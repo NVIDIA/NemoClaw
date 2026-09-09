@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import os from "node:os";
+import path from "node:path";
 import type { Readable, Writable } from "node:stream";
 
+import { withConnectSandboxLifecycleLock } from "../actions/sandbox/lifecycle/lock";
 import { createCliHermesAcpSshTransport } from "../adapters/openshell/hermes-acp-ssh-cli";
 import type { HermesAcpSshTransport } from "../adapters/openshell/hermes-acp-ssh";
 import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/sandbox-identity-cli";
@@ -61,6 +63,7 @@ export type HermesAcpTarget = Readonly<{
   gatewayName: string;
   gatewayPort: number;
   sandboxName: string;
+  stateRoot: string;
 }>;
 
 export type HermesAcpTargetResolution =
@@ -84,6 +87,7 @@ export type HermesAcpCommandDeps = Readonly<{
     runtimeSelection: { gatewayName: string; workspace: string };
   }) => Promise<RecoveryResult>;
   transport?: HermesAcpSshTransport;
+  withLifecycleLock?: typeof withConnectSandboxLifecycleLock;
 }>;
 
 function usageError(message: string): never {
@@ -207,6 +211,7 @@ export function resolveHermesAcpTarget(
       gatewayName,
       gatewayPort: match.gatewayPort,
       sandboxName: request.sandboxName,
+      stateRoot: match.stateRoot,
     },
   };
 }
@@ -295,9 +300,10 @@ export async function runHermesAcpCommand(
     return 0;
   }
 
+  const home = (deps.home ?? os.homedir)();
   let entries: HostGatewayRegistryEntry[];
   try {
-    entries = (deps.listRegistry ?? listHostGatewayRegistryEntries)((deps.home ?? os.homedir)());
+    entries = (deps.listRegistry ?? listHostGatewayRegistryEntries)(home);
   } catch {
     await writeLine(io.diagnostics, "NemoClaw could not safely inspect the sandbox registry.");
     return 1;
@@ -313,11 +319,7 @@ export async function runHermesAcpCommand(
     return 1;
   }
 
-  const target = resolved.target;
-  const runtimeSelection = {
-    gatewayName: target.gatewayName,
-    workspace: OPENSHELL_DEFAULT_WORKSPACE,
-  };
+  const selectedTarget = resolved.target;
   try {
     assertNoOpenShellGatewayEndpointOverride();
   } catch {
@@ -327,46 +329,101 @@ export async function runHermesAcpCommand(
     );
     return 1;
   }
-  let recovery: RecoveryResult;
+  let completion: ReturnType<HermesAcpSshTransport["run"]>;
   try {
-    recovery = await withoutConsoleOutput(() =>
-      (deps.recoverGateway ?? recoverNamedGatewayRuntime)({
-        gatewayName: target.gatewayName,
-        runtimeSelection,
-      }),
-    );
-  } catch {
-    await writeLine(io.diagnostics, "The selected OpenShell gateway could not be recovered.");
-    return 1;
-  }
-  if (!recovery.recovered || recovery.after.state !== "healthy_named") {
-    await writeLine(io.diagnostics, "The selected OpenShell gateway is not ready.");
-    return 1;
-  }
+    const started = await (deps.withLifecycleLock ?? withConnectSandboxLifecycleLock)(
+      selectedTarget.sandboxName,
+      async () => {
+        let currentEntries: HostGatewayRegistryEntry[];
+        try {
+          currentEntries = (deps.listRegistry ?? listHostGatewayRegistryEntries)(home);
+        } catch {
+          return {
+            error: "NemoClaw could not safely revalidate the sandbox registry.",
+          } as const;
+        }
+        const current = resolveHermesAcpTarget(currentEntries, {
+          gatewayName: selectedTarget.gatewayName,
+          sandboxName: selectedTarget.sandboxName,
+          nemoclawVersion: currentVersion,
+        });
+        if (
+          !current.ok ||
+          current.target.stateRoot !== selectedTarget.stateRoot ||
+          current.target.entry.lifecycleGeneration !== selectedTarget.entry.lifecycleGeneration ||
+          current.target.entry.lifecycleLiveIdentityFingerprint !==
+            selectedTarget.entry.lifecycleLiveIdentityFingerprint
+        ) {
+          return {
+            error: "The requested sandbox changed before the ACP adapter could start.",
+          } as const;
+        }
+        const target = current.target;
+        const runtimeSelection = {
+          gatewayName: target.gatewayName,
+          workspace: OPENSHELL_DEFAULT_WORKSPACE,
+        };
+        let recovery: RecoveryResult;
+        try {
+          recovery = await withoutConsoleOutput(() =>
+            (deps.recoverGateway ?? recoverNamedGatewayRuntime)({
+              gatewayName: target.gatewayName,
+              runtimeSelection,
+            }),
+          );
+        } catch {
+          return { error: "The selected OpenShell gateway could not be recovered." } as const;
+        }
+        if (!recovery.recovered || recovery.after.state !== "healthy_named") {
+          return { error: "The selected OpenShell gateway is not ready." } as const;
+        }
 
-  let liveError: string | null;
-  try {
-    liveError = await validateLiveTarget(
-      target,
-      deps.observer ?? defaultObserver(),
-      deps.inspectIdentity ?? inspectOpenShellSandboxIdentityFingerprint,
+        let liveError: string | null;
+        try {
+          liveError = await validateLiveTarget(
+            target,
+            deps.observer ?? defaultObserver(),
+            deps.inspectIdentity ?? inspectOpenShellSandboxIdentityFingerprint,
+          );
+        } catch {
+          liveError = "OpenShell could not validate the selected sandbox identity.";
+        }
+        if (liveError) return { error: liveError } as const;
+
+        let markSessionStarted!: () => void;
+        const sessionStarted = new Promise<void>((resolve) => {
+          markSessionStarted = resolve;
+        });
+        const transportCompletion = (deps.transport ?? createCliHermesAcpSshTransport()).run({
+          gatewayName: target.gatewayName,
+          sandboxName: target.sandboxName,
+          streams: io,
+          onSessionStarted: markSessionStarted,
+          ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+        });
+        await Promise.race([
+          sessionStarted,
+          transportCompletion.then(
+            () => undefined,
+            () => undefined,
+          ),
+        ]);
+        return { completion: transportCompletion, error: null } as const;
+      },
+      { stateDir: path.join(selectedTarget.stateRoot, "state") },
     );
+    if (started.error !== null) {
+      await writeLine(io.diagnostics, started.error);
+      return 1;
+    }
+    completion = started.completion;
   } catch {
-    liveError = "OpenShell could not validate the selected sandbox identity.";
-  }
-  if (liveError) {
-    await writeLine(io.diagnostics, liveError);
+    await writeLine(io.diagnostics, "The Hermes ACP transport could not start safely.");
     return 1;
   }
-
   let outcome;
   try {
-    outcome = await (deps.transport ?? createCliHermesAcpSshTransport()).run({
-      gatewayName: target.gatewayName,
-      sandboxName: target.sandboxName,
-      streams: io,
-      ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
-    });
+    outcome = await completion;
   } catch {
     await writeLine(io.diagnostics, "The Hermes ACP transport could not start safely.");
     return 1;

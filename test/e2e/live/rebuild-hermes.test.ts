@@ -1179,16 +1179,19 @@ test(
     expectExitZero(hermesVersion, "Hermes version after rebuild");
     const hermesVersionText = resultText(hermesVersion);
     const actualHermesVersion = hermesVersionText.match(/v(\d+\.\d+\.\d+)/)?.[1];
+    const acpInitializedAfterRebuild = await runHermesAcpLiveScenario({
+      artifacts,
+      env: testEnv(apiKey),
+      progress,
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+      scenario: "initialize",
+    });
+    const acpAvailableAfterRebuild =
+      actualHermesVersion === expectedVersion && acpInitializedAfterRebuild;
     expect(
-      await runHermesAcpLiveScenario({
-        artifacts,
-        env: testEnv(apiKey),
-        progress,
-        sandbox,
-        sandboxName: SANDBOX_NAME,
-        scenario: "initialize",
-      }),
-      `Hermes ${actualHermesVersion ?? "unknown"} did not expose compatible ACP after rebuild; expected ${expectedVersion}`,
+      acpAvailableAfterRebuild,
+      `Hermes ${actualHermesVersion ?? "unknown"} did not preserve version ${expectedVersion} with compatible ACP after rebuild`,
     ).toBe(true);
     await cronRestore.verify(rebuildOutput, rebuildBackupPath);
     await cronRestore.verifyStrandedGateRecovery();

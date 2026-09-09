@@ -277,7 +277,10 @@ describe("CLI Hermes ACP SSH transport", () => {
     expect(fixture.cleanup).toHaveBeenCalledOnce();
   });
 
-  it("forwards a host termination signal and returns its conventional exit code", async () => {
+  it.each([
+    ["SIGTERM" as const, 143],
+    ["SIGINT" as const, 130],
+  ])("forwards host %s and returns its conventional exit code", async (signal, exitCode) => {
     const signalEvents = new EventEmitter();
     const session = fakeChild();
     const fixture = harness([probeChild(), session], {
@@ -293,14 +296,33 @@ describe("CLI Hermes ACP SSH transport", () => {
       streams: io.value,
     });
     await vi.waitFor(() => expect(fixture.spawnSsh).toHaveBeenCalledTimes(2));
-    signalEvents.emit("SIGTERM");
+    signalEvents.emit(signal);
 
     const result = await pending;
 
-    expect(result).toMatchObject({ kind: "failed", error: { kind: "cancelled" }, exitCode: 143 });
-    expect(session.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(result).toMatchObject({ kind: "failed", error: { kind: "cancelled" }, exitCode });
+    expect(session.kill).toHaveBeenCalledWith(signal);
     expect(signalEvents.listenerCount("SIGTERM")).toBe(0);
     expect(signalEvents.listenerCount("SIGINT")).toBe(0);
+  });
+
+  it("reports session start only after SSH launches and before completion", async () => {
+    const session = fakeChild();
+    const fixture = harness([probeChild(), session]);
+    const io = streams();
+    const onSessionStarted = vi.fn();
+    const pending = fixture.transport.run({
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      streams: io.value,
+      onSessionStarted,
+    });
+
+    await vi.waitFor(() => expect(onSessionStarted).toHaveBeenCalledOnce());
+    expect(session.exitCode).toBeNull();
+    session.finish(0);
+
+    await expect(pending).resolves.toEqual({ kind: "completed", exitCode: 0 });
   });
 
   it("terminates a timed-out session and reports a bounded timeout", async () => {
@@ -340,6 +362,39 @@ describe("CLI Hermes ACP SSH transport", () => {
 
     expect(result).toMatchObject({ kind: "failed", error: { kind } });
     expect(fixture.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("classifies a failed live SSH session and cleans the temporary configuration", async () => {
+    const session = fakeChild((child) => child.finish(255));
+    const fixture = harness([probeChild(), session]);
+    const io = streams(Readable.from(["request"]));
+
+    const result = await fixture.transport.run({
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      streams: io.value,
+    });
+
+    expect(result).toMatchObject({ kind: "failed", error: { kind: "transport" }, exitCode: 255 });
+    expect(fixture.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["native Windows", { platform: "win32" as const }],
+    ["a different OpenShell version", { openshellVersion: vi.fn(() => "0.0.105") }],
+  ])("rejects %s before preparing SSH", async (_label, overrides) => {
+    const fixture = harness([], overrides);
+    const io = streams();
+
+    const result = await fixture.transport.run({
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      streams: io.value,
+    });
+
+    expect(result).toMatchObject({ kind: "failed", error: { kind: "unavailable" } });
+    expect(fixture.captureOpenShell).not.toHaveBeenCalled();
+    expect(fixture.spawnSsh).not.toHaveBeenCalled();
   });
 
   it.each([

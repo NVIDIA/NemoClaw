@@ -215,7 +215,16 @@ test(
     timeout: testTimeout(HERMES_E2E_TEST_TIMEOUT_MS),
     meta: { e2ePhases: HERMES_E2E_PHASES },
   },
-  async ({ artifacts, cleanup, host, inference, progress, runtimeProvider, sandbox }) => {
+  async ({
+    artifacts,
+    cleanup,
+    host,
+    inference,
+    lifecycle,
+    progress,
+    runtimeProvider,
+    sandbox,
+  }) => {
     await artifacts.target.declare({
       id: "hermes-e2e",
       boundary: `install.sh --non-interactive --fresh + Hermes sandbox runtime + ${inference.mode} inference adapter`,
@@ -459,6 +468,7 @@ test(
       timeoutMs: 30_000,
     });
     expect(hermesVersion.exitCode, resultText(hermesVersion)).toBe(0);
+    expect(resultText(hermesVersion)).not.toMatch(/MISSING|not found|No such file/i);
     // The exact executable and version compatibility is exercised through the
     // packaged ACP adapter below and classified by lower source tests.
 
@@ -782,21 +792,35 @@ test(
     const remoteExitPassed = await runAcpScenario("remote-exit");
     const cancellationPassed = await runAcpScenario("cancel");
     const clientDisconnectPassed = await runAcpScenario("client-disconnect");
-    const gatewayRecoveryPassed = await runAcpScenario("gateway-recovery");
-    expect(
+    const gatewayRestartPassed = await runHermesAcpLiveScenario({
+      artifacts,
+      env,
+      progress,
+      restartGateway: async () => {
+        await lifecycle.restartGatewayRuntime({ sandboxName: SANDBOX_NAME });
+        await lifecycle.waitForGatewayConnected();
+      },
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+      scenario: "gateway-restart",
+    });
+    const postRestartInitializePassed = await runAcpScenario("initialize");
+    const acpLifecyclePassed =
       exchangePassed &&
-        remoteExitPassed &&
-        cancellationPassed &&
-        clientDisconnectPassed &&
-        gatewayRecoveryPassed,
-      "Hermes ACP lifecycle scenarios failed; inspect the fixed per-scenario JSON receipts",
-    ).toBe(true);
+      remoteExitPassed &&
+      cancellationPassed &&
+      clientDisconnectPassed &&
+      gatewayRestartPassed &&
+      postRestartInitializePassed;
 
     const directChat = await inference.directChat("Reply with exactly one word: PONG", {
       artifactName: "phase-5-direct-inference-chat",
       maxTokens: 1024,
     });
-    expect(exhaustedReasoningBudget(directChat)).toBe(false);
+    expect(
+      exhaustedReasoningBudget(directChat) || !acpLifecyclePassed,
+      "Hermes ACP lifecycle failed or direct inference exhausted its reasoning budget; inspect the fixed ACP receipts and inference artifact",
+    ).toBe(false);
     expectPong(`${inference.mode} direct chat`, directChat);
 
     const sandboxChat = await sandbox.exec(
@@ -934,7 +958,7 @@ test(
         standaloneRoutingSidecarsAbsentAfterRecovery: true,
         hermesAcpInitializeSessionPromptPong: true,
         hermesAcpInterruptDisconnectAndRemoteExitClean: true,
-        hermesAcpRecoversStoppedOpenShellGateway: true,
+        hermesAcpCleansUpAndReconnectsAfterOpenShellGatewayRestart: true,
         dashboardChecked: hermesDashboardE2eEnabled(),
         securityPostureChecked: securityPosture !== null,
       },

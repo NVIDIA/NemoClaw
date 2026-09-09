@@ -33,6 +33,8 @@ export type HermesAcpSshRequest = Readonly<{
     output: Writable;
     diagnostics: Writable;
   }>;
+  /** Release the host lifecycle fence after the remote adapter process starts. */
+  onSessionStarted?: () => void;
   signal?: AbortSignal;
   timeoutMs?: number;
 }>;

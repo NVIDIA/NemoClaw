@@ -583,6 +583,7 @@ export function createCliHermesAcpSshTransport(
         } catch {
           return failure("invocation", "The SSH client could not start.", 1);
         }
+        request.onSessionStarted?.();
         return await runSession(session, request, deps.signalSource ?? processSignals);
       } finally {
         temporary.cleanup();

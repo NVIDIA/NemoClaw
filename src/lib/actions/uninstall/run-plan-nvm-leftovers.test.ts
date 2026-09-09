@@ -58,7 +58,7 @@ describe("uninstall NVM leftovers", () => {
     const cliNames = ["nemoclaw", "nemoclaw-acp", "nemohermes", "nemo-deepagents"] as const;
     const declaredBins = {
       nemoclaw: "bin/nemoclaw.js",
-      "nemoclaw-acp": "bin/nemoclaw-acp.js",
+      "nemoclaw-acp": "dist/lib/acp/main.js",
       nemohermes: "bin/nemohermes.js",
       "nemo-deepagents": "bin/nemoclaw.js",
     } as const;
@@ -109,7 +109,7 @@ describe("uninstall NVM leftovers", () => {
     const linkedPackage = path.join(tmpHome, "linked-nemoclaw");
     const declaredBins = {
       nemoclaw: "bin/nemoclaw.js",
-      "nemoclaw-acp": "bin/nemoclaw-acp.js",
+      "nemoclaw-acp": "dist/lib/acp/main.js",
       nemohermes: "bin/nemohermes.js",
       "nemo-deepagents": "bin/nemo-deepagents.js",
     } as const;
@@ -122,6 +122,7 @@ describe("uninstall NVM leftovers", () => {
     fs.symlinkSync(linkedPackage, packageLink);
     const bins = Object.entries(declaredBins).map(([name, relativeTarget]) => {
       const packageTarget = path.join(linkedPackage, relativeTarget);
+      fs.mkdirSync(path.dirname(packageTarget), { recursive: true });
       fs.writeFileSync(packageTarget, "#!/usr/bin/env node\n");
       const bin = path.join(versionDir, "bin", name);
       fs.mkdirSync(path.dirname(bin), { recursive: true });

@@ -18,10 +18,14 @@ function registryEntry(
   overrides: Record<string, unknown> = {},
 ): HostGatewayRegistryEntry {
   const gatewayName = gatewayPort === 8080 ? "nemoclaw" : `nemoclaw-${String(gatewayPort)}`;
+  const stateRoot =
+    gatewayPort === 8080
+      ? "/home/operator/.nemoclaw"
+      : `/home/operator/.nemoclaw/gateways/${String(gatewayPort)}`;
   return {
     gatewayPort,
-    registryFile: `/home/operator/.nemoclaw/${String(gatewayPort)}/sandboxes.json`,
-    stateRoot: `/home/operator/.nemoclaw/${String(gatewayPort)}`,
+    registryFile: `${stateRoot}/sandboxes.json`,
+    stateRoot,
     entry: {
       name,
       agent: "hermes",
@@ -67,6 +71,7 @@ function commandHarness(
     observer?: OpenShellSandboxObserver;
     recovered?: boolean;
     transport?: HermesAcpSshTransport;
+    withLifecycleLock?: typeof import("../actions/sandbox/lifecycle/lock").withConnectSandboxLifecycleLock;
   } = {},
 ) {
   const output = collector();
@@ -80,13 +85,22 @@ function commandHarness(
   const transport =
     overrides.transport ??
     ({
-      run: vi.fn(async () => ({ kind: "completed" as const, exitCode: 0 })),
+      run: vi.fn(async (request) => {
+        request.onSessionStarted?.();
+        return { kind: "completed" as const, exitCode: 0 };
+      }),
     } satisfies HermesAcpSshTransport);
+  const withLifecycleLock = vi.fn(
+    overrides.withLifecycleLock ??
+      ((async (_sandboxName, operation) =>
+        await operation()) as typeof import("../actions/sandbox/lifecycle/lock").withConnectSandboxLifecycleLock),
+  );
   return {
     diagnostics,
     output,
     recoverGateway,
     transport,
+    withLifecycleLock,
     run: (argv: string[]) =>
       runHermesAcpCommand(
         argv,
@@ -103,6 +117,8 @@ function commandHarness(
           observer: overrides.observer ?? readyObserver(),
           recoverGateway: recoverGateway as never,
           transport,
+          withLifecycleLock:
+            withLifecycleLock as unknown as typeof import("../actions/sandbox/lifecycle/lock").withConnectSandboxLifecycleLock,
         },
       ),
   };
@@ -203,9 +219,84 @@ describe("Hermes ACP command", () => {
     });
     expect(fixture.transport.run).toHaveBeenCalledWith({
       gatewayName: "nemoclaw",
+      onSessionStarted: expect.any(Function),
       sandboxName: "alpha",
       streams: expect.objectContaining({ input: expect.any(Readable) }),
     });
+    expect(fixture.withLifecycleLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
+      stateDir: "/home/operator/.nemoclaw/state",
+    });
+  });
+
+  it("revalidates and starts SSH inside the lifecycle fence, then releases it", async () => {
+    const events: string[] = [];
+    let finishSession!: () => void;
+    const sessionFinished = new Promise<void>((resolve) => {
+      finishSession = resolve;
+    });
+    const transport: HermesAcpSshTransport = {
+      run: vi.fn(async (request) => {
+        events.push("session-started");
+        request.onSessionStarted?.();
+        await sessionFinished;
+        events.push("session-finished");
+        return { kind: "completed" as const, exitCode: 0 };
+      }),
+    };
+    const withLifecycleLock = vi.fn(
+      async <T>(_sandboxName: string, operation: () => Promise<T> | T): Promise<T> => {
+        events.push("lock-acquired");
+        const result = await operation();
+        events.push("lock-released");
+        return result;
+      },
+    );
+    const fixture = commandHarness({
+      transport,
+      withLifecycleLock:
+        withLifecycleLock as typeof import("../actions/sandbox/lifecycle/lock").withConnectSandboxLifecycleLock,
+    });
+
+    const pending = fixture.run(["--sandbox", "alpha"]);
+    await vi.waitFor(() => expect(events).toContain("lock-released"));
+
+    expect(events).toEqual(["lock-acquired", "session-started", "lock-released"]);
+    finishSession();
+    await expect(pending).resolves.toBe(0);
+    expect(events).toEqual([
+      "lock-acquired",
+      "session-started",
+      "lock-released",
+      "session-finished",
+    ]);
+  });
+
+  it("fails closed when the registered target changes while waiting for the lifecycle fence", async () => {
+    const first = registryEntry("alpha");
+    const changed = registryEntry("alpha", 8080, { lifecycleGeneration: "generation-2" });
+    const listRegistry = vi.fn().mockReturnValueOnce([first]).mockReturnValueOnce([changed]);
+    const output = collector();
+    const diagnostics = collector();
+    const transport = {
+      run: vi.fn(async () => ({ kind: "completed" as const, exitCode: 0 })),
+    } satisfies HermesAcpSshTransport;
+
+    const exitCode = await runHermesAcpCommand(
+      ["--sandbox", "alpha"],
+      { input: Readable.from([]), output: output.stream, diagnostics: diagnostics.stream },
+      {
+        currentVersion: () => VERSION,
+        home: () => "/home/operator",
+        listRegistry,
+        transport,
+        withLifecycleLock: (async (_sandboxName, operation) =>
+          await operation()) as typeof import("../actions/sandbox/lifecycle/lock").withConnectSandboxLifecycleLock,
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(diagnostics.text()).toContain("changed before the ACP adapter could start");
+    expect(transport.run).not.toHaveBeenCalled();
   });
 
   it.each([

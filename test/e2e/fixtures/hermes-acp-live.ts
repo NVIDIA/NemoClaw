@@ -19,7 +19,7 @@ export type HermesAcpLiveScenario =
   | "cancel"
   | "client-disconnect"
   | "exchange"
-  | "gateway-recovery"
+  | "gateway-restart"
   | "initialize"
   | "remote-exit";
 
@@ -27,6 +27,7 @@ export interface HermesAcpLiveOptions {
   readonly artifacts: ArtifactSink;
   readonly env: NodeJS.ProcessEnv;
   readonly progress: ChildProcessProgress;
+  readonly restartGateway?: () => Promise<void>;
   readonly sandbox: SandboxClient;
   readonly sandboxName: string;
   readonly scenario: HermesAcpLiveScenario;
@@ -156,23 +157,8 @@ async function verifyNoRemoteHermesAcpProcess(
   return false;
 }
 
-async function stopOpenShellGateway(options: HermesAcpLiveOptions): Promise<boolean> {
-  const result = await options.sandbox.openshell(
-    ["gateway", "stop", "-g", OPENSHELL_GATEWAY_NAME],
-    {
-      artifactName: "hermes-acp-gateway-recovery-stop",
-      env: hermesAcpLiveHostEnv(options.env),
-      timeoutMs: 60_000,
-    },
-  );
-  return result.exitCode === 0;
-}
-
 /** Drive the real packaged adapter while retaining only fixed boolean and exit evidence. */
 export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): Promise<boolean> {
-  if (options.scenario === "gateway-recovery" && !(await stopOpenShellGateway(options))) {
-    return false;
-  }
   const child = spawnObservedChild(
     "nemoclaw-acp",
     ["--sandbox", options.sandboxName, "--gateway", OPENSHELL_GATEWAY_NAME, "--timeout", "360"],
@@ -269,17 +255,16 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
   if (scenarioValid && options.scenario === "cancel") {
     signalAdapter(child, "SIGTERM");
   } else if (scenarioValid && options.scenario === "client-disconnect") {
+    input.end();
     child.stdout?.destroy();
-    scenarioValid = await writeRequest(input, {
-      jsonrpc: "2.0",
-      id: 2,
-      method: "initialize",
-      params: {
-        protocolVersion: 1,
-        clientCapabilities: {},
-        clientInfo: { name: "nemoclaw-e2e-disconnected", version: "1.0.0" },
-      },
-    });
+    child.stderr?.destroy();
+  } else if (scenarioValid && options.scenario === "gateway-restart") {
+    if (!options.restartGateway) {
+      scenarioValid = false;
+      signalAdapter(child, "SIGTERM");
+    } else {
+      await options.restartGateway();
+    }
   } else if (scenarioValid && options.scenario === "remote-exit") {
     scenarioValid = await terminateRemoteHermesAcp(
       options.sandbox,
@@ -324,7 +309,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     cancel: 143,
     "client-disconnect": 1,
     exchange: 0,
-    "gateway-recovery": 0,
+    "gateway-restart": 255,
     initialize: 0,
     "remote-exit": null,
   }[options.scenario];
