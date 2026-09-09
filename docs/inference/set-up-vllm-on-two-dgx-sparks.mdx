@@ -36,9 +36,6 @@ Declining setup creates no binding.
 After confirmation, NemoClaw attempts to remove every binding when setup fails or the durable runtime receipt is committed.
 If cleanup cannot be confirmed, a new managed-vLLM install stops before mutation and preserves the claims for explicit recovery or removal.
 
-If onboarding stops after a preset-driven install records its model, `$$nemoclaw onboard --resume` verifies that the recorded model matches the preset before it changes runtime resources.
-If they differ, it stops and tells you to run `$$nemoclaw onboard --fresh`.
-
 When no matching cluster qualifies during automatic selection, NemoClaw retains the existing single-DGX Spark managed vLLM path.
 This ordinary no-match result occurs before the distributed image or model download starts.
 

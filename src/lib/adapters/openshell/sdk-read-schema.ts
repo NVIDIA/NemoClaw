@@ -32,6 +32,21 @@ export const ProviderResponseSchema = Type.Object({
     credentials: OpaqueMapSchema,
     credentialHandles: Type.Optional(Type.Union([OpaqueMapSchema, Type.Null()])),
     config: OpaqueMapSchema,
+    profileWorkspace: Type.Optional(Type.String()),
+  }),
+});
+// OpenShell's native NVIDIA inference profile uses /v1 on this builtin host
+// when the provider has no configuration overrides.
+export const BuiltinNvidiaProfileResponseSchema = Type.Object({
+  profile: Type.Object({
+    id: Type.Literal("nvidia"),
+    source: Type.Literal("builtin"),
+    scope: Type.Literal(""),
+    resourceVersion: Type.Refine(VersionSchema, (value) => BigInt(value) === 0n),
+    inferenceCapable: Type.Literal(true),
+    endpoints: Type.Tuple([
+      Type.Object({ host: Type.Literal("integrate.api.nvidia.com"), port: Type.Literal(443) }),
+    ]),
   }),
 });
 export const SandboxResponseSchema = Type.Object({

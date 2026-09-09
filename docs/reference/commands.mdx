@@ -199,6 +199,7 @@ Start a new shell session to refresh the cached sandbox names after creating or 
 Export a supported registered OpenClaw sandbox as a secret-free `NemoClawConfig` document. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
+For native NVIDIA hosted inference, export requires the built-in NVIDIA profile at its default endpoint without provider configuration overrides.
 If OpenShell cannot supply the required evidence, the command stops without writing output.
 
 Write a file on Linux:

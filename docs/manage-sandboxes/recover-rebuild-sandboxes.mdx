@@ -105,7 +105,6 @@ $$nemoclaw <sandbox-name> connect --probe-only
 ```
 
 These commands verify the published inference receipt, sandbox registry, provider and lifecycle authority, recovery journal, and exact Podman runtime identity.
-Portable Hermes records the gateway selected by `NEMOCLAW_GATEWAY_PORT`; recovery and uninstall use that recorded gateway, including a non-default gateway.
 They verify and reuse an already-running exact runner without restarting it.
 When the exact runner is stopped, they resume only that runner; they do not select another runtime, model, network, or provider.
 Missing authority, a same-name replacement, or other drift stops recovery before NemoClaw treats another resource as the runner.
