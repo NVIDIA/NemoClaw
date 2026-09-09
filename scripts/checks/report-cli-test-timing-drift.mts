@@ -6,10 +6,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-type TimingHints = {
-  defaultDurationMs: number;
-  files: Record<string, number>;
-};
+import { parseCliTestTimingHints } from "./cli-test-timing-hints.mts";
 
 type VitestFileResult = {
   name?: unknown;
@@ -45,29 +42,6 @@ function normalizeReportPath(name: string, repoRoot: string): string | undefined
   return relativeName;
 }
 
-function parseHints(value: unknown): TimingHints {
-  if (!isRecord(value) || !Number.isSafeInteger(value.defaultDurationMs)) {
-    throw new Error("Invalid CLI timing hints");
-  }
-  if (!isRecord(value.files)) {
-    throw new Error("Invalid CLI timing hint file map");
-  }
-
-  const defaultDurationMs = Number(value.defaultDurationMs);
-  if (defaultDurationMs <= 0) {
-    throw new Error("Invalid CLI timing hint default duration");
-  }
-
-  const files: Record<string, number> = {};
-  for (const [file, duration] of Object.entries(value.files)) {
-    if (!Number.isSafeInteger(duration) || Number(duration) <= defaultDurationMs) {
-      throw new Error(`Invalid CLI timing hint: ${file}`);
-    }
-    files[file] = Number(duration);
-  }
-  return { defaultDurationMs, files };
-}
-
 function parseFileResults(value: VitestReport, repoRoot: string): Map<string, number> {
   if (!Array.isArray(value.testResults)) {
     throw new Error("Invalid Vitest timing report");
@@ -99,7 +73,7 @@ export function findCliTestTimingDrift(
   hintsValue: unknown,
   repoRoot: string,
 ): TimingDrift[] {
-  const hints = parseHints(hintsValue);
+  const hints = parseCliTestTimingHints(hintsValue);
   const durations = parseFileResults(reportValue, path.resolve(repoRoot));
   const drift: TimingDrift[] = [];
 

@@ -11,11 +11,11 @@ import {
   discoverVitestCandidates,
   expectedProjectForTestPath,
 } from "../../scripts/checks/vitest-project-overlap.mts";
+import { parseCliTestTimingHints } from "../../scripts/checks/cli-test-timing-hints.mts";
 import {
   assignStableShards,
   CliCoverageSequencer,
   cliTestTimingHints,
-  parseCliTestTimingHints,
   shouldUseCliCoverageSharding,
   timingWeightForPath,
   type WeightedShardEntry,
@@ -95,10 +95,14 @@ describe("stable CLI coverage sharding", () => {
     ]);
     const withRemoval = assignmentOwners(entries.slice(1));
 
-    expect(entries.every((entry) =>
-        Object.is(withAddition.get(entry.key), baseline.get(entry.key)))).toBe(true);
-    expect(entries.slice(1).every((entry) =>
-        Object.is(withRemoval.get(entry.key), baseline.get(entry.key)))).toBe(true);
+    expect(
+      entries.every((entry) => Object.is(withAddition.get(entry.key), baseline.get(entry.key))),
+    ).toBe(true);
+    expect(
+      entries
+        .slice(1)
+        .every((entry) => Object.is(withRemoval.get(entry.key), baseline.get(entry.key))),
+    ).toBe(true);
   });
 
   it("keeps recorded project and path keys on their stable shards", () => {
@@ -137,9 +141,7 @@ describe("stable CLI coverage sharding", () => {
     );
     expect(integrationEntries.length).toBeGreaterThan(0);
 
-    const weights = assignStableShards(integrationEntries, 12).map(
-      (shard) => shard.totalWeightMs,
-    );
+    const weights = assignStableShards(integrationEntries, 12).map((shard) => shard.totalWeightMs);
     const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
 
     expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.1);
@@ -155,8 +157,14 @@ describe("stable CLI coverage sharding", () => {
 
   it("wires stable project and path ownership into the Vitest sequencer", async () => {
     const specifications = [
-      testSpecification("test/credentials/local-credential-helper-fields.test.ts", "local-credentials"),
-      testSpecification("test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts", "hermes-config"),
+      testSpecification(
+        "test/credentials/local-credential-helper-fields.test.ts",
+        "local-credentials",
+      ),
+      testSpecification(
+        "test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts",
+        "hermes-config",
+      ),
       ...Array.from({ length: 8 }, (_, index) =>
         testSpecification(`test/regular-${index}.test.ts`, `regular-${index}`),
       ),
@@ -217,6 +225,12 @@ describe("stable CLI coverage sharding", () => {
         headSha: "be1452092af48f439531502870e826215b0d76f9",
         recordedAt: "2026-09-06T05:43:35Z",
       },
+      {
+        runId: 34324134466,
+        artifactId: 10093500400,
+        headSha: "933cb4ef3f59defc5c872475fcd38bc893399add",
+        recordedAt: "2026-09-09T07:43:34Z",
+      },
     ]);
     expect(files).toEqual([...files].sort());
     expect(files.length).toBeGreaterThan(50);
@@ -225,6 +239,13 @@ describe("stable CLI coverage sharding", () => {
       expect(cliTestTimingHints.files[file]).toBeGreaterThan(cliTestTimingHints.defaultDurationMs);
     });
     expect(timingWeightForPath("test/new-unprofiled-test.test.ts")).toBe(5_000);
+  });
+
+  it("uses the conservative fallback for the measured sub-default session-evidence split", () => {
+    const file = "test/e2e/support/launch-agent-turn-session-evidence.test.ts";
+
+    expect(cliTestTimingHints.files[file]).toBeUndefined();
+    expect(timingWeightForPath(file)).toBe(cliTestTimingHints.defaultDurationMs);
   });
 
   it("rejects malformed timing hint manifests", () => {

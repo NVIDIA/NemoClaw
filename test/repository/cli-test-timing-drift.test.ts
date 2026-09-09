@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { parseCliTestTimingHints } from "../../scripts/checks/cli-test-timing-hints.mts";
 import {
   findCliTestTimingDrift,
   formatCliTestTimingDriftSummary,
@@ -23,7 +24,16 @@ function report(files: Record<string, number>): object {
 }
 
 const hints = {
+  schemaVersion: 2,
   defaultDurationMs: 5_000,
+  sources: [
+    {
+      runId: 1,
+      artifactId: 1,
+      headSha: "0123456789abcdef0123456789abcdef01234567",
+      recordedAt: "2026-09-09T00:00:00Z",
+    },
+  ],
   files: {
     "test/faster.test.ts": 50_000,
     "test/slower.test.ts": 10_000,
@@ -75,5 +85,15 @@ describe("CLI test timing drift", () => {
     expect(summary).toContain("`test/new.test.ts`");
     expect(summary).toContain("16.0s");
     expect(formatCliTestTimingDriftSummary([])).toContain("No material timing-hint drift");
+  });
+
+  it.each([
+    { name: "schema version", value: { ...hints, schemaVersion: 1 } },
+    { name: "source metadata", value: { ...hints, sources: [] } },
+  ])("rejects invalid $name through the shared parser and reporter", ({ value }) => {
+    expect(() => parseCliTestTimingHints(value)).toThrow(/schemaVersion 2|source metadata/u);
+    expect(() => findCliTestTimingDrift(report({}), value, repoRoot)).toThrow(
+      /schemaVersion 2|source metadata/u,
+    );
   });
 });
