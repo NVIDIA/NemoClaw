@@ -80,6 +80,7 @@ A runtime-emitted precondition reports `0` because the runtime completed and ret
 A bridge-level precondition that skips runtime execution reports `null`.
 An unreachable sandbox also reports `null` when no runtime exit status exists.
 A failed result includes `failedStage`, `failureClass`, and a redacted `detail` value.
+An invalid JSON, JSON-RPC envelope, or tool-list schema reports `failureClass: "protocol"`.
 Bounded partial results set `truncated` to `true`.
 Correct the reported precondition, runtime, connection, authentication, protocol, or tool-operation failure, and then rerun the same command.
 

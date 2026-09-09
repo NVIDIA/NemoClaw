@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  baseImageInputsChanged,
   collectPaginated,
   expandBaseImagePushPaths,
   type FirstParentHistory,
@@ -174,6 +175,18 @@ function successfulManualJobs(): Record<string, unknown>[] {
 }
 
 describe("base-image publication evidence", () => {
+  it("publishes after a root package manifest changes", () => {
+    const workflowSource = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
+      "utf8",
+    );
+    const reviewedPaths = parseBaseImagePushPaths(workflowSource);
+
+    expect(reviewedPaths).toEqual(expect.arrayContaining(["package.json", "package-lock.json"]));
+    expect(baseImageInputsChanged(["package.json"], reviewedPaths)).toBe(true);
+    expect(baseImageInputsChanged(["package-lock.json"], reviewedPaths)).toBe(true);
+  });
+
   it.each(["push", "workflow_dispatch"])("accepts %s publication preflight events", (eventName) => {
     expect(isBaseImagePublicationEvent(eventName)).toBe(true);
   });
