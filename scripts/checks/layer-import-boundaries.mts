@@ -170,11 +170,23 @@ function collectPreprocessedImportRefs(source: string): ImportRef[] {
   });
 }
 
-const NAMESPACE_EXPORT_PATTERN =
-  /\bexport(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*)*\*(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*)*as\b/u;
+function mayContainNamespaceExport(source: string): boolean {
+  return (
+    source.includes("export") &&
+    source.includes("*") &&
+    source.includes("as") &&
+    source.includes("from")
+  );
+}
 
-function containsNamespaceExport(source: string): boolean {
-  return NAMESPACE_EXPORT_PATTERN.test(source);
+function containsNamespaceExport(sourceFile: ts.SourceFile): boolean {
+  return sourceFile.statements.some(
+    (statement) =>
+      ts.isExportDeclaration(statement) &&
+      !statement.isTypeOnly &&
+      statement.exportClause !== undefined &&
+      ts.isNamespaceExport(statement.exportClause),
+  );
 }
 
 function resolveInternalImport(fromAbsPath: string, specifier: string): string | null {
@@ -691,7 +703,8 @@ export function findLayerImportBoundaryViolations(root = SRC_ROOT): Violation[] 
       (preprocessedImports.some(
         (ref) => resolveInternalImport(absPath, ref.specifier) === LEGACY_BUFFERED_EXEC_HELPER,
       ) ||
-        (containsNamespaceExport(source) &&
+        (mayContainNamespaceExport(source) &&
+          containsNamespaceExport(getParsedSourceFile()) &&
           getParsedImports().some(
             (ref) => resolveInternalImport(absPath, ref.specifier) === LEGACY_BUFFERED_EXEC_HELPER,
           )));

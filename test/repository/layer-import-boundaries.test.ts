@@ -137,6 +137,18 @@ describe("CLI layer import boundaries (#6245)", () => {
       "namespace re-export with comments",
       'export /* keep */ * /* keep */ as legacy from "../actions/sandbox/exec";\n',
     ],
+    [
+      "namespace re-export with line comments",
+      'export // keep\n* // keep\nas legacy from "../actions/sandbox/exec";\n',
+    ],
+    [
+      "namespace re-export with adjacent comments",
+      'export/**//**/*/**//**/as legacy from "../actions/sandbox/exec";\n',
+    ],
+    [
+      "namespace re-export after an interpolated template",
+      'const value = 1; const template = `x ${value} y`; export * as legacy from "../actions/sandbox/exec";\n',
+    ],
     ["star re-export", 'export * from "../actions/sandbox/exec";\n'],
   ])("rejects buffered sandbox commands through %s (#10991)", (_label, source) => {
     const violations = scanFixture(
@@ -162,10 +174,36 @@ describe("CLI layer import boundaries (#6245)", () => {
       'export type { buildOpenshellExecArgs } from "../actions/sandbox/exec";\n',
     ],
     ["a type-only star export", 'export type * from "../actions/sandbox/exec";\n'],
+    [
+      "a type-only namespace export",
+      'export type * as legacy from "../actions/sandbox/exec";\n',
+    ],
+    [
+      "comment and string namespace-export bait",
+      '// export * as legacy\nconst bait = "export * as legacy";\nexport { execSandbox } from "../actions/sandbox/exec";\n',
+    ],
+    [
+      "template and regular-expression namespace-export bait",
+      'const template = `export * as`; const pattern = /export * as/;\nexport { execSandbox } from "../actions/sandbox/exec";\n',
+    ],
   ])("allows %s from the legacy helper module (#10991)", (_label, source) => {
     const violations = scanFixture(
       fixturePath("src/lib/onboard", "buffered-exec-helper-allowed-export"),
       source,
+    );
+
+    expect(violations).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: "buffered-exec-uses-async-executor" }),
+      ]),
+    );
+  });
+
+  it("scans comment-heavy namespace-export near misses without backtracking (#10991)", () => {
+    const comments = "/*x*/".repeat(10_000);
+    const violations = scanFixture(
+      fixturePath("src/lib/onboard", "buffered-exec-helper-comment-noise"),
+      `const value = 1; const asValue = 2; export ${comments} { value }; export ${comments} * ${comments} from "../safe";\n`,
     );
 
     expect(violations).not.toEqual(
