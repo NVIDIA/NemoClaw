@@ -245,8 +245,8 @@ Classify the effects that each workflow owns:
   succeed. Report Pi candidate failures separately; they do not determine production promotion.
 
 A failed post-tag workflow does not change tag success. Report the failing job and recovery path.
-Check [retry prerequisites](references/candidate-evidence.md#check-prerequisites-before-a-retry),
-then ask before a rerun. Bind and monitor the new attempt. The managed-image workflow supports failed-job
+For failed image jobs, check [retry prerequisites](references/candidate-evidence.md#check-prerequisites-before-a-retry).
+Ask before a rerun. Bind and monitor the new attempt. The managed-image workflow supports failed-job
 reruns that reuse successful producer artifacts from the same run. Existing build checks still verify those artifacts.
 
 After image classification, read the peeled `lkg` commit. This skill never moves `lkg`. If

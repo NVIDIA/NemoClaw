@@ -31,8 +31,8 @@ gh run list --repo NVIDIA/NemoClaw --workflow base-image.yaml --branch main --ev
 ```
 
 Collect independent reads concurrently when possible. Keep prerequisite-dependent commands ordered.
-Give each shell check its own initialized variables and temporary directory. Stop a failed check;
-never consume its partial output. Preserve `run_or_stop` in candidate-bound checks. Follow the access hard stop for
+Keep each check's shell state separate. Stop a failed check; never consume its partial output.
+Preserve `run_or_stop` in candidate-bound checks. Follow the access hard stop for
 access errors. Otherwise, collect the remaining independent results before reporting readiness.
 
 Show one compact summary: item, ready/pending/blocked/unverified, evidence, and next action.
