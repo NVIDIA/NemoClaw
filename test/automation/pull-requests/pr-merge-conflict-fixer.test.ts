@@ -169,7 +169,10 @@ function repairSelection(
   };
 }
 
-function repairProposal(selection: RepairSelection, changedPaths = selection.selectedPaths): string {
+function repairProposal(
+  selection: RepairSelection,
+  changedPaths = selection.selectedPaths,
+): string {
   const target = path.join(temporaryDirectory(), "proposal.json");
   fs.writeFileSync(
     target,
@@ -354,6 +357,7 @@ function pullRequest(input: {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -1137,18 +1141,36 @@ describe("PR merge conflict fixer", () => {
     });
     const validationOutput = path.join(temporaryDirectory(), "sealed");
     const executed: string[] = [];
+    const environments: NodeJS.ProcessEnv[] = [];
+    vi.stubEnv("ACTIONS_RESULTS_URL", "https://results.example.test");
+    vi.stubEnv("ACTIONS_RUNTIME_TOKEN", "actions-secret");
+    vi.stubEnv("GH_TOKEN", "gh-secret");
+    vi.stubEnv("GITHUB_TOKEN", "github-secret");
+    vi.stubEnv("REPOSITORY_SECRET", "repository-secret");
     validateAndSealRepair({
       selection,
       candidate,
       candidateDirectory: candidate.repository,
       patchFile,
       outputDirectory: validationOutput,
-      run: (executable, arguments_) => {
+      run: (executable, arguments_, _workingDirectory, environment) => {
         executed.push([executable, ...arguments_].join(" "));
+        environments.push(environment);
         return 0;
       },
     });
     expect(executed).toEqual(repairValidationPlan(selection).map(({ command }) => command));
+    expect(environments).toHaveLength(executed.length);
+    const environment = required(environments[0], "validation environment");
+    expect(new Set(environments)).toEqual(new Set([environment]));
+    expect(environment).toMatchObject({ CI: "true", PATH: process.env.PATH });
+    expect(environment.HOME).toContain("nemoclaw-repair-validation-");
+    expect(environment.NPM_CONFIG_USERCONFIG).toContain("nemoclaw-repair-validation-");
+    expect(environment.ACTIONS_RESULTS_URL).toBeUndefined();
+    expect(environment.ACTIONS_RUNTIME_TOKEN).toBeUndefined();
+    expect(environment.GH_TOKEN).toBeUndefined();
+    expect(environment.GITHUB_TOKEN).toBeUndefined();
+    expect(environment.REPOSITORY_SECRET).toBeUndefined();
     const receipt = JSON.parse(
       fs.readFileSync(path.join(validationOutput, "validation.json"), "utf8"),
     );
@@ -1207,9 +1229,9 @@ describe("PR merge conflict fixer", () => {
     });
 
     expect(candidate.changedPaths.map(({ path: file }) => file)).toEqual(selection.selectedPaths);
-    expect(fs.existsSync(path.join(candidate.repository, ".github/workflows/unselected.yaml"))).toBe(
-      true,
-    );
+    expect(
+      fs.existsSync(path.join(candidate.repository, ".github/workflows/unselected.yaml")),
+    ).toBe(true);
   });
   it("publishes only the sealed one-parent repair with non-force compare-and-swap (#10791)", async () => {
     const fixture = createRepairFixture();

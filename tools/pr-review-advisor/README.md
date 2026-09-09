@@ -66,7 +66,9 @@ records the approved exact-generated-SHA checks without starting another repair 
 
 `repair-contract.mts` owns the fixed validation plan, and `repair-validate.mts` executes that plan.
 It seals the repair patch and validation receipt only after every required command succeeds; a
-failed command produces neither file. Generated-head validation also dispatches the
+failed command produces neither file. Validation subprocesses receive a positive environment
+allowlist with isolated home, temporary, npm configuration, and npm cache directories; GitHub,
+Actions, repository, and provider credentials are not inherited. Generated-head validation also dispatches the
 credential-bearing SDK packager from trusted `main`; `CI / Pull Request` accepts its artifact only
 when the workflow-dispatch identity, attempt key, generated SHA, and artifact name match the repair
 being checked.
