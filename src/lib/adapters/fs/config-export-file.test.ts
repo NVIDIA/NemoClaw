@@ -250,13 +250,13 @@ describe("publishExportFile", () => {
       name: "unchanged",
       retainedName: "output",
       location: "confirmed" as const,
-      relocate: (_parent: string, _moved: string) => undefined,
+      relocate: (_parent: string, _moved: string): void => undefined,
     },
     {
       name: "moved",
       retainedName: "moved",
       location: "unknown" as const,
-      relocate: (parent: string, moved: string) => {
+      relocate: (parent: string, moved: string): void => {
         fs.renameSync(parent, moved);
         fs.mkdirSync(parent);
       },
