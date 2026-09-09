@@ -7,12 +7,12 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { observeOnboardLock } = vi.hoisted(() => ({
-  observeOnboardLock: vi.fn<(lockPath: string) => OnboardLockObservation>(() => ({
-    kind: "absent",
+const { inspectOnboardLock } = vi.hoisted(() => ({
+  inspectOnboardLock: vi.fn<(lockPath: string) => { observation: OnboardLockObservation }>(() => ({
+    observation: { kind: "absent" },
   })),
 }));
-vi.mock("./onboard-session/lock-observation", () => ({ observeOnboardLock }));
+vi.mock("./onboard-session/lock-observation", () => ({ inspectOnboardLock }));
 
 import { type OnboardEntryOptionsDeps, resolveOnboardEntryOptions } from "../onboard/entry-options";
 import { hasMigratableLegacySandbox, migrateLegacyPortState } from "./legacy-port-migration";
@@ -92,8 +92,8 @@ function expectRetainedNameBlocked(
 }
 
 afterEach(() => {
-  observeOnboardLock.mockReset();
-  observeOnboardLock.mockReturnValue({ kind: "absent" });
+  inspectOnboardLock.mockReset();
+  inspectOnboardLock.mockReturnValue({ observation: { kind: "absent" } });
   vi.restoreAllMocks();
   for (const home of homes.splice(0)) fs.rmSync(home, { recursive: true, force: true });
 });
@@ -459,9 +459,11 @@ describe("legacy non-default gateway state migration", () => {
     fs.mkdirSync(root(shared, selected), { recursive: true });
     fs.writeFileSync(path.join(root(shared, selected), "onboard.lock"), "active writer");
 
-    observeOnboardLock.mockImplementation((lockPath: string): OnboardLockObservation =>
-      fs.existsSync(lockPath) ? { kind: "busy", reason: "unverified" } : { kind: "absent" },
-    );
+    inspectOnboardLock.mockImplementation((lockPath: string) => ({
+      observation: fs.existsSync(lockPath)
+        ? { kind: "busy", reason: "unverified" }
+        : { kind: "absent" },
+    }));
     expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
       `is unverified; confirm no NemoClaw onboarding process in any environment sharing this state root is active, then remove only ${path.join(root(shared, selected), "onboard.lock")} and retry; migration will not remove it automatically`,
     );
@@ -490,7 +492,7 @@ describe("legacy non-default gateway state migration", () => {
     const before = fs.readFileSync(recoveryFile, "utf8");
     const lockBefore = `retained ${reason} lock`;
     fs.writeFileSync(activeLock, lockBefore);
-    observeOnboardLock.mockReturnValue({ kind: "busy", reason });
+    inspectOnboardLock.mockReturnValue({ observation: { kind: "busy", reason } });
 
     expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
       `is ${reason}; ${recoveryFor(activeLock)}`,
@@ -515,16 +517,18 @@ describe("legacy non-default gateway state migration", () => {
       metadata: { gatewayName: "nemoclaw-9123" },
     });
     fs.writeFileSync(lock, "retained stale lock");
-    observeOnboardLock.mockReturnValue({
-      kind: "stale",
-      reason: "departed",
-      owner: {
-        pid: 123,
-        startedAt: null,
-        command: null,
-        processGeneration: "boot:10",
-        hostIdentity: "host-a",
-        pidNamespaceIdentity: "pid:[1]",
+    inspectOnboardLock.mockReturnValue({
+      observation: {
+        kind: "stale",
+        reason: "departed",
+        owner: {
+          pid: 123,
+          startedAt: null,
+          command: null,
+          processGeneration: "boot:10",
+          hostIdentity: "host-a",
+          pidNamespaceIdentity: "pid:[1]",
+        },
       },
     });
 
@@ -545,8 +549,8 @@ describe("legacy non-default gateway state migration", () => {
     fs.symlinkSync(outside, selected, "dir");
 
     expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(/symbolic link/);
-    expect(observeOnboardLock).toHaveBeenCalledOnce();
-    expect(observeOnboardLock).toHaveBeenCalledWith(path.join(shared, "onboard.lock"));
+    expect(inspectOnboardLock).toHaveBeenCalledOnce();
+    expect(inspectOnboardLock).toHaveBeenCalledWith(path.join(shared, "onboard.lock"));
     expect(fs.readFileSync(path.join(outside, "onboard.lock"), "utf8")).toBe("outside lock");
   });
 

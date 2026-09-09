@@ -15,10 +15,7 @@ import {
   readGatewayRegistryFile,
   registryEntryGatewayPort,
 } from "./gateway-registry";
-import {
-  observeOnboardLock,
-  type OnboardLockObservation,
-} from "./onboard-session/index";
+import { inspectOnboardLock, type OnboardLockObservation } from "./onboard-session/index";
 import {
   listRetainedSandboxRecoveryRecords,
   retainedSandboxRecoveryFile,
@@ -534,10 +531,9 @@ function readMigrationIntent(home: string, sharedRoot: string): LegacyPortMigrat
   }
   if (
     selectedRecovery === null &&
-    readRetainedRecoveryDocument(
-      home,
-      retainedSandboxRecoveryFile(sharedRoot),
-    )?.unresolved.some((record) => record.gatewayPort === gatewayPort)
+    readRetainedRecoveryDocument(home, retainedSandboxRecoveryFile(sharedRoot))?.unresolved.some(
+      (record) => record.gatewayPort === gatewayPort,
+    )
   ) {
     throw migrationError(
       "published migration intent predates retained recovery partitioning; retained recovery remains safely in the shared root",
@@ -681,17 +677,9 @@ function applyMigrationIntent(
   }
 
   if (intent.selectedRecovery && intent.remainingRecovery) {
-    writeJsonAtomic(
-      home,
-      retainedSandboxRecoveryFile(selectedRoot),
-      intent.selectedRecovery,
-    );
+    writeJsonAtomic(home, retainedSandboxRecoveryFile(selectedRoot), intent.selectedRecovery);
     if (intent.remainingRecovery.unresolved.length > 0) {
-      writeJsonAtomic(
-        home,
-        retainedSandboxRecoveryFile(sharedRoot),
-        intent.remainingRecovery,
-      );
+      writeJsonAtomic(home, retainedSandboxRecoveryFile(sharedRoot), intent.remainingRecovery);
     } else {
       removeRetainedRecoveryFile(home, retainedSandboxRecoveryFile(sharedRoot));
     }
@@ -789,13 +777,11 @@ function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[])
   for (const stateRoot of stateRoots) {
     const activeLock = path.join(stateRoot, "onboard.lock");
     assertGatewayStatePathSafe(home, activeLock);
-    const lock = observeOnboardLock(activeLock);
+    const lock = inspectOnboardLock(activeLock).observation;
     if (lock.kind === "busy") {
       const owner = lock.owner ? ` recorded for PID ${String(lock.owner.pid)}` : "";
       const recovery = onboardLockRecoveryAdvice(lock.reason, activeLock);
-      throw migrationError(
-        `onboarding lock ${activeLock}${owner} is ${lock.reason}; ${recovery}`,
-      );
+      throw migrationError(`onboarding lock ${activeLock}${owner} is ${lock.reason}; ${recovery}`);
     }
   }
 }
@@ -913,9 +899,7 @@ export function migrateLegacyPortState(
     const remainingRecoveryRecords =
       recovery?.unresolved.filter((record) => record.gatewayPort !== gatewayPort) ?? [];
     const selectedRecovery =
-      selectedRecoveryRecords.length > 0
-        ? retainedRecoveryDocument(selectedRecoveryRecords)
-        : null;
+      selectedRecoveryRecords.length > 0 ? retainedRecoveryDocument(selectedRecoveryRecords) : null;
     const remainingRecovery = selectedRecovery
       ? retainedRecoveryDocument(remainingRecoveryRecords)
       : null;
@@ -956,11 +940,7 @@ export function migrateLegacyPortState(
       }
     }
     if (selectedRecovery) {
-      preflightMovePath(
-        home,
-        legacyRecoveryFile,
-        retainedSandboxRecoveryFile(selectedRoot),
-      );
+      preflightMovePath(home, legacyRecoveryFile, retainedSandboxRecoveryFile(selectedRoot));
     }
 
     registryLocks.push(acquireDirectoryLock(home, `${selectedRegistryFile}.lock`));
