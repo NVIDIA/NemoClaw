@@ -285,11 +285,12 @@ describe("OpenShell supervisor manifest trust", () => {
     const result = runParser({
       transformSupervisor: (source) =>
         source.replace(
-          "\n};\n\n/** Resolve the canonical gateway name",
+          '\n};\nconst QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";\n\n/** Resolve the canonical gateway name',
           `
 };
 (OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS as Record<string, string>)["0.0.103"] =
   "${REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST}";
+const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";
 
 /** Resolve the canonical gateway name`,
         ),
