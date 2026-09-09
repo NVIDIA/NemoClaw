@@ -250,7 +250,7 @@ expected_hook_state="$(printf '%s\n' root:sandbox:1775 root:root:444)"
 trap cleanup_personal_profile_probe EXIT
 
 for login_profile in "$PERSONAL_LOGIN_PROFILE" "$HOSTILE_LOGIN_FALLBACK"; do
-  profile_before="$(sandbox_exec "set -eu; test -w /sandbox/.bashrc; test -w /sandbox/.profile; printf '%s\n' 'touch $HOSTILE_PROFILE_MARKER' 'export NEMOCLAW_E2E_PERSONAL_PROFILE=loaded' > '$login_profile'; printf '%s\n' 'touch $HOSTILE_PROFILE_MARKER' > '$HOSTILE_SHELL_ENV'; sha256sum '$login_profile'")" \
+  profile_before="$(sandbox_exec "set -eu; test -w /sandbox/.bashrc; test -w /sandbox/.profile; printf '%s\n' 'touch $HOSTILE_PROFILE_MARKER' 'export NEMOCLAW_E2E_PERSONAL_PROFILE=loaded' > '$login_profile'; printf '%s\n' 'export NEMOCLAW_E2E_PERSONAL_PROFILE=loaded' >> /sandbox/.bashrc; printf '%s\n' 'touch $HOSTILE_PROFILE_MARKER' > '$HOSTILE_SHELL_ENV'; sha256sum '$login_profile' /sandbox/.bashrc")" \
     || fail "sandbox identity could not write its personal login profile"
   managed_output="$(
     openshell sandbox exec --name "$SANDBOX_NAME" -- \
@@ -266,9 +266,12 @@ for login_profile in "$PERSONAL_LOGIN_PROFILE" "$HOSTILE_LOGIN_FALLBACK"; do
   ordinary_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- /usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE /bin/bash -lc 'printf %s "$NEMOCLAW_E2E_PERSONAL_PROFILE"' 2>&1)" \
     || fail "ordinary login failed with a personal profile: $ordinary_output"
   [ "$ordinary_output" = loaded ] || fail "ordinary login did not read its personal profile"
-  profile_after="$(sandbox_exec "set -eu; test -w '$login_profile'; sha256sum '$login_profile'")" \
+  # shellcheck disable=SC2016 # Read the variable set by the sandbox's personal profile.
+  openshell sandbox exec --name "$SANDBOX_NAME" -- /usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE /bin/bash -ic 'test "$NEMOCLAW_E2E_PERSONAL_PROFILE" = loaded' \
+    || fail "ordinary interactive shell did not read its personal profile"
+  profile_after="$(sandbox_exec "set -eu; test -w '$login_profile'; sha256sum '$login_profile' /sandbox/.bashrc")" \
     || fail "personal profile became unwritable after managed and ordinary commands"
-  [ "$profile_after" = "$profile_before" ] || fail "managed or ordinary login rewrote the personal profile"
+  [ "$profile_after" = "$profile_before" ] || fail "managed or ordinary shells rewrote personal profiles"
   cleanup_personal_profile_probe
 done
 trap - EXIT
