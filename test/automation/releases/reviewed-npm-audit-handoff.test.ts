@@ -120,27 +120,19 @@ describe("reviewed npm audit handoff", () => {
       readonly runs?: { readonly steps?: readonly { readonly name?: string }[] };
     };
     const baseActionHandoff = JSON.stringify(
-      baseAction.runs?.steps?.find(
-        ({ name }) => name === "Build and push platform digest",
-      ),
+      baseAction.runs?.steps?.find(({ name }) => name === "Build and push platform digest"),
     );
     const baseActionValidation = JSON.stringify(
-      baseAction.runs?.steps?.find(
-        ({ name }) => name === "Validate production Docker build args",
-      ),
+      baseAction.runs?.steps?.find(({ name }) => name === "Validate production Docker build args"),
     );
     const buildKitHandoffs = [...managedHandoffs, baseActionHandoff];
 
     expect(managedHandoffs.length).toBeGreaterThan(0);
     expect(
-      buildKitHandoffs.filter(
-        (source) => !source.includes("nemoclaw-mcporter-audit-receipt"),
-      ),
+      buildKitHandoffs.filter((source) => !source.includes("nemoclaw-mcporter-audit-receipt")),
     ).toEqual([]);
     expect(
-      buildKitHandoffs.filter(
-        (source) => !source.includes("nemoclaw-mcporter-audit-raw-report"),
-      ),
+      buildKitHandoffs.filter((source) => !source.includes("nemoclaw-mcporter-audit-raw-report")),
     ).toEqual([]);
     expect(
       buildKitHandoffs.filter(
@@ -152,21 +144,33 @@ describe("reviewed npm audit handoff", () => {
         (source) => !source.includes("NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256"),
       ),
     ).toEqual([]);
-    expect(baseActionValidation).toContain(
-      "NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256",
-    );
+    expect(baseActionValidation).toContain("NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256");
     expect(baseHandoff).toContain("mcporter-audit-receipt");
     expect(baseHandoff).toContain("mcporter-audit-raw-report");
     expect(baseHandoff).toContain("mcporter-audit-policy-result");
 
     const prPreparation = managedSteps.find(
-      ({ name, run }) => name === "Prepare same-run mcporter audit evidence" && run?.includes("trusted_root"),
+      ({ name, run }) =>
+        name === "Prepare same-run mcporter audit evidence" && run?.includes("trusted_root"),
     );
     expect(prPreparation?.run).toContain('"$trusted_root/scripts/lib/npm-audit-receipt.mts"');
     expect(prPreparation?.run).toContain('--result "$policy"');
     expect(prPreparation?.run).not.toContain(
       '"$GITHUB_WORKSPACE/scripts/lib/npm-audit-receipt.mts"',
     );
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile"), "utf8");
+    const trustedPolicyRead = dockerfile.indexOf(
+      "require('/tmp/mcporter-npm-audit-policy.json').exceptionPolicySha256",
+    );
+    const provenanceWrite = dockerfile.indexOf(
+      '"mcporter-audit-policy-sha256=${MCPORTER_AUDIT_POLICY_SHA256}"',
+    );
+    expect(trustedPolicyRead).toBeGreaterThan(-1);
+    expect(provenanceWrite).toBeGreaterThan(trustedPolicyRead);
+    expect(dockerfile).toContain(
+      "require('/tmp/mcporter-npm-audit-policy.json').acceptedAdvisories.join(',')",
+    );
+    expect(dockerfile).toContain("require('/tmp/mcporter-npm-audit-policy.json').status");
   });
 
   it("keeps protected audit acceptance under trusted policy and rejects forged transport", () => {
@@ -183,8 +187,33 @@ describe("reviewed npm audit handoff", () => {
       fs.readFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
     );
     const npmVersion = auditConfig.npmVersion as string;
-    const rawReport =
-      '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}\n';
+    const acceptedAdvisory = "GHSA-aaaa-bbbb-cccc";
+    const rawReport = `${JSON.stringify({
+      auditReportVersion: 2,
+      vulnerabilities: {
+        "vulnerable-package": {
+          effects: [],
+          isDirect: true,
+          name: "vulnerable-package",
+          nodes: ["node_modules/vulnerable-package"],
+          severity: "high",
+          via: [
+            {
+              dependency: "vulnerable-package",
+              name: "vulnerable-package",
+              range: "<=1.0.0",
+              severity: "high",
+              source: 123456,
+              title: "test advisory",
+              url: `https://github.com/advisories/${acceptedAdvisory}`,
+            },
+          ],
+        },
+      },
+      metadata: {
+        vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 0 },
+      },
+    })}\n`;
     try {
       fs.mkdirSync(runtime, { recursive: true });
       fs.mkdirSync(path.join(trustedRoot, "ci"), { recursive: true });
@@ -194,9 +223,20 @@ describe("reviewed npm audit handoff", () => {
       fs.cpSync(path.join(REPO_ROOT, "agents/openclaw/mcporter-runtime"), runtime, {
         recursive: true,
       });
+      fs.mkdirSync(path.join(runtime, "node_modules", "vulnerable-package"), {
+        recursive: true,
+      });
+      fs.writeFileSync(
+        path.join(runtime, "node_modules", "vulnerable-package", "package.json"),
+        '{"name":"vulnerable-package","version":"1.0.0"}\n',
+      );
       fs.mkdirSync(path.join(targetRoot, "ci"), { recursive: true });
       fs.mkdirSync(path.join(targetRoot, "scripts", "lib"), { recursive: true });
       fs.writeFileSync(path.join(targetRoot, "ci", "reviewed-npm-audit.json"), "{}\n");
+      fs.writeFileSync(
+        path.join(targetRoot, "ci", "npm-audit-exceptions.json"),
+        '{"schemaVersion":1,"exceptions":[]}\n',
+      );
       fs.writeFileSync(
         path.join(targetRoot, "scripts", "audit-reviewed-npm-graph.mts"),
         "throw new Error('candidate producer executed');\n",
@@ -205,7 +245,27 @@ describe("reviewed npm audit handoff", () => {
         path.join(targetRoot, "scripts", "lib", "npm-audit-receipt.mts"),
         "throw new Error('candidate verifier executed');\n",
       );
-      fs.copyFileSync(path.join(REPO_ROOT, "ci/npm-audit-exceptions.json"), exceptionFile);
+      fs.writeFileSync(
+        exceptionFile,
+        `${JSON.stringify({
+          schemaVersion: 1,
+          exceptions: [
+            {
+              advisory: acceptedAdvisory,
+              compensatingControls: ["The vulnerable input is rejected before use."],
+              decision: "temporary-risk-acceptance",
+              expires: "2026-09-16",
+              graph: "mcporter-runtime",
+              installedVersion: "1.0.0",
+              owner: "security-maintainers",
+              package: "vulnerable-package",
+              rationale: "The fix is in validation.",
+              severity: "high",
+              trackingIssue: "https://github.com/NVIDIA/NemoClaw/issues/11088",
+            },
+          ],
+        })}\n`,
+      );
       fs.copyFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), auditConfigFile);
       fs.mkdirSync(artifactDirectory, { recursive: true });
       const rawReportFile = path.join(artifactDirectory, "audit.json");
@@ -223,15 +283,15 @@ describe("reviewed npm audit handoff", () => {
         rawReportFile,
         registryOrigin: "https://registry.yarnpkg.com",
         result: {
-          acceptedAdvisories: [],
+          acceptedAdvisories: [acceptedAdvisory],
           blockingThreshold: "high",
           exceptionPolicySha256: createHash("sha256")
             .update(fs.readFileSync(exceptionFile))
             .digest("hex"),
           graph: "mcporter-runtime",
-          reported: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+          reported: { info: 0, low: 0, moderate: 0, high: 1, critical: 0 },
           schemaVersion: 1,
-          status: "clean",
+          status: "accepted-exceptions",
           unacceptedBlockingAdvisories: [],
         },
         threshold: "high",
@@ -241,10 +301,7 @@ describe("reviewed npm audit handoff", () => {
       const retainedPackageJson = path.join(runtime, "package.json");
       const retainedPackageLock = path.join(runtime, "package-lock.json");
       const transportRawReport = path.join(artifactDirectory, "mcporter-runtime.raw.json");
-      const producerPolicyResult = path.join(
-        artifactDirectory,
-        "mcporter-runtime.policy.json",
-      );
+      const producerPolicyResult = path.join(artifactDirectory, "mcporter-runtime.policy.json");
       const trustedPolicyResult = path.join(root, "trusted-policy-result.json");
       const receiptVerifier = path.join(trustedRoot, "scripts", "lib", "npm-audit-receipt.mts");
       const retainedReport = path.join(root, "retained-report.json");
@@ -290,10 +347,7 @@ describe("reviewed npm audit handoff", () => {
       helperSource = helperSource
         .replaceAll("/run/secrets/nemoclaw-mcporter-audit-receipt", receiptFile)
         .replaceAll("/run/secrets/nemoclaw-mcporter-audit-raw-report", transportRawReport)
-        .replaceAll(
-          "/run/secrets/nemoclaw-mcporter-audit-policy-result",
-          trustedPolicyResult,
-        )
+        .replaceAll("/run/secrets/nemoclaw-mcporter-audit-policy-result", trustedPolicyResult)
         .replaceAll(
           "/run/nemoclaw-mcporter-audit-cache/reviewed-npm-audit",
           path.join(root, "no-seed"),
@@ -325,16 +379,15 @@ describe("reviewed npm audit handoff", () => {
 
       fs.writeFileSync(transportRawReport, "{}\n");
       expect(JSON.parse(fs.readFileSync(producerPolicyResult, "utf8"))).toMatchObject({
+        acceptedAdvisories: [acceptedAdvisory],
         graph: "mcporter-runtime",
-        status: "clean",
+        status: "accepted-exceptions",
       });
       const rejectedByTrustedPolicy = spawnSync(process.execPath, verifierArgs, {
         encoding: "utf8",
       });
       expect(rejectedByTrustedPolicy.status).not.toBe(0);
-      expect(rejectedByTrustedPolicy.stderr).toContain(
-        "receipt rawResponseSha256 does not match",
-      );
+      expect(rejectedByTrustedPolicy.stderr).toContain("receipt rawResponseSha256 does not match");
       expect(fs.existsSync(trustedPolicyResult)).toBe(false);
 
       fs.writeFileSync(transportRawReport, rawReport);
@@ -343,8 +396,9 @@ describe("reviewed npm audit handoff", () => {
       });
       expect(acceptedByTrustedPolicy.status, acceptedByTrustedPolicy.stderr).toBe(0);
       expect(JSON.parse(fs.readFileSync(trustedPolicyResult, "utf8"))).toMatchObject({
+        acceptedAdvisories: [acceptedAdvisory],
         graph: "mcporter-runtime",
-        status: "clean",
+        status: "accepted-exceptions",
       });
 
       const wrongHash = "0".repeat(64);
@@ -371,9 +425,7 @@ describe("reviewed npm audit handoff", () => {
         forgedPolicyHelper,
       );
       expect(rejectedPolicyResult.status).not.toBe(0);
-      expect(rejectedPolicyResult.stderr).toContain(
-        "policy result hash does not match",
-      );
+      expect(rejectedPolicyResult.stderr).toContain("policy result hash does not match");
       expect(fs.existsSync(retainedReport)).toBe(false);
       expect(fs.existsSync(retainedResult)).toBe(false);
       expect(fs.existsSync(nodeLog)).toBe(false);
@@ -386,7 +438,6 @@ describe("reviewed npm audit handoff", () => {
         fs.readFileSync(trustedPolicyResult, "utf8"),
       );
       expect(fs.existsSync(nodeLog)).toBe(false);
-
       const directHelper = path.join(root, "verify-mcporter-direct-audit.sh");
       fs.writeFileSync(
         directHelper,
@@ -409,8 +460,8 @@ describe("reviewed npm audit handoff", () => {
         },
       });
       expect(direct.status, direct.stderr).toBe(0);
-      expect(fs.readFileSync(nodeLog, "utf8").trim().split("\n").at(-1)).toContain(
-        `--report ${retainedReport} --result ${retainedResult}`,
+      expect(fs.readFileSync(nodeLog, "utf8").trim().split("\n").at(-1)).toBe(
+        `/scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high --report ${retainedReport} --result ${retainedResult}`,
       );
 
       const seedEvidence = path.join(root, "seed", "reviewed-npm-audit");
