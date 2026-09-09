@@ -22,24 +22,20 @@ function legacyForwardPorts(output: string | null | undefined, sandboxName: stri
     .filter((port) => Number.isInteger(port));
 }
 
-/** PID column of the exact sandbox+port legacy entry, or null when absent or unparseable. */
+/**
+ * PID column of the exact sandbox+port entry in OpenShell's legacy forward
+ * registry: `undefined` when no such row is listed, `null` when the row's PID
+ * is unparseable. One lookup answers both "listed" and "which process".
+ */
 export function legacySandboxForwardPid(
   output: string | null | undefined,
   sandboxName: string,
   port: number,
-): number | null {
+): number | null | undefined {
   const row = legacyForwardRows(output, sandboxName).find((columns) => Number(columns[2]) === port);
-  const pid = Number(row?.[3]);
+  if (!row) return undefined;
+  const pid = Number(row[3]);
   return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
-}
-
-/** Identify an exact sandbox+port entry in OpenShell's legacy forward registry. */
-export function isLegacySandboxForwardListed(
-  output: string | null | undefined,
-  sandboxName: string,
-  port: number,
-): boolean {
-  return legacyForwardPorts(output, sandboxName).includes(port);
 }
 
 export interface LegacyForwardMigrationDeps {

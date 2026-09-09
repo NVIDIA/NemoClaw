@@ -4,22 +4,25 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  isLegacySandboxForwardListed,
+  legacySandboxForwardPid,
   retireLegacySandboxForwards,
 } from "./forward-service-migration";
 
 describe("ForwardTcp legacy migration", () => {
-  it("matches only the exact sandbox and port", () => {
+  it("names the listed process for the exact sandbox and port only (#11149)", () => {
     const output = [
       "SANDBOX  BIND       PORT   PID  STATUS",
       "demo     127.0.0.1  18789  10   running",
       "demo     127.0.0.1  19999  11   running",
+      "demo     127.0.0.1  20000  -    running",
       "other    127.0.0.1  18789  12   running",
     ].join("\n");
 
-    expect(isLegacySandboxForwardListed(output, "demo", 18_789)).toBe(true);
-    expect(isLegacySandboxForwardListed(output, "demo", 19_000)).toBe(false);
-    expect(isLegacySandboxForwardListed(output, "other", 19_999)).toBe(false);
+    expect(legacySandboxForwardPid(output, "demo", 18_789)).toBe(10);
+    expect(legacySandboxForwardPid(output, "demo", 20_000)).toBeNull();
+    expect(legacySandboxForwardPid(output, "demo", 19_000)).toBeUndefined();
+    expect(legacySandboxForwardPid(output, "other", 19_999)).toBeUndefined();
+    expect(legacySandboxForwardPid(null, "demo", 18_789)).toBeUndefined();
   });
 
   it("retires only registered NemoClaw ports for the selected sandbox", () => {
