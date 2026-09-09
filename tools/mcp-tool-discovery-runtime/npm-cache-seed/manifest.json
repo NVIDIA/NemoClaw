@@ -603,7 +603,7 @@
     }
   ],
   "kind": "nemoclaw-locked-npm-cache-seed-v1",
-  "lockSha256": "3a3eab9fc8062d0073b132b4d4c2994308497410d37fe1170899642a97451add",
+  "lockSha256": "0aa1a0dd417a19b9fdd8eaedd19e0962874b4908cdc39b0e06974176c29177ea",
   "target": {
     "cpu": "x64",
     "libc": "glibc",
