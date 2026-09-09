@@ -92,16 +92,6 @@
       "category": "security"
     },
     {
-      "file": "test/platform/images/muse-glimmer-vllm-image-provenance.test.ts",
-      "test": "binds the checked-in provenance to the selected runtime",
-      "category": "security"
-    },
-    {
-      "file": "test/platform/images/muse-glimmer-vllm-image-provenance.test.ts",
-      "test": "rejects %s",
-      "category": "security"
-    },
-    {
       "file": "test/platform/images/node-tar-dockerfile-contract.test.ts",
       "test": "rejects an isolated unreviewed Deep Agents Code Node base pin",
       "category": "security"
@@ -264,6 +254,21 @@
     {
       "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
       "test": "pins the reviewed image runtime artifacts exactly",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+      "test": "cleans the protected registry before passing risk evidence",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+      "test": "binds a correlation identity for main pushes without an input",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "runs the typed security test against the produced image and uploads evidence",
       "category": "security"
     },
     {

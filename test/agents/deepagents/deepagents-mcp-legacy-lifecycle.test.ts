@@ -148,7 +148,7 @@ beforeEach(() => {
         return providerExists
           ? {
               status: 0,
-              stdout: `Id: ${providerId}\nType: ${providerType}\nResource version: ${providerResourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
+              stdout: `Name: alpha-mcp-github\nId: ${providerId}\nType: ${providerType}\nResource version: ${providerResourceVersion}\nCredential keys: GITHUB_TOKEN\nConfig keys: <none>\n`,
               stderr: "",
             }
           : { status: 1, stdout: "", stderr: "Provider not found" };

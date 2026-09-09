@@ -73,7 +73,8 @@ function report(
   collectionOptions: {
     detectHostGpuPlatform?: () => NvidiaPlatform;
     platformIdentity?: ReturnType<typeof emptyPlatformIdentity>;
-    wslDockerDesktopGpuProofPassed?: boolean;
+    containerGpuProof?: Readonly<{ providerId: string; passed: boolean }>;
+    runtimeProvider?: Readonly<{ providerId: string; ownsHostReadiness: boolean }>;
   } = {},
 ) {
   return projectHostReadiness(
@@ -83,7 +84,8 @@ function report(
       now: () => NOW,
       collectPlatformIdentity: () => collectionOptions.platformIdentity ?? emptyPlatformIdentity(),
       detectHostGpuPlatform: collectionOptions.detectHostGpuPlatform,
-      wslDockerDesktopGpuProofPassed: collectionOptions.wslDockerDesktopGpuProofPassed,
+      containerGpuProof: collectionOptions.containerGpuProof,
+      runtimeProvider: collectionOptions.runtimeProvider,
     }),
     { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION, now: () => NOW },
   );
@@ -238,7 +240,7 @@ describe("host readiness projection (#7408)", () => {
         cdiNvidiaGpuSpecStale: true,
         nvidiaContainerToolkitInstalled: false,
       },
-      { wslDockerDesktopGpuProofPassed: true },
+      { containerGpuProof: { providerId: "docker", passed: true } },
     ],
   ] as const)("preserves CDI enforcement exclusions for %s", (overrides, collectionOptions) => {
     const result = report(overrides, collectionOptions);
@@ -348,17 +350,46 @@ describe("host readiness projection (#7408)", () => {
 
     expect(detectGpu).toHaveBeenCalledWith(
       expect.objectContaining({
-        proveArm64WslDockerDesktopGpu: null,
+        proveArm64ContainerGpu: null,
         runCaptureImpl: expect.any(Function),
       }),
     );
     expect(state(result, "host.platform.wsl_gpu_passthrough")).toBe("unknown");
   });
 
+  it("projects provider-owned Podman and its matching WSL GPU proof", () => {
+    const result = report(
+      {
+        isWsl: true,
+        runtime: "unknown",
+        dockerInstalled: false,
+        dockerReachable: false,
+      },
+      {
+        runtimeProvider: { providerId: "podman", ownsHostReadiness: true },
+        containerGpuProof: { providerId: "podman", passed: true },
+      },
+    );
+
+    expect(state(result, "host.platform.supported")).toBe("present");
+    expect(state(result, "host.platform.wsl_runtime_available")).toBe("present");
+    expect(state(result, "host.platform.wsl_gpu_passthrough")).toBe("present");
+    expect(result.observations).toContainEqual({
+      id: "host.runtime.provider",
+      state: "present",
+      value: "podman",
+    });
+    expect(result.observations).toContainEqual({
+      id: "host.gpu.container_proof_provider",
+      state: "present",
+      value: "podman",
+    });
+  });
+
   it("skips the WSL Docker Desktop GPU proof when Docker is unreachable", () => {
     const detectGpuProbe = vi.fn(() => ({
       count: 1,
-      wslDockerDesktopGpuProofPassed: true,
+      containerGpuProof: { providerId: "docker", passed: true },
     }));
 
     createHostReadinessReport(

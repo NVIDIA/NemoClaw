@@ -234,7 +234,10 @@ describe("rebuild preflight guards", () => {
       listRecovery.mock.invocationCallOrder[0]!,
     );
     expect(bail).toHaveBeenCalledWith("Retained sandbox recovery blocks rebuild for 'alpha'.", 1);
-    expect(error.mock.calls.flat().join("\n")).toContain("nemoclaw alpha destroy --yes");
+    const output = error.mock.calls.flat().join("\n");
+    expect(output).toContain("nemoclaw alpha destroy --yes");
+    expect(output).toContain("reports the sandbox present or cannot determine presence");
+    expect(output).not.toContain("administrator");
   });
 
   it("stops after a failed onboard-lock acquisition without releasing another run's lock (#7794)", () => {
