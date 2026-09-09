@@ -16,7 +16,6 @@ import {
 import {
   createHermesGpuFallbackWrapper,
   extractHermesGpuDiagnosticsDirectory,
-  HERMES_GPU_FALLBACK_COMMIT_EVENT,
   HERMES_GPU_FALLBACK_EVENTS,
   HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF,
   readHermesGpuFallbackEvents,
@@ -211,7 +210,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     expect(readHermesGpuFallbackEvents(wrapper.eventsPath)).toEqual([
       HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
       HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
-      HERMES_GPU_FALLBACK_COMMIT_EVENT,
+      HERMES_GPU_FALLBACK_EVENTS.commitCompatibilityHandoff,
     ]);
     const wrapperArtifacts = fs
       .readdirSync(path.dirname(wrapper.eventsPath), { withFileTypes: true })
@@ -481,8 +480,36 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     expect(fs.realpathSync(wrapper.wrapperPath)).toBe(fs.realpathSync(realOpenshell));
     expect(readHermesGpuFallbackEvents(wrapper.eventsPath)).toEqual([
       HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
-      HERMES_GPU_FALLBACK_COMMIT_EVENT,
+      HERMES_GPU_FALLBACK_EVENTS.commitCompatibilityHandoff,
     ]);
+  });
+
+  it("bounds a stuck Ready query and retains native fault injection (#11239)", async () => {
+    const { root, wrapper } = createWrapperFixture("hermes-gpu-fallback-ready-timeout-test-", {
+      openshell: [
+        "#!/usr/bin/env bash",
+        'if [[ "${1:-}" == "sandbox" && "${2:-}" == "get" ]]; then exec sleep 30; fi',
+        "trap 'exit 143' HUP INT TERM",
+        ': >"$E2E_FAKE_READY"',
+        "while :; do sleep 1; done",
+        "",
+      ].join("\n"),
+    });
+    const ready = path.join(root, "compatibility-ready");
+    const env = { ...process.env, ...wrapper.componentEnv, E2E_FAKE_READY: ready };
+    const compatibility = spawnWrapper(
+      wrapper.wrapperPath,
+      ["sandbox", "create", "--from", "image", "--", "NEMOCLAW_SANDBOX_NAME=alpha"],
+      env,
+    );
+    const compatibilityStatus = waitForChild(compatibility);
+    await waitForFile(ready);
+    const terminatedAt = Date.now();
+
+    expect(compatibility.kill("SIGTERM")).toBe(true);
+    expect(await compatibilityStatus).toBe(143);
+    expect(Date.now() - terminatedAt).toBeLessThan(4_000);
+    expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
   });
 
   it("preserves the fallback wrapper while staging the existing OpenShell service (#7140)", () => {

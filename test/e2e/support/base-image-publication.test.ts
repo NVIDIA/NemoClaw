@@ -163,6 +163,16 @@ function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string,
   ];
 }
 
+function successfulManualJobs(): Record<string, unknown>[] {
+  return [
+    ...successfulJobs(),
+    publisherJob(
+      "Publish complete managed images / Promote complete multi-platform managed image cohort",
+      { id: 4 },
+    ),
+  ];
+}
+
 describe("base-image publication evidence", () => {
   it.each(["push", "workflow_dispatch"])("accepts %s publication preflight events", (eventName) => {
     expect(isBaseImagePublicationEvent(eventName)).toBe(true);
@@ -504,6 +514,27 @@ describe("base-image publication evidence", () => {
     ).toThrow(/event must be push/u);
   });
 
+  it("prefers a successful push over a successful manual publication at the same commit", () => {
+    const pushRunId = RUN_ID + 1;
+    const selection = selectPublicationRun(
+      runsPayload([
+        workflowRun({ event: "workflow_dispatch" }),
+        workflowRun({
+          id: pushRunId,
+          html_url: `${RUN_URL_ROOT}/${pushRunId}`,
+        }),
+      ]),
+      history(),
+      WORKFLOW_ID,
+      { allowWorkflowDispatch: true, completedSuccessOnly: true },
+    );
+
+    expect(selection).toMatchObject({
+      state: "selected",
+      run: { id: pushRunId, event: "push", headSha: RELEVANT_SHA },
+    });
+  });
+
   it("accepts the renamed trusted workflow while selecting branch reuse", () => {
     const selection = selectPublicationRun(
       runsPayload([workflowRun({ name: "Images / Base Images" })]),
@@ -633,6 +664,23 @@ describe("base-image publication evidence", () => {
         run,
       ),
     ).toThrow(/provenance does not match/u);
+  });
+
+  it("requires exact managed-image promotion from a manual publication", () => {
+    const manualRun = selectedRun({ event: "workflow_dispatch" });
+
+    expect(() =>
+      validatePublisherJobs(
+        { total_count: successfulJobs().length, jobs: successfulJobs() },
+        manualRun,
+      ),
+    ).toThrow(/missing required Publish complete managed images/u);
+    expect(
+      validatePublisherJobs(
+        { total_count: successfulManualJobs().length, jobs: successfulManualJobs() },
+        manualRun,
+      ),
+    ).toBe("ready");
   });
 
   it("accepts the renamed trusted publisher jobs", () => {
@@ -865,7 +913,7 @@ describe("base-image publication evidence", () => {
     const responses = [
       workflowMetadata(),
       runsPayload([manualRun]),
-      { total_count: 3, jobs: successfulJobs() },
+      { total_count: 4, jobs: successfulManualJobs() },
       manualRun,
     ];
     const requests: string[] = [];

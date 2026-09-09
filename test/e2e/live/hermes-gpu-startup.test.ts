@@ -23,7 +23,6 @@ import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.t
 import {
   createHermesGpuFallbackWrapper,
   extractHermesGpuDiagnosticsDirectory,
-  HERMES_GPU_FALLBACK_COMMIT_EVENT,
   HERMES_GPU_FALLBACK_EVENTS,
   readHermesGpuFallbackEvents,
   resolveHermesGpuStartupScenario,
@@ -490,7 +489,7 @@ test(
 
     const verifyFallback = () => {
       expect(fallbackEvents.join("\n")).toBe(
-        `${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}\n${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}\n${HERMES_GPU_FALLBACK_COMMIT_EVENT}`,
+        `${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}\n${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}\n${HERMES_GPU_FALLBACK_EVENTS.commitCompatibilityHandoff}`,
       );
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
       expect(

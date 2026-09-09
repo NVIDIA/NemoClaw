@@ -87,13 +87,19 @@ export const REQUIRED_PUBLISHER_JOBS = [
   "Build and push Hermes base image",
   "Build and push Deep Agents Code base image",
 ] as const;
-const PUBLISHER_JOB_ALIASES = new Map<string, (typeof REQUIRED_PUBLISHER_JOBS)[number]>([
+const REQUIRED_MANUAL_MANAGED_IMAGE_JOB =
+  "Publish complete managed images / Promote complete multi-platform managed image cohort";
+type RequiredPublisherJob =
+  | (typeof REQUIRED_PUBLISHER_JOBS)[number]
+  | typeof REQUIRED_MANUAL_MANAGED_IMAGE_JOB;
+const PUBLISHER_JOB_ALIASES = new Map<string, RequiredPublisherJob>([
   ["Build and push OpenClaw base image", "Build and push OpenClaw base image"],
   ["Manifests / OpenClaw", "Build and push OpenClaw base image"],
   ["Build and push Hermes base image", "Build and push Hermes base image"],
   ["Manifests / Hermes", "Build and push Hermes base image"],
   ["Build and push Deep Agents Code base image", "Build and push Deep Agents Code base image"],
   ["Manifests / Deep Agents Code", "Build and push Deep Agents Code base image"],
+  [REQUIRED_MANUAL_MANAGED_IMAGE_JOB, REQUIRED_MANUAL_MANAGED_IMAGE_JOB],
 ]);
 
 type JsonRecord = Record<string, unknown>;
@@ -527,12 +533,16 @@ export function selectPublicationRun(
 
   const nearestDistance = Math.min(...selectable.map(({ distance }) => distance));
   const nearest = selectable.filter(({ distance }) => distance === nearestDistance);
-  if (nearest.length !== 1) {
+  const preferredEvent = nearest.some(({ run }) => run.event === "push")
+    ? "push"
+    : "workflow_dispatch";
+  const preferred = nearest.filter(({ run }) => run.event === preferredEvent);
+  if (preferred.length !== 1) {
     throw new Error(
-      `multiple trusted base-image workflow runs match ${nearest[0]?.run.headSha ?? history.relevantSha}`,
+      `multiple trusted ${preferredEvent} base-image workflow runs match ${preferred[0]?.run.headSha ?? history.relevantSha}: ${preferred.map(({ run }) => run.url).join(", ")}`,
     );
   }
-  const run = nearest[0].run;
+  const run = preferred[0].run;
   return { state: "selected", run };
 }
 
@@ -581,7 +591,11 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
   }
 
   let pending = false;
-  for (const requiredName of REQUIRED_PUBLISHER_JOBS) {
+  const requiredJobs: readonly RequiredPublisherJob[] =
+    run.event === "workflow_dispatch"
+      ? [...REQUIRED_PUBLISHER_JOBS, REQUIRED_MANUAL_MANAGED_IMAGE_JOB]
+      : REQUIRED_PUBLISHER_JOBS;
+  for (const requiredName of requiredJobs) {
     const current = jobsByName.get(requiredName);
     if (!current) {
       if (run.status === "completed") {
