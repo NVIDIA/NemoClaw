@@ -122,7 +122,7 @@ Create the brief template now, before collecting evidence, so each result can be
 read:
 
 ```bash
-node --experimental-strip-types --no-warnings \
+node --no-warnings \
   .agents/skills/nemoclaw-maintainer-day/scripts/handoff-summary.ts \
   --plan ../nemoclaw-release-vX.Y.Z/plan.json \
   --output ../nemoclaw-release-vX.Y.Z/release-brief.md

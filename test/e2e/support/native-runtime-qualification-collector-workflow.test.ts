@@ -118,7 +118,7 @@ describe("native runtime qualification collector workflow", () => {
       (collect as WorkflowStep & { readonly "working-directory"?: string })["working-directory"],
     ).toBe("trusted");
     expect(collect.run).toContain(
-      "node --experimental-strip-types --no-warnings tools/e2e/native-runtime-qualification-collector.mts",
+      "node --no-warnings tools/e2e/native-runtime-qualification-collector.mts",
     );
     expect(tokenSteps.map((step) => step.name)).toEqual([
       "Authenticate and consume protected qualification evidence",
