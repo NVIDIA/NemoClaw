@@ -860,6 +860,10 @@ async function proveHistoricalHermesPortableLifecycle(input: {
           },
         ],
         ["sandbox\0exec", { status: 0, stderr: "", stdout: "" }],
+        [
+          "policy\0get",
+          { status: 0, stderr: "", stdout: fs.readFileSync(qualifiedPolicyPath, "utf8") },
+        ],
       ]);
       const refusingCapture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
         args,
