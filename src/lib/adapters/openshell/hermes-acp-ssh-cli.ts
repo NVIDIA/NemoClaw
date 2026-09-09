@@ -20,7 +20,6 @@ import { isValidName } from "../../sandbox-name-contract";
 import { isSshTransportFailure } from "../../state/ssh-transport";
 import { resolveOpenshellBinaryOrNull } from "./resolve-shared";
 import { buildOpenShellRuntimeSelectionEnv } from "./runtime-selection";
-import { resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
 import { OPENSHELL_DEFAULT_WORKSPACE } from "./sandbox-ssh-host";
 import {
   HERMES_ACP_EXECUTABLE,
@@ -130,6 +129,46 @@ function assertEnvironmentSafe(environment: NodeJS.ProcessEnv): void {
       throw new Error("OpenShell subprocess environment is invalid");
     }
   }
+}
+
+function shellEscape(value: string): string {
+  if (!value) return "''";
+  if (/^[A-Za-z0-9./_-]+$/u.test(value)) return value;
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function validatedSshHost(
+  config: string,
+  openshellBinary: string,
+  request: HermesAcpSshRequest,
+): string | null {
+  const host = `openshell-${request.sandboxName}.${OPENSHELL_DEFAULT_WORKSPACE}`;
+  const expected = new Map<string, string>([
+    ["host", host],
+    ["user", "sandbox"],
+    ["stricthostkeychecking", "no"],
+    ["userknownhostsfile", "/dev/null"],
+    ["globalknownhostsfile", "/dev/null"],
+    ["loglevel", "ERROR"],
+    ["serveraliveinterval", "15"],
+    ["serveralivecountmax", "3"],
+    [
+      "proxycommand",
+      `${shellEscape(openshellBinary)} ssh-proxy --gateway-name ${request.gatewayName} --name ${request.sandboxName} --workspace ${OPENSHELL_DEFAULT_WORKSPACE}`,
+    ],
+  ]);
+  const seen = new Set<string>();
+  for (const line of config.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const separator = trimmed.search(/\s/u);
+    if (separator <= 0) return null;
+    const directive = trimmed.slice(0, separator).toLowerCase();
+    const value = trimmed.slice(separator).trim();
+    if (seen.has(directive) || expected.get(directive) !== value) return null;
+    seen.add(directive);
+  }
+  return seen.size === expected.size ? host : null;
 }
 
 function sshArgs(configFile: string, host: string, command: string): string[] {
@@ -542,7 +581,7 @@ export function createCliHermesAcpSshTransport(
           255,
         );
       }
-      const host = resolveOpenshellSandboxSshHost(request.sandboxName, config);
+      const host = validatedSshHost(config, binaries.openshell, request);
       if (!host) {
         return failure("transport", "OpenShell returned an invalid SSH target.", 255);
       }

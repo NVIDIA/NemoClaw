@@ -7,7 +7,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HermesAcpSshTransport } from "../adapters/openshell/hermes-acp-ssh";
 import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
 import type { HostGatewayRegistryEntry } from "../state/gateway-registry";
-import { parseHermesAcpCommandArgs, resolveHermesAcpTarget, runHermesAcpCommand } from "./command";
+import {
+  type HermesAcpCommandDeps,
+  parseHermesAcpCommandArgs,
+  resolveHermesAcpTarget,
+  runHermesAcpCommand,
+} from "./command";
 
 const FINGERPRINT = "a".repeat(64);
 const VERSION = "0.0.120-44-g8fed029c7a";
@@ -76,12 +81,14 @@ function commandHarness(
 ) {
   const output = collector();
   const diagnostics = collector();
-  const recoverGateway = vi.fn(async () => ({
-    recovered: overrides.recovered ?? true,
-    attempted: true,
-    before: { state: "missing_named" },
-    after: { state: overrides.recovered === false ? "missing_named" : "healthy_named" },
-  }));
+  const recoverGateway = vi.fn(
+    async (_options: Parameters<NonNullable<HermesAcpCommandDeps["recoverGateway"]>>[0]) => ({
+      recovered: overrides.recovered ?? true,
+      attempted: true,
+      before: { state: "missing_named" },
+      after: { state: overrides.recovered === false ? "missing_named" : "healthy_named" },
+    }),
+  );
   const transport =
     overrides.transport ??
     ({
@@ -126,6 +133,7 @@ function commandHarness(
 
 describe("Hermes ACP command", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 
@@ -195,11 +203,21 @@ describe("Hermes ACP command", () => {
     ).toMatchObject({ ok: false, error });
   });
 
-  it("recovers the recorded gateway, validates live identity, and starts one transport", async () => {
+  it("recovers the recorded gateway, validates live identity, and starts one transport (#10947)", async () => {
     const fixture = commandHarness();
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    fixture.recoverGateway.mockImplementationOnce(async () => {
-      console.log("gateway lifecycle progress must not reach ACP stdout");
+    let continueRecovery!: () => void;
+    let markRecoveryStarted!: () => void;
+    const recoveryStarted = new Promise<void>((resolve) => {
+      markRecoveryStarted = resolve;
+    });
+    const recoveryCanFinish = new Promise<void>((resolve) => {
+      continueRecovery = resolve;
+    });
+    fixture.recoverGateway.mockImplementationOnce(async (options) => {
+      options.output.log("gateway lifecycle progress must not reach ACP stdout");
+      markRecoveryStarted();
+      await recoveryCanFinish;
       return {
         recovered: true,
         attempted: true,
@@ -208,13 +226,25 @@ describe("Hermes ACP command", () => {
       } as never;
     });
 
-    expect(await fixture.run(["--sandbox", "alpha"])).toBe(0);
+    const pending = fixture.run(["--sandbox", "alpha"]);
+    await recoveryStarted;
+    console.log("unrelated concurrent diagnostic remains visible");
+    continueRecovery();
 
-    expect(consoleLog).not.toHaveBeenCalled();
+    expect(await pending).toBe(0);
+
+    expect(consoleLog).toHaveBeenCalledOnce();
+    expect(consoleLog).toHaveBeenCalledWith("unrelated concurrent diagnostic remains visible");
     expect(fixture.output.text()).toBe("");
     expect(fixture.diagnostics.text()).toBe("");
     expect(fixture.recoverGateway).toHaveBeenCalledWith({
       gatewayName: "nemoclaw",
+      output: expect.objectContaining({
+        error: expect.any(Function),
+        log: expect.any(Function),
+        step: expect.any(Function),
+        warn: expect.any(Function),
+      }),
       runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
     });
     expect(fixture.transport.run).toHaveBeenCalledWith({

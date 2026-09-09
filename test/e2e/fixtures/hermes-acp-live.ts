@@ -77,6 +77,51 @@ export function acpMessageContainsPong(value: unknown): boolean {
   );
 }
 
+function messageSessionIds(message: JsonObject): string[] {
+  const ids: string[] = [];
+  for (const value of [message.params, message.result]) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const sessionId = (value as JsonObject).sessionId;
+    if (typeof sessionId === "string") ids.push(sessionId);
+  }
+  return ids;
+}
+
+export function createHermesAcpPromptEvidenceTracker(): {
+  markPromptWritten(sessionId: string): void;
+  observe(message: JsonObject): void;
+  readonly pongObserved: boolean;
+} {
+  let promptSessionId: string | null = null;
+  let pongObserved = false;
+  return {
+    markPromptWritten(sessionId) {
+      promptSessionId = sessionId;
+    },
+    observe(message) {
+      if (!promptSessionId || !acpMessageContainsPong(message)) return;
+      const sessionIds = messageSessionIds(message);
+      if (
+        sessionIds.length === 0 ||
+        sessionIds.every((sessionId) => sessionId === promptSessionId)
+      ) {
+        pongObserved = true;
+      }
+    },
+    get pongObserved() {
+      return pongObserved;
+    },
+  };
+}
+
+export function hermesAcpExchangeEvidencePassed(evidence: {
+  pongObserved: boolean;
+  promptCompleted: boolean;
+  sessionCreated: boolean;
+}): boolean {
+  return evidence.sessionCreated && evidence.promptCompleted && evidence.pongObserved;
+}
+
 function sessionIdFromResponse(message: JsonObject | null): string | null {
   const result = message?.result;
   if (!result || typeof result !== "object") return null;
@@ -86,11 +131,17 @@ function sessionIdFromResponse(message: JsonObject | null): string | null {
     : null;
 }
 
-async function writeRequest(stream: NodeJS.WritableStream, request: JsonObject): Promise<boolean> {
+async function writeRequest(
+  stream: NodeJS.WritableStream,
+  request: JsonObject,
+  onWritten?: () => void,
+): Promise<boolean> {
   const payload = `${JSON.stringify(request)}\n`;
   if (Buffer.byteLength(payload, "utf8") > 16 * 1024) return false;
   try {
-    if (!stream.write(payload)) await once(stream, "drain");
+    const accepted = stream.write(payload);
+    onWritten?.();
+    if (!accepted) await once(stream, "drain");
     return true;
   } catch {
     return false;
@@ -177,7 +228,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
   let buffered = "";
   let observedBytes = 0;
   let protocolValid = true;
-  let pongObserved = false;
+  const promptEvidence = createHermesAcpPromptEvidenceTracker();
   let stderrObserved = false;
   let childClosed = false;
   const inbox: JsonObject[] = [];
@@ -193,7 +244,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
       if (typeof message !== "object" || message === null || Array.isArray(message)) {
         protocolValid = false;
       } else {
-        pongObserved ||= acpMessageContainsPong(message);
+        promptEvidence.observe(message as JsonObject);
         inbox.push(message as JsonObject);
       }
     } catch {
@@ -283,15 +334,19 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     sessionCreated = sessionId !== null;
     scenarioValid &&= sessionCreated;
     if (scenarioValid) {
-      scenarioValid = await writeRequest(input, {
-        jsonrpc: "2.0",
-        id: 3,
-        method: "session/prompt",
-        params: {
-          sessionId,
-          prompt: [{ type: "text", text: "Reply with exactly one word: PONG" }],
+      scenarioValid = await writeRequest(
+        input,
+        {
+          jsonrpc: "2.0",
+          id: 3,
+          method: "session/prompt",
+          params: {
+            sessionId,
+            prompt: [{ type: "text", text: "Reply with exactly one word: PONG" }],
+          },
         },
-      });
+        () => promptEvidence.markPromptWritten(sessionId!),
+      );
       const prompt = scenarioValid ? await nextResponse(3) : null;
       promptCompleted = typeof prompt?.result === "object" && prompt.result !== null;
       scenarioValid &&= promptCompleted;
@@ -332,7 +387,12 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     scenarioValid &&
     adapterProcessAbsent &&
     remoteProcessAbsent &&
-    (options.scenario !== "exchange" || (sessionCreated && promptCompleted && pongObserved));
+    (options.scenario !== "exchange" ||
+      hermesAcpExchangeEvidencePassed({
+        pongObserved: promptEvidence.pongObserved,
+        promptCompleted,
+        sessionCreated,
+      }));
 
   await options.artifacts.writeJson(`hermes-acp-${options.scenario}.json`, {
     schemaVersion: 1,
@@ -340,7 +400,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     initialized,
     sessionCreated,
     promptCompleted,
-    pongObserved,
+    pongObserved: promptEvidence.pongObserved,
     exitCode: result.exitCode,
     signal: result.signal,
     timedOut: result.timedOut,

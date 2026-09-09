@@ -13,7 +13,20 @@ import {
   type CliHermesAcpSshTransportDeps,
 } from "./hermes-acp-ssh-cli";
 
-const CONFIG = "Host openshell-alpha.default\n  HostName 127.0.0.1\n  User sandbox\n";
+function sshConfig(gatewayName = "nemoclaw"): string {
+  return [
+    "Host openshell-alpha.default",
+    "  User sandbox",
+    "  StrictHostKeyChecking no",
+    "  UserKnownHostsFile /dev/null",
+    "  GlobalKnownHostsFile /dev/null",
+    "  LogLevel ERROR",
+    "  ServerAliveInterval 15",
+    "  ServerAliveCountMax 3",
+    `  ProxyCommand /usr/bin/openshell ssh-proxy --gateway-name ${gatewayName} --name alpha --workspace default`,
+    "",
+  ].join("\n");
+}
 const PROBE_OUTPUT = "0.20.6\n0.9.0\n";
 
 type FakeChild = Omit<
@@ -95,13 +108,19 @@ function harness(
 ): {
   captureOpenShell: ReturnType<typeof vi.fn>;
   cleanup: ReturnType<typeof vi.fn>;
+  createTempConfig: ReturnType<typeof vi.fn>;
   spawnSsh: ReturnType<typeof vi.fn>;
   transport: ReturnType<typeof createCliHermesAcpSshTransport>;
 } {
   const cleanup = vi.fn();
+  const createTempConfig = vi.fn(() => ({
+    dir: "/tmp/nemoclaw-acp-test",
+    file: "/tmp/nemoclaw-acp-test/ssh_config",
+    cleanup,
+  }));
   const captureOpenShell = vi.fn((args: string[]) => ({
     status: 0,
-    output: args.includes("ssh-config") ? CONFIG : "sandbox ready",
+    output: args.includes("ssh-config") ? sshConfig(args[args.indexOf("-g") + 1]) : "sandbox ready",
   }));
   const spawnSsh = vi.fn(() => {
     return children.shift() as FakeChild;
@@ -109,11 +128,7 @@ function harness(
   const deps: CliHermesAcpSshTransportDeps = {
     access: vi.fn(),
     captureOpenShell,
-    createTempConfig: vi.fn(() => ({
-      dir: "/tmp/nemoclaw-acp-test",
-      file: "/tmp/nemoclaw-acp-test/ssh_config",
-      cleanup,
-    })),
+    createTempConfig,
     openshellVersion: vi.fn(() => "0.0.106"),
     platform: "linux",
     resolveOpenshell: () => "/usr/bin/openshell",
@@ -121,7 +136,13 @@ function harness(
     sshBinary: "/usr/bin/ssh",
     ...overrides,
   };
-  return { captureOpenShell, cleanup, spawnSsh, transport: createCliHermesAcpSshTransport(deps) };
+  return {
+    captureOpenShell,
+    cleanup,
+    createTempConfig,
+    spawnSsh,
+    transport: createCliHermesAcpSshTransport(deps),
+  };
 }
 
 function throwSshSpawn(): never {
@@ -209,6 +230,30 @@ describe("CLI Hermes ACP SSH transport", () => {
     expect(options.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(options.env).not.toHaveProperty("OPENSHELL_TOKEN");
     expect(options.env).not.toHaveProperty("SSH_AUTH_SOCK");
+  });
+
+  it("rejects an untrusted SSH proxy command before writing a configuration or starting SSH (#10947)", async () => {
+    const captureOpenShell = vi.fn((args: string[]) => ({
+      status: 0,
+      output: args.includes("ssh-config")
+        ? sshConfig().replace(
+            "/usr/bin/openshell ssh-proxy --gateway-name nemoclaw --name alpha --workspace default",
+            "/bin/sh -c 'touch /tmp/not-allowed'",
+          )
+        : "sandbox ready",
+    }));
+    const fixture = harness([], { captureOpenShell });
+    const io = streams();
+
+    const result = await fixture.transport.run({
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      streams: io.value,
+    });
+
+    expect(result).toMatchObject({ kind: "failed", error: { kind: "transport" } });
+    expect(fixture.createTempConfig).not.toHaveBeenCalled();
+    expect(fixture.spawnSsh).not.toHaveBeenCalled();
   });
 
   it("preserves a remote nonzero status while reducing remote diagnostics", async () => {

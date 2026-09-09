@@ -24,6 +24,7 @@ import { HERMES_LIFECYCLE_DEFINITION } from "../domain/lifecycle/hermes-definiti
 import { recoverNamedGatewayRuntime } from "../gateway-runtime-action";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
+import type { GatewayRecoveryOutput } from "../onboard/gateway-recovery";
 import { isValidName } from "../sandbox-name-contract";
 import {
   listHostGatewayRegistryEntries,
@@ -84,6 +85,7 @@ export type HermesAcpCommandDeps = Readonly<{
   observer?: OpenShellSandboxObserver;
   recoverGateway?: (options: {
     gatewayName: string;
+    output: GatewayRecoveryOutput;
     runtimeSelection: { gatewayName: string; workspace: string };
   }) => Promise<RecoveryResult>;
   transport?: HermesAcpSshTransport;
@@ -233,28 +235,12 @@ function defaultObserver(): OpenShellSandboxObserver {
   });
 }
 
-async function withoutConsoleOutput<T>(run: () => Promise<T>): Promise<T> {
-  const original = {
-    debug: console.debug,
-    error: console.error,
-    info: console.info,
-    log: console.log,
-    warn: console.warn,
-  };
-  const discard = () => undefined;
-  Object.assign(console, {
-    debug: discard,
-    error: discard,
-    info: discard,
-    log: discard,
-    warn: discard,
-  });
-  try {
-    return await run();
-  } finally {
-    Object.assign(console, original);
-  }
-}
+const DISCARD_GATEWAY_RECOVERY_OUTPUT: GatewayRecoveryOutput = {
+  error: () => undefined,
+  log: () => undefined,
+  step: () => undefined,
+  warn: () => undefined,
+};
 
 async function validateLiveTarget(
   target: HermesAcpTarget,
@@ -365,12 +351,11 @@ export async function runHermesAcpCommand(
         };
         let recovery: RecoveryResult;
         try {
-          recovery = await withoutConsoleOutput(() =>
-            (deps.recoverGateway ?? recoverNamedGatewayRuntime)({
-              gatewayName: target.gatewayName,
-              runtimeSelection,
-            }),
-          );
+          recovery = await (deps.recoverGateway ?? recoverNamedGatewayRuntime)({
+            gatewayName: target.gatewayName,
+            output: DISCARD_GATEWAY_RECOVERY_OUTPUT,
+            runtimeSelection,
+          });
         } catch {
           return { error: "The selected OpenShell gateway could not be recovered." } as const;
         }

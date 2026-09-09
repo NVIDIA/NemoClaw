@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   acpMessageContainsPong,
+  createHermesAcpPromptEvidenceTracker,
+  hermesAcpExchangeEvidencePassed,
   hermesAcpLiveHostEnv,
   isAcpResponse,
   isProcessAbsent,
@@ -38,6 +40,47 @@ describe("Hermes ACP live evidence boundary", () => {
   it("finds the bounded PONG assertion in nested ACP messages", () => {
     expect(acpMessageContainsPong({ params: { update: [{ text: "PONG" }] } })).toBe(true);
     expect(acpMessageContainsPong({ params: { update: [{ text: "SPONGE" }] } })).toBe(false);
+  });
+
+  it("counts PONG only after the prompt and only for the selected session (#10947)", () => {
+    const evidence = createHermesAcpPromptEvidenceTracker();
+    evidence.observe({ jsonrpc: "2.0", id: 1, result: { note: "PONG" } });
+    evidence.markPromptWritten("session-a");
+    evidence.observe({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "session-b",
+        update: { text: "PONG" },
+      },
+    });
+    evidence.observe({ jsonrpc: "2.0", id: 3, result: { stopReason: "end_turn" } });
+
+    expect(evidence.pongObserved).toBe(false);
+    expect(
+      hermesAcpExchangeEvidencePassed({
+        sessionCreated: true,
+        promptCompleted: true,
+        pongObserved: evidence.pongObserved,
+      }),
+    ).toBe(false);
+
+    evidence.observe({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "session-a",
+        update: { text: "PONG" },
+      },
+    });
+    expect(evidence.pongObserved).toBe(true);
+    expect(
+      hermesAcpExchangeEvidencePassed({
+        sessionCreated: true,
+        promptCompleted: true,
+        pongObserved: evidence.pongObserved,
+      }),
+    ).toBe(true);
   });
 
   it("classifies the live adapter process state", () => {
