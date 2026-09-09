@@ -43,13 +43,15 @@ If NemoClaw reports that a Docker-driver sandbox is stopped, restart the existin
 $$nemoclaw <sandbox-name> start
 ```
 
-This path preserves the sandbox workspace and repairs the agent runtime and host-side forwards after the container starts. If the container is paused, follow the printed `docker unpause` guidance instead. If Docker no longer has the container, destroy the stale NemoClaw entry and onboard a clean replacement. Restore a separately created snapshot afterward if one is available; rebuild cannot recover a workspace or live OpenShell policy that no longer exists.
+This path preserves the sandbox workspace after the container starts.
+If the container is paused, follow the printed `docker unpause` guidance instead.
+If Docker no longer has the container, destroy the stale NemoClaw entry and onboard a clean replacement.
+Restore a separately created snapshot afterward if one is available; rebuild cannot recover a workspace or live OpenShell policy that no longer exists.
 
 <AgentOnly variant="openclaw,hermes">
-  The `start` command returns success only after it authenticates the recovered agent runtime,
-  OpenShell reports the sandbox ready, and host-side port forwards pass their checks. If a check
-  fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you
-  retry `start`.
+  The `start` command repairs the agent runtime and host-side port forwards.
+  It returns success only after it authenticates the recovered agent runtime, OpenShell reports the sandbox ready, and host-side port forwards pass their checks.
+  If a check fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you retry `start`.
 </AgentOnly>
 
 ## Recover the Agent Runtime
@@ -158,7 +160,8 @@ For the controller topology, trust boundary, and fail-closed conditions, refer t
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
-Deep Agents sandboxes are terminal runtimes and do not expose an OpenClaw or Hermes in-sandbox gateway.
+Deep Agents uses a terminal runtime without an in-sandbox agent gateway or host-side port forward.
+The OpenShell ownership and local endpoint reachability prerequisites for an active port forward do not apply.
 Use `nemo-deepagents <sandbox-name> status`, `logs`, `connect`, and `rebuild` for recovery.
 If the terminal runtime reports degraded health, rebuild the sandbox instead of using `recover` or `gateway restart`.
 </AgentOnly>
@@ -252,6 +255,8 @@ $$nemoclaw <sandbox-name> rebuild
 On WSL with Docker Desktop, a generated replacement image build uses a temporary credential-free Docker configuration when the configured Docker Desktop credential helper is unavailable. NemoClaw removes the temporary configuration after the build and does not modify your Docker configuration. An explicit custom Dockerfile continues to use your configured Docker credentials because its base image or build steps might require a private registry. If that custom rebuild cannot reach the credential helper, restore the Docker Desktop session or credential-helper access before retrying.
 
 Rebuild creates the replacement from the base image selected during preflight, even when the source sandbox records an older base-image hint.
+
+If the sandbox's container is stopped (for example, an out-of-band container kill left the sandbox in `Phase: Error`), rebuild starts the container for the duration of the pre-recreate state backup and returns it to its stopped state afterward, the same recovery `$$nemoclaw backup-all` uses for a stopped container. If no stopped container can be found for the sandbox, or the retried backup still fails, rebuild aborts without recreating the sandbox; it reports an incomplete-snapshot notice only when a partial snapshot was retained. If the backup itself succeeds but the started container cannot be returned to its stopped state, rebuild also aborts, so a sandbox that was stopped before rebuild started is never left running without a warning.
 
 <AgentOnly variant="hermes">
 

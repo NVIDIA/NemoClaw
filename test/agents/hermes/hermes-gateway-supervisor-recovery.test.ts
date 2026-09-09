@@ -500,7 +500,7 @@ describe("Hermes supervised auxiliary recovery", () => {
     ]);
   });
 
-  it("re-prepares runtime inputs and retries a refused non-root gateway respawn", () => {
+  it("re-prepares runtime inputs and bounds a later preparation refusal", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
       'trace() { printf "%s\\n" "$*"; }',
@@ -512,7 +512,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "sleep() { :; }",
       "prepare_calls=0",
       "launch_calls=0",
-      'prepare_hermes_nonroot_runtime() { prepare_calls=$((prepare_calls + 1)); trace "prepare:$prepare_calls"; [ "$prepare_calls" -ne 2 ]; }',
+      'prepare_hermes_nonroot_runtime() { prepare_calls=$((prepare_calls + 1)); trace "prepare:$prepare_calls"; if [ "$prepare_calls" -ge 2 ]; then HERMES_NONROOT_PREPARE_FAILURE_STAGE="messaging-channels"; return 1; fi; }',
       'launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); [ "$launch_calls" -eq 1 ] && GATEWAY_PID=5252 || GATEWAY_PID=6262; trace "launch:$GATEWAY_PID"; }',
       'wait_for_hermes_gateway_internal() { trace "health:$1"; }',
       "ensure_hermes_supervised_auxiliaries() { trace auxiliaries; }",
@@ -521,7 +521,6 @@ describe("Hermes supervised auxiliary recovery", () => {
       'refresh_hermes_supervised_child_pids() { trace "refresh:$GATEWAY_PID"; }',
       "hermes_gateway_healthy() { return 0; }",
       'hermes_stop_tracked_role() { trace "unexpected-stop:$2"; return 1; }',
-      extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),
       extractShellFunction(source, "record_hermes_managed_gateway_exit"),
       extractShellFunction(source, "recover_hermes_gateway_current_user"),
       extractShellFunction(source, "supervise_hermes_gateway_current_user"),
@@ -531,7 +530,8 @@ describe("Hermes supervised auxiliary recovery", () => {
       "tracked_5252=0",
       "tracked_6262=0",
       "GATEWAY_PID=4242",
-      "supervise_hermes_gateway_current_user",
+      "if supervise_hermes_gateway_current_user; then supervisor_status=0; else supervisor_status=$?; fi",
+      'trace "supervisor-status:$supervisor_status"',
     ]);
 
     expect(result.status, result.stderr).toBe(0);
@@ -547,13 +547,15 @@ describe("Hermes supervised auxiliary recovery", () => {
       "mark-stopped",
       "prepare:2",
       "prepare:3",
-      "launch:6262",
-      "health:6262",
-      "auxiliaries",
-      "refresh:6262",
-      "supervised:6262",
+      "prepare:4",
+      "prepare:5",
+      "prepare:6",
+      "supervisor-status:1",
     ]);
     expect(result.stderr).toContain("Hermes gateway respawned (pid 5252)");
+    expect(result.stderr).toContain("HERMES_RUNTIME_PREPARATION_FAILED stage=messaging-channels");
+    expect(result.stderr).toContain("after 5 consecutive attempts; supervisor exiting");
+    expect(result.stdout).not.toContain("launch:6262");
   });
 
   it("quarantines after five gateway exits in one minute without a sixth launch", () => {
@@ -736,9 +738,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "prepare:5",
       "failed",
     ]);
-    expect(result.stderr).toContain(
-      "runtime preparation failed after 5 consecutive attempts; supervisor exiting",
-    );
+    expect(result.stderr).toContain("after 5 consecutive attempts; supervisor exiting");
     expect(result.stderr).toContain("correct the reported failure, then stop and start the sandbox");
     expect(result.stderr).not.toContain("quarantin");
     expect(result.stdout).not.toContain("unexpected-");

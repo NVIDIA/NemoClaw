@@ -681,7 +681,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       // `nemoclaw <name> status` to see provider and session state.
       if (provider || model) {
         const parts = [provider, model].filter(Boolean).join(" / ");
-        log(`      Inference: ${parts}`);
+        log(`      Inference (configured): ${parts}`);
       }
       if (deps.getActiveSessionCount && !portablePhase) {
         const count = deps.getActiveSessionCount(sb.name);

@@ -4,7 +4,11 @@
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { shellQuote } from "../../core/shell-quote";
 import type { McpBridgeEntry } from "../../state/registry";
-import type { McpBridgeStatus } from "./mcp-bridge-contracts";
+import type {
+  McpBridgeStatus,
+  McpBridgeToolDiscoveryFailedStage,
+  McpBridgeToolDiscoveryFailureClass,
+} from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type { CredentialResolutionProbeReadiness } from "./mcp-bridge-resolution-readiness";
@@ -23,7 +27,7 @@ import { buildTrustedProxyEnvSourceShell } from "./trusted-proxy-env";
 
 export const MCP_TOOL_DISCOVERY_RUNTIME_PATH =
   "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs";
-export const MCP_TOOL_DISCOVERY_RESULT_PROTOCOL = 1;
+export const MCP_TOOL_DISCOVERY_RESULT_PROTOCOL = 2;
 export const MCP_TOOL_DISCOVERY_MAX_TOOLS = 500;
 export const MCP_TOOL_DISCOVERY_MAX_NAME_BYTES = 256;
 const MCP_TOOL_DISCOVERY_MAX_DETAIL_BYTES = 512;
@@ -40,8 +44,28 @@ export interface McpToolDiscoveryCommand {
   resultMarker: string;
 }
 
-function failure(detail: string): NonNullable<McpBridgeStatus["toolDiscovery"]> {
-  return { ok: false, count: 0, tools: [], truncated: false, detail };
+function failure(
+  detail: string,
+  failedStage: McpBridgeToolDiscoveryFailedStage,
+  failureClass: McpBridgeToolDiscoveryFailureClass,
+  commandStatus: number | null,
+): NonNullable<McpBridgeStatus["toolDiscovery"]> {
+  return {
+    ok: false,
+    count: 0,
+    tools: [],
+    truncated: false,
+    commandStatus,
+    detail,
+    failedStage,
+    failureClass,
+  };
+}
+
+export function mcpToolDiscoveryPreconditionFailure(
+  detail: string,
+): NonNullable<McpBridgeStatus["toolDiscovery"]> {
+  return failure(detail, "preflight", "precondition", null);
 }
 
 export function toolDiscoveryReadinessSkipDetail(
@@ -91,6 +115,8 @@ export function buildMcpToolDiscoveryCommand(
     tools: [],
     truncated: false,
     detail: "sandbox image does not include the MCP tool discovery runtime; rebuild the sandbox",
+    failedStage: "runtime",
+    failureClass: "runtime",
   });
   const runtimeCommand = wrapMcpRuntimeCommand(adapter, [
     "/usr/local/bin/node",
@@ -135,7 +161,7 @@ export function classifyMcpToolDiscoveryResult(
   entry: Pick<McpBridgeEntry, "env">,
   resultMarker: string,
 ): NonNullable<McpBridgeStatus["toolDiscovery"]> {
-  if (result === null) return failure("sandbox unreachable");
+  if (result === null) return failure("sandbox unreachable", "runtime", "runtime", null);
   if (result.status !== 0) {
     const safeFailure = `${result.stderr}\n${result.stdout}`
       .split(/\r?\n/u)
@@ -145,29 +171,41 @@ export function classifyMcpToolDiscoveryResult(
       .find((line) => safeString(line, MCP_TOOL_DISCOVERY_MAX_DETAIL_BYTES));
     return failure(
       `MCP tool discovery runtime failed to start (exit ${String(result.status)})${safeFailure ? `: ${safeFailure}` : ""}; rebuild the sandbox if the image predates this diagnostic`,
+      "runtime",
+      "runtime",
+      result.status,
     );
   }
   const output = extractSandboxExecCommandStdoutFromStreams(
     { stdout: result.stdout, stderr: result.stderr },
     resultMarker,
   );
-  if (output === null) return failure("tool discovery output missing trusted result frame");
+  if (output === null) {
+    return failure("tool discovery output missing trusted result frame", "runtime", "runtime", 0);
+  }
   if (utf8Bytes(output) > MCP_TOOL_DISCOVERY_MAX_OUTPUT_BYTES) {
-    return failure("tool discovery returned an oversized result");
+    return failure("tool discovery returned an oversized result", "runtime", "runtime", 0);
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
   } catch {
-    return failure("tool discovery returned an invalid result");
+    return failure("tool discovery returned an invalid result", "runtime", "runtime", 0);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return failure("tool discovery returned an invalid result");
+    return failure("tool discovery returned an invalid result", "runtime", "runtime", 0);
   }
   const value = parsed as Record<string, unknown>;
+  if (value.protocol !== MCP_TOOL_DISCOVERY_RESULT_PROTOCOL) {
+    return failure(
+      "tool discovery runtime result is incompatible; rebuild the sandbox",
+      "runtime",
+      "runtime",
+      0,
+    );
+  }
   if (
-    value.protocol !== MCP_TOOL_DISCOVERY_RESULT_PROTOCOL ||
     typeof value.ok !== "boolean" ||
     typeof value.count !== "number" ||
     !Number.isSafeInteger(value.count) ||
@@ -177,7 +215,7 @@ export function classifyMcpToolDiscoveryResult(
     value.tools.length > MCP_TOOL_DISCOVERY_MAX_TOOLS ||
     typeof value.truncated !== "boolean"
   ) {
-    return failure("tool discovery returned an invalid result");
+    return failure("tool discovery returned an invalid result", "runtime", "runtime", 0);
   }
 
   const tools: string[] = [];
@@ -188,37 +226,80 @@ export function classifyMcpToolDiscoveryResult(
       tool.length === 0 ||
       seen.has(tool)
     ) {
-      return failure("tool discovery returned an invalid tool name");
+      return failure("tool discovery returned an invalid tool name", "runtime", "runtime", 0);
     }
     seen.add(tool);
     tools.push(tool);
   }
   const sortedTools = [...tools].sort(compareNames);
   if (tools.some((tool, index) => tool !== sortedTools[index])) {
-    return failure("tool discovery returned a non-deterministic tool inventory");
+    return failure(
+      "tool discovery returned a non-deterministic tool inventory",
+      "runtime",
+      "runtime",
+      0,
+    );
   }
 
   const detail = value.detail;
   if (detail !== undefined && !safeString(detail, MCP_TOOL_DISCOVERY_MAX_DETAIL_BYTES)) {
-    return failure("tool discovery returned an invalid detail");
+    return failure("tool discovery returned an invalid detail", "runtime", "runtime", 0);
   }
-  if ((value.ok && value.truncated) || (!value.ok && !detail)) {
-    return failure("tool discovery returned an inconsistent result");
+  const failedStage = value.failedStage;
+  const failureClass = value.failureClass;
+  const validFailedStage =
+    failedStage === "preflight" ||
+    failedStage === "runtime" ||
+    failedStage === "initialization" ||
+    failedStage === "tool-discovery";
+  const validFailureClass =
+    failureClass === "precondition" ||
+    failureClass === "runtime" ||
+    failureClass === "connection" ||
+    failureClass === "authentication" ||
+    failureClass === "protocol" ||
+    failureClass === "tool-operation";
+  if (
+    (value.ok &&
+      (value.truncated ||
+        detail !== undefined ||
+        failedStage !== undefined ||
+        failureClass !== undefined)) ||
+    (!value.ok && (!detail || !validFailedStage || !validFailureClass))
+  ) {
+    return failure("tool discovery returned an inconsistent result", "runtime", "runtime", 0);
   }
   if (!value.ok && !value.truncated && tools.length > 0) {
-    return failure("tool discovery returned an inconsistent partial result");
+    return failure(
+      "tool discovery returned an inconsistent partial result",
+      "runtime",
+      "runtime",
+      0,
+    );
   }
 
   const redactedDetail = detail ? redactBridgeSecretsForDisplay(detail, entry) : undefined;
   if (redactedDetail && utf8Bytes(redactedDetail) > MCP_TOOL_DISCOVERY_MAX_DETAIL_BYTES) {
-    return failure("tool discovery returned an oversized detail after redaction");
+    return failure(
+      "tool discovery returned an oversized detail after redaction",
+      "runtime",
+      "runtime",
+      0,
+    );
   }
   return {
     ok: value.ok,
     count: tools.length,
     tools,
     truncated: value.truncated,
+    commandStatus: 0,
     ...(redactedDetail ? { detail: redactedDetail } : {}),
+    ...(!value.ok
+      ? {
+          failedStage: failedStage as McpBridgeToolDiscoveryFailedStage,
+          failureClass: failureClass as McpBridgeToolDiscoveryFailureClass,
+        }
+      : {}),
   };
 }
 
@@ -229,13 +310,23 @@ export function discoverMcpTools(
   readiness: McpToolDiscoveryReadiness,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): NonNullable<McpBridgeStatus["toolDiscovery"]> {
-  if (!adapter) return failure("tool discovery skipped: MCP adapter is not declared");
-  if (entry.addState) return failure("tool discovery skipped: add transaction is incomplete");
+  if (!adapter) {
+    return mcpToolDiscoveryPreconditionFailure(
+      "tool discovery skipped: MCP adapter is not declared",
+    );
+  }
+  if (entry.addState) {
+    return mcpToolDiscoveryPreconditionFailure(
+      "tool discovery skipped: add transaction is incomplete",
+    );
+  }
   const readinessSkipDetail = toolDiscoveryReadinessSkipDetail(readiness);
-  if (readinessSkipDetail) return failure(readinessSkipDetail);
+  if (readinessSkipDetail) return mcpToolDiscoveryPreconditionFailure(readinessSkipDetail);
   const discoveryCommand = buildMcpToolDiscoveryCommand(entry, adapter);
   if (!discoveryCommand) {
-    return failure("tool discovery skipped: no valid managed endpoint is available");
+    return mcpToolDiscoveryPreconditionFailure(
+      "tool discovery skipped: no valid managed endpoint is available",
+    );
   }
   return classifyMcpToolDiscoveryResult(
     executeSandboxCommand(sandboxName, discoveryCommand.command, { runtimeSelection }),
