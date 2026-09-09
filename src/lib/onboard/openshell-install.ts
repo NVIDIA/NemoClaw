@@ -194,7 +194,7 @@ export function ensureOpenshellForOnboard(
     localBin: null,
     futureShellPathHint: null,
   };
-  const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.0.106";
+  const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.0.116";
 
   if (!deps.isOpenshellInstalled()) {
     deps.log("  openshell CLI not found. Installing...");

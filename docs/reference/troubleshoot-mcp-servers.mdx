@@ -52,7 +52,7 @@ OpenShell cannot bind that provider to an MCP endpoint, and NemoClaw accepts it 
 
 ## Rebuild or Destroy Cannot Prove a Credential Revision
 
-If rebuild or destroy reports that it could not prove a revision-scoped credential, a fresh sandbox process did not expose the exact OpenShell credential identity required for adapter cleanup.
+If rebuild or destroy reports that it could not prove a credential handle, a fresh sandbox process did not expose the exact OpenShell credential identity required for adapter cleanup.
 NemoClaw leaves the affected adapter and every provider unchanged.
 It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures.
 

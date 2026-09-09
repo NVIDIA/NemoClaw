@@ -259,12 +259,12 @@ const proofText = "NemoClaw Slack channel mention proof";
 const token = process.env.SLACK_BOT_TOKEN;
 const appToken = process.env.SLACK_APP_TOKEN;
 invariant(
-  /^openshell:resolve:env:v[0-9]+_SLACK_BOT_TOKEN$/.test(token || ""),
-  "missing revision-scoped SLACK_BOT_TOKEN environment placeholder",
+  /^openshell:resolve:env:s[a-f0-9]{64}_SLACK_BOT_TOKEN$/.test(token || ""),
+  "missing credential-handle SLACK_BOT_TOKEN environment placeholder",
 );
 invariant(
-  /^openshell:resolve:env:v[0-9]+_SLACK_APP_TOKEN$/.test(appToken || ""),
-  "missing revision-scoped SLACK_APP_TOKEN environment placeholder",
+  /^openshell:resolve:env:s[a-f0-9]{64}_SLACK_APP_TOKEN$/.test(appToken || ""),
+  "missing credential-handle SLACK_APP_TOKEN environment placeholder",
 );
 
 function createPipelineSlackProofContext(appClient) {

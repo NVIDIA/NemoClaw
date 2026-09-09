@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json";
+import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json";
 import {
   BREW_OUTCOMES,
   CANDIDATE_RUNTIME,
@@ -831,7 +831,7 @@ exit 1`,
           NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
           NEMOCLAW_OPENSHELL_CHANNEL: "dev",
           NEMOCLAW_TEST_BREW_UNTRUST_HELP_STATUS: "1",
-          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.106-dev.8+g7bce1223d",
+          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.116-dev.8+g7bce1223d",
           PATH: `${fakeBin}:/usr/bin:/bin`,
         },
         encoding: "utf8",
@@ -860,7 +860,7 @@ exit 1`,
           NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
           NEMOCLAW_OPENSHELL_CHANNEL: "dev",
           NEMOCLAW_TEST_BREW_UNTRUST_STATUS: "1",
-          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.106-dev.8+g7bce1223d",
+          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.116-dev.8+g7bce1223d",
           PATH: `${fakeBin}:/usr/bin:/bin`,
         },
         encoding: "utf8",
@@ -890,7 +890,7 @@ exit 1`,
           NEMOCLAW_OPENSHELL_CHANNEL: "dev",
           NEMOCLAW_TEST_BREW_INSTALL_STATUS: "1",
           NEMOCLAW_TEST_BREW_UNTRUST_CLEANUP_STATUS: "1",
-          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.106-dev.8+g7bce1223d",
+          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.116-dev.8+g7bce1223d",
           PATH: `${fakeBin}:/usr/bin:/bin`,
         },
         encoding: "utf8",
@@ -921,7 +921,7 @@ exit 1`,
           NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
           NEMOCLAW_OPENSHELL_CHANNEL: "dev",
           NEMOCLAW_TEST_BREW_TRUST_STATUS: "1",
-          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.106-dev.8+g7bce1223d",
+          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.116-dev.8+g7bce1223d",
           PATH: `${fakeBin}:/usr/bin:/bin`,
         },
         encoding: "utf8",
@@ -978,7 +978,7 @@ openshell-checksums-sha256.txt)
 openshell-gateway-checksums-sha256.txt)
   printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' > "$out" ;;
 openshell-sandbox-checksums-sha256.txt)
-  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out" ;;
+  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-musl.tar.gz' > "$out" ;;
 *) : > "$out" ;;
 esac
 exit 0`,
@@ -991,7 +991,7 @@ line="$(cat)"
 case "$line" in
 '${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz'|\
 '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz'|\
-'${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz') ;;
+'${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-musl.tar.gz') ;;
 *) exit 10 ;;
 esac
 printf '%s\n' "$line" >> ${JSON.stringify(checksumLog)}
@@ -1055,11 +1055,11 @@ chmod 755 "$dest"`,
       const downloads = fs.readFileSync(downloadLog, "utf8");
       expect(downloads).toContain("openshell-aarch64-unknown-linux-musl.tar.gz");
       expect(downloads).toContain("openshell-gateway-aarch64-unknown-linux-gnu.tar.gz");
-      expect(downloads).toContain("openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz");
+      expect(downloads).toContain("openshell-sandbox-aarch64-unknown-linux-musl.tar.gz");
       expect(fs.readFileSync(checksumLog, "utf8").trim().split("\n")).toEqual([
         `${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz`,
         `${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz`,
-        `${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz`,
+        `${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-musl.tar.gz`,
       ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1112,7 +1112,7 @@ if [ -n "$out" ]; then
     printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxX64}  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' > "$out"
     ;;
   openshell-sandbox-checksums-sha256.txt)
-    printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' > "$out"
+    printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-musl.tar.gz' > "$out"
     ;;
   *)
     : > "$out"
@@ -1247,7 +1247,7 @@ if [ -n "$out" ]; then
     printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxX64}  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' > "$out"
     ;;
   openshell-sandbox-checksums-sha256.txt)
-    printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' > "$out"
+    printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-musl.tar.gz' > "$out"
     ;;
   *)
     : > "$out"
@@ -1288,7 +1288,7 @@ exit 0`,
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
       expect(result.stderr).toContain(
-        "OpenShell release checksum for openshell-x86_64-unknown-linux-musl.tar.gz does not match NemoClaw-pinned v0.0.106 digest",
+        `OpenShell release checksum for openshell-x86_64-unknown-linux-musl.tar.gz does not match NemoClaw-pinned v${REQUIRED_OPENSHELL_VERSION} digest`,
       );
       expect(fs.existsSync(tarLog) ? fs.readFileSync(tarLog, "utf-8") : "").toBe("");
       expect(fs.existsSync(installLog) ? fs.readFileSync(installLog, "utf-8") : "").toBe("");
@@ -1322,8 +1322,8 @@ exit 0`,
     expect(result.stdout).toMatch(/below minimum.*upgrading/);
   });
 
-  it("reinstalls the pinned release when openshell 0.0.107 is above MAX_VERSION", () => {
-    const result = runWithInstalledVersion("0.0.107");
+  it("reinstalls the pinned release when openshell 0.0.117 is above MAX_VERSION", () => {
+    const result = runWithInstalledVersion("0.0.117");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain(
       `above the maximum (${REQUIRED_OPENSHELL_VERSION}) supported by this NemoClaw release`,
@@ -1349,7 +1349,7 @@ exit 0`,
   });
 
   it("accepts an installed OpenShell dev-channel Docker-driver build", () => {
-    const result = runWithInstalledVersion("0.0.106.dev84+g6b2180425", {
+    const result = runWithInstalledVersion("0.0.116.dev84+g6b2180425", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
     });
@@ -1359,7 +1359,7 @@ exit 0`,
   });
 
   it("fails closed for dev-channel installs without explicit risk acceptance", () => {
-    const result = runWithInstalledVersion("0.0.106.dev84+g6b2180425", {
+    const result = runWithInstalledVersion("0.0.116.dev84+g6b2180425", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
     });
     expect(result.status).toBe(1);
@@ -1370,12 +1370,12 @@ exit 0`,
 
   it("accepts coherent dev components with different git-prefix lengths", () => {
     const result = runWithInstalledVersion(
-      "0.0.106-dev.8+g7bce1223d",
+      "0.0.116-dev.8+g7bce1223d",
       {
         NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       },
-      { driverVersion: "0.0.106-dev.8+g7bce1223" },
+      { driverVersion: "0.0.116-dev.8+g7bce1223" },
     );
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toMatch(/dev channel/);
@@ -1410,7 +1410,7 @@ exit 0`,
 
   it("reuses a macOS dev build with its required Homebrew gateway service", () => {
     const result = runWithInstalledVersion(
-      "0.0.106-dev.8+g7bce1223d",
+      "0.0.116-dev.8+g7bce1223d",
       {
         NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
@@ -1422,7 +1422,7 @@ exit 0`,
   });
 
   it("refreshes an installed dev build when current main is required", () => {
-    const result = runWithInstalledVersion("0.0.106-dev.8+g7bce1223d", {
+    const result = runWithInstalledVersion("0.0.116-dev.8+g7bce1223d", {
       NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",

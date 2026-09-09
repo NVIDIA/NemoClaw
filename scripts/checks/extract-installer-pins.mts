@@ -500,7 +500,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     },
     // The v0.0.116 release publishes only MUSL standalone sandbox archives.
     // Trust only the prospective installer template whose stable Linux path
-    // selects that ABI. The v0.0.106 record retains the active GNU templates.
+    // selects that ABI. The historical v0.0.106 record retains the GNU templates.
     installerTemplateSha256: [
       "243f607a1b9a67c116f80844d5cd6e7185d63537e74fb08b3994652f79cb00e9",
     ],

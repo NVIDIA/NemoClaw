@@ -15,7 +15,7 @@ import {
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect } from "../fixtures/e2e-test.ts";
-import { hermesRevisionScopedCredentialLinePattern } from "../fixtures/hermes-channel-credential-state.ts";
+import { hermesStableCredentialLinePattern } from "../fixtures/hermes-channel-credential-state.ts";
 import {
   type OpenClawChannelConfigState,
   openClawChannelIsActive,
@@ -626,7 +626,7 @@ async function hermesChannelIsActive(
 ): Promise<boolean> {
   const probes: Record<string, string> = {
     // Telegram and Discord render no token line, for the same reason as Slack
-    // below: OpenShell injects the revision-scoped placeholder into the process
+    // below: OpenShell injects the credential-handle placeholder into the process
     // environment, and a rendered line would shadow it. The allowlist line is
     // what proves the channel still renders.
     //
@@ -637,9 +637,9 @@ async function hermesChannelIsActive(
       'grep -Eq "^TELEGRAM_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^[[:space:]]*(export[[:space:]]+)?TELEGRAM_BOT_TOKEN=" /sandbox/.hermes/.env',
     discord:
       'grep -Eq "^DISCORD_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^[[:space:]]*(export[[:space:]]+)?DISCORD_BOT_TOKEN=" /sandbox/.hermes/.env',
-    wechat: `grep -Eq "${hermesRevisionScopedCredentialLinePattern("wechat")}" /sandbox/.hermes/.env`,
+    wechat: `grep -Eq "${hermesStableCredentialLinePattern("wechat")}" /sandbox/.hermes/.env`,
     // Slack renders no token line: OpenShell binds SLACK_* to the policy
-    // endpoint and injects revision-scoped placeholders, and Hermes loads .env
+    // endpoint and injects credential-handle placeholders, and Hermes loads .env
     // with override=True, so a rendered line would shadow them. The allowlist
     // line is what proves the channel still renders.
     slack:
@@ -648,7 +648,7 @@ async function hermesChannelIsActive(
     // supplied, so the live sealed .env is where that derivation is proven.
     whatsapp:
       'grep -Eq "^WHATSAPP_ENABLED=true$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_MODE=bot$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_DM_POLICY=allowlist$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_ALLOWED_USERS=.+$" /sandbox/.hermes/.env',
-    teams: `grep -Eq "${hermesRevisionScopedCredentialLinePattern("teams")}" /sandbox/.hermes/.env`,
+    teams: `grep -Eq "${hermesStableCredentialLinePattern("teams")}" /sandbox/.hermes/.env`,
     // The access token exists only in the live process environment. A rendered
     // line would shadow the revision-scoped placeholder OpenShell injects.
     googlechat:
@@ -1053,7 +1053,7 @@ export async function runChannelsStopStartTarget({
   await artifacts.target.declare({
     id: "channels-stop-start",
     boundary:
-      "messaging onboard + channel lifecycle + channel removal cleanup + revision-scoped placeholder and provider egress + installed Hermes pull/ack",
+      "messaging onboard + channel lifecycle + channel removal cleanup + credential-handle placeholder and provider egress + installed Hermes pull/ack",
     agent: AGENT,
     sandboxName: SANDBOX_NAME,
     channels: CHANNELS,

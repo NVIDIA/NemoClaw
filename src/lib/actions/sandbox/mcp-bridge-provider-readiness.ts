@@ -13,9 +13,14 @@ import {
 } from "./mcp-bridge-validation";
 import { executeSandboxExecCommand } from "./process-recovery";
 
-const MCP_CREDENTIAL_REVISION_OBSERVATION_RE = /^(?:absent|canonical|v[0-9]{1,20})$/;
+const MCP_CREDENTIAL_REVISION_OBSERVATION_RE =
+  /^(?:absent|canonical|v[0-9]{1,20}|s[a-f0-9]{64})$/;
 
-export type McpCredentialRevisionObservation = "absent" | "canonical" | `v${number}`;
+export type McpCredentialRevisionObservation =
+  | "absent"
+  | "canonical"
+  | `v${number}`
+  | `s${string}`;
 export type McpAttachedCredentialRevision = Exclude<
   McpCredentialRevisionObservation,
   "absent" | "canonical"
@@ -23,7 +28,7 @@ export type McpAttachedCredentialRevision = Exclude<
 
 export function mcpAdapterCredentialRevisionUnavailableError(server: string): McpBridgeError {
   return new McpBridgeError(
-    `OpenShell did not expose a revision-scoped credential while reconciling MCP adapter '${server}'.`,
+    `OpenShell did not expose a credential handle while reconciling MCP adapter '${server}'.`,
   );
 }
 
@@ -61,22 +66,25 @@ function executeMcpCredentialProofCommand(
 function mcpCredentialPlaceholderValidatorShell(envName: string): string[] {
   validateMcpCredentialEnvName(envName);
   const canonical = `openshell:resolve:env:${envName}`;
-  const revisionPrefix = "openshell:resolve:env:v";
-  const revisionSuffix = `_${envName}`;
+  const prefix = "openshell:resolve:env:";
+  const suffix = `_${envName}`;
   return [
     `canonical=${shellQuote(canonical)}`,
-    `prefix=${shellQuote(revisionPrefix)}`,
-    `suffix=${shellQuote(revisionSuffix)}`,
+    `prefix=${shellQuote(prefix)}`,
+    `suffix=${shellQuote(suffix)}`,
     "valid_placeholder() {",
     '  candidate="$1"',
     '  [ "$candidate" = "$canonical" ] && return 0',
-    '  versioned="${candidate#"$prefix"}"',
-    '  [ "$versioned" != "$candidate" ] || return 1',
-    '  revision="${versioned%"$suffix"}"',
-    '  [ "$revision" != "$versioned" ] || return 1',
-    '  [ "$versioned" = "$revision$suffix" ] || return 1',
-    '  case "$revision" in ""|*[!0-9]*) return 1 ;; esac',
-    '  [ "${#revision}" -le 20 ] || return 1',
+    '  scoped="${candidate#"$prefix"}"',
+    '  [ "$scoped" != "$candidate" ] || return 1',
+    '  generation="${scoped%"$suffix"}"',
+    '  [ "$generation" != "$scoped" ] || return 1',
+    '  [ "$scoped" = "$generation$suffix" ] || return 1',
+    '  case "$generation" in',
+    '    v*) revision="${generation#v}"; case "$revision" in ""|*[!0-9]*) return 1 ;; esac; [ "${#revision}" -le 20 ] || return 1 ;;',
+    '    s*) handle="${generation#s}"; case "$handle" in *[!0-9a-f]*) return 1 ;; esac; [ "${#handle}" -eq 64 ] || return 1 ;;',
+    '    *) return 1 ;;',
+    '  esac',
     "}",
   ];
 }
@@ -100,9 +108,9 @@ export function buildMcpCredentialRevisionObservationCommand(envName: string): s
     "  printf '%s\\n' canonical",
     "  exit 0",
     "fi",
-    'versioned="${value#"$prefix"}"',
-    'revision="${versioned%"$suffix"}"',
-    "printf 'v%s\\n' \"$revision\"",
+    'scoped="${value#"$prefix"}"',
+    'generation="${scoped%"$suffix"}"',
+    "printf '%s\\n' \"$generation\"",
   ].join("\n");
 }
 
@@ -206,12 +214,16 @@ export async function waitForAttachedMcpCredential(
       // The startup command can expose the identityless canonical placeholder
       // before the process supervisor receives the attached provider snapshot.
       // Endpoint-bound credentials become usable only when a fresh exec sees
-      // the revision-scoped placeholder issued by that snapshot.
+      // the credential handle issued by that snapshot. Legacy revision handles
+      // must advance after an update; OpenShell 0.0.116 stable handles remain
+      // unchanged while the provider identity and endpoint authorization do.
       const attached =
         observation !== null &&
         observation !== "absent" &&
         observation !== "canonical" &&
-        (options.previousRevision === undefined || observation !== options.previousRevision);
+        (options.previousRevision === undefined ||
+          observation !== options.previousRevision ||
+          observation.startsWith("s"));
       if (!attached) {
         candidateRevision = undefined;
         return false;
@@ -220,8 +232,8 @@ export async function waitForAttachedMcpCredential(
         candidateRevision = observation;
         return false;
       }
-      // OpenShell can briefly project the revision that preceded a post-policy
-      // provider refresh. Require the same revision from two consecutive fresh
+      // OpenShell can briefly project the handle that preceded a post-policy
+      // provider refresh. Require the same handle from two consecutive fresh
       // execs so the adapter cannot be committed with a placeholder that is
       // already being replaced by the provider sidecar.
       attachedRevision = observation;

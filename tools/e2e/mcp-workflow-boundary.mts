@@ -895,7 +895,7 @@ function validateCredentialWindowJob(
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",
     E2E_OBSERVABLE_OUTCOME:
-      "Credential expiry rotation detach and rebuild preserve the intended access window",
+      "Stable-handle refresh, revocation, detach, re-add, and rebuild preserve authorization epochs",
     E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT:
       "Ubuntu managed runtime host; local compatible inference and MCP endpoint",
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/${CREDENTIAL_WINDOW_ARTIFACT_DIR}`,

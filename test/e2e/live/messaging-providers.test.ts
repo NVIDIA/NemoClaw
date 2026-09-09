@@ -482,12 +482,12 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       redactionValues,
     );
     check(
-      /^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN_AGENT_A$/u.test(extraA),
-      "X4a: TELEGRAM_BOT_TOKEN_AGENT_A is a revision-scoped resolve placeholder",
+      /^openshell:resolve:env:s[a-f0-9]{64}_TELEGRAM_BOT_TOKEN_AGENT_A$/u.test(extraA),
+      "X4a: TELEGRAM_BOT_TOKEN_AGENT_A is a stable-handle resolve placeholder",
     );
     check(
-      /^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN_AGENT_B$/u.test(extraB),
-      "X4b: TELEGRAM_BOT_TOKEN_AGENT_B is a revision-scoped resolve placeholder",
+      /^openshell:resolve:env:s[a-f0-9]{64}_TELEGRAM_BOT_TOKEN_AGENT_B$/u.test(extraB),
+      "X4b: TELEGRAM_BOT_TOKEN_AGENT_B is a stable-handle resolve placeholder",
     );
 
     const startLog = await sandboxOutput(
@@ -601,9 +601,9 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       redactionValues,
     );
     check(
-      /"token"\s*:\s*"openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN"/.test(wechatCredentialFile) &&
+      /"token"\s*:\s*"openshell:resolve:env:s[a-f0-9]{64}_WECHAT_BOT_TOKEN"/.test(wechatCredentialFile) &&
         !wechatCredentialFile.includes(state.tokens.wechat),
-      "M-W9: WeChat account file uses the revision-scoped L7-resolved placeholder",
+      "M-W9: WeChat account file uses the stable-handle L7-resolved placeholder",
     );
     const wechatIndex = await sandboxOutput(
       sandbox,
@@ -930,9 +930,9 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       redactionValues,
     );
     check(
-      /^openshell:resolve:env:v[0-9]+_SLACK_BOT_TOKEN$/u.test(slackBotPlaceholder) &&
-        /^openshell:resolve:env:v[0-9]+_SLACK_APP_TOKEN$/u.test(slackAppPlaceholder),
-      "M11j: Slack bindings expose revision-scoped OpenShell credential placeholders",
+      /^openshell:resolve:env:s[a-f0-9]{64}_SLACK_BOT_TOKEN$/u.test(slackBotPlaceholder) &&
+        /^openshell:resolve:env:s[a-f0-9]{64}_SLACK_APP_TOKEN$/u.test(slackAppPlaceholder),
+      "M11j: Slack bindings expose stable-handle OpenShell credential placeholders",
     );
 
     const slackAuth = await runSlackApiRequest(
@@ -944,7 +944,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     );
     check(
       /^200\b/.test(slackAuth) && /invalid_auth|not_authed|ok":true/.test(slackAuth),
-      `M-S15: Slack auth.test exercised revision-scoped placeholder rewrite (${slackAuth.slice(0, 200)})`,
+      `M-S15: Slack auth.test exercised stable-handle placeholder rewrite (${slackAuth.slice(0, 200)})`,
     );
     const slackAuthCapture = lastJsonLine(
       fakeSlackBot.captureFile,
@@ -982,7 +982,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     check(
       /^200\b/.test(slackApp) &&
         /invalid_auth|not_authed|not_allowed_token_type|ok":true/.test(slackApp),
-      "M-S16: Slack Socket Mode HTTPS leg exercised revision-scoped placeholder rewrite",
+      "M-S16: Slack Socket Mode HTTPS leg exercised stable-handle placeholder rewrite",
     );
     const slackAppCapture = lastJsonLine(
       fakeSlackApp.captureFile,
@@ -1173,7 +1173,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     );
     const gatewayProof = await runDiscordGatewayClient(sandbox, {
       port: fakeGateway.port,
-      identifyToken: { kind: "revisioned-discord-env" },
+      identifyToken: { kind: "openshell-discord-env" },
       redactionValues,
     });
     check(

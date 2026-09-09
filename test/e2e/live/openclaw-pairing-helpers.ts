@@ -293,7 +293,7 @@ NODE
 `.replace("__LOAD_CONVERSATION_RUNTIME_SOURCE__", LOAD_CONVERSATION_RUNTIME_SOURCE);
 
 // Source-of-truth boundary: the Slack live probe validates its localized fake API
-// ports, proxy environment, and the revision-scoped credential references issued
+// ports, proxy environment, and the credential-handle references issued
 // to the sandbox before it opens direct Node socket/http clients. Invalid state
 // would otherwise hide the real pairing failure behind a low-level network error,
 // route the fake Slack websocket through an unexpected host, or send a credential
@@ -325,8 +325,8 @@ function parseProxyTarget() {
 function parseManagedCredentialReference(name) {
   if (name !== "SLACK_APP_TOKEN" && name !== "SLACK_BOT_TOKEN") throw new Error("unexpected Slack credential reference name");
   const value = process.env[name] || "";
-  if (!new RegExp("^openshell:resolve:env:v[0-9]{1,20}_" + name + "$").test(value)) {
-    throw new Error(name + " must be the revision-scoped OpenShell credential reference issued to the sandbox");
+  if (!new RegExp("^openshell:resolve:env:s[a-f0-9]{64}_" + name + "$").test(value)) {
+    throw new Error(name + " must be the OpenShell credential-handle reference issued to the sandbox");
   }
   return value;
 }
@@ -654,7 +654,7 @@ export async function runDiscordGatewayProof(options: {
   return runDiscordGatewayClient(options.sandbox, {
     sandboxName: options.sandboxName,
     port: options.port,
-    identifyToken: { kind: "revisioned-discord-env" },
+    identifyToken: { kind: "openshell-discord-env" },
     redactionValues: options.redactions,
   });
 }

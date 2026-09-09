@@ -198,7 +198,7 @@ function credentialObservationDetail(
     return "a fresh OpenShell exec did not expose the credential placeholder";
   }
   if (observation === "canonical") {
-    return "a fresh OpenShell exec exposed an identityless credential placeholder instead of a revision-scoped placeholder";
+    return "a fresh OpenShell exec exposed an identityless credential placeholder instead of a generation-scoped placeholder";
   }
   return undefined;
 }

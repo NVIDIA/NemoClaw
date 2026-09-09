@@ -181,8 +181,8 @@ if (Object.prototype.hasOwnProperty.call(account, "botToken")) {
 const target = process.env.OPENCLAW_MESSAGE_TARGET || "42424242";
 const text = process.env.OPENCLAW_MESSAGE_TEXT || "NemoClaw OpenClaw Telegram plugin mock E2E";
 const token = process.env.TELEGRAM_BOT_TOKEN;
-if (!/^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN$/.test(token || "")) {
-  throw new Error("missing revision-scoped TELEGRAM_BOT_TOKEN environment placeholder");
+if (!/^openshell:resolve:env:s[a-f0-9]{64}_TELEGRAM_BOT_TOKEN$/.test(token || "")) {
+  throw new Error("missing stable-handle TELEGRAM_BOT_TOKEN environment placeholder");
 }
 const api = {
   sendMessage: (chatId, body, params = {}) =>

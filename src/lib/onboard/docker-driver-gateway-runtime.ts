@@ -48,6 +48,7 @@ const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = 
   "0.0.99": "sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6",
   "0.0.101": "sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb",
   "0.0.106": "sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01",
+  "0.0.116": "sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
 };
 
 /** Resolve the canonical gateway name without bypassing the binding owner. */

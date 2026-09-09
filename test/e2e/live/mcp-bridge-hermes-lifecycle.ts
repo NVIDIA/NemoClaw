@@ -32,7 +32,7 @@ export async function assertHermesConfig(
     `entry = data['mcp_servers'][${JSON.stringify(SERVER_NAME)}]`,
     `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
     "authorization = entry['headers']['Authorization']",
-    "assert re.fullmatch(r'Bearer openshell:resolve:env:v[0-9]{1,20}_FAKE_MCP_SECRET', authorization)",
+    "assert re.fullmatch(r'Bearer openshell:resolve:env:s[a-f0-9]{64}_FAKE_MCP_SECRET', authorization)",
     `assert ${JSON.stringify(HOST_SECRET)} not in text`,
     "PY",
   ].join("\n");

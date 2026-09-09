@@ -26,13 +26,13 @@ import {
 
 const temporaryRoots: string[] = [];
 const archiveBytes = Buffer.from("reviewed OpenShell SDK fixture");
-const artifactName = "nvidia-openshell-sdk-0.0.106.tgz";
+const artifactName = "nvidia-openshell-sdk-0.0.116.tgz";
 const reviewed: ReviewedSourceRegistryPackage = {
   artifactName,
   integrity: `sha512-${createHash("sha512").update(archiveBytes).digest("base64")}`,
-  label: "OpenShell TypeScript SDK 0.0.106",
-  packageSpec: "@nvidia/openshell-sdk@0.0.106",
-  tarballUrl: "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/reviewed-fixture",
+  label: "OpenShell TypeScript SDK 0.0.116",
+  packageSpec: "@nvidia/openshell-sdk@0.0.116",
+  tarballUrl: "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.116/reviewed-fixture",
 };
 
 type CacheStageRequest = Readonly<{
@@ -50,11 +50,11 @@ function reviewedLock(packageIdentity: ReviewedSourceRegistryPackage = reviewed)
     lockfileVersion: 3,
     name: "reviewed-sdk-artifact-fixture",
     packages: {
-      "": { dependencies: { "@nvidia/openshell-sdk": "0.0.106" } },
+      "": { dependencies: { "@nvidia/openshell-sdk": "0.0.116" } },
       "node_modules/@nvidia/openshell-sdk": {
         integrity: packageIdentity.integrity,
         resolved: packageIdentity.tarballUrl,
-        version: "0.0.106",
+        version: "0.0.116",
       },
     },
     version: "1.0.0",
@@ -128,7 +128,7 @@ function packedInstallFixture() {
   mkdirSync(packageRoot);
   writeFileSync(
     join(packageRoot, "package.json"),
-    JSON.stringify({ name: "@nvidia/openshell-sdk", version: "0.0.106" }),
+    JSON.stringify({ name: "@nvidia/openshell-sdk", version: "0.0.116" }),
   );
   writeFileSync(join(packageRoot, "index.js"), "export {};\n");
   rmSync(join(source.artifactDirectory, artifactName));
@@ -148,7 +148,7 @@ function packedInstallFixture() {
   writeFileSync(
     join(source.root, "package.json"),
     JSON.stringify({
-      dependencies: { "@nvidia/openshell-sdk": "0.0.106" },
+      dependencies: { "@nvidia/openshell-sdk": "0.0.116" },
       name: "reviewed-sdk-install-fixture",
       private: true,
       version: "1.0.0",
@@ -324,7 +324,7 @@ describe("trusted OpenShell SDK archive preparation", () => {
     const installed = JSON.parse(
       readFileSync(join(source.root, "node_modules/@nvidia/openshell-sdk/package.json"), "utf8"),
     ) as { version?: string };
-    expect(installed.version).toBe("0.0.106");
+    expect(installed.version).toBe("0.0.116");
   });
 
   it("rejects changed bytes before writing the npm cache", async () => {

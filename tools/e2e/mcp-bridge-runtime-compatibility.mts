@@ -42,7 +42,7 @@ export interface McpBridgeRuntimeCompatibilityResult {
   mode: McpBridgeRuntimeCompatibilityMode;
 }
 
-type AssertRuntimeVersion = () => void;
+type AssertRuntimeVersion = () => string | void;
 const MCP_BRIDGE_DEV_JOB = "mcp-bridge-dev";
 const MCP_BRIDGE_DEV_SHARDS = new Set(["openclaw", "hermes", "deepagents"]);
 
@@ -66,9 +66,10 @@ export function classifyMcpBridgeRuntimeCompatibility(
   assertRuntimeVersion: AssertRuntimeVersion = assertMcpCredentialBoundaryRuntimeVersion,
 ): McpBridgeRuntimeCompatibilityResult {
   try {
-    assertRuntimeVersion();
+    const actualVersion =
+      assertRuntimeVersion() ?? MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION;
     return {
-      actualVersion: MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION,
+      actualVersion,
       expectedVersion: MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION,
       mode: "full-lifecycle",
     };

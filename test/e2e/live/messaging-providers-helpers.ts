@@ -1448,9 +1448,9 @@ let authorization = process.env.FAKE_SLACK_AUTH ?? "";
 const providerEnvKey = process.env.FAKE_SLACK_PROVIDER_ENV_KEY ?? "";
 if (providerEnvKey) {
   const scoped = process.env[providerEnvKey] ?? "";
-  const expected = new RegExp("^openshell:resolve:env:(v[0-9]{1,20}_" + providerEnvKey + ")$");
+  const expected = new RegExp("^openshell:resolve:env:(s[a-f0-9]{64}_" + providerEnvKey + ")$");
   const match = scoped.match(expected);
-  if (!match) throw new Error("missing current revision-scoped Slack provider placeholder");
+  if (!match) throw new Error("missing current stable-handle Slack provider placeholder");
   const aliasPrefix = process.env.FAKE_SLACK_ALIAS_PREFIX ?? "";
   const placeholder = aliasPrefix
     ? aliasPrefix + "-OPENSHELL-RESOLVE-ENV-" + match[1]
@@ -1508,7 +1508,7 @@ req.end();
 
 export type DiscordGatewayIdentifyToken =
   | { readonly kind: "explicit"; readonly value: string }
-  | { readonly kind: "revisioned-discord-env" };
+  | { readonly kind: "openshell-discord-env" };
 
 export const DISCORD_GATEWAY_CLIENT_SOURCE = String.raw`
 import crypto from "node:crypto";
@@ -1519,12 +1519,12 @@ const port = Number(process.env.FAKE_DISCORD_GATEWAY_PORT);
 function resolveIdentifyToken() {
   const mode = process.env.FAKE_DISCORD_IDENTIFY_MODE || "explicit";
   if (mode === "explicit") return process.env.FAKE_DISCORD_IDENTIFY_TOKEN || "";
-  if (mode !== "revisioned-discord-env") {
+  if (mode !== "openshell-discord-env") {
     throw new Error("Discord Gateway proof identify mode is invalid");
   }
   const value = process.env.DISCORD_BOT_TOKEN || "";
-  if (!/^openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN$/.test(value)) {
-    throw new Error("Discord Gateway proof requires the revision-scoped DISCORD_BOT_TOKEN placeholder");
+  if (!/^openshell:resolve:env:s[a-f0-9]{64}_DISCORD_BOT_TOKEN$/.test(value)) {
+    throw new Error("Discord Gateway proof requires the stable-handle DISCORD_BOT_TOKEN placeholder");
   }
   return value;
 }
@@ -1690,7 +1690,7 @@ export async function runDiscordGatewayClient(
           FAKE_DISCORD_IDENTIFY_MODE: "explicit",
           FAKE_DISCORD_IDENTIFY_TOKEN: options.identifyToken.value,
         }
-      : { FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env" };
+      : { FAKE_DISCORD_IDENTIFY_MODE: "openshell-discord-env" };
   const result = await runSandboxNode(sandbox, DISCORD_GATEWAY_CLIENT_SOURCE, {
     artifactName: "fake-discord-gateway-client",
     env: {

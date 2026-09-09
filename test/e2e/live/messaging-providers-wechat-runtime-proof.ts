@@ -287,8 +287,8 @@ try {
     "installed WeChat runtime resolved an unexpected account base URL",
   );
   invariant(
-    /^openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN$/.test(account.token || ""),
-    "installed WeChat runtime did not load the revision-scoped account token",
+    /^openshell:resolve:env:s[a-f0-9]{64}_WECHAT_BOT_TOKEN$/.test(account.token || ""),
+    "installed WeChat runtime did not load the credential-handle account token",
   );
 
   const relay = await startPolicyRelay();

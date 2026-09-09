@@ -69,7 +69,7 @@ function officialFormulaInfo(): SpawnSyncLikeResult {
     JSON.stringify({
       formulae: [
         {
-          installed: [{ version: "0.0.106" }],
+          installed: [{ version: "0.0.116" }],
           name: "openshell",
           service: { run: HOMEBREW_SERVICE_PROGRAM },
           tap: "nvidia/openshell",

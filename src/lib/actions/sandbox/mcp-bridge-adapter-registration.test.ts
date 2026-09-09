@@ -432,7 +432,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
           {},
           "v11",
         ),
-      ).toThrow("did not expose a revision-scoped credential");
+      ).toThrow("did not expose a generation-scoped credential");
     },
   );
 

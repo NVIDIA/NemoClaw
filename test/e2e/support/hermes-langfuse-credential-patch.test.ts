@@ -12,7 +12,10 @@ import { describe, expect, it } from "vitest";
 import { patchLangfuseCredentials } from "../../../agents/hermes/patch-langfuse-credentials.mts";
 
 const patcherPath = fileURLToPath(
-  new URL("../../../agents/hermes/patch-langfuse-credentials.mts", import.meta.url),
+  new URL(
+    "../../../agents/hermes/patch-langfuse-credentials.mts",
+    import.meta.url,
+  ),
 );
 
 const pinnedValidatorFixture = `\
@@ -69,9 +72,13 @@ assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "sk-lf-secret") is N
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is None
 assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "openshell:resolve:env:v0_LANGFUSE_SECRET_KEY") is None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:v12345678901234567890_LANGFUSE_PUBLIC_KEY") is None
+assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "openshell:resolve:env:s${"a".repeat(64)}_LANGFUSE_SECRET_KEY") is None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:LANGFUSE_SECRET_KEY") is not None
 assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is not None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:v123456789012345678901_LANGFUSE_PUBLIC_KEY") is not None
+assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:s${"a".repeat(63)}_LANGFUSE_PUBLIC_KEY") is not None
+assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:s${"a".repeat(65)}_LANGFUSE_PUBLIC_KEY") is not None
+assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:s${"A".repeat(64)}_LANGFUSE_PUBLIC_KEY") is not None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "prefix-openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is not None
 assert _validate_langfuse_base_url("https://cloud.langfuse.com") is None
 assert _validate_langfuse_base_url("https://langfuse.example.test:8443/base") is None
@@ -103,7 +110,9 @@ describe("Hermes Langfuse OpenShell credential compatibility", () => {
 
   it("fails closed when the pinned Hermes validator shape drifts (#7446)", () => {
     expect(() =>
-      patchLangfuseCredentials(pinnedValidatorFixture.replace("pk-lf-", "pk-live-")),
+      patchLangfuseCredentials(
+        pinnedValidatorFixture.replace("pk-lf-", "pk-live-"),
+      ),
     ).toThrow("Hermes Langfuse credential-name binding shape changed");
     expect(() =>
       patchLangfuseCredentials(
@@ -116,7 +125,9 @@ describe("Hermes Langfuse OpenShell credential compatibility", () => {
   });
 
   it("runs under the image build Node runtime and patches the requested file (#7446)", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-langfuse-cli-"));
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-hermes-langfuse-cli-"),
+    );
     const fixturePath = path.join(directory, "__init__.py");
     fs.writeFileSync(fixturePath, pinnedValidatorFixture, "utf8");
 

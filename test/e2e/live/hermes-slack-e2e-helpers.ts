@@ -510,7 +510,7 @@ lines = set(text.splitlines())
 required = {"API_SERVER_PORT=18642"}
 missing = sorted(required - lines)
 # Slack tokens must not be rendered here. OpenShell binds SLACK_* to the policy
-# endpoint and injects revision-scoped placeholders into the process
+# endpoint and injects credential-handle placeholders into the process
 # environment; a rendered line would shadow them, because Hermes loads this file
 # with override=True.
 def assignment_key(line):
@@ -680,11 +680,11 @@ import sys
 import urllib.error
 import urllib.request
 
-# This probe sends the revision-scoped placeholders through permitted Slack
+# This probe sends credential-handle placeholders through permitted Slack
 # provider egress. Upstream authentication responses prove reachability; the
 # messaging-providers target owns capture-based credential-rewrite proof.
 TLS_CONTEXT = ssl.create_default_context()
-INJECTED_RE = re.compile(r"^openshell:resolve:env:(v[0-9]+_)?(SLACK_BOT_TOKEN|SLACK_APP_TOKEN)$")
+INJECTED_RE = re.compile(r"^openshell:resolve:env:s[a-f0-9]{64}_(SLACK_BOT_TOKEN|SLACK_APP_TOKEN)$")
 
 def injected_token(env_key):
     """Read the value OpenShell injected, never a fabricated alias.
@@ -710,7 +710,7 @@ def injected_token(env_key):
 def call(label, path, env_key, allowed_errors):
     token = injected_token(env_key)
     if not INJECTED_RE.fullmatch(token):
-        print(f"FAIL {label}: {env_key} is not a revision-scoped injected placeholder")
+        print(f"FAIL {label}: {env_key} is not a credential-handle placeholder")
         return False
     req = urllib.request.Request(
         f"https://slack.com/api/{path}",

@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.116");
 
 function writeManagedGatewayDeclaration(home: string): string {
   const declarationPath = path.join(home, "gateway-management.json");

@@ -91,7 +91,7 @@ function directoryChain(directory: string): string[] {
 
 function openshellExecutableAuthority(): HermesPortableOpenShellExecutableAuthority {
   return {
-    version: "0.0.106",
+    version: "0.0.116",
     executable: {
       executablePath: "/usr/bin/openshell",
       device: "1",
@@ -356,7 +356,7 @@ function lifecycleDeps(
           gatewayName: GATEWAY,
           lifecycleGeneration: GENERATION,
           lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
-          openshellVersion: "0.0.106",
+          openshellVersion: "0.0.116",
           ...options.registry,
         }) as SandboxEntry,
       captureOpenShell,
