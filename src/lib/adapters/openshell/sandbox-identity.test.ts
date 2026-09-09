@@ -73,6 +73,12 @@ describe("OpenShell sandbox identity parsing", () => {
 
   it("distinguishes an absent ID from invalid identity evidence (#11302)", () => {
     expect(observeOpenShellSandboxId("Name: alpha\nPhase: Error\n")).toEqual({ kind: "absent" });
+    expect(observeOpenShellSandboxId("Name: alpha\nID:\nPhase: Error\n")).toEqual({
+      kind: "invalid",
+    });
+    expect(observeOpenShellSandboxId("Name: alpha\nID:\nsandbox-alpha\n")).toEqual({
+      kind: "invalid",
+    });
     expect(observeOpenShellSandboxId("ID: first\nID: second\n")).toEqual({ kind: "invalid" });
     expect(observeOpenShellSandboxId("ID: sandbox/alpha\n")).toEqual({ kind: "invalid" });
     expect(observeOpenShellSandboxId("ID: sandbox-alpha\n")).toEqual({

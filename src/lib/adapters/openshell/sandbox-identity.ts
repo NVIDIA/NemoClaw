@@ -74,14 +74,14 @@ export type OpenShellSandboxIdObservation =
   | { readonly kind: "invalid" };
 
 export function observeOpenShellSandboxId(output: string): OpenShellSandboxIdObservation {
-  const matches = [
+  const fields = [
     ...String(output)
       .replace(ANSI_RE, "")
-      .matchAll(/^\s*(?:Id|ID):\s*(\S+)\s*$/gm),
-  ].map((match) => match[1] ?? "");
-  if (matches.length === 0) return { kind: "absent" };
-  return matches.length === 1 && isOpenShellSandboxId(matches[0])
-    ? { kind: "present", id: matches[0] as string }
+      .matchAll(/^[\t ]*(?:Id|ID):[\t ]*(.*)$/gmu),
+  ].map((match) => (match[1] ?? "").trim());
+  if (fields.length === 0) return { kind: "absent" };
+  return fields.length === 1 && isOpenShellSandboxId(fields[0])
+    ? { kind: "present", id: fields[0] as string }
     : { kind: "invalid" };
 }
 
