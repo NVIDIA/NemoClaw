@@ -908,7 +908,10 @@ function deletePortableOpenShellSandbox(
 const GATEWAY_REMOVE_UNSUPPORTED =
   /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
 
-function isExplicitGatewayRegistrationAbsence(output: string, gatewayLabel: string): boolean {
+function classifyGatewayRegistrationAbsence(
+  output: string,
+  gatewayLabel: string,
+): "generic" | "named" | null {
   const clean = output.replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "");
   const escapedLabel = gatewayLabel.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const namedGateway = `(?:['"]${escapedLabel}['"]|${escapedLabel})`;
@@ -920,15 +923,19 @@ function isExplicitGatewayRegistrationAbsence(output: string, gatewayLabel: stri
       .replace(/^Error:\s*/iu, "")
       .replace(/^×\s*/u, "");
   const completeDiagnostic = normalizeLine(clean);
-  return (
+  if (
     /^gateway not found\.?$/iu.test(completeDiagnostic) ||
+    /^No active gateway\.?$/iu.test(completeDiagnostic) ||
     new RegExp(
       `^${structuredNotFound},\\s*message:\\s*['"]gateway\\s+(?:does not exist|not found)['"]\\.?$`,
       "iu",
-    ).test(completeDiagnostic) ||
-    new RegExp(`^No gateway metadata found for ${namedGateway}\\.?$`, "iu").test(
-      completeDiagnostic,
-    ) ||
+    ).test(completeDiagnostic)
+  ) {
+    return "generic";
+  }
+  return new RegExp(`^No gateway metadata found for ${namedGateway}\\.?$`, "iu").test(
+    completeDiagnostic,
+  ) ||
     new RegExp(`^gateway\\s+${namedGateway}\\s+(?:does not exist|not found)\\.?$`, "iu").test(
       completeDiagnostic,
     ) ||
@@ -936,7 +943,16 @@ function isExplicitGatewayRegistrationAbsence(output: string, gatewayLabel: stri
       `^${structuredNotFound},\\s*message:\\s*['"]gateway\\s+${escapedLabel}\\s+(?:does not exist|not found)['"]\\.?$`,
       "iu",
     ).test(completeDiagnostic)
-  );
+    ? "named"
+    : null;
+}
+
+function confirmsGatewayRegistrationAbsence(
+  runtime: UninstallRuntime,
+  gatewayLabel: string,
+): boolean {
+  const gatewayNames = collectLiveOpenShellGatewayNames(runtime);
+  return gatewayNames !== null && !gatewayNames.has(gatewayLabel);
 }
 
 function gatewayRegistrationRemovalFailureMessage(
@@ -965,7 +981,11 @@ function removeGatewayRegistration(
   }
 
   const removeOutput = `${removeResult.stdout}\n${removeResult.stderr}`;
-  if (isExplicitGatewayRegistrationAbsence(removeOutput, gatewayLabel)) {
+  const removeAbsence = classifyGatewayRegistrationAbsence(removeOutput, gatewayLabel);
+  if (
+    removeAbsence === "named" ||
+    (removeAbsence === "generic" && confirmsGatewayRegistrationAbsence(runtime, gatewayLabel))
+  ) {
     runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
     return true;
   }
@@ -991,11 +1011,13 @@ function removeGatewayRegistration(
     runtime.log(`Destroyed legacy gateway '${gatewayLabel}'`);
     return true;
   }
+  const destroyAbsence = classifyGatewayRegistrationAbsence(
+    `${destroyResult.stdout}\n${destroyResult.stderr}`,
+    gatewayLabel,
+  );
   if (
-    isExplicitGatewayRegistrationAbsence(
-      `${destroyResult.stdout}\n${destroyResult.stderr}`,
-      gatewayLabel,
-    )
+    destroyAbsence === "named" ||
+    (destroyAbsence === "generic" && confirmsGatewayRegistrationAbsence(runtime, gatewayLabel))
   ) {
     runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
     return true;

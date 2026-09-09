@@ -319,6 +319,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
 
   it.each([
     { name: "a permission error", diagnostic: "permission denied" },
+    { name: "an unverified generic absence", diagnostic: "gateway not found" },
     { name: "an unrelated not-found error", diagnostic: "gateway service endpoint not found" },
     {
       name: "a generic absence plus another failure",
