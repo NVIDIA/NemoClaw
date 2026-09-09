@@ -11,6 +11,7 @@ import {
   requireDcodeBaseImageReference,
 } from "../fixtures/dcode-base-image.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
+import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -70,11 +71,12 @@ export function buildCloudExperimentalCommandEnv(
 ): NodeJS.ProcessEnv {
   const candidateDcodeBaseImage =
     options.dcodeBaseImageReference ?? base[DCODE_BASE_IMAGE_ENV]?.trim();
-  const dcodeBaseImage = options.forwardDcodeBaseImage && candidateDcodeBaseImage
-    ? requireDcodeBaseImageReference(
-        { [DCODE_BASE_IMAGE_ENV]: candidateDcodeBaseImage },
-      )
-    : undefined;
+  const dcodeBaseImage =
+    base.E2E_WORKLOAD_SOURCE !== "managed-image" &&
+    options.forwardDcodeBaseImage &&
+    candidateDcodeBaseImage
+      ? requireDcodeBaseImageReference({ [DCODE_BASE_IMAGE_ENV]: candidateDcodeBaseImage })
+      : undefined;
   return {
     ...buildAvailabilityProbeEnv(base),
     CLOUD_EXPERIMENTAL_MODEL: base.NEMOCLAW_MODEL,
@@ -110,31 +112,6 @@ export function cloudExperimentalCheckTimeoutMs(scriptPath: string): number {
   return DEFAULT_CHECK_TIMEOUT_MS;
 }
 
-async function assertDeepAgentsRuntimeObserved(
-  sandboxName: string,
-  context: Pick<E2ETargetFixtures, "host">,
-): Promise<void> {
-  const result = await context.host.command(
-    "openshell",
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--",
-      "bash",
-      "-c",
-      "test -d /sandbox/.deepagents && command -v dcode >/dev/null",
-    ],
-    {
-      artifactName: "cloud-experimental-deepagents-runtime",
-      env: buildCloudExperimentalCommandEnv(sandboxName, ""),
-      timeoutMs: 30_000,
-    },
-  );
-  expect(result.exitCode, `Deep Agents Code runtime marker missing: ${resultText(result)}`).toBe(0);
-}
-
 export async function runE2eCloudExperimentalChecks(
   targetId: string,
   sandboxName: string,
@@ -148,9 +125,27 @@ export async function runE2eCloudExperimentalChecks(
     "e2e-cloud-experimental-checks.json",
     buildCloudExperimentalChecksEvidence(targetId, sandboxName, checkScripts),
   );
-  await Promise.resolve(
-    checkScripts.length > 0 ? assertDeepAgentsRuntimeObserved(sandboxName, context) : undefined,
-  );
+  if (checkScripts.length > 0) {
+    const result = await context.host.command(
+      "openshell",
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        "--",
+        "bash",
+        "-c",
+        "test -d /sandbox/.deepagents && command -v dcode >/dev/null",
+      ],
+      {
+        artifactName: "cloud-experimental-deepagents-runtime",
+        env: buildCloudExperimentalCommandEnv(sandboxName, ""),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(result.exitCode, `Deep Agents Code runtime marker missing: ${resultText(result)}`).toBe(0);
+  }
   for (const scriptPath of checkScripts) {
     const result = await context.host.command("bash", [path.join(REPO_ROOT, scriptPath)], {
       artifactName: `cloud-experimental-${path.basename(scriptPath, ".sh")}`,
@@ -163,5 +158,11 @@ export async function runE2eCloudExperimentalChecks(
       timeoutMs: cloudExperimentalCheckTimeoutMs(scriptPath),
     });
     assertRequiredCloudExperimentalResult(scriptPath, result);
+    if (
+      scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK &&
+      process.env.E2E_WORKLOAD_SOURCE === "managed-image"
+    ) {
+      assertStockManagedImageReceipt({ sandboxName, expectedAgent: "langchain-deepagents-code" });
+    }
   }
 }

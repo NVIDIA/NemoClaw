@@ -193,26 +193,13 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     (step) => step.name === "Install locked runtime",
   );
   const runtimeInstallScript = String(runtimeInstall?.run ?? "");
-  const runtimeInstallLines = runtimeInstallScript.split("\n").map((line) => line.trim());
-  const sourceGuardIndex = runtimeInstallLines.indexOf('if [ ! -r "$UBUNTU_APT_SOURCES" ]; then');
-  const expectedSourceGuard = [
-    'if [ ! -r "$UBUNTU_APT_SOURCES" ]; then',
-    'echo "::error::Required Ubuntu APT source is unavailable: $UBUNTU_APT_SOURCES"',
-    "exit 1",
-    "fi",
-  ];
-  const aptGetInvocations = runtimeInstallLines.filter((line) => line.includes("sudo apt-get"));
-  const scopedAptPrefix = 'sudo apt-get "${APT_SOURCE_OPTIONS[@]}" ';
+  const pinnedPackageInstall =
+    'bash "$ADVISOR_DIR/.github/actions/ci-install-pinned-ubuntu-packages.sh" "fd-find=${FD_FIND_VERSION}" "ripgrep=${RIPGREP_VERSION}"';
   if (
-    !runtimeInstallScript.includes('UBUNTU_APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"') ||
-    sourceGuardIndex === -1 ||
-    !expectedSourceGuard.every(
-      (expectedLine, offset) => runtimeInstallLines[sourceGuardIndex + offset] === expectedLine,
-    ) ||
-    !runtimeInstallScript.includes("Dir::Etc::sourcelist=$UBUNTU_APT_SOURCES") ||
-    !runtimeInstallScript.includes("Dir::Etc::sourceparts=-") ||
-    aptGetInvocations.length !== 2 ||
-    aptGetInvocations.some((invocation) => !invocation.startsWith(scopedAptPrefix))
+    !runtimeInstallScript.includes(pinnedPackageInstall) ||
+    runtimeInstallScript.includes("apt-get") ||
+    runtimeInstallScript.includes("UBUNTU_APT_SOURCES") ||
+    runtimeInstallScript.includes("APT_SOURCE_OPTIONS")
   ) {
     errors.push("Unified advisor runtime package install must use only Ubuntu archive sources");
   }
