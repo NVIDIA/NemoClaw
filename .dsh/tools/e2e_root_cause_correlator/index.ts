@@ -105,7 +105,7 @@ export default async function e2e_root_cause_correlator(input: {
         (path) => file === path || file.startsWith(`${path}/`) || path.startsWith(`${file}/`),
       ),
     );
-    const externalSignature = key.includes("dependency-audit") || key.includes("sandbox-deleting");
+    const externalSignature = key.includes("sandbox-deleting");
     const classification =
       matched.length > 0
         ? "source-change-candidate"
