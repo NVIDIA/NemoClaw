@@ -428,21 +428,24 @@ describe("managed startup agent environment", () => {
   });
 
   it.each([
-    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "0", /positive safe integer/u],
-    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "1.5", /positive safe integer/u],
+    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "0", /positive integer/u],
+    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "1.5", /positive integer/u],
     [
       "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
       String(Number.MAX_SAFE_INTEGER + 1),
-      /positive safe integer/u,
+      /positive integer/u,
     ],
-    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "Infinity", /finite positive seconds/u],
-    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "NaN", /finite positive seconds/u],
-    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "not-a-number", /finite positive seconds/u],
-    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "1\n", /single-line text/u],
-    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "\r1", /single-line text/u],
-    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "1\0", /single-line text/u],
-    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS", "-0.1", /finite positive seconds/u],
-    ["NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", " ", /finite positive seconds/u],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "Infinity", /positive, finite/u],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "NaN", /positive, finite/u],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "not-a-number", /positive, finite/u],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "1\n", /positive, finite/u],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "\r1", /positive, finite/u],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "1\0", /positive, finite/u],
+    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS", "-0.1", /positive, finite/u],
+    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS", "1000000001", /1000000000/u],
+    ["NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS", "2147484", /2147483/u],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "1000000000001", /1000000000000/u],
+    ["NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", " ", /positive, finite/u],
   ] as const)("rejects invalid application runtime input %s=%s", (name, value, message) => {
     expect(() =>
       mapManagedStartupProfileToAgentEnvironment(openClawProfile(), { [name]: value }),

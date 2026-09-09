@@ -3814,7 +3814,7 @@ OpenClaw-specific onboarding configuration:
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the generated OpenClaw config. Set `0m` to disable periodic agent turns. |
 | `NEMOCLAW_EXTRA_AGENTS_JSON` | JSON array of OpenClaw secondary-agent entries | Adds secondary agents to `agents.list`. Refer to [Extra OpenClaw agents](#extra-openclaw-agents) for the entry schema, path constraints, and validation rules. |
 
-`Infinity`, `NaN`, unparseable text, and values outside the ranges above are rejected for these auto-pair controls when the sandbox is created, so they never reach the sandbox. A sandbox started outside the NemoClaw CLI skips those checks; there, any value the watcher cannot use falls back to the documented default rather than stopping the watcher.
+NemoClaw rejects `Infinity`, `NaN`, unparseable text, and values outside the ranges of these three auto-pair controls before it creates the sandbox. The managed image entrypoint enforces the same ranges. A direct process environment assignment that bypasses the managed entrypoint uses the documented default when the watcher cannot use the value.
 
 </AgentOnly>
 <AgentOnly variant="hermes">

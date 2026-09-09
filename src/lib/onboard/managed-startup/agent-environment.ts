@@ -5,6 +5,11 @@ import { Buffer } from "node:buffer";
 
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import {
+  OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES,
+  openClawAutoPairRuntimeEnvRequirement,
+  parseOpenClawAutoPairRuntimeEnvValue,
+} from "../openclaw-runtime-env";
+import {
   MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
@@ -136,15 +141,6 @@ type MutableEnvironment = Record<string, string>;
 type ApplicationEnvironment = Readonly<Record<string, string | undefined>>;
 const EMPTY_APPLICATION_ENVIRONMENT: ApplicationEnvironment = Object.freeze({});
 
-const OPENCLAW_APPLICATION_RUNTIME_INPUTS = Object.freeze([
-  ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "positive-finite-seconds"],
-  ["NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS", "positive-finite-seconds"],
-  ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS", "positive-finite-seconds"],
-  ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "positive-safe-integer"],
-  ["NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS", "positive-finite-seconds"],
-  ["NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", "positive-finite-seconds"],
-] as const);
-
 function booleanFlag(value: boolean): "0" | "1" {
   return value ? "1" : "0";
 }
@@ -175,26 +171,16 @@ function sortedEnvironment(environment: MutableEnvironment): Readonly<Record<str
 }
 
 function canonicalApplicationRuntimeValue(
-  name: string,
+  rule: (typeof OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES)[number],
   raw: string,
-  kind: "positive-finite-seconds" | "positive-safe-integer",
 ): string {
-  if (raw.includes("\0") || /[\r\n]/u.test(raw)) {
-    throw new ManagedStartupAgentEnvironmentError(`${name} must be single-line text`);
-  }
-  const value = Number(raw.trim());
-  const valid =
-    kind === "positive-safe-integer"
-      ? Number.isSafeInteger(value) && value > 0
-      : Number.isFinite(value) && value > 0;
-  if (!valid) {
+  const parsed = parseOpenClawAutoPairRuntimeEnvValue(rule, raw);
+  if (!parsed) {
     throw new ManagedStartupAgentEnvironmentError(
-      `${name} must be ${
-        kind === "positive-safe-integer" ? "a positive safe integer" : "finite positive seconds"
-      }`,
+      `${rule.name} must be ${openClawAutoPairRuntimeEnvRequirement(rule)}`,
     );
   }
-  return String(value);
+  return String(parsed.value);
 }
 
 function applicationRuntimePlan(
@@ -203,10 +189,10 @@ function applicationRuntimePlan(
 ): ManagedStartupApplicationRuntimePlan {
   const exportEnvironment: MutableEnvironment = {};
   if (profile.agent === "openclaw") {
-    for (const [name, kind] of OPENCLAW_APPLICATION_RUNTIME_INPUTS) {
-      const raw = environment[name];
+    for (const rule of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES) {
+      const raw = environment[rule.name];
       if (raw !== undefined) {
-        exportEnvironment[name] = canonicalApplicationRuntimeValue(name, raw, kind);
+        exportEnvironment[rule.name] = canonicalApplicationRuntimeValue(rule, raw);
       }
     }
   }
@@ -216,8 +202,8 @@ function applicationRuntimePlan(
     ).map(({ input }) => input),
   );
   if (profile.agent !== "openclaw") {
-    for (const [name] of OPENCLAW_APPLICATION_RUNTIME_INPUTS) {
-      unsetEnvironment.add(name);
+    for (const rule of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES) {
+      unsetEnvironment.add(rule.name);
     }
   }
   return Object.freeze({

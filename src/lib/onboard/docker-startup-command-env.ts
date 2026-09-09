@@ -7,63 +7,20 @@ import { formatEnvAssignment } from "../core/url-utils";
 import { isValidProxyHost, isValidProxyPort } from "./dockerfile-patch";
 import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
 import { HERMES_API_PORT_ENV, resolveOnboardHermesApiPort } from "./hermes-api-port";
-import {
-  appendHermesDashboardEnvArgs,
-  type HermesDashboardOnboardState,
-} from "./hermes-dashboard";
+import { appendHermesDashboardEnvArgs, type HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
-import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
+import {
+  appendOpenClawRuntimeEnvArgs,
+  OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES,
+  openClawAutoPairRuntimeEnvRequirement,
+  parseOpenClawAutoPairRuntimeEnvValue,
+} from "./openclaw-runtime-env";
 
 const STARTUP_COMMAND_TOKEN = /^[A-Za-z0-9_./:=,@%+\-\[\]]+$/u;
-const OPENCLAW_AUTO_PAIR_SECONDS_MAX = 1e308;
-const OPENCLAW_AUTO_PAIR_SECONDS_VALUE =
-  /^\+?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]{1,3})?$/u;
-const OPENCLAW_AUTO_PAIR_POLLS_VALUE = /^\+?[0-9]+$/u;
-const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
-  ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "seconds"],
-  ["NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS", "seconds"],
-  ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS", "seconds"],
-  ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "polls"],
-  ["NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS", "seconds"],
-  ["NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", "seconds"],
-] as const;
 const OPENCLAW_DIAGNOSTIC_RUNTIME_ENV_KEYS = ["NEMOCLAW_MCP_SHADOW_DIAGNOSTICS"] as const;
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV = "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS";
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS = 1500;
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS = 10_000;
-
-/**
- * Bound an auto-pair scheduler knob before it reaches the sandbox argv.
- *
- * These names are forwarded straight from the operator's environment, so the
- * launch renderer is the first place that can reject a value. The grammar
- * matches the one the image entrypoint enforces in
- * `scripts/lib/entrypoint-env-wrapper.sh`, so a knob that survives here cannot
- * be rejected later by the container it is being rendered for. Values that
- * parse to a non-finite float, such as `Infinity` or `1e309`, are what the
- * auto-pair watcher cannot survive (#11161).
- */
-function openClawAutoPairRuntimeEnvValue(
-  key: string,
-  raw: string,
-  kind: "seconds" | "polls",
-): string {
-  const value = Number(raw);
-  const bounded =
-    kind === "polls"
-      ? OPENCLAW_AUTO_PAIR_POLLS_VALUE.test(raw) && Number.isSafeInteger(value)
-      : OPENCLAW_AUTO_PAIR_SECONDS_VALUE.test(raw) &&
-        Number.isFinite(value) &&
-        value < OPENCLAW_AUTO_PAIR_SECONDS_MAX;
-  if (!bounded || !(value > 0)) {
-    throw new Error(
-      kind === "polls"
-        ? `${key} must be a positive integer no greater than ${Number.MAX_SAFE_INTEGER}.`
-        : `${key} must be a positive, finite number of seconds.`,
-    );
-  }
-  return raw;
-}
 
 function appendOpenClawAutoPairRuntimeEnvArgs(
   envArgs: string[],
@@ -71,10 +28,14 @@ function appendOpenClawAutoPairRuntimeEnvArgs(
   env: NodeJS.ProcessEnv,
 ): void {
   if (agent && agent.name !== "openclaw") return;
-  for (const [key, kind] of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS) {
-    const value = env[key]?.trim();
-    if (value)
-      envArgs.push(formatEnvAssignment(key, openClawAutoPairRuntimeEnvValue(key, value, kind)));
+  for (const rule of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES) {
+    const raw = env[rule.name];
+    if (raw === undefined || raw.trim() === "") continue;
+    const parsed = parseOpenClawAutoPairRuntimeEnvValue(rule, raw);
+    if (!parsed) {
+      throw new Error(`${rule.name} must be ${openClawAutoPairRuntimeEnvRequirement(rule)}.`);
+    }
+    envArgs.push(formatEnvAssignment(rule.name, parsed.input));
   }
 }
 

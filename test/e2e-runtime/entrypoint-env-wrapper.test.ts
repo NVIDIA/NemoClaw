@@ -7,6 +7,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import {
+  OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES,
+  parseOpenClawAutoPairRuntimeEnvValue,
+} from "../../src/lib/onboard/openclaw-runtime-env";
 import { sliceBlock } from "../helpers/corporate-ca-support";
 
 const HELPER = path.join(
@@ -18,6 +22,12 @@ const HELPER = path.join(
   "entrypoint-env-wrapper.sh",
 );
 const OPENCLAW_START = path.join(import.meta.dirname, "..", "..", "scripts", "nemoclaw-start.sh");
+const AUTO_PAIR_PARITY_CASES = OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES.flatMap((rule) =>
+  (rule.kind === "polls"
+    ? ["1", String(rule.maximum), String(rule.maximum + 1), "0.5", "1e1"]
+    : ["0.05", String(rule.maximum), String(rule.maximum + 1), "1e-324", "3e-324", ".1e309"]
+  ).map((value) => ({ rule, value })),
+);
 
 function runNormalizer(argv: readonly string[]) {
   const harness = [
@@ -217,6 +227,22 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=.1e310",
     },
     {
+      name: "an interval above the watcher sleep limit",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=1000000001",
+    },
+    {
+      name: "a slow interval above the watcher sleep limit",
+      assignment: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=1.000000001e9",
+    },
+    {
+      name: "a run timeout above the subprocess limit",
+      assignment: "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=2147484",
+    },
+    {
+      name: "a watcher deadline above its limit",
+      assignment: "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=1000000000001",
+    },
+    {
       name: "an infinite watcher deadline",
       assignment: "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=Infinity",
     },
@@ -251,16 +277,6 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       probe: "FAST_REENTRY_INTERVAL=6e2",
     },
     {
-      name: "a fractional mantissa the launch renderer also accepts",
-      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=.000000001e309",
-      probe: "FAST_REENTRY_INTERVAL=.000000001e309",
-    },
-    {
-      name: "a leading-dot mantissa at the finite ceiling",
-      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=.1e308",
-      probe: "FAST_REENTRY_INTERVAL=.1e308",
-    },
-    {
       name: "a month-long interval",
       assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=2592000",
       probe: "FAST_REENTRY_INTERVAL=2592000",
@@ -286,6 +302,23 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(probe);
   });
+
+  it.each(AUTO_PAIR_PARITY_CASES)(
+    "matches the shared $rule.name grammar and limit for $value at the entrypoint boundary (#11161)",
+    ({ rule, value }) => {
+      const expected = parseOpenClawAutoPairRuntimeEnvValue(rule, value) !== null;
+      const result = runNormalizer([
+        "env",
+        `${rule.name}=${value}`,
+        "nemoclaw-start",
+        "/bin/sh",
+        "-c",
+        ":",
+      ]);
+
+      expect(result.status, `${rule.name}=${value}`).toBe(expected ? 0 : 1);
+    },
+  );
 
   it("unwraps the sandbox-create env self-wrapper and applies dashboard port defaults", () => {
     const normalizer = fs.readFileSync(

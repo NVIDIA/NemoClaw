@@ -495,7 +495,7 @@ describe("managed startup image runtime", () => {
       applyManagedStartupRootRequest(request, {
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "NaN",
       }),
-    ).rejects.toThrow(/finite positive seconds/u);
+    ).rejects.toThrow(/positive, finite number of seconds/u);
     expect(lstat).not.toHaveBeenCalled();
     expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
   });

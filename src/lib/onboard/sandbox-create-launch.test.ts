@@ -451,6 +451,26 @@ describe("prepareSandboxCreateLaunch", () => {
       key: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
       value: "1e309",
     },
+    {
+      name: "an interval above the watcher sleep limit",
+      key: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
+      value: "1000000001",
+    },
+    {
+      name: "a slow interval above the watcher sleep limit",
+      key: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
+      value: "1.000000001e9",
+    },
+    {
+      name: "a run timeout above the subprocess limit",
+      key: "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
+      value: "2147484",
+    },
+    {
+      name: "a deadline above the watcher limit",
+      key: "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
+      value: "1000000000001",
+    },
     { name: "a suffixed slow interval", key: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", value: "5s" },
     {
       name: "a slow interval with an underscore separator",
@@ -487,8 +507,9 @@ describe("prepareSandboxCreateLaunch", () => {
       createArgs: [],
       env: {
         NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2592000",
-        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "6e2",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "1e9",
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "9007199254740991",
+        NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "2147483",
       },
       extraPlaceholderKeys: [],
       getDashboardForwardPort: vi.fn(() => {
@@ -501,8 +522,9 @@ describe("prepareSandboxCreateLaunch", () => {
     });
 
     expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=2592000");
-    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=6e2");
+    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=1e9");
     expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=9007199254740991");
+    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=2147483");
   });
 
   it("adds Hermes dashboard env and skips OpenClaw env for non-OpenClaw agents", () => {

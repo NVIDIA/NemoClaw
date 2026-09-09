@@ -104,6 +104,10 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
       name: "a run timeout past the subprocess limit",
       input: { NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "2147484" },
     },
+    {
+      name: "a watcher deadline past its comparison limit",
+      input: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1000000000001" },
+    },
     { name: "an infinite watcher deadline", input: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "inf" } },
   ])("keeps the auto-pair watcher alive and on defaults for $name (#11161)", ({ input }) => {
     const resolved = resolveSchedulerConstants(input);
@@ -139,6 +143,11 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
       name: "a year-long watcher deadline",
       input: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "31536000" },
       expected: { DEADLINE: "31536000" },
+    },
+    {
+      name: "a run timeout at the subprocess limit",
+      input: { NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "2147483" },
+      expected: { RUN_TIMEOUT: "2147483.0" },
     },
   ])(
     "bounds each knob by the limit that applies to it, honouring $name (#11161)",

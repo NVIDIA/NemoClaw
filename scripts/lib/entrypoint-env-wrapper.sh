@@ -2,65 +2,53 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Bounded numeric grammars for the OpenClaw auto-pair scheduler knobs. These
-# names are forwarded verbatim from the operator's environment, so the value,
-# not just the name, has to be admitted deliberately. The contract matches the
-# launch renderer's: strictly positive, and finite once parsed as a double.
-#
-# Bash has no floating-point arithmetic, and bc/awk/python are unavailable to a
-# PID 1 entrypoint in a minimal image, so both properties are decided
-# structurally. The grammar admits no sign, so a value is greater than zero
-# exactly when a non-zero digit survives deleting the separators and zeros. The
-# magnitude is the decimal position of the first significant digit, taken from
-# the integer digits when there are any and otherwise from the leading zeros of
-# the fraction, plus the decimal exponent. Capping it at 308 keeps the value
-# below 1e308, so it can never parse to infinity; flooring it at -324 rejects a
-# value that would underflow to zero as a double, which the launch renderer
-# already rejects for not being positive. The bounds are deliberately no
-# stricter than the renderer's, so a value the CLI admits cannot be refused here
-# and fail the sandbox late.
-# Digit ranges are enumerated rather than written [0-9] so the match does not
-# depend on an inherited LC_COLLATE.
+# Bounded numeric grammar for the OpenClaw auto-pair scheduler knobs. Bash's
+# printf builtin converts each admitted decimal with the same binary64 boundary
+# behavior as the TypeScript launch validator. The normalized values can then
+# be compared without bc, awk, or Python, which are unavailable to this PID 1
+# entrypoint. Digit ranges are explicit so inherited collation cannot widen the
+# grammar.
 #
 # An empty value is admitted: the watcher reads it as "use the built-in
 # default", which is what an unset name already does.
 _nemoclaw_bounded_seconds_value() {
   local _nemoclaw_value
-  local _nemoclaw_mantissa
-  local _nemoclaw_integer
-  local _nemoclaw_exponent
-  local _nemoclaw_fraction
-  local _nemoclaw_leading
-  local _nemoclaw_magnitude
+  local _nemoclaw_maximum="${2:?maximum is required}"
+  local _nemoclaw_normalized
+  local _nemoclaw_normalized_maximum
+  local _nemoclaw_value_exponent
+  local _nemoclaw_maximum_exponent
+  local _nemoclaw_value_digits
+  local _nemoclaw_maximum_digits
   [ -n "${1-}" ] || return 0
   _nemoclaw_value="${1#+}"
   if [[ ! "$_nemoclaw_value" =~ ^([0123456789]+(\.[0123456789]*)?|\.[0123456789]+)([eE][+-]?[0123456789]{1,3})?$ ]]; then
     return 1
   fi
-  _nemoclaw_mantissa="${_nemoclaw_value%%[eE]*}"
-  case "${_nemoclaw_mantissa//[.0]/}" in
-    '') return 1 ;;
+  _nemoclaw_normalized=""
+  _nemoclaw_normalized_maximum=""
+  LC_NUMERIC=C printf -v _nemoclaw_normalized '%.17e' "$_nemoclaw_value" 2>/dev/null || :
+  LC_NUMERIC=C printf -v _nemoclaw_normalized_maximum '%.17e' "$_nemoclaw_maximum" 2>/dev/null || :
+  case "$_nemoclaw_normalized" in
+    0.00000000000000000e+00 | inf | nan | '') return 1 ;;
   esac
-  _nemoclaw_integer="${_nemoclaw_mantissa%%.*}"
-  _nemoclaw_integer="${_nemoclaw_integer#"${_nemoclaw_integer%%[!0]*}"}"
-  _nemoclaw_fraction="${_nemoclaw_mantissa#*.}"
-  _nemoclaw_exponent=0
-  case "$_nemoclaw_value" in
-    *[eE]*)
-      _nemoclaw_exponent="${_nemoclaw_value##*[eE]}"
-      case "$_nemoclaw_exponent" in
-        -*) _nemoclaw_exponent="-$((10#${_nemoclaw_exponent#-}))" ;;
-        *) _nemoclaw_exponent="$((10#${_nemoclaw_exponent#+}))" ;;
-      esac
-      ;;
+  _nemoclaw_value_exponent="${_nemoclaw_normalized##*e}"
+  _nemoclaw_maximum_exponent="${_nemoclaw_normalized_maximum##*e}"
+  case "$_nemoclaw_value_exponent" in
+    -*) _nemoclaw_value_exponent="-$((10#${_nemoclaw_value_exponent#-}))" ;;
+    *) _nemoclaw_value_exponent="$((10#${_nemoclaw_value_exponent#+}))" ;;
   esac
-  if [ -n "$_nemoclaw_integer" ]; then
-    _nemoclaw_magnitude=$((${#_nemoclaw_integer} + _nemoclaw_exponent))
-  else
-    _nemoclaw_leading="${_nemoclaw_fraction%%[!0]*}"
-    _nemoclaw_magnitude=$((_nemoclaw_exponent - ${#_nemoclaw_leading}))
-  fi
-  [ "$_nemoclaw_magnitude" -le 308 ] && [ "$_nemoclaw_magnitude" -ge -324 ]
+  case "$_nemoclaw_maximum_exponent" in
+    -*) _nemoclaw_maximum_exponent="-$((10#${_nemoclaw_maximum_exponent#-}))" ;;
+    *) _nemoclaw_maximum_exponent="$((10#${_nemoclaw_maximum_exponent#+}))" ;;
+  esac
+  [ "$_nemoclaw_value_exponent" -lt "$_nemoclaw_maximum_exponent" ] && return 0
+  [ "$_nemoclaw_value_exponent" -eq "$_nemoclaw_maximum_exponent" ] || return 1
+  _nemoclaw_value_digits="${_nemoclaw_normalized%%e*}"
+  _nemoclaw_value_digits="${_nemoclaw_value_digits//./}"
+  _nemoclaw_maximum_digits="${_nemoclaw_normalized_maximum%%e*}"
+  _nemoclaw_maximum_digits="${_nemoclaw_maximum_digits//./}"
+  [ "$_nemoclaw_value_digits" -le "$_nemoclaw_maximum_digits" ]
 }
 
 # The fast-reentry counter is an integer, so it carries the launch renderer's
@@ -221,12 +209,23 @@ nemoclaw_normalize_entrypoint_env_wrapper() {
           return 1
         fi
         ;;
-      NEMOCLAW_AUTO_PAIR_DEADLINE_SECS | \
-        NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS | \
-        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS | \
-        NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS | \
+      NEMOCLAW_AUTO_PAIR_DEADLINE_SECS | NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS)
+        if ! _nemoclaw_bounded_seconds_value "${_nemoclaw_token#*=}" 1000000000000; then
+          printf '%s\n' \
+            '[SECURITY] Managed startup env wrapper contains an out-of-range assignment.' >&2
+          return 1
+        fi
+        ;;
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS | \
         NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS)
-        if ! _nemoclaw_bounded_seconds_value "${_nemoclaw_token#*=}"; then
+        if ! _nemoclaw_bounded_seconds_value "${_nemoclaw_token#*=}" 1000000000; then
+          printf '%s\n' \
+            '[SECURITY] Managed startup env wrapper contains an out-of-range assignment.' >&2
+          return 1
+        fi
+        ;;
+      NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS)
+        if ! _nemoclaw_bounded_seconds_value "${_nemoclaw_token#*=}" 2147483; then
           printf '%s\n' \
             '[SECURITY] Managed startup env wrapper contains an out-of-range assignment.' >&2
           return 1
