@@ -247,7 +247,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "gateway-supervisor.sh"));
     writeFixture(path.join("scripts", "lib", "sandbox-rlimits.sh"));
     writeFixture(path.join("scripts", "lib", "openclaw_device_approval_policy.py"));
-    writeFixture(path.join("scripts", "lib", "clean_runtime_shell_env_shim.py"));
     writeFixture(path.join("scripts", "lib", "normalize_mutable_config_perms.py"));
     writeFixture(path.join("scripts", "lib", "refresh-openclaw-wechat-placeholder.py"));
     writeFixture(
@@ -258,6 +257,7 @@ describe("sandbox build context staging", () => {
     );
     writeFixture(path.join("src", "lib", "tool-disclosure.ts"));
     for (const relativePath of [
+      "extra-agents-validation.ts",
       path.join("core", "json-types.ts"),
       path.join("core", "ports.ts"),
       path.join("onboard", "managed-bootstrap", "envelope.ts"),
@@ -496,6 +496,7 @@ describe("sandbox build context staging", () => {
 
   function expectStagedManagedStartupRuntimeSources(buildCtx: string, sourceRoot: string) {
     for (const relativePath of [
+      path.join("src", "lib", "extra-agents-validation.ts"),
       path.join("src", "lib", "core", "json-types.ts"),
       path.join("src", "lib", "core", "ports.ts"),
       path.join("src", "lib", "onboard", "managed-bootstrap", "envelope.ts"),

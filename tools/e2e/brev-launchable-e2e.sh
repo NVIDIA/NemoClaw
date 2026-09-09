@@ -1000,7 +1000,8 @@ export NEMOCLAW_SANDBOX_NAME=e2e-staging
 ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
 printf 'NEMOCLAW_FULL_E2E_PASSED\n'
 REMOTE
-} | timeout "${FULL_E2E_TIMEOUT_SECONDS:-3000}" ssh -T -o ConnectTimeout=10 -o LogLevel=ERROR \
+  # The wrapper adds five minutes for remote-shell and Vitest lifecycle overhead beyond the test.
+} | timeout "${FULL_E2E_TIMEOUT_SECONDS:-4500}" ssh -T -o ConnectTimeout=10 -o LogLevel=ERROR \
   "$INSTANCE_NAME" 'bash -s' >"$raw_log" 2>&1
 e2e_status=$?
 set -e

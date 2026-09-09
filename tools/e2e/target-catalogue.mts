@@ -18,6 +18,7 @@ import {
   runtimeCoverageVariant,
   runtimeExecutionId,
 } from "./gateway-runtime.mts";
+import { FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES } from "./full-e2e-timeout-contract.mts";
 import {
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
@@ -736,7 +737,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
-    timeoutMinutes: 75,
+    timeoutMinutes: FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
@@ -744,6 +745,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "test/e2e/live/launch-agent-turn.ts",
       "test/e2e/live/pr-base-comparison.ts",
       "src/lib/tunnel/gateway-stop-script.ts",
+      "tools/e2e/full-e2e-timeout-contract.mts",
     ],
     environment: {
       ...hostedInference,
@@ -1308,13 +1310,14 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     testFile: "test/e2e/live/full-e2e.test.ts",
-    timeoutMinutes: 75,
+    timeoutMinutes: FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
     installMode: "credential-free",
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
     shard: "openclaw",
     artifactLayout: "flat-shard",
+    owningPaths: ["tools/e2e/full-e2e-timeout-contract.mts"],
     environment: {
       ...hostedInference,
       ...nonInteractive,
