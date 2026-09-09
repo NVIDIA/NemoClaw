@@ -259,6 +259,8 @@ ${serviceIdentityCheck}`,
     const revisionExpression = "${{ github.event.pull_request.head.sha || github.sha }}";
 
     expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
+    expect(workflow.on.push.paths).toContain("tools/e2e/full-e2e-timeout-contract.mts");
+    expect(workflow.on.pull_request.paths).not.toContain("tools/e2e/full-e2e-timeout-contract.mts");
     expect(workflow.on.pull_request.paths).toEqual(
       expect.arrayContaining([
         "src/lib/onboard/experimental/portable-host-preparation.ts",
@@ -274,6 +276,7 @@ ${serviceIdentityCheck}`,
     expect(upload?.if).toBe("always()");
     expect(upload?.with?.name).toContain(revisionExpression);
     expect(workflow.jobs["portable-launch"]?.if).toBe("${{ github.ref == 'refs/heads/main' }}");
+    expect(workflow.jobs["portable-launch"]?.["timeout-minutes"]).toBe(135);
     expect(liveSource).toContain('run("git", ["rev-parse", "HEAD"])');
     expect(liveSource).toContain('"network", "rm", disposableNetworkId');
     expect(liveSource).not.toContain('"network", "rm", "--force"');

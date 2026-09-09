@@ -376,6 +376,15 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/automation/e2e/platform-vitest-main-workflow.test.ts"),
   },
   {
+    pattern: /(?:^|\/)tools\/e2e\/full-e2e-timeout-contract\.mts$/,
+    testsToRun: runTests(
+      "test/automation/e2e/e2e-recommendations.test.ts",
+      "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test/e2e/support/security-posture-workflow-boundary.test.ts",
+    ),
+  },
+  {
     pattern:
       /(?:^|\/)\.agents\/skills\/(?:nemoclaw-maintainer-cut-release-tag\/SKILL\.md|nemoclaw-maintainer-evening\/SKILL\.md|nemoclaw-maintainer-release-notes\/SKILL\.md|nemoclaw-maintainer-policies\/references\/release-train\.md)$/,
     testsToRun: runTests("test/automation/releases/release-post-tag-follow-through.test.ts"),
