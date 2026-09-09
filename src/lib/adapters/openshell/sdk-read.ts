@@ -21,6 +21,10 @@ type Options = Readonly<{ signal: AbortSignal }>;
 export interface OpenShellReadClient {
   readonly raw: {
     getProvider(request: { name: string; workspace: string }, options: Options): Promise<unknown>;
+    getProviderProfile(
+      request: { id: string; workspace: string },
+      options: Options,
+    ): Promise<unknown>;
     getSandbox(request: { name: string; workspace: string }, options: Options): Promise<unknown>;
     getSandboxConfig(request: { sandboxId: string }, options: Options): Promise<unknown>;
   };
