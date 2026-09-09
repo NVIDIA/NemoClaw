@@ -3535,7 +3535,6 @@ install_core_runtime_preloads || exit 1
 # lowercase (no_proxy) over uppercase (NO_PROXY) when both are set.
 # curl/wget use uppercase.  gRPC C-core uses lowercase.
 _RUNTIME_SHELL_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
-_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"
 
 write_runtime_shell_env() {
   _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
@@ -3662,9 +3661,8 @@ GATEWAYURLENVEOF
 # nemoclaw-configure-guard begin
 # #4538: a raw in-sandbox `openclaw doctor --fix` (run directly from a connect
 # shell, outside any NemoClaw wrapper command) tightens the mutable OpenClaw
-# config tree back to single-user 700/600 — even when it exits nonzero (e.g. it
-# hits EACCES on a root-locked shell init file). That blocks the gateway UID,
-# a member of the sandbox group, from persisting config writes. Restore the
+# config tree back to single-user 700/600, even after a failed command. This
+# blocks the gateway UID, a sandbox group member, from persisting config. Restore the
 # setgid + group-writable contract (2770 dir / 660 config) after every openclaw
 # invocation routed through this guard, regardless of exit code. Best-effort and
 # idempotent: it skips a root-owned active config transaction and is a no-op
@@ -4285,61 +4283,6 @@ GATEWAYTOKENENVEOF
 # populated as children start; cleanup refreshes and validates them before
 # signaling anything.
 
-# Keep per-user rc files out of runtime proxy wiring. Older images and prior
-# entrypoint versions wrote a two-line shim into .bashrc/.profile; remove that
-# managed stanza before lock_rc_files makes the files read-only again.
-#
-# The Python body lives in scripts/lib/clean_runtime_shell_env_shim.py so it
-# can be unit-tested with controlled rc fixtures. Installed location in the
-# sandbox image: /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py.
-ensure_runtime_shell_env_shim() {
-  local failed=0
-  local rc_file
-  # Resolution order is deliberately fixed: the immutable installed helper at
-  # /usr/local/lib/nemoclaw/ ALWAYS wins when present. That path is set up
-  # by the Dockerfile, chmod 644, root-owned (or build-time owned), and lives
-  # under a system directory the sandbox user cannot write to. We refuse to
-  # honour any environment-supplied override when that file is in place so a
-  # malicious envvar cannot swap in arbitrary Python.
-  #
-  # The NEMOCLAW_RC_CLEAN_SCRIPT override is consulted ONLY when the installed
-  # helper is missing — i.e. running the unit-test wrappers against the
-  # repository tree, where the script lives at scripts/lib/ instead.
-  # The final fallback resolves the script relative to nemoclaw-start.sh so
-  # `bash scripts/nemoclaw-start.sh` works out-of-the-box for ad-hoc dev runs.
-  local clean_script="/usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py"
-  if [ ! -f "$clean_script" ]; then
-    if [ -n "${NEMOCLAW_RC_CLEAN_SCRIPT:-}" ] && [ -f "${NEMOCLAW_RC_CLEAN_SCRIPT}" ]; then
-      clean_script="${NEMOCLAW_RC_CLEAN_SCRIPT}"
-    else
-      clean_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/clean_runtime_shell_env_shim.py"
-    fi
-  fi
-
-  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-    if [ -L "$rc_file" ]; then
-      echo "[SECURITY] refusing symlinked rc file: $rc_file" >&2
-      failed=1
-      continue
-    fi
-    if [ -e "$rc_file" ] && [ ! -f "$rc_file" ]; then
-      echo "[SECURITY] refusing non-regular rc file: $rc_file" >&2
-      failed=1
-      continue
-    fi
-    if [ ! -f "$rc_file" ]; then
-      continue
-    fi
-
-    if ! command python3 "$clean_script" "$rc_file" "$_RUNTIME_SHELL_ENV_SHIM" "$(id -u)"; then
-      failed=1
-      continue
-    fi
-  done
-
-  return "$failed"
-}
-
 # ── Legacy layout migration ──────────────────────────────────────
 # Sandboxes created with the OLD base image have:
 #   .openclaw/ containing symlinks → .openclaw-data/<subdir>
@@ -4798,6 +4741,7 @@ setup_auth_profile_as_sandbox() {
 }
 
 PLUGIN_REFRESH_LOG="/tmp/nemoclaw-plugin-refresh.log"
+PLUGIN_REFRESH_TIMEOUT_DURATION="30s"
 
 prepare_plugin_refresh_log() {
   local dir base tmp
@@ -4850,16 +4794,26 @@ start_plugin_registry_refresh() {
       echo "[plugin-refresh] gateway did not become ready; skipping registry refresh" >&2
       exit 0
     fi
+    local refresh_rc=0
     if [ "$(id -u)" -eq 0 ]; then
-      "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
+      timeout --signal=TERM --kill-after=5s "$PLUGIN_REFRESH_TIMEOUT_DURATION" \
+        "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
         sh -c "exec \"\$@\" >\"\$PLUGIN_REFRESH_LOG\" 2>&1" sh \
-        "$OPENCLAW" plugins registry --refresh || true
+        "$OPENCLAW" plugins registry --refresh || refresh_rc=$?
     else
-      env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
+      timeout --signal=TERM --kill-after=5s "$PLUGIN_REFRESH_TIMEOUT_DURATION" \
+        env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
         sh -c "exec \"\$@\" >\"\$PLUGIN_REFRESH_LOG\" 2>&1" sh \
-        "$OPENCLAW" plugins registry --refresh || true
+        "$OPENCLAW" plugins registry --refresh || refresh_rc=$?
+    fi
+    if [ "$refresh_rc" -eq 124 ]; then
+      echo "[plugin-refresh] registry refresh timed out after $PLUGIN_REFRESH_TIMEOUT_DURATION" >&2
     fi
 
+    if ! normalize_mutable_config_perms; then
+      echo "[plugin-refresh] mutable OpenClaw config permission normalization failed" >&2
+      exit 1
+    fi
     # The registry refresh may rewrite openclaw.json after the gateway reports
     # ready. Keep the mutable integrity metadata ordered after that writer so a
     # rebuild cannot observe the refreshed config with its previous hash. Run
@@ -4867,6 +4821,7 @@ start_plugin_registry_refresh() {
     # part of the config before returning nonzero.
     if ! ensure_mutable_openclaw_config_hash; then
       echo "[plugin-refresh] mutable OpenClaw config hash refresh failed" >&2
+      exit 1
     fi
   ) &
   PLUGIN_REFRESH_PID=$!
@@ -4874,6 +4829,16 @@ start_plugin_registry_refresh() {
     # The best-effort refresh may legitimately finish before PID 1 can read
     # its stat record.  An uncaptured PID is never admitted or signalled.
     PLUGIN_REFRESH_PID_START_IDENTITY=""
+  fi
+}
+
+wait_for_plugin_registry_refresh() {
+  local refresh_rc=0
+  [ -n "${PLUGIN_REFRESH_PID:-}" ] || return 0
+  wait "$PLUGIN_REFRESH_PID" || refresh_rc=$?
+  if [ "$refresh_rc" -ne 0 ]; then
+    echo "[plugin-refresh] registry refresh postcondition failed" >&2
+    return "$refresh_rc"
   fi
 }
 
@@ -5834,6 +5799,12 @@ handle_openclaw_gateway_control_request() {
   # prior refresh is harmless and will exit on its own.
   start_plugin_registry_refresh
   refresh_openclaw_supervised_child_pids
+  if ! wait_for_plugin_registry_refresh; then
+    refresh_openclaw_supervised_child_pids
+    gateway_control_fail unsafe-config "$old_pid"
+    return 1
+  fi
+  refresh_openclaw_supervised_child_pids
   gateway_control_complete ok "$old_pid" "$GATEWAY_PID"
 }
 
@@ -5901,8 +5872,6 @@ if [ "$(id -u)" -ne 0 ]; then
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH
   write_messaging_runtime_setup_plan
   write_runtime_shell_env
-  ensure_runtime_shell_env_shim
-  lock_rc_files "$_SANDBOX_HOME" || true
   # Apply manifest-declared runtime env aliases before any child inherits the
   # env. This covers both one-shot commands and the gateway launch.
   apply_messaging_runtime_env_aliases
@@ -5975,6 +5944,8 @@ if [ "$(id -u)" -ne 0 ]; then
   start_persistent_gateway_log_mirror || exit 1
   start_auto_pair
   start_plugin_registry_refresh
+  refresh_openclaw_supervised_child_pids
+  wait_for_plugin_registry_refresh || exit 1
   start_gateway_serving_watchdog
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
@@ -6054,8 +6025,6 @@ write_openclaw_config_baseline
 export_gateway_token
 write_messaging_runtime_setup_plan
 write_runtime_shell_env
-ensure_runtime_shell_env_shim
-lock_rc_files "$_SANDBOX_HOME"
 # Apply manifest-declared runtime env aliases before any child (the one-shot
 # "${NEMOCLAW_CMD[@]}" exec or the stepped-down gateway) inherits the env.
 # setpriv preserves the environment, so the export reaches the gateway user.
@@ -6214,7 +6183,8 @@ start_auto_pair
 # registry forgets them — so `/nemoclaw` is unreachable in the TUI and
 # `openclaw plugins inspect nemoclaw` says "Plugin not found" (#2021).
 # A `plugins registry --refresh` repopulates plugins[] from installRecords.
-# Backgrounded so the gateway-wait loop is unblocked; failure is non-fatal.
+# Run in a supervised child so PID 1 can forward shutdown signals while the
+# caller waits for its config postcondition before publishing readiness.
 # Source boundary: the lossy policy-changed rebuild lives in OpenClaw's registry
 # regeneration path, outside NemoClaw. NemoClaw can only heal the initial
 # post-start registry from persisted installRecords until upstream preserves
@@ -6223,6 +6193,8 @@ start_auto_pair
 # workaround after openclaw/openclaw#89606 ships and the full onboard E2E still
 # proves /nemoclaw registration without the refresh.
 start_plugin_registry_refresh
+refresh_openclaw_supervised_child_pids
+wait_for_plugin_registry_refresh || exit 1
 
 start_gateway_serving_watchdog
 

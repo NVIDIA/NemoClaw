@@ -83,6 +83,7 @@ describe("CLI OpenShell provider adapter", () => {
     const credentialValue = "host-only-value";
     const operations = [
       adapter.listProviders({ target }),
+      adapter.listProviderAttachments({ target, sandboxName: "alpha" }),
       adapter.createProvider({
         target,
         name: "search-prod",
@@ -134,6 +135,7 @@ describe("CLI OpenShell provider adapter", () => {
       expectedFailure,
       expectedFailure,
       expectedFailure,
+      { ...expectedFailure, operation: "inspect" },
       expectedFailure,
       expectedFailure,
       expectedFailure,
@@ -157,6 +159,7 @@ describe("CLI OpenShell provider adapter", () => {
     ).resolves.toEqual({ ok: true, value: { names: ["zeta", "alpha"] } });
     expect(run).toHaveBeenCalledWith(["provider", "list", "-g", "nemoclaw-18080", "--names"], {
       ignoreError: true,
+      maxBuffer: 64 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 4_321,
     });
@@ -188,7 +191,9 @@ describe("CLI OpenShell provider adapter", () => {
         0,
         [
           "Name: search-prod",
+          "Id: 11111111-2222-4333-8444-555555555555",
           "Type: tavily",
+          "Resource version: 7",
           "Credential keys: TAVILY_API_KEY",
           "Config keys: <none>",
         ].join("\n"),
@@ -209,6 +214,10 @@ describe("CLI OpenShell provider adapter", () => {
         type: "tavily",
         credentialKeys: ["TAVILY_API_KEY"],
         configKeys: [],
+        revision: {
+          id: "11111111-2222-4333-8444-555555555555",
+          resourceVersion: 7,
+        },
       },
     });
     expect(run).toHaveBeenCalledWith(["provider", "get", "-g", "nemoclaw-18080", "search-prod"], {
@@ -217,6 +226,58 @@ describe("CLI OpenShell provider adapter", () => {
       stdio: ["ignore", "pipe", "pipe"],
       suppressOutput: true,
       timeout: 4_321,
+    });
+  });
+
+  it("returns a null revision when provider output omits revision fields (#9806)", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () =>
+        captured(
+          0,
+          [
+            "Name: search-prod",
+            "Type: tavily",
+            "Credential keys: TAVILY_API_KEY",
+            "Config keys: <none>",
+          ].join("\n"),
+        ),
+    });
+
+    await expect(
+      adapter.getProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { revision: null } });
+  });
+
+  it.each([
+    ["missing resource version", "Id: 11111111-2222-4333-8444-555555555555"],
+    ["missing identity", "Resource version: 7"],
+    ["invalid resource version", "Id: 11111111-2222-4333-8444-555555555555\nResource version: 0"],
+  ])("rejects provider metadata with %s (#9806)", async (_case, revisionFields) => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () =>
+        captured(
+          0,
+          [
+            "Name: search-prod",
+            revisionFields,
+            "Type: tavily",
+            "Credential keys: TAVILY_API_KEY",
+            "Config keys: <none>",
+          ].join("\n"),
+        ),
+    });
+
+    await expect(
+      adapter.getProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: { kind: "schema", message: "OpenShell returned invalid provider metadata." },
     });
   });
 
@@ -272,9 +333,31 @@ describe("CLI OpenShell provider adapter", () => {
       error: {
         kind: "command",
         reason: "failed",
-        message: "Error: gateway 'nemoclaw' not found while checking provider 'search-prod'",
+        message: "OpenShell could not inspect the provider.",
       },
     });
+  });
+
+  it("does not return stored credential values from provider lookup failures (#9806)", async () => {
+    const storedCredential = "stored-provider-secret"; // gitleaks:allow
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(1, "", `provider lookup failed with credential ${storedCredential}`),
+    });
+
+    const result = await adapter.getProvider({
+      target: selectedOpenShellGateway(),
+      providerName: "search-prod",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "OpenShell could not inspect the provider.",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(storedCredential);
   });
 
   it("does not classify signaled lookup output as exact absence (#9806)", async () => {
@@ -295,7 +378,7 @@ describe("CLI OpenShell provider adapter", () => {
       error: {
         kind: "command",
         reason: "failed",
-        message: "Error: provider 'search-prod' not found",
+        message: "OpenShell could not inspect the provider.",
       },
     });
   });
@@ -956,6 +1039,7 @@ describe("CLI OpenShell provider adapter", () => {
         message:
           "The OpenShell provider profile does not match the checked-in credential boundary.",
       },
+      operation: "verify",
     });
     expect(run).toHaveBeenCalledTimes(1);
   });
@@ -1024,6 +1108,7 @@ describe("CLI OpenShell provider adapter", () => {
         kind: "validation",
         message: "The checked-in OpenShell provider profile is invalid or unreadable.",
       },
+      operation: "read",
     });
     expect(run).not.toHaveBeenCalled();
   });
@@ -1117,7 +1202,7 @@ describe("CLI OpenShell provider adapter", () => {
         providerName: "search-prod",
         sandboxName: "alpha",
       }),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true, value: { changed: true } });
     expect(run.mock.calls[1]?.[0]).toEqual([
       "sandbox",
       "provider",
@@ -1148,6 +1233,31 @@ describe("CLI OpenShell provider adapter", () => {
     });
   });
 
+  it("parses an attachment diagnostic wrapped at the terminal column boundary (#11186)", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () =>
+        captured(
+          1,
+          "",
+          "Error: × code: 'The system is not in a state required for the operation's │ execution', message: \"provider 'search-prod' is attached │ to sandbox(es): alpha\"",
+        ),
+    });
+
+    await expect(
+      adapter.deleteProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "attached",
+        attachedSandboxes: ["alpha"],
+      },
+    });
+  });
+
   it("places a named gateway flag before detach arguments (#9806)", async () => {
     const run = vi.fn(() => captured(0));
     const adapter = createCliOpenShellProviderAdapter({ run });
@@ -1158,7 +1268,7 @@ describe("CLI OpenShell provider adapter", () => {
         providerName: "search-prod",
         sandboxName: "alpha",
       }),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true, value: { changed: true } });
     expect(run).toHaveBeenCalledWith(
       ["sandbox", "provider", "detach", "-g", "nemoclaw-18080", "alpha", "search-prod"],
       expect.objectContaining({ ignoreError: true, timeout: 30_000 }),
@@ -1178,9 +1288,88 @@ describe("CLI OpenShell provider adapter", () => {
           providerName: "search-prod",
           sandboxName: "alpha",
         }),
-      ).resolves.toEqual({ ok: true });
+      ).resolves.toEqual({ ok: true, value: { changed: false } });
     },
   );
+
+  it("classifies the exact provider-detach resource-version race (#9806)", async () => {
+    const diagnostic =
+      "Failed to detach provider: sandbox was modified by another operation. Please retry the command.";
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(1, "", diagnostic),
+    });
+
+    await expect(
+      adapter.detachProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: { kind: "command", reason: "conflict", message: diagnostic },
+    });
+  });
+
+  it("returns typed provider attachments from a named gateway (#9806)", async () => {
+    const run = vi.fn(() =>
+      captured(
+        0,
+        [
+          "NAME              TYPE              CREDENTIAL_KEYS   CONFIG_KEYS",
+          "alpha-mcp-github  nemoclaw-mcp-v1  1                 0",
+          "alpha-mcp-slack   nemoclaw-mcp-v1  1                 0",
+        ].join("\n"),
+      ),
+    );
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    await expect(
+      adapter.listProviderAttachments({
+        target: namedOpenShellGateway("nemoclaw-18080"),
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { names: ["alpha-mcp-github", "alpha-mcp-slack"] },
+    });
+    expect(run).toHaveBeenCalledWith(
+      ["sandbox", "provider", "list", "-g", "nemoclaw-18080", "alpha"],
+      expect.objectContaining({ suppressOutput: true }),
+    );
+  });
+
+  it("returns an empty typed attachment inventory for an unattached sandbox (#9806)", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(0, "No providers attached to sandbox alpha."),
+    });
+
+    await expect(
+      adapter.listProviderAttachments({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({ ok: true, value: { names: [] } });
+  });
+
+  it("rejects malformed provider attachment output at the CLI adapter boundary (#9806)", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(0, "unexpected output"),
+    });
+
+    await expect(
+      adapter.listProviderAttachments({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        kind: "schema",
+        message: "OpenShell returned invalid provider attachment metadata.",
+      },
+    });
+  });
 
   it.each(["provider search-prod NotFound", "provider search-prod not found"])(
     "does not report a missing provider as detached: %s (#9806)",

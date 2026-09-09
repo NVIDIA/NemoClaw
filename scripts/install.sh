@@ -224,7 +224,19 @@ error() { error_with_status 1 "$@"; }
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
 resolve_nemoclaw_gateway_port() {
-  local port="${NEMOCLAW_GATEWAY_PORT:-8080}"
+  local port="${NEMOCLAW_GATEWAY_PORT:-}" persisted_port persisted_status
+  if [[ -z "$port" ]]; then
+    if persisted_port="$(resolve_persisted_automatic_gateway_port)"; then
+      port="$persisted_port"
+    else
+      persisted_status=$?
+      case "$persisted_status" in
+        1) port=8080 ;;
+        3) error "Refusing symbolic link in NemoClaw state path while resolving the automatic gateway port." ;;
+        *) error "Could not safely resolve the automatically selected NemoClaw gateway port. Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly." ;;
+      esac
+    fi
+  fi
   port="${port#"${port%%[![:space:]]*}"}"
   port="${port%"${port##*[![:space:]]}"}"
   if [[ ! "$port" =~ ^0*([0-9]{1,5})$ ]]; then
@@ -244,6 +256,7 @@ resolve_nemoclaw_gateway_port() {
   esac
   local -a configured_names=(
     NEMOCLAW_DASHBOARD_PORT
+    NEMOCLAW_HERMES_DASHBOARD_PORT
     NEMOCLAW_VLLM_PORT
     NEMOCLAW_OLLAMA_PORT
     NEMOCLAW_OLLAMA_PROXY_PORT
@@ -253,6 +266,7 @@ resolve_nemoclaw_gateway_port() {
   )
   local -a configured_ports=(
     "${NEMOCLAW_DASHBOARD_PORT:-18789}"
+    "${NEMOCLAW_HERMES_DASHBOARD_PORT:-}"
     "${NEMOCLAW_VLLM_PORT:-8000}"
     "${NEMOCLAW_OLLAMA_PORT:-11434}"
     "${NEMOCLAW_OLLAMA_PROXY_PORT:-11435}"
@@ -273,6 +287,176 @@ resolve_nemoclaw_gateway_port() {
     fi
   done
   printf "%s" "$port"
+}
+
+automatic_gateway_port_path_is_trusted() {
+  local path="${1:-}" metadata owner mode current_uid mode_value
+  if metadata="$(stat -c '%u %a' -- "$path" 2>/dev/null)"; then
+    :
+  elif metadata="$(stat -f '%u %Lp' "$path" 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+  read -r owner mode <<<"$metadata"
+  current_uid="${UID:-$(id -u 2>/dev/null)}"
+  [[ "$owner" =~ ^[0-9]+$ && "$owner" == "$current_uid" ]] || return 1
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  mode_value=$((8#$mode))
+  (((mode_value & 18) == 0))
+}
+
+resolve_persisted_automatic_gateway_port() {
+  local root gateways_dir marker state_dir port marker_value marker_size expected_size
+  local selected_port="" marker_count=0
+  local -a markers=()
+  root="$(nemoclaw_state_root)" || return 2
+  if [[ ! -e "$root" && ! -L "$root" ]]; then return 1; fi
+  if [[ -L "$root" ]]; then return 3; fi
+  if [[ ! -d "$root" || ! -r "$root" || ! -x "$root" ]]; then return 2; fi
+  gateways_dir="${root}/gateways"
+  if [[ ! -e "$gateways_dir" && ! -L "$gateways_dir" ]]; then return 1; fi
+  if [[ -L "$gateways_dir" ]]; then return 3; fi
+  if [[ ! -d "$gateways_dir" || ! -r "$gateways_dir" || ! -x "$gateways_dir" ]]; then
+    return 2
+  fi
+  for marker in "$gateways_dir"/*/automatic-gateway-port "$gateways_dir"/*/automatic-gateway-port.pending; do
+    if [[ -e "$marker" || -L "$marker" ]]; then markers+=("$marker"); fi
+  done
+  [[ "${#markers[@]}" -gt 0 ]] || return 1
+  automatic_gateway_port_path_is_trusted "$root" || return 2
+  automatic_gateway_port_path_is_trusted "$gateways_dir" || return 2
+  for marker in "${markers[@]}"; do
+    state_dir="${marker%/automatic-gateway-port*}"
+    port="${state_dir##*/}"
+    if [[ -L "$state_dir" ]]; then return 3; fi
+    if [[ ! -d "$state_dir" || ! -r "$state_dir" || ! -x "$state_dir" ]]; then
+      return 2
+    fi
+    automatic_gateway_port_path_is_trusted "$state_dir" || return 2
+    case "$port" in
+      899[0-9] | 900[0-5]) ;;
+      *) return 2 ;;
+    esac
+    if [[ -L "$marker" || ! -f "$marker" || ! -r "$marker" ]]; then return 2; fi
+    automatic_gateway_port_path_is_trusted "$marker" || return 2
+    marker_size="$(LC_ALL=C wc -c <"$marker" 2>/dev/null)" || return 2
+    marker_size="${marker_size//[[:space:]]/}"
+    expected_size=$((${#port} + 1))
+    [[ "$marker_size" =~ ^[0-9]+$ && "$marker_size" -eq "$expected_size" ]] || return 2
+    marker_value="$(<"$marker")" || return 2
+    [[ "$marker_value" == "$port" ]] || return 2
+    marker_count=$((marker_count + 1))
+    if [[ "$marker_count" -ne 1 ]]; then return 2; fi
+    selected_port="$port"
+  done
+  [[ "$marker_count" -eq 1 ]] || return 1
+  printf '%s' "$selected_port"
+}
+
+apply_persisted_automatic_gateway_port() {
+  local persisted_port persisted_status
+  if [[ -n "${NEMOCLAW_GATEWAY_PORT:-}" ]]; then
+    unset _NEMOCLAW_AUTOMATIC_GATEWAY_PORT
+    return 0
+  fi
+  unset _NEMOCLAW_AUTOMATIC_GATEWAY_PORT
+  if persisted_port="$(resolve_persisted_automatic_gateway_port)"; then
+    NEMOCLAW_GATEWAY_PORT="$persisted_port"
+    _NEMOCLAW_AUTOMATIC_GATEWAY_PORT=1
+    export NEMOCLAW_GATEWAY_PORT _NEMOCLAW_AUTOMATIC_GATEWAY_PORT
+    return 0
+  else
+    persisted_status=$?
+  fi
+  case "$persisted_status" in
+    1) return 0 ;;
+    3) error "Refusing symbolic link in NemoClaw state path while resolving the automatic gateway port." ;;
+    *) error "Could not safely resolve the automatically selected NemoClaw gateway port. Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly." ;;
+  esac
+}
+
+is_explicit_nemoclaw_gateway_port() {
+  local raw="${NEMOCLAW_GATEWAY_PORT:-}"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  raw="${raw%"${raw##*[![:space:]]}"}"
+  [[ "${_NEMOCLAW_AUTOMATIC_GATEWAY_PORT:-}" == "1" ]] && return 1
+  [[ -n "$raw" ]]
+}
+
+validate_gateway_port_candidate() {
+  local port
+  port="$(NEMOCLAW_GATEWAY_PORT="${1:-}" resolve_nemoclaw_gateway_port 2>/dev/null)" || return 1
+  [ "$port" -eq 8080 ] && return 1
+  if [ "$port" -ge 8642 ] && [ "$port" -le 8652 ]; then
+    return 1
+  fi
+  return 0
+}
+
+candidate_gateway_port_is_available() {
+  local port="$1"
+  validate_gateway_port_candidate "$port" || return 1
+
+  local state_root state_dir
+  state_root="$(nemoclaw_state_root 2>/dev/null || true)"
+  if [[ -n "$state_root" ]]; then
+    state_dir="${state_root}/gateways/${port}"
+    if [[ -e "$state_dir" || -L "$state_dir" ]]; then
+      # Reject any existing per-port gateway state directory, including state
+      # with a missing or stale PID, so fallback selection cannot reuse ambiguous state.
+      return 1
+    fi
+  fi
+  local config_home
+  config_home="$(openshell_user_config_home)"
+  local gateway_registration="${config_home%/}/openshell/gateways/nemoclaw-${port}"
+  if [[ -e "$gateway_registration" || -L "$gateway_registration" ]]; then return 1; fi
+
+  local probe_output probe_status
+  if command_exists lsof; then
+    probe_output="$(lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>&1)"
+    probe_status=$?
+    if [ "$probe_status" -eq 0 ]; then
+      # A listener is confirmed present.
+      return 1
+    elif [ "$probe_status" -ne 1 ] || [[ -n "$probe_output" ]]; then
+      # Probe command failed with an unexpected error. Fail closed.
+      return 1
+    fi
+  elif command_exists ss; then
+    probe_output="$(ss -H -t -l -n "sport = :${port}" 2>&1)"
+    probe_status=$?
+    if [ "$probe_status" -ne 0 ] || [[ -n "$probe_output" ]]; then
+      # ss failed or returned an error. Fail closed.
+      return 1
+    fi
+  elif command_exists fuser; then
+    probe_output="$(fuser "${port}/tcp" 2>&1)"
+    probe_status=$?
+    if [ "$probe_status" -eq 0 ]; then
+      return 1
+    elif [ "$probe_status" -ne 1 ] || [[ -n "$probe_output" ]]; then
+      return 1
+    fi
+  else
+    # None of lsof, ss, or fuser is available. Fail closed.
+    return 1
+  fi
+
+  return 0
+}
+
+find_safe_alternate_gateway_port() {
+  local candidate
+  local -a candidates=(8990 8991 8992 8993 8994 8995 8996 8997 8998 8999 9000 9001 9002 9003 9004 9005)
+  for candidate in "${candidates[@]}"; do
+    if candidate_gateway_port_is_available "$candidate"; then
+      printf "%s" "$candidate"
+      return 0
+    fi
+  done
+  return 1
 }
 
 nemoclaw_state_root() {
@@ -335,6 +519,61 @@ ensure_nemoclaw_state_dir() {
       || error "Could not secure gateway-scoped NemoClaw state directory: ${state_dir}"
   fi
   printf "%s" "$state_dir"
+}
+
+persist_pending_automatic_gateway_port_selection() {
+  local port state_dir marker
+  port="$(resolve_nemoclaw_gateway_port)" || return 1
+  validate_gateway_port_candidate "$port" || error "Refusing to persist an invalid automatic NemoClaw gateway port."
+  state_dir="$(ensure_nemoclaw_state_dir)" || return 1
+  marker="${state_dir}/automatic-gateway-port.pending"
+  node - "$marker" "$port" <<'NODE' || error "Could not persist the pending automatic NemoClaw gateway port."
+const fs = require("node:fs");
+
+const [marker, port] = process.argv.slice(2);
+const noFollow = fs.constants.O_NOFOLLOW;
+if (typeof noFollow !== "number") process.exit(1);
+const fd = fs.openSync(
+  marker,
+  fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
+  0o600,
+);
+try {
+  fs.writeFileSync(fd, `${port}\n`, "utf8");
+  fs.fsyncSync(fd);
+} finally {
+  fs.closeSync(fd);
+}
+NODE
+}
+
+complete_automatic_gateway_port_selection() {
+  local port persisted_port state_dir pending_marker complete_marker
+  port="$(resolve_nemoclaw_gateway_port)" || return 1
+  persisted_port="$(NEMOCLAW_GATEWAY_PORT="" resolve_persisted_automatic_gateway_port)" || return 1
+  [[ "$persisted_port" == "$port" ]] || return 1
+  state_dir="$(nemoclaw_state_dir)" || return 1
+  pending_marker="${state_dir}/automatic-gateway-port.pending"
+  complete_marker="${state_dir}/automatic-gateway-port"
+  if [[ -f "$complete_marker" && ! -L "$complete_marker" &&
+    ! -e "$pending_marker" && ! -L "$pending_marker" ]]; then
+    return 0
+  fi
+  node - "$pending_marker" "$complete_marker" "$port" <<'NODE' || error "Could not complete the automatically selected NemoClaw gateway port record."
+const fs = require("node:fs");
+
+const [pendingMarker, completeMarker, port] = process.argv.slice(2);
+const pendingStat = fs.lstatSync(pendingMarker);
+if (pendingStat.isSymbolicLink() || !pendingStat.isFile()) process.exit(1);
+if (fs.readFileSync(pendingMarker, "utf8") !== `${port}\n`) process.exit(1);
+try {
+  fs.lstatSync(completeMarker);
+  process.exit(1);
+} catch (error) {
+  if (!error || error.code !== "ENOENT") process.exit(1);
+}
+fs.renameSync(pendingMarker, completeMarker);
+NODE
 }
 
 nemoclaw_gateway_name() {
@@ -768,6 +1007,16 @@ print_done() {
     printf "  ${C_YELLOW}${C_BOLD}Existing sandbox upgrade did not finish.${C_RESET}\n"
     printf "  ${C_YELLOW}One or more pre-existing sandboxes failed to upgrade. See the messages above for the affected sandbox name, any preserved backup path, and recovery steps (${C_BOLD}%s onboard --resume${C_RESET}${C_YELLOW} / ${C_BOLD}%s <name> rebuild${C_RESET}${C_YELLOW}).${C_RESET}\n" "$_CLI_BIN" "$_CLI_BIN"
   fi
+  local _gateway_port
+  _gateway_port="$(resolve_nemoclaw_gateway_port 2>/dev/null || echo 8080)"
+  if [ "$_gateway_port" -ne 8080 ]; then
+    printf "\n"
+    printf "  ${C_CYAN}Gateway environment:${C_RESET}\n"
+    printf "  ${C_DIM}Ordinary CLI commands restore recorded port %s automatically.${C_RESET}\n" "$_gateway_port"
+    printf "  ${C_DIM}For a script or another process that intentionally needs explicit gateway scope:${C_RESET}\n"
+    printf "    %sexport NEMOCLAW_GATEWAY_PORT=%s%s\n" "$C_GREEN" "$_gateway_port" "$C_RESET"
+    printf "  ${C_DIM}This export makes the port an explicit operator selection, including for no-name gateway stop authorization.${C_RESET}\n"
+  fi
   printf "\n"
   printf "  ${C_BOLD}GitHub${C_RESET}  ${C_DIM}https://github.com/nvidia/nemoclaw${C_RESET}\n"
   printf "  ${C_BOLD}Docs${C_RESET}    ${C_DIM}https://docs.nvidia.com/nemoclaw/latest/${C_RESET}\n"
@@ -790,7 +1039,7 @@ usage() {
   printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
-  printf "    --force-station-install Bypass only the DGX release-metadata allowlist for Station GB300 express install\n"
+  printf "    --force-station-install Validate an unrecognized Station GB300 release profile without onboarding\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
@@ -1595,8 +1844,12 @@ openshell_user_config_home() {
 }
 
 enabled_openshell_gateway_user_service_activation_path() {
-  local user_config_home user_data_home runtime_dir unit_root activation_dir service_name activation_path
+  local mode="${1:-observe}" user_config_home user_data_home runtime_dir unit_root activation_dir
+  local service_name activation_path="" activation_physical="" candidate_path candidate_physical
+  local unit_path="" unit_physical activation_unit_physical dropin_dir dropin exec_start gateway_bin
+  local activation_count=0 exec_start_count environment_file_count port_line_count port_setting_count
   local config_dirs data_dirs directory
+  local -a config_unit_roots=() data_unit_roots=()
   local -a unit_roots=()
   if [[ -n "${SYSTEMD_UNIT_PATH:-}" ]]; then
     printf 'SYSTEMD_UNIT_PATH=%q\n' "$SYSTEMD_UNIT_PATH"
@@ -1608,41 +1861,37 @@ enabled_openshell_gateway_user_service_activation_path() {
     printf '%s\n' "$user_data_home"
     return 2
   fi
-  unit_roots+=(
-    "${user_config_home}/systemd/user"
-    "${user_config_home}/systemd/user.control"
-    "${user_data_home%/}/systemd/user"
-    "/etc/systemd/user"
-    "/run/systemd/user"
-    "/usr/local/lib/systemd/user"
-    "/usr/lib/systemd/user"
-    "/lib/systemd/user"
-  )
   config_dirs="${XDG_CONFIG_DIRS:-/etc/xdg}"
   data_dirs="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
   local IFS=:
-  for directory in $config_dirs $data_dirs; do
+  for directory in $config_dirs; do
     [[ -n "$directory" ]] || continue
     if [[ "$directory" != /* ]]; then
       printf '%s\n' "$directory"
       return 2
     fi
-    unit_roots+=("${directory%/}/systemd/user")
+    config_unit_roots+=("${directory%/}/systemd/user")
+  done
+  for directory in $data_dirs; do
+    [[ -n "$directory" ]] || continue
+    if [[ "$directory" != /* ]]; then
+      printf '%s\n' "$directory"
+      return 2
+    fi
+    data_unit_roots+=("${directory%/}/systemd/user")
   done
   runtime_dir="${XDG_RUNTIME_DIR:-}"
   if [[ "$runtime_dir" != /* && "${UID:-}" =~ ^[0-9]+$ ]]; then
     runtime_dir="/run/user/${UID}"
   fi
-  if [[ "$runtime_dir" == /* ]]; then
-    unit_roots+=(
-      "${runtime_dir%/}/systemd/user.control"
-      "${runtime_dir%/}/systemd/transient"
-      "${runtime_dir%/}/systemd/generator.early"
-      "${runtime_dir%/}/systemd/user"
-      "${runtime_dir%/}/systemd/generator"
-      "${runtime_dir%/}/systemd/generator.late"
-    )
-  fi
+  unit_roots+=("${user_config_home}/systemd/user.control")
+  if [[ "$runtime_dir" == /* ]]; then unit_roots+=("${runtime_dir%/}/systemd/user.control" "${runtime_dir%/}/systemd/transient" "${runtime_dir%/}/systemd/generator.early"); fi
+  unit_roots+=("${user_config_home}/systemd/user" "${config_unit_roots[@]}" "/etc/systemd/user")
+  if [[ "$runtime_dir" == /* ]]; then unit_roots+=("${runtime_dir%/}/systemd/user"); fi
+  unit_roots+=("/run/systemd/user")
+  if [[ "$runtime_dir" == /* ]]; then unit_roots+=("${runtime_dir%/}/systemd/generator"); fi
+  unit_roots+=("${user_data_home%/}/systemd/user" "${data_unit_roots[@]}" "/usr/local/lib/systemd/user" "/usr/lib/systemd/user" "/lib/systemd/user")
+  if [[ "$runtime_dir" == /* ]]; then unit_roots+=("${runtime_dir%/}/systemd/generator.late"); fi
 
   for unit_root in "${unit_roots[@]}"; do
     if [[ -e "$unit_root" || -L "$unit_root" ]]; then
@@ -1662,15 +1911,60 @@ enabled_openshell_gateway_user_service_activation_path() {
         return 2
       fi
       for service_name in openshell-gateway "${NEMOCLAW_GATEWAY_SERVICE_NAME}"; do
-        activation_path="${activation_dir}/${service_name}.service"
-        if [[ -e "$activation_path" || -L "$activation_path" ]]; then
-          printf '%s\n' "$activation_path"
-          return 0
+        candidate_path="${activation_dir}/${service_name}.service"
+        if [[ -e "$candidate_path" || -L "$candidate_path" ]]; then
+          candidate_physical="$(cd -P -- "$activation_dir" 2>/dev/null && printf '%s/%s.service' "$PWD" "$service_name")" || return 2
+          if [[ "$activation_count" -ne 0 && "$candidate_physical" != "$activation_physical" ]]; then
+            printf '%s\n' "$candidate_path"
+            return 2
+          fi
+          if [[ "$activation_count" -eq 0 ]]; then
+            activation_path="$candidate_path"
+            activation_physical="$candidate_physical"
+            activation_count=1
+          fi
         fi
       done
     done
   done
-  return 1
+  [[ "$activation_count" -eq 1 ]] || return 1
+  if [[ "$mode" == "qualified-default" ]]; then
+    [[ "${activation_path##*/}" == "openshell-gateway.service" && -L "$activation_path" ]] || return 2
+    for unit_root in "${unit_roots[@]}"; do
+      candidate_path="${unit_root}/openshell-gateway.service"
+      if [[ -z "$unit_path" && (-e "$candidate_path" || -L "$candidate_path") ]]; then unit_path="$candidate_path"; fi
+      for dropin_dir in "${unit_root}/service.d" "${unit_root}/openshell-.service.d" "${unit_root}/openshell-gateway.service.d"; do
+        if [[ -e "$dropin_dir" || -L "$dropin_dir" ]]; then
+          [[ ! -L "$dropin_dir" && -d "$dropin_dir" && -r "$dropin_dir" && -x "$dropin_dir" ]] || return 2
+          for dropin in "$dropin_dir"/*.conf; do
+            if [[ -e "$dropin" || -L "$dropin" ]]; then return 2; fi
+          done
+        fi
+      done
+    done
+    [[ -n "$unit_path" ]] || return 2
+    trusted_upstream_openshell_gateway_unit_for_service "$unit_path" || return 2
+    [[ -f "$unit_path" && -r "$unit_path" ]] || return 2
+    unit_physical="$(node -e 'process.stdout.write(require("node:fs").realpathSync(process.argv[1]))' "$unit_path" 2>/dev/null)" || return 2
+    activation_unit_physical="$(node -e 'process.stdout.write(require("node:fs").realpathSync(process.argv[1]))' "$activation_path" 2>/dev/null)" || return 2
+    [[ "$activation_unit_physical" == "$unit_physical" ]] || return 2
+    exec_start_count="$(grep -c '^ExecStart=' "$unit_path" 2>/dev/null || true)"
+    environment_file_count="$(grep -c '^EnvironmentFile=' "$unit_path" 2>/dev/null || true)"
+    [[ "$exec_start_count" -eq 1 && "$environment_file_count" -eq 1 ]] || return 2
+    exec_start="$(sed -n 's/^ExecStart=//p' "$unit_path")"
+    [[ "$exec_start" != *[[:space:]]* ]] || return 2
+    gateway_bin="$exec_start"
+    trusted_upstream_openshell_gateway_bin_for_service "$gateway_bin" || return 2
+    [[ "$(grep -Fxc 'EnvironmentFile=-%E/openshell/gateway.env' "$unit_path" 2>/dev/null || true)" -eq 1 ]] || return 2
+    if grep -Eq '^[^#]*(OPENSHELL_SERVER_PORT|--port([=[:space:]]|$))' "$unit_path"; then return 2; fi
+    local gateway_env
+    gateway_env="$(openshell_user_config_home)/openshell/gateway.env"
+    [[ -f "$gateway_env" && ! -L "$gateway_env" && -r "$gateway_env" ]] || return 2
+    port_line_count="$(grep -Fxc 'OPENSHELL_SERVER_PORT=8080' "$gateway_env" 2>/dev/null || true)"
+    port_setting_count="$(grep -Ec '^[[:space:]]*OPENSHELL_SERVER_PORT[[:space:]]*=' "$gateway_env" 2>/dev/null || true)"
+    [[ "$port_line_count" -eq 1 && "$port_setting_count" -eq 1 ]] || return 2
+  fi
+  printf '%s\n' "$activation_path"
 }
 
 install_nemoclaw_openshell_gateway_user_service() {
@@ -1701,7 +1995,22 @@ install_nemoclaw_openshell_gateway_user_service() {
       error "Could not determine whether the effective upstream OpenShell gateway user service is compatible."
     fi
     if activation_path="$(enabled_openshell_gateway_user_service_activation_path)"; then
-      error "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
+      if is_explicit_nemoclaw_gateway_port; then
+        error "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
+      fi
+      if ! enabled_openshell_gateway_user_service_activation_path qualified-default >/dev/null; then
+        error "The systemd user manager is unavailable, and $activation_path can activate a gateway user service whose effective port is not proven to be limited to 8080. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
+      fi
+      local alternate_port
+      if alternate_port="$(find_safe_alternate_gateway_port)"; then
+        NEMOCLAW_GATEWAY_PORT="$alternate_port"
+        _NEMOCLAW_AUTOMATIC_GATEWAY_PORT=1
+        export NEMOCLAW_GATEWAY_PORT _NEMOCLAW_AUTOMATIC_GATEWAY_PORT
+        persist_pending_automatic_gateway_port_selection
+        warn "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Automatically selected safe alternate gateway port ${alternate_port} to isolate the gateway environment without modifying the existing service."
+        return 0
+      fi
+      error "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Could not automatically select a safe alternate gateway port. Restore the systemd user manager, disable that service, or specify a free supported port with NEMOCLAW_GATEWAY_PORT before rerunning NemoClaw. The installer did not change the unit or activation path."
     else
       activation_status=$?
       if [[ "$activation_status" -eq 2 ]]; then
@@ -4415,16 +4724,16 @@ is_wsl_host() {
 # N1x from its protected FastOS and PCI identity, and Windows WSL from the host
 # environment. Used to gate the express install prompt; only platforms with an
 # accepted default are offered.
-is_station_gb300_product() {
-  local product=${1:-}
-  [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
-    "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
-}
-
 classify_dgx_station_release() {
   local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
   [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
   bash "$helper" --classify-dgx-release
+}
+
+classify_dgx_station_hardware() {
+  local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
+  [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
+  bash "$helper" --classify-station-hardware
 }
 
 N1X_FASTOS_RELEASE_MAX_BYTES=4096
@@ -4567,20 +4876,44 @@ is_n1x_host() {
 }
 
 detect_express_platform() {
-  local model="" release_state=""
+  local firmware_state="" release_state=""
   if is_wsl_host; then
     printf "Windows WSL"
     return
   fi
-  if [ -r /sys/class/dmi/id/product_name ]; then
-    model="$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)"
-  fi
-  if [ -z "$model" ] && [ -r /sys/firmware/devicetree/base/model ]; then
-    model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null || true)"
-  fi
-  case "$model" in
-    *DGX*Spark*)
+  firmware_state="$(classify_dgx_station_hardware)" || return "$?"
+  case "$firmware_state" in
+    conflicting)
+      printf "Conflicting NVIDIA firmware identity"
+      return
+      ;;
+    spark)
       printf "DGX Spark"
+      return
+      ;;
+    station-other)
+      printf "Unsupported DGX Station generation"
+      return
+      ;;
+    station-gb300-pci-missing)
+      printf "Unverified DGX Station hardware"
+      return
+      ;;
+    jetson) return ;;
+    station-gb300)
+      release_state="$(classify_dgx_station_release)" || return "$?"
+      case "$release_state" in
+        generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
+          printf "DGX Station"
+          ;;
+        *)
+          if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+            printf "DGX Station"
+          else
+            printf "Unsupported DGX Station OS"
+          fi
+          ;;
+      esac
       return
       ;;
   esac
@@ -4588,41 +4921,27 @@ detect_express_platform() {
     printf "DGX Spark"
     return
   fi
-  if is_station_gb300_product "$model"; then
-    release_state="$(classify_dgx_station_release)"
-    case "$release_state" in
-      generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
-        printf "DGX Station"
-        ;;
-      *)
-        if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
-          printf "DGX Station"
-        else
-          printf "Unsupported DGX Station OS"
-        fi
-        ;;
-    esac
-    return
-  fi
   if is_n1x_host; then
     printf "N1x"
     return
   fi
-  case "$model" in
-    *DGX*Station*) printf "Unsupported DGX Station generation" ;;
-    *) ;;
-  esac
 }
 
 validate_express_platform_boundary() {
   case "${1:-}" in
     "Unsupported DGX Station OS")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
-      error "This DGX Station OS image is outside the recognized Station Express release-metadata boundary. Station Express accepts generic Ubuntu 24.04 ARM64, OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0, an explicitly qualified Station factory image, or the no-OTA DGX OS 7.6.x profile with DGX_PRETTY_NAME=\"NVIDIA DGX GB300WS\" or DGX_PRETTY_NAME=\"NVIDIA DGX Server\"."
+      error "This DGX Station OS image is outside the recognized Station Express release-metadata boundary. Station Express accepts generic Ubuntu 24.04 ARM64, OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0, the no-OTA DGX OS 7.6.x profile, or an explicitly qualified Station factory image. DGX_PRETTY_NAME is diagnostic and does not determine qualification."
       ;;
     "Unsupported DGX Station generation")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
       error "This DGX Station generation is outside the validated Station GB300 express boundary."
+      ;;
+    "Conflicting NVIDIA firmware identity")
+      error "NVIDIA platform identity conflicts across firmware fields. Resolve the firmware identity before installation."
+      ;;
+    "Unverified DGX Station hardware")
+      error "DGX Station GB300 firmware was found without an exact NVIDIA GB300 PCI device. Resolve the hardware identity before installation."
       ;;
   esac
 }
@@ -4634,7 +4953,6 @@ STATION_ULTRA_LEGACY_VLLM_IMAGE="vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899
 STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
 _SELECTED_EXPRESS_PLATFORM=""
-_EXPRESS_WSL_PROVIDER_PENDING=""
 _STATION_EXPRESS_RESUME_REVISION=""
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
 _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=0
@@ -4674,6 +4992,9 @@ validate_force_station_install_override() {
   local platform="$1" release_state
   if [ "${FORCE_STATION_INSTALL:-}" != "1" ]; then
     return 0
+  fi
+  if [ "${STATION_DEEPSEEK:-}" = "1" ] || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ]; then
+    error "--force-station-install is validation-only and cannot be combined with --station-deepseek, NEMOCLAW_VLLM_MODEL, or NEMOCLAW_MODEL. Remove the model-selection override."
   fi
   if [ "$platform" != "DGX Station" ]; then
     error "--force-station-install requires DGX Station GB300 hardware (detected: ${platform:-unsupported platform})."
@@ -4753,7 +5074,8 @@ validate_station_deepseek_override() {
 
 preflight_explicit_express_flags() {
   local platform
-  platform="$(detect_express_platform)"
+  platform="$(detect_express_platform)" \
+    || error "Cannot classify NVIDIA platform identity. Refusing to continue installation."
   validate_express_platform_boundary "$platform"
   validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
@@ -5231,158 +5553,6 @@ clear_station_express_resume() {
       || error "DGX Station express receipt retirement claim contains unexpected state: ${claim}"
   done
 }
-
-# Report the container runtime's operating-system string (e.g. "Docker Desktop"
-# or "Ubuntu 24.04.4 LTS"). Bounded with a hard timeout so a wedged,
-# misconfigured, or dead-DOCKER_HOST daemon cannot hang the interactive express
-# prompt: this runs from describe_express_install before ensure_docker, and WSL
-# skips ensure_docker entirely. Empty on timeout or error.
-express_wsl_docker_operating_system() {
-  timeout 10 docker info --format '{{.OperatingSystem}}' 2>/dev/null
-}
-
-# Resolve Docker's effective context name: the DOCKER_CONTEXT override if set,
-# otherwise the persisted currentContext from Docker's config (what
-# `docker context use` writes). A missing config or a config with no
-# currentContext uses Docker's "default"; an unreadable or unparseable config
-# fails closed as non-local.
-express_wsl_docker_active_context() {
-  if [ -n "${DOCKER_CONTEXT:-}" ]; then
-    printf '%s' "${DOCKER_CONTEXT}"
-    return 0
-  fi
-  local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
-  local ctx="" parse_status=0
-  if [ ! -e "$cfg" ]; then
-    printf '%s' "default"
-    return 0
-  fi
-  if [ -e "$cfg" ] && [ ! -r "$cfg" ]; then
-    printf '%s' "__unknown__"
-    return 0
-  fi
-  if command -v node >/dev/null 2>&1; then
-    ctx="$(
-      node - "$cfg" <<'NODE'
-const fs = require("node:fs");
-
-let config;
-try {
-  config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-} catch {
-  process.exit(1);
-}
-if (config === null || typeof config !== "object" || Array.isArray(config)) process.exit(1);
-if (!Object.prototype.hasOwnProperty.call(config, "currentContext")) process.exit(2);
-if (typeof config.currentContext !== "string") process.exit(1);
-process.stdout.write(config.currentContext);
-NODE
-    )" || parse_status=$?
-    if [ "$parse_status" -eq 0 ]; then
-      printf '%s' "$ctx"
-      return 0
-    fi
-    if [ "$parse_status" -eq 2 ]; then
-      printf '%s' "default"
-      return 0
-    fi
-    printf '%s' "__unknown__"
-    return 0
-  fi
-  printf '%s' "__unknown__"
-}
-
-# True only when the Docker CLI targets the LOCAL default daemon: the active
-# context is "default" and no DOCKER_HOST override is set. A DOCKER_HOST, a
-# DOCKER_CONTEXT override, or a persisted currentContext other than "default"
-# (a context name like desktop-linux is not proof of a local endpoint — it can be
-# pointed at a remote daemon) can reach a remote Docker Desktop that is not the
-# qualified local N1x runtime (PRA-1). Fails closed (non-local) on any
-# non-default, unreadable, or unparseable context.
-express_wsl_docker_target_is_local() {
-  [ -z "${DOCKER_HOST:-}" ] || return 1
-  [ "$(express_wsl_docker_active_context)" = "default" ]
-}
-
-# The managed N1x WSL llama.cpp route requires LOCAL Docker Desktop WSL
-# integration. Keep this topology check narrow: Windows-host Ollama is no
-# longer an Express default because making raw port 11434 container-reachable
-# previously required a wildcard, unauthenticated listener.
-express_wsl_uses_local_docker_desktop() {
-  express_wsl_docker_target_is_local || return 1
-  express_wsl_docker_operating_system | grep -qi 'docker desktop'
-}
-
-# Select the accepted N1x WSL llama.cpp candidate only when Windows product
-# identity, WSL architecture, Docker Desktop locality, and the 48 GB GPU class
-# all match. Later readiness still requires container GPU proof before launch.
-express_wsl_can_use_n1x_managed_llama_cpp() {
-  express_wsl_uses_local_docker_desktop || return 1
-  [ "$(uname -m 2>/dev/null | tr -d '[:space:]')" = "aarch64" ] || return 1
-  command_exists timeout || return 1
-  command_exists powershell.exe || return 1
-  command_exists nvidia-smi || return 1
-
-  local product_name=""
-  local memory_mb=""
-  product_name="$(timeout 10s powershell.exe -NoProfile -NonInteractive -Command '(Get-CimInstance Win32_ComputerSystem).Model' 2>/dev/null | tr -d '\r' | head -n 1)"
-  case "$product_name" in
-    *"RTX Spark N1X"*) ;;
-    *) return 1 ;;
-  esac
-
-  memory_mb="$(timeout 10s nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '[:space:]')"
-  case "$memory_mb" in
-    '' | *[!0-9]*) return 1 ;;
-  esac
-  [ "$memory_mb" -ge 48000 ]
-}
-
-# True when a readable Docker configuration decides the context but no Node.js can
-# parse it yet. The express prompt runs before install_nodejs; selection waits
-# for the runtime so a qualifying N1x host can still choose managed llama.cpp.
-express_wsl_docker_context_needs_node() {
-  [ -z "${DOCKER_HOST:-}" ] || return 1
-  [ -z "${DOCKER_CONTEXT:-}" ] || return 1
-  local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
-  [ -e "$cfg" ] && [ -r "$cfg" ] || return 1
-  ! command_exists node
-}
-
-# Choose managed llama.cpp on qualified N1x WSL; otherwise use WSL-local
-# Ollama. Defer when a missing Node.js runtime is the only thing preventing the
-# N1x Docker topology check.
-select_express_wsl_provider() {
-  _EXPRESS_WSL_PROVIDER_PENDING=""
-  unset NEMOCLAW_LLAMACPP_RECIPE
-  if express_wsl_can_use_n1x_managed_llama_cpp; then
-    export NEMOCLAW_PROVIDER=install-llama-cpp
-    export NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1
-    return 0
-  fi
-  if express_wsl_docker_context_needs_node; then
-    _EXPRESS_WSL_PROVIDER_PENDING=1
-    return 0
-  fi
-  export NEMOCLAW_PROVIDER=install-ollama
-}
-
-# Finish a deferred Windows WSL selection once install_nodejs has provided the
-# runtime that reads the Docker configuration.
-resolve_pending_express_wsl_provider() {
-  [ "${_EXPRESS_WSL_PROVIDER_PENDING:-}" = "1" ] || return 0
-  _EXPRESS_WSL_PROVIDER_PENDING=""
-  select_express_wsl_provider
-  case "${NEMOCLAW_PROVIDER:-}" in
-    install-llama-cpp)
-      info "Express install will configure managed Qwen 3.6 35B with llama.cpp on N1x WSL."
-      ;;
-    *)
-      info "Express install will configure WSL-local Ollama."
-      ;;
-  esac
-}
-
 select_spark_express_inference() {
   local input_fd="${1:-0}"
   local reply=""
@@ -5466,7 +5636,7 @@ activate_express_install() {
       configure_station_express_model
       ;;
     "Windows WSL")
-      select_express_wsl_provider
+      unset NEMOCLAW_PROVIDER NEMOCLAW_LLAMACPP_RECIPE
       ;;
   esac
 }
@@ -5617,6 +5787,13 @@ ensure_station_express_host() {
   run_station_host_preparation || status=$?
   case "$status" in
     0)
+      if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        clear_station_express_resume
+        ok "DGX Station factory-runtime validation completed"
+        warn "Station Express remains blocked because this release profile is not qualified."
+        info "Install a supported DGX Station software profile, then rerun the installer without --force-station-install."
+        exit 0
+      fi
       ok "DGX Station host prerequisites are ready"
       ;;
     10)
@@ -5950,15 +6127,8 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
-      if express_wsl_can_use_n1x_managed_llama_cpp; then
-        show_hf_authentication="1"
-        inference_summary="managed Qwen 3.6 35B with llama.cpp on N1x WSL"
-        inference_disclosure="Managed llama.cpp downloads a pinned 20.4 GB GGUF file before it starts the loopback-only authenticated server."
-      elif express_wsl_docker_context_needs_node; then
-        inference_summary="local inference, selected once the installed Node.js runtime reads the Docker configuration"
-      else
-        inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"
-      fi
+      inference_summary="automatic local inference for the detected WSL hardware"
+      inference_disclosure="Onboarding selects managed Qwen 3.6 35B with llama.cpp on a qualified N1x GPU. Other WSL hosts use WSL-local Ollama."
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     *)
@@ -5966,6 +6136,12 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
   esac
+
+  if [ "$platform" = "DGX Station" ] && [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+    printf "  This validation-only run checks the existing factory GPU and container runtime without authorizing onboarding.\n"
+    printf "  A passing result stops before onboarding. Install a supported DGX Station software profile, then rerun without --force-station-install.\n"
+    return 0
+  fi
 
   case "$tier" in
     balanced)
@@ -6023,7 +6199,8 @@ describe_hf_download_authentication() {
 
 maybe_offer_express_install() {
   local platform resume_file
-  platform="$(detect_express_platform)"
+  platform="$(detect_express_platform)" \
+    || error "Cannot classify NVIDIA platform identity. Refusing to continue installation."
   validate_express_platform_boundary "$platform"
   validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
@@ -6110,6 +6287,8 @@ maybe_offer_express_install() {
     describe_express_install "$platform"
     if [ "$platform" = "N1x" ]; then
       printf "  Run the Deferred N1x preview with these settings? [Y/n]: "
+    elif [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+      printf "  Run validation-only Station checks with these settings? [Y/n]: "
     else
       printf "  Run express install with these settings? [Y/n]: "
     fi
@@ -6132,6 +6311,8 @@ maybe_offer_express_install() {
     describe_express_install "$platform"
     if [ "$platform" = "N1x" ]; then
       printf "  Run the Deferred N1x preview with these settings? [Y/n]: "
+    elif [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+      printf "  Run validation-only Station checks with these settings? [Y/n]: "
     else
       printf "  Run express install with these settings? [Y/n]: "
     fi
@@ -6155,6 +6336,8 @@ maybe_offer_express_install() {
     "" | y | yes)
       if [ "$platform" = "N1x" ]; then
         info "Using the Deferred N1x preview."
+      elif [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        info "Using validation-only Station checks."
       else
         info "Using express install for ${platform}."
       fi
@@ -6178,7 +6361,6 @@ install_nemoclaw_before_onboarding() {
   step 1 "Node.js"
   install_nodejs
   ensure_supported_runtime
-  resolve_pending_express_wsl_provider
   ensure_station_express_pair
 
   step 2 "${_CLI_DISPLAY} CLI"
@@ -6199,6 +6381,7 @@ main() {
   # self re-exec under sg(1) when the docker group needs activating in a
   # non-interactive run (#4414).
   _NEMOCLAW_INSTALLER_ARGS=("$@")
+  apply_persisted_automatic_gateway_port
 
   # Parse flags
   NON_INTERACTIVE=""
@@ -6436,6 +6619,13 @@ finalize_install() {
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then
+  if [[ "$#" -eq 1 && "${1:-}" == "--internal-resolve-automatic-gateway-port" ]]; then
+    resolve_nemoclaw_gateway_port
+    exit 0
+  elif [[ "$#" -eq 1 && "${1:-}" == "--internal-complete-automatic-gateway-port" ]]; then
+    complete_automatic_gateway_port_selection
+    exit 0
+  fi
   # #4414: When invoked via `curl ... | bash`, BASH_SOURCE is empty and
   # $0="bash". ensure_docker's sg(1) re-exec (#4419) needs a real script
   # file to point bash at; without one it falls back to the legacy

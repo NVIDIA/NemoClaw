@@ -19,9 +19,11 @@ import {
   type GetOpenShellProviderRefreshStatusRequest,
   type ImportOpenShellProviderProfileRequest,
   type InspectOpenShellProviderProfileRequest,
+  type ListOpenShellProviderAttachmentsRequest,
   type OpenShellProviderAdapter,
   type OpenShellProviderError,
   type OpenShellProviderMutationResult,
+  type OpenShellProviderProfileOperation,
   type OpenShellProviderRequest,
   type OpenShellProviderResult,
   type UpdateOpenShellProviderRequest,
@@ -76,10 +78,10 @@ export type CliOpenShellProviderAdapter = Omit<OpenShellProviderAdapter, "import
   Readonly<{
     importProviderProfile(
       request: ImportOpenShellProviderProfileRequest,
-    ): OpenShellProviderMutationResult;
+    ): CliOpenShellProviderProfileResult;
   }>;
 
-export type CliOpenShellProviderProfileOperation = "read" | "inspect" | "import" | "verify";
+export type CliOpenShellProviderProfileOperation = OpenShellProviderProfileOperation;
 
 export type CliOpenShellProviderProfileResult =
   | Readonly<{ ok: true }>
@@ -95,10 +97,13 @@ const TERMINAL_STRING_RE = /(?:\x1B[PX^_]|[\x90\x98\x9E\x9F])[\s\S]*?(?:\x1B\\|\
 const TERMINAL_CSI_RE = /(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~]/gu;
 const TERMINAL_CONTROL_RE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/gu;
 const ATTACHED_TO_SANDBOX_RE =
-  /attached\s+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+?)(?=\.\s+[a-z]|["\n]|$)/iu;
+  /attached(?:\s|│)+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+?)(?=\.\s+[a-z]|["\n]|$)/iu;
 const TOLERATED_DETACH_OUTPUT_RE = /\bNotAttached\b|\bnot\s+attached\b/iu;
 const PROVIDER_GET_DIAGNOSTIC_LIMIT = 64 * 1024;
 const REFRESH_STATUS_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u;
+const NO_PROVIDER_ATTACHMENTS_RE = /^No providers attached to sandbox\b/mu;
+const PROVIDER_ATTACHMENT_HEADER_RE = /^NAME\s+TYPE\s+CREDENTIAL_KEYS\s+CONFIG_KEYS$/u;
+const PROVIDER_ATTACHMENT_ROW_RE = /^(\S+)\s+(\S+)\s+(\d+)\s+(\d+)$/u;
 
 function success<T>(value: T): OpenShellProviderResult<T> {
   return { ok: true, value };
@@ -240,6 +245,13 @@ function commandError(
   }
   if (/already exists/iu.test(output)) {
     return { kind: "command", reason: "already_exists", message };
+  }
+  if (
+    /Failed to detach provider:\s*sandbox was modified by another operation\.\s*Please retry the command\.?/iu.test(
+      output,
+    )
+  ) {
+    return { kind: "command", reason: "conflict", message };
   }
   const attachedSandboxes = attachedSandboxNames(output);
   if (attachedSandboxes) {
@@ -405,6 +417,25 @@ function parseRefreshStatus(output: string, credentialKey: string): string | nul
   return status && REFRESH_STATUS_PATTERN.test(status) ? status : null;
 }
 
+function parseProviderAttachmentNames(output: string): string[] | null {
+  const clean = commandOutput({ status: 0, output });
+  if (NO_PROVIDER_ATTACHMENTS_RE.test(clean)) return [];
+  const lines = clean
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const headerIndex = lines.findIndex((line) => PROVIDER_ATTACHMENT_HEADER_RE.test(line));
+  if (headerIndex < 0) return null;
+  const names: string[] = [];
+  for (const line of lines.slice(headerIndex + 1)) {
+    const match = line.match(PROVIDER_ATTACHMENT_ROW_RE);
+    const name = match?.[1];
+    if (!name || !isValidCliOpenShellProviderIdentifier(name)) return null;
+    names.push(name);
+  }
+  return names;
+}
+
 export function createCliOpenShellProviderAdapter(
   deps: CliOpenShellProviderAdapterDeps = {},
 ): CliOpenShellProviderAdapter {
@@ -443,7 +474,14 @@ export function createCliOpenShellProviderAdapter(
   const listProviders: OpenShellProviderAdapter["listProviders"] = async (request) => {
     const targetError = namedGatewayEndpointOverrideError(request.target, environment);
     if (targetError) return failure(targetError);
-    const result = invoke(["provider", "list", "--names"], request);
+    const result = invoke(
+      ["provider", "list", "--names"],
+      request,
+      undefined,
+      2,
+      false,
+      PROVIDER_GET_DIAGNOSTIC_LIMIT,
+    );
     const error = commandError(result);
     if (error) return failure(error);
     const names = parseCliOpenShellProviderNames(result.stdout);
@@ -525,8 +563,12 @@ export function createCliOpenShellProviderAdapter(
     const error = commandError(result);
     if (error) {
       return failure(
-        error.kind === "command" && error.reason === "not_found"
-          ? { ...error, reason: "failed" }
+        error.kind === "command"
+          ? {
+              ...error,
+              reason: error.reason === "not_found" ? "failed" : error.reason,
+              message: "OpenShell could not inspect the provider.",
+            }
           : error,
       );
     }
@@ -561,8 +603,7 @@ export function createCliOpenShellProviderAdapter(
   };
 
   const importProviderProfile: CliOpenShellProviderAdapter["importProviderProfile"] = (request) => {
-    const result = importCliOpenShellProviderProfile(request, { ...deps, environment, run });
-    return result.ok ? result : { ok: false, error: result.error };
+    return importCliOpenShellProviderProfile(request, { ...deps, environment, run });
   };
 
   const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] = async (
@@ -591,8 +632,27 @@ export function createCliOpenShellProviderAdapter(
     const targetError = namedGatewayEndpointOverrideError(request.target, environment);
     if (targetError) return failure(targetError);
     const result = invoke(["provider", "delete", request.providerName], request);
+    const output = commandOutput(result);
+    if (
+      !result.error &&
+      !result.signal &&
+      result.status === 1 &&
+      reportsExactProviderNotFound(output, request.providerName, PROVIDER_GET_DIAGNOSTIC_LIMIT)
+    ) {
+      return failure({
+        kind: "command",
+        reason: "not_found",
+        message: `OpenShell provider not found: '${request.providerName}'.`,
+      });
+    }
     const error = commandError(result);
-    return error ? failure(error) : mutationSuccess();
+    return error
+      ? failure(
+          error.kind === "command" && error.reason === "not_found"
+            ? { ...error, reason: "failed" }
+            : error,
+        )
+      : mutationSuccess();
   };
 
   const detachProvider: OpenShellProviderAdapter["detachProvider"] = async (
@@ -607,11 +667,16 @@ export function createCliOpenShellProviderAdapter(
       3,
     );
     const output = commandOutput(result);
-    if (result.status !== 0 && TOLERATED_DETACH_OUTPUT_RE.test(output)) {
-      return mutationSuccess();
-    }
     const error = commandError(result);
-    return error ? failure(error) : mutationSuccess();
+    const confirmedIdempotentDetach =
+      !result.error &&
+      !result.signal &&
+      result.status !== null &&
+      TOLERATED_DETACH_OUTPUT_RE.test(output);
+    if (confirmedIdempotentDetach) {
+      return success({ changed: false });
+    }
+    return error ? failure(error) : success({ changed: true });
   };
 
   const attachProvider: OpenShellProviderAdapter["attachProvider"] = async (
@@ -633,6 +698,33 @@ export function createCliOpenShellProviderAdapter(
     );
     const error = commandError(result);
     return error ? failure(error) : mutationSuccess();
+  };
+
+  const listProviderAttachments: OpenShellProviderAdapter["listProviderAttachments"] = async (
+    request: ListOpenShellProviderAttachmentsRequest,
+  ) => {
+    const targetError = namedGatewayEndpointOverrideError(request.target, environment);
+    if (targetError) return failure(targetError);
+    if (!isValidCliOpenShellProviderIdentifier(request.sandboxName)) {
+      return failure({ kind: "validation", message: "Provider attachment input is invalid." });
+    }
+    const result = invoke(
+      ["sandbox", "provider", "list", request.sandboxName],
+      request,
+      undefined,
+      3,
+      true,
+      PROVIDER_GET_DIAGNOSTIC_LIMIT,
+    );
+    const error = commandError(result);
+    if (error) return failure(error);
+    const names = parseProviderAttachmentNames(rawCommandOutput(result));
+    return names
+      ? success({ names })
+      : failure({
+          kind: "schema",
+          message: "OpenShell returned invalid provider attachment metadata.",
+        });
   };
 
   const configureProviderRefresh: OpenShellProviderAdapter["configureProviderRefresh"] = async (
@@ -719,6 +811,7 @@ export function createCliOpenShellProviderAdapter(
     deleteProvider,
     detachProvider,
     attachProvider,
+    listProviderAttachments,
     configureProviderRefresh,
     getProviderRefreshStatus,
   };

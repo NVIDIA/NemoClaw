@@ -9,6 +9,7 @@ import type {
   ManagedBootstrapRuntimeOnboardRoutingInput,
 } from "../managed-bootstrap/runtime-create";
 import type { NativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
+import type { PortableAgentRuntimeProviderSupport } from "../workload/portable-agent-runtime";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type {
@@ -103,6 +104,32 @@ export interface RuntimeProviderGatewayImageCacheResult {
   readonly alreadyCached?: boolean;
   readonly reason?: "inspect_unavailable" | "pull_failed" | "pull_timeout";
   readonly details?: string;
+}
+
+export type RuntimeProviderGatewayVersionCompatibility = "compatible" | "drift" | "unknown";
+
+export interface RuntimeProviderOwnedGatewayReadinessInput {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly platform: NodeJS.Platform;
+  readonly architecture: NodeJS.Architecture;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly expectedEndpoint: string;
+  readonly managedGatewayOutputs: readonly string[];
+  readonly portAvailable: boolean;
+  readonly installedOpenShellVersion: string | null;
+  readonly trustedGatewayBin: string | null;
+}
+
+export interface RuntimeProviderOwnedGatewayReadinessObservation {
+  readonly endpointBinding: "match" | "mismatch" | "unknown";
+  readonly listenerScan: {
+    readonly pids: readonly number[];
+    readonly unverifiedPids: readonly number[];
+    readonly complete: boolean;
+  };
+  readonly targetBoundListenerPids: readonly number[];
+  readonly versionCompatibility: RuntimeProviderGatewayVersionCompatibility | null;
 }
 
 /**
@@ -297,6 +324,8 @@ export type RuntimeProviderNativeArtifactSupport = {
 export interface RuntimeProviderWorkloadProfile {
   readonly support: RuntimeProviderManagedImageSupport | null;
   readonly nativeArtifactSupport?: RuntimeProviderNativeArtifactSupport | null;
+  /** Missing or null until this provider has complete, reviewed portable runtime qualification. */
+  readonly portableAgentRuntimeSupport?: PortableAgentRuntimeProviderSupport | null;
   readonly hostArchitectures: readonly string[];
   readonly managedImageSelectionPolicy: ManagedImageSelectionPolicy;
   readonly legacyDockerfileBuilds: boolean;
@@ -544,15 +573,35 @@ export type RuntimeProviderPreflightDoctorSurface = RuntimeProviderSupportedSurf
   ): RuntimeProviderLifecycleResult | null;
 }>;
 
-export type RuntimeProviderGatewaySurface = RuntimeProviderSupportedSurface<{
+type RuntimeProviderGatewaySurfaceBase = {
   readonly launcher: RuntimeProviderGatewayLauncher;
   readonly inspectLegacyContainer: boolean;
-  /** Explicit authority to replace standard Docker host readiness during admission. */
-  readonly ownsHostReadiness: boolean;
+  /** Project provider-owned gateway behavior without changing host state. */
+  observeHostRuntime(
+    input: RuntimeProviderGatewayHostRuntimeInput,
+  ): RuntimeProviderGatewayHostRuntime;
+  /** Prepare host state, then project the same provider-owned gateway behavior. */
   prepareHostRuntime(
     input: RuntimeProviderGatewayHostRuntimeInput,
   ): RuntimeProviderGatewayHostRuntime;
-}>;
+};
+
+export type RuntimeProviderGatewaySurface = RuntimeProviderSupportedSurface<
+  RuntimeProviderGatewaySurfaceBase &
+    (
+      | {
+          /** Replace standard Docker readiness with provider-owned observation. */
+          readonly ownsHostReadiness: true;
+          observeOwnedGateway(
+            input: RuntimeProviderOwnedGatewayReadinessInput,
+          ): RuntimeProviderOwnedGatewayReadinessObservation;
+        }
+      | {
+          readonly ownsHostReadiness: false;
+          readonly observeOwnedGateway?: never;
+        }
+    )
+>;
 
 export type RuntimeProviderWorkloadSurface = RuntimeProviderSupportedSurface<{
   readonly profile: RuntimeProviderWorkloadProfile;
@@ -688,6 +737,44 @@ export type RuntimeProviderCleanupSurface =
     }>
   | RuntimeProviderUnsupportedSurface;
 
+/** Provider-neutral request for a bounded NVIDIA container workload. */
+export interface RuntimeProviderNvidiaContainerInput {
+  readonly image: string;
+  readonly entrypoint: string;
+  readonly command: readonly string[];
+  readonly resource: RuntimeProviderOwnedContainerResource;
+}
+
+export interface RuntimeProviderOwnedContainerResource {
+  readonly name: string;
+  readonly ownership: {
+    readonly label: string;
+    readonly value: string;
+  };
+}
+
+export interface RuntimeProviderOwnedContainerCleanupResult {
+  readonly status: "absent" | "removed" | "failed";
+}
+
+export interface RuntimeProviderOwnedContainerCleanupOptions {
+  readonly timeoutMs?: number;
+  readonly observation: "immediate" | "until-deadline";
+}
+
+export interface RuntimeProviderNvidiaContainerSurface {
+  capture(
+    operation: RuntimeProviderContainerEngineOperation,
+    input: RuntimeProviderNvidiaContainerInput,
+    timeoutMs?: number,
+  ): RuntimeProviderCommandCapture;
+  cleanup(
+    operation: RuntimeProviderContainerEngineOperation,
+    resource: RuntimeProviderOwnedContainerResource,
+    options: RuntimeProviderOwnedContainerCleanupOptions,
+  ): RuntimeProviderOwnedContainerCleanupResult;
+}
+
 export type RuntimeProviderContainerEngineSurface =
   | RuntimeProviderSupportedSurface<{
       readonly identities: readonly {
@@ -700,6 +787,7 @@ export type RuntimeProviderContainerEngineSurface =
         args: readonly string[],
         timeoutMs?: number,
       ): RuntimeProviderCommandCapture;
+      readonly nvidiaContainer?: RuntimeProviderNvidiaContainerSurface;
     }>
   | RuntimeProviderUnsupportedSurface;
 
