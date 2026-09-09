@@ -3008,7 +3008,7 @@ jobs:
           fi
 
           # Prove that every staged agent alias is anonymously pullable on both
-          # supported architectures before the single consumer pointer moves.
+          # supported architectures before any shipped-agent consumer pointer moves.
           anonymous_config="$(mktemp -d "$RUNNER_TEMP/anonymous-cohort-docker-XXXXXX")"
           chmod 0700 "$anonymous_config"
           while IFS= read -r manifest; do
@@ -3021,14 +3021,12 @@ jobs:
             done
           done < <(jq -c '.[]' "$cohort_manifests")
 
-          # Record the intended OpenClaw root pointers in every exact contract.
-          # They are not moved until all v2 evidence artifacts are durable.
-          openclaw_manifest="$(jq -ce '.[] | select(.agent == "openclaw")' "$cohort_manifests")"
-          consumer_aliases=("$(jq -r '.image' <<<"$openclaw_manifest"):${GITHUB_SHA}")
+          # Record the intended root pointers for every shipped agent in its
+          # exact contract. They are not moved until all v2 evidence artifacts
+          # are durable. Hermes ships alongside OpenClaw (#11228); Deep Agents
+          # Code stays cohort-only until its own publication decision.
+          shipped_agents=(openclaw hermes)
           release_tag="$(jq -r '.[0].release // empty' "$CANDIDATE_SET")"
-          if [ -n "$release_tag" ]; then
-            consumer_aliases+=("$(jq -r '.image' <<<"$openclaw_manifest"):${release_tag}")
-          fi
 
           while IFS= read -r candidate; do
             agent="$(jq -r '.agent' <<<"$candidate")"
@@ -3041,9 +3039,14 @@ jobs:
               jq -c '{alias, descriptor, reference}' <<<"$cohort_manifest"
             )"
             aliases=("$cohort_alias")
-            if [ "$agent" = "openclaw" ]; then
-              aliases+=("${consumer_aliases[@]}")
-            fi
+            for shipped_agent in "${shipped_agents[@]}"; do
+              if [ "$agent" = "$shipped_agent" ]; then
+                aliases+=("$(jq -r '.image' <<<"$cohort_manifest"):${GITHUB_SHA}")
+                if [ -n "$release_tag" ]; then
+                  aliases+=("$(jq -r '.image' <<<"$cohort_manifest"):${release_tag}")
+                fi
+              fi
+            done
             aliases_json="$(printf '%s\n' "${aliases[@]}" | jq -R . | jq -s .)"
             contract_dir="$contract_root/$agent/$artifact_platform"
             mkdir -p "$contract_dir"
@@ -3266,74 +3269,95 @@ jobs:
             exit 1
           fi
           cohort="$PUBLICATION_COHORT"
-          if ! jq -e \
-            --arg cohort "$cohort" \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg revision "$GITHUB_SHA" \
-            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
-            --argjson runId "$GITHUB_RUN_ID" \
-            '
-              .contractVersion == 2
-              and .cohort == $cohort
-              and .source.repository == $repository
-              and .source.revision == $revision
-              and .run == {id: $runId, attempt: $runAttempt}
-              and .agents.openclaw.reference ==
-                (.agents.openclaw.image + "@" + .agents.openclaw.digest)
-              and .agents.openclaw.descriptor == {
-                mediaType: "application/vnd.oci.image.index.v1+json",
-                digest: .agents.openclaw.digest,
-                size: .agents.openclaw.descriptor.size
-              }
-              and (.agents.openclaw.descriptor.size | type) == "number"
-              and .agents.openclaw.descriptor.size > 0
-            ' "$cohort_contract" >/dev/null; then
-            echo "ERROR: durable managed image cohort contract cannot authorize promotion." >&2
-            exit 1
-          fi
-
-          image="$(jq -er '.agents.openclaw.image' "$cohort_contract")"
-          exact_reference="$(jq -er '.agents.openclaw.reference' "$cohort_contract")"
-          expected_digest="$(jq -er '.agents.openclaw.digest' "$cohort_contract")"
-          expected_size="$(jq -er '.agents.openclaw.descriptor.size | tostring' "$cohort_contract")"
+          # Root pointers move for every shipped agent: OpenClaw and, per
+          # #11228, Hermes. Deep Agents Code stays cohort-only. Every shipped
+          # agent's contract and exact cohort bytes are validated before any
+          # pointer moves. A registry failure can leave an earlier agent's
+          # pointers moved; rerunning this job reconciles them to this cohort.
+          shipped_agents=(openclaw hermes)
           release_tag="$(jq -r '.source.release // empty' "$cohort_contract")"
-          if [[ ! "$image" =~ ^ghcr\.io/nvidia/nemoclaw/openclaw-sandbox$ ]] ||
-             [[ ! "$exact_reference" =~ ^ghcr\.io/nvidia/nemoclaw/openclaw-sandbox@sha256:[0-9a-f]{64}$ ]] ||
-             [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+          if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "ERROR: durable managed image pointer identity is invalid." >&2
             exit 1
           fi
-
-          consumer_aliases=("${image}:${GITHUB_SHA}")
-          if [ -n "$release_tag" ]; then
-            if [[ ! "$release_tag" =~ ^v[0-9]+([.][0-9]+){1,3}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
-              echo "ERROR: durable managed image release identity is invalid." >&2
-              exit 1
-            fi
-            consumer_aliases+=("${image}:${release_tag}")
-          fi
-
-          exact_raw="$RUNNER_TEMP/managed-image-openclaw-cohort-exact.raw"
-          docker buildx imagetools inspect "$exact_reference" --raw > "$exact_raw"
-          actual_digest="sha256:$(sha256sum "$exact_raw" | awk '{print $1}')"
-          actual_size="$(wc -c < "$exact_raw" | tr -d '[:space:]')"
-          if [ "$actual_digest" != "$expected_digest" ] ||
-             [ "$actual_size" != "$expected_size" ]; then
-            echo "ERROR: exact OpenClaw cohort bytes differ from the durable contract." >&2
+          if [ -n "$release_tag" ] &&
+             [[ ! "$release_tag" =~ ^v[0-9]+([.][0-9]+){1,3}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "ERROR: durable managed image release identity is invalid." >&2
             exit 1
           fi
 
-          consumer_tag_args=()
-          for alias in "${consumer_aliases[@]}"; do
-            consumer_tag_args+=(--tag "$alias")
-          done
-          docker buildx imagetools create "${consumer_tag_args[@]}" "$exact_reference"
-
-          for alias in "${consumer_aliases[@]}"; do
-            alias_raw="$RUNNER_TEMP/managed-image-openclaw-pointer-${alias##*:}.raw"
-            docker buildx imagetools inspect "$alias" --raw > "$alias_raw"
-            if ! cmp -s "$exact_raw" "$alias_raw"; then
-              echo "ERROR: OpenClaw cohort pointer is not exact: $alias" >&2
+          for agent in "${shipped_agents[@]}"; do
+            if ! jq -e \
+              --arg agent "$agent" \
+              --arg cohort "$cohort" \
+              --arg repository "$GITHUB_REPOSITORY" \
+              --arg revision "$GITHUB_SHA" \
+              --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+              --argjson runId "$GITHUB_RUN_ID" \
+              '
+                .contractVersion == 2
+                and .cohort == $cohort
+                and .source.repository == $repository
+                and .source.revision == $revision
+                and .run == {id: $runId, attempt: $runAttempt}
+                and .agents[$agent].reference ==
+                  (.agents[$agent].image + "@" + .agents[$agent].digest)
+                and .agents[$agent].descriptor == {
+                  mediaType: "application/vnd.oci.image.index.v1+json",
+                  digest: .agents[$agent].digest,
+                  size: .agents[$agent].descriptor.size
+                }
+                and (.agents[$agent].descriptor.size | type) == "number"
+                and .agents[$agent].descriptor.size > 0
+              ' "$cohort_contract" >/dev/null; then
+              echo "ERROR: durable managed image cohort contract cannot authorize promotion for ${agent}." >&2
               exit 1
             fi
+
+            image="$(jq -er --arg agent "$agent" '.agents[$agent].image' "$cohort_contract")"
+            exact_reference="$(jq -er --arg agent "$agent" '.agents[$agent].reference' "$cohort_contract")"
+            expected_digest="$(jq -er --arg agent "$agent" '.agents[$agent].digest' "$cohort_contract")"
+            expected_size="$(jq -er --arg agent "$agent" '.agents[$agent].descriptor.size | tostring' "$cohort_contract")"
+            if [ "$image" != "ghcr.io/nvidia/nemoclaw/${agent}-sandbox" ] ||
+               [[ ! "$exact_reference" =~ ^ghcr\.io/nvidia/nemoclaw/(openclaw|hermes)-sandbox@sha256:[0-9a-f]{64}$ ]] ||
+               [ "${exact_reference%@*}" != "$image" ]; then
+              echo "ERROR: durable managed image pointer identity is invalid for ${agent}." >&2
+              exit 1
+            fi
+
+            exact_raw="$RUNNER_TEMP/managed-image-${agent}-cohort-exact.raw"
+            docker buildx imagetools inspect "$exact_reference" --raw > "$exact_raw"
+            actual_digest="sha256:$(sha256sum "$exact_raw" | awk '{print $1}')"
+            actual_size="$(wc -c < "$exact_raw" | tr -d '[:space:]')"
+            if [ "$actual_digest" != "$expected_digest" ] ||
+               [ "$actual_size" != "$expected_size" ]; then
+              echo "ERROR: exact ${agent} cohort bytes differ from the durable contract." >&2
+              exit 1
+            fi
+          done
+
+          for agent in "${shipped_agents[@]}"; do
+            image="$(jq -er --arg agent "$agent" '.agents[$agent].image' "$cohort_contract")"
+            exact_reference="$(jq -er --arg agent "$agent" '.agents[$agent].reference' "$cohort_contract")"
+            exact_raw="$RUNNER_TEMP/managed-image-${agent}-cohort-exact.raw"
+
+            consumer_aliases=("${image}:${GITHUB_SHA}")
+            if [ -n "$release_tag" ]; then
+              consumer_aliases+=("${image}:${release_tag}")
+            fi
+
+            consumer_tag_args=()
+            for alias in "${consumer_aliases[@]}"; do
+              consumer_tag_args+=(--tag "$alias")
+            done
+            docker buildx imagetools create "${consumer_tag_args[@]}" "$exact_reference"
+
+            for alias in "${consumer_aliases[@]}"; do
+              alias_raw="$RUNNER_TEMP/managed-image-${agent}-pointer-${alias##*:}.raw"
+              docker buildx imagetools inspect "$alias" --raw > "$alias_raw"
+              if ! cmp -s "$exact_raw" "$alias_raw"; then
+                echo "ERROR: ${agent} cohort pointer is not exact: $alias" >&2
+                exit 1
+              fi
+            done
           done
