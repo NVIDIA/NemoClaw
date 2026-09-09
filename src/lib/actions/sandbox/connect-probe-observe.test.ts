@@ -8,6 +8,7 @@ import {
   createConnectHarness,
   requireDist,
 } from "../../../../test/support/connect-flow-test-harness";
+import { HermesPortableRecoveryRollbackError } from "../../onboard/experimental/hermes-portable-lifecycle";
 
 describe("connectSandbox probe-only observe mode", () => {
   let exitSpy: MockInstance;
@@ -72,9 +73,11 @@ describe("connectSandbox probe-only observe mode", () => {
     });
     const nestedDiagnostic = "Bearer do-not-print";
     harness.recoverPortableDemoLifecycleSpy.mockImplementation(() => {
-      throw new AggregateError(
-        [new Error(nestedDiagnostic)],
-        "Hermes portable lifecycle recovery failed (primary=startup-launch; rollback=openshell-terminal-settlement-unproved)",
+      throw new HermesPortableRecoveryRollbackError(
+        "startup-launch",
+        "openshell-terminal-settlement",
+        new Error(nestedDiagnostic),
+        new Error(nestedDiagnostic),
       );
     });
 
