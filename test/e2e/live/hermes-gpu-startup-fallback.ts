@@ -81,14 +81,13 @@ function quoteShellLiteral(value: string): string {
 /**
  * Create an E2E-only OpenShell CLI wrapper that rejects the exact native
  * `--gpu` create before build or sandbox progress. The compatibility create
- * runs the real CLI with the wrapper path as argv[0], while the rejecting
- * wrapper stays installed. After that create succeeds, the wrapper atomically
- * replaces itself with a link to the real CLI so later ForwardTcp ownership
- * checks resolve the configured path to the executable that owns each
- * listener. A failed or interrupted invocation never changes the wrapper path;
- * an overlapping successful invocation may independently commit the terminal
- * link and remains authoritative. Every other invocation transparently
- * delegates its original argv. This
+ * runs the real CLI while the rejecting wrapper stays installed. After that
+ * create succeeds, the wrapper removes itself so normal OpenShell resolution
+ * selects the real CLI path used by surviving ForwardTcp listeners. A failed
+ * or interrupted invocation never changes the wrapper path; an overlapping
+ * successful invocation may independently commit the removal and remains
+ * authoritative. Every other invocation transparently delegates its original
+ * argv. This
  * test-only wrapper never logs argv: its sole artifact is an event log made of
  * fixed labels, so sandbox-create environment arguments never enter artifacts.
  * This interception pattern is specific to the #6110 fallback proof and must
@@ -158,7 +157,7 @@ export function createHermesGpuFallbackWrapper(
     "    trap 'forward_compatibility_signal HUP 129' HUP",
     "    trap 'forward_compatibility_signal INT 130' INT",
     "    trap 'forward_compatibility_signal TERM 143' TERM",
-    '    (exec -a "$0" "$REAL_OPENSHELL" "$@") &',
+    '    (exec "$REAL_OPENSHELL" "$@") &',
     '    COMPATIBILITY_PID="$!"',
     '    wait "$COMPATIBILITY_PID" || {',
     '      compatibility_status="$?"',
@@ -166,9 +165,7 @@ export function createHermesGpuFallbackWrapper(
     '      exit "$compatibility_status"',
     "    }",
     "    trap - HUP INT TERM",
-    '    REAL_OPENSHELL_LINK="$FALLBACK_STATE_DIR/openshell-real.$$"',
-    '    ln -s "$REAL_OPENSHELL" "$REAL_OPENSHELL_LINK"',
-    '    mv -f "$REAL_OPENSHELL_LINK" "$0"',
+    '    rm -f "$0"',
     "    exit 0",
     "  fi",
     "fi",
@@ -184,6 +181,7 @@ export function createHermesGpuFallbackWrapper(
       NEMOCLAW_OPENSHELL_BIN: wrapperPath,
       NEMOCLAW_OPENSHELL_GATEWAY_BIN: gatewayPath,
       NEMOCLAW_OPENSHELL_SANDBOX_BIN: sandboxPath,
+      PATH: `${componentDir}:${process.env.PATH ?? ""}`,
     },
     eventsPath,
     rootDir,

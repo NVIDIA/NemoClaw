@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildDirectSandboxGpuProofCommands } from "../../../src/lib/onboard/initial-policy";
+import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve";
 import {
   hasRequiredOpenshellMessagingFeatures,
   REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE,
@@ -127,7 +128,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     ]);
   });
 
-  it("keeps the real OpenShell CLI at the wrapper path after compatibility create succeeds (#11239)", () => {
+  it("selects the real OpenShell CLI after compatibility create succeeds (#11239)", () => {
     const { realOpenshell, root, wrapper } = createWrapperFixture("hermes-gpu-fallback-test-", {
       openshell: [
         "#!/usr/bin/env bash",
@@ -188,24 +189,25 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
       env,
     );
     expect(compatibility.status, compatibility.stderr).toBe(0);
-    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
-    expect(fs.realpathSync(wrapper.wrapperPath)).toBe(fs.realpathSync(realOpenshell));
+    expect(fs.existsSync(wrapper.wrapperPath)).toBe(false);
+    const selectedOpenshell = resolveOpenshell({ env }) ?? "missing-openshell";
+    expect(selectedOpenshell).toBe(realOpenshell);
 
     const repeatedCompatibility = runWrapper(
-      wrapper.wrapperPath,
+      selectedOpenshell,
       ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
       env,
     );
     expect(repeatedCompatibility.status, repeatedCompatibility.stderr).toBe(0);
 
     const compatibilityProof = runWrapper(
-      wrapper.wrapperPath,
+      selectedOpenshell,
       ["sandbox", "exec", "-n", "alpha", "--", "sh", "-lc", HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF],
       env,
     );
     expect(compatibilityProof.status, compatibilityProof.stderr).toBe(0);
 
-    const version = runWrapper(wrapper.wrapperPath, ["--version"], env);
+    const version = runWrapper(selectedOpenshell, ["--version"], env);
     expect(version.status, version.stderr).toBe(0);
     expect(readHermesGpuFallbackEvents(wrapper.eventsPath)).toEqual([
       HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
@@ -233,44 +235,10 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     expect(fs.readFileSync(delegateExecutableLog, "utf8").split(/\r?\n/u).filter(Boolean)).toEqual([
       realOpenshell,
       realOpenshell,
-      wrapper.wrapperPath,
-      wrapper.wrapperPath,
-      wrapper.wrapperPath,
+      realOpenshell,
+      realOpenshell,
+      realOpenshell,
     ]);
-  });
-
-  it("passes the configured wrapper path as native executable argv[0] before committing the link (#11239)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-gpu-fallback-argv0-test-"));
-    roots.push(root);
-    const realDir = path.join(root, "real");
-    fs.mkdirSync(realDir);
-    const realOpenshell = path.join(realDir, "openshell");
-    fs.symlinkSync(process.execPath, realOpenshell);
-    writeExecutable(path.join(realDir, "openshell-gateway"), "#!/usr/bin/env bash\nexit 0\n");
-    writeExecutable(path.join(realDir, "openshell-sandbox"), "#!/usr/bin/env bash\nexit 0\n");
-    const wrapper = createHermesGpuFallbackWrapper(realOpenshell, {
-      rootDir: path.join(root, "wrapper"),
-    });
-    const argvZeroLog = path.join(root, "argv-zero.log");
-    fs.writeFileSync(
-      path.join(root, "sandbox"),
-      'require("node:fs").writeFileSync(process.env.E2E_ARGV_ZERO_LOG, process.argv0);\n',
-    );
-
-    const compatibility = spawnSync(
-      wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
-      {
-        cwd: root,
-        encoding: "utf8",
-        env: { ...process.env, ...wrapper.componentEnv, E2E_ARGV_ZERO_LOG: argvZeroLog },
-      },
-    );
-
-    expect(compatibility.status, compatibility.stderr).toBe(0);
-    expect(fs.readFileSync(argvZeroLog, "utf8")).toBe(wrapper.wrapperPath);
-    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
-    expect(fs.realpathSync(wrapper.wrapperPath)).toBe(fs.realpathSync(realOpenshell));
   });
 
   it("keeps native fault injection when the exact proof precedes compatibility create (#11239)", () => {
@@ -376,7 +344,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
 
     fs.writeFileSync(release, "");
     expect(await compatibilityStatus).toBe(0);
-    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(wrapper.wrapperPath)).toBe(false);
   });
 
   it("retains the successful handoff when an overlapping compatibility create fails (#11239)", async () => {
@@ -427,10 +395,10 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
 
     fs.writeFileSync(successRelease, "");
     expect(await successfulStatus).toBe(0);
-    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(wrapper.wrapperPath)).toBe(false);
     fs.writeFileSync(failureRelease, "");
     expect(await failingStatus).toBe(23);
-    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(wrapper.wrapperPath)).toBe(false);
   });
 
   it("leaves native fault injection installed when compatibility create is interrupted (#11239)", async () => {
