@@ -141,6 +141,24 @@ class ProbeOnlyConnectCommand extends NemoClawCommand {
   }
 }
 
+class PortableStartCommand extends NemoClawCommand {
+  static id = "sandbox:start";
+  static args = { sandboxName: Args.string({ required: true }) };
+  static flags = {};
+  static observed = { host: false, lifecycle: false };
+
+  public async run(): Promise<void> {
+    const { args } = await this.parse(PortableStartCommand);
+    const sandboxName = args.sandboxName!;
+    PortableStartCommand.observed = {
+      host: fs.existsSync(
+        portableHostAuthority.portableHostFencePath(process.env.HOME || os.homedir()),
+      ),
+      lifecycle: isMcpLifecycleLockHeld(sandboxName),
+    };
+  }
+}
+
 function useHermesPortableAuthority(): void {
   vi.spyOn(receiptAuthority, "hasHermesPortableReceiptCandidate").mockReturnValue(true);
   vi.spyOn(
@@ -186,6 +204,7 @@ describe("NemoClawCommand", () => {
     GlobalUnsupportedMutationCommand.ran = false;
     GlobalUseMutationCommand.ran = false;
     ProbeOnlyConnectCommand.operation = () => undefined;
+    PortableStartCommand.observed = { host: false, lifecycle: false };
   });
 
   it("records status-like command results without throwing", () => {
@@ -304,14 +323,24 @@ describe("NemoClawCommand", () => {
     ).toBe(false);
   });
 
-  it("does not create the Portable host fence when a probe has no Hermes receipt candidate (#10423)", async () => {
+  it("holds the Portable host fence outside the start lifecycle fence", async () => {
+    useHermesPortableAuthority();
+
+    await PortableStartCommand.run(["alpha"], process.cwd());
+
+    expect(PortableStartCommand.observed).toEqual({ host: true, lifecycle: true });
+  });
+
+  it("does not create the Portable host fence when a lifecycle command has no Hermes receipt candidate", async () => {
     vi.stubEnv("HOME", stateDir);
     vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", stateDir);
     vi.spyOn(receiptAuthority, "hasHermesPortableReceiptCandidate").mockReturnValue(false);
 
     await ProbeOnlyConnectCommand.run(["alpha", "--probe-only"], process.cwd());
+    await PortableStartCommand.run(["alpha"], process.cwd());
 
     expect(ProbeOnlyConnectCommand.observed).toEqual({ host: false, lifecycle: true });
+    expect(PortableStartCommand.observed).toEqual({ host: false, lifecycle: true });
   });
 
   it("routes interrupted successor recovery through the public probe fences (#10423)", async () => {

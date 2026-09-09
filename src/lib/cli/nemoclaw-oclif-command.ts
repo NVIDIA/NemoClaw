@@ -146,7 +146,7 @@ export abstract class NemoClawCommand extends Command {
       return await withMcpLifecycleLock(sandboxName, runLocked);
     };
     if (
-      this.isProbeOnlyConnect(commandId) &&
+      (commandId === "sandbox:start" || this.isProbeOnlyConnect(commandId)) &&
       hasHermesPortableReceiptCandidate(sandboxName, defaultPortableDemoStateDir(process.env))
     ) {
       return await withCurrentPortableHostFence(runWithLifecycleFence);
