@@ -2135,13 +2135,13 @@ class SandboxStateFlow<
       state.webSearchConfig as unknown as SharedWebSearchConfig | null,
       this.options.hermesToolGateways,
     );
-    const extraProviderPlan = await this.deps.planRegisteredExtraProviders(
-      this.options.gatewayName,
-    );
     const createAndRecord = async (): Promise<SandboxStepState<WebSearchConfig>> => {
       this.assertRegistryMessagingPlanUnchanged(
         requestedSandboxName,
         registryMessagingAuthoritySnapshot,
+      );
+      const extraProviderPlan = await this.deps.planRegisteredExtraProviders(
+        this.options.gatewayName,
       );
       if (
         this.options.apfInterceptorRequested === true &&
