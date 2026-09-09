@@ -583,7 +583,7 @@ replace(provider, "ensureMcpBridgeProviderProfile", () => {});
 replace(provider, "assertMcpProviderRecoverable", metadata);
 replace(provider, "upsertMcpProvider", () => { const action = exists ? "updated" : "created"; exists = true; return { action, inspection: metadata() }; });
 replace(provider, "attachProvider", () => { attached = true; });
-replace(provider, "detachProvider", () => { attached = false; return "detached"; });
+replace(provider, "detachProvider", () => { assert.equal(YAML.parse(document).network_policies?.mcp_bridge_github, undefined); attached = false; return "detached"; });
 replace(provider, "observeMcpCredentialRevision", () => "v7");
 replace(provider, "waitForAttachedMcpCredential", () => "v7");
 replace(provider, "waitForDetachedMcpCredential", () => assert.equal(attached, false));

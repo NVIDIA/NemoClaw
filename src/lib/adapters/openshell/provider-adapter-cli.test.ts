@@ -1275,22 +1275,32 @@ describe("CLI OpenShell provider adapter", () => {
     );
   });
 
-  it.each(["NotAttached", "provider search-prod is not attached"])(
-    "treats an idempotent detach result as already detached: %s (#9806)",
-    async (diagnostic) => {
-      const adapter = createCliOpenShellProviderAdapter({
-        run: () => captured(1, "", diagnostic),
-      });
+  it.each([
+    "Provider search-prod was not attached to sandbox alpha.",
+    "Provider search-prod was not attached to sandbox alpha.\n",
+  ])("accepts the exact successful idempotent detach receipt: %s (#9806)", async (diagnostic) => {
+    const adapter = createCliOpenShellProviderAdapter({ run: () => captured(0, diagnostic) });
+    await expect(
+      adapter.detachProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({ ok: true, value: { changed: false } });
+  });
 
-      await expect(
-        adapter.detachProvider({
-          target: selectedOpenShellGateway(),
-          providerName: "search-prod",
-          sandboxName: "alpha",
-        }),
-      ).resolves.toEqual({ ok: true, value: { changed: false } });
-    },
-  );
+  it("does not confuse a detached provider name with an absence status", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(0, "✓ Detached provider notattached from sandbox alpha"),
+    });
+    await expect(
+      adapter.detachProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "notattached",
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({ ok: true, value: { changed: true } });
+  });
 
   it("classifies the exact provider-detach resource-version race (#9806)", async () => {
     const diagnostic =

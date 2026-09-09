@@ -227,7 +227,7 @@ $$nemoclaw my-sandbox mcp add local-tools \
 unset LOCAL_MCP_TOKEN
 ```
 
-Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider. The provider itself is preserved for explicit cleanup. The re-add performs a new DNS preflight and records the reviewed exact address set.
+Removing the server removes its generated policy key, detaches the exactly identified provider, and verifies attachment and credential cleanup before deleting the agent-native entry. The provider itself is preserved for explicit cleanup. The re-add performs a new DNS preflight and records the reviewed exact address set.
 
 ## Remove a Server
 
@@ -237,13 +237,13 @@ $$nemoclaw my-sandbox mcp remove github
 
 Removing a server blocks new requests and reconnects but does not terminate a response or SSE stream that is already open. For immediate revocation, revoke the upstream credential first, then run `$$nemoclaw <sandbox> rebuild --yes` or destroy the sandbox to terminate an existing stream.
 
-`remove --force` may remove a modified same-name native entry after credential and policy cleanup is proven. It never claims or deletes an ambiguous OpenShell provider.
+`remove --force` may remove a modified same-name native entry after policy, attachment, and credential cleanup is proven. It never claims or deletes an ambiguous OpenShell provider.
 
 Policy removal targets the deterministic current MCP policy key. Force never claims an unrelated policy or provider.
 
-NemoClaw refuses conflicting native configuration and live policy before changing either source. It detaches a provider only when the live policy binding, provider ID, type, and credential key agree, then verifies that fresh sandbox processes no longer receive the credential. It removes the policy key and finally the native registration. If the policy is already absent, it preserves providers and still requires credential absence before removing an authenticated native entry. The workspace provider is retained for explicit cleanup.
+NemoClaw refuses conflicting native configuration and live policy before changing either source. It verifies the live policy binding, provider ID, type, and credential key, then removes the policy key before detaching that exact provider. OpenShell requires this order because a policy cannot reference a detached provider. NemoClaw verifies that no attachment carries the MCP credential key and that fresh sandbox processes no longer receive it before removing the native registration. The workspace provider is retained for explicit cleanup.
 
-If credential or policy cleanup cannot be proven, the command fails and retains the native registration for recovery, including with `--force`. Inspect the reported policy or provider state, correct the cause, and retry `mcp remove`. It never detaches the provider from another sandbox or silently reports that the provider was deleted.
+If policy, attachment, or credential cleanup cannot be proven, the command fails and retains the native registration for recovery, including with `--force`. A retry after policy removal does not infer provider ownership from its name. If an attachment still carries the MCP credential key, inspect and detach it explicitly before retrying `mcp remove`, even if fresh processes no longer receive the credential. NemoClaw never detaches the provider from another sandbox or silently reports that the provider was deleted.
 
 ## Rebuild with Managed MCP State
 

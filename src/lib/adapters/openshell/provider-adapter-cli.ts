@@ -98,7 +98,7 @@ const TERMINAL_CSI_RE = /(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~]/gu;
 const TERMINAL_CONTROL_RE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/gu;
 const ATTACHED_TO_SANDBOX_RE =
   /attached(?:\s|│)+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+?)(?=\.\s+[a-z]|["\n]|$)/iu;
-const TOLERATED_DETACH_OUTPUT_RE = /\bNotAttached\b|\bnot\s+attached\b/iu;
+const UNCONFIRMED_DETACH_OUTPUT_RE = /^NotAttached$|\bnot\s+attached\b/iu;
 const PROVIDER_GET_DIAGNOSTIC_LIMIT = 64 * 1024;
 const REFRESH_STATUS_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u;
 const NO_PROVIDER_ATTACHMENTS_RE = /^No providers attached to sandbox\b/mu;
@@ -668,15 +668,24 @@ export function createCliOpenShellProviderAdapter(
     );
     const output = commandOutput(result);
     const error = commandError(result);
-    const confirmedIdempotentDetach =
-      !result.error &&
-      !result.signal &&
-      result.status !== null &&
-      TOLERATED_DETACH_OUTPUT_RE.test(output);
-    if (confirmedIdempotentDetach) {
+    if (error) return failure(error);
+    // OpenShell's successful no-op names both targets. FailedPrecondition also
+    // says "not attached" when a policy still references the provider; it must
+    // retain its error instead of being mistaken for an idempotent detach.
+    if (
+      output ===
+      `Provider ${request.providerName} was not attached to sandbox ${request.sandboxName}.`
+    ) {
       return success({ changed: false });
     }
-    return error ? failure(error) : success({ changed: true });
+    if (UNCONFIRMED_DETACH_OUTPUT_RE.test(output)) {
+      return failure({
+        kind: "schema",
+        message:
+          "OpenShell did not confirm idempotent detach for the requested provider and sandbox.",
+      });
+    }
+    return success({ changed: true });
   };
 
   const attachProvider: OpenShellProviderAdapter["attachProvider"] = async (

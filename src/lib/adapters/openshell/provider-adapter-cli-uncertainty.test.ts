@@ -29,6 +29,45 @@ describe("CLI OpenShell provider adapter uncertain mutations", () => {
     ).resolves.toMatchObject({ ok: false });
   });
 
+  it("preserves the pinned policy-binding detach refusal instead of treating it as absence", async () => {
+    const diagnostic =
+      "Error: code: 'The system is not in a state required for the operation execution', message: \"credential_binding references provider 'search-prod', but that provider is not attached to the sandbox\"";
+    const adapter = createCliOpenShellProviderAdapter({ run: () => captured(1, diagnostic) });
+    await expect(
+      adapter.detachProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: diagnostic },
+    });
+  });
+
+  it.each([
+    ["wrong provider", 0, "Provider another-provider was not attached to sandbox alpha."],
+    ["wrong sandbox", 0, "Provider search-prod was not attached to sandbox another-sandbox."],
+    ["provider prefix", 0, "Provider search-prod-copy was not attached to sandbox alpha."],
+    ["generic status", 1, "NotAttached"],
+    ["generic sentence", 1, "provider search-prod is not attached"],
+    ["failed exact receipt", 1, "Provider search-prod was not attached to sandbox alpha."],
+    [
+      "embedded receipt",
+      0,
+      "Failure before detach. Provider search-prod was not attached to sandbox alpha.",
+    ],
+  ] as const)("rejects %s as proof of idempotent detach", async (_label, status, diagnostic) => {
+    const adapter = createCliOpenShellProviderAdapter({ run: () => captured(status, diagnostic) });
+    await expect(
+      adapter.detachProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+        sandboxName: "alpha",
+      }),
+    ).resolves.toMatchObject({ ok: false });
+  });
+
   it("preserves the provider-not-found compatibility diagnostic on delete (#9806)", async () => {
     const adapter = createCliOpenShellProviderAdapter({
       run: () => captured(1, "provider 'search-prod' not found"),

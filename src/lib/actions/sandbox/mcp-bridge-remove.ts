@@ -17,6 +17,7 @@ import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import {
   detachProvider,
   inspectMcpProvider,
+  inspectMcpProviderAttachments,
   providerMatchesManagedCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
@@ -77,6 +78,7 @@ export async function removeMcpBridge(
     const envValues = resolvePersistedCredentialEnvForRedaction(entry.env);
     let preservedProvider: string | undefined;
     try {
+      let detachExactProvider = false;
       const policyPresent = getPolicyPresence(
         sandboxName,
         entry,
@@ -86,9 +88,8 @@ export async function removeMcpBridge(
       if (policyPresent === null) {
         throw new McpBridgeError("Could not prove the current generated MCP policy state.");
       }
-      // The live policy binds the provider identity. Keep that binding until
-      // detach is proven; a retry after policy removal must not adopt the
-      // default same-name provider inferred by source inspection.
+      // Capture detach authority before removing the policy binding. OpenShell
+      // rejects detach while that policy still references the provider.
       if (policyPresent && entry.providerName) {
         const provider = await inspectMcpProvider(entry.providerName, runtimeSelection);
         const exact =
@@ -97,16 +98,7 @@ export async function removeMcpBridge(
             allowLegacyGeneric: true,
           });
         if (exact) {
-          operationTarget?.liveIdentity?.assertCurrent();
-          const outcome = await detachProvider(sandboxName, entry, {
-            allowLegacyGeneric: true,
-            runtimeSelection,
-          });
-          if (outcome === "unknown") {
-            throw new McpBridgeError(
-              `Provider detach state for '${entry.providerName}' is unknown.`,
-            );
-          }
+          detachExactProvider = true;
         } else if (provider.exists !== false) {
           throw new McpBridgeError(
             `Provider '${entry.providerName}' could not be proven as the current exact MCP provider and was preserved.`,
@@ -114,16 +106,42 @@ export async function removeMcpBridge(
         }
         if (provider.exists !== false) preservedProvider = entry.providerName;
       }
-      if (entry.env.length > 0) {
-        // Fresh exec credential absence is required even if the provider or
-        // policy was already absent and conveyed no detach authority.
-        waitForDetachedMcpCredential(sandboxName, entry, runtimeSelection);
-      }
       if (policyPresent)
         removeGeneratedPolicy(sandboxName, entry, {
           runtimeSelection,
           ...(operationTarget ? { operationTarget } : {}),
         });
+      if (detachExactProvider) {
+        operationTarget?.liveIdentity?.assertCurrent();
+        const outcome = await detachProvider(sandboxName, entry, {
+          allowLegacyGeneric: true,
+          runtimeSelection,
+        });
+        if (outcome === "unknown") {
+          throw new McpBridgeError(`Provider detach state for '${entry.providerName}' is unknown.`);
+        }
+      }
+      if (entry.env.length > 0) {
+        // Endpointless credentials can be withheld while their provider is
+        // still attached. An interrupted removal must prove both absences,
+        // without adopting an inferred provider after the policy is gone.
+        const inspection = await inspectMcpProviderAttachments(sandboxName, runtimeSelection);
+        if (!inspection.attachments) {
+          throw new McpBridgeError(
+            inspection.error ?? "Could not prove the current provider attachment state.",
+          );
+        }
+        if (
+          inspection.attachments.some((attachment) =>
+            entry.env.some((key) => attachment.credentialKeys.includes(key)),
+          )
+        ) {
+          throw new McpBridgeError(
+            "A provider attachment still carries this MCP credential key. Inspect and detach that attachment explicitly before retrying removal.",
+          );
+        }
+        waitForDetachedMcpCredential(sandboxName, entry, runtimeSelection);
+      }
     } catch (error) {
       const detail = redactBridgeSecretsForDisplay(
         error instanceof Error ? error.message : String(error),
