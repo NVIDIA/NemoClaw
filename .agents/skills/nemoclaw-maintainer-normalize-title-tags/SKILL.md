@@ -44,7 +44,7 @@ gh auth status
 ## Step 2: Preview Proposed Changes
 
 ```bash
-node --experimental-strip-types --no-warnings \
+node --no-warnings \
   .agents/skills/nemoclaw-maintainer-normalize-title-tags/scripts/normalize-title-tags.ts
 ```
 
@@ -64,7 +64,7 @@ Ask the user which scope they want:
 Apply to all items:
 
 ```bash
-node --experimental-strip-types --no-warnings \
+node --no-warnings \
   .agents/skills/nemoclaw-maintainer-normalize-title-tags/scripts/normalize-title-tags.ts \
   --apply
 ```
@@ -72,7 +72,7 @@ node --experimental-strip-types --no-warnings \
 Apply only to open items:
 
 ```bash
-node --experimental-strip-types --no-warnings \
+node --no-warnings \
   .agents/skills/nemoclaw-maintainer-normalize-title-tags/scripts/normalize-title-tags.ts \
   --state open \
   --apply

@@ -22,7 +22,7 @@ runs:
 
     - name: Enforce base-trusted createRequire allowlist ratchet
       shell: bash
-      run: node --experimental-strip-types "$GITHUB_ACTION_PATH/create-require-ratchet.mts"
+      run: node "$GITHUB_ACTION_PATH/create-require-ratchet.mts"
 
     - name: Install hadolint
       shell: bash

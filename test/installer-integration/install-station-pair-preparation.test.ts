@@ -978,7 +978,6 @@ fi
           process.execPath,
           [
             "--no-warnings",
-            "--experimental-strip-types",
             COORDINATOR,
             "--helper",
             helper,
@@ -1129,7 +1128,6 @@ exit 96
           process.execPath,
           [
             "--no-warnings",
-            "--experimental-strip-types",
             COORDINATOR,
             "--helper",
             helper,

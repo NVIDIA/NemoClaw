@@ -329,7 +329,7 @@ jobs:
 
           /usr/bin/systemctl --user start podman.socket
           /usr/bin/systemctl --user is-active --quiet podman.socket
-          node --experimental-strip-types --no-warnings --input-type=module --eval '
+          node --no-warnings --input-type=module --eval '
             const { inspectPortableCpuDelegation } = await import(
               "./src/lib/onboard/experimental/portable-cpu-delegation-preflight.ts"
             );

@@ -243,7 +243,7 @@ jobs:
           decision="$(
             NEMOCLAW_CI_NPM_PACKAGE_MODE=inspect \
               NEMOCLAW_CI_TARGET_ROOT="$GITHUB_WORKSPACE" \
-              node --experimental-strip-types "$trusted_inspector"
+              node "$trusted_inspector"
           )"
           required="$(
             jq -ser '

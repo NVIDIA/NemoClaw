@@ -48,14 +48,14 @@ function requireEqual(actual: string, expected: string, label: string): void {
 export function runRealOpenClawMcpStartRetryProof(options: ProofOptions): void {
   const applied = spawnSync(
     options.nodeExecutable,
-    ["--experimental-strip-types", options.patchScript, options.dist],
+    [options.patchScript, options.dist],
     { encoding: "utf8", timeout: options.timeoutMs },
   );
   requireSuccess(applied, "apply MCP startup recovery patch");
 
   const audit = spawnSync(
     options.nodeExecutable,
-    ["--experimental-strip-types", options.patchScript, "--audit", options.dist],
+    [options.patchScript, "--audit", options.dist],
     { encoding: "utf8", timeout: options.timeoutMs },
   );
   requireSuccess(audit, "audit MCP startup recovery patch");

@@ -131,7 +131,7 @@ describe("hosted-runner recovery workflow boundary", () => {
       SOURCE_RUN_ID: "${{ github.event.workflow_run.id }}",
     });
     expect(evaluate.run).toBe(
-      "node --experimental-strip-types --no-warnings tools/e2e/hosted-runner-recovery.mts",
+      "node --no-warnings tools/e2e/hosted-runner-recovery.mts",
     );
   });
 

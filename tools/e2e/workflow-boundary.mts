@@ -1992,7 +1992,7 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
   const dispatch = namedStep(steps, "Dispatch exact commit to Jetson through operator backend");
   if (
     dispatch?.run !==
-      "node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-client.mts" ||
+      "node --no-warnings tools/e2e/jetson-dispatch-client.mts" ||
     !isDeepStrictEqual(asRecord(dispatch?.env), {
       E2E_ARTIFACT_DIR: "${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu",
       JETSON_DISPATCH_CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",

@@ -58,7 +58,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          artifact_path="$(node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts)"
+          artifact_path="$(node scripts/checks/package-openshell-sdk-for-pr.mts)"
           [ -n "$artifact_path" ]
           printf 'artifact_path=%s\n' "$artifact_path" >> "$GITHUB_OUTPUT"
 

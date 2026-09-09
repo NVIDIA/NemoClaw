@@ -52,7 +52,7 @@ const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
     "    exit 1",
     "  }",
     "fi",
-    'selection="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "$catalog_path")"',
+    'selection="$(node --no-warnings tools/e2e/pr-managed-image-publication.mts "$catalog_path")"',
     'case "$selection" in',
     "  base-cohort)",
     '    [[ ! -e "$catalog_path" && ! -L "$catalog_path" ]] || {',
@@ -798,7 +798,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           'if [[ "$SELECT_NEAREST_SUCCESSFUL_PUBLICATION" == "1" ]]; then',
           "  wait_seconds=300",
           "fi",
-          'node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds "$wait_seconds" --poll-seconds 30',
+          'node --no-warnings tools/e2e/base-image-publication.mts --wait-seconds "$wait_seconds" --poll-seconds 30',
           "",
         ].join("\n"),
       },
@@ -811,7 +811,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
           PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
         },
-        run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"',
+        run: 'node --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"',
       },
       {
         id: "validate_dcode_base",
@@ -822,7 +822,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
           PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
         },
-        run: 'node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"',
+        run: 'node --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"',
       },
       {
         id: "download_managed_cohort",
@@ -835,7 +835,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
           PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
         },
-        run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/managed-image-cohort"',
+        run: 'node --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/managed-image-cohort"',
       },
       {
         id: "validate_managed_cohort",
@@ -846,7 +846,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
           PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
         },
-        run: 'node --experimental-strip-types --no-warnings tools/e2e/managed-image-cohort-contract.mts "${RUNNER_TEMP}/managed-image-cohort/cohort.json"',
+        run: 'node --no-warnings tools/e2e/managed-image-cohort-contract.mts "${RUNNER_TEMP}/managed-image-cohort/cohort.json"',
       },
     ],
   };
@@ -1134,7 +1134,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}" ||
     requireResults.run !==
-      "node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts"
+      "node --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("relevant-e2e must evaluate planner-selected jobs from needs");
   }
@@ -1177,7 +1177,7 @@ function validateReleaseQualification(errors: string[], workflow: OperationsWork
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.release_required_jobs }}" ||
     requireResults.run !==
-      "node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts"
+      "node --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("release-qualification must evaluate planner-selected jobs from needs");
   }
