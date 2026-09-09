@@ -124,7 +124,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     ]);
   });
 
-  it("replaces the wrapper with the real OpenShell CLI after compatibility create succeeds (#11239)", () => {
+  it("keeps the real OpenShell CLI at the wrapper path after compatibility create succeeds (#11239)", () => {
     const { realOpenshell, root, wrapper } = createWrapperFixture("hermes-gpu-fallback-test-", {
       openshell: [
         "#!/usr/bin/env bash",
@@ -136,14 +136,17 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
         "  done",
         "fi",
         `printf '%s\\n' "$marker" >>"$E2E_FAKE_DELEGATE_LOG"`,
+        `printf '%s\\n' "$0" >>"$E2E_FAKE_DELEGATE_EXECUTABLE_LOG"`,
         "",
       ].join("\n"),
     });
     const delegateMarkerLog = path.join(root, "delegate-markers.log");
+    const delegateExecutableLog = path.join(root, "delegate-executables.log");
     const env = {
       ...process.env,
       ...wrapper.componentEnv,
       E2E_FAKE_DELEGATE_LOG: delegateMarkerLog,
+      E2E_FAKE_DELEGATE_EXECUTABLE_LOG: delegateExecutableLog,
     };
     const secretMarkers = [
       "must-not-enter-wrapper-events",
@@ -223,6 +226,13 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
       "create-without-gpu",
       "delegated",
       "delegated",
+    ]);
+    expect(fs.readFileSync(delegateExecutableLog, "utf8").split(/\r?\n/u).filter(Boolean)).toEqual([
+      realOpenshell,
+      wrapper.wrapperPath,
+      wrapper.wrapperPath,
+      wrapper.wrapperPath,
+      wrapper.wrapperPath,
     ]);
   });
 
