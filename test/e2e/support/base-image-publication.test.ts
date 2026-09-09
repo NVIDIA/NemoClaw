@@ -951,6 +951,33 @@ describe("base-image publication evidence", () => {
     ]);
   });
 
+  it("selects the newest tied manual publication deterministically (#11289)", () => {
+    const olderManualRunId = RUN_ID + 1;
+    const newerManualRunId = RUN_ID + 2;
+
+    expect(
+      selectPublicationRun(
+        runsPayload([
+          workflowRun({
+            id: olderManualRunId,
+            event: "workflow_dispatch",
+            head_sha: DESCENDANT_SHA,
+            html_url: `${RUN_URL_ROOT}/${olderManualRunId}`,
+          }),
+          workflowRun({
+            id: newerManualRunId,
+            event: "workflow_dispatch",
+            head_sha: DESCENDANT_SHA,
+            html_url: `${RUN_URL_ROOT}/${newerManualRunId}`,
+          }),
+        ]),
+        history(),
+        WORKFLOW_ID,
+        { allowWorkflowDispatch: true, completedSuccessOnly: true },
+      ),
+    ).toMatchObject({ state: "selected", run: { id: newerManualRunId, event: "workflow_dispatch" } });
+  });
+
   it("selects an older eligible push after skipping a newer manual run without managed-image promotion (#11289)", async () => {
     const manualRunId = RUN_ID + 1;
     const manualRun = workflowRun({

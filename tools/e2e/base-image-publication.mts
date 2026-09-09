@@ -550,12 +550,12 @@ export function selectPublicationRun(
     ? "push"
     : "workflow_dispatch";
   const preferred = nearest.filter(({ run }) => run.event === preferredEvent);
-  if (preferred.length !== 1) {
+  if (preferredEvent === "push" && preferred.length !== 1) {
     throw new Error(
       `multiple trusted ${preferredEvent} base-image workflow runs match ${preferred[0]?.run.headSha ?? history.relevantSha}: ${preferred.map(({ run }) => run.url).join(", ")}`,
     );
   }
-  const run = preferred[0].run;
+  const run = [...preferred].sort((left, right) => right.run.id - left.run.id)[0].run;
   return { state: "selected", run };
 }
 
