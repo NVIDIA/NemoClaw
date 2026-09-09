@@ -8,11 +8,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   __test,
+  clearHermesOperatorConfigHandoff,
   clearRebuildMcpHandoff,
   clearRebuildPolicyHandoff,
+  readHermesOperatorConfigHandoff,
   readRebuildMcpHandoff,
   readRebuildPolicyHandoff,
   type RebuildManifest,
+  writeHermesOperatorConfigHandoff,
   writeRebuildMcpHandoff,
   writeRebuildPolicyHandoff,
 } from "./sandbox.js";
@@ -85,6 +88,83 @@ describe("rebuild manifest publication", () => {
         }),
       }),
     ).toThrow("write failed");
+  });
+});
+
+describe("bounded Hermes operator config handoff", () => {
+  it("binds private exact content and removes recovery authority after success", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-handoff-"));
+    tempDirs.push(backupPath);
+    const published = { ...manifest(backupPath), agentType: "hermes" };
+    __test.writeManifest(backupPath, published);
+    const document = '{"version":1,"sandboxName":"alpha","entries":[],"droppedKeys":[]}\n';
+
+    const withHandoff = writeHermesOperatorConfigHandoff(published, document, [
+      "memory.provider",
+      "model.max_tokens",
+    ]);
+    const handoffPath = path.join(backupPath, withHandoff.hermesOperatorConfigHandoff!.file);
+    expect(withHandoff.hermesOperatorConfigHandoff?.keys).toEqual([
+      "memory.provider",
+      "model.max_tokens",
+    ]);
+    expect(readHermesOperatorConfigHandoff(withHandoff)).toBe(document);
+    const descriptor = fs.openSync(handoffPath, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
+    try {
+      expect(fs.fstatSync(descriptor).mode & 0o777).toBe(0o600);
+      fs.ftruncateSync(descriptor, 0);
+      fs.writeSync(descriptor, `${document}tampered`, 0, "utf8");
+      fs.fsyncSync(descriptor);
+      expect(readHermesOperatorConfigHandoff(withHandoff)).toBeNull();
+      fs.ftruncateSync(descriptor, 0);
+      fs.writeSync(descriptor, document, 0, "utf8");
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+
+    expect(clearHermesOperatorConfigHandoff(withHandoff)).toBe(true);
+    expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(withHandoff).not.toHaveProperty("hermesOperatorConfigHandoff");
+  });
+
+  it("retains retired cleanup identity after deletion fails and removes it on retry", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-cleanup-"));
+    tempDirs.push(backupPath);
+    const published = { ...manifest(backupPath), agentType: "hermes" };
+    __test.writeManifest(backupPath, published);
+    const document = '{"version":1,"sandboxName":"alpha","entries":[],"droppedKeys":[]}\n';
+    const withHandoff = writeHermesOperatorConfigHandoff(published, document);
+    const handoffPath = path.join(backupPath, withHandoff.hermesOperatorConfigHandoff!.file);
+
+    expect(
+      clearHermesOperatorConfigHandoff(withHandoff, {
+        remove: vi.fn(() => {
+          throw new Error("injected deletion failure");
+        }),
+      }),
+    ).toBe(false);
+    expect(withHandoff.hermesOperatorConfigHandoff).toMatchObject({
+      retired: true,
+    });
+    expect(readHermesOperatorConfigHandoff(withHandoff)).toBeNull();
+    expect(fs.existsSync(handoffPath)).toBe(true);
+
+    expect(clearHermesOperatorConfigHandoff(withHandoff)).toBe(true);
+    expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(withHandoff).not.toHaveProperty("hermesOperatorConfigHandoff");
+  });
+
+  it("rejects control characters in the Hermes config key inventory", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-keys-"));
+    tempDirs.push(backupPath);
+    const published = { ...manifest(backupPath), agentType: "hermes" };
+    __test.writeManifest(backupPath, published);
+    const document = '{"version":1,"sandboxName":"alpha","entries":[],"droppedKeys":[]}\n';
+
+    expect(() =>
+      writeHermesOperatorConfigHandoff(published, document, ["model.max_tokens\nforged"]),
+    ).toThrow("key inventory is invalid");
   });
 });
 
@@ -222,6 +302,37 @@ describe("bounded rebuild MCP handoff", () => {
     source: "native" as const,
   };
   const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" as const };
+
+  it("preserves independent Hermes config and source-derived MCP recovery handoffs", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-handoff-"));
+    tempDirs.push(backupPath);
+    const published: RebuildManifest = { ...manifest(backupPath), agentType: "hermes" };
+    const hermesEntry = { ...entry, agent: "hermes", adapter: "hermes-config" as const };
+    const document = '{"version":1,"sandboxName":"alpha","entries":[],"droppedKeys":[]}\n';
+    __test.writeManifest(backupPath, published);
+    writeRebuildMcpHandoff(published, [hermesEntry], runtimeSelection);
+    writeHermesOperatorConfigHandoff(published, document);
+
+    const manifestPath = path.join(backupPath, "rebuild-manifest.json");
+    const retained = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as RebuildManifest;
+    expect(readHermesOperatorConfigHandoff(retained)).toBe(document);
+    expect(clearHermesOperatorConfigHandoff(retained)).toBe(true);
+    expect(readRebuildMcpHandoff(retained)).toEqual({
+      entries: [hermesEntry],
+      runtimeSelection,
+    });
+
+    writeHermesOperatorConfigHandoff(retained, document);
+    expect(clearRebuildMcpHandoff(retained, { retainRetirement: true })).toBe(true);
+    expect(readRebuildMcpHandoff(retained)).toBeNull();
+    expect(readHermesOperatorConfigHandoff(retained)).toBe(document);
+    expect(clearRebuildMcpHandoff(retained)).toBe(true);
+    expect(readHermesOperatorConfigHandoff(retained)).toBe(document);
+    expect(clearHermesOperatorConfigHandoff(retained)).toBe(true);
+    const completed = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as RebuildManifest;
+    expect(completed).not.toHaveProperty("rebuildMcpHandoff");
+    expect(completed).not.toHaveProperty("hermesOperatorConfigHandoff");
+  });
 
   it("persists exact source-derived state for retry and removes it after recovery", () => {
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-handoff-"));
