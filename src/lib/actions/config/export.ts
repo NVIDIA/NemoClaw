@@ -6,10 +6,9 @@ import type { NemoClawConfigDocumentName, NemoClawConfigDocumentUid } from "../.
 import { validateNemoClawConfig } from "../../config/schema";
 import type { NonEmptyExportFindings } from "../../domain/config/export-evidence";
 import { buildExportConfig } from "../../domain/config/export-document";
-import {
-  YamlExportOutputError,
-  type YamlExportFailureKind,
-  type YamlExportFileState,
+import type {
+  YamlExportFailure,
+  YamlExportPublication,
 } from "../../adapters/fs/config-export-file";
 import type { ExportObservationResult } from "./observe-export-source";
 
@@ -37,7 +36,7 @@ export interface ConfigExportResult {
 export interface ConfigExportDependencies {
   readonly observe: (sandboxName: string) => Promise<ExportObservationResult>;
   readonly createDocumentUid: () => NemoClawConfigDocumentUid;
-  readonly publish: (path: string, contents: string, force: boolean) => string;
+  readonly publish: (path: string, contents: string, force: boolean) => YamlExportPublication;
   readonly writeStdout: (contents: string) => Promise<void>;
 }
 
@@ -51,124 +50,12 @@ export type ConfigExportFailure =
       readonly findings: NonEmptyExportFindings;
       readonly attempts: 1 | 2;
     }
-  | {
-      readonly kind: "output";
-      readonly target: "stdout";
-      readonly category: "unsafe-output";
-      readonly diagnostic: string;
-    }
-  | {
-      readonly kind: "output";
-      readonly target: "file";
-      readonly fileState: YamlExportFileState | "unknown";
-      readonly category: YamlExportFailureKind;
-      readonly diagnostic: string;
-    };
+  | { readonly kind: "output"; readonly target: "stdout"; readonly category: "unsafe-output" }
+  | ({ readonly kind: "output"; readonly target: "file" } & YamlExportFailure);
 
 export type ConfigExportOutcome =
   | { readonly ok: true; readonly completion: ConfigExportCompletion }
   | { readonly ok: false; readonly failure: ConfigExportFailure };
-
-function stdoutFailure(): ConfigExportOutcome {
-  return {
-    ok: false,
-    failure: {
-      kind: "output",
-      target: "stdout",
-      category: "unsafe-output",
-      diagnostic: "The export could not be written to stdout.",
-    },
-  };
-}
-
-function unreachable(value: never): never {
-  throw new Error(`Unexpected export file state: ${String(value)}`);
-}
-
-function fileDiagnostic(category: YamlExportFailureKind, fileState: YamlExportFileState): string {
-  switch (fileState.publication) {
-    case "unknown":
-      return fileState.stagingCleanup === "incomplete"
-        ? "The export publication state and staging cleanup could not be confirmed."
-        : "The export may have been written, but its publication state could not be confirmed.";
-    case "not-published":
-      if (fileState.stagingCleanup === "incomplete") {
-        return "The export was not published, and its staging file could not be removed.";
-      }
-      return category === "output-conflict"
-        ? "The output path already exists."
-        : "The output path could not be published safely.";
-    case "published": {
-      const concerns = [
-        ...(fileState.durability === "unknown" ? ["filesystem durability"] : []),
-        ...(fileState.location === "unknown" ? ["the final output location"] : []),
-        ...(fileState.stagingCleanup === "incomplete" ? ["staging cleanup"] : []),
-      ];
-      return concerns.length > 0
-        ? `The export was written, but ${concerns.join(", ")} could not be confirmed.`
-        : "The export was written, but output finalization failed.";
-    }
-    default:
-      return unreachable(fileState);
-  }
-}
-
-function fileFailure(error: unknown): ConfigExportOutcome {
-  if (error instanceof YamlExportOutputError) {
-    const { fileState } = error;
-    const category =
-      error.category === "output-conflict" &&
-      fileState.publication === "not-published" &&
-      fileState.stagingCleanup === "complete"
-        ? "output-conflict"
-        : "unsafe-output";
-    return {
-      ok: false,
-      failure: {
-        kind: "output",
-        target: "file",
-        fileState,
-        category,
-        diagnostic: fileDiagnostic(category, fileState) + stagingDiagnostic(error),
-      },
-    };
-  }
-  return {
-    ok: false,
-    failure: {
-      kind: "output",
-      target: "file",
-      fileState: "unknown",
-      category: "unsafe-output",
-      diagnostic: "The export publication state could not be determined safely.",
-    },
-  };
-}
-
-function stagingDiagnostic(error: YamlExportOutputError): string {
-  if (error.fileState.stagingCleanup !== "incomplete") return "";
-  const reference = error.stagingReference;
-  if (
-    reference === null ||
-    !/^\.nemoclaw-export\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.tmp$/u.test(
-      reference.name,
-    ) ||
-    ![
-      reference.directoryDevice,
-      reference.directoryInode,
-      reference.fileDevice,
-      reference.fileInode,
-    ].every((value) => Number.isSafeInteger(value) && value >= 0)
-  ) {
-    return " The staging identity is unavailable. Do not remove files by name alone.";
-  }
-  return (
-    ` Staging file: ${reference.name}; device ${reference.fileDevice}, inode ${reference.fileInode}.` +
-    ` Original output directory: device ${reference.directoryDevice}, inode ${reference.directoryInode}.` +
-    " Locate that directory, which may have moved. Before manual removal, verify both identities and that the staging entry is a regular file." +
-    " Do not remove the requested output file."
-  );
-}
 
 export async function runConfigExport(
   request: ConfigExportRequest,
@@ -198,28 +85,30 @@ export async function runConfigExport(
       await dependencies.writeStdout(rendered.yaml);
       return { ok: true, completion: { kind: "stdout" } };
     } catch {
-      return stdoutFailure();
+      return {
+        ok: false,
+        failure: { kind: "output", target: "stdout", category: "unsafe-output" },
+      };
     }
   }
 
   const { outputPath, force } = request.target;
-  try {
-    const published = dependencies.publish(outputPath, rendered.yaml, force);
-    return {
-      ok: true,
-      completion: {
-        kind: "file",
-        result: {
-          version: CONFIG_EXPORT_RESULT_VERSION,
-          status: "succeeded",
-          sourceSandbox: request.sandboxName,
-          outputPath: published,
-          documentDigest: rendered.documentDigest,
-          specDigest: rendered.specDigest,
-        },
-      },
-    };
-  } catch (error) {
-    return fileFailure(error);
+  const published = dependencies.publish(outputPath, rendered.yaml, force);
+  if (!published.ok) {
+    return { ok: false, failure: { kind: "output", target: "file", ...published.failure } };
   }
+  return {
+    ok: true,
+    completion: {
+      kind: "file",
+      result: {
+        version: CONFIG_EXPORT_RESULT_VERSION,
+        status: "succeeded",
+        sourceSandbox: request.sandboxName,
+        outputPath: published.outputPath,
+        documentDigest: rendered.documentDigest,
+        specDigest: rendered.specDigest,
+      },
+    },
+  };
 }

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { YamlExportOutputError } from "../../lib/adapters/fs/config-export-file";
 
 const mocks = vi.hoisted(() => ({
   snapshotReader: { read: vi.fn() },
@@ -47,15 +46,15 @@ describe("config export command", () => {
       attempts: 1,
     });
     mocks.buildExportConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
-    mocks.validateNemoClawConfig
-      .mockReset()
-      .mockReturnValue({ kind: "NemoClawConfig" });
+    mocks.validateNemoClawConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
     mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
       yaml: "kind: NemoClawConfig\n",
       documentDigest: "sha256:document",
       specDigest: "sha256:spec",
     });
-    mocks.publishExportFile.mockReset().mockReturnValue("/tmp/alpha.yaml");
+    mocks.publishExportFile
+      .mockReset()
+      .mockReturnValue({ ok: true, outputPath: "/tmp/alpha.yaml" });
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -156,35 +155,38 @@ describe("config export command", () => {
 
   it.each([
     {
-      name: "typed",
-      error: new YamlExportOutputError(
-        "output-conflict",
-        "/private/raw-path.yaml",
-        "CANARY: /private/raw-path.yaml",
-      ),
+      name: "conflicting",
+      failure: {
+        category: "output-conflict",
+        fileState: { publication: "not-published", stagingCleanup: "complete" },
+        stagingReference: null,
+      },
       diagnostic: "Config export failed (output-conflict): The output path already exists.",
     },
     {
-      name: "unknown",
-      error: new Error("CANARY: /private/raw-path.yaml"),
+      name: "uncertain",
+      failure: {
+        category: "unsafe-output",
+        fileState: { publication: "unknown", stagingCleanup: "complete" },
+        stagingReference: null,
+      },
       diagnostic:
-        "Config export failed (unsafe-output): The export publication state could not be determined safely.",
+        "Config export failed (unsafe-output): The export may have been written, but its publication state could not be confirmed.",
     },
-  ] as const)("displays a sanitized $name publication error", async ({ error, diagnostic }) => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-    mocks.publishExportFile.mockImplementation(() => {
-      throw error;
-    });
-
-    const result = await ConfigExportCommand.run(
-      ["alpha", "--output", "/private/raw-path.yaml"],
-      process.cwd(),
-    ).catch((caught: unknown) => caught);
-
-    expect(result).toBeInstanceOf(Error);
-    expect((result as Error).message).toContain(diagnostic);
-    expect((result as Error).message).not.toMatch(/CANARY|\/private\/raw-path\.yaml/u);
-  });
+  ] as const)(
+    "displays a $name publication failure without the requested path",
+    async ({ failure, diagnostic }) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      mocks.publishExportFile.mockReturnValue({ ok: false, failure });
+      const result = await ConfigExportCommand.run(
+        ["alpha", "--output", "/private/raw-path.yaml"],
+        process.cwd(),
+      ).catch((caught: unknown) => caught);
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error).message).toContain(diagnostic);
+      expect((result as Error).message).not.toContain("/private/raw-path.yaml");
+    },
+  );
 
   it("declares the required output and safe replacement flags (#10938)", () => {
     expect(ConfigExportCommand.flags).toMatchObject({

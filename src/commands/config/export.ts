@@ -3,6 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { Flags } from "@oclif/core";
+import { formatConfigExportFailure } from "../../lib/cli/config-export-diagnostics";
 import type { ConfigExportTarget } from "../../lib/actions/config/export";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../lib/sandbox/command-support";
@@ -47,9 +48,8 @@ export default class ConfigExportCommand extends NemoClawCommand {
     const { args, flags } = await this.parse(ConfigExportCommand);
     const json = this.jsonEnabled();
     const documentName = flags.name ?? args.sandboxName;
-    const { isValidNemoClawConfigDocumentName, parseNemoClawConfigDocumentUid } = await import(
-      "../../lib/config/model"
-    );
+    const { isValidNemoClawConfigDocumentName, parseNemoClawConfigDocumentUid } =
+      await import("../../lib/config/model");
     if (!isValidNemoClawConfigDocumentName(documentName)) this.error("The config name is invalid.");
     if (json && flags.output === "-") {
       this.error("--json cannot be used when --output is stdout (-).");
@@ -69,13 +69,12 @@ export default class ConfigExportCommand extends NemoClawCommand {
       { observeStableExportSource },
       { createLiveExportSnapshotReader },
       { publishExportFile },
-    ] =
-      await Promise.all([
-        import("../../lib/actions/config/export"),
-        import("../../lib/actions/config/observe-export-source"),
-        import("../../lib/adapters/config/live-export-source"),
-        import("../../lib/adapters/fs/config-export-file"),
-      ]);
+    ] = await Promise.all([
+      import("../../lib/actions/config/export"),
+      import("../../lib/actions/config/observe-export-source"),
+      import("../../lib/adapters/config/live-export-source"),
+      import("../../lib/adapters/fs/config-export-file"),
+    ]);
     const snapshotReader = createLiveExportSnapshotReader();
     const outcome = await runConfigExport(
       {
@@ -93,19 +92,7 @@ export default class ConfigExportCommand extends NemoClawCommand {
           }),
       },
     );
-    if (!outcome.ok) {
-      const { failure } = outcome;
-      if (failure.kind === "observation") {
-        const categories = [...new Set(failure.findings.map(({ category }) => category))];
-        this.error(
-          [
-            `Config export failed (${categories.join(", ")}).`,
-            ...failure.findings.map(({ diagnostic }) => diagnostic),
-          ].join("\n"),
-        );
-      }
-      this.error(`Config export failed (${failure.category}): ${failure.diagnostic}`);
-    }
+    if (!outcome.ok) this.error(formatConfigExportFailure(outcome.failure));
     const { completion } = outcome;
     return completion.kind === "file" ? completion.result : undefined;
   }

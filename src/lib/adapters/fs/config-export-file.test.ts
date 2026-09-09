@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { publishExportFile, YamlExportOutputError } from "./config-export-file";
+import { publishExportFile } from "./config-export-file";
 
 const roots: string[] = [];
 
@@ -33,7 +33,7 @@ describe("publishExportFile", () => {
   name: nemo 🐠
 `;
 
-    expect(publishExportFile(outputPath, yaml)).toBe(outputPath);
+    expect(publishExportFile(outputPath, yaml)).toEqual({ ok: true, outputPath });
 
     const stat = fs.lstatSync(outputPath);
     expect(fs.readFileSync(outputPath, "utf8")).toBe(yaml);
@@ -47,13 +47,13 @@ describe("publishExportFile", () => {
     const outputPath = path.join(root, "selected.yaml");
     fs.writeFileSync(outputPath, "original");
 
-    expect(() => publishExportFile(outputPath, "replacement")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
+    expect(publishExportFile(outputPath, "replacement")).toMatchObject({
+      ok: false,
+      failure: {
         category: "output-conflict",
         fileState: { publication: "not-published", stagingCleanup: "complete" },
-        outputPath,
-      }),
-    );
+      },
+    });
     expect(fs.readFileSync(outputPath, "utf8")).toBe("original");
   });
 
@@ -85,13 +85,13 @@ describe("publishExportFile", () => {
     fs.writeFileSync(targetPath, "target");
     create(outputPath, targetPath);
 
-    expect(() => publishExportFile(outputPath, "replacement", true)).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
+    expect(publishExportFile(outputPath, "replacement", true)).toMatchObject({
+      ok: false,
+      failure: {
         category: "unsafe-output",
         fileState: { publication: "not-published", stagingCleanup: "complete" },
-        outputPath,
-      }),
-    );
+      },
+    });
     expect(fs.readFileSync(targetPath, "utf8")).toBe("target");
   });
 
@@ -102,26 +102,26 @@ describe("publishExportFile", () => {
       const outputPath = path.join(root, "selected.yaml");
       execFileSync("mkfifo", [outputPath]);
 
-      expect(() => publishExportFile(outputPath, "replacement", true)).toThrowError(
-        expect.objectContaining<Partial<YamlExportOutputError>>({
+      expect(publishExportFile(outputPath, "replacement", true)).toMatchObject({
+        ok: false,
+        failure: {
           category: "unsafe-output",
           fileState: { publication: "not-published", stagingCleanup: "complete" },
-          outputPath,
-        }),
-      );
+        },
+      });
     },
   );
 
   it.runIf(process.platform !== "win32")(
     "classifies a device destination as unsafe output (#10938)",
     () => {
-      expect(() => publishExportFile("/dev/null", "replacement", true)).toThrowError(
-        expect.objectContaining<Partial<YamlExportOutputError>>({
+      expect(publishExportFile("/dev/null", "replacement", true)).toMatchObject({
+        ok: false,
+        failure: {
           category: "unsafe-output",
           fileState: { publication: "not-published", stagingCleanup: "complete" },
-          outputPath: "/dev/null",
-        }),
-      );
+        },
+      });
     },
   );
 
@@ -138,13 +138,13 @@ describe("publishExportFile", () => {
       fs.mkdirSync(outputParent);
     });
 
-    expect(() => publishExportFile(outputPath, "content")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
+    expect(publishExportFile(outputPath, "content")).toMatchObject({
+      ok: false,
+      failure: {
         category: "unsafe-output",
         fileState: { publication: "not-published", stagingCleanup: "complete" },
-        outputPath,
-      }),
-    );
+      },
+    });
     expect(fs.existsSync(outputPath)).toBe(false);
     expect(fs.existsSync(path.join(movedParent, "selected.yaml"))).toBe(false);
     expect(temporaryEntries(movedParent)).toEqual([]);
@@ -159,13 +159,13 @@ describe("publishExportFile", () => {
       linkSync(source, destination);
     });
 
-    expect(() => publishExportFile(outputPath, "content")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
+    expect(publishExportFile(outputPath, "content")).toMatchObject({
+      ok: false,
+      failure: {
         category: "output-conflict",
         fileState: { publication: "not-published", stagingCleanup: "complete" },
-        outputPath,
-      }),
-    );
+      },
+    });
     expect(fs.readFileSync(outputPath, "utf8")).toBe("racing writer");
     expect(temporaryEntries(root)).toEqual([]);
   });
@@ -183,13 +183,13 @@ describe("publishExportFile", () => {
       throw Object.assign(new Error("injected cleanup failure"), { code: "EIO" });
     });
 
-    expect(() => publishExportFile(outputPath, "content")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
+    expect(publishExportFile(outputPath, "content")).toMatchObject({
+      ok: false,
+      failure: {
         category: "unsafe-output",
         fileState: { publication: "not-published", stagingCleanup: "incomplete" },
-        outputPath,
-      }),
-    );
+      },
+    });
     expect(fs.readFileSync(outputPath, "utf8")).toBe("racing writer");
     expect(temporaryEntries(root)).toHaveLength(1);
     unlinkSync(path.join(root, temporaryEntries(root)[0]!));
@@ -204,7 +204,7 @@ describe("publishExportFile", () => {
       throw Object.assign(new Error("injected ambiguous link failure"), { code: "EIO" });
     });
 
-    expect(publishExportFile(outputPath, "content")).toBe(outputPath);
+    expect(publishExportFile(outputPath, "content")).toEqual({ ok: true, outputPath });
     expect(fs.readFileSync(outputPath, "utf8")).toBe("content");
     expect(temporaryEntries(root)).toEqual([]);
   });
@@ -219,7 +219,7 @@ describe("publishExportFile", () => {
       throw Object.assign(new Error("injected ambiguous rename failure"), { code: "EIO" });
     });
 
-    expect(publishExportFile(outputPath, "replacement", true)).toBe(outputPath);
+    expect(publishExportFile(outputPath, "replacement", true)).toEqual({ ok: true, outputPath });
     expect(fs.readFileSync(outputPath, "utf8")).toBe("replacement");
     expect(temporaryEntries(root)).toEqual([]);
   });
@@ -239,7 +239,7 @@ describe("publishExportFile", () => {
       throw Object.assign(new Error("injected ambiguous rename failure"), { code: "EIO" });
     });
 
-    expect(publishExportFile(outputPath, "replacement", true)).toBe(outputPath);
+    expect(publishExportFile(outputPath, "replacement", true)).toEqual({ ok: true, outputPath });
     expect(fs.readFileSync(outputPath, "utf8")).toBe("replacement");
     expect(fs.readFileSync(foreignPath, "utf8")).toBe("foreign");
     unlinkSync(foreignPath);
@@ -283,9 +283,10 @@ describe("publishExportFile", () => {
         throw Object.assign(new Error("injected cleanup failure"), { code: "EIO" });
       });
 
-      const publish = vi.fn(() => publishExportFile(outputPath, "content"));
-      expect(publish).toThrowError(
-        expect.objectContaining<Partial<YamlExportOutputError>>({
+      const result = publishExportFile(outputPath, "content");
+      expect(result).toMatchObject({
+        ok: false,
+        failure: {
           category: "unsafe-output",
           fileState: {
             publication: "published",
@@ -293,24 +294,22 @@ describe("publishExportFile", () => {
             location,
             stagingCleanup: "incomplete",
           },
-          outputPath,
-          message: expect.stringContaining("temporary link could not be removed"),
-        }),
-      );
+        },
+      });
       expect(fs.readFileSync(path.join(retainedParent, "selected.yaml"), "utf8")).toBe("content");
       const [name] = temporaryEntries(retainedParent);
       expect(temporaryEntries(retainedParent)).toHaveLength(1);
       const directory = fs.lstatSync(retainedParent);
       const file = fs.lstatSync(path.join(retainedParent, name!));
-      const failure = publish.mock.results[0]!.value as YamlExportOutputError;
-      expect(failure.stagingReference).toEqual({
+      const reference = result.ok ? null : result.failure.stagingReference;
+      expect(reference).toEqual({
         name,
         directoryDevice: directory.dev,
         directoryInode: directory.ino,
         fileDevice: file.dev,
         fileInode: file.ino,
       });
-      expect(JSON.stringify(failure.stagingReference)).not.toContain("selected.yaml");
+      expect(JSON.stringify(reference)).not.toContain("selected.yaml");
       unlinkSync(path.join(retainedParent, name!));
     },
   );
@@ -329,8 +328,9 @@ describe("publishExportFile", () => {
         : fsyncSync(descriptor);
     });
 
-    expect(() => publishExportFile(outputPath, "content")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
+    expect(publishExportFile(outputPath, "content")).toMatchObject({
+      ok: false,
+      failure: {
         category: "unsafe-output",
         fileState: {
           publication: "published",
@@ -338,10 +338,8 @@ describe("publishExportFile", () => {
           location: "confirmed",
           stagingCleanup: "complete",
         },
-        outputPath,
-        message: expect.stringContaining("new export is published"),
-      }),
-    );
+      },
+    });
     expect(fs.readFileSync(outputPath, "utf8")).toBe("content");
     expect(temporaryEntries(root)).toEqual([]);
   });
@@ -361,8 +359,9 @@ describe("publishExportFile", () => {
       throw Object.assign(new Error("injected cleanup failure"), { code: "EIO" });
     });
 
-    expect(() => publishExportFile(outputPath, "content")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
+    expect(publishExportFile(outputPath, "content")).toMatchObject({
+      ok: false,
+      failure: {
         category: "unsafe-output",
         fileState: {
           publication: "published",
@@ -370,9 +369,8 @@ describe("publishExportFile", () => {
           location: "confirmed",
           stagingCleanup: "incomplete",
         },
-        outputPath,
-      }),
-    );
+      },
+    });
     expect(fs.readFileSync(outputPath, "utf8")).toBe("content");
     expect(temporaryEntries(root)).toHaveLength(1);
     unlinkSync(path.join(root, temporaryEntries(root)[0]!));
@@ -394,8 +392,9 @@ describe("publishExportFile", () => {
       })
       .mockImplementation((descriptor) => fsyncSync(descriptor));
 
-    expect(() => publishExportFile(outputPath, "content")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
+    expect(publishExportFile(outputPath, "content")).toMatchObject({
+      ok: false,
+      failure: {
         category: "unsafe-output",
         fileState: {
           publication: "published",
@@ -403,9 +402,8 @@ describe("publishExportFile", () => {
           location: "unknown",
           stagingCleanup: "complete",
         },
-        outputPath,
-      }),
-    );
+      },
+    });
     expect(fs.existsSync(outputPath)).toBe(false);
     expect(fs.readFileSync(path.join(movedParent, "selected.yaml"), "utf8")).toBe("content");
     expect(temporaryEntries(movedParent)).toEqual([]);
@@ -434,8 +432,9 @@ describe("publishExportFile", () => {
         : lstatSync(candidate),
     );
 
-    expect(() => publishExportFile(outputPath, "content")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
+    expect(publishExportFile(outputPath, "content")).toMatchObject({
+      ok: false,
+      failure: {
         category: "unsafe-output",
         fileState: {
           publication: "published",
@@ -443,9 +442,8 @@ describe("publishExportFile", () => {
           location: "unknown",
           stagingCleanup: "complete",
         },
-        outputPath,
-      }),
-    );
+      },
+    });
     expect(fs.existsSync(outputPath)).toBe(false);
     expect(fs.readFileSync(path.join(movedParent, "selected.yaml"), "utf8")).toBe("content");
   });
@@ -463,8 +461,9 @@ describe("publishExportFile", () => {
       })
       .mockImplementation((descriptor) => fsyncSync(descriptor));
 
-    expect(() => publishExportFile(outputPath, "content")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
+    expect(publishExportFile(outputPath, "content")).toMatchObject({
+      ok: false,
+      failure: {
         category: "unsafe-output",
         fileState: {
           publication: "published",
@@ -472,9 +471,8 @@ describe("publishExportFile", () => {
           location: "unknown",
           stagingCleanup: "complete",
         },
-        outputPath,
-      }),
-    );
+      },
+    });
     expect(fs.readFileSync(outputPath, "utf8")).toBe("foreign");
   });
 
@@ -484,20 +482,22 @@ describe("publishExportFile", () => {
     const closeSync = fs.closeSync;
     const closed: number[] = [];
     vi.spyOn(fs, "fstatSync").mockImplementationOnce(() => {
-      throw new Error("injected fstat failure");
+      throw new Error("CANARY: /private/raw-path.yaml");
     });
     vi.spyOn(fs, "closeSync").mockImplementation((descriptor) => {
       closed.push(descriptor);
       closeSync(descriptor);
     });
 
-    expect(() => publishExportFile(outputPath, "content")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
+    const result = publishExportFile(outputPath, "content");
+    expect(result).toMatchObject({
+      ok: false,
+      failure: {
         category: "unsafe-output",
         fileState: { publication: "not-published", stagingCleanup: "complete" },
-        outputPath,
-      }),
-    );
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/CANARY|\/private\/raw-path\.yaml/u);
     expect(closed).toHaveLength(1);
   });
 
@@ -506,16 +506,19 @@ describe("publishExportFile", () => {
     const outputPath = path.join(root, "selected.yaml");
     const closed = vi.spyOn(fs, "closeSync");
     vi.spyOn(fs, "writeSync").mockImplementationOnce(() => {
-      throw Object.assign(new Error("injected staging write failure"), { code: "EIO" });
+      throw Object.assign(new Error("CANARY: /private/raw-path.yaml"), { code: "EIO" });
     });
 
-    expect(() => publishExportFile(outputPath, "content")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
+    const result = publishExportFile(outputPath, "content");
+    expect(result).toMatchObject({
+      ok: false,
+      failure: {
         category: "unsafe-output",
         fileState: { publication: "not-published", stagingCleanup: "complete" },
         stagingReference: null,
-      }),
-    );
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/CANARY|\/private\/raw-path\.yaml/u);
     expect(closed).toHaveBeenCalledTimes(2);
     expect(fs.existsSync(outputPath)).toBe(false);
     expect(temporaryEntries(root)).toEqual([]);
@@ -532,52 +535,59 @@ describe("publishExportFile", () => {
         throw Object.assign(new Error("injected staging identity failure"), { code: "EIO" });
       });
 
-    expect(() => publishExportFile(outputPath, "content")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
+    expect(publishExportFile(outputPath, "content")).toMatchObject({
+      ok: false,
+      failure: {
         category: "unsafe-output",
         fileState: { publication: "not-published", stagingCleanup: "incomplete" },
         stagingReference: null,
-      }),
-    );
+      },
+    });
     expect(closed).toHaveBeenCalledTimes(2);
     expect(fs.existsSync(outputPath)).toBe(false);
     expect(temporaryEntries(root)).toHaveLength(1);
   });
 
-  it("does not retry a staged descriptor close that reports failure after publication (#10938)", () => {
-    const root = temporaryRoot();
-    const outputPath = path.join(root, "selected.yaml");
-    const closeSync = fs.closeSync;
-    let failedDescriptor: number | null = null;
-    const closed: number[] = [];
-    vi.spyOn(fs, "closeSync")
-      .mockImplementationOnce((descriptor) => {
-        failedDescriptor = descriptor;
-        closed.push(descriptor);
-        closeSync(descriptor);
-        throw Object.assign(new Error("injected close failure"), { code: "EIO" });
-      })
-      .mockImplementation((descriptor) => {
-        closed.push(descriptor);
-        closeSync(descriptor);
-      });
+  it.each([
+    { name: "error", failure: Object.assign(new Error("injected close failure"), { code: "EIO" }) },
+    { name: "missing error value", failure: undefined },
+  ])(
+    "does not retry a staged close that fails with $name after publication (#10938)",
+    ({ failure }) => {
+      const root = temporaryRoot();
+      const outputPath = path.join(root, "selected.yaml");
+      const closeSync = fs.closeSync;
+      let failedDescriptor: number | null = null;
+      const closed: number[] = [];
+      vi.spyOn(fs, "closeSync")
+        .mockImplementationOnce((descriptor) => {
+          failedDescriptor = descriptor;
+          closed.push(descriptor);
+          closeSync(descriptor);
+          throw failure;
+        })
+        .mockImplementation((descriptor) => {
+          closed.push(descriptor);
+          closeSync(descriptor);
+        });
 
-    expect(() => publishExportFile(outputPath, "content")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
-        category: "unsafe-output",
-        fileState: {
-          publication: "published",
-          durability: "confirmed",
-          location: "confirmed",
-          stagingCleanup: "complete",
+      expect(publishExportFile(outputPath, "content")).toMatchObject({
+        ok: false,
+        failure: {
+          category: "unsafe-output",
+          fileState: {
+            publication: "published",
+            durability: "confirmed",
+            location: "confirmed",
+            stagingCleanup: "complete",
+          },
         },
-        outputPath,
-      }),
-    );
-    expect(closed.filter((descriptor) => descriptor === failedDescriptor)).toHaveLength(1);
-    expect(fs.readFileSync(outputPath, "utf8")).toBe("content");
-    expect(temporaryEntries(root)).toEqual([]);
-  });
+      });
+      expect(closed.filter((descriptor) => descriptor === failedDescriptor)).toHaveLength(1);
+      expect(fs.readFileSync(outputPath, "utf8")).toBe("content");
+      expect(temporaryEntries(root)).toEqual([]);
+    },
+  );
 
   it("fsyncs the temporary file before publication and then fsyncs the parent (#10938)", () => {
     const root = temporaryRoot();

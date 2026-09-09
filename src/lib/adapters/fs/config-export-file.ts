@@ -35,32 +35,22 @@ export type YamlExportFileState =
       readonly stagingCleanup: "complete" | "incomplete";
     };
 
-export class YamlExportOutputError extends Error {
-  readonly stagingReference: YamlExportStagingReference | null;
+export type YamlExportFailure = Readonly<{
+  category: YamlExportFailureKind;
+  fileState: YamlExportFileState;
+  stagingReference: YamlExportStagingReference | null;
+}>;
+export type YamlExportPublication =
+  | Readonly<{ ok: true; outputPath: string }>
+  | Readonly<{ ok: false; failure: YamlExportFailure }>;
 
-  constructor(
-    public readonly category: YamlExportFailureKind,
-    public readonly outputPath: string,
-    message: string,
-    public readonly fileState: YamlExportFileState = {
-      publication: "not-published",
-      stagingCleanup: "complete",
-    },
-    options?: ErrorOptions & { stagingReference?: YamlExportStagingReference },
-  ) {
-    super(message, options);
-    this.name = "YamlExportOutputError";
-    this.stagingReference = options?.stagingReference
-      ? Object.freeze({ ...options.stagingReference })
-      : null;
-  }
-}
+class OutputConflict extends Error {}
 
 function sameFile(left: fs.Stats, right: fs.Stats): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-function inspectDestination(destination: string, outputPath: string, force: boolean): void {
+function inspectDestination(destination: string, force: boolean): void {
   let pathStat: fs.Stats;
   try {
     pathStat = fs.lstatSync(destination);
@@ -69,18 +59,10 @@ function inspectDestination(destination: string, outputPath: string, force: bool
     throw error;
   }
   if (!pathStat.isFile()) {
-    throw new YamlExportOutputError(
-      "unsafe-output",
-      outputPath,
-      "Refusing to replace an output path that is not a regular file.",
-    );
+    throw new Error("Refusing to replace an output path that is not a regular file.");
   }
   if (!force) {
-    throw new YamlExportOutputError(
-      "output-conflict",
-      outputPath,
-      "The output path already exists.",
-    );
+    throw new OutputConflict("The output path already exists.");
   }
 }
 
@@ -95,20 +77,12 @@ function writeComplete(descriptor: number, bytes: Uint8Array): void {
 
 function openParent(outputPath: string) {
   if (process.platform !== "linux") {
-    throw new YamlExportOutputError(
-      "unsafe-output",
-      outputPath,
-      "Safe export publication requires Linux retained-directory descriptors.",
-    );
+    throw new Error("Safe export publication requires Linux retained-directory descriptors.");
   }
   const directoryPath = path.dirname(outputPath);
   const before = fs.lstatSync(directoryPath);
   if (!before.isDirectory() || before.isSymbolicLink()) {
-    throw new YamlExportOutputError(
-      "unsafe-output",
-      outputPath,
-      "Refusing to publish through an output parent that is not a real directory.",
-    );
+    throw new Error("Refusing to publish through an output parent that is not a real directory.");
   }
   const descriptor = fs.openSync(
     directoryPath,
@@ -117,11 +91,7 @@ function openParent(outputPath: string) {
   try {
     const stat = fs.fstatSync(descriptor);
     if (!stat.isDirectory() || !sameFile(before, stat)) {
-      throw new YamlExportOutputError(
-        "unsafe-output",
-        outputPath,
-        "Refusing to publish because the output parent changed.",
-      );
+      throw new Error("Refusing to publish because the output parent changed.");
     }
     return { descriptor, directoryPath, retainedPath: `/proc/self/fd/${descriptor}`, stat };
   } catch (error) {
@@ -134,36 +104,24 @@ function openParent(outputPath: string) {
   }
 }
 
-function assertParentStable(parent: ReturnType<typeof openParent>, outputPath: string): void {
+function assertParentStable(parent: ExportParent): void {
   let current: fs.Stats;
   try {
     current = fs.lstatSync(parent.directoryPath);
   } catch {
-    throw new YamlExportOutputError(
-      "unsafe-output",
-      outputPath,
-      "Refusing to publish because the output parent changed.",
-    );
+    throw new Error("Refusing to publish because the output parent changed.");
   }
   if (!current.isDirectory() || !sameFile(parent.stat, current)) {
-    throw new YamlExportOutputError(
-      "unsafe-output",
-      outputPath,
-      "Refusing to publish because the output parent changed.",
-    );
+    throw new Error("Refusing to publish because the output parent changed.");
   }
 }
 
-function publishNew(temporary: string, destination: string, outputPath: string): void {
+function publishNew(temporary: string, destination: string): void {
   try {
     fs.linkSync(temporary, destination);
   } catch (error) {
     if (isErrnoException(error) && error.code === "EEXIST") {
-      throw new YamlExportOutputError(
-        "output-conflict",
-        outputPath,
-        "Refusing to replace an output path created during publication.",
-      );
+      throw new OutputConflict("Refusing to replace an output path created during publication.");
     }
     throw error;
   }
@@ -202,18 +160,10 @@ function assertPublishedLocation(stagedFile: fs.Stats, outputPath: string): void
   try {
     current = fs.lstatSync(outputPath);
   } catch {
-    throw new YamlExportOutputError(
-      "unsafe-output",
-      outputPath,
-      "The published export could not be verified at the final output location.",
-    );
+    throw new Error("The published export could not be verified at the final output location.");
   }
   if (!current.isFile() || !sameFile(current, stagedFile)) {
-    throw new YamlExportOutputError(
-      "unsafe-output",
-      outputPath,
-      "The published export could not be verified at the final output location.",
-    );
+    throw new Error("The published export could not be verified at the final output location.");
   }
 }
 
@@ -230,6 +180,7 @@ type ExportOutcome = {
   error?: unknown;
   stagingReference?: YamlExportStagingReference;
 };
+type Preparation<Value> = { ok: true; value: Value } | { ok: false; outcome: ExportOutcome };
 type PublicationAttempt = {
   publication: YamlExportFileState["publication"];
   stagingPresent: boolean;
@@ -241,7 +192,10 @@ function attemptFileOperation(operation: () => void): FileOperation {
     operation();
     return { ok: true };
   } catch (error) {
-    return { ok: false, error };
+    return {
+      ok: false,
+      error: error ?? new Error("Filesystem operation failed without an error value."),
+    };
   }
 }
 
@@ -273,9 +227,8 @@ function stagingReference(
 
 function stageExport(
   parent: ExportParent,
-  outputPath: string,
   contents: string | Uint8Array,
-): StagedExport {
+): Preparation<StagedExport> {
   const temporary = path.join(parent.retainedPath, `.nemoclaw-export.${randomUUID()}.tmp`);
   const descriptor = fs.openSync(
     temporary,
@@ -289,11 +242,7 @@ function stageExport(
   try {
     stat = fs.fstatSync(descriptor);
     if (!stat.isFile() || stat.nlink !== 1) {
-      throw new YamlExportOutputError(
-        "unsafe-output",
-        outputPath,
-        "Could not create a safe temporary file.",
-      );
+      throw new Error("Could not create a safe temporary file.");
     }
     fs.fchmodSync(descriptor, 0o600);
     writeComplete(
@@ -301,17 +250,20 @@ function stageExport(
       typeof contents === "string" ? Buffer.from(contents, "utf8") : contents,
     );
     fs.fsyncSync(descriptor);
-    return { path: temporary, descriptor, stat };
+    return { ok: true, value: { path: temporary, descriptor, stat } };
   } catch (error) {
     const stagingCleanup = stat
       ? cleanStaging({ path: temporary, descriptor, stat }, 2)
       : "incomplete";
     attemptFileOperation(() => fs.closeSync(descriptor));
-    throw exportFailure(outputPath, {
-      fileState: { publication: "not-published", stagingCleanup },
-      error,
-      stagingReference: stagingReference(parent, temporary, stat),
-    });
+    return {
+      ok: false,
+      outcome: {
+        fileState: { publication: "not-published", stagingCleanup },
+        error,
+        stagingReference: stagingReference(parent, temporary, stat),
+      },
+    };
   }
 }
 
@@ -319,27 +271,28 @@ function prepareExport(
   outputPath: string,
   contents: string | Uint8Array,
   force: boolean,
-): PreparedExport {
+): Preparation<PreparedExport> {
   const parent = openParent(outputPath);
   try {
     const destination = path.join(parent.retainedPath, path.basename(outputPath));
-    inspectDestination(destination, outputPath, force);
-    return { parent, destination, staged: stageExport(parent, outputPath, contents) };
+    inspectDestination(destination, force);
+    const staged = stageExport(parent, contents);
+    if (!staged.ok) {
+      attemptFileOperation(() => fs.closeSync(parent.descriptor));
+      return staged;
+    }
+    return { ok: true, value: { parent, destination, staged: staged.value } };
   } catch (error) {
     attemptFileOperation(() => fs.closeSync(parent.descriptor));
     throw error;
   }
 }
 
-function attemptPublication(
-  prepared: PreparedExport,
-  outputPath: string,
-  force: boolean,
-): PublicationAttempt {
+function attemptPublication(prepared: PreparedExport, force: boolean): PublicationAttempt {
   const { staged, destination } = prepared;
   const result = attemptFileOperation(() => {
     if (force) fs.renameSync(staged.path, destination);
-    else publishNew(staged.path, destination, outputPath);
+    else publishNew(staged.path, destination);
   });
   if (result.ok) return { publication: "published", stagingPresent: !force };
   return {
@@ -347,23 +300,6 @@ function attemptPublication(
     stagingPresent: true,
     error: result.error,
   };
-}
-
-function confirmationError(
-  outputPath: string,
-  durability: FileOperation,
-  location: FileOperation,
-): unknown {
-  if (!durability.ok) {
-    return new YamlExportOutputError(
-      "unsafe-output",
-      outputPath,
-      "The new export is published, but parent-directory durability could not be confirmed.",
-      undefined,
-      { cause: durability.error },
-    );
-  }
-  return operationError(location);
 }
 
 function confirmPublication(
@@ -387,7 +323,7 @@ function confirmPublication(
     // A reported syscall failure is recovered only after every postcondition holds.
     error: confirmed
       ? undefined
-      : (publicationError ?? confirmationError(outputPath, durability, location)),
+      : (publicationError ?? operationError(durability) ?? operationError(location)),
   };
 }
 
@@ -396,14 +332,14 @@ function publishPrepared(
   outputPath: string,
   force: boolean,
 ): ExportOutcome {
-  const stable = attemptFileOperation(() => assertParentStable(prepared.parent, outputPath));
+  const stable = attemptFileOperation(() => assertParentStable(prepared.parent));
   if (!stable.ok) {
     return {
       fileState: { publication: "not-published", stagingCleanup: cleanStaging(prepared.staged, 2) },
       error: stable.error,
     };
   }
-  const result = attemptPublication(prepared, outputPath, force);
+  const result = attemptPublication(prepared, force);
   // Preserve the existing two cleanup attempts, plus the final two after an unconfirmed publication.
   const stagingCleanup = result.stagingPresent
     ? cleanStaging(prepared.staged, result.publication === "published" ? 2 : 4)
@@ -426,55 +362,65 @@ function finalizeExport(prepared: PreparedExport, outcome: ExportOutcome): Expor
   };
 }
 
-function failureMessage({ fileState, error }: ExportOutcome): string {
-  if (fileState.stagingCleanup === "complete") {
-    return error instanceof YamlExportOutputError
-      ? error.message
-      : "The export could not be published safely.";
-  }
-  const messages = {
-    published: "The new export is published, but its temporary link could not be removed.",
-    unknown: "The export may have been published, and its temporary file could not be removed.",
-    "not-published": "The export was not published, and its temporary file could not be removed.",
-  };
-  return messages[fileState.publication];
-}
-
-function exportFailure(outputPath: string, outcome: ExportOutcome): YamlExportOutputError {
-  const { fileState, error } = outcome;
+function failedPublication({
+  fileState,
+  error,
+  stagingReference,
+}: ExportOutcome): YamlExportPublication {
   const category =
-    error instanceof YamlExportOutputError &&
-    error.category === "output-conflict" &&
+    error instanceof OutputConflict &&
     fileState.publication === "not-published" &&
     fileState.stagingCleanup === "complete"
       ? "output-conflict"
       : "unsafe-output";
-  return new YamlExportOutputError(category, outputPath, failureMessage(outcome), fileState, {
-    cause: error,
-    stagingReference:
-      fileState.stagingCleanup === "incomplete" ? outcome.stagingReference : undefined,
-  });
+  return {
+    ok: false,
+    failure: {
+      category,
+      fileState,
+      stagingReference:
+        fileState.stagingCleanup === "incomplete" ? (stagingReference ?? null) : null,
+    },
+  };
 }
 
 export function publishExportFile(
   requestedPath: string,
   contents: string | Uint8Array,
   force = false,
-): string {
-  const outputPath = path.resolve(requestedPath);
+): YamlExportPublication {
+  let outputPath: string;
   let prepared: PreparedExport;
   try {
-    prepared = prepareExport(outputPath, contents, force);
+    outputPath = path.resolve(requestedPath);
+    const preparation = prepareExport(outputPath, contents, force);
+    if (!preparation.ok) return failedPublication(preparation.outcome);
+    prepared = preparation.value;
   } catch (error) {
-    if (error instanceof YamlExportOutputError) throw error;
-    throw exportFailure(outputPath, {
+    return failedPublication({
       fileState: { publication: "not-published", stagingCleanup: "complete" },
       error,
     });
   }
-  const outcome = finalizeExport(prepared, publishPrepared(prepared, outputPath, force));
-  if (outcome.error !== undefined || outcome.fileState.stagingCleanup === "incomplete") {
-    throw exportFailure(outputPath, outcome);
+  let outcome: ExportOutcome;
+  try {
+    outcome = publishPrepared(prepared, outputPath, force);
+  } catch (error) {
+    outcome = {
+      fileState: { publication: "unknown", stagingCleanup: cleanStaging(prepared.staged, 2) },
+      error,
+    };
   }
-  return outputPath;
+  outcome = finalizeExport(prepared, outcome);
+  const state = outcome.fileState;
+  if (
+    state.publication !== "published" ||
+    state.durability !== "confirmed" ||
+    state.location !== "confirmed" ||
+    state.stagingCleanup !== "complete" ||
+    outcome.error !== undefined
+  ) {
+    return failedPublication(outcome);
+  }
+  return { ok: true, outputPath };
 }

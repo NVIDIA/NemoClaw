@@ -6,6 +6,8 @@ import { defineConfig } from "oxlint";
 import { oxcIgnorePatterns } from "./oxc.ignore-patterns.ts";
 
 const strictComplexityFiles = [
+  "src/lib/actions/config/export.ts",
+  "src/lib/cli/config-export-diagnostics.ts",
   "src/lib/adapters/fs/config-export-file.ts",
   "src/lib/actions/sandbox/status.ts",
   "src/lib/actions/sandbox/status-text.ts",

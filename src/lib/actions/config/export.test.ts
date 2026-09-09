@@ -20,7 +20,7 @@ vi.mock("../../config/schema", () => ({
 }));
 
 import { runConfigExport, type ConfigExportDependencies } from "./export";
-import { YamlExportOutputError } from "../../adapters/fs/config-export-file";
+
 import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
@@ -43,7 +43,7 @@ function dependencies(): ConfigExportDependencies {
   return {
     observe: vi.fn(async () => ({ ok: true, source: observation, attempts: 1 }) as const),
     createDocumentUid: vi.fn(() => documentUid),
-    publish: vi.fn(() => "/tmp/alpha.yaml"),
+    publish: vi.fn(() => ({ ok: true, outputPath: "/tmp/alpha.yaml" }) as const),
     writeStdout: vi.fn(async () => undefined),
   };
 }
@@ -94,7 +94,7 @@ describe("runConfigExport", () => {
     expect(deps.publish).toHaveBeenCalledWith("/tmp/alpha.yaml", "kind: NemoClawConfig\n", true);
   });
 
-  it("waits for stdout completion and returns a sanitized write failure", async () => {
+  it("returns a stdout failure without exposing the rejected write error", async () => {
     const canary = "CANARY: stdout failure";
     const deps = {
       ...dependencies(),
@@ -114,7 +114,6 @@ describe("runConfigExport", () => {
         kind: "output",
         target: "stdout",
         category: "unsafe-output",
-        diagnostic: "The export could not be written to stdout.",
       },
     });
     expect(JSON.stringify(outcome)).not.toContain(canary);
@@ -147,203 +146,34 @@ describe("runConfigExport", () => {
   });
 
   it.each([
+    { publication: "not-published", stagingCleanup: "complete" },
     {
-      name: "valid",
-      stagingName: ".nemoclaw-export.123e4567-e89b-42d3-a456-426614174000.tmp",
-      expected: expect.stringContaining(
-        "Staging file: .nemoclaw-export.123e4567-e89b-42d3-a456-426614174000.tmp; device 1, inode 3. Original output directory: device 1, inode 2.",
-      ),
-    },
-    {
-      name: "unsafe",
-      stagingName: "../CANARY\n",
-      expected: expect.stringContaining("staging identity is unavailable"),
-    },
-  ])(
-    "sanitizes the $name staging reference in a cleanup diagnostic (#10938)",
-    async ({ stagingName, expected }) => {
-      const deps = dependencies();
-      vi.mocked(deps.publish).mockImplementation(() => {
-        throw new YamlExportOutputError(
-          "unsafe-output",
-          "/private/CANARY.yaml",
-          "CANARY",
-          { publication: "not-published", stagingCleanup: "incomplete" },
-          {
-            stagingReference: {
-              name: stagingName,
-              directoryDevice: 1,
-              directoryInode: 2,
-              fileDevice: 1,
-              fileInode: 3,
-            },
-          },
-        );
-      });
-      const outcome = await runConfigExport(
-        {
-          sandboxName: "alpha",
-          documentName: alphaDocumentName,
-          target: { kind: "file", outputPath: "/private/CANARY.yaml", force: false },
-        },
-        deps,
-      );
-      expect(outcome).toMatchObject({
-        ok: false,
-        failure: { kind: "output", diagnostic: expected },
-      });
-      expect(JSON.stringify(outcome)).not.toMatch(/CANARY|\/private/u);
-    },
-  );
-
-  it.each([
-    {
-      name: "typed",
-      error: new YamlExportOutputError(
-        "output-conflict",
-        "/private/raw-path.yaml",
-        "CANARY: /private/raw-path.yaml",
-      ),
-      category: "output-conflict",
-      fileState: { publication: "not-published", stagingCleanup: "complete" },
-      diagnostic: "The output path already exists.",
-    },
-    {
-      name: "conflict with residual staging file",
-      error: new YamlExportOutputError(
-        "output-conflict",
-        "/private/raw-path.yaml",
-        "CANARY: /private/raw-path.yaml",
-        {
-          publication: "not-published",
-          stagingCleanup: "incomplete",
-        },
-      ),
-      category: "unsafe-output",
-      fileState: {
-        publication: "not-published",
-        stagingCleanup: "incomplete",
-      },
-      diagnostic:
-        "The export was not published, and its staging file could not be removed. The staging identity is unavailable. Do not remove files by name alone.",
-    },
-    {
-      name: "committed",
-      error: new YamlExportOutputError(
-        "unsafe-output",
-        "/private/raw-path.yaml",
-        "CANARY: /private/raw-path.yaml",
-        {
-          publication: "published",
-          durability: "confirmed",
-          location: "confirmed",
-          stagingCleanup: "incomplete",
-        },
-      ),
-      category: "unsafe-output",
-      fileState: {
-        publication: "published",
-        durability: "confirmed",
-        location: "confirmed",
-        stagingCleanup: "incomplete",
-      },
-      diagnostic:
-        "The export was written, but staging cleanup could not be confirmed. The staging identity is unavailable. Do not remove files by name alone.",
-    },
-    {
-      name: "durability",
-      error: new YamlExportOutputError(
-        "unsafe-output",
-        "/private/raw-path.yaml",
-        "CANARY: /private/raw-path.yaml",
-        {
-          publication: "published",
-          durability: "unknown",
-          location: "confirmed",
-          stagingCleanup: "complete",
-        },
-      ),
-      category: "unsafe-output",
-      fileState: {
-        publication: "published",
-        durability: "unknown",
-        location: "confirmed",
-        stagingCleanup: "complete",
-      },
-      diagnostic: "The export was written, but filesystem durability could not be confirmed.",
-    },
-    {
-      name: "location",
-      error: new YamlExportOutputError(
-        "unsafe-output",
-        "/private/raw-path.yaml",
-        "CANARY: /private/raw-path.yaml",
-        {
-          publication: "published",
-          durability: "confirmed",
-          location: "unknown",
-          stagingCleanup: "complete",
-        },
-      ),
-      category: "unsafe-output",
-      fileState: {
-        publication: "published",
-        durability: "confirmed",
-        location: "unknown",
-        stagingCleanup: "complete",
-      },
-      diagnostic: "The export was written, but the final output location could not be confirmed.",
-    },
-    {
-      name: "ambiguous publication",
-      error: new YamlExportOutputError(
-        "unsafe-output",
-        "/private/raw-path.yaml",
-        "CANARY: /private/raw-path.yaml",
-        {
-          publication: "unknown",
-          stagingCleanup: "complete",
-        },
-      ),
-      category: "unsafe-output",
-      fileState: {
-        publication: "unknown",
-        stagingCleanup: "complete",
-      },
-      diagnostic:
-        "The export may have been written, but its publication state could not be confirmed.",
-    },
-    {
-      name: "unknown",
-      error: new Error("CANARY: /private/raw-path.yaml"),
-      category: "unsafe-output",
-      fileState: "unknown",
-      diagnostic: "The export publication state could not be determined safely.",
+      publication: "published",
+      durability: "unknown",
+      location: "confirmed",
+      stagingCleanup: "complete",
     },
   ] as const)(
-    "sanitizes $name publication errors",
-    async ({ error, category, fileState, diagnostic }) => {
-      const deps = {
-        ...dependencies(),
-        publish: vi.fn(() => {
-          throw error;
-        }),
-      };
+    "passes through a $publication output failure without reclassifying it",
+    async (fileState) => {
+      const deps = dependencies();
+      const failure = { category: "unsafe-output", fileState, stagingReference: null } as const;
+      vi.mocked(deps.publish).mockReturnValue({ ok: false, failure });
 
-      const outcome = await runConfigExport(
-        {
-          sandboxName: "alpha",
-          documentName: alphaDocumentName,
-          target: { kind: "file", outputPath: "/private/raw-path.yaml", force: false },
-        },
-        deps,
-      );
-
-      expect(outcome).toEqual({
+      await expect(
+        runConfigExport(
+          {
+            sandboxName: "alpha",
+            documentName: alphaDocumentName,
+            target: { kind: "file", outputPath: "/tmp/alpha.yaml", force: false },
+          },
+          deps,
+        ),
+      ).resolves.toEqual({
         ok: false,
-        failure: { kind: "output", target: "file", fileState, category, diagnostic },
+        failure: { kind: "output", target: "file", ...failure },
       });
-      expect(JSON.stringify(outcome)).not.toMatch(/CANARY|\/private\/raw-path\.yaml/u);
+      expect(deps.writeStdout).not.toHaveBeenCalled();
     },
   );
 });
