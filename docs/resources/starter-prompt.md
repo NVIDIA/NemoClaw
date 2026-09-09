@@ -83,7 +83,7 @@ After the readiness check, load exactly one matching instruction asset before pr
 
 - Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/6d73400f8f1d1f731b6a30a7c5c1fe684213b31f/docs/resources/prompt-assets/dgx-spark.md).
 - Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/508ad9d135c56df42ce6b1f9335bcaa7fc90c6e5/docs/resources/prompt-assets/dgx-station.md).
-- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/6d73400f8f1d1f731b6a30a7c5c1fe684213b31f/docs/resources/prompt-assets/windows-wsl.md).
+- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/9ae697aca7eb77049511f09914d3eec075a8fbd3/docs/resources/prompt-assets/windows-wsl.md).
 
 Read the matching raw Markdown file completely and follow it before continuing.
 Do not load a platform asset for any other computer.

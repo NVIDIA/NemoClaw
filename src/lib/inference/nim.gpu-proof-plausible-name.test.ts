@@ -99,14 +99,16 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     onWsl2Arm64WithoutKernelInterface(() => {
       const result = detectGpu({
         proveArm64ContainerGpu: prover,
-        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 49088, 48000\n`),
         isWsl: true,
       });
       expect(result).toMatchObject({
         type: "nvidia",
         name: PLAUSIBLE_NAME,
         count: 1,
-        totalMemoryMB: 8128,
+        totalMemoryMB: 49088,
+        platform: "n1x",
+        computeConstrained: true,
         containerGpuProof: { providerId: "docker", passed: true },
       });
       expect(prover).toHaveBeenCalledWith([PLAUSIBLE_NAME]);

@@ -1618,6 +1618,7 @@ type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRouteHandoff;
 
 const {
+  providerSelectionReaders,
   readRecordedProvider,
   readRecordedNimContainer,
   readRecordedModel,
@@ -2297,6 +2298,7 @@ function getSetupNimDeps(): SetupNimDeps {
     vllmPort: VLLM_PORT,
     getGatewayPort: () => GATEWAY_PORT,
     getRuntimeProvider: () => setupNimFlow.resolveCurrentRuntimeProviderBundle(),
+    checkpointManagedLlamaCppSelection: onboardSession.checkpointManagedLlamaCppSelection,
     step,
     isNonInteractive,
     getNonInteractiveProvider,
@@ -2305,9 +2307,7 @@ function getSetupNimDeps(): SetupNimDeps {
     detectInferenceProviderHostState,
     getAgentInferenceProviderOptions,
     loadRoutedProfile: () => loadBlueprintProfile("routed"),
-    readRecordedProvider,
-    readRecordedNimContainer,
-    readRecordedModel,
+    ...providerSelectionReaders,
     prompt,
     selectFromNumberedMenu: selectFromNumberedMenuOrExit,
     note,

@@ -38,6 +38,7 @@
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
         "src/lib/inference/llama-cpp/managed-installer.test.ts",
         "src/lib/onboard/setup-nim-flow.test.ts",
+        "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts"
       ]
     },
@@ -924,6 +925,7 @@
       "live": "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
       "fast": [
         "test/agents/hermes/hermes-start.test.ts",
+        "test/runtime/sandbox/sandbox-init.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
