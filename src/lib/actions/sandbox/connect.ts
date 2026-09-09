@@ -71,7 +71,7 @@ import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
   buildGatewayInferenceSetArgs,
-  GatewayRouteConflictError,
+  isGatewayRouteConflictError,
   sandboxUsesLegacyClusterGateway,
 } from "./connect-inference-gateway";
 import {
@@ -1606,7 +1606,7 @@ function ensureSandboxInferenceRouteUnlocked(
       console.error(`  Error: ${error.message}`);
       process.exit(1);
     }
-    if (error instanceof GatewayRouteConflictError) {
+    if (isGatewayRouteConflictError(error)) {
       console.error(`  Error: ${error.message}`);
       process.exit(1);
     }
