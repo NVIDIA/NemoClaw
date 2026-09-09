@@ -67,7 +67,7 @@ export function gatewayReachableCompatibleEndpointUrl(
     : `${parsed.origin}${parsed.pathname}${routeSuffix}`;
 }
 
-export function reuseRegisteredProviderWithGatewayEndpoint(args: {
+export async function reuseRegisteredProviderWithGatewayEndpoint(args: {
   provider: string;
   providerType: string;
   credentialEnv: string | null | undefined;
@@ -75,7 +75,7 @@ export function reuseRegisteredProviderWithGatewayEndpoint(args: {
   gatewayEndpointUrl: string | null | undefined;
   runOpenshell: RunOpenshell;
   upsertProvider: UpsertProvider;
-}): UpsertProviderResult {
+}): Promise<UpsertProviderResult> {
   const {
     provider,
     providerType,

@@ -124,9 +124,14 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("keeps an omitted provider env separate from the bound gateway", () => {
-    const upsert = vi.fn(() => ({ ok: true }));
-    bindGatewayUpsertProvider(upsert, GATEWAY)("openai-api", "openai", "OPENAI_API_KEY", null);
+  it("keeps an omitted provider env separate from the bound gateway", async () => {
+    const upsert = vi.fn(async () => ({ ok: true }));
+    await bindGatewayUpsertProvider(upsert, GATEWAY)(
+      "openai-api",
+      "openai",
+      "OPENAI_API_KEY",
+      null,
+    );
     expect(upsert).toHaveBeenCalledWith(
       "openai-api",
       "openai",
@@ -137,9 +142,9 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     );
   });
 
-  it("binds a routed resume provider mutation to the selected gateway", () => {
+  it("binds a routed resume provider mutation to the selected gateway", async () => {
     const events: string[] = [];
-    const upsert = vi.fn(() => {
+    const upsert = vi.fn(async () => {
       events.push("provider mutation");
       return { ok: true };
     });
@@ -149,7 +154,7 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     });
 
     expect(
-      reupsertRoutedProvider(
+      await reupsertRoutedProvider(
         GATEWAY,
         "nvidia-router",
         "http://host.openshell.internal:4000/v1",

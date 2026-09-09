@@ -214,7 +214,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
     options?: { revalidateSandboxIdentity?(operation: string): void },
   ) => ReturnType<CommonDeps["upsertProvider"]>;
   verifyInferenceRoute: (gatewayName: string, provider: string, model: string) => void;
-  providerExistsInGateway: (name: string, gatewayName: string) => boolean;
+  providerExistsInGateway: (name: string, gatewayName: string) => Promise<boolean>;
   run: typeof import("../runner").run;
   updateSandbox: typeof import("../state/registry").reserveSandboxInferenceRoute;
   // #9110 optional GPU-release seams; omitted by test literals that build deps
@@ -270,13 +270,13 @@ export function createRoutedResumeProviderUpsert(deps: {
   upsertProvider: SetupInferenceDeps["upsertProvider"];
   hydrateCredentialEnv: RoutedProviderDeps["hydrateCredentialEnv"];
 }) {
-  return (
+  return async (
     gatewayName: string,
     provider: string,
     endpointUrl: string | null,
     credentialEnv: string | null,
   ) => {
-    const result = upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
+    const result = await upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
       upsertProvider: bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
       hydrateCredentialEnv: deps.hydrateCredentialEnv,
     });
@@ -781,10 +781,10 @@ export function createSetupInference(
               hostLocalProviderErrors.push(message);
             }
           : deps.error;
-        const selectedUpsertProvider: CommonDeps["upsertProvider"] = (...args) => {
+        const selectedUpsertProvider: CommonDeps["upsertProvider"] = async (...args) => {
           revalidateSandboxIdentity?.("register the inference provider");
           const upsertProvider = hostLocalGatewayMutation?.upsertProvider ?? defaultUpsertProvider;
-          return upsertProvider(...args);
+          return await upsertProvider(...args);
         };
         const commonDeps = {
           runOpenshell: runGatewayOpenshell,

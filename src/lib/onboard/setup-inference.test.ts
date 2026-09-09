@@ -141,7 +141,7 @@ describe("createProviderReviewDeps", () => {
       },
       {
         runOpenshell: () => ({ status: 0 }),
-        upsertProvider: () => ({ ok: true }),
+        upsertProvider: async () => ({ ok: true }),
         verifyInferenceRoute: vi.fn(),
         verifyOnboardInferenceSmoke: vi.fn(),
         isNonInteractive: () => true,

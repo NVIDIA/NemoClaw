@@ -117,24 +117,28 @@ describe("recovered provider reuse", () => {
     gatewayEndpointUrl: REGISTERED_URL,
   };
 
-  it("reuses an unchanged OpenAI gateway route without a compatibility-profile mutation", () => {
+  it("reuses an unchanged OpenAI gateway route without a compatibility-profile mutation", async () => {
     const { commands, runOpenshell } = createRunOpenshell();
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
 
     expect(
-      reuseRegisteredProviderWithGatewayEndpoint({ ...reuseArgs, runOpenshell, upsertProvider }),
+      await reuseRegisteredProviderWithGatewayEndpoint({
+        ...reuseArgs,
+        runOpenshell,
+        upsertProvider,
+      }),
     ).toEqual({ ok: true });
 
     expect(upsertProvider).not.toHaveBeenCalled();
     expect(commands).toEqual(["provider get compatible-endpoint"]);
   });
 
-  it("leaves a non-openai recovered provider untouched", () => {
+  it("leaves a non-openai recovered provider untouched", async () => {
     const { commands, runOpenshell } = createRunOpenshell();
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
 
     expect(
-      reuseRegisteredProviderWithGatewayEndpoint({
+      await reuseRegisteredProviderWithGatewayEndpoint({
         ...reuseArgs,
         providerType: "anthropic",
         runOpenshell,
