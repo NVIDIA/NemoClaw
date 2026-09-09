@@ -95,7 +95,7 @@ describe("nim", () => {
   describe("listModels", () => {
     it("returns 5 models", () => {
       expect(nim.listModels().length).toBe(5);
-      });
+    });
     it.each(nim.listModels())("model $name has an image and positive GPU memory", (model) => {
       expect(model.name).toBeTruthy();
       expect(model.image).toBeTruthy();
@@ -425,11 +425,11 @@ describe("nim", () => {
         expect(nim.detectNvidiaPlatform()).toBe("spark");
       });
     });
-
   });
 
   describe("detectGpu", () => {
-    const proveArm64WslDockerDesktopGpu = vi.fn(() => ({
+    const proveArm64ContainerGpu = vi.fn(() => ({
+      providerId: "docker",
       passed: true,
       timedOut: false,
       exitCode: 0,
@@ -686,7 +686,7 @@ describe("nim", () => {
 
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: null })).toBeNull();
+          expect(nimModule.detectGpu({ proveArm64ContainerGpu: null })).toBeNull();
         });
       } finally {
         restore();
@@ -709,7 +709,7 @@ describe("nim", () => {
 
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu })).toBeNull();
+          expect(nimModule.detectGpu({ proveArm64ContainerGpu })).toBeNull();
         });
       } finally {
         restore();
@@ -729,15 +729,15 @@ describe("nim", () => {
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          const result = nimModule.detectGpu({ proveArm64WslDockerDesktopGpu });
+          const result = nimModule.detectGpu({ proveArm64ContainerGpu });
           expect(result).toMatchObject({
             type: "nvidia",
             name: gpuName,
             count: 1,
             totalMemoryMB: 65471,
-            wslDockerDesktopGpuProofPassed: true,
+            containerGpuProof: { providerId: "docker", passed: true },
           });
-          expect(proveArm64WslDockerDesktopGpu).toHaveBeenCalledWith([gpuName]);
+          expect(proveArm64ContainerGpu).toHaveBeenCalledWith([gpuName]);
           expect(nimModule.formatNvidiaGpuPreflightLines(result)).toEqual([
             "NVIDIA GPU detected (JMJWOA-Generic-\\u{001b}\\u{0085}\\u{200d}\\u{2028}\\u{2029}GPU, 65471 MB)",
           ]);
@@ -760,6 +760,7 @@ describe("nim", () => {
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
       const failingProver = vi.fn(() => ({
+        providerId: "docker",
         passed: false,
         timedOut: false,
         exitCode: 1,
@@ -769,12 +770,10 @@ describe("nim", () => {
 
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: failingProver })).toBeNull();
+          expect(nimModule.detectGpu({ proveArm64ContainerGpu: failingProver })).toBeNull();
           // A host that is not an ARM64 WSL Docker Desktop candidate returns
           // null from the prover and must also fail closed (no proof attempted).
-          expect(
-            nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: notCandidateProver }),
-          ).toBeNull();
+          expect(nimModule.detectGpu({ proveArm64ContainerGpu: notCandidateProver })).toBeNull();
         });
       } finally {
         restore();
@@ -795,7 +794,7 @@ describe("nim", () => {
 
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: null })).toBeNull();
+          expect(nimModule.detectGpu({ proveArm64ContainerGpu: null })).toBeNull();
         });
       } finally {
         restore();
@@ -822,7 +821,7 @@ describe("nim", () => {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
           withLinuxArm64(() => {
             withNvidiaKernelInterface(false, () => {
-              expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: null })).toBeNull();
+              expect(nimModule.detectGpu({ proveArm64ContainerGpu: null })).toBeNull();
             });
           });
         });
@@ -855,7 +854,7 @@ describe("nim", () => {
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
           withLinuxArm64(() => {
-            expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: null })).toBeNull();
+            expect(nimModule.detectGpu({ proveArm64ContainerGpu: null })).toBeNull();
           });
         });
       } finally {

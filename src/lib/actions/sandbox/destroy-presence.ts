@@ -257,7 +257,7 @@ export function assertUnambiguousDestroyContainerIdentity(
     deps.captureProviderIdentity !== undefined || deps.captureProviderIdentityByName !== undefined;
   try {
     providerOwnsIdentity ||= Boolean(
-      provider.gateway.prepareHostRuntime({
+      provider.gateway.observeHostRuntime({
         environment: process.env,
         platform: process.platform,
       }).socketPath !== null,

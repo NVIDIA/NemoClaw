@@ -33,6 +33,7 @@ export function createHermesPortableForwardRecoveryFixture({
   malformedList = false,
   listStatus = 0,
   startStatus = 0,
+  stopStatus = 0,
   startUpdatesState = true,
   driftCurrentAfterStart = false,
   dropStartedPort,
@@ -47,6 +48,7 @@ export function createHermesPortableForwardRecoveryFixture({
   malformedList?: boolean;
   listStatus?: number;
   startStatus?: number;
+  stopStatus?: number;
   startUpdatesState?: boolean;
   driftCurrentAfterStart?: boolean;
   dropStartedPort?: number;
@@ -93,7 +95,7 @@ export function createHermesPortableForwardRecoveryFixture({
     const port = Number(args[1] === "stop" ? args[2] : args[3]);
     if (args[1] === "stop") {
       records.delete(port);
-      return { status: 0, output: "" };
+      return { status: stopStatus, output: "" };
     }
     if (args[1] === "start") {
       if (startUpdatesState) {
