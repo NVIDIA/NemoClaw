@@ -22,7 +22,10 @@ import {
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts";
-import { assertUnchangedStableMcpCredentialAuthorized } from "./mcp-bridge-credential-authorization";
+import {
+  assertUnchangedStableMcpCredentialAuthorized,
+  statusMcpBridge,
+} from "./mcp-bridge-status";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import {
   applyGeneratedPolicy,
@@ -648,6 +651,7 @@ async function addMcpBridgeUnlocked(
       providerRuntimeSelection,
       authorizationPreviousRevision,
       credentialRevision,
+      statusMcpBridge,
     );
     // The adapter was proven absent above, so cleanup is safe even when a
     // command commits config and then fails during its runtime reload.

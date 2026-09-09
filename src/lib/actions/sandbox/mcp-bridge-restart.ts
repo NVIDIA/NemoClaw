@@ -10,7 +10,6 @@ import {
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
-import { assertUnchangedStableMcpCredentialAuthorized } from "./mcp-bridge-credential-authorization";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
 import {
@@ -50,7 +49,7 @@ import {
   nowIso,
   writeBridgeEntry,
 } from "./mcp-bridge-state";
-import { statusMcpBridge } from "./mcp-bridge-status";
+import { assertUnchangedStableMcpCredentialAuthorized, statusMcpBridge } from "./mcp-bridge-status";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
@@ -302,6 +301,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
         providerRuntimeSelection,
         previousCredentialRevision,
         credentialRevision,
+        statusMcpBridge,
       );
     }
     registerAgentAdapterAtCurrentCredentialRevision(
@@ -420,6 +420,7 @@ export async function restoreExistingMcpBridgeRuntime(
         providerRuntimeSelection,
         previousCredentialRevision,
         credentialRevision,
+        statusMcpBridge,
       );
     } catch (error) {
       unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {

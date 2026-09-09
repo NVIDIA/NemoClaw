@@ -16,7 +16,7 @@ import {
   type HermesMcpReconciliationResult,
   inspectHermesMcpRuntimeIntent,
 } from "./mcp-bridge-hermes-reconciliation";
-import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { redactBridgeFailureForDisplay, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { getPolicyGatewayState, getRegisteredGeneratedPolicy } from "./mcp-bridge-policy";
 import {
   getMcpProviderInspectionRuntimeSelection,
@@ -69,6 +69,52 @@ const UNSUPPORTED_STORED_CREDENTIAL_WARNING =
   "This persisted MCP credential name no longer satisfies the host-only credential boundary. Restart and rebuild fail closed for it; remove this server, then add it again with a dedicated service credential name.";
 const UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL =
   "the unsupported legacy credential may still be attached to fresh sandbox children";
+const AUTHORIZATION_DETAIL_MAX_LENGTH = 240;
+
+function authorizationDetailForDisplay(
+  detail: string,
+  entry: McpBridgeEntry,
+  fallback: string,
+): string {
+  return (
+    redactBridgeFailureForDisplay(detail, entry).trim().slice(0, AUTHORIZATION_DETAIL_MAX_LENGTH) ||
+    fallback
+  );
+}
+
+/** Require endpoint authorization before accepting an unchanged stable credential handle. */
+export async function assertUnchangedStableMcpCredentialAuthorized(
+  sandboxName: string,
+  entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+  previousRevision: McpCredentialRevisionObservation | undefined,
+  credentialRevision: McpCredentialRevisionObservation,
+  inspectStatus: typeof statusMcpBridge = statusMcpBridge,
+): Promise<void> {
+  if (previousRevision !== credentialRevision || !credentialRevision.startsWith("s")) return;
+
+  let detail = "post-update wire-level credential verification did not return a result";
+  try {
+    const [status] = await inspectStatus(sandboxName, entry.server, {
+      allowCredentialProbeWithAdapterMismatch: true,
+      allowIncompleteAddCredentialProbe: true,
+      probeCredentialResolution: true,
+      runtimeSelection,
+    });
+    const probe = status?.provider.credentialResolution;
+    if (probe?.ok === true) return;
+    if (probe?.detail) detail = authorizationDetailForDisplay(probe.detail, entry, detail);
+  } catch (error) {
+    detail = authorizationDetailForDisplay(
+      error instanceof Error ? error.message : String(error),
+      entry,
+      "post-update credential status inspection failed",
+    );
+  }
+  throw new McpBridgeError(
+    `MCP server '${entry.server}' did not authorize its unchanged stable credential handle after provider update: ${detail}.`,
+  );
+}
 
 function storedUrlWarning(entry: McpBridgeEntry): string | undefined {
   try {
