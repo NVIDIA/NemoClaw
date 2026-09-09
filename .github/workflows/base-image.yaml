@@ -6,8 +6,7 @@
 # Triggers:
 #   - Push to main when a base- or managed-image input changes
 #   - Manual dispatch for ad-hoc rebuilds
-# E2E publication verification accepts push builds and trusted manual main
-# rebuilds only when the complete managed-image promotion job succeeds.
+# Trusted manual publications require complete managed-image promotion.
 #
 # Base images contain the expensive, rarely-changing layers. Complete image
 # publication consumes exact base digests from the same trusted workflow run.

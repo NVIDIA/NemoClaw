@@ -501,6 +501,7 @@ export function selectPublicationRun(
   options: {
     readonly allowWorkflowDispatch?: boolean;
     readonly completedSuccessOnly?: boolean;
+    readonly excludedRunIds?: ReadonlySet<number>;
   } = {},
 ): PublicationSelection {
   positiveSafeInteger(workflowId, "base-image workflow id");
@@ -523,6 +524,7 @@ export function selectPublicationRun(
     throw new Error("workflow run listing contains duplicate run ids");
   }
   const eligible = runs.flatMap((run) => {
+    if (options.excludedRunIds?.has(run.id)) return [];
     const distance = history.distanceBySha.get(run.headSha);
     return distance === undefined ? [] : [{ run, distance }];
   });
@@ -793,11 +795,15 @@ export async function waitForBaseImagePublication(
   const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}${eventFilter}&per_page=100`;
   while (true) {
     const runs = await collectPaginated(request, runsPath, "workflow_runs");
-    const selection = selectPublicationRun(runs, options.history, workflowId, {
-      allowWorkflowDispatch,
-      completedSuccessOnly: options.selectNearestSuccessfulRun === true,
-    });
-    if (selection.state === "selected") {
+    const excludedRunIds = new Set<number>();
+    const select = () =>
+      selectPublicationRun(runs, options.history, workflowId, {
+        allowWorkflowDispatch,
+        completedSuccessOnly: options.selectNearestSuccessfulRun === true,
+        excludedRunIds,
+      });
+    let selection = select();
+    while (selection.state === "selected") {
       if (now() > deadline) {
         throw new Error(
           `timed out validating base-image publication for ${selection.run.headSha}; ${selection.run.url}`,
@@ -842,6 +848,15 @@ export async function waitForBaseImagePublication(
           }
         }
       } catch (error) {
+        if (
+          selection.run.event === "workflow_dispatch" &&
+          error instanceof Error &&
+          error.message.includes(REQUIRED_MANUAL_MANAGED_IMAGE_JOB)
+        ) {
+          excludedRunIds.add(selection.run.id);
+          selection = select();
+          continue;
+        }
         throw publicationEvidenceError(error, selection.run);
       }
       if (publisherState === "ready") {
@@ -852,6 +867,7 @@ export async function waitForBaseImagePublication(
         }
         return validatedRun;
       }
+      break;
     }
 
     if (now() >= deadline) {

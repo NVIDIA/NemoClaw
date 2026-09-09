@@ -952,6 +952,51 @@ describe("base-image publication evidence", () => {
     ]);
   });
 
+  it("selects an older eligible push after skipping a newer manual run without managed-image promotion (#11289)", async () => {
+    const manualRunId = RUN_ID + 1;
+    const manualRun = workflowRun({
+      id: manualRunId,
+      event: "workflow_dispatch",
+      head_sha: DESCENDANT_SHA,
+      html_url: `${RUN_URL_ROOT}/${manualRunId}`,
+    });
+    const manualJobs = successfulJobs().map((job) => ({
+      ...job,
+      run_id: manualRunId,
+      head_sha: DESCENDANT_SHA,
+    }));
+    const pushRun = workflowRun();
+    const responses = [
+      workflowMetadata(),
+      runsPayload([manualRun, pushRun]),
+      { total_count: manualJobs.length, jobs: manualJobs },
+      { total_count: successfulJobs().length, jobs: successfulJobs() },
+      pushRun,
+    ];
+    const requests: string[] = [];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async (requestPath) => {
+          requests.push(requestPath);
+          return responses.shift();
+        },
+        requireWorkflowSuccess: true,
+        selectNearestSuccessfulRun: true,
+        waitMs: 100,
+        pollMs: 10,
+      }),
+    ).resolves.toEqual(selectedRun());
+    expect(requests).toEqual([
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      `/repos/NVIDIA/NemoClaw/actions/runs/${manualRunId}/attempts/1/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
+    ]);
+  });
+
   it("rejects failed managed-image publication before E2E consumers start", async () => {
     const failedRun = workflowRun({ conclusion: "failure" });
     const responses = [
