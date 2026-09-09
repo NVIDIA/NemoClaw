@@ -10,7 +10,10 @@ workflow run.
 
 After a required `CI / Pull Request` run whose name ends in `gate true` succeeds, it runs every specialist prompt in `tools/pr-review-advisor/specialists`. Other completed CI runs do not schedule the Advisor. Each prompt owns a distinct review concern and defines its purpose, investigation method, evidence expectations, and finding threshold.
 
-Specialists inspect their assigned concern and recommend the smallest direct correction. They run independently and publish separate reports. The advisor does not select, aggregate, or summarize their findings.
+Specialists inspect their assigned concern and recommend the smallest direct correction. They run
+independently and publish separate reports. Ordinary analysis does not select, aggregate, or
+summarize their findings. The manually dispatched repair path separately selects eligible findings
+from their machine-readable ledgers.
 
 Ordinary analysis intentionally does not report GitHub mergeability, branch protection, CI status,
 reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
@@ -278,5 +281,6 @@ remaining resource name or path. Remove that named resource before retrying.
 ## Output contract
 
 Each specialist returns a Markdown review grounded in repository evidence and shared trusted
-guidance. No component combines findings or makes merge decisions. Specialist reviews are advisory.
-They do not replace required human review or change repository merge gates.
+guidance. Specialist reports remain separate. The manual repair path selects eligible findings from
+their ledgers; it does not make merge decisions. Specialist reviews are advisory. They do not
+replace required human review or change repository merge gates.
