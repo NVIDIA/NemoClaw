@@ -368,6 +368,21 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
     );
   });
 
+  it("applies the test size budget to executable suite modules", async () => {
+    const diff = fixtureDiff(
+      [{ filename: "test/helpers/example-suite.ts", status: "added" }],
+      { "ci/test-file-size-budget.json": '{"defaultMaxLines":1}' },
+      {
+        "ci/test-file-size-budget.json": '{"defaultMaxLines":1}',
+        "test/helpers/example-suite.ts": "import { it } from 'vitest';\nit('works', () => {});\n",
+      },
+    );
+
+    expect(await testSizeViolations(diff)).toEqual([
+      "test/helpers/example-suite.ts has 2 lines, above its budget 1",
+    ]);
+  });
+
   it("asks for a stale legacy budget to be removed when its test is deleted", async () => {
     const budget = '{"defaultMaxLines":1500,"legacyMaxLines":{"test/legacy.test.ts":1}}';
     const diff = fixtureDiff(

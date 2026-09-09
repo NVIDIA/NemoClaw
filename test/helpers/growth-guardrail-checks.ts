@@ -11,6 +11,8 @@ const E2E_ASSERTION_BUDGET_FILE = "ci/e2e-assertion-budget.json";
 const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
 const JAVASCRIPT_FILE_RE = /\.(?:cjs|js|mjs)$/;
 const TEST_FILE_RE = /^(?:test|src|nemoclaw\/src)\/.*\.(?:test|spec)\.(?:[cm]?[jt]s)$/;
+const TEST_SIZE_FILE_RE =
+  /^(?:test|src|nemoclaw\/src)\/.*(?:\.(?:test|spec)|-suite)\.(?:[cm]?[jt]s)$/;
 const LIVE_E2E_TEST_RE = /^test\/e2e\/live\/.*\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/;
 const ONBOARD_ENTRY = "src/lib/onboard.ts";
 const STOCK_DOCKERFILE = "Dockerfile";
@@ -345,7 +347,7 @@ export async function testSizeViolations(diff: GrowthGuardrailDiff): Promise<str
       filename === BUDGET_FILE || previous_filename === BUDGET_FILE,
   );
   const changedTests = diff.files
-    .filter(({ filename, status }) => status !== "removed" && TEST_FILE_RE.test(filename))
+    .filter(({ filename, status }) => status !== "removed" && TEST_SIZE_FILE_RE.test(filename))
     .map(({ filename }) => filename);
   const baseBudgetBlob = await diff.readBase([BUDGET_FILE]);
   const baseBudget = parseBudget(baseBudgetBlob.get(BUDGET_FILE) ?? FALLBACK_BUDGET, "base budget");
