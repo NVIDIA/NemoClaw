@@ -5924,7 +5924,7 @@ ensure_station_express_pair() {
   revision="$(station_installer_revision)"
 
   local -a pair_command=(
-    node --no-warnings --experimental-strip-types "$coordinator"
+    node --no-warnings "$coordinator"
     --helper "$helper"
     --state "$state_file"
     --revision "$revision"
@@ -6025,7 +6025,7 @@ clear_station_dual_pair_resume() {
   assert_nemoclaw_state_path_safe "$state_file"
   [[ -e "$state_file" || -L "$state_file" || -e "${state_file}.ssh-binding" || -L "${state_file}.ssh-binding" ]] || return 0
   [[ -f "$coordinator" ]] || error "Dual DGX Station preparation coordinator is missing: ${coordinator}"
-  node --no-warnings --experimental-strip-types "$coordinator" --state "$state_file" --clear-state >/dev/null \
+  node --no-warnings "$coordinator" --state "$state_file" --clear-state >/dev/null \
     || error "Could not safely clear completed dual DGX Station resume state: ${state_file}"
 }
 

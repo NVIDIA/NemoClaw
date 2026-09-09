@@ -68,7 +68,7 @@ case "$*" in
         ;;
       npm-registry-dns-once:1 | npm-registry-dns-always:1 | npm-registry-dns-always:2)
         printf '%s\n' '#128 0.180 ERROR: curl failed: curl: (6) Could not resolve host: registry.npmjs.org' >&2
-        printf '%s\n' 'ERROR: failed to build: failed to solve: process "/bin/sh -c node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts --npm-root /usr/local/lib/node_modules/npm" did not complete successfully: exit code: 1' >&2
+        printf '%s\n' 'ERROR: failed to build: failed to solve: process "/bin/sh -c node /scripts/patch-bundled-npm-tar.mts --npm-root /usr/local/lib/node_modules/npm" did not complete successfully: exit code: 1' >&2
         exit 42
         ;;
       npm-registry-dns-near-match:1)
@@ -101,8 +101,8 @@ esac
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$NEMOCLAW_TEST_SEED_LOG"
-mode="$4"
-shift 4
+mode="$3"
+shift 3
 output=""
 while (($# > 0)); do
   case "$1" in

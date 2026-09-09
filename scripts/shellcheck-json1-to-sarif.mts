@@ -192,7 +192,7 @@ function formatError(error: unknown): string {
 
 function usage(): string {
   return (
-    "Usage: node --experimental-strip-types scripts/shellcheck-json1-to-sarif.mts " +
+    "Usage: node scripts/shellcheck-json1-to-sarif.mts " +
     "<shellcheck.json> <shellcheck.sarif>"
   );
 }

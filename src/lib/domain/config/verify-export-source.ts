@@ -329,11 +329,11 @@ function classifyManagedStartupProfile(
 function endpointEvidenceMatchesRoute(inference: QualifiedExportSnapshot["inference"]): boolean {
   const evidence = inference.endpointEvidence;
   if (!evidence) return false;
-  if (evidence.kind === "builtin-provider") {
+  if (evidence.source.kind === "builtin-profile") {
     return (
       inference.credentialEnv !== null &&
       isDeepStrictEqual(
-        [evidence.providerType, inference.provider, inference.api, evidence.endpoint],
+        [evidence.source.profileId, inference.provider, inference.api, evidence.endpoint],
         ["nvidia", "nvidia-prod", "openai-completions", BUILD_ENDPOINT_URL],
       )
     );
@@ -343,9 +343,9 @@ function endpointEvidenceMatchesRoute(inference: QualifiedExportSnapshot["infere
   else if (["openai-completions", "openai-responses"].includes(inference.api))
     expectedConfigKey = "OPENAI_BASE_URL";
   return (
-    evidence.kind === "provider-config" &&
+    evidence.source.kind === "provider-config" &&
     expectedConfigKey !== null &&
-    evidence.configKey === expectedConfigKey
+    evidence.source.key === expectedConfigKey
   );
 }
 
@@ -564,11 +564,11 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
       ),
     );
   if (
-    !evidence.providerId ||
-    !evidence.resourceVersion ||
+    !evidence.provider.id ||
+    !evidence.provider.resourceVersion ||
     !endpointEvidenceMatchesRoute(inference) ||
     !isDeepStrictEqual(
-      [evidence.workspace, evidence.gatewayName, evidence.providerName],
+      [evidence.provider.workspace, evidence.provider.gatewayName, evidence.provider.name],
       [sandbox.workspace, gateway.name, inference.provider],
     )
   )

@@ -150,22 +150,17 @@ async function readProviderEvidence(
     throw new Error("The live inference provider metadata does not match the registry.");
   }
   return {
-    ...(builtin
-      ? ({
-          kind: "builtin-provider",
-          providerType: "nvidia",
-          endpoint: provider.builtinInferenceEndpoint!,
-        } as const)
-      : ({
-          kind: "provider-config",
-          configKey,
-          endpoint: provider.config[configKey] ?? "",
-        } as const)),
-    gatewayName,
-    providerName: provider.name,
-    providerId: provider.id,
-    workspace: provider.workspace,
-    resourceVersion: provider.resourceVersion,
+    provider: {
+      gatewayName,
+      workspace: provider.workspace,
+      name: provider.name,
+      id: provider.id,
+      resourceVersion: provider.resourceVersion,
+    },
+    endpoint: provider.builtinInferenceEndpoint ?? provider.config[configKey] ?? "",
+    source: builtin
+      ? { kind: "builtin-profile", profileId: "nvidia" }
+      : { kind: "provider-config", key: configKey },
   };
 }
 

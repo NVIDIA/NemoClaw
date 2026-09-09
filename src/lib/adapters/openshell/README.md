@@ -8,7 +8,7 @@ issue #10938 and PR #11065. They do not complete the capability migrations in th
 
 | Read | Owner | Transport and reason |
 | --- | --- | --- |
-| Provider endpoint and identity | `providers.ts` | SDK `raw.getProvider`; the pinned SDK has no curated gateway-provider read. Reuses the metadata fields from `provider-adapter.ts` (#9806, #9825). |
+| Provider endpoint and identity | `providers.ts` | SDK `raw.getProvider`, plus `raw.getProviderProfile` for native NVIDIA inference without overrides; the pinned SDK has no curated gateway-provider read. Reuses the metadata fields from `provider-adapter.ts` (#9806, #9825). |
 | Sandbox identity, image, and attachments | `sandboxes.ts` | SDK `raw.getSandbox`; curated `sandbox.get` omits workspace, image, and active policy version. |
 | Configuration identity | `sandbox-config.ts` | SDK `raw.getSandboxConfig` by verified ID; curated `sandbox.getConfig` does a new name lookup and omits workspace. |
 | Effective policy document and applied revision | `sandbox-policy.ts` and `sandbox-policy-cli.ts` | Retains the existing policy contract from #10150. YAML conversion and policy migration remain with #9805 and #9826. |

@@ -304,9 +304,12 @@ describe("live export snapshot reader", () => {
         model: "model-a",
         endpointEvidence: {
           endpoint,
-          providerId: "provider-id",
-          resourceVersion: "8",
-          workspace: "default",
+          provider: {
+            id: "provider-id",
+            resourceVersion: "8",
+            workspace: "default",
+          },
+          source: { kind: "provider-config", key: "OPENAI_BASE_URL" },
         },
       },
     });
