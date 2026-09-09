@@ -968,13 +968,17 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: [
       "test/e2e/live/network-policy-transient-provider.ts",
       "test/e2e/live/restricted-onboard-helpers.ts",
+      "src/commands/config/",
       "src/lib/actions/config/",
       "src/lib/adapters/config/",
+      "src/lib/adapters/fs/config-export-file.ts",
+      "src/lib/config/",
       "src/lib/domain/config/",
       "src/lib/adapters/openshell/providers.ts",
       "src/lib/adapters/openshell/sandboxes.ts",
       "src/lib/adapters/openshell/sandbox-config.ts",
       "src/lib/adapters/openshell/sdk-read.ts",
+      "src/lib/adapters/openshell/sdk-read-schema.ts",
       "src/lib/adapters/openshell/sdk.ts",
     ],
     environment: {

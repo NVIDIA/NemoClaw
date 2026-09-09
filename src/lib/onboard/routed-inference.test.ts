@@ -23,31 +23,31 @@ import {
 } from "./routed-inference";
 
 describe("normalizeRoutedEndpointUrl (#4564)", () => {
-  it("rewrites localhost to the sandbox-facing host alias", () => {
+  it("rewrites localhost to the sandbox-facing host alias", async () => {
     expect(normalizeRoutedEndpointUrl("http://localhost:4000/v1")).toBe(
       "http://host.openshell.internal:4000/v1",
     );
   });
 
-  it("rewrites 127.0.0.1 to the host alias", () => {
+  it("rewrites 127.0.0.1 to the host alias", async () => {
     expect(normalizeRoutedEndpointUrl("http://127.0.0.1:4000/v1")).toBe(
       "http://host.openshell.internal:4000/v1",
     );
   });
 
-  it("omits the colon when the endpoint has no explicit port and preserves query/hash", () => {
+  it("omits the colon when the endpoint has no explicit port and preserves query/hash", async () => {
     expect(normalizeRoutedEndpointUrl("http://localhost/v1?x=1#frag")).toBe(
       "http://host.openshell.internal/v1?x=1#frag",
     );
   });
 
-  it("leaves an already-aliased endpoint untouched", () => {
+  it("leaves an already-aliased endpoint untouched", async () => {
     expect(normalizeRoutedEndpointUrl("http://host.openshell.internal:4000/v1")).toBe(
       "http://host.openshell.internal:4000/v1",
     );
   });
 
-  it("falls back to the blueprint endpoint when none is recorded, then normalizes it", () => {
+  it("falls back to the blueprint endpoint when none is recorded, then normalizes it", async () => {
     // The mocked loadBlueprintProfile returns http://localhost:4000/v1.
     expect(normalizeRoutedEndpointUrl(null)).toBe("http://host.openshell.internal:4000/v1");
     expect(normalizeRoutedEndpointUrl("")).toBe("http://host.openshell.internal:4000/v1");
@@ -55,12 +55,12 @@ describe("normalizeRoutedEndpointUrl (#4564)", () => {
 });
 
 describe("resolveRoutedCredentialEnv (#4564)", () => {
-  it("prefers an explicitly recorded credential env", () => {
+  it("prefers an explicitly recorded credential env", async () => {
     const loadProfile = vi.fn(() => ({ credential_env: "CUSTOM_KEY" })) as never;
     expect(resolveRoutedCredentialEnv("SESSION_KEY", loadProfile)).toBe("SESSION_KEY");
   });
 
-  it("falls back to the routed profile credential env before the NVIDIA default", () => {
+  it("falls back to the routed profile credential env before the NVIDIA default", async () => {
     const loadProfile = vi.fn(() => ({
       credential_env: "CUSTOM_KEY",
       router: { credential_env: "ROUTER_KEY" },
@@ -69,23 +69,23 @@ describe("resolveRoutedCredentialEnv (#4564)", () => {
     expect(resolveRoutedCredentialEnv(null, loadProfile)).toBe("ROUTER_KEY");
   });
 
-  it("falls back to the profile-level credential env when the router has none", () => {
+  it("falls back to the profile-level credential env when the router has none", async () => {
     const loadProfile = vi.fn(() => ({ credential_env: "CUSTOM_KEY" })) as never;
     expect(resolveRoutedCredentialEnv(null, loadProfile)).toBe("CUSTOM_KEY");
   });
 
-  it("uses the NVIDIA default when no profile credential env is set", () => {
+  it("uses the NVIDIA default when no profile credential env is set", async () => {
     const loadProfile = vi.fn(() => ({ endpoint: "http://localhost:4000/v1" })) as never;
     expect(resolveRoutedCredentialEnv(null, loadProfile)).toBe("NVIDIA_INFERENCE_API_KEY");
   });
 });
 
 describe("upsertRoutedProvider (#4564)", () => {
-  it("upserts the provider with the normalized host alias base URL", () => {
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+  it("upserts the provider with the normalized host alias base URL", async () => {
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const hydrateCredentialEnv = vi.fn(() => "nvapi-secret");
 
-    const result = upsertRoutedProvider(
+    const result = await upsertRoutedProvider(
       "nvidia-router",
       "http://localhost:4000/v1",
       "NVIDIA_INFERENCE_API_KEY",
@@ -107,11 +107,11 @@ describe("upsertRoutedProvider (#4564)", () => {
     );
   });
 
-  it("defaults the credential env and omits an empty credential from the env block", () => {
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+  it("defaults the credential env and omits an empty credential from the env block", async () => {
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const hydrateCredentialEnv = vi.fn(() => undefined);
 
-    const result = upsertRoutedProvider("nvidia-router", "http://localhost:4000/v1", null, {
+    const result = await upsertRoutedProvider("nvidia-router", "http://localhost:4000/v1", null, {
       upsertProvider,
       hydrateCredentialEnv,
     });
@@ -126,11 +126,11 @@ describe("upsertRoutedProvider (#4564)", () => {
     );
   });
 
-  it("propagates a failed upsert result", () => {
-    const upsertProvider = vi.fn(() => ({ ok: false, message: "boom", status: 3 }));
+  it("propagates a failed upsert result", async () => {
+    const upsertProvider = vi.fn(async () => ({ ok: false, message: "boom", status: 3 }));
     const hydrateCredentialEnv = vi.fn(() => "nvapi-secret");
 
-    const result = upsertRoutedProvider(
+    const result = await upsertRoutedProvider(
       "nvidia-router",
       "http://localhost:4000/v1",
       "NVIDIA_INFERENCE_API_KEY",
@@ -143,5 +143,30 @@ describe("upsertRoutedProvider (#4564)", () => {
     expect(result.ok).toBe(false);
     expect(result.result.message).toBe("boom");
     expect(result.result.status).toBe(3);
+  });
+
+  it("waits for provider registration before resolving", async () => {
+    let release: ((value: { ok: true }) => void) | undefined;
+    const upsertProvider = vi.fn(
+      () =>
+        new Promise<{ ok: true }>((resolve) => {
+          release = resolve;
+        }),
+    );
+    let settled = false;
+    const resultPromise = upsertRoutedProvider(
+      "nvidia-router",
+      "http://localhost:4000/v1",
+      "NVIDIA_INFERENCE_API_KEY",
+      { upsertProvider, hydrateCredentialEnv: () => "nvapi-secret" },
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    release?.({ ok: true });
+    await expect(resultPromise).resolves.toMatchObject({ ok: true });
   });
 });
