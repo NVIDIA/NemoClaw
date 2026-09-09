@@ -176,6 +176,14 @@ repos:
         files: ^(nemoclaw-blueprint/.*\.yaml$|nemoclaw/openclaw\.plugin\.json$|schemas/.*\.json$)
         priority: 10
 
+      - id: validate-nemoclaw-config-schema
+        name: Validate generated NemoClawConfig schema
+        entry: npm run config-schema:check
+        language: system
+        pass_filenames: false
+        files: ^(package(?:-lock)?\.json|nemoclaw/src/shared/sandbox-name\.cts|schemas/nemoclaw-config-v1\.schema\.json|scripts/config/generate-nemoclaw-config-schema\.mts|src/lib/(?:config/model|core/endpoint-contract|name-validation|sandbox-name-contract)\.ts)$
+        priority: 10
+
       - id: validate-managed-inference-catalog
         name: Validate managed inference catalog
         entry: npm run catalog:check

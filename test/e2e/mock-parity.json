@@ -241,6 +241,9 @@
       "live": "test/e2e/live/network-policy.test.ts",
       "liveSources": ["test/e2e/live/restricted-onboard-helpers.ts"],
       "fast": [
+        "src/commands/config/export.test.ts",
+        "src/lib/adapters/config/live-export-source.test.ts",
+        "src/lib/domain/config/verify-export-source.test.ts",
         "src/lib/actions/sandbox/exec-policy-hint-detection.test.ts",
         "src/lib/actions/sandbox/policy-channel-add-drift.test.ts",
         "src/lib/actions/sandbox/policy-channel-policy.test.ts",
