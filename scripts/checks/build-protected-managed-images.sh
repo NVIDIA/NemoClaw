@@ -247,8 +247,7 @@ validate_audit_evidence() {
 }
 
 if [[ -n "$cache_from" ]]; then
-  audit_evidence_dir="$audit_evidence_from"
-  validate_audit_evidence "$audit_evidence_dir"
+  validate_audit_evidence "$audit_evidence_from"
 fi
 
 if [[ -n "$cache_from" ]]; then
