@@ -4,6 +4,8 @@
 import { parseLiveSandboxEntries } from "../../runtime-recovery";
 import { resolveSandboxContainerOwner } from "./container-owner";
 
+export { resolveSandboxContainerOwner } from "./container-owner";
+
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 const TERMINAL_OPEN_SHELL_SANDBOX_PHASES = new Set(["Error", "Failed"]);
 

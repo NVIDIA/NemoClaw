@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { NEMOCLAW_MANAGED_PROBE_LABEL } from "../../adapters/docker/exec";
 import {
   type RunResult,
   runUninstallPlan as runUninstallPlanBase,
@@ -85,14 +86,14 @@ function runManagedHermesVolumeUninstall(
     dockerCalls.push(args);
     events.push(`docker ${args.join(" ")}`);
     switch (args.join(" ")) {
-      case "ps -a --format {{.ID}} {{.Image}} {{.Names}}":
+      case `ps -a --format {{.ID}} {{.Image}} {{.Names}} {{.Label "${NEMOCLAW_MANAGED_PROBE_LABEL}"}}`:
         switch (containerPresent ? containerMode : "absent") {
           case "owned":
             return ok(
-              `${containerId} ghcr.io/nvidia/nemoclaw/hermes-sandbox:latest openshell-default--hermes-runtime-id\n`,
+              `${containerId} ghcr.io/nvidia/nemoclaw/hermes-sandbox:latest openshell-default--hermes-runtime-id false\n`,
             );
           case "foreign":
-            return ok(`${containerId} redis:7 foreign-service\n`);
+            return ok(`${containerId} redis:7 foreign-service false\n`);
           default:
             return ok();
         }

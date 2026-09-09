@@ -7,6 +7,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeAgent, withMockedDocker } from "../../../test/helpers/base-image-test-harness";
+import { NEMOCLAW_MANAGED_PROBE_LABEL } from "../adapters/docker/exec";
 import { dockerRunCommandBetween } from "../../../test/helpers/dockerfile-run-shell";
 
 describe("agent base image provisioning", () => {
@@ -26,6 +27,8 @@ describe("agent base image provisioning", () => {
       expect(probeArgs.slice(0, -1)).toEqual([
         "run",
         "--rm",
+        "--label",
+        `${NEMOCLAW_MANAGED_PROBE_LABEL}=true`,
         "--network",
         "none",
         "--cap-drop",

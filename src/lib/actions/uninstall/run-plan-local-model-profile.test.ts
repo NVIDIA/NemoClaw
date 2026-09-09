@@ -11,6 +11,7 @@ import {
   writeManagedGatewayRuntimeProof,
 } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
+import { NEMOCLAW_MANAGED_PROBE_LABEL } from "../../adapters/docker/exec";
 import {
   loadManagedLlamaCppOwner,
   managedLlamaCppStatePaths,
@@ -254,14 +255,19 @@ describe("uninstall local model profile cleanup", () => {
       ],
       [JSON.stringify(["ps", "-a", "--format", "{{.Names}}"]), ok("nemoclaw-llama-cpp\n")],
       [
-        JSON.stringify(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"]),
+        JSON.stringify([
+          "ps",
+          "-a",
+          "--format",
+          `{{.ID}} {{.Image}} {{.Names}} {{.Label "${NEMOCLAW_MANAGED_PROBE_LABEL}"}}`,
+        ]),
         ok(
           [
-            "id-head image nemoclaw-vllm",
-            "id-worker image nemoclaw-vllm-worker",
-            "id-cluster image nemoclaw-vllm-cluster-rank-0",
-            "id-llama image nemoclaw-llama-cpp",
-            "id-other image nemoclaw-helper",
+            "id-head image nemoclaw-vllm false",
+            "id-worker image nemoclaw-vllm-worker false",
+            "id-cluster image nemoclaw-vllm-cluster-rank-0 false",
+            "id-llama image nemoclaw-llama-cpp false",
+            "id-other image nemoclaw-helper false",
           ].join("\n"),
         ),
       ],

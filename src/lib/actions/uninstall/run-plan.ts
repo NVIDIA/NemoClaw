@@ -6,14 +6,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { dockerSpawnSync } from "../../adapters/docker/exec";
+import { dockerSpawnSync, NEMOCLAW_MANAGED_PROBE_LABEL } from "../../adapters/docker/exec";
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { isErrnoException } from "../../core/errno";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
 import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
-import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import {
+  getSandboxDeleteOutcome,
+  resolveSandboxContainerOwner,
+} from "../../domain/sandbox/destroy";
 import {
   gatewayDestroySkipMessage,
   OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
@@ -47,7 +50,11 @@ import {
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
 } from "../../onboard/docker-driver-gateway-service";
-import { resolveGatewayName, resolveGatewayPortFromName } from "../../onboard/gateway-binding";
+import {
+  resolveGatewayCompatContainerName,
+  resolveGatewayName,
+  resolveGatewayPortFromName,
+} from "../../onboard/gateway-binding";
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
   type GatewayTeardownAuthorityResolver,
@@ -2254,35 +2261,51 @@ function removeDockerContainers(
   runtime: UninstallRuntime,
   gatewayName: string,
   sandboxNames: readonly string[],
-): void {
-  const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
-    env: runtime.env,
-  });
-  const ids = splitNonEmptyLines(result.stdout)
-    .filter((line) => {
-      const fields = dockerInventoryFields(line, 3);
-      const image = fields[1] ?? "";
+): boolean {
+  const result = runtime.runDocker(
+    [
+      "ps",
+      "-a",
+      "--format",
+      `{{.ID}} {{.Image}} {{.Names}} {{.Label "${NEMOCLAW_MANAGED_PROBE_LABEL}"}}`,
+    ],
+    { env: runtime.env },
+  );
+  if (result.status !== 0) {
+    const detail =
+      result.stderr.trim() || result.stdout.trim() || "Docker returned no error detail";
+    runtime.error(
+      `Could not inventory Docker containers: ${detail}. Remaining uninstall state was preserved for retry.`,
+    );
+    return false;
+  }
+
+  const rows = splitNonEmptyLines(result.stdout).map((line) => dockerInventoryFields(line, 4));
+  const containerNames = rows.map((fields) => fields[2] ?? "").join("\n");
+  const ownedSandboxContainers = new Set(
+    sandboxNames
+      .map((sandboxName) => resolveSandboxContainerOwner(containerNames, sandboxName, sandboxNames))
+      .filter((name): name is string => name !== null),
+  );
+  const ids = rows
+    .filter((fields) => {
       const name = fields[2] ?? "";
+      const managedProbe = fields[3] === "true";
       if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) return false;
-      // Probe containers that run with `--rm` and no `--name`, such as
-      // `hermesBaseImageSupportsMcp`, take a random Docker name. Their
-      // NemoClaw image reference is the only way to reclaim one that an
-      // interrupted run orphaned.
-      return (
-        isOwnedDockerContainerName(name, gatewayName, sandboxNames) ||
-        isOwnedDockerImageRepository(image)
-      );
+      return isOwnedDockerContainerName(name, gatewayName, ownedSandboxContainers, managedProbe);
     })
-    .map((line) => line.split(/\s+/)[0]);
+    .map((fields) => fields[0] ?? "")
+    .filter(Boolean);
   if (ids.length === 0) {
     runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker containers found`);
-    return;
+    return true;
   }
   for (const id of [...new Set(ids)]) {
     if (runtime.runDocker(["rm", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0)
       runtime.log(`Removed Docker container ${id}`);
     else runtime.warn(`Failed to remove Docker container ${id}`);
   }
+  return true;
 }
 
 function removeDockerImages(runtime: UninstallRuntime): void {
@@ -2322,40 +2345,36 @@ function dockerImageRepository(imageRef: string): string {
 function isOwnedDockerContainerName(
   name: string,
   gatewayName: string,
-  sandboxNames: readonly string[],
+  ownedSandboxContainers: ReadonlySet<string>,
+  managedProbe: boolean,
 ): boolean {
-  if (name === `openshell-cluster-${gatewayName}`) return true;
-  if (
-    name ===
-    (GATEWAY_PORT === DEFAULT_GATEWAY_PORT
-      ? "nemoclaw-openshell-gateway"
-      : `nemoclaw-openshell-gateway-${String(GATEWAY_PORT)}`)
-  ) {
-    return true;
-  }
-  return sandboxNames.some(
-    (sandboxName) =>
-      name === `openshell-${sandboxName}` || isOpenShellWorkspaceContainer(name, sandboxName),
+  return (
+    managedProbe ||
+    name === `openshell-cluster-${gatewayName}` ||
+    name === resolveGatewayCompatContainerName(GATEWAY_PORT) ||
+    ownedSandboxContainers.has(name)
   );
 }
 
-function isOpenShellWorkspaceContainer(name: string, sandboxName: string): boolean {
-  const sandboxMarker = `--${sandboxName}-`;
-  const markerIndex = name.lastIndexOf(sandboxMarker);
-  if (!name.startsWith("openshell-") || markerIndex === -1) return false;
-  const suffix = name.slice(markerIndex + sandboxMarker.length);
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-    suffix,
-  );
-}
+const OWNED_DOCKER_IMAGE_REPOSITORIES = new Set([
+  "ghcr.io/nvidia/nemoclaw",
+  "ghcr.io/nvidia/nemoclaw/sandbox-base",
+  "ghcr.io/nvidia/nemoclaw/openclaw-sandbox",
+  "ghcr.io/nvidia/nemoclaw/hermes-sandbox",
+  "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox",
+  "ghcr.io/nvidia/nemoclaw/pi-sandbox",
+  "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
+  "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+  "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
+  "nemoclaw-sandbox-local",
+  "nemoclaw-hermes-sandbox-base-local",
+  "nemoclaw-langchain-deepagents-code-sandbox-base-local",
+  "openshell/sandbox-from",
+  "openshell/sandbox-from-nemoclaw",
+]);
 
 function isOwnedDockerImageRepository(imageRef: string): boolean {
-  const repository = dockerImageRepository(imageRef);
-  return (
-    /^nemoclaw-/iu.test(repository) ||
-    /^openshell\//iu.test(repository) ||
-    /^ghcr\.io\/nvidia\/nemoclaw(?:[/-]|$)/iu.test(repository)
-  );
+  return OWNED_DOCKER_IMAGE_REPOSITORIES.has(dockerImageRepository(imageRef));
 }
 
 function removeDockerVolume(name: string, runtime: UninstallRuntime): void {
@@ -2885,11 +2904,15 @@ function executeOpenShellResourceCleanup(
     dockerIsAvailable(runtime)
   ) {
     // An unreachable gateway can leave a stopped sandbox container attached to the state volume.
-    removeDockerContainers(
-      runtime,
-      options.gatewayName || resolveGatewayName(GATEWAY_PORT),
-      sandboxNames,
-    );
+    if (
+      !removeDockerContainers(
+        runtime,
+        options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+        sandboxNames,
+      )
+    ) {
+      return false;
+    }
   }
   if (
     !portableRuntimeCleanup &&
@@ -3120,11 +3143,15 @@ function executePlan(
           "Kept Docker containers, images, and volumes used by the externally supervised gateway.",
         );
       } else if (dockerIsAvailable(runtime)) {
-        removeDockerContainers(
-          runtime,
-          options.gatewayName || resolveGatewayName(GATEWAY_PORT),
-          sandboxNames,
-        );
+        if (
+          !removeDockerContainers(
+            runtime,
+            options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+            sandboxNames,
+          )
+        ) {
+          return { ok: false };
+        }
         if (scopedToSelectedGateway) {
           runtime.log("Sibling gateways remain; kept shared Docker images.");
         } else {

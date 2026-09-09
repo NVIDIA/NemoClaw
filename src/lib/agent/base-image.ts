@@ -14,6 +14,7 @@ import {
   dockerRmi,
   dockerTag,
 } from "../adapters/docker";
+import { NEMOCLAW_MANAGED_PROBE_LABEL } from "../adapters/docker/exec";
 import { CUA_SANDBOX_IMAGE_ENV, requireCuaSandboxImageRef } from "../cua/feature";
 import { encodeCorporateCaArg, resolveCorporateCa } from "../onboard/corporate-ca";
 import { createCustomBuildContextFilter } from "../onboard/custom-build-context";
@@ -309,6 +310,8 @@ export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
     [
       "run",
       "--rm",
+      "--label",
+      `${NEMOCLAW_MANAGED_PROBE_LABEL}=true`,
       ...HERMES_BASE_IMAGE_PROBE_GUARDS,
       "--entrypoint",
       "/opt/hermes/.venv/bin/python",

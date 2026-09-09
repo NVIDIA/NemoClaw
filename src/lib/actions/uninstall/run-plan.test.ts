@@ -104,7 +104,7 @@ describe("uninstall run plan", () => {
     const dockerCalls: string[][] = [];
     const runDocker = vi.fn((args: string[]) => {
       dockerCalls.push(args);
-      if (args[0] === "ps") return ok("abc openclaw:latest openshell-cluster-nemoclaw\n");
+      if (args[0] === "ps") return ok("abc openclaw:latest openshell-cluster-nemoclaw false\n");
       if (args[0] === "images") return ok("img1 ghcr.io/nvidia/nemoclaw:test\n");
       return ok();
     });

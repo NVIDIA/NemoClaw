@@ -577,7 +577,7 @@ describe("uninstall OpenShell gateway user service", () => {
         runDocker: (args) => {
           dockerCalls.push(args);
           return args[0] === "ps"
-            ? ok("sandbox-id openshell/sandbox openshell-cluster-nemoclaw\n")
+            ? ok("sandbox-id openshell/sandbox openshell-cluster-nemoclaw false\n")
             : ok();
         },
       },
