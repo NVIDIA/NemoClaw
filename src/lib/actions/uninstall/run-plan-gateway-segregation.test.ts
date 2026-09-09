@@ -325,6 +325,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       diagnostic: "gateway not found\nconnection refused",
     },
     {
+      name: "a named absence plus another failure",
+      diagnostic: "No gateway metadata found for nemoclaw.\nconnection refused",
+    },
+    {
       name: "a different gateway absence",
       diagnostic: "No gateway metadata found for 'other'. Request for nemoclaw failed",
     },
@@ -484,11 +488,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(fs.existsSync(path.join(otherEnv, "sandboxes.json"))).toBe(true);
       expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(false);
       expect(fs.existsSync(stateDir)).toBe(true);
-      expect(
-        adapterStateEntries.every((name) =>
-          Object.is(fs.existsSync(path.join(stateDir, name)), true),
-        ),
-      ).toBe(true);
+      expect(adapterStateEntries.every((name) => fs.existsSync(path.join(stateDir, name)))).toBe(
+        true,
+      );
       expect(kill).not.toHaveBeenCalled();
       expect(
         run.mock.calls.some(
@@ -1081,11 +1083,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(runCalls.some(({ command }) => command === "systemctl")).toBe(false);
       expect(fs.existsSync(path.join(nemoclawConfig, "keep"))).toBe(true);
       expect(kill.mock.calls.every(([pid]) => pid !== 4242)).toBe(true);
-      expect(
-        proxyStateEntries.every((entry) =>
-          Object.is(fs.existsSync(path.join(shared, entry)), true),
-        ),
-      ).toBe(true);
+      expect(proxyStateEntries.every((entry) => fs.existsSync(path.join(shared, entry)))).toBe(
+        true,
+      );
       expect(logs).toContain(
         "Preserving the shared Ollama auth proxy for the remaining gateway ports",
       );
@@ -1486,11 +1486,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(logs.join("\n")).toContain("Sibling gateways remain");
       expect(fs.existsSync(path.join(stateDir, "gateways", "8091"))).toBe(true);
       expect(proxyProcessIsRunning).toBe(true);
-      expect(
-        proxyStateEntries.every((entry) =>
-          Object.is(fs.existsSync(path.join(stateDir, entry)), true),
-        ),
-      ).toBe(true);
+      expect(proxyStateEntries.every((entry) => fs.existsSync(path.join(stateDir, entry)))).toBe(
+        true,
+      );
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
