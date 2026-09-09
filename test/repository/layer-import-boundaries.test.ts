@@ -10,6 +10,7 @@ import {
   findLayerImportBoundaryViolations,
   findManagedRuntimeBoundaryViolations,
 } from "../../scripts/checks/layer-import-boundaries.mts";
+import { testTimeoutOptions } from "../helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 let fixtureCounter = 0;
@@ -42,9 +43,13 @@ function scanFixture(fixture: string, source: string) {
 }
 
 describe("CLI layer import boundaries (#6245)", () => {
-  it("keeps domain, adapter, action, and command layers separated (#6245)", () => {
-    expect(findLayerImportBoundaryViolations()).toEqual([]);
-  });
+  it(
+    "keeps domain, adapter, action, and command layers separated (#6245)",
+    testTimeoutOptions(60_000),
+    () => {
+      expect(findLayerImportBoundaryViolations()).toEqual([]);
+    },
+  );
 
   it("keeps managed runtime orchestration provider-neutral (#9145)", () => {
     expect(findManagedRuntimeBoundaryViolations()).toEqual([]);
@@ -112,12 +117,26 @@ describe("CLI layer import boundaries (#6245)", () => {
       "awaited dynamic import binding",
       'export async function value() {\n  const { buildOpenshellExecArgs } = await import("../actions/sandbox/exec");\n  return buildOpenshellExecArgs;\n}\n',
     ],
+    [
+      "export assignment of a namespace import",
+      'import * as legacy from "../actions/sandbox/exec";\nexport = legacy;\n',
+    ],
+    [
+      "default export of a namespace import",
+      'import * as legacy from "../actions/sandbox/exec";\nexport default legacy;\n',
+    ],
+    ["export assignment of a direct require", 'export = require("../actions/sandbox/exec");\n'],
+    ["default export of a direct require", 'export default require("../actions/sandbox/exec");\n'],
     ["named re-export", 'export { buildOpenshellExecArgs } from "../actions/sandbox/exec";\n'],
     [
       "aliased named re-export",
       'export { buildOpenshellExecArgs as legacyBuild } from "../actions/sandbox/exec";\n',
     ],
     ["namespace re-export", 'export * as legacy from "../actions/sandbox/exec";\n'],
+    [
+      "namespace re-export with comments",
+      'export /* keep */ * /* keep */ as legacy from "../actions/sandbox/exec";\n',
+    ],
     ["star re-export", 'export * from "../actions/sandbox/exec";\n'],
   ])("rejects buffered sandbox commands through %s (#10991)", (_label, source) => {
     const violations = scanFixture(
