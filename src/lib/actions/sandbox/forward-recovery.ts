@@ -14,7 +14,7 @@ import {
 } from "../../adapters/openshell/forward-service";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
-  legacySandboxForwardPid,
+  legacySandboxForwardRow,
 } from "../../adapters/openshell/forward-service-migration";
 import {
   captureOpenshell,
@@ -412,17 +412,21 @@ export function describeSandboxPortForwardListener(
       runtimeSelection,
     ),
   );
-  const legacyPid =
+  const legacyRow =
     !listed.error && !listed.signal && listed.status === 0
-      ? legacySandboxForwardPid(listed.output, sandboxName, port)
+      ? legacySandboxForwardRow(listed.output, sandboxName, port)
       : undefined;
-  if (legacyPid !== undefined) {
+  if (legacyRow !== undefined) {
     // A tracked legacy row proves nothing about who holds the port today. A
     // stale row over a foreign listener would send `forward stop` and then
-    // wait on a port that never releases, so the row's PID must be the one
-    // listening; anything else is unverified (#11149).
+    // wait on a port that never releases, so OpenShell must still report the
+    // forward as running and the row's PID must be the one listening; a dead
+    // row's PID can already belong to another process (#11149).
     const holders = localListenerPids(port);
-    return legacyPid !== null && holders.length === 1 && holders[0] === String(legacyPid)
+    return legacyRow.status === "running" &&
+      legacyRow.pid !== null &&
+      holders.length === 1 &&
+      holders[0] === String(legacyRow.pid)
       ? "legacy"
       : "unverified";
   }

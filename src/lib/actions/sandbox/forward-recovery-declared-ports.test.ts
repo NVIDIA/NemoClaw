@@ -275,6 +275,22 @@ describe("a dashboard port held by a listener the sandbox does not own (#11149)"
     );
   });
 
+  it("treats a dead legacy row whose PID matches the listener as unverified", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.captureOpenshell.mockReturnValue(forwardList(["box  127.0.0.1  18789  4242  dead"]));
+    const { describeSandboxForwardListener, ensureSandboxPortForward } =
+      await import("./forward-recovery");
+
+    expect(describeSandboxForwardListener("box", { isWsl: false })).toBe("unverified");
+    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
+
+    expect(mocks.runOpenshell).not.toHaveBeenCalled();
+    expect(mocks.launchForwardService).not.toHaveBeenCalled();
+    expect(error.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "Host port 18789 for 'box' is held by a listener",
+    );
+  });
+
   it("still relaunches when nothing listens", async () => {
     mocks.isLocalForwardReachable.mockReturnValue(false);
     const { ensureSandboxPortForward } = await import("./forward-recovery");
