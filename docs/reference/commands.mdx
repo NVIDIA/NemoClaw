@@ -2471,7 +2471,7 @@ $$nemoclaw my-assistant mcp restart [server]
 
 Remove an MCP server from a sandbox.
 
-NemoClaw first removes the named agent-native entry so the agent can no longer use it, then removes the deterministic policy key and detaches the exact live provider when the policy binding, provider identity, type, and credential key agree. The workspace provider and its stored credential are deliberately preserved because current OpenShell provider deletion is name-based. The command reports the retained provider name so an operator can inspect or remove it separately after confirming it is unused.
+NemoClaw keeps the native entry while it checks the current live policy. When that policy binds a provider, NemoClaw detaches it only if the provider identity, type, and credential key match the binding. It then verifies that fresh sandbox processes no longer receive the credential, removes the generated policy if present, and finally removes the named agent-native entry. If detachment, credential absence, or policy removal cannot be proved, the command exits nonzero and retains the native entry for an explicit retry. The workspace provider and its stored credential are deliberately preserved because current OpenShell provider deletion is name-based. The command reports an identified retained provider so an operator can inspect or remove it separately after confirming it is unused.
 
 The command fails closed when it cannot safely identify the source entry. `--force` permits removal of a modified same-name agent entry, but it does not widen policy or provider authority and never deletes a provider. Legacy Mcporter or `.nemoclaw-mcp.json` entries must be converted with `mcp migrate --apply` before ordinary removal.
 
@@ -2481,7 +2481,7 @@ $$nemoclaw my-assistant mcp remove github [--force]
 
 | Flag | Description |
 | --- | --- |
-| `--force` | Remove a modified same-name native agent entry and continue conservative policy and attachment cleanup; never delete the workspace provider |
+| `--force` | Permit removal of a modified same-name native agent entry after verified policy and credential cleanup; never bypass those checks or delete the workspace provider |
 
 ### `$$nemoclaw <name> skill install <path>`
 

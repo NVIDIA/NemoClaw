@@ -543,6 +543,9 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
     "runs $agent source and policy mutations with registry $registryText",
     ({ agent, adapter, registryText }) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-live-operation-"));
+      const openshell = path.join(home, "openshell");
+      // Policy still resolves an executable before calling the modeled writer.
+      fs.writeFileSync(openshell, "#!/bin/sh\nexit 99\n", { mode: 0o700 });
       const script = String.raw`
 const fs = require("node:fs");
 const assert = require("node:assert/strict");
@@ -616,6 +619,7 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
           env: {
             ...process.env,
             HOME: home,
+            NEMOCLAW_OPENSHELL_BIN: openshell,
             NODE_OPTIONS: [
               process.env.NODE_OPTIONS,
               `--require=${path.resolve("test/helpers/onboard-script-mocks.cjs")}`,
