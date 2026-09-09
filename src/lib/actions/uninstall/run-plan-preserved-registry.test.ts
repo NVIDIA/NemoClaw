@@ -115,6 +115,12 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
       destroyDiagnostic: "No active gateway",
       expectedDestroy: true,
     },
+    {
+      kind: "named",
+      removeDiagnostic: "gateway nemoclaw not found",
+      destroyDiagnostic: "",
+      expectedDestroy: false,
+    },
   ])(
     "uses the 'already removed' wording when the $kind absence post-condition is verified",
     async ({ destroyDiagnostic, expectedDestroy, removeDiagnostic }) => {

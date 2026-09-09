@@ -962,7 +962,11 @@ function gatewayRegistrationRemovalFailureMessage(
 ): string {
   const output = `${result.stdout}\n${result.stderr}`;
   // Map untrusted command output to fixed phrases so diagnostics do not expose secrets.
-  const cause = /connection refused/iu.test(output) ? "connection refused; " : "";
+  const cause = /permission denied|operation not permitted|access denied|forbidden/iu.test(output)
+    ? "permission denied; "
+    : /connection refused/iu.test(output)
+      ? "connection refused; "
+      : "";
   const status = result.status === null ? "no exit status" : `exit ${String(result.status)}`;
   return `Could not remove gateway registration '${gatewayLabel}': openshell gateway ${operation} failed (${cause}${status}).`;
 }
@@ -982,10 +986,7 @@ function removeGatewayRegistration(
 
   const removeOutput = `${removeResult.stdout}\n${removeResult.stderr}`;
   const removeAbsence = classifyGatewayRegistrationAbsence(removeOutput, gatewayLabel);
-  if (
-    removeAbsence === "named" ||
-    (removeAbsence === "generic" && confirmsGatewayRegistrationAbsence(runtime, gatewayLabel))
-  ) {
+  if (removeAbsence !== null && confirmsGatewayRegistrationAbsence(runtime, gatewayLabel)) {
     runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
     return true;
   }
@@ -1015,10 +1016,7 @@ function removeGatewayRegistration(
     `${destroyResult.stdout}\n${destroyResult.stderr}`,
     gatewayLabel,
   );
-  if (
-    destroyAbsence === "named" ||
-    (destroyAbsence === "generic" && confirmsGatewayRegistrationAbsence(runtime, gatewayLabel))
-  ) {
+  if (destroyAbsence !== null && confirmsGatewayRegistrationAbsence(runtime, gatewayLabel)) {
     runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
     return true;
   }
