@@ -2947,7 +2947,8 @@ For native rootless Podman on Linux, select the provider explicitly:
 NEMOCLAW_GATEWAY_RUNTIME=podman $$nemoclaw onboard
 ```
 
-Native preflight fails closed unless the current-user Podman socket and service, rootless engine, cgroups v2 hierarchy, bridge networking, DNS, host architecture, and exact managed-image contract are all qualified.
+Native preflight fails closed unless the current-user Podman socket and service, rootless engine, cgroups v2 hierarchy, bridge networking, DNS, host architecture, exact managed-image contract, and `lsof` listener enumeration are all qualified.
+If `lsof` is unavailable, install it through the host's package-management policy and retry; NemoClaw does not install it.
 Do not redirect it with `DOCKER_HOST`, `DOCKER_CONTEXT`, `CONTAINER_HOST`, or a named Podman connection; restore the current user's reported socket authority and retry with the explicit selector.
 Native Podman supports stock managed-image onboarding only. Use the Docker provider for an explicit `--from <Dockerfile>` or a read-only host mount.
 

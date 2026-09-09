@@ -443,10 +443,10 @@ describe("RuntimeProviderBundle registry contract", () => {
     ],
     [
       "gateway",
-      (bundle: RuntimeProviderBundle) => ({
-        ...bundle.gateway,
-        launcher: "invalid",
-      }),
+      (bundle: RuntimeProviderBundle) => {
+        const { observeHostRuntime: _observeHostRuntime, ...incomplete } = bundle.gateway;
+        return incomplete;
+      },
     ],
     [
       "workload",
@@ -691,6 +691,47 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.gateway.ownsHostReadiness).toBe(false);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.gateway.ownsHostReadiness).toBe(true);
   });
+
+  it("requires provider-owned readiness observation from a gateway readiness owner (#10984)", () => {
+    const bundle = CURRENT_RUNTIME_PROVIDER_BUNDLES.podman!;
+    const { observeOwnedGateway: _observeOwnedGateway, ...gatewayWithoutObservation } =
+      bundle.gateway;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["podman", replaceSurface(bundle, "gateway", gatewayWithoutObservation)],
+      ]),
+    ).toThrow(/gateway\.observeOwnedGateway must be a function/u);
+  });
+
+  it("rejects provider-owned readiness observation from a non-owning gateway (#10984)", () => {
+    const bundle = mxcBundle();
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "gateway", {
+            ...bundle.gateway,
+            observeOwnedGateway: vi.fn(),
+          }),
+        ],
+      ]),
+    ).toThrow(/observeOwnedGateway requires gateway\.ownsHostReadiness/u);
+  });
+
+  it.each(["observeHostRuntime", "prepareHostRuntime"] as const)(
+    "rejects a gateway surface without %s",
+    (method) => {
+      const bundle = mxcBundle();
+      const { [method]: _missing, ...incomplete } = bundle.gateway;
+
+      expect(() =>
+        createRuntimeProviderBundleRegistry([
+          ["mxc", replaceSurface(bundle, "gateway", incomplete)],
+        ]),
+      ).toThrow(new RegExp(`gateway\\.${method} must be a function`, "u"));
+    },
+  );
 
   it("rejects an unsupported host-local-inference capability with an actionable provider error", () => {
     const bundle = mxcBundle();
