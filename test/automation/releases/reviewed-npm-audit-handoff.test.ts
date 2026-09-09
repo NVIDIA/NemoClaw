@@ -309,8 +309,9 @@ describe("reviewed npm audit handoff", () => {
       const runHelper = (
         receiptSha256 = correctReceiptSha256,
         trustedPolicyResultSha256 = policyResultSha256(),
+        helperFile = helper,
       ) =>
-        spawnSync("bash", [helper], {
+        spawnSync("bash", [helperFile], {
           encoding: "utf8",
           env: {
             ...process.env,
@@ -357,12 +358,19 @@ describe("reviewed npm audit handoff", () => {
       expect(fs.existsSync(retainedResult)).toBe(false);
       expect(fs.existsSync(nodeLog)).toBe(false);
 
-      const verifiedPolicyResult = fs.readFileSync(trustedPolicyResult);
       const verifiedPolicyResultSha256 = policyResultSha256();
-      fs.writeFileSync(trustedPolicyResult, '{"graph":"mcporter-runtime","status":"failed"}\n');
+      const forgedPolicyResult = path.join(root, "forged-policy-result.json");
+      const forgedPolicyHelper = path.join(root, "verify-forged-mcporter-audit.sh");
+      fs.writeFileSync(forgedPolicyResult, '{"graph":"mcporter-runtime","status":"failed"}\n');
+      fs.writeFileSync(
+        forgedPolicyHelper,
+        helperSource.replaceAll(trustedPolicyResult, forgedPolicyResult),
+        { mode: 0o755 },
+      );
       const rejectedPolicyResult = runHelper(
         correctReceiptSha256,
         verifiedPolicyResultSha256,
+        forgedPolicyHelper,
       );
       expect(rejectedPolicyResult.status).not.toBe(0);
       expect(rejectedPolicyResult.stderr).toContain(
@@ -371,7 +379,6 @@ describe("reviewed npm audit handoff", () => {
       expect(fs.existsSync(retainedReport)).toBe(false);
       expect(fs.existsSync(retainedResult)).toBe(false);
       expect(fs.existsSync(nodeLog)).toBe(false);
-      fs.writeFileSync(trustedPolicyResult, verifiedPolicyResult);
 
       const accepted = runHelper();
       expect(accepted.status, accepted.stderr).toBe(0);
