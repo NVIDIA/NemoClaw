@@ -3272,8 +3272,8 @@ jobs:
           # Root pointers move for every shipped agent: OpenClaw and, per
           # #11228, Hermes. Deep Agents Code stays cohort-only. Every shipped
           # agent's contract and exact cohort bytes are validated before any
-          # pointer moves, so a failure on either agent leaves all pointers
-          # unmoved.
+          # pointer moves. A registry failure can leave an earlier agent's
+          # pointers moved; rerunning this job reconciles them to this cohort.
           shipped_agents=(openclaw hermes)
           release_tag="$(jq -r '.source.release // empty' "$cohort_contract")"
           if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
