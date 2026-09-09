@@ -498,7 +498,7 @@ describe("Docker managed bootstrap adapter", () => {
     ).resolves.toMatchObject({ runtimeId: NEW_ID });
 
     const completionCopies = vi
-      .mocked(fake.deps.dockerRun)
+      .mocked(fake.deps.dockerRun!)
       .mock.calls.filter(
         ([args]) => args[0] === "cp" && String(args[1]).startsWith(`${NEW_ID}:`),
       );

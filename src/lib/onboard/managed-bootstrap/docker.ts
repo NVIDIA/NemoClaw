@@ -4233,6 +4233,11 @@ export function createDockerManagedBootstrapAdapter(
         "bootstrap-complete",
         deps,
       );
+      if (bootstrapCompleteJournal.commitReceipt === null) {
+        throw new Error(
+          "Managed bootstrap Docker completion receipt disappeared at the bootstrap-complete fence.",
+        );
+      }
       return bootstrapCompleteJournal.commitReceipt;
     },
 
