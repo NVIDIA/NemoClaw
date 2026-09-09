@@ -500,7 +500,7 @@ describe("destroySandbox flow", () => {
 
   it("revalidates schema-4 Portable identity at every destroy checkpoint without Docker preflight (#9189)", async () => {
     const harness = createDestroyHarness({
-      dockerRunResult: { status: 0, stdout: `${"f".repeat(64)}\t\tforeign\t` },
+      dockerRunResult: { status: 0, stdout: `${"f".repeat(64)}\t\tforeign\t\t` },
       portableDestroyAuthority: true,
     });
 
@@ -843,8 +843,8 @@ describe("destroySandbox flow", () => {
 
   it("refuses before destructive work when multiple Docker identities share the name", async () => {
     const rows = [
-      "aaaa000000000000\topenshell\tdefault\tsb-real",
-      "ffff000000000000\t\tforeign\t",
+      "aaaa000000000000\topenshell\tdefault\tsb-real\t",
+      "ffff000000000000\t\tforeign\t\t",
     ].join("\n");
     const harness = createDestroyHarness({
       dockerRunResult: { status: 0, stdout: rows },
@@ -873,8 +873,8 @@ describe("destroySandbox flow", () => {
   });
 
   it("refuses identity drift after read-only destroy preflight (#8999)", async () => {
-    const managed = "aaaa000000000000\topenshell\tdefault\tsb-alpha";
-    const foreign = "ffff000000000000\t\tforeign\t";
+    const managed = "aaaa000000000000\topenshell\tdefault\tsb-alpha\t";
+    const foreign = "ffff000000000000\t\tforeign\t\t";
     const harness = createDestroyHarness({
       dockerRunResultSequence: [
         { status: 0, stdout: managed },
@@ -904,12 +904,12 @@ describe("destroySandbox flow", () => {
   it.each([
     [
       "a replacement identity",
-      { status: 0, stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta" },
+      { status: 0, stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta\t" },
     ],
     ["container absence", { status: 0, stdout: "" }],
     ["a failed revalidation probe", { status: 1, stderr: "daemon unavailable" }],
   ])("refuses %s before sandbox mutation", async (_scenario, changedIdentity) => {
-    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha\t" };
     const harness = createDestroyHarness({
       dockerRunResultSequence: [managed, managed, changedIdentity],
     });
@@ -929,7 +929,7 @@ describe("destroySandbox flow", () => {
     const absent = { status: 0, stdout: "" };
     const replacement = {
       status: 0,
-      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta",
+      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta\t",
     };
     const harness = createDestroyHarness({
       sandboxPresent: false,
@@ -945,10 +945,10 @@ describe("destroySandbox flow", () => {
   });
 
   it("restores MCP preparation when identity changes before wipe", async () => {
-    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha\t" };
     const replacement = {
       status: 0,
-      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta",
+      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta\t",
     };
     const harness = createDestroyHarness({
       mcpServers: ["github"],
@@ -994,7 +994,7 @@ describe("destroySandbox flow", () => {
   it.each([
     [
       "a replacement identity",
-      { status: 0, stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta" },
+      { status: 0, stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta\t" },
       "Container identity changed after managed inference cleanup",
     ],
     [
@@ -1005,7 +1005,7 @@ describe("destroySandbox flow", () => {
   ])(
     "restores MCP preparation and refuses workspace wipe after %s",
     async (_scenario, changedIdentity, expectedMessage) => {
-      const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+      const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha\t" };
       const harness = createDestroyHarness({
         mcpServers: ["github"],
         dockerRunResultSequence: [managed, managed, managed, managed, changedIdentity],
@@ -1028,10 +1028,10 @@ describe("destroySandbox flow", () => {
   );
 
   it("revalidates immediately before delete and reports partial provider preparation", async () => {
-    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha\t" };
     const replacement = {
       status: 0,
-      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta",
+      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta\t",
     };
     const harness = createDestroyHarness({
       detachedProviders: ["provider-a"],
@@ -1062,7 +1062,7 @@ describe("destroySandbox flow", () => {
   });
 
   it("keeps the final exact probe immediately adjacent to sandbox delete", async () => {
-    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha\t" };
     const trace: string[] = [];
     let identityProbeCalls = 0;
     const harness = createDestroyHarness({
@@ -1192,7 +1192,7 @@ describe("destroySandbox flow", () => {
       dockerOrphanIds: [containerId],
       dockerRunResult: {
         status: 0,
-        stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+        stdout: `${containerId}\topenshell\tdefault\tsb-alpha\t`,
       },
     });
 
@@ -1213,7 +1213,7 @@ describe("destroySandbox flow", () => {
       dockerOrphanIds: [replacementContainerId],
       dockerRunResult: {
         status: 0,
-        stdout: `${expectedContainerId}\topenshell\tdefault\tsb-alpha`,
+        stdout: `${expectedContainerId}\topenshell\tdefault\tsb-alpha\t`,
       },
     });
 
@@ -1235,7 +1235,7 @@ describe("destroySandbox flow", () => {
       dockerRemoveStatus: 1,
       dockerRunResult: {
         status: 0,
-        stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+        stdout: `${containerId}\topenshell\tdefault\tsb-alpha\t`,
       },
     };
     const harness = createDestroyHarness(options);
@@ -1264,7 +1264,7 @@ describe("destroySandbox flow", () => {
       dockerOrphanQueryStatus: 1,
       dockerRunResult: {
         status: 0,
-        stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+        stdout: `${containerId}\topenshell\tdefault\tsb-alpha\t`,
       },
     });
 
@@ -1286,7 +1286,7 @@ describe("destroySandbox flow", () => {
       dockerOrphanIds: [containerId],
       dockerRunResult: {
         status: 0,
-        stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+        stdout: `${containerId}\topenshell\tdefault\tsb-alpha\t`,
       },
     });
 
