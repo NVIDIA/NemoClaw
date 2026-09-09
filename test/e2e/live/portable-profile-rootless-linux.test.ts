@@ -766,12 +766,13 @@ async function proveHistoricalHermesPortableLifecycle(input: {
         health: string;
         verificationCount: number;
       } = { forwardRecovery: null, health: "", verificationCount: 0 };
-      const requireCurrentStartupAuthority = () => {
+      const requireCompatibleStartupAuthority = () => {
         const current = readHermesPortableLifecycleReceipt(sandboxName, receiptStateDir);
         assert.ok(
           current?.successor &&
-            current.successor.receipt.startup.manifestSha256 === currentStartup.manifestSha256,
-          "Public start did not publish current Hermes startup authority",
+            current.successor.receipt.startup.manifestSha256 ===
+              HERMES_PORTABLE_E2E_HISTORICAL_MANIFEST_SHA256,
+          "Public start did not preserve the reviewed Hermes transition authority",
         );
       };
       const publicStartDeps = {
@@ -780,11 +781,11 @@ async function proveHistoricalHermesPortableLifecycle(input: {
         log: console.log,
         verifyGateway: async () => {
           gatewayEvidence.verificationCount += 1;
-          requireCurrentStartupAuthority();
+          requireCompatibleStartupAuthority();
           gatewayEvidence.forwardRecovery = recoverHermesPortableLaunchForwards(
             createHermesPortableForwardRecoveryInput({
-              assertCurrent: requireCurrentStartupAuthority,
-              assertRollbackCurrent: requireCurrentStartupAuthority,
+              assertCurrent: requireCompatibleStartupAuthority,
+              assertRollbackCurrent: requireCompatibleStartupAuthority,
               commandAuthority: {
                 env: childEnv,
                 executablePath: input.openshellBin,
@@ -840,7 +841,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
           gatewayEvidence.health === "200",
         `Public start did not complete recovery and gateway verification: upgrade=${JSON.stringify(upgradeResult)} start=${JSON.stringify(startResult)} checks=${String(gatewayEvidence.verificationCount)} health=${gatewayEvidence.health || "none"}`,
       );
-      requireCurrentStartupAuthority();
+      requireCompatibleStartupAuthority();
 
       withMcpLifecycleLockSync(
         sandboxName,
@@ -928,7 +929,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
           installed: active.receipt.startup.manifestSha256,
           current: currentStartup.manifestSha256,
         },
-        requalification: "migrated-via-public-start",
+        requalification: "reviewed-transition-accepted-via-public-start",
         stop: {
           result: firstStop.kind,
           containerStatus: firstStoppedContainerStatus,
