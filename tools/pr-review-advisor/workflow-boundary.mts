@@ -193,12 +193,18 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     (step) => step.name === "Install locked runtime",
   );
   const runtimeInstallScript = String(runtimeInstall?.run ?? "");
+  const aptGetInvocations = runtimeInstallScript
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.includes("sudo apt-get"));
+  const scopedAptPrefix = 'sudo apt-get "${APT_SOURCE_OPTIONS[@]}" ';
   if (
     !runtimeInstallScript.includes('UBUNTU_APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"') ||
     !runtimeInstallScript.includes('if [ ! -r "$UBUNTU_APT_SOURCES" ]; then') ||
     !runtimeInstallScript.includes("Dir::Etc::sourcelist=$UBUNTU_APT_SOURCES") ||
     !runtimeInstallScript.includes("Dir::Etc::sourceparts=-") ||
-    runtimeInstallScript.includes("sudo apt-get update -qq")
+    aptGetInvocations.length !== 2 ||
+    aptGetInvocations.some((invocation) => !invocation.startsWith(scopedAptPrefix))
   ) {
     errors.push("Unified advisor runtime package install must use only Ubuntu archive sources");
   }

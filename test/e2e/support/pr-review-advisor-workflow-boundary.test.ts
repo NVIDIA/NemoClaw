@@ -98,6 +98,12 @@ it.each([
     "Unified advisor runtime package install must use only Ubuntu archive sources",
   ],
   [
+    "Ubuntu archive install isolation",
+    'sudo apt-get "${APT_SOURCE_OPTIONS[@]}" install -y',
+    "sudo apt-get install -y",
+    "Unified advisor runtime package install must use only Ubuntu archive sources",
+  ],
+  [
     "Ubuntu archive source availability",
     'if [ ! -r "$UBUNTU_APT_SOURCES" ]; then',
     "if false; then",
