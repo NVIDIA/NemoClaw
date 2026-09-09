@@ -451,6 +451,7 @@ describe("pull request and main workflow contracts", () => {
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+  const advisorWorkflow = readYaml<CiWorkflow>(".github/workflows/pr-review-advisor.yaml");
   const sdkPackageWorkflow = readYaml<SdkPackageWorkflow>(
     ".github/workflows/openshell-sdk-package-pr.yaml",
   );
@@ -568,6 +569,42 @@ describe("pull request and main workflow contracts", () => {
     expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual(
       actions.map(() => 'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"'),
     );
+  });
+
+  // source-shape-contract: security -- The trusted split must retain test-config coverage after compiling candidate production code
+  it.each([
+    ["pull request", prWorkflow],
+    ["main", mainWorkflow],
+  ] as const)(
+    "keeps %s plugin test typechecking after the trusted production build",
+    (_name, workflow) => {
+      expect([workflow.jobs["build-typecheck"].needs].flat()).toContain("compile-artifacts");
+      expect(requiredStep(sharedActions.buildTypecheck, "Typecheck plugin tests").run).toBe(
+        "npm --prefix nemoclaw exec -- tsc --noEmit -p nemoclaw/tsconfig.test.json",
+      );
+      expect(stepRuns(sharedActions.buildTypecheck)).not.toContain(
+        "npm --prefix nemoclaw run typecheck",
+      );
+    },
+  );
+  it.each([
+    [
+      "CLI shards",
+      requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools"),
+    ],
+    [
+      "Advisor runtime",
+      requiredWorkflowStep(
+        advisorWorkflow.jobs["build-advisor-runtime"],
+        "Install locked runtime",
+      ),
+    ],
+  ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
+    // Both callers delegate source isolation to the shared installer, which
+    // pins apt to /etc/apt/sources.list.d/ubuntu.sources and disables source
+    // fragments before either updating metadata or installing packages.
+    expect(installStep.run).toContain("ci-install-pinned-ubuntu-packages.sh");
+    expect(installStep.run).not.toContain("apt-get update");
   });
 
   it("limits CLI shard package installation to Ubuntu archive sources", () => {
@@ -1019,7 +1056,9 @@ describe("pull request and main workflow contracts", () => {
       NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
-    expect(fetch.run).toContain("node scripts/checks/package-openshell-sdk-for-pr.mts");
+    expect(fetch.run).toContain(
+      "node scripts/checks/package-openshell-sdk-for-pr.mts",
+    );
     expect(fetch.run).toContain("artifact_path=");
     expect(
       (sdkPackageJob.steps ?? [])
