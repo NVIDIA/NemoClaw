@@ -129,7 +129,9 @@ function exceptionPolicy(
 
 describe("reviewed npm audit gate", () => {
   it("removes the checked-in brace-expansion exception after remediation (#8116)", () => {
-    expect(CHECKED_IN_POLICY).toEqual(EMPTY_POLICY);
+    expect(CHECKED_IN_POLICY.exceptions).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ package: "brace-expansion" })]),
+    );
   });
 
   it("fails at high or critical findings while retaining lower severities", () => {

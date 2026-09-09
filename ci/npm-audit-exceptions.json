@@ -1,4 +1,21 @@
 {
   "schemaVersion": 1,
-  "exceptions": []
+  "exceptions": [
+    {
+      "advisory": "GHSA-2883-xcg3-v3hh",
+      "compensatingControls": [
+        "The identified production consumer reads agent manifests from the installed repository, not a remote request endpoint.",
+        "Keep agent manifest files under maintainer control during the exception period."
+      ],
+      "decision": "temporary-risk-acceptance",
+      "expires": "2026-09-10",
+      "graph": "nemoclaw-cli",
+      "installedVersion": "4.3.1",
+      "owner": "Rebecca Sliter",
+      "package": "js-yaml",
+      "rationale": "Rebecca Sliter approved deferring the js-yaml 4.3.2 upgrade from v0.0.121 until September 10, 2026. This accepts the identified merge-work denial-of-service risk temporarily; it does not establish that all callers are unaffected.",
+      "severity": "high",
+      "trackingIssue": "https://github.com/NVIDIA/NemoClaw/issues/11252"
+    }
+  ]
 }
