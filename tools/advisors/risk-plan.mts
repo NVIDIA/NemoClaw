@@ -178,6 +178,7 @@ const MANAGED_IMAGE_MULTIARCH_INPUTS = new Set([
   ".github/workflows/managed-images.yaml",
   "Dockerfile",
   "ci/npm-audit-exceptions.json",
+  "src/lib/extra-agents-validation.ts",
   "src/lib/core/json-types.ts",
   "src/lib/core/ports.ts",
   "src/lib/onboard/managed-bootstrap/envelope.ts",

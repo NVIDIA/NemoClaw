@@ -520,7 +520,7 @@ lock_rc_files() {
       continue
     fi
     if [ -f "$rc_file" ]; then
-      if ! python3 - "$rc_file" "$(id -u)" <<'PY' 2>/dev/null; then
+      if ! python3 -I - "$rc_file" "$(id -u)" <<'PY' 2>/dev/null; then
 import errno
 import os
 import stat
@@ -645,7 +645,7 @@ EOF
 }
 
 read_messaging_plan_channels() {
-  python3 - <<'PY'
+  python3 -I - <<'PY'
 import base64
 import json
 import os
