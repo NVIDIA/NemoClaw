@@ -73,7 +73,7 @@ on:
         default: ""
         type: string
       checkout_repository:
-        description: Optional repository containing the selected PR head or base SHA for manual E2E.
+        description: Source repository for manual PR E2E; must be NVIDIA/NemoClaw.
         required: false
         default: ""
         type: string
@@ -446,9 +446,13 @@ jobs:
             [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
           fi
           nvidia_owned=false
-          if [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
+          if [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" &&
+                "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
                 "$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization" ]]; then
             nvidia_owned=true
+          else
+            echo "::error::Manual PR E2E requires a source branch in NVIDIA/NemoClaw. Review and adopt fork contributions onto a repository branch first." >&2
+            exit 1
           fi
           if [[ ",${JOBS}," == *",staging-brev-launchable-identity,"* ]]; then
             echo "::error::Launchable identity smoke runs only against trusted main" >&2
@@ -788,7 +792,8 @@ jobs:
             [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha changed before head execution" >&2; exit 1; }
           fi
           if [[ "$NVIDIA_OWNED" == "true" ]]; then
-            [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
+            [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" &&
+                  "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
                   "$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization" ]] || {
               echo "::error::PR source repository ownership changed before execution" >&2
               exit 1
@@ -812,6 +817,7 @@ jobs:
           set -euo pipefail
           credentials_allowed=false
           if [[ "$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw" &&
+                "$CHECKOUT_REPOSITORY" == "NVIDIA/NemoClaw" &&
                 "$NVIDIA_OWNED" == "true" &&
                 "$EVENT_NAME" == "workflow_dispatch" &&
                 "$REF" == refs/heads/* &&
@@ -823,9 +829,31 @@ jobs:
           fi
           printf 'allowed=%s\n' "$credentials_allowed" >> "$GITHUB_OUTPUT"
 
+      - name: Check out trusted compiled artifact action
+        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.workflow_sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-compile-artifacts
+            .github/actions/ci-install-dependencies.sh
+            ci/reviewed-npm-audit.json
+            scripts/check-dist-sourcemaps.mts
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
+          sparse-checkout-cone-mode: false
+
       - name: Prepare E2E workspace
         if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        uses: ./.trusted-ci-actions/.github/actions/ci-compile-artifacts
 
       - id: package_cli_artifact
         name: Package exact-commit CLI

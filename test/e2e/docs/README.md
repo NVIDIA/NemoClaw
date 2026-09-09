@@ -288,7 +288,7 @@ test/e2e/
   required workflow dispatch flag.
   Runner, credential, evidence, and cleanup requirements remain job-specific.
   A maintainer can also dispatch the trusted `main` workflow against the latest
-  commit from an open internal or fork PR. The manual path validates the actor,
+  commit from an open PR whose source branch is in `NVIDIA/NemoClaw`. The manual path validates the actor,
   PR number, PR source repository, candidate commit SHA, base commit SHA,
   workflow SHA, review reason, and allowed jobs, targets, and Launchable
   combination before candidate checkout.
@@ -303,24 +303,18 @@ test/e2e/
   authentication but does not revoke the key. The key remains valid in the
   issuing NVIDIA service until it expires or that service revokes it.
 
-  For a PR revision run, leave `jobs` and
-  `targets` empty. The run selects every default-selected free-standing workflow
-  E2E except `staging Brev Launchable`, every catalogue target in the
-  `standard` profile, all shared credential-free tests, and these
-  controller-selected registry targets:
-  `ubuntu-policy-custom-missing-presets-negative`,
-  `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and
-  `ubuntu-repo-docker-post-reboot-recovery`. Keep
-  `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for
-  this default selection. If the DGX Spark flag is `true`, GitHub can pause the
+  Manual PR E2E rejects fork sources, including NVIDIA sibling repositories.
+  Review and adopt fork contributions onto a repository branch before dispatch.
+  Repository writers are trusted to populate the shared compiled cache before merging.
+
+  For a PR revision run, leave `jobs` and `targets` empty for all default-selected
+  workflow E2E, catalogue profiles, shared tests, and registry targets.
+  `Staging Brev Launchable` requires its separate opt-in.
+  Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for
+  the default selection. If the DGX Spark flag is `true`, GitHub can pause the
   qualification job for the `approve-dgx-spark-image-qualification` environment.
   An authorized environment reviewer must approve it before qualification starts.
-  Accepted nonempty `jobs` values are:
-
-  - `inference-routing`
-  - `managed-image-protected-runtime`
-  - `native-runtime-qualification-producer`
-  The `jetson-nvmap-gpu` target is also accepted when `allow_jetson_dispatch` is `true`.
+  Supported jobs and targets can also be selected individually.
   Refer to [NemoClaw E2E CI](../README.md).
 
 - [Jetson dispatch controller](jetson-dispatch.md) defines the NemoClaw-owned
