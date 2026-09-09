@@ -16,6 +16,49 @@ import { sshBinding } from "../helpers/dgx-station-peer-fixture";
 import { runInstallerSourced } from "../helpers/installer-express-prompt-harness";
 
 describe("Station classifier process boundaries", () => {
+  it("documents validation-only Station mode in public bootstrap help", () => {
+    const result = spawnSync(
+      "bash",
+      [path.resolve(import.meta.dirname, "../../install.sh"), "--help"],
+      {
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/--force-station-install.*without onboarding/);
+  });
+
+  it.each([
+    ["preflight_explicit_express_flags", "STATION_DEEPSEEK"],
+    ["preflight_explicit_express_flags", "NEMOCLAW_VLLM_MODEL"],
+    ["preflight_explicit_express_flags", "NEMOCLAW_MODEL"],
+    ["maybe_offer_express_install", "STATION_DEEPSEEK"],
+    ["maybe_offer_express_install", "NEMOCLAW_VLLM_MODEL"],
+    ["maybe_offer_express_install", "NEMOCLAW_MODEL"],
+  ])("%s rejects %s in validation-only mode", (entrypoint, override) => {
+    const { home, result, output } = runInstallerSourced(
+      `
+classify_dgx_station_hardware() { printf station-gb300; }
+classify_dgx_station_release() { printf unsupported-dgx-os; }
+express_prompt_can_read_tty() { return 0; }
+${entrypoint}
+printf continued
+`,
+      {
+        FORCE_STATION_INSTALL: "1",
+        [override]: override === "STATION_DEEPSEEK" ? "1" : "example/model",
+      },
+    );
+    try {
+      expect(result.status, output).toBe(1);
+      expect(output).toContain("validation-only");
+      expect(output).not.toContain("continued");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("pins the Station preparation endpoint after the strict SSH policy (#9519)", () => {
     const args = stationPrepSshArgs(sshBinding(), "/tmp/nemoclaw-known-hosts", "python3 -");
     expect(args).toEqual([

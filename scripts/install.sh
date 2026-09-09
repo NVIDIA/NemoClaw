@@ -4994,6 +4994,9 @@ validate_force_station_install_override() {
   if [ "${FORCE_STATION_INSTALL:-}" != "1" ]; then
     return 0
   fi
+  if [ "${STATION_DEEPSEEK:-}" = "1" ] || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ]; then
+    error "--force-station-install is validation-only and cannot be combined with --station-deepseek, NEMOCLAW_VLLM_MODEL, or NEMOCLAW_MODEL. Remove the model-selection override."
+  fi
   if [ "$platform" != "DGX Station" ]; then
     error "--force-station-install requires DGX Station GB300 hardware (detected: ${platform:-unsupported platform})."
   fi
