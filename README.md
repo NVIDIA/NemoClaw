@@ -3,9 +3,9 @@
 
 # Native Windows ARM64 preview for PR #10799
 
-[Download the setup EXE](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/NemoClawSetup-0.1.0-windows-arm64.exe).
+[Download the setup EXE](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/99b2e5b9edcb087f05bba5247421db35578c9b01/NemoClawSetup-0.1.0-windows-arm64.exe).
 
-[Download the MSI](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/NemoClaw-0.1.0-windows-arm64.msi).
+[Download the MSI](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/99b2e5b9edcb087f05bba5247421db35578c9b01/NemoClaw-0.1.0-windows-arm64.msi).
 
 This unsigned test installer was built from source commit `36cdec5a1e8cd5fb0618afd5b20d8055ed051d53`.
 
@@ -22,8 +22,8 @@ Those prerequisites do not establish complete installed-agent acceptance.
 The bundled OpenShell source is pinned to NVIDIA/OpenShell#2721 commit
 `bcd517bbe08cc80860c9be57699390cd32e8445f`, with the checked-in NemoClaw derivative.
 
-The [receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/installer-receipt.json) records the source and verified package hashes.
-The [package manifest](https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/package-manifest.json) records the payload inventory.
+The [receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/99b2e5b9edcb087f05bba5247421db35578c9b01/installer-receipt.json) records the source and verified package hashes.
+The [package manifest](https://raw.githubusercontent.com/NVIDIA/NemoClaw/99b2e5b9edcb087f05bba5247421db35578c9b01/package-manifest.json) records the payload inventory.
 The original [source artifact 10113338300](https://github.com/NVIDIA/NemoClaw/actions/runs/34369256122/artifacts/10113338300) is retained by GitHub Actions.
 
 This artifact branch uses Git LFS. No GitHub Release is published.
