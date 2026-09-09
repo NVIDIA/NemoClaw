@@ -11,6 +11,13 @@
     "integrity": "sha512-dB4mLex23Pnw61caGMR2CMHQihy9bj7IK2elJJd718k3yevm+fOt/vG6dJg8/5us4la2BwcOdRwLvOia3tdwFw==",
     "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/dc32180ba1d658fc4ec309bdf89d2b162196928d"
   },
+  "sourceRegistryPackageReplacement": {
+    "artifactName": "nvidia-openshell-sdk-0.0.116.tgz",
+    "label": "OpenShell TypeScript SDK 0.0.116",
+    "packageSpec": "@nvidia/openshell-sdk@0.0.116",
+    "integrity": "sha512-MFnyX2vs47f/yVJRUXKmA7C6wZDH03ZGFFg+R5gZME+yMQDg9WF6G4Kdz/APM7nCUpaoGk2bwNEdUUmR60J54A==",
+    "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.116/3380652847354127ed1bb8010490f8815040ada3"
+  },
   "sourceNestedShrinkwrapPackages": ["@earendil-works/pi-coding-agent@0.80.6"],
   "sourceRegistryPackagesWithoutIntegrity": [
     {

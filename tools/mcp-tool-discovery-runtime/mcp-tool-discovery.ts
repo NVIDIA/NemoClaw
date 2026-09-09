@@ -25,9 +25,16 @@ function writeResult(result: McpToolDiscoveryResult): void {
 }
 
 export function normalizeMcpSdkError(error: unknown): unknown {
-  return error instanceof McpError && error.code === ErrorCode.RequestTimeout
-    ? new ToolDiscoveryRuntimeError("timeout")
-    : error;
+  if (error instanceof ToolDiscoveryRuntimeError) return error;
+  if (error instanceof McpError) {
+    return error.code === ErrorCode.RequestTimeout
+      ? new ToolDiscoveryRuntimeError("timeout")
+      : error;
+  }
+  // The SDK exposes malformed JSON, invalid JSON-RPC envelopes, and invalid
+  // result schemas as untyped parser errors. They are protocol failures, not
+  // remote tool-operation errors.
+  return new ToolDiscoveryRuntimeError("invalid-response");
 }
 
 async function callMcpSdk<T>(operation: () => Promise<T>): Promise<T> {
