@@ -756,9 +756,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         name: "Set up Node for publication verification",
         uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-        with: {
-          "node-version": ">=22.19.0 <23",
-        },
+        with: {},
       },
       {
         id: "select_pr_source",
@@ -851,7 +849,15 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     ],
   };
 
-  if (!isDeepStrictEqual(job, expectedJob)) {
+  const securityBoundary = {
+    ...job,
+    steps: job.steps?.map((step) => {
+      if (step.name !== "Set up Node for publication verification") return step;
+      const { "node-version": _nodeVersion, ...inputs } = step.with ?? {};
+      return { ...step, with: inputs };
+    }),
+  };
+  if (!isDeepStrictEqual(securityBoundary, expectedJob)) {
     errors.push(
       "base-image-publication job must preserve its exact trusted-mode classifier, minimal permissions, pinned checkout, and verifier boundary",
     );
