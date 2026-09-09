@@ -21,6 +21,7 @@ import {
   type GhResolverFilesystem,
   resolveProductionGhExecutableForTest,
 } from "../../.agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts";
+import correlateE2eRootCauses from "../../.dsh/tools/e2e_root_cause_correlator/index.ts";
 import { artifactZip, artifactZipEntryDataOffset } from "../helpers/artifact-zip";
 const script = resolve(
   ".agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts",
@@ -307,6 +308,21 @@ describe("GitHub CLI production resolver", () => {
   });
 });
 
+describe("reviewed npm root-cause correlation", () => {
+  test.each([
+    ["npm@12.0.2 archive integrity mismatch", "dependency-audit/bootstrap-integrity"],
+    ["npm audit threshold failed", "dependency-audit/unaccepted-advisory"],
+  ])("separates %s", async (signature, expectedKey) => {
+    const result = await correlateE2eRootCauses({
+      changedFiles: [],
+      failures: [{ jobId: 123, jobName: "PR npm audit", signatureLines: [signature] }],
+    });
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]?.key).toBe(expectedKey);
+  });
+});
+
 describe.skipIf(process.platform !== "linux")("CI failure classifier process", () => {
   test("redacts credentials from classified diagnostic output", () => {
     const secrets = [
@@ -445,6 +461,25 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     const result = run(item.env);
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout).categories).toContain("reviewed-npm-audit");
+  });
+  test.each([
+    ["archive integrity mismatch", "ERROR: npm@12.0.2 archive integrity mismatch."],
+    [
+      "archive version mismatch",
+      "ERROR: npm archive version 12.0.1 does not match reviewed npm@12.0.2.",
+    ],
+    ["invalid archive identity", "npm audit configuration has an invalid npmArchiveSha256"],
+  ])("classifies a reviewed npm bootstrap %s separately", (_caseName, log) => {
+    const item = fixture(log);
+    item.env.JOB_NAME = "PR npm audit";
+    const result = run(item.env);
+    expect(result.status, result.stderr).toBe(0);
+    const value = JSON.parse(result.stdout);
+    expect(value.categories).toContain("reviewed-npm-bootstrap");
+    expect(value.categories).not.toContain("reviewed-npm-audit");
+    expect(value.nextActions).toContain(
+      "Inspect the pinned npm identity and downloaded archive; do not change the advisory exception baseline.",
+    );
   });
   test.each(REDACTION_CASES)(
     "redacts a standalone %s from returned process logs",

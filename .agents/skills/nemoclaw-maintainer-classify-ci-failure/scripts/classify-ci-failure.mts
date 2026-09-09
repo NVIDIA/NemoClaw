@@ -109,6 +109,8 @@ const SYSTEM_EXECUTABLES = {
 } as const;
 const NPM_AUDIT_FAILURE_PATTERN =
   /npm audit (?:threshold failed|scan remained incomplete|failed without vulnerability findings|requires npm [^\n;]+; running npm)|unused npm audit exceptions|\d+ unaccepted at or above (?:high|critical)/i;
+const NPM_BOOTSTRAP_FAILURE_PATTERN =
+  /npm(?:@[0-9A-Za-z.-]+ archive integrity mismatch| archive version [0-9A-Za-z.-]+ does not match reviewed npm@[0-9A-Za-z.-]+| audit configuration (?:is not valid JSON|has an invalid npm(?:Version|Integrity|ArchiveSha256)))/i;
 
 type TrustedExecutableStat = {
   isFile: () => boolean;
@@ -803,7 +805,11 @@ async function classifyCiFailureWithRuntime(
   const selectedIndexes = new Set<number>();
   let matchedLines = 0;
   for (let index = 0; index < logLines.length; index += 1) {
-    if (!logPattern.test(logLines[index]) && !NPM_AUDIT_FAILURE_PATTERN.test(logLines[index]))
+    if (
+      !logPattern.test(logLines[index]) &&
+      !NPM_AUDIT_FAILURE_PATTERN.test(logLines[index]) &&
+      !NPM_BOOTSTRAP_FAILURE_PATTERN.test(logLines[index])
+    )
       continue;
     matchedLines += 1;
     const first = Math.max(0, index - 20);
@@ -1087,7 +1093,14 @@ async function classifyCiFailureWithRuntime(
       job.name.trim(),
     );
   const hasNpmAuditFailure = NPM_AUDIT_FAILURE_PATTERN.test(text);
-  if (isNpmAuditJob || hasNpmAuditFailure)
+  const hasNpmBootstrapFailure = NPM_BOOTSTRAP_FAILURE_PATTERN.test(text);
+  if (hasNpmBootstrapFailure)
+    add(
+      "reviewed-npm-bootstrap",
+      "The reviewed npm bootstrap rejected the pinned npm archive or identity.",
+      "Inspect the pinned npm identity and downloaded archive; do not change the advisory exception baseline.",
+    );
+  else if (isNpmAuditJob || hasNpmAuditFailure)
     add(
       "reviewed-npm-audit",
       "The npm audit check reported advisory drift.",

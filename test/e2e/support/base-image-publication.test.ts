@@ -238,12 +238,12 @@ describe("base-image publication evidence", () => {
     const expanded = expandBaseImagePushPaths(EXPECTED_SHA, [
       "Dockerfile",
       "agents/**",
-      ".github/actions/setup-reviewed-npm/**",
+      ".github/actions/ci-reviewed-npm-audit/**",
       "src/lib/messaging/**",
       "test/e2e/live/managed-image-activation-e2e*.ts",
     ]);
     expect(expanded).toEqual([
-      ":(glob).github/actions/setup-reviewed-npm/**",
+      ":(glob).github/actions/ci-reviewed-npm-audit/**",
       ":(glob)agents/**",
       ":(glob)src/lib/messaging/**",
       ":(glob)test/e2e/live/managed-image-activation-e2e*.ts",
@@ -251,8 +251,8 @@ describe("base-image publication evidence", () => {
     ]);
     expect(
       matchesBaseImagePushPath(
-        ".github/actions/setup-reviewed-npm/**",
-        ".github/actions/setup-reviewed-npm/verify-and-install-npm.sh",
+        ".github/actions/ci-reviewed-npm-audit/**",
+        ".github/actions/ci-reviewed-npm-audit/verify-and-install-npm.sh",
       ),
     ).toBe(true);
   });

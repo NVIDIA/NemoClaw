@@ -72,6 +72,9 @@ const REVIEWED_NPM_ACTION = YAML.parse(
 const reviewedNpmBootstrapCommand = REVIEWED_NPM_ACTION.runs?.steps?.find(
   (step) => step.name === "Download and verify production npm",
 )?.run;
+const reviewedNpmAuditCommand = REVIEWED_NPM_ACTION.runs?.steps?.find(
+  (step) => step.name === "Materialize and audit production dependency graphs",
+)?.run;
 const FIRST_TRUSTED_AUDIT_ACTION_CHECKOUT = TRUSTED_AUDIT_ACTION_CHECKOUTS[0];
 assert.ok(
   FIRST_TRUSTED_AUDIT_ACTION_CHECKOUT,
@@ -81,6 +84,10 @@ const REVIEWED_NPM_BOOTSTRAP_COMMAND =
   typeof reviewedNpmBootstrapCommand === "string"
     ? reviewedNpmBootstrapCommand
     : assert.fail("The npm audit action does not define the production npm bootstrap command");
+const REVIEWED_NPM_AUDIT_COMMAND =
+  typeof reviewedNpmAuditCommand === "string"
+    ? reviewedNpmAuditCommand
+    : assert.fail("The npm audit action does not define the production npm audit command");
 
 function stageSparseCheckout(root: string, sparseCheckout: string): void {
   sparseCheckout
@@ -97,6 +104,7 @@ function stageSparseCheckout(root: string, sparseCheckout: string): void {
 function runTrustedBootstrapHandoff(
   sparseCheckout: string,
   mutateCheckout: (root: string) => void = () => {},
+  installUpdatesVersion = true,
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-audit-bootstrap-handoff-"));
   const bin = path.join(root, "bin");
@@ -104,16 +112,52 @@ function runTrustedBootstrapHandoff(
   const archiveFile = path.join(root, "fixture.tgz");
   const installMarker = path.join(root, "install-called");
   const npmLog = path.join(root, "npm.log");
+  const npmVersionState = path.join(root, "npm-version");
+  const reportDirectory = path.join(root, "artifacts", "reviewed-npm-audit");
   stageSparseCheckout(root, sparseCheckout);
   mutateCheckout(root);
   fs.mkdirSync(bin);
   fs.writeFileSync(archiveFile, archive);
+  fs.writeFileSync(npmVersionState, "9.9.9\n");
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    `${JSON.stringify({ name: "reviewed-npm-handoff-fixture", version: "1.0.0" })}\n`,
+  );
+  fs.writeFileSync(
+    path.join(root, "package-lock.json"),
+    `${JSON.stringify({
+      lockfileVersion: 3,
+      name: "reviewed-npm-handoff-fixture",
+      packages: { "": { name: "reviewed-npm-handoff-fixture", version: "1.0.0" } },
+      requires: true,
+      version: "1.0.0",
+    })}\n`,
+  );
   fs.writeFileSync(
     path.join(root, "ci", "reviewed-npm-audit.json"),
     `${JSON.stringify({
+      archiveGraphId: "reviewed-archive-graph",
+      archivePackages: [],
+      archiveTarVersion: "7.5.21",
+      artifactDirectory: "artifacts/reviewed-npm-audit",
+      exceptionFile: "ci/npm-audit-exceptions.json",
+      lockedGraphs: [],
+      nodeVersion: process.version.slice(1),
       npmArchiveSha256: createHash("sha256").update(archive).digest("hex"),
       npmIntegrity: `sha512-${createHash("sha512").update(archive).digest("base64")}`,
       npmVersion: "12.0.2",
+      registryOrigin: "https://registry.npmjs.org",
+      schemaVersion: 2,
+      severityThreshold: "high",
+      sourceNestedShrinkwrapPackages: [],
+      sourceRegistryPackage: {
+        artifactName: "unused-1.0.0.tgz",
+        integrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+        label: "unused fixture package",
+        packageSpec: "unused@1.0.0",
+        tarballUrl: "https://registry.npmjs.org/unused/-/unused-1.0.0.tgz",
+      },
+      sourceRegistryPackagesWithoutIntegrity: [],
     })}\n`,
   );
   fs.writeFileSync(
@@ -122,6 +166,9 @@ function runTrustedBootstrapHandoff(
 set -euo pipefail
 printf '%s\\n' "$*" >> "$NEMOCLAW_TEST_NPM_LOG"
 case "$1" in
+  --version)
+    cat "$NEMOCLAW_TEST_NPM_VERSION_STATE"
+    ;;
   pack)
     shift
     download_dir=""
@@ -136,7 +183,21 @@ case "$1" in
     cp "$NEMOCLAW_TEST_ARCHIVE_FILE" "$download_dir/npm-12.0.2.tgz"
     ;;
   install)
-    : > "$NEMOCLAW_TEST_INSTALL_MARKER"
+    if [ "\${2:-}" = "--global" ]; then
+      : > "$NEMOCLAW_TEST_INSTALL_MARKER"
+      if [ "$NEMOCLAW_TEST_INSTALL_UPDATES_VERSION" = "true" ]; then
+        printf '12.0.2\\n' > "$NEMOCLAW_TEST_NPM_VERSION_STATE"
+      fi
+    else
+      printf '%s\\n' '{"name":"nemoclaw-reviewed-production-graph","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"nemoclaw-reviewed-production-graph","version":"1.0.0"}}}' > package-lock.json
+    fi
+    ;;
+  ci)
+    ;;
+  audit)
+    if [ "\${2:-}" != "signatures" ]; then
+      printf '%s\\n' '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}'
+    fi
     ;;
   *)
     exit 2
@@ -155,24 +216,43 @@ printf '{"version":"12.0.2"}\\n'
 `,
     { mode: 0o755 },
   );
-  const result = spawnSync("bash", ["-c", REVIEWED_NPM_BOOTSTRAP_COMMAND], {
+  const environment = {
+    ...process.env,
+    GITHUB_ACTION_PATH: path.join(root, ".github", "actions", "ci-reviewed-npm-audit"),
+    NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: path.relative(root, reportDirectory),
+    NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: root,
+    NEMOCLAW_TEST_ARCHIVE_FILE: archiveFile,
+    NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
+    NEMOCLAW_TEST_INSTALL_UPDATES_VERSION: String(installUpdatesVersion),
+    NEMOCLAW_TEST_NPM_LOG: npmLog,
+    NEMOCLAW_TEST_NPM_VERSION_STATE: npmVersionState,
+    NPM_CONFIG_REGISTRY: "https://registry.npmjs.org/",
+    NPM_CONFIG_USERCONFIG: "/dev/null",
+    PATH: `${bin}:${process.env.PATH ?? ""}`,
+    RUNNER_TEMP: root,
+  };
+  delete environment.NEMOCLAW_NPM_AUDIT_CACHE_FILE;
+  delete environment.NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIR;
+  const bootstrapResult = spawnSync("bash", ["-c", REVIEWED_NPM_BOOTSTRAP_COMMAND], {
     cwd: root,
     encoding: "utf8",
-    env: {
-      ...process.env,
-      GITHUB_ACTION_PATH: path.join(root, ".github", "actions", "ci-reviewed-npm-audit"),
-      NEMOCLAW_TEST_ARCHIVE_FILE: archiveFile,
-      NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
-      NEMOCLAW_TEST_NPM_LOG: npmLog,
-      PATH: `${bin}:${process.env.PATH ?? ""}`,
-      RUNNER_TEMP: root,
-    },
+    env: environment,
   });
+  const auditResult =
+    bootstrapResult.status === 0
+      ? spawnSync("bash", ["-c", REVIEWED_NPM_AUDIT_COMMAND], {
+          cwd: root,
+          encoding: "utf8",
+          env: environment,
+        })
+      : undefined;
   return {
+    auditResult,
+    bootstrapResult,
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
     installCalled: fs.existsSync(installMarker),
     npmInvocations: fs.existsSync(npmLog) ? fs.readFileSync(npmLog, "utf8").trim().split("\n") : [],
-    result,
+    reportFiles: fs.existsSync(reportDirectory) ? fs.readdirSync(reportDirectory) : [],
   };
 }
 
@@ -204,14 +284,18 @@ describe("npm audit handoff", () => {
   );
 
   it.each(TRUSTED_AUDIT_ACTION_CHECKOUTS)(
-    "executes the reviewed npm bootstrap from the $name trusted sparse checkout",
+    "installs and audits with the reviewed npm from the $name trusted sparse checkout",
     ({ sparseCheckout }) => {
       const fixture = runTrustedBootstrapHandoff(sparseCheckout);
       try {
-        expect(fixture.result.status, fixture.result.stderr).toBe(0);
+        expect(fixture.bootstrapResult.status, fixture.bootstrapResult.stderr).toBe(0);
+        expect(fixture.auditResult?.status, fixture.auditResult?.stderr).toBe(0);
         expect(fixture.installCalled).toBe(true);
-        expect(fixture.npmInvocations).toHaveLength(2);
+        expect(fixture.npmInvocations[0]).toMatch(/^pack npm@12\.0\.2 /u);
         expect(fixture.npmInvocations[1]).toMatch(/install --global .* --offline$/u);
+        expect(fixture.npmInvocations[2]).toBe("--version");
+        expect(fixture.reportFiles).toContain("nemoclaw-cli.receipt.json");
+        expect(fixture.reportFiles).toContain("reviewed-archive-graph.receipt.json");
       } finally {
         fixture.cleanup();
       }
@@ -222,15 +306,41 @@ describe("npm audit handoff", () => {
     const fixture = runTrustedBootstrapHandoff(
       FIRST_TRUSTED_AUDIT_ACTION_CHECKOUT.sparseCheckout,
       (root) =>
-        fs.rmSync(path.join(root, ".github", "actions", "setup-reviewed-npm"), {
-          recursive: true,
-          force: true,
-        }),
+        fs.rmSync(
+          path.join(
+            root,
+            ".github",
+            "actions",
+            "ci-reviewed-npm-audit",
+            "verify-and-install-npm.sh",
+          ),
+          { force: true },
+        ),
     );
     try {
-      expect(fixture.result.status).not.toBe(0);
+      expect(fixture.bootstrapResult.status).not.toBe(0);
+      expect(fixture.auditResult).toBeUndefined();
       expect(fixture.installCalled).toBe(false);
       expect(fixture.npmInvocations).toEqual([]);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("rejects the audit before accepting results when installation leaves an older npm selected (#8253)", () => {
+    const fixture = runTrustedBootstrapHandoff(
+      FIRST_TRUSTED_AUDIT_ACTION_CHECKOUT.sparseCheckout,
+      () => {},
+      false,
+    );
+    try {
+      expect(fixture.bootstrapResult.status, fixture.bootstrapResult.stderr).toBe(0);
+      expect(fixture.auditResult?.status).toBe(1);
+      expect(fixture.auditResult?.stderr).toContain(
+        "npm audit requires npm 12.0.2; running npm 9.9.9",
+      );
+      expect(fixture.reportFiles).not.toContain("nemoclaw-cli.receipt.json");
+      expect(fixture.reportFiles).not.toContain("source-graph-policy.json");
     } finally {
       fixture.cleanup();
     }

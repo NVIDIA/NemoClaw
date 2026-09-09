@@ -13,7 +13,7 @@ const BOOTSTRAP = path.join(
   REPO_ROOT,
   ".github",
   "actions",
-  "setup-reviewed-npm",
+  "ci-reviewed-npm-audit",
   "verify-and-install-npm.sh",
 );
 

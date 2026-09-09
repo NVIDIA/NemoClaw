@@ -80,10 +80,15 @@ export default async function e2e_root_cause_correlator(input: {
       /^(?:reviewed-npm-audit|pr npm audit|npm audit for managed image publication)$/.test(
         jobName.trim().toLowerCase(),
       );
+    const hasNpmBootstrapFailure =
+      /npm(?:@[0-9a-z.-]+ archive integrity mismatch| archive version [0-9a-z.-]+ does not match reviewed npm@[0-9a-z.-]+| audit configuration (?:is not valid json|has an invalid npm(?:version|integrity|archivesha256)))/.test(
+        text,
+      );
     const hasNpmAuditFailure =
       /npm audit (?:threshold failed|scan remained incomplete|failed without vulnerability findings|requires npm [^\n;]+; running npm)|unused npm audit exceptions|\d+ unaccepted at or above (?:high|critical)/.test(
         text,
       );
+    if (hasNpmBootstrapFailure) return "dependency-audit/bootstrap-integrity";
     if (isNpmAuditJob || hasNpmAuditFailure) return "dependency-audit/unaccepted-advisory";
     if (text.includes("timed out") || text.includes("timeout"))
       return "runtime/timeout/unclassified";
