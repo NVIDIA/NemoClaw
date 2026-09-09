@@ -169,19 +169,27 @@ function runNeutralPlatformProbe(configuration: string) {
 }
 
 describe("Hermes image build probes", () => {
-  it("binds the probe runner to its source digest", () => {
-    const digest = createHash("sha256").update(probeSource).digest("hex");
-    const digestBinding = `ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=${digest}`;
-    const integrityCheck =
-      '"$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py';
-    const bindingIndex = dockerfile.indexOf(digestBinding);
-    const integrityCheckIndex = dockerfile.indexOf(integrityCheck, bindingIndex);
-
-    expect(bindingIndex).toBeGreaterThan(-1);
-    expect(integrityCheckIndex).toBeGreaterThan(bindingIndex);
-    expect(dockerfile.indexOf("| sha256sum -c -", integrityCheckIndex)).toBeGreaterThan(
-      integrityCheckIndex,
+  // source-shape-contract: security -- Every executed probe must match the reviewed source digest
+  it("binds every image build probe pin to its source digest", () => {
+    const imageDockerfile = fs.readFileSync(
+      path.join(import.meta.dirname, "../../../agents/hermes/Dockerfile"),
+      "utf8",
     );
+    const imageBuildProbes = fs.readFileSync(
+      path.join(import.meta.dirname, "../../../agents/hermes/image-build-probes.py"),
+    );
+    const digest = createHash("sha256").update(imageBuildProbes).digest("hex");
+    const digestBinding = `ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=${digest}`;
+
+    expect(imageDockerfile).toContain(digestBinding);
+    expect(
+      Array.from(
+        imageDockerfile.matchAll(
+          /^ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=([0-9a-f]{64})$/gmu,
+        ),
+        (match) => match[1],
+      ),
+    ).toEqual([digest, digest]);
   });
 
   it("verifies the A2A neutralization patch before root applies it", () => {
