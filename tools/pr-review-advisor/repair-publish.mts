@@ -25,6 +25,7 @@ import { readValidatedArtifactZipEntries } from "../../scripts/lib/read-artifact
 import {
   assertLiveRepairState,
   assertValidatedRepair,
+  credentialBearingRepairE2eJob,
   fullSha,
   parseSelection,
   parseValidationReceipt,
@@ -858,6 +859,11 @@ export async function waitForAdvisorRepairHead(input: {
   const runName = repairValidationRunName(input.attemptKey, input.generatedHeadSha);
   const receiptName = repairValidationReceiptName(input);
   const riskPlan = advisorRepairRiskPlan(input.generatedHeadSha, input.changedPaths);
+  const credentialJob = credentialBearingRepairE2eJob(riskPlan.requiredJobs);
+  if (credentialJob)
+    throw new RepairError(
+      `generated-head repair validation requires credential-bearing E2E job ${credentialJob}`,
+    );
   await Promise.all(
     ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS.map((workflow) =>
       dispatchRepairValidation(workflow, input, runName, input.request),

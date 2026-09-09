@@ -98,6 +98,9 @@ its exclusion list is empty:
 Security findings are never eligible for automated repair, even when their specialist and path
 otherwise match an allowed pair. The model-provided finding kind cannot widen this list. Every other
 specialist and path combination, or any nonempty exclusion list, fails closed.
+Selection also rebuilds the risk plan and rejects a finding when its path would require the
+credential-bearing `cloud-inference` E2E job. The generated-head reporter repeats that guard before
+dispatching any validation workflow, so repair validation remains credential-free.
 
 Before dispatch, configure the `advisor-repair-publish` environment with required reviewers limited
 to users or teams that hold `maintain` or `admin` permission, plus the intended self-review policy,

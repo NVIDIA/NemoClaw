@@ -477,6 +477,17 @@ describe("PR review advisor specialist prompts", () => {
             regressionTest: "Run the dependency gate.",
             exclusions: ["dependency-change"],
           },
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "Credential selection is wrong.",
+            path: "src/lib/credentials/example.ts",
+            line: 4,
+            impact: "Generated-head validation would require hosted inference credentials.",
+            smallestSafeFix: "Leave the credential-sensitive repair to a maintainer.",
+            regressionTest: "Prove credential-bearing validation classes remain ineligible.",
+            exclusions: [],
+          },
         ],
         noFindingsReason: null,
       },
@@ -485,8 +496,11 @@ describe("PR review advisor specialist prompts", () => {
       undefined as never,
     );
     const ledger = controller.snapshot();
-    const eligible = ledger.findings.find(({ path: file }) => file.startsWith("src/"))!;
+    const eligible = ledger.findings.find(({ path: file }) => file === "src/lib/example.ts")!;
     const excluded = ledger.findings.find(({ path: file }) => file === "package-lock.json")!;
+    const credentialBearing = ledger.findings.find(
+      ({ path: file }) => file === "src/lib/credentials/example.ts",
+    )!;
     const selection = selectRepairFindings({
       version: 1,
       repository: "NVIDIA/NemoClaw",
@@ -508,7 +522,7 @@ describe("PR review advisor specialist prompts", () => {
       stateDigest: `sha256:${"e".repeat(64)}`,
       reviewDigest: `sha256:${"f".repeat(64)}`,
       ledgers: [ledger],
-      optedFindingIds: [eligible.id, excluded.id],
+      optedFindingIds: [eligible.id, excluded.id, credentialBearing.id],
       productScope: "accepted:#10791",
       optIn: "manual-exact-head",
     });
@@ -519,6 +533,11 @@ describe("PR review advisor specialist prompts", () => {
       id: excluded.id,
       selected: false,
       reason: "excluded:implementation-path-mismatch",
+    });
+    expect(selection.decisions).toContainEqual({
+      id: credentialBearing.id,
+      selected: false,
+      reason: "excluded:repair-validation-requires-cloud-inference",
     });
     expect(() =>
       parseProposal(
