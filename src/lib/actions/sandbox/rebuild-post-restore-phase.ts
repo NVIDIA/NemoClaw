@@ -110,9 +110,9 @@ export function printHermesOperatorConfigRestoreReport(
   targetAgentName: string,
   report: HermesOperatorConfigRestoreReport | undefined,
 ): void {
-  if (targetAgentName !== "hermes") return;
-  const restored = report?.restoredKeys.join(", ") || "none";
-  const dropped = report?.droppedKeys.join(", ") || "none";
+  if (targetAgentName !== "hermes" || !report) return;
+  const restored = report.restoredKeys.join(", ") || "none";
+  const dropped = report.droppedKeys.join(", ") || "none";
   console.log(`    Restored Hermes operator config keys: ${restored}`);
   console.log(`    Dropped Hermes operator config keys: ${dropped}`);
 }

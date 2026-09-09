@@ -1031,6 +1031,16 @@ describe("rebuild post-restore phase", () => {
 });
 
 describe("Hermes operator config completion report", () => {
+  it("stays silent when no restore report exists", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      printHermesOperatorConfigRestoreReport("hermes", undefined);
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("explicitly names restored keys and an empty dropped set", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {

@@ -43,14 +43,14 @@ const DOCKER_INSPECT_TIMEOUT_MS = 15000;
 const STATE_BACKUP_MAX_RETRIES = 5;
 const STATE_BACKUP_RETRY_SECONDS = 2;
 
+type ManagedSupervisorFinalizeOutcome = DockerGpuPatchFinalizeOutcome & {
+  stateRestored?: boolean;
+  stateBackupRemoved?: boolean;
+};
+
 export type ManagedSupervisorRelaunch = {
   containerId: string;
-  finalize(supervisorReady: boolean): Promise<
-    DockerGpuPatchFinalizeOutcome & {
-      stateRestored?: boolean;
-      stateBackupRemoved?: boolean;
-    }
-  >;
+  finalize(supervisorReady: boolean): Promise<ManagedSupervisorFinalizeOutcome>;
 };
 
 export type ManagedSupervisorRelaunchDeps = {
@@ -232,8 +232,7 @@ export function relaunchManagedSupervisorSession(
   const recreate = deps.recreate ?? recreateOpenShellDockerSandboxWithStartupCommand;
   const finalize = deps.finalize ?? finalizeDockerGpuPatchBackup;
   const commandExecutor =
-    deps.commandExecutor ??
-    createCliOpenShellSandboxCommandExecutor({ hostCwd: REPOSITORY_ROOT });
+    deps.commandExecutor ?? createCliOpenShellSandboxCommandExecutor({ hostCwd: REPOSITORY_ROOT });
   let pendingStateBackupPath: string | null = null;
   try {
     const containerId = resolveContainer(sandboxName, driver);
@@ -298,12 +297,9 @@ export function relaunchManagedSupervisorSession(
       waitForSupervisor: false,
     });
     pendingStateBackupPath = null;
-    let completed: {
+    let completion: {
       supervisorReady: boolean;
-      outcome: DockerGpuPatchFinalizeOutcome & {
-        stateRestored?: boolean;
-        stateBackupRemoved?: boolean;
-      };
+      promise: Promise<ManagedSupervisorFinalizeOutcome>;
     } | null = null;
     const removeSettledStateBackup = (): boolean => {
       try {
@@ -312,93 +308,96 @@ export function relaunchManagedSupervisorSession(
         return false;
       }
     };
+    const finalizeTransaction = async (
+      supervisorReady: boolean,
+    ): Promise<ManagedSupervisorFinalizeOutcome> => {
+      const finalizeFailure = async () => {
+        const finalized = await finalize({ result, supervisorReady: false });
+        return {
+          ...finalized,
+          stateRestored: false,
+          ...(finalized.rolledBack ? { stateBackupRemoved: removeSettledStateBackup() } : {}),
+        };
+      };
+      if (!supervisorReady) {
+        return finalizeFailure();
+      }
+      let replacementOwned = false;
+      try {
+        replacementOwned = sameContainerId(
+          resolveContainer(sandboxName, driver),
+          result.newContainerId,
+        );
+      } catch {
+        replacementOwned = false;
+      }
+      if (!replacementOwned) {
+        return finalizeFailure();
+      }
+      let stateRestored = false;
+      try {
+        stateRestored = restoreState(sandboxName, backupManifest.backupPath).success;
+      } catch {
+        stateRestored = false;
+      }
+      if (!stateRestored) {
+        return finalizeFailure();
+      }
+      let restoredManagedGatewayReady = false;
+      try {
+        restoredManagedGatewayReady =
+          restartRestoredManagedGateway?.(result.newContainerId) === true;
+      } catch {
+        restoredManagedGatewayReady = false;
+      }
+      if (!restoredManagedGatewayReady) {
+        // Apply restored state to a fresh managed gateway process. OpenClaw
+        // can otherwise retain pre-restore runtime state or enter its
+        // in-process reload path. Keep the previous container available for
+        // rollback until the pinned replacement restart and health proof
+        // both succeed.
+        return finalizeFailure();
+      }
+      const runLifecycleProbe = deps.runOpenshell;
+      const captureLifecycleProbe = deps.runCaptureOpenshell;
+      if (!runLifecycleProbe || !captureLifecycleProbe) return finalizeFailure();
+      const lifecycleDeps = {
+        commandExecutor,
+        runCaptureOpenshell: captureLifecycleProbe,
+        runOpenshell: runLifecycleProbe,
+        ...(deps.sleep ? { sleep: deps.sleep } : {}),
+      };
+      const finalized = await finalize(
+        {
+          result,
+          supervisorReady: true,
+          sandboxName,
+          finalHandoffTimeoutSecs: getDockerGpuSupervisorReconnectTimeoutSecs(1),
+        },
+        lifecycleDeps,
+      );
+      return {
+        ...finalized,
+        stateRestored: true,
+        ...(finalized.finalHandoffAcknowledged === true
+          ? { stateBackupRemoved: removeSettledStateBackup() }
+          : {}),
+      };
+    };
     return {
       containerId: result.newContainerId,
-      async finalize(supervisorReady) {
-        if (completed) {
-          if (completed.supervisorReady !== supervisorReady) {
-            throw new Error(
-              "Supervisor relaunch transaction was finalized with conflicting state.",
+      finalize(supervisorReady) {
+        if (completion) {
+          if (completion.supervisorReady !== supervisorReady) {
+            return Promise.reject(
+              new Error("Supervisor relaunch transaction was finalized with conflicting state."),
             );
           }
-          return completed.outcome;
+          return completion.promise;
         }
-        const finalizeFailure = async () => {
-          const finalized = await finalize({ result, supervisorReady: false });
-          const outcome = {
-            ...finalized,
-            stateRestored: false,
-            ...(finalized.rolledBack ? { stateBackupRemoved: removeSettledStateBackup() } : {}),
-          };
-          completed = { supervisorReady, outcome };
-          return outcome;
-        };
-        if (!supervisorReady) {
-          return finalizeFailure();
-        }
-        let replacementOwned = false;
-        try {
-          replacementOwned = sameContainerId(
-            resolveContainer(sandboxName, driver),
-            result.newContainerId,
-          );
-        } catch {
-          replacementOwned = false;
-        }
-        if (!replacementOwned) {
-          return finalizeFailure();
-        }
-        let stateRestored = false;
-        try {
-          stateRestored = restoreState(sandboxName, backupManifest.backupPath).success;
-        } catch {
-          stateRestored = false;
-        }
-        if (!stateRestored) {
-          return finalizeFailure();
-        }
-        let restoredManagedGatewayReady = false;
-        try {
-          restoredManagedGatewayReady =
-            restartRestoredManagedGateway?.(result.newContainerId) === true;
-        } catch {
-          restoredManagedGatewayReady = false;
-        }
-        if (!restoredManagedGatewayReady) {
-          // Apply restored state to a fresh managed gateway process. OpenClaw
-          // can otherwise retain pre-restore runtime state or enter its
-          // in-process reload path. Keep the previous container available for
-          // rollback until the pinned replacement restart and health proof
-          // both succeed.
-          return finalizeFailure();
-        }
-        const runLifecycleProbe = deps.runOpenshell;
-        const captureLifecycleProbe = deps.runCaptureOpenshell;
-        if (!runLifecycleProbe || !captureLifecycleProbe) return finalizeFailure();
-        const lifecycleDeps = {
-          commandExecutor,
-          runCaptureOpenshell: captureLifecycleProbe,
-          runOpenshell: runLifecycleProbe,
-          ...(deps.sleep ? { sleep: deps.sleep } : {}),
-        };
-        const finalized = await finalize(
-          {
-            result,
-            supervisorReady: true,
-            sandboxName,
-            finalHandoffTimeoutSecs: getDockerGpuSupervisorReconnectTimeoutSecs(1),
-          },
-          lifecycleDeps,
-        );
-        const outcome = {
-          ...finalized,
-          stateRestored: true,
-          ...(finalized.finalHandoffAcknowledged === true
-            ? { stateBackupRemoved: removeSettledStateBackup() }
-            : {}),
-        };
-        completed = { supervisorReady, outcome };
-        return outcome;
+        const promise = Promise.resolve().then(() => finalizeTransaction(supervisorReady));
+        completion = { supervisorReady, promise };
+        return promise;
       },
     };
   } catch (error) {

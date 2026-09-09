@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DockerGpuPatchFinalizeOutcome } from "../../onboard/docker-gpu-patch-finalize";
 import type { DockerGpuPatchResult } from "../../onboard/docker-gpu-patch";
 import * as registry from "../../state/registry";
 import {
@@ -441,6 +442,35 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.finalize).toHaveBeenCalledWith({
       result: expect.objectContaining({ backupContainerName: expect.any(String) }),
       supervisorReady: false,
+    });
+  });
+
+  it("runs finalization once for concurrent matching callers", async () => {
+    let completeFinalization: ((outcome: DockerGpuPatchFinalizeOutcome) => void) | undefined;
+    const finalization = new Promise<DockerGpuPatchFinalizeOutcome>((resolve) => {
+      completeFinalization = resolve;
+    });
+    const deps = baseDeps({ finalize: vi.fn(() => finalization) });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    const first = relaunch?.finalize(true);
+    const second = relaunch?.finalize(true);
+
+    expect(second).toBe(first);
+    await Promise.resolve();
+    expect(deps.finalize).toHaveBeenCalledOnce();
+    await expect(relaunch?.finalize(false)).rejects.toThrow(
+      "Supervisor relaunch transaction was finalized with conflicting state.",
+    );
+    completeFinalization?.({
+      backupRemoved: true,
+      finalHandoffAcknowledged: true,
+      rolledBack: false,
+    });
+    await expect(first).resolves.toMatchObject({
+      backupRemoved: true,
+      rolledBack: false,
+      stateRestored: true,
     });
   });
 
