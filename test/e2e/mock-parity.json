@@ -574,6 +574,7 @@
     {
       "live": "test/e2e/live/jetson-nvmap-gpu.test.ts",
       "fast": [
+        "test/e2e/support/jetson-nvmap-gpu-diagnostics.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",

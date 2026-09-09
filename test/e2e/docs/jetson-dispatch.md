@@ -199,6 +199,13 @@ The test writes `phase-2-published-managed-image.json` with the registry
 workload receipt, digest-qualified managed-image reference, and inspected image
 labels used to prove its agent, contracts, source revision, and platform.
 
+When installation fails, the test captures `jetson-install-failure.json` before
+cleanup. It includes state and redacted startup logs for at most four Docker
+containers labeled for the test sandbox, the OpenShell sandbox observation,
+and the last 120 lines within 16 KiB of the job-local gateway log. Docker and
+OpenShell probes have two-second timeouts. Unavailable evidence is recorded as
+null or empty; diagnostic failures preserve the installation failure and cleanup.
+
 The test result verifies CPU-only onboarding for the named commit and Jetson
 device. It does not verify CUDA or OpenClaw Jetson device-group preservation.
 It does not establish that `cuInit(0)` works through OpenShell or that issue

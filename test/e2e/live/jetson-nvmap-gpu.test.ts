@@ -20,6 +20,7 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import type { FakeOpenAiCompatibleRequest } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { installJetsonWithDiagnostics } from "../fixtures/jetson-diagnostics.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-jetson-nvmap";
 const INFERENCE_API_KEY = "jetson-nvmap-e2e-key";
@@ -277,12 +278,9 @@ fi`,
     // A3: install.sh does not accept --no-gpu. NEMOCLAW_SANDBOX_GPU=0 selects
     // the same CPU-only behavior while #7610 blocks GPU verification through OpenShell.
     progress.phase("install NemoClaw with sandbox GPU access disabled");
-    const install = await host.command("bash", ["install.sh", "--non-interactive"], {
-      artifactName: "phase-2-install-jetson-nvmap",
-      cwd: REPO_ROOT,
-      env: env(inferenceEnv),
-      timeoutMs: 40 * 60_000,
-    });
+    const install = await installJetsonWithDiagnostics(
+      artifacts, host, SANDBOX_NAME, env(inferenceEnv), REPO_ROOT,
+    );
     await artifacts.writeText("install-jetson-nvmap.log", resultText(install));
     expect(install.exitCode, resultText(install)).toBe(0);
 
