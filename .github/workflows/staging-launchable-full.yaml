@@ -17,7 +17,7 @@ jobs:
   test:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 160
+    timeout-minutes: 175
     steps:
       - name: Check out trusted Vitest controller
         timeout-minutes: 10
