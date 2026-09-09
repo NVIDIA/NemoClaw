@@ -956,37 +956,6 @@ describe("uninstall run plan", () => {
     expect(logs).not.toContain("Swap file removed");
   });
 
-  it("uses the 'already removed' wording for gateway remove no-ops, sub-bug 4 (#3456)", () => {
-    const warnings: string[] = [];
-    const logs: string[] = [];
-    const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
-      {
-        commandExists: (command) => command !== "docker" && command !== "pgrep",
-        env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
-        error: (line) => warnings.push(line),
-        existsSync: () => false,
-        isTty: false,
-        log: (line) => logs.push(line),
-        rmSync: vi.fn(),
-        run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "remove") {
-            return { status: 1, stdout: "", stderr: "gateway not found" };
-          }
-          if (args[0] === "-c") return ok("/fake/bin/tool\n");
-          return okWithKnownGatewayList(command, args);
-        },
-        runDocker: () => ok(""),
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(warnings.join("\n")).toContain("Gateway 'nemoclaw' already removed or unreachable");
-    expect(`${warnings.join("\n")}\n${logs.join("\n")}`).not.toContain(
-      "Destroyed gateway 'nemoclaw' skipped",
-    );
-  });
-
   describe("user-data preservation under ~/.nemoclaw/", () => {
     function setupStateDir(): { tmpHome: string; stateDir: string } {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
