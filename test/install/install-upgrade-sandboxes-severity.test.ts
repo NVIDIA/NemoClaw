@@ -12,7 +12,7 @@ const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "../..", "scripts", "in
 // auto-upgrade of pre-existing sandboxes is destructive (it deletes a sandbox
 // before recreating it), so a failed auto-upgrade must not be reported as a
 // clean install (#5735).
-function runPrintDone(upgradeFailed: boolean): string {
+function runPrintDone(upgradeFailed: boolean, gatewayPort = ""): string {
   const snippet = `
     set -e
     source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1 || true
@@ -29,6 +29,7 @@ function runPrintDone(upgradeFailed: boolean): string {
     _CLI_BIN="nemoclaw"
     ONBOARD_RAN=true
     NEMOCLAW_READY_NOW=true
+    NEMOCLAW_GATEWAY_PORT="${gatewayPort}"
     _UPGRADE_SANDBOXES_FAILED=${upgradeFailed ? "true" : "false"}
     print_done
   `;
@@ -92,6 +93,17 @@ describe("install.sh print_done — auto-upgrade severity (#5735)", () => {
     expect(out).toContain("Existing sandbox upgrade did not finish");
     expect(out).toContain("onboard --resume");
     expect(out).toContain("rebuild");
+  });
+
+  it("keeps the automatic-port export out of ordinary CLI guidance (#10824)", () => {
+    const out = runPrintDone(false, "8990");
+
+    expect(out).toContain("Ordinary CLI commands restore recorded port 8990 automatically");
+    expect(out).toContain("script or another process that intentionally needs explicit gateway scope");
+    expect(out).toContain("export NEMOCLAW_GATEWAY_PORT=8990");
+    expect(out).toContain("explicit operator selection");
+    expect(out).toContain("no-name gateway stop authorization");
+    expect(out).not.toContain("before CLI commands targeting this gateway");
   });
 });
 

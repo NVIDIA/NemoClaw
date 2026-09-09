@@ -63,23 +63,6 @@ export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
-/**
- * The DGX Station qualification projection was introduced in v0.0.97. A Hermes
- * sandbox stamped by an earlier managed release may be rebuilt once without
- * reapplying that later admission rule. Version-shaped text is not authority.
- */
-export function hasLegacyDgxStationQualificationAuthority(
-  sandbox: Pick<SandboxEntry, "agent" | "fromDockerfile" | "nemoclawVersion">,
-): boolean {
-  if (sandbox.agent !== "hermes" || sandbox.fromDockerfile != null) return false;
-  const match = /^(?:v)?0\.0\.(0|[1-9]\d*)(?:-[1-9]\d*-g[0-9a-f]{7,40})?$/i.exec(
-    sandbox.nemoclawVersion ?? "",
-  );
-  if (!match) return false;
-  const patch = Number(match[1]);
-  return Number.isSafeInteger(patch) && patch < 97;
-}
-
 export type RebuildLiveState = {
   staleRecovery: boolean;
   staleRegistrySnapshot: ReturnType<typeof loadRegistry> | null;

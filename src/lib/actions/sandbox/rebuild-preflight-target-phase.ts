@@ -36,7 +36,6 @@ import {
   disposeRebuildAgentBaseImagePreflight,
   ensureRebuildAgentBaseImage,
   ensureRebuildTargetGatewaySelected,
-  hasLegacyDgxStationQualificationAuthority,
   pinRebuildAgentBaseImageForRecreate,
   replaceOpenShellRuntimeSelectionEnv,
   type RebuildAgentBaseImagePreflight,
@@ -232,7 +231,7 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   );
   if (!recreateOptions) return null;
-  if (hasLegacyDgxStationQualificationAuthority(sandboxEntry)) {
+  if (registry.hasLegacyDgxStationQualificationAuthority(sandboxEntry)) {
     recreateOptions.allowLegacyDgxStationQualification = true;
   }
   if (mcpRuntimeSelection) recreateOptions.runtimeSelection = mcpRuntimeSelection;

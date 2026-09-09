@@ -22,7 +22,6 @@ import {
   disposeRebuildAgentBaseImagePreflight,
   ensureRebuildAgentBaseImage,
   ensureRebuildTargetGatewaySelected,
-  hasLegacyDgxStationQualificationAuthority,
   pinRebuildAgentBaseImageForRecreate,
   warnUnpreservedUserManagedFiles,
 } from "./rebuild-flow-helpers";
@@ -66,44 +65,6 @@ function makeBail(): (msg: string, code?: number) => never {
     throw new Error(`bail: ${msg}`);
   };
 }
-
-describe("legacy DGX Station rebuild authority", () => {
-  it.each([
-    ["v0.0.83", true],
-    ["0.0.96-12-gabcdef0", true],
-    ["v0.0.97", false],
-    ["0.0.97-1-gabcdef0", false],
-    ["0.0.83-preview", false],
-    ["v0.0.096", false],
-    ["0.0.x", false],
-    ["", false],
-  ])("accepts only a valid release older than v0.0.97: %s", (nemoclawVersion, expected) => {
-    expect(
-      hasLegacyDgxStationQualificationAuthority({
-        agent: "hermes",
-        fromDockerfile: null,
-        nemoclawVersion,
-      }),
-    ).toBe(expected);
-  });
-
-  it("rejects unrelated sandbox state", () => {
-    expect(
-      hasLegacyDgxStationQualificationAuthority({
-        agent: "openclaw",
-        fromDockerfile: null,
-        nemoclawVersion: "v0.0.83",
-      }),
-    ).toBe(false);
-    expect(
-      hasLegacyDgxStationQualificationAuthority({
-        agent: "hermes",
-        fromDockerfile: "/tmp/Dockerfile",
-        nemoclawVersion: "v0.0.83",
-      }),
-    ).toBe(false);
-  });
-});
 
 describe("rebuild target gateway preflight", () => {
   const priorOpenShellEnv = {
