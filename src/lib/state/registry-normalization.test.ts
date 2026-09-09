@@ -266,9 +266,7 @@ describe("sandbox registry normalization", () => {
         deferredN1xManagedVllmAccepted: "true",
       },
     });
-    expect(() => malformed.getSandbox("malformed")).toThrow(
-      "invalid N1x preview acceptance",
-    );
+    expect(() => malformed.getSandbox("malformed")).toThrow("invalid N1x preview acceptance");
     const mismatchedRoute = await loadRegistryWith({
       mismatched: {
         name: "mismatched",
@@ -387,7 +385,10 @@ describe("sandbox registry normalization", () => {
       sandboxName: "alpha",
       lifecycleGeneration: "generation",
       sandboxIdentityFingerprint: "a".repeat(64),
-      route: "none" as const,
+      route: "compatibility" as const,
+      exactFinalHandoffCommitStarted: true as const,
+      exactFinalHandoffRuntimeId: "b".repeat(64),
+      exactFinalHandoffAcknowledged: true as const,
       policyHash: "legacy",
     };
     const { registry } = await loadRegistryDocument({
@@ -408,8 +409,48 @@ describe("sandbox registry normalization", () => {
       sandboxName: "alpha",
       lifecycleGeneration: "generation",
       sandboxIdentityFingerprint: "a".repeat(64),
-      route: "none",
+      route: "compatibility",
+      exactFinalHandoffCommitStarted: true,
+      exactFinalHandoffRuntimeId: "b".repeat(64),
+      exactFinalHandoffAcknowledged: true,
     });
+  });
+
+  it.each([
+    ["an acknowledgement without a commit fence", { exactFinalHandoffAcknowledged: true }],
+    ["a false commit fence", { exactFinalHandoffCommitStarted: false }],
+    ["a false acknowledgement", { exactFinalHandoffAcknowledged: false }],
+    [
+      "a compatibility fence without exact runtime authority",
+      { exactFinalHandoffCommitStarted: true },
+    ],
+    ["runtime authority without a commit fence", { exactFinalHandoffRuntimeId: "b".repeat(64) }],
+    [
+      "malformed runtime authority",
+      { exactFinalHandoffCommitStarted: true, exactFinalHandoffRuntimeId: "short" },
+    ],
+  ])("rejects %s in a pending create checkpoint", async (_case, receipt) => {
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        pendingRouteReservation: true,
+        pendingCreateIdentity: {
+          schemaVersion: 1,
+          state: "verified-create",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          sandboxName: "alpha",
+          lifecycleGeneration: "generation",
+          sandboxIdentityFingerprint: "a".repeat(64),
+          route: "compatibility",
+          ...receipt,
+        },
+      },
+    });
+
+    expect(() => registry.getSandbox("alpha")).toThrow(
+      /invalid pending sandbox create verification/u,
+    );
   });
 
   it("sets a gateway port only while the complete qualified row remains current", async () => {

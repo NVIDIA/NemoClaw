@@ -140,6 +140,10 @@ export interface CreatedSandboxCompletionOptions {
         typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
       >[2]["runCaptureOpenshell"]
     >;
+    readonly persistFinalHandoffAcknowledgement: (
+      runtimePatch: SandboxGpuCreateFlowResult["runtimePatch"],
+    ) => void;
+    readonly persistFinalHandoffCommitStarted: (replacementRuntimeId: string | null) => void;
   };
   readonly dashboard: {
     readonly chatUiUrl: string;
@@ -376,6 +380,8 @@ export function createCreatedSandboxCompletionActions(
         deps.revalidateSandboxIdentity?.(
           `committing GPU capability for sandbox '${options.finalization.sandboxName}'`,
         ),
+      options.gpu.persistFinalHandoffCommitStarted,
+      () => options.gpu.persistFinalHandoffAcknowledgement(created.runtimePatch),
     );
   }
   function recordHermesGpuProof(): void {
@@ -541,9 +547,13 @@ function assertVerifiedCreateMatchesCreateBoundary(
   boundary: VerifiedSandboxCreateBoundary,
   verifiedCreate: NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>,
 ): void {
-  if (
-    !isDeepStrictEqual(verifiedCreate.checkpoint, pendingSandboxCreateIdentityForBoundary(boundary))
-  ) {
+  const {
+    exactFinalHandoffCommitStarted: _commitStarted,
+    exactFinalHandoffRuntimeId: _runtimeId,
+    exactFinalHandoffAcknowledged: _acknowledged,
+    ...identity
+  } = verifiedCreate.checkpoint;
+  if (!isDeepStrictEqual(identity, pendingSandboxCreateIdentityForBoundary(boundary))) {
     throw new Error("Pending sandbox create identity does not match the final create boundary.");
   }
 }
@@ -618,6 +628,10 @@ type OnboardPreparedPolicy = Pick<
     CreatedSandboxRegistrationInput["verifiedCreate"]
   >;
   readonly revalidateSandboxIdentity: (operation: string) => void;
+  readonly persistFinalHandoffAcknowledgement: (
+    runtimePatch: SandboxGpuCreateFlowResult["runtimePatch"],
+  ) => void;
+  readonly persistFinalHandoffCommitStarted: (replacementRuntimeId: string | null) => void;
 };
 
 type CurrentRestoreSnapshotDependencies = {
@@ -764,6 +778,8 @@ export function createOnboardCreatedSandboxCompletion(
         dockerDriverGateway,
         verifyDirectSandboxGpu,
         runCaptureOpenshell,
+        persistFinalHandoffAcknowledgement: preparedPolicy.persistFinalHandoffAcknowledgement,
+        persistFinalHandoffCommitStarted: preparedPolicy.persistFinalHandoffCommitStarted,
       },
       dashboard: {
         chatUiUrl,

@@ -128,6 +128,7 @@ type DockerGpuSandboxCreatePatchOptions = {
 
 export interface DockerManagedBootstrapDeferredCutover {
   readonly selectedMode: DockerGpuPatchMode;
+  readonly replacementRuntimeId: string;
   readonly failureContext: DockerGpuPatchFailureContext;
   rollback(): Promise<void>;
   commit(): Promise<void>;
@@ -150,7 +151,11 @@ export type DockerGpuSandboxCreatePatch = {
    * Call only after authoritative Ready and the required GPU and applicable
    * local-inference checks pass.
    */
-  commitAfterReady: () => Promise<void>;
+  commitAfterReady: (options?: {
+    readonly beforeFinalHandoff?: (replacementRuntimeId: string | null) => void;
+  }) => Promise<void>;
+  /** True only after OpenShell acknowledged the exact replacement's final handoff. */
+  allowsNotReadyLifecycleRevalidation: () => boolean;
   selectedMode: () => DockerGpuPatchMode | null;
   /**
    * Print the Docker GPU readiness-failure block (including the Error-phase
@@ -182,6 +187,7 @@ export function createDockerGpuSandboxCreatePatch(
   let cutoverFinalization: Promise<void> | null = null;
   let cutoverFinalizationOutcome: "commit" | "rollback" | null = null;
   let cutoverFinalizationFailure: Error | null = null;
+  let exactFinalHandoffAcknowledged = false;
 
   const findContainerIds =
     options.overrides?.findContainerIds ?? findOpenShellDockerSandboxContainerIds;
@@ -327,7 +333,7 @@ export function createDockerGpuSandboxCreatePatch(
     },
 
     replacementRuntimeId() {
-      return result?.newContainerId ?? null;
+      return managedBootstrapCutover?.replacementRuntimeId ?? result?.newContainerId ?? null;
     },
 
     createFailureMessage() {
@@ -456,7 +462,7 @@ export function createDockerGpuSandboxCreatePatch(
       });
     },
 
-    async commitAfterReady() {
+    async commitAfterReady(commitOptions) {
       if (cutoverFinalizationFailure) throw cutoverFinalizationFailure;
       if (cutoverFinalized || (!managedBootstrapCutover && !result)) return;
       if (needsSupervisorWait) {
@@ -483,9 +489,13 @@ export function createDockerGpuSandboxCreatePatch(
         return;
       }
       const finalization = (async () => {
+        commitOptions?.beforeFinalHandoff?.(
+          managedBootstrapCutover?.replacementRuntimeId ?? result?.newContainerId ?? null,
+        );
         if (managedBootstrapCutover) {
           try {
             await managedBootstrapCutover.commit();
+            exactFinalHandoffAcknowledged = true;
           } catch (error) {
             const failure = error instanceof Error ? error : new Error(String(error));
             let rollbackError: Error | null = null;
@@ -539,6 +549,7 @@ export function createDockerGpuSandboxCreatePatch(
           finalizeOutcome.replacementRestarted &&
           finalizeOutcome.finalHandoffAcknowledged === true
         ) {
+          exactFinalHandoffAcknowledged = true;
           return;
         }
         const failure = new Error(
@@ -575,6 +586,10 @@ export function createDockerGpuSandboxCreatePatch(
           cutoverFinalizationOutcome = null;
         }
       }
+    },
+
+    allowsNotReadyLifecycleRevalidation() {
+      return exactFinalHandoffAcknowledged;
     },
 
     selectedMode() {
