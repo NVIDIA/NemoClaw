@@ -215,7 +215,7 @@ validate_audit_evidence() {
     exit 1
   }
   local recorded_hash
-  read -r recorded_hash <"$hash_file"
+  read -r recorded_hash <"$hash_file" || recorded_hash=""
   audit_receipt_sha256="$(sha256sum "$audit_receipt" | awk '{print $1}')"
   [[ "$recorded_hash" =~ ^[a-f0-9]{64}$ && "$recorded_hash" == "$audit_receipt_sha256" ]] || {
     echo "ERROR: protected managed-image reviewed audit receipt hash does not match" >&2

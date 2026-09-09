@@ -628,6 +628,15 @@ describe("protected managed-image build-cache boundary", () => {
         ),
       "reviewed audit receipt hash does not match",
     ],
+    [
+      "empty",
+      (cacheRoot: string) =>
+        writeFileSync(
+          path.join(cacheRoot, "reviewed-npm-audit", "mcporter-runtime.receipt.sha256"),
+          "",
+        ),
+      "reviewed audit receipt hash does not match",
+    ],
   ])(
     "rejects %s reviewed audit evidence before invoking Docker (#11088)",
     (_case, mutate, error) => {
