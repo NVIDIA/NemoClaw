@@ -513,7 +513,7 @@ test(
     // still prints phase headings before the resume-skip decisions, so assert
     // the skip evidence and absence of redo-only success strings instead of
     // rejecting headings that now frame the skipped phases.
-    expect(resumeText).not.toContain("Starting OpenShell Docker-driver gateway...");
+    expect(resumeText).not.toMatch(/Starting OpenShell [^\r\n]*gateway/);
     const reconciledExtraProviders = readExtraProviders();
     expect(reconciledExtraProviders).toContain(LIVE_EXTRA_PROVIDER);
     expect(reconciledExtraProviders).not.toContain(STALE_EXTRA_PROVIDER);

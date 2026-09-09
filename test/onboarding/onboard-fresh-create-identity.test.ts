@@ -2,26 +2,40 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { beforeEach, describe, it, vi } from "vitest";
+import { describe, it } from "vitest";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-split-context";
 import { encodeMessagingPlan, makeMessagingPlan } from "../helpers/messaging-plan-fixtures";
 
-beforeEach(() => {
-  vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
-  vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
-  vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
-});
+function runNodeScript(
+  scriptPath: string,
+  options: { cwd: string; env: NodeJS.ProcessEnv; timeout: number },
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      [scriptPath],
+      { ...options, encoding: "utf8" },
+      (error, stdout, stderr) => {
+        resolve({
+          status: error ? (typeof error.code === "number" ? error.code : null) : 0,
+          stdout,
+          stderr,
+        });
+      },
+    );
+  });
+}
 
 describe("fresh create identity", () => {
-  it.each([
+  it.concurrent.each([
     {
       title: "binds ordinary providers at create time before managed registration (#9833)",
       apfInterceptorRequested: false,
@@ -186,10 +200,44 @@ describe("fresh create identity", () => {
       const dockerExecPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "adapters", "docker", "exec.ts"),
       );
+      const doctorHostCommandPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "actions", "sandbox", "doctor-host-command.ts"),
+      );
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
 
       const script = String.raw`
+	const doctorHostCommand = require(${doctorHostCommandPath});
+	const managedVolumes = new Map();
+	doctorHostCommand.captureHostCommand = (command, args) => {
+	  if (command !== "docker" || args[0] !== "volume") {
+	    return { status: 1, stdout: "", stderr: "unexpected container-engine fixture command" };
+	  }
+	  const action = args[1];
+	  const volumeName = args[args.length - 1];
+	  if (action === "inspect") {
+	    const labels = managedVolumes.get(volumeName);
+	    return labels
+	      ? { status: 0, stdout: JSON.stringify({ Name: volumeName, Labels: labels }), stderr: "" }
+	      : { status: 1, stdout: "", stderr: "Error: No such volume: " + volumeName };
+	  }
+	  if (action === "create") {
+	    const labels = {};
+	    for (let index = 2; index < args.length - 1; index += 1) {
+	      if (args[index] !== "--label") continue;
+	      const [name, ...value] = String(args[index + 1]).split("=");
+	      labels[name] = value.join("=");
+	      index += 1;
+	    }
+	    managedVolumes.set(volumeName, labels);
+	    return { status: 0, stdout: volumeName, stderr: "" };
+	  }
+	  if (action === "rm") {
+	    managedVolumes.delete(volumeName);
+	    return { status: 0, stdout: volumeName, stderr: "" };
+	  }
+	  return { status: 1, stdout: "", stderr: "unexpected volume fixture command" };
+	};
 	const runner = require(${runnerPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
@@ -693,6 +741,9 @@ if (${JSON.stringify(
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
+        NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE: "1",
+        NEMOCLAW_SANDBOX_PREBUILD: "1",
         NEMOCLAW_NON_INTERACTIVE: expectedOutcome.startsWith("cancel-after-create-") ? "" : "1",
         NEMOCLAW_GATEWAY_PORT: String(gatewayPort),
         OPENSHELL_DRIVERS: "docker",
@@ -703,9 +754,8 @@ if (${JSON.stringify(
               )
             : "",
       };
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runNodeScript(scriptPath, {
         cwd: repoRoot,
-        encoding: "utf-8",
         env: childEnv,
         timeout: 30000,
       });
@@ -913,7 +963,7 @@ if (${JSON.stringify(
         assert.equal(record.reason, "retained_after_sandbox_creation_failure");
         assertRecoveryTuple(record);
       };
-      const assertPostCreateRegistrationRecoveryReadbackFailure = () => {
+      const assertPostCreateRegistrationRecoveryReadbackFailure = async () => {
         assert.equal(payload.sandboxName, null);
         assert.equal(payload.sandboxCreated, true);
         assert.equal(payload.deleted, false);
@@ -939,9 +989,8 @@ if (${JSON.stringify(
           },
         ] as const;
         for (const { message, mode } of reentryCases) {
-          const reentry = spawnSync(process.execPath, [scriptPath], {
+          const reentry = await runNodeScript(scriptPath, {
             cwd: repoRoot,
-            encoding: "utf-8",
             env: {
               ...childEnv,
               NEMOCLAW_RECOVERY_REENTRY: mode,
@@ -969,9 +1018,8 @@ if (${JSON.stringify(
             recoveryRegistryEntry: payload.verifiedRecoveryRegistryEntry,
           }),
         );
-        const registryOnlyReentry = spawnSync(process.execPath, [scriptPath], {
+        const registryOnlyReentry = await runNodeScript(scriptPath, {
           cwd: repoRoot,
-          encoding: "utf-8",
           env: {
             ...childEnv,
             NEMOCLAW_RECOVERY_REENTRY: "fresh-same-registry-only",
@@ -1015,7 +1063,7 @@ if (${JSON.stringify(
         assert.notEqual(payload.savedSession.status, "recovery_required");
         assert.deepEqual(payload.retainedRecoveryRecords, []);
       };
-      const assertCancellationRecovery = () => {
+      const assertCancellationRecovery = async () => {
         assert.equal(payload.exitCode, 1);
         assert.equal(payload.sandboxName, "my-assistant");
         assert.equal(payload.deleted, false);
@@ -1051,9 +1099,8 @@ if (${JSON.stringify(
         assert.match(result.stderr, /clear the matching recovery record/u);
         assertCreateAttemptLabelReported();
 
-        const differentName = spawnSync(process.execPath, [scriptPath], {
+        const differentName = await runNodeScript(scriptPath, {
           cwd: repoRoot,
-          encoding: "utf-8",
           env: {
             ...childEnv,
             NEMOCLAW_RECOVERY_REENTRY: "fresh-different",
@@ -1104,9 +1151,8 @@ if (${JSON.stringify(
           },
         ] as const;
         for (const { messages, mode: reentryMode } of reentryCases) {
-          const reentry = spawnSync(process.execPath, [scriptPath], {
+          const reentry = await runNodeScript(scriptPath, {
             cwd: repoRoot,
-            encoding: "utf-8",
             env: {
               ...childEnv,
               NEMOCLAW_RECOVERY_REENTRY: reentryMode,
@@ -1144,7 +1190,7 @@ if (${JSON.stringify(
         "cancel-after-create-tier-presets": assertCancellationRecovery,
         "cancel-after-create-custom-presets": assertCancellationRecovery,
       };
-      assertions[expectedOutcome]();
+      await assertions[expectedOutcome]();
     },
   );
 });
