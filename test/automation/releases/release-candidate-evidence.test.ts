@@ -267,7 +267,7 @@ function runAuditReuse(
   overrides: {
     artifact?: Record<string, unknown>;
     consumer?: Record<string, unknown>;
-    env?: Record<string, string>;
+    env?: NodeJS.ProcessEnv;
     omitRaw?: boolean;
     cleanupFailure?: boolean;
     commands?: Record<string, string>;
