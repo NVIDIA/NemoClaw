@@ -38,7 +38,6 @@ import {
   planInferenceRouteReconcile,
   sanitizeRouteValueForDisplay,
 } from "../../inference/config";
-import { GatewayRouteConflictError } from "../../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import {
   findReachableOllamaHost,
@@ -51,6 +50,7 @@ import {
   assertNoOpenShellGatewayEndpointOverride,
   OpenShellGatewayEndpointOverrideError,
 } from "../../openshell-gateway-endpoint-guard";
+import { emitPortableOpenClawAlreadyRunningTiming } from "../../onboard/experimental/portable-demo-lifecycle-timing";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact, redactFull } from "../../security/redact";
@@ -71,6 +71,7 @@ import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
   buildGatewayInferenceSetArgs,
+  GatewayRouteConflictError,
   sandboxUsesLegacyClusterGateway,
 } from "./connect-inference-gateway";
 import {
@@ -84,7 +85,6 @@ import {
   ensureLiveSandboxOrExit,
   assertHermesPortableLifecycleForConnect,
   buildHermesPortableCommandAuthority,
-  emitPortableOpenClawAlreadyRunningTiming,
   type HermesPortableActiveLifecycleAuthority,
   getNamedGatewayLifecycleState,
   printGatewayLifecycleHint,
