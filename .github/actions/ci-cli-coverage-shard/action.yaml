@@ -57,17 +57,7 @@ runs:
         RIPGREP_VERSION: "14.1.0-1"
       run: |
         set -euo pipefail
-        UBUNTU_APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"
-        if [ ! -r "$UBUNTU_APT_SOURCES" ]; then
-          echo "::error::Required Ubuntu APT source is unavailable: $UBUNTU_APT_SOURCES"
-          exit 1
-        fi
-        APT_SOURCE_OPTIONS=(
-          -o "Dir::Etc::sourcelist=$UBUNTU_APT_SOURCES"
-          -o "Dir::Etc::sourceparts=-"
-        )
-        sudo apt-get "${APT_SOURCE_OPTIONS[@]}" update -qq
-        sudo apt-get "${APT_SOURCE_OPTIONS[@]}" install -y --no-install-recommends \
+        bash "$GITHUB_ACTION_PATH/../ci-install-pinned-ubuntu-packages.sh" \
           "fd-find=${FD_FIND_VERSION}" \
           "ripgrep=${RIPGREP_VERSION}"
 

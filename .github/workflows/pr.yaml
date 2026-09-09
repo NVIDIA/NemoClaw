@@ -605,6 +605,7 @@ jobs:
             .github/actions/ci-plugin-coverage
             .github/actions/ci-installer-integration
             .github/actions/ci-install-dependencies.sh
+            .github/actions/ci-install-pinned-ubuntu-packages.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/checks/prepare-ci-npm-install.mts

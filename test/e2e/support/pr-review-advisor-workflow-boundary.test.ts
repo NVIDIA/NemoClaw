@@ -25,12 +25,32 @@ it("executes the Advisor runtime install with only the required Ubuntu source", 
   const fakeBin = join(directory, "bin");
   const advisorDirectory = join(directory, "advisor");
   const aptTrace = join(directory, "apt-trace");
+  const npmTrace = join(directory, "npm-trace");
   const ubuntuSources = join(directory, "ubuntu.sources");
   mkdirSync(fakeBin);
-  mkdirSync(advisorDirectory);
+  mkdirSync(join(advisorDirectory, ".github/actions"), { recursive: true });
+  const packageInstaller = readFileSync(
+    join(process.cwd(), ".github/actions/ci-install-pinned-ubuntu-packages.sh"),
+    "utf8",
+  ).replace(
+    'UBUNTU_APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"',
+    `UBUNTU_APT_SOURCES=${JSON.stringify(ubuntuSources)}`,
+  );
+  writeFileSync(
+    join(advisorDirectory, ".github/actions/ci-install-pinned-ubuntu-packages.sh"),
+    packageInstaller,
+    { mode: 0o755 },
+  );
   writeFileSync(
     join(fakeBin, "sudo"),
-    '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$*" >> "$APT_TRACE"\n',
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'printf "%s\\n" "$*" >> "$APT_TRACE"',
+      'if [ "${FAIL_APT_INSTALL:-0}" = "1" ] && [[ " $* " == *" install "* ]]; then',
+      "  exit 42",
+      "fi",
+    ].join("\n"),
     { mode: 0o755 },
   );
   writeFileSync(
@@ -46,7 +66,11 @@ it("executes the Advisor runtime install with only the required Ubuntu source", 
     ].join("\n"),
     { mode: 0o755 },
   );
-  writeFileSync(join(fakeBin, "npm"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+  writeFileSync(
+    join(fakeBin, "npm"),
+    '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$NPM_TRACE"\n',
+    { mode: 0o755 },
+  );
 
   try {
     const workflow = YAML.parse(
@@ -57,12 +81,8 @@ it("executes the Advisor runtime install with only the required Ubuntu source", 
     const installStep = workflow.jobs["build-advisor-runtime"]?.steps?.find(
       (step) => step.name === "Install locked runtime",
     );
-    const executableScript = installStep?.run?.replace(
-      'UBUNTU_APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"',
-      `UBUNTU_APT_SOURCES=${JSON.stringify(ubuntuSources)}`,
-    );
-    const runInstall = () =>
-      spawnSync("bash", ["-c", executableScript ?? ""], {
+    const runInstall = (extraEnv: Record<string, string> = {}) =>
+      spawnSync("bash", ["-c", installStep?.run ?? ""], {
         cwd: directory,
         encoding: "utf8",
         env: {
@@ -70,8 +90,10 @@ it("executes the Advisor runtime install with only the required Ubuntu source", 
           ADVISOR_DIR: advisorDirectory,
           APT_TRACE: aptTrace,
           FD_FIND_VERSION: "9.0.0-1",
+          NPM_TRACE: npmTrace,
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
           RIPGREP_VERSION: "14.1.0-1",
+          ...extraEnv,
         },
         timeout: 5_000,
       });
@@ -83,13 +105,22 @@ it("executes the Advisor runtime install with only the required Ubuntu source", 
       `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- update -qq`,
       `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1`,
     ]);
+    expect(readFileSync(npmTrace, "utf8").trim()).toBe("ci --ignore-scripts --no-audit --no-fund");
 
     rmSync(ubuntuSources);
     rmSync(aptTrace);
+    rmSync(npmTrace);
     const missingSource = runInstall();
     expect(missingSource.status).not.toBe(0);
     expect(missingSource.stdout).toContain("Required Ubuntu APT source is unavailable");
     expect(existsSync(aptTrace)).toBe(false);
+    expect(existsSync(npmTrace)).toBe(false);
+
+    writeFileSync(ubuntuSources, "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\n");
+    const unavailablePackage = runInstall({ FAIL_APT_INSTALL: "1" });
+    expect(unavailablePackage.status).not.toBe(0);
+    expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toHaveLength(2);
+    expect(existsSync(npmTrace)).toBe(false);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
@@ -169,21 +200,15 @@ it.each([
     "Unified advisor must prepare the PR revision from the successful checks run",
   ],
   [
-    "Ubuntu archive source isolation",
-    'sudo apt-get "${APT_SOURCE_OPTIONS[@]}" update -qq',
-    "sudo apt-get update -qq",
+    "pinned Ubuntu package helper",
+    'bash "$ADVISOR_DIR/.github/actions/ci-install-pinned-ubuntu-packages.sh"',
+    'bash "/bin/true"',
     "Unified advisor runtime package install must use only Ubuntu archive sources",
   ],
   [
-    "Ubuntu archive install isolation",
-    'sudo apt-get "${APT_SOURCE_OPTIONS[@]}" install -y',
-    "sudo apt-get install -y",
-    "Unified advisor runtime package install must use only Ubuntu archive sources",
-  ],
-  [
-    "Ubuntu archive source availability",
-    'echo "::error::Required Ubuntu APT source is unavailable: $UBUNTU_APT_SOURCES"\n            exit 1',
-    'echo "::error::Required Ubuntu APT source is unavailable: $UBUNTU_APT_SOURCES"\n            true',
+    "direct apt bypass",
+    'bash "$ADVISOR_DIR/.github/actions/ci-install-pinned-ubuntu-packages.sh"',
+    'sudo apt-get update\n          bash "$ADVISOR_DIR/.github/actions/ci-install-pinned-ubuntu-packages.sh"',
     "Unified advisor runtime package install must use only Ubuntu archive sources",
   ],
 ])("rejects an unsafe Advisor %s mutation", (_case, before, after, error) => {

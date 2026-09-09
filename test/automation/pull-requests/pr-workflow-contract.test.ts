@@ -573,13 +573,35 @@ describe("pull request and main workflow contracts", () => {
   it("limits CLI shard package installation to Ubuntu archive sources", () => {
     const temp = mkdtempSync(join(tmpdir(), "nemoclaw-cli-shard-apt-"));
     const fakeBin = join(temp, "bin");
+    const actionPath = join(temp, "actions", "ci-cli-coverage-shard");
     const aptTrace = join(temp, "apt-trace");
+    const binaryTrace = join(temp, "binary-trace");
     const ubuntuSources = join(temp, "ubuntu.sources");
     mkdirSync(fakeBin);
+    mkdirSync(actionPath, { recursive: true });
+    const packageInstaller = readFileSync(
+      join(process.cwd(), ".github/actions/ci-install-pinned-ubuntu-packages.sh"),
+      "utf8",
+    ).replace(
+      'UBUNTU_APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"',
+      `UBUNTU_APT_SOURCES=${JSON.stringify(ubuntuSources)}`,
+    );
+    writeFileSync(
+      join(actionPath, "..", "ci-install-pinned-ubuntu-packages.sh"),
+      packageInstaller,
+      { mode: 0o755 },
+    );
     writeFileSync(ubuntuSources, "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\n");
     writeFileSync(
       join(fakeBin, "sudo"),
-      '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$*" >> "$APT_TRACE"\n',
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'printf "%s\\n" "$*" >> "$APT_TRACE"',
+        'if [ "${FAIL_APT_INSTALL:-0}" = "1" ] && [[ " $* " == *" install "* ]]; then',
+        "  exit 42",
+        "fi",
+      ].join("\n"),
       { mode: 0o755 },
     );
     writeFileSync(
@@ -595,45 +617,53 @@ describe("pull request and main workflow contracts", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
-    writeFileSync(join(fakeBin, "fdfind"), '#!/usr/bin/env bash\nprintf "fdfind 9.0.0\\n"\n', {
-      mode: 0o755,
-    });
-    writeFileSync(join(fakeBin, "rg"), '#!/usr/bin/env bash\nprintf "ripgrep 14.1.0\\n"\n', {
-      mode: 0o755,
-    });
+    writeFileSync(
+      join(fakeBin, "fdfind"),
+      '#!/usr/bin/env bash\nprintf "fdfind\\n" >> "$BINARY_TRACE"\nprintf "fdfind 9.0.0\\n"\n',
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(fakeBin, "rg"),
+      '#!/usr/bin/env bash\nprintf "rg\\n" >> "$BINARY_TRACE"\nprintf "ripgrep 14.1.0\\n"\n',
+      { mode: 0o755 },
+    );
 
     try {
       const installStep = requiredStep(
         sharedActions.cliCoverageShard,
         "Install pinned Pi search tools",
       );
-      const executableInstallStep = {
-        ...installStep,
-        run: installStep.run?.replace(
-          'UBUNTU_APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"',
-          `UBUNTU_APT_SOURCES=${JSON.stringify(ubuntuSources)}`,
-        ),
-      };
-      const result = runWorkflowShellStep(executableInstallStep, {
-        APT_TRACE: aptTrace,
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-      });
+      const runInstall = (extraEnv: Record<string, string> = {}) =>
+        runWorkflowShellStep(installStep, {
+          APT_TRACE: aptTrace,
+          BINARY_TRACE: binaryTrace,
+          GITHUB_ACTION_PATH: actionPath,
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          ...extraEnv,
+        });
+      const result = runInstall();
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toEqual([
         `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- update -qq`,
         `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1`,
       ]);
+      expect(readFileSync(binaryTrace, "utf8").trim().split("\n")).toEqual(["fdfind", "rg"]);
 
       rmSync(ubuntuSources);
       rmSync(aptTrace);
-      const missingSourceResult = runWorkflowShellStep(executableInstallStep, {
-        APT_TRACE: aptTrace,
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-      });
+      rmSync(binaryTrace);
+      const missingSourceResult = runInstall();
       expect(missingSourceResult.status).not.toBe(0);
       expect(missingSourceResult.stdout).toContain("Required Ubuntu APT source is unavailable");
       expect(existsSync(aptTrace)).toBe(false);
+      expect(existsSync(binaryTrace)).toBe(false);
+
+      writeFileSync(ubuntuSources, "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\n");
+      const unavailablePackageResult = runInstall({ FAIL_APT_INSTALL: "1" });
+      expect(unavailablePackageResult.status).not.toBe(0);
+      expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toHaveLength(2);
+      expect(existsSync(binaryTrace)).toBe(false);
     } finally {
       rmSync(temp, { force: true, recursive: true });
     }
