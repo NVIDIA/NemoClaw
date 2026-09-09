@@ -63,17 +63,24 @@ const files = (overrides: Partial<ArtifactFiles> = {}): ArtifactFiles => ({
       repoClean: true,
       runtimeOverrides: false,
     },
-    workspace: { name: "workspace", id: "ws-1" },
+    workspace: { name: "nclaw-e2e-10-2", id: "ws-1" },
     fullE2e: "passed",
   }),
   "full-e2e.log": "output\nNEMOCLAW_FULL_E2E_PASSED\n",
   "cleanup.json": JSON.stringify({
-    workspaceName: "workspace",
+    workspaceName: "nclaw-e2e-10-2",
     workspaceId: "ws-1",
     status: "ABSENT",
     verifiedAt: "2026-06-01T01:00:00Z",
   }),
   ...overrides,
+});
+const recoveryReceipt = JSON.stringify({
+  schemaVersion: 1,
+  candidateSha: SHA,
+  runId: "10",
+  runAttempt: "2",
+  workspace: { name: "nclaw-e2e-10-2", id: "ws-1" },
 });
 const reader = (
   runs: WorkflowRun[] = [run()],
@@ -97,33 +104,71 @@ const reader = (
       : artifact,
 });
 describe("Launchable evidence inspection", () => {
-  it("returns a versioned receipt from candidate-bound successful evidence (#10798)", () =>
-    expect(inspectLaunchableEvidence({ candidate: SHA }, reader())).toEqual({
-      version: 1,
-      candidate: { sha: SHA },
-      run: { id: 10, attempt: 2, url: "https://example.test/runs/10" },
-      job: { id: 20, url: "https://example.test/jobs/20" },
-      artifact: { name: `staging-brev-launchable-${SHA}-10-2` },
-      producer: {
-        runId: 30,
-        status: "success",
-        url: "https://github.com/brevdev/nemoclaw-image/actions/runs/30",
+  it.each([false, true])(
+    "returns successful evidence with recovery receipt present=%s (#10798)",
+    (withRecovery) =>
+      expect(
+        inspectLaunchableEvidence(
+          { candidate: SHA },
+          reader(
+            undefined,
+            undefined,
+            files(withRecovery ? { "workspace-recovery.json": recoveryReceipt } : {}),
+          ),
+        ),
+      ).toEqual({
+        version: 1,
+        candidate: { sha: SHA },
+        run: { id: 10, attempt: 2, url: "https://example.test/runs/10" },
+        job: { id: 20, url: "https://example.test/jobs/20" },
+        artifact: { name: `staging-brev-launchable-${SHA}-10-2` },
+        producer: {
+          runId: 30,
+          status: "success",
+          url: "https://github.com/brevdev/nemoclaw-image/actions/runs/30",
+        },
+        boot: {
+          bootImage: "registry.test/image@sha256:123",
+          schemaVersion: 1,
+          sourceRepository: "NVIDIA/NemoClaw",
+          sourcePath: "/opt/nemoclaw-image/NemoClaw",
+          repoSha: SHA,
+          provisionSha: SHA,
+          imageRepositorySha: IMAGE_SHA,
+          repoClean: true,
+          runtimeOverrides: false,
+        },
+        workspace: { name: "nclaw-e2e-10-2", id: "ws-1" },
+        fullE2e: { status: "passed", sentinel: "NEMOCLAW_FULL_E2E_PASSED" },
+        cleanup: { status: "ABSENT", verifiedAt: "2026-06-01T01:00:00Z" },
+      }),
+  );
+  it.each([
+    [
+      "invalid boot provenance",
+      {
+        "launchable-e2e.json": files()["launchable-e2e.json"]!.replace(
+          "NVIDIA/NemoClaw",
+          "untrusted/repository",
+        ),
       },
-      boot: {
-        bootImage: "registry.test/image@sha256:123",
-        schemaVersion: 1,
-        sourceRepository: "NVIDIA/NemoClaw",
-        sourcePath: "/opt/nemoclaw-image/NemoClaw",
-        repoSha: SHA,
-        provisionSha: SHA,
-        imageRepositorySha: IMAGE_SHA,
-        repoClean: true,
-        runtimeOverrides: false,
-      },
-      workspace: { name: "workspace", id: "ws-1" },
-      fullE2e: { status: "passed", sentinel: "NEMOCLAW_FULL_E2E_PASSED" },
-      cleanup: { status: "ABSENT", verifiedAt: "2026-06-01T01:00:00Z" },
-    }));
+      "boot provenance is invalid",
+    ],
+    [
+      "a missing success sentinel",
+      { "full-e2e.log": "no successful run" },
+      "full-e2e.log is missing the exact success sentinel line",
+    ],
+  ])(
+    "preserves the error for %s when recovery evidence is present (#10798)",
+    (_case, overrides, message) => {
+      const artifact = files({ "workspace-recovery.json": recoveryReceipt, ...overrides });
+      const inspect = () =>
+        inspectLaunchableEvidence({ candidate: SHA }, reader(undefined, undefined, artifact));
+      expect(inspect).toThrow(message);
+      expect(inspect).toThrow("workspace=nclaw-e2e-10-2 id=ws-1 status=ABSENT");
+    },
+  );
   it("accepts candidate-bound artifacts from a later trusted main dispatch (#10798)", () =>
     expect(
       inspectLaunchableEvidence(
@@ -275,7 +320,7 @@ describe("Launchable evidence inspection", () => {
   it("reports recovery identity from a failed cleanup job (#10798)", () => {
     const artifact = files({
       "cleanup.json": JSON.stringify({
-        workspaceName: "workspace",
+        workspaceName: "nclaw-e2e-10-2",
         workspaceId: "ws-1",
         status: "PRESENT",
         checkedAt: "2026-06-01T01:00:00Z",
@@ -287,7 +332,7 @@ describe("Launchable evidence inspection", () => {
         reader([run()], { "10:2": [job(20, { conclusion: "failure" })] }, artifact),
       ),
     ).toThrow(
-      `run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=workspace id=ws-1 status=PRESENT checkedAt=2026-06-01T01:00:00Z`,
+      `run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=nclaw-e2e-10-2 id=ws-1 status=PRESENT checkedAt=2026-06-01T01:00:00Z`,
     );
   });
   it("rejects a mismatched artifact candidate (#10798)", () => {
@@ -390,7 +435,7 @@ describe("Launchable evidence inspection", () => {
   it("rejects the newest failed job instead of accepting older success (#10798)", () => {
     const artifact = files({
       "cleanup.json": JSON.stringify({
-        workspaceName: "workspace",
+        workspaceName: "nclaw-e2e-10-2",
         workspaceId: "ws-1",
         status: "PRESENT",
         checkedAt: "2026-07-01T01:00:00Z",
@@ -563,7 +608,7 @@ describe("Launchable evidence inspection", () => {
       const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
       const artifact = files({
         "cleanup.json": JSON.stringify({
-          workspaceName: "workspace",
+          workspaceName: "nclaw-e2e-10-2",
           workspaceId: "ws-1",
           status,
           checkedAt,
@@ -573,7 +618,7 @@ describe("Launchable evidence inspection", () => {
       expect(runCli(["--candidate", SHA], reader(undefined, undefined, artifact))).toBe(1);
       const message = String(stderr.mock.calls.at(-1)?.[0]);
       expect(message).toContain(
-        `run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=workspace id=ws-1 status=${status} checkedAt=${expected}`,
+        `run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=nclaw-e2e-10-2 id=ws-1 status=${status} checkedAt=${expected}`,
       );
       expect(message).not.toContain(`checkedAt=${verifiedAt ?? "undefined"}`);
     },
@@ -581,7 +626,7 @@ describe("Launchable evidence inspection", () => {
   it("preserves recovery identity for invalid verifiedAt (#10798)", () => {
     const artifact = files({
       "cleanup.json": JSON.stringify({
-        workspaceName: "workspace",
+        workspaceName: "nclaw-e2e-10-2",
         workspaceId: "ws-1",
         status: "ABSENT",
         checkedAt: "2026-06-01T01:00:00Z",
@@ -596,7 +641,7 @@ describe("Launchable evidence inspection", () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const artifact = files({
       "cleanup.json": JSON.stringify({
-        workspaceName: "workspace",
+        workspaceName: "nclaw-e2e-10-2",
         workspaceId: "ws-1",
         status: "ABSENT",
         checkedAt: "2026-06-01T01:00:00Z",
@@ -604,7 +649,7 @@ describe("Launchable evidence inspection", () => {
     });
     expect(runCli(["--candidate", SHA], reader(undefined, undefined, artifact))).toBe(1);
     expect(String(stderr.mock.calls.at(-1)?.[0])).toContain(
-      `run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=workspace id=ws-1 status=ABSENT checkedAt=2026-06-01T01:00:00Z`,
+      `run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=nclaw-e2e-10-2 id=ws-1 status=ABSENT checkedAt=2026-06-01T01:00:00Z`,
     );
   });
   it.each([
@@ -619,7 +664,7 @@ describe("Launchable evidence inspection", () => {
       ),
     ).toBe(1);
     expect(String(stderr.mock.calls.at(-1)?.[0])).toContain(
-      `cleanup ${reason}: run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=workspace id=ws-1 status=<missing> checkedAt=<missing>`,
+      `cleanup ${reason}: run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=nclaw-e2e-10-2 id=ws-1 status=<missing> checkedAt=<missing>`,
     );
   });
 });

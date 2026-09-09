@@ -326,6 +326,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Write E2E evidence manifest",
     "Upload skill-agent artifacts",
     "Upload E2E artifacts",
+    "Restore Docker CLI after native Podman E2E",
     "Clean up Docker auth",
   ];
   if (
@@ -658,6 +659,19 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       "standard E2E profile must upload only its validated artifact path with the reviewed action",
     );
   }
+  const restoreNativePodman = requireStep(
+    errors,
+    workflowSteps,
+    "Restore Docker CLI after native Podman E2E",
+  );
+  if (
+    restoreNativePodman?.if !== "${{ always() && inputs.runtime_provider == 'podman' }}" ||
+    restoreNativePodman.uses !== E2E_ACTION_PROVENANCE.restoreNativePodmanRuntime.reference ||
+    !isDeepStrictEqual(record(restoreNativePodman.with), { enabled: "true" }) ||
+    workflowSteps.indexOf(restoreNativePodman ?? {}) <= workflowSteps.indexOf(upload ?? {})
+  ) {
+    errors.push("standard E2E profile must restore Docker after native Podman artifact capture");
+  }
   const comparisonFinalize = requireStep(
     errors,
     workflowSteps,
@@ -702,6 +716,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   if (
     cleanup?.if !== "always()" ||
     cleanup.run !== "bash .github/scripts/docker-auth-cleanup.sh" ||
+    workflowSteps.indexOf(restoreNativePodman ?? {}) >= workflowSteps.indexOf(cleanup ?? {}) ||
     workflowSteps.at(-1) !== cleanup
   ) {
     errors.push("standard E2E profile must always clean up Docker authentication last");

@@ -299,6 +299,27 @@ describe("generate-openclaw-config :: agents manifest", () => {
     },
   );
 
+  it.each([
+    [
+      "secondary agent",
+      { agents: [makeExtra({ subagents: { maxSpawnDepth: 2 } })] },
+      "NEMOCLAW_EXTRA_AGENTS_JSON.agents[0].subagents",
+    ],
+    [
+      "main agent",
+      { agents: [], main: { subagents: { maxSpawnDepth: 2 } } },
+      "NEMOCLAW_EXTRA_AGENTS_JSON.main.subagents",
+    ],
+  ])(
+    "rejects per-agent maxSpawnDepth from a Base64 build payload for the %s",
+    (_label, payload, path) => {
+      expectBuildConfigError(
+        { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64(payload) },
+        `${path}.maxSpawnDepth is not accepted per-agent; OpenClaw honours it only on agents.defaults.subagents. Set it under the manifest 'defaults.subagents.maxSpawnDepth' instead.`,
+      );
+    },
+  );
+
   it("merges main.subagents and main.tools onto the canonical main entry", () => {
     const mainTools = { profile: "minimal", allow: ["read", "write"] };
     const mainSubagents = {

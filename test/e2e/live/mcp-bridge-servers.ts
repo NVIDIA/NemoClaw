@@ -29,6 +29,8 @@ export interface StartedHttpServer {
   close(): Promise<void>;
 }
 
+export const FAKE_MCP_STATUS_RESULT_TOKEN = "MCP_STATUS_OK";
+
 export interface FakeMcpRequest {
   method: string;
   path: string;
@@ -37,6 +39,7 @@ export interface FakeMcpRequest {
   sessionId: string;
   protocolVersion: string;
   rpcMethod?: string;
+  rpcToolName?: string;
   responseStatus?: number;
   responseHasResult?: boolean;
   negotiatedSessionId?: string;
@@ -475,6 +478,15 @@ export async function startCompatibleMock(options: {
   toolNames?: string[];
   deferredToolName?: string;
   progressiveToolSearch?: { toolName: string; query: string };
+  deniedToolProbe?:
+    | { mode: "bridge"; promptMarker: string; resultToken: string; toolName: string }
+    | {
+        mode: "progressive";
+        promptMarker: string;
+        query: string;
+        resultToken: string;
+        toolName: string;
+      };
 }): Promise<StartedHttpServer> {
   const server = http.createServer(async (req, res) => {
     const requestPath = new URL(req.url ?? "/", "http://compatible.mock").pathname;
@@ -508,6 +520,10 @@ export async function startCompatibleMock(options: {
       );
       const toolResults = (body.messages ?? []).filter((message) => message.role === "tool");
       const toolResultCount = toolResults.length;
+      const deniedToolProbe = options.deniedToolProbe;
+      const deniedToolProbeRequested =
+        deniedToolProbe !== undefined &&
+        JSON.stringify(body.messages ?? []).includes(deniedToolProbe.promptMarker);
       const sawAuthenticatedToolResult = toolResults.some((message) =>
         JSON.stringify(message.content).includes(options.toolResultToken ?? "__never__"),
       );
@@ -536,6 +552,11 @@ export async function startCompatibleMock(options: {
         } catch {
           return undefined;
         }
+      };
+      const isDeniedBridgeToolResult = (index: number, toolCallId: string) => {
+        const message = toolResults[index];
+        if (message?.tool_call_id !== toolCallId) return false;
+        return /policy_denied|blocked by deny rule/iu.test(JSON.stringify(message.content));
       };
       const classifyHermesSearchResult = (
         index: number,
@@ -615,8 +636,63 @@ export async function startCompatibleMock(options: {
         | { id: string; name: string; arguments: Record<string, unknown> }
         | undefined;
       let protocolError: string | undefined;
+      let deniedToolProbeComplete = false;
 
-      if (!sawAuthenticatedToolResult && options.progressiveToolSearch) {
+      if (deniedToolProbeRequested && deniedToolProbe) {
+        if (deniedToolProbe.mode === "bridge") {
+          if (toolResultCount === 0 && !visibleToolNames.has("tool_call")) {
+            protocolError = "denied-tool probe requires the tool_call bridge";
+          } else if (toolResultCount === 0) {
+            plannedToolCall = {
+              id: "call_denied_tool_bridge",
+              name: "tool_call",
+              arguments: { name: deniedToolProbe.toolName, arguments: {} },
+            };
+          } else if (toolResultCount === 1) {
+            deniedToolProbeComplete =
+              isDeniedBridgeToolResult(0, "call_denied_tool_bridge");
+            if (!deniedToolProbeComplete) {
+              protocolError = "denied-tool bridge call did not report a policy denial";
+            }
+          } else {
+            protocolError = "denied-tool bridge returned an unexpected result sequence";
+          }
+        } else if (toolResultCount === 0 && visibleToolNames.has(deniedToolProbe.toolName)) {
+          protocolError = `denied progressive target ${deniedToolProbe.toolName} was visible before search_tools`;
+        } else if (toolResultCount === 0 && !visibleToolNames.has("search_tools")) {
+          protocolError = "denied-tool probe requires search_tools";
+        } else if (toolResultCount === 0) {
+          plannedToolCall = {
+            id: "call_denied_tool_search",
+            name: "search_tools",
+            arguments: { query: deniedToolProbe.query },
+          };
+        } else if (
+          toolResultCount === 1 &&
+          !hasExpectedToolResult(0, "call_denied_tool_search", [
+            `- ${deniedToolProbe.toolName}:`,
+          ])
+        ) {
+          protocolError = "search_tools did not return the denied progressive target";
+        } else if (toolResultCount === 1 && !visibleToolNames.has(deniedToolProbe.toolName)) {
+          protocolError = "denied progressive target was not visible after search_tools";
+        } else if (toolResultCount === 1) {
+          plannedToolCall = {
+            id: "call_denied_progressive_tool",
+            name: deniedToolProbe.toolName,
+            arguments: {},
+          };
+        } else if (toolResultCount === 2) {
+          deniedToolProbeComplete =
+            toolResults[1]?.tool_call_id === "call_denied_progressive_tool" &&
+            /policy_denied|blocked by deny rule/iu.test(JSON.stringify(toolResults[1]?.content));
+          if (!deniedToolProbeComplete) {
+            protocolError = "denied progressive tool call did not report a policy denial";
+          }
+        } else {
+          protocolError = "denied progressive tool returned an unexpected result sequence";
+        }
+      } else if (!sawAuthenticatedToolResult && options.progressiveToolSearch) {
         const { query, toolName } = options.progressiveToolSearch;
         if (toolResultCount === 0 && visibleToolNames.has(toolName)) {
           protocolError = `progressive target ${toolName} was visible before search_tools`;
@@ -698,14 +774,16 @@ export async function startCompatibleMock(options: {
           };
         }
       }
-      const responseMessage = sawAuthenticatedToolResult
+      const responseMessage = deniedToolProbeComplete
+        ? { role: "assistant", content: deniedToolProbe?.resultToken }
+        : sawAuthenticatedToolResult
         ? {
             role: "assistant",
             content: options.toolResultToken,
           }
         : protocolError
           ? { role: "assistant", content: `mock protocol error: ${protocolError}` }
-          : plannedToolCall && options.toolChallenge
+          : plannedToolCall && (deniedToolProbeRequested || options.toolChallenge)
             ? {
                 role: "assistant",
                 content: null,
@@ -860,6 +938,9 @@ export async function startFakeMcpHttpsServer(options: {
     if (observedRequestId !== undefined) recordedObservation.rpcId = observedRequestId;
     if (typeof parsedPayload?.method === "string") {
       recordedObservation.rpcMethod = parsedPayload.method;
+    }
+    if (parsedPayload?.method === "tools/call" && typeof parsedPayload.params?.name === "string") {
+      recordedObservation.rpcToolName = parsedPayload.params.name;
     }
     // The public quick-tunnel readiness probe uses HEAD /mcp. Keep it out of
     // the protocol request ledger so zero-upstream decoy and policy-denial
@@ -1139,27 +1220,35 @@ export async function startFakeMcpHttpsServer(options: {
         return;
       }
     } else if (parsedPayload.method === "tools/call") {
+      const toolName = parsedPayload.params?.name;
       const challenge = parsedPayload.params?.arguments?.challenge;
-      if (
-        parsedPayload.params?.name !== "fake_echo" ||
-        (options.challenge !== undefined && challenge !== options.challenge)
-      ) {
-        respondRpc(responseId, {
-          jsonrpc: "2.0",
-          id: responseId,
-          error: { code: -32602, message: "invalid fake_echo challenge" },
-        });
-        return;
+      if (toolName === "fake_status") {
+        result = {
+          content: [{ type: "text", text: FAKE_MCP_STATUS_RESULT_TOKEN }],
+          isError: false,
+        };
+      } else {
+        if (
+          toolName !== "fake_echo" ||
+          (options.challenge !== undefined && challenge !== options.challenge)
+        ) {
+          respondRpc(responseId, {
+            jsonrpc: "2.0",
+            id: responseId,
+            error: { code: -32602, message: "invalid fake_echo challenge" },
+          });
+          return;
+        }
+        result = {
+          content: [
+            {
+              type: "text",
+              text: options.resultToken ?? `MCP_AUTH_REWRITE_OK::${String(challenge ?? "")}`,
+            },
+          ],
+          isError: false,
+        };
       }
-      result = {
-        content: [
-          {
-            type: "text",
-            text: options.resultToken ?? `MCP_AUTH_REWRITE_OK::${String(challenge ?? "")}`,
-          },
-        ],
-        isError: false,
-      };
     } else if (
       typeof parsedPayload.method === "string" &&
       Object.prototype.hasOwnProperty.call(MCP_EMPTY_RESULT_BY_METHOD, parsedPayload.method)

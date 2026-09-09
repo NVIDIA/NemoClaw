@@ -358,8 +358,13 @@ export function inspectLaunchableEvidence(options: Options, reader: EvidenceRead
   try {
     receipt = validateLaunchableEvidence(options.candidate, selection, artifactName, files);
   } catch (error) {
-    if (files["workspace-recovery.json"] !== undefined)
-      return earlyRecovery(options.candidate, selection, artifactName, files);
+    if (files["workspace-recovery.json"] !== undefined && error instanceof Error) {
+      try {
+        earlyRecovery(options.candidate, selection, artifactName, files);
+      } catch (recoveryError) {
+        if (recoveryError instanceof Error) fail(`${error.message}; ${recoveryError.message}`);
+      }
+    }
     throw error;
   }
   if (selection.job.conclusion !== "success")

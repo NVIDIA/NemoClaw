@@ -14,16 +14,27 @@ vi.mock("../../platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../platform")>()),
   containerCanReachHostLoopback: vi.fn(() => true),
 }));
+vi.mock("../../runner", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../runner")>();
+  return {
+    ...actual,
+    runCapture: vi.fn(actual.runCapture),
+    runCaptureEx: vi.fn(actual.runCaptureEx),
+  };
+});
 
 import {
   CONTAINER_REACHABILITY_IMAGE,
   loadPersistedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
+  OLLAMA_LOCALHOST,
   persistResolvedOllamaHost,
   resetOllamaHostCache,
   runOllamaWarmup,
   setResolvedOllamaHost,
+  validateOllamaModelWithToolsOverride,
 } from "../../inference/local";
+import { runCapture, runCaptureEx } from "../../runner";
 import { setupOllamaLocalInference } from "./ollama-local";
 import type { OllamaDeps } from "./types";
 
@@ -31,9 +42,11 @@ const CREDENTIAL_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
 
 beforeEach(() => {
   vi.stubEnv("DOCKER_CONTEXT", "default");
+  vi.stubEnv("DOCKER_HOST", "");
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   resetOllamaHostCache();
 });
@@ -51,7 +64,7 @@ function deps(overrides: OllamaDepsOverrides = {}): OllamaDeps {
   const { localInference, ...rest } = overrides;
   return {
     runOpenshell: vi.fn(() => ({ status: 0 })),
-    upsertProvider: vi.fn(() => ({ ok: true })),
+    upsertProvider: vi.fn(async () => ({ ok: true })),
     verifyInferenceRoute: vi.fn(),
     verifyOnboardInferenceSmoke: vi.fn(),
     isNonInteractive: () => true,
@@ -84,7 +97,7 @@ function deps(overrides: OllamaDepsOverrides = {}): OllamaDeps {
 
 describe("Ollama local provider sandbox-facing model gate", () => {
   it("refuses to record a route the sandbox endpoint cannot serve (#9454)", async () => {
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
     const validateSandboxFacingOllamaModel = vi.fn(() => ({
       ok: false,
@@ -136,7 +149,7 @@ describe("Ollama local provider sandbox-facing model gate", () => {
   });
 
   it("records the route when the sandbox endpoint serves the model", async () => {
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-provider-route-"));
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
     try {
@@ -222,7 +235,7 @@ describe("Ollama local provider sandbox-facing model gate", () => {
   });
 
   it("fails before provider registration when the cleanup route cannot be staged", async () => {
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
 
     await expect(
@@ -254,7 +267,7 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       setupOllamaLocalInference(
         { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
         deps({
-          upsertProvider: () => ({ ok: false, status: 1, message: "provider rejected" }),
+          upsertProvider: async () => ({ ok: false, status: 1, message: "provider rejected" }),
           localInference: {
             validateOllamaModelWithToolsOverride: () => ({ ok: true }),
             validateSandboxFacingOllamaModel: () => ({ ok: true }),
@@ -342,16 +355,27 @@ describe("Ollama local provider sandbox-facing model gate", () => {
   it("restores the prior cleanup route when model validation fails", async () => {
     const rollbackPersistedOllamaHost = vi.fn();
     const persistResolvedOllamaHost = vi.fn(() => rollbackPersistedOllamaHost);
+    const error = vi.fn();
+    setResolvedOllamaHost(OLLAMA_LOCALHOST);
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.mocked(runCapture).mockClear().mockReturnValueOnce("active");
+    vi.mocked(runCaptureEx)
+      .mockClear()
+      .mockReturnValueOnce({ stdout: "", stderr: "", exitCode: 28, timedOut: true })
+      .mockReturnValueOnce({ stdout: "", stderr: "", exitCode: 28, timedOut: true });
+    const recoveryMessage =
+      "Selected Ollama model 'llama3.2:1b' did not answer the local probe in time. " +
+      "It may still be loading, too large for the host, or otherwise unhealthy. " +
+      "Stale runner processes from a previous model may be holding GPU memory. " +
+      "Run 'sudo systemctl restart ollama' and rerun onboarding.";
 
     await expect(
       setupOllamaLocalInference(
         { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
         deps({
+          error,
           localInference: {
-            validateOllamaModelWithToolsOverride: () => ({
-              ok: false,
-              message: "model validation failed",
-            }),
+            validateOllamaModelWithToolsOverride,
             validateSandboxFacingOllamaModel: () => ({ ok: true }),
             persistResolvedOllamaHost,
           },
@@ -359,7 +383,10 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       ),
     ).rejects.toThrow("exit 1");
 
-    expect(rollbackPersistedOllamaHost).toHaveBeenCalledOnce();
+    expect({ errorCalls: error.mock.calls, rollbackCalls: rollbackPersistedOllamaHost.mock.calls }).toEqual({
+      errorCalls: [[`  ${recoveryMessage}`]],
+      rollbackCalls: [[]],
+    });
   });
 
   it("restores the prior cleanup route when model warm-up throws", async () => {

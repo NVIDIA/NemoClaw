@@ -42,6 +42,7 @@ import type {
   ManagedBootstrapRuntimeSnapshot,
 } from "./managed-bootstrap/runtime-create";
 import {
+  isExactOpenShellDockerSandboxReplacement,
   queryOpenShellDockerSandboxContainers,
   queryOpenShellDockerSandboxRuntimeSnapshot,
 } from "./openshell-docker-sandbox-containers";
@@ -245,7 +246,7 @@ function probeExactOpenShellSandboxId(
 
 async function verifyCreatedSandboxBeforeEffects(
   sandboxId: string,
-  createAttemptNonce: string,
+  createAttemptNonce: string | undefined,
   route: SelectedDockerGpuRoute,
   input: SandboxGpuCreateFlowInput,
 ): Promise<void> {
@@ -267,6 +268,14 @@ function resolveCreateAttemptNonce(
     return deferPostCreateEffects
       ? randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString("hex")
       : null;
+  }
+  if (
+    !resumedCreateAttemptNonce &&
+    input.resumeVerifiedCreate.route === "compatibility" &&
+    input.resumeVerifiedCreate.finalHandoffCommitStarted === true &&
+    /^[0-9a-f]{64}$/u.test(input.resumeVerifiedCreate.finalHandoffRuntimeId ?? "")
+  ) {
+    return null;
   }
   if (
     !resumedCreateAttemptNonce ||
@@ -434,6 +443,65 @@ async function verifyActivatedManagedCreateBeforeEffects(input: {
   }
 }
 
+function restartInterruptedFinalHandoff(
+  input: Pick<SandboxGpuCreateFlowInput, "gatewayName" | "resumeVerifiedCreate" | "sandboxName">,
+  deps: Pick<SandboxGpuCreateFlowDeps, "runOpenshell" | "verifyExactFinalHandoffRuntime">,
+): void {
+  if (input.resumeVerifiedCreate?.finalHandoffCommitStarted !== true) return;
+  const replacementRuntimeId = input.resumeVerifiedCreate.finalHandoffRuntimeId;
+  if (!replacementRuntimeId) {
+    throw new Error(
+      "Interrupted Docker final handoff has no durable replacement runtime authority.",
+    );
+  }
+  const verifyExactRuntime =
+    deps.verifyExactFinalHandoffRuntime ?? isExactOpenShellDockerSandboxReplacement;
+  if (!verifyExactRuntime(input.sandboxName, replacementRuntimeId, false)) {
+    throw new Error(
+      "Interrupted Docker final handoff could not prove the exact replacement as the sole Docker runtime before restart.",
+    );
+  }
+  deps.runOpenshell(["sandbox", "start", "-g", input.gatewayName, input.sandboxName], {
+    ignoreError: true,
+    timeout: SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+    killProcessTreeOnTimeout: true,
+  });
+}
+
+function acknowledgeInterruptedFinalHandoff(
+  input: Pick<
+    SandboxGpuCreateFlowInput,
+    "persistResumedFinalHandoffAcknowledgement" | "resumeVerifiedCreate" | "sandboxName"
+  >,
+  deps: Pick<SandboxGpuCreateFlowDeps, "verifyExactFinalHandoffRuntime">,
+): void {
+  if (input.resumeVerifiedCreate?.finalHandoffCommitStarted !== true) return;
+  const replacementRuntimeId = input.resumeVerifiedCreate.finalHandoffRuntimeId;
+  if (!replacementRuntimeId) {
+    throw new Error(
+      "Interrupted Docker final handoff has no durable replacement runtime authority.",
+    );
+  }
+  const verifyExactRuntime =
+    deps.verifyExactFinalHandoffRuntime ?? isExactOpenShellDockerSandboxReplacement;
+  if (!verifyExactRuntime(input.sandboxName, replacementRuntimeId, true)) {
+    throw new Error(
+      "Interrupted Docker final handoff did not prove the exact replacement as the sole running Docker runtime.",
+    );
+  }
+  input.persistResumedFinalHandoffAcknowledgement?.();
+}
+
+function requiresRuntimePatchApplication(input: {
+  readonly managedLifecycle: ManagedBootstrapRuntimeCreateLifecycle | null;
+  readonly portableLifecycle: boolean;
+  readonly resumedFinalHandoff: boolean;
+}): boolean {
+  if (input.resumedFinalHandoff && !input.managedLifecycle) return false;
+  return !input.portableLifecycle || input.managedLifecycle !== null;
+}
+
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
@@ -546,7 +614,7 @@ export function createSandboxGpuCreateAttemptRunner(
         const persistenceFailureMessage =
           "NemoClaw could not save the retained sandbox recovery record for this create attempt.";
         console.error(
-          `  ${persistenceFailureMessage} Preserve the terminal output for an OpenShell administrator.`,
+          `  ${persistenceFailureMessage} Preserve the registry entry and terminal output; do not delete the sandbox by mutable name.`,
         );
         throw new Error(persistenceFailureMessage, { cause: persistenceCause });
       }
@@ -774,7 +842,7 @@ export function createSandboxGpuCreateAttemptRunner(
         throw new Error(
           createAttemptNonce
             ? `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw retained the sandbox and blocked post-create effects. Follow the retained recovery action above.`
-            : `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw blocked post-create effects. No create-attempt identity was available for retained recovery. Preserve the sandbox for identity-bound OpenShell administrator recovery; do not delete it by mutable name.`,
+            : `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw blocked post-create effects. No create-attempt identity was available for retained recovery. Preserve the registry entry and terminal output; do not delete the sandbox by mutable name.`,
         );
       }
       return createResult;
@@ -807,7 +875,7 @@ export function createSandboxGpuCreateAttemptRunner(
       resumedSandboxId = identity.sandboxId;
       await verifyCreatedSandboxBeforeEffects(
         identity.sandboxId,
-        createAttemptNonce!,
+        createAttemptNonce ?? undefined,
         route,
         input,
       );
@@ -1063,12 +1131,19 @@ export function createSandboxGpuCreateAttemptRunner(
         createResult?.status === 0 ? 1 : (createResult?.status ?? 1),
       );
     }
-    if (!portableLifecycle || managedLifecycle) {
+    if (
+      requiresRuntimePatchApplication({
+        managedLifecycle,
+        portableLifecycle,
+        resumedFinalHandoff: input.resumeVerifiedCreate?.finalHandoffCommitStarted === true,
+      })
+    ) {
       revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
       await runtimePatch.ensureApplied();
     }
     await runtimePatch.waitForSupervisorReconnectIfNeeded();
     revalidatePostCreateEffect(`reconnect sandbox supervisor for '${input.sandboxName}'`);
+    restartInterruptedFinalHandoff(input, deps);
     console.log("  Waiting for sandbox to become ready...");
     const readiness = await sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
       sandboxName: input.sandboxName,
@@ -1158,13 +1233,16 @@ export function createSandboxGpuCreateAttemptRunner(
         console.error(
           `  NemoClaw left sandbox '${input.sandboxName}' in place because OpenShell can delete it only by mutable name.`,
         );
-        console.error("  Verify the sandbox identity before manual cleanup.");
+        console.error(
+          `  Recovery remains blocked while this sandbox exists. Do not delete it by mutable name; run 'nemoclaw ${input.sandboxName} destroy' to check for authoritative absence.`,
+        );
       }
       failAfterCreatedSandboxVerification(
         `Sandbox '${input.sandboxName}' did not become ready after verified creation.`,
         createResult?.status === 0 ? 1 : (createResult?.status ?? 1),
       );
     }
+    acknowledgeInterruptedFinalHandoff(input, deps);
     if (input.sandboxGpuConfig.sandboxGpuEnabled) {
       revalidatePostCreateEffect(`verify GPU access for sandbox '${input.sandboxName}'`);
       const deferNativeProofFailure =
@@ -1241,7 +1319,9 @@ export function createSandboxGpuCreateAttemptRunner(
     // their final authoritative Ready gate here.
     if (!input.sandboxGpuConfig.sandboxGpuEnabled) {
       revalidatePostCreateEffect(`commit runtime readiness for sandbox '${input.sandboxName}'`);
-      await runtimePatch.commitAfterReady();
+      await runtimePatch.commitAfterReady({
+        beforeFinalHandoff: input.persistFinalHandoffCommitStarted,
+      });
     }
     return {
       ok: true,

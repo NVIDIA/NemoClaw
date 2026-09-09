@@ -476,7 +476,7 @@ describe("startSandbox", () => {
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
   });
 
-  it("keeps active Hermes start out of every Docker path (#9203)", async () => {
+  it("repairs Hermes Portable forwards after lifecycle recovery (#11248)", async () => {
     const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
@@ -498,7 +498,10 @@ describe("startSandbox", () => {
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
     expect(h.dockerUnpause).not.toHaveBeenCalled();
     expect(h.restoreStartupState).not.toHaveBeenCalled();
-    expect(h.verifyGateway).not.toHaveBeenCalled();
+    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+    expect(h.recoverPortableSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
 

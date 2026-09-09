@@ -502,7 +502,11 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
     );
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands).not.toContain("ssh full-e2e diagnostic platform state");
-    expect(commands.indexOf("ExecMainCode")).toBeLessThan(commands.indexOf("brev delete ws-1"));
+    const diagnosticIndex = commands.indexOf("ExecMainCode");
+    const deletionIndex = commands.indexOf("brev delete ws-1");
+    expect(diagnosticIndex).toBeGreaterThanOrEqual(0);
+    expect(deletionIndex).toBeGreaterThanOrEqual(0);
+    expect(diagnosticIndex).toBeLessThan(deletionIndex);
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
