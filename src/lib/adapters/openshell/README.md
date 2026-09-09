@@ -41,6 +41,8 @@ Provider reads retain the complete config-key inventory so export can reject uns
 environment values. Configuration reads return revision metadata, not settings or credential values.
 Export compares two complete observations and can repeat that pair once when state changes.
 
-Other provider CRUD, credential, profile, attachment, policy mutation, and lifecycle consumers
-keep their existing adapters. Their migration remains with the linked capability issues. This
-change does not replace their contracts or claim SDK qualification for their operations.
+Managed rebuild recovery and snapshot-clone provider inspection, profile import, and creation use
+`managed-provider-adapter.ts`, which binds the typed CLI adapter to the selected gateway. Provider
+detachment, deletion, replacement cleanup, and other lifecycle operations keep their existing
+adapters until the remaining #9806 migration slices land. This does not claim SDK qualification for
+those operations.

@@ -326,13 +326,13 @@ export async function runRebuildPreflightPhase(
         resumeConfig.credentialEnv && hydrateCredentialEnv(resumeConfig.credentialEnv),
       );
       if (
-        !checkRebuildGatewayCredentialReuseOrBail(
+        !(await checkRebuildGatewayCredentialReuseOrBail(
           sandboxName,
           resumeConfig,
           hostCredentialAvailable,
           log,
           bail,
-        )
+        ))
       ) {
         return null;
       }
