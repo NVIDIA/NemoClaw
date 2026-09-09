@@ -122,7 +122,7 @@ export function createHermesGpuFallbackWrapper(
     `REAL_OPENSHELL=${quoteShellLiteral(realOpenshellPath)}`,
     `FALLBACK_STATE_DIR=${quoteShellLiteral(stateDir)}`,
     'NATIVE_CREATE_REJECTED="$FALLBACK_STATE_DIR/native-create-rejected"',
-    'SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-}"',
+    `SANDBOX_NAME="$(printf '%s\\n' "$@" | awk 'previous == "--name" { print; exit } /^--name=/ { sub(/^--name=/, ""); print; exit } /^NEMOCLAW_SANDBOX_NAME=/ { sub(/^NEMOCLAW_SANDBOX_NAME=/, ""); print; exit } { previous = $0 }')"`,
     "",
     "commit_compatibility_handoff() {",
     '  REAL_OPENSHELL_LINK="$FALLBACK_STATE_DIR/openshell-real.$$"',

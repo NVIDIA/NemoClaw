@@ -417,7 +417,6 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
       ...process.env,
       ...wrapper.componentEnv,
       E2E_FAKE_READY: ready,
-      NEMOCLAW_SANDBOX_NAME: "alpha",
     };
     const compatibility = spawnWrapper(
       wrapper.wrapperPath,
@@ -458,11 +457,19 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
       ...process.env,
       ...wrapper.componentEnv,
       E2E_FAKE_READY: ready,
-      NEMOCLAW_SANDBOX_NAME: "alpha",
     };
     const compatibility = spawnWrapper(
       wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--name", "alpha", "--gpu-device", "all"],
+      [
+        "sandbox",
+        "create",
+        "--from",
+        "image",
+        "--gpu-device",
+        "all",
+        "--",
+        "NEMOCLAW_SANDBOX_NAME=alpha",
+      ],
       env,
     );
     const compatibilityStatus = waitForChild(compatibility);
