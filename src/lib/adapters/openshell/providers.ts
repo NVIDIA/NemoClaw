@@ -11,9 +11,12 @@ import {
   text,
   type ConnectOpenShellReader,
   type ReadRequest,
+  type OpenShellReadClient,
 } from "./sdk-read";
 
-import { ProviderResponseSchema } from "./sdk-read-schema";
+import { BuiltinNvidiaProfileResponseSchema, ProviderResponseSchema } from "./sdk-read-schema";
+
+import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
 
 import type { OpenShellProviderMetadata } from "./provider-adapter";
 
@@ -23,12 +26,28 @@ export type Provider = Readonly<
     workspace: string;
     resourceVersion: string;
     config: Readonly<Record<string, string>>;
+    builtinInferenceEndpoint?: string;
   }
 >;
 export interface Providers {
   get(
     request: ReadRequest & Readonly<{ name: string; configKeys: readonly string[] }>,
   ): Promise<Provider | null>;
+}
+
+async function readBuiltinNvidiaEndpoint(
+  client: OpenShellReadClient,
+  request: ReadRequest,
+): Promise<string> {
+  request.signal.throwIfAborted();
+  readValue(
+    BuiltinNvidiaProfileResponseSchema,
+    await client.raw.getProviderProfile(
+      { id: "nvidia", workspace: request.workspace },
+      { signal: request.signal },
+    ),
+  );
+  return BUILD_ENDPOINT_URL;
 }
 
 export function createProviders(
@@ -54,8 +73,18 @@ export function createProviders(
         }
         const { provider } = readValue(ProviderResponseSchema, response);
         const { config } = provider;
+        const identity = metadata(provider.metadata, name, request.workspace);
+        let builtinInferenceEndpoint: string | undefined;
+        if (
+          provider.type === "nvidia" &&
+          provider.profileWorkspace === "" &&
+          Object.keys(config).length === 0
+        ) {
+          builtinInferenceEndpoint = await readBuiltinNvidiaEndpoint(client, request);
+        }
         return owned({
-          ...metadata(provider.metadata, name, request.workspace),
+          ...identity,
+          ...(builtinInferenceEndpoint === undefined ? {} : { builtinInferenceEndpoint }),
           type: provider.type,
           credentialKeys: [
             ...new Set([
