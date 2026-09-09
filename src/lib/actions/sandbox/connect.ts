@@ -10,7 +10,6 @@ import {
   type OpenShellSandboxObservation,
   type OpenShellSandboxObserver,
 } from "../../adapters/openshell/sandbox-observer";
-import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
   captureResolvedOpenshell,
@@ -38,6 +37,7 @@ import {
   planInferenceRouteReconcile,
   sanitizeRouteValueForDisplay,
 } from "../../inference/config";
+import { GatewayRouteConflictError } from "../../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import {
   findReachableOllamaHost,
@@ -71,7 +71,6 @@ import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
   buildGatewayInferenceSetArgs,
-  GatewayRouteConflictError,
   sandboxUsesLegacyClusterGateway,
 } from "./connect-inference-gateway";
 import {
@@ -2144,15 +2143,12 @@ export function printInteractiveSessionHints(sandboxName: string): void {
 
   // Active session hint — inform if already connected in another terminal
   try {
-    const opsBinConnect = resolveOpenshell();
-    if (opsBinConnect) {
-      const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinConnect));
-      if (sessionResult.detected && sessionResult.sessions.length > 0) {
-        const count = sessionResult.sessions.length;
-        console.log(
-          `  ${D}Note: ${count} existing SSH session${count > 1 ? "s" : ""} to '${sandboxName}' detected (another terminal).${R}`,
-        );
-      }
+    const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps());
+    if (sessionResult.detected && sessionResult.sessions.length > 0) {
+      const count = sessionResult.sessions.length;
+      console.log(
+        `  ${D}Note: ${count} existing SSH session${count > 1 ? "s" : ""} to '${sandboxName}' detected (another terminal).${R}`,
+      );
     }
   } catch {
     /* non-fatal — don't block connect on session detection failure */
