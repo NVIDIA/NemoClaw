@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -45,27 +45,35 @@ function openshellResult(status: number, stdout: string, stderr: string) {
  * serves `body` at `code`, so the in-sandbox classification is exercised rather
  * than simulated. Returns the probe's stdout.
  */
-function runProbeCommandWithBody(code: string, body: string): string {
-  const dir = mkdtempSync(path.join(tmpdir(), "nemoclaw-probe-parity-"));
-  const bin = path.join(dir, "bin");
-  mkdirSync(bin);
-  writeFileSync(path.join(dir, "body.txt"), body);
-  writeFileSync(
-    path.join(bin, "curl"),
-    [
-      "#!/bin/sh",
-      'out=""; prev=""',
-      'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done',
-      `cat ${JSON.stringify(path.join(dir, "body.txt"))} > "$out"`,
-      `printf '%s' ${JSON.stringify(code)}`,
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-  const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(input)], {
-    encoding: "utf8",
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}` },
-  });
-  return run.stdout || "";
+function runProbeCommandWithBody(
+  code: string,
+  body: string,
+  parentDirectory: string = tmpdir(),
+): string {
+  const dir = mkdtempSync(path.join(parentDirectory, "nemoclaw-probe-parity-"));
+  try {
+    const bin = path.join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(path.join(dir, "body.txt"), body);
+    writeFileSync(
+      path.join(bin, "curl"),
+      [
+        "#!/bin/sh",
+        'out=""; prev=""',
+        'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done',
+        `cat ${JSON.stringify(path.join(dir, "body.txt"))} > "$out"`,
+        `printf '%s' ${JSON.stringify(code)}`,
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(input)], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}` },
+    });
+    return run.stdout || "";
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 const NVCF_BODY_VARIANTS = [
@@ -200,6 +208,28 @@ describe("sandbox inference invocation probe", () => {
       expect(stdout).not.toContain("abc-123");
     },
   );
+
+  it("rejects a multiline NVCF body consistently across host and sandbox classifiers (#10879)", () => {
+    const body = `{"status":404,"detail":"Function\n'abc-123': Not found for account 'acct-42'"}`;
+
+    expect(isNvcfFunctionNotFoundForAccount(body)).toBe(false);
+
+    const stdout = runProbeCommandWithBody("404", body);
+
+    expect(stdout.trim()).toBe("404");
+    expect(stdout).not.toContain("nemoclaw-probe:nvcf-function-not-found");
+  });
+
+  it("removes the shell harness directory after the probe exits (#10879)", () => {
+    const parentDirectory = mkdtempSync(path.join(tmpdir(), "nemoclaw-probe-parity-parent-"));
+    try {
+      runProbeCommandWithBody("404", "404 page not found", parentDirectory);
+
+      expect(readdirSync(parentDirectory)).toEqual([]);
+    } finally {
+      rmSync(parentDirectory, { recursive: true, force: true });
+    }
+  });
 
   it("leaves a generic 404 body unclassified and unreported (#10879)", () => {
     const body = "404 page not found";

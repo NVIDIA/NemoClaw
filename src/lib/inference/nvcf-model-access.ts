@@ -21,7 +21,7 @@
  * raw NVCF body. See issue #1601.
  */
 export function isNvcfFunctionNotFoundForAccount(message: string): boolean {
-  return /Function\s+'[^']+':\s*Not found for account/i.test(String(message || ""));
+  return /Function[ \t]+'[^']+':[ \t]*Not found for account/i.test(String(message || ""));
 }
 
 /**
@@ -33,10 +33,11 @@ export function isNvcfFunctionNotFoundForAccount(message: string): boolean {
  * agree on what an account-entitlement 404 is, or the same provider response
  * yields a remediation during onboarding and a bare HTTP 404 at `status`.
  * `NVCF_FUNCTION_NOT_FOUND_SHELL_MATCH_ARGS` carries the case-insensitive flag
- * that `/i` supplies on the TypeScript side; `[[:space:]]` mirrors `\s`.
+ * that `/i` supplies on the TypeScript side. Both forms accept horizontal
+ * whitespace only because the shell matcher processes one line at a time.
  */
 export const NVCF_FUNCTION_NOT_FOUND_SHELL_ERE =
-  "Function[[:space:]]+'[^']+':[[:space:]]*Not found for account";
+  "Function[[:blank:]]+'[^']+':[[:blank:]]*Not found for account";
 export const NVCF_FUNCTION_NOT_FOUND_SHELL_MATCH_ARGS = "-qiE";
 
 /**
