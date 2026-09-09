@@ -235,7 +235,7 @@ validate_audit_evidence() {
   }
   audit_receipt_sha256="$(sha256sum "$audit_receipt" | awk '{print $1}')"
   audit_policy_result="$work_dir/mcporter-runtime.policy.json"
-  node --experimental-strip-types --no-warnings "$trusted_receipt_verifier" \
+  node --no-warnings "$trusted_receipt_verifier" \
     --receipt "$audit_receipt" \
     --package-json "$source_root/agents/openclaw/mcporter-runtime/package.json" \
     --package-lock "$source_root/agents/openclaw/mcporter-runtime/package-lock.json" \
