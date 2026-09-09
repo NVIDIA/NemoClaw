@@ -912,19 +912,32 @@ function isExplicitGatewayRegistrationAbsence(output: string, gatewayLabel: stri
   const clean = output.replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "");
   const escapedLabel = gatewayLabel.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const namedGateway = `(?:['"]${escapedLabel}['"]|${escapedLabel})`;
-  return clean.split(/\r?\n/u).some((rawLine) => {
-    const line = rawLine
+  const structuredNotFound =
+    `(?:status:\\s*['"]?NotFound['"]?|` + `code:\\s*['"]Some requested entity was not found['"])`;
+  const normalizeLine = (rawLine: string) =>
+    rawLine
       .trim()
       .replace(/^Error:\s*/iu, "")
       .replace(/^×\s*/u, "");
+  const completeDiagnostic = normalizeLine(clean);
+  if (
+    /^gateway not found\.?$/iu.test(completeDiagnostic) ||
+    new RegExp(
+      `^${structuredNotFound},\\s*message:\\s*['"]gateway\\s+(?:does not exist|not found)['"]\\.?$`,
+      "iu",
+    ).test(completeDiagnostic)
+  ) {
+    return true;
+  }
+  return clean.split(/\r?\n/u).some((rawLine) => {
+    const line = normalizeLine(rawLine);
     return (
-      /^gateway not found\.?$/iu.test(line) ||
       new RegExp(`^No gateway metadata found for ${namedGateway}\\.?$`, "iu").test(line) ||
       new RegExp(`^gateway\\s+${namedGateway}\\s+(?:does not exist|not found)\\.?$`, "iu").test(
         line,
       ) ||
       new RegExp(
-        `^status:\\s*['"]?NotFound['"]?,\\s*message:\\s*['"]gateway(?:\\s+${escapedLabel})?\\s+(?:does not exist|not found)['"]\\.?$`,
+        `^${structuredNotFound},\\s*message:\\s*['"]gateway\\s+${escapedLabel}\\s+(?:does not exist|not found)['"]\\.?$`,
         "iu",
       ).test(line)
     );

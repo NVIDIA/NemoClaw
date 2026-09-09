@@ -95,7 +95,13 @@ function preserveCaseDeps(
 }
 
 describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#6520)", () => {
-  it("uses the 'already removed' wording for provider and sandbox delete no-ops", async () => {
+  it.each([
+    ["status", "Error: × status: 'NotFound', message: \"gateway not found\""],
+    [
+      "code",
+      "Error: × code: 'Some requested entity was not found', message: \"gateway not found\"",
+    ],
+  ])("uses the 'already removed' wording for structured %s no-ops", async (_kind, diagnostic) => {
     // Same defect family as the gateway wording fix (#3456 sub-bug 4): when
     // `openshell provider delete <name>` or `openshell sandbox delete --all`
     // no-ops (target already gone), `Deleted provider 'X' skipped` reads as if
@@ -119,7 +125,7 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
               ? {
                   status: 1,
                   stdout: "",
-                  stderr: "Error: × status: 'NotFound', message: \"gateway not found\"",
+                  stderr: diagnostic,
                 }
               : command === "openshell"
                 ? notFound()
