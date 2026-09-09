@@ -58,6 +58,7 @@ import { withPortableHostFence } from "../../../src/lib/state/portable-uninstall
 import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { retryUntil } from "../../../src/lib/core/retry.ts";
 import { test } from "../fixtures/e2e-test.ts";
+import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
 import {
   cleanupPortableHostGatewayAlias,
   cleanupPortableProfileRootlessFixture,
@@ -1102,7 +1103,7 @@ async function main(progress: TestProgress): Promise<void> {
       gatewayPort: 8080,
       stateDir,
       podmanSocketPath: `${runtimeDir}/podman/podman.sock`,
-      getDockerSupervisorImage: () => "supervisor:e2e-not-launched",
+      getDockerSupervisorImage: () => OPENSHELL_V0106_QUALIFICATION.supervisorImage,
       resolveSandboxBin: () => sandboxBin,
     });
     assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, `https://${PORTABLE_HOST_GATEWAY_IP}:8080`);
