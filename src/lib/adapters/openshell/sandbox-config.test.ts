@@ -19,6 +19,68 @@ function exportedEndpoint(endpoint: Record<string, unknown>) {
 }
 
 describe("SDK policy document conversion", () => {
+  it.each([
+    ["version", { version: "1" }],
+    ["filesystem", { filesystem: false }],
+    ["workdir flag", { filesystem: { include_workdir: "false" } }],
+    ["filesystem paths", { filesystem: { read_only: [42] } }],
+    ["process identity", { process: { run_as_user: 42 } }],
+    ["network policy map", { network_policies: [] }],
+    ["network rule", { network_policies: { api: false } }],
+    ["endpoint list", { network_policies: { api: { endpoints: {} } } }],
+    ["binary path", { network_policies: { api: { binaries: [{ path: 42 }] } } }],
+  ])("rejects a malformed %s before policy conversion", (_field, input) => {
+    expect(() => sdkPolicyDocument(input)).toThrow("OpenShell read failed (schema).");
+  });
+
+  it.each([
+    ["host", { host: 123 }],
+    ["port", { port: "443" }],
+    ["port list", { ports: ["443"] }],
+    ["negative port", { port: -1 }],
+    ["fractional port", { port: 443.5 }],
+    ["uint32 overflow", { port: 4294967296 }],
+    ["protocol", { protocol: false }],
+    ["MCP options", { mcp: false }],
+    ["MCP strict tool names", { mcp: { strict_tool_names: "false" } }],
+    ["MCP method profile", { mcp: { allow_all_known_mcp_methods: "false" } }],
+    ["body limit", { json_rpc_max_body_bytes: "4096" }],
+    ["rules", { rules: {} }],
+    ["allow matcher", { rules: [{ allow: false }] }],
+    ["method", { rules: [{ allow: { method: 42 } }] }],
+    ["query glob", { rules: [{ allow: { query: { repo: { glob: 42 } } } }] }],
+    ["parameter glob", { rules: [{ allow: { params: { name: { glob: 42 } } } }] }],
+    ["parameter choices", { rules: [{ allow: { params: { name: { any: [false] } } } }] }],
+    ["deny matcher", { deny_rules: [false] }],
+  ])("rejects a malformed endpoint %s before conversion", (_field, input) => {
+    expect(() => document(input)).toThrow("OpenShell read failed (schema).");
+  });
+
+  it("accepts omitted protobuf defaults without inventing optional sections", () => {
+    expect(sdkPolicyDocument({})).toEqual({ version: 0 });
+    expect(exportedEndpoint({ rules: [{ allow: { params: { name: {} } } }] })).toEqual({
+      rules: [{ allow: { params: { name: "" } } }],
+    });
+  });
+
+  it("preserves untouched policy fields without mutating the input", () => {
+    const endpoint = {
+      protocol: "mcp",
+      tls: "terminate",
+      allowed_ips: ["192.0.2.1"],
+      json_rpc_max_body_bytes: 4096,
+      mcp: { strict_tool_names: false },
+    };
+    const before = structuredClone(endpoint);
+    expect(exportedEndpoint(endpoint)).toEqual({
+      protocol: "mcp",
+      tls: "terminate",
+      allowed_ips: ["192.0.2.1"],
+      mcp: { strict_tool_names: false, max_body_bytes: 4096 },
+    });
+    expect(endpoint).toEqual(before);
+  });
+
   it("preserves filesystem defaults and omits an empty process identity", () => {
     expect(
       sdkPolicyDocument({

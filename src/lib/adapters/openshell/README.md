@@ -26,6 +26,8 @@ strings so uint64 values cannot lose precision.
 
 `sdk-read-schema.ts` defines TypeBox schemas for consumed response fields. Validate before
 projection, keep credential values opaque, and check response identities against the request.
+Policy protobuf JSON passes through a consumed-field schema before document conversion. Converter
+input types come from that schema; fields outside the conversion stay with the complete policy validator.
 Schema failures use fixed messages without rejected values.
 
 Provider reads return credential names and requested non-secret config values.

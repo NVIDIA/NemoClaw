@@ -6,7 +6,12 @@ import { sortCanonicalMappings } from "../../config/canonical-mapping";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import type { SandboxConfiguration } from "../../domain/sandbox/configuration";
 import type { OpenShellSandboxPolicyRead } from "./sandbox-policy";
-import { SandboxConfigResponseSchema } from "./sdk-read-schema";
+import {
+  PolicyJsonSchema,
+  SandboxConfigResponseSchema,
+  type PolicyEndpointJson,
+  type PolicyMatcherJson,
+} from "./sdk-read-schema";
 import {
   connectOpenShellReader,
   OpenShellReadError,
@@ -60,15 +65,9 @@ export function createSandboxConfig(
   };
 }
 
-type Value = string | number | boolean | null | Value[] | Mapping;
-type Mapping = { [key: string]: Value };
-
-function mapping(value: unknown): Mapping {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new OpenShellReadError("schema");
-  }
-  return value as Mapping;
-}
+type PolicyDocument = Record<string, unknown>;
+type ParameterMatcher = string | { any: string[] };
+type ParameterTree = { [key: string]: ParameterMatcher | ParameterTree };
 
 function rejectUnknownWireFields(value: unknown): void {
   if (!value || typeof value !== "object") return;
@@ -78,86 +77,91 @@ function rejectUnknownWireFields(value: unknown): void {
   for (const child of Object.values(value)) rejectUnknownWireFields(child);
 }
 
-function matchers(value: Value | undefined): Mapping {
+function matchers(value: PolicyMatcherJson["params"]): Record<string, ParameterMatcher> {
   return Object.fromEntries(
-    Object.entries(mapping(value ?? {})).map(([key, value]) => {
-      const matcher = mapping(value);
-      return [
-        key,
-        Array.isArray(matcher.any) && matcher.any.length
-          ? { any: matcher.any }
-          : (matcher.glob ?? ""),
-      ];
-    }),
+    Object.entries(value ?? {}).map(([key, matcher]) => [
+      key,
+      matcher.any?.length ? { any: matcher.any } : (matcher.glob ?? ""),
+    ]),
   );
 }
 
-function nestedParams(flat: Mapping): Mapping {
-  const root: Mapping = Object.create(null);
-  const leaves = new Set<string>();
+function nestedParams(flat: Record<string, ParameterMatcher>): ParameterTree {
+  const root: ParameterTree = Object.create(null);
+  const branches = new Map<string, ParameterTree>();
   for (const key of Object.keys(flat).sort()) {
     const parts = key.split(".");
     let parent = root;
     for (let index = 0; index < parts.length - 1; index++) {
-      if (leaves.has(parts.slice(0, index + 1).join("."))) return flat;
-      const part = parts[index];
-      if (!Object.hasOwn(parent, part)) parent[part] = Object.create(null);
-      parent = mapping(parent[part]);
+      const prefix = parts.slice(0, index + 1).join(".");
+      if (Object.hasOwn(flat, prefix)) return flat;
+      const child: ParameterTree = branches.get(prefix) ?? Object.create(null);
+      parent[parts[index]] = child;
+      branches.set(prefix, child);
+      parent = child;
     }
     parent[parts.at(-1)!] = flat[key];
-    leaves.add(key);
   }
   return root;
 }
 
-function omittedMcpMethod(rule: Mapping, allowKnownMethods: boolean): boolean {
-  return Object.hasOwn(rule, "tool")
-    ? allowKnownMethods && rule.method === "tools/call"
-    : rule.method === "*";
+function omittedMcpMethod(
+  method: PolicyMatcherJson["method"],
+  hasTool: boolean,
+  allowKnownMethods: boolean,
+): boolean {
+  return hasTool ? allowKnownMethods && method === "tools/call" : method === "*";
 }
 
-function convertMatcher(value: Value, mcp: boolean, allowKnownMethods: boolean): Mapping {
-  const result = { ...mapping(value) };
-  if (result.query) result.query = matchers(result.query);
-  const params = matchers(result.params);
+function convertMatcher(
+  value: PolicyMatcherJson,
+  mcp: boolean,
+  allowKnownMethods: boolean,
+): PolicyDocument {
+  const result: PolicyDocument = { ...value };
+  if (value.query) result.query = matchers(value.query);
+  const params = matchers(value.params);
   if (mcp && Object.hasOwn(params, "name")) {
     result.tool = params.name;
     delete params.name;
   }
   if (Object.keys(params).length) result.params = mcp ? nestedParams(params) : params;
   else delete result.params;
-  if (mcp && omittedMcpMethod(result, allowKnownMethods)) delete result.method;
+  if (mcp && omittedMcpMethod(value.method, Object.hasOwn(result, "tool"), allowKnownMethods))
+    delete result.method;
   return result;
 }
 
-function compactEndpointPorts(endpoint: Mapping): void {
-  if (Array.isArray(endpoint.ports) && endpoint.ports.length) {
-    if (endpoint.ports.length === 1) {
-      endpoint.port = endpoint.ports[0];
+function compactEndpointPorts(endpoint: PolicyDocument, ports: PolicyEndpointJson["ports"]): void {
+  if (ports?.length) {
+    if (ports.length === 1) {
+      endpoint.port = ports[0];
       delete endpoint.ports;
     } else delete endpoint.port;
   }
 }
 
-function convertEndpoint(value: Value): Mapping {
-  const endpoint = { ...mapping(value) };
-  const mcp = typeof endpoint.protocol === "string" && endpoint.protocol.toLowerCase() === "mcp";
-  const options = mapping(endpoint.mcp ?? {});
+function convertEndpoint(value: PolicyEndpointJson): PolicyDocument {
+  const endpoint: PolicyDocument = { ...value };
+  const mcp = value.protocol?.toLowerCase() === "mcp";
+  const options: NonNullable<PolicyEndpointJson["mcp"]> & { max_body_bytes?: number } = {
+    ...value.mcp,
+  };
   const allowKnownMethods = options.allow_all_known_mcp_methods === true;
-  compactEndpointPorts(endpoint);
-  if (endpoint.json_rpc_max_body_bytes) options.max_body_bytes = endpoint.json_rpc_max_body_bytes;
+  compactEndpointPorts(endpoint, value.ports);
+  if (value.json_rpc_max_body_bytes) options.max_body_bytes = value.json_rpc_max_body_bytes;
   delete endpoint.json_rpc_max_body_bytes;
   delete endpoint.mcp;
   if (mcp && Object.keys(options).length) endpoint.mcp = options;
   else if (!mcp && options.max_body_bytes)
     endpoint.json_rpc = { max_body_bytes: options.max_body_bytes };
-  if (Array.isArray(endpoint.rules)) {
-    endpoint.rules = endpoint.rules.map((rule) => ({
-      allow: convertMatcher(mapping(rule).allow ?? {}, mcp, allowKnownMethods),
+  if (value.rules) {
+    endpoint.rules = value.rules.map((rule) => ({
+      allow: convertMatcher(rule.allow ?? {}, mcp, allowKnownMethods),
     }));
   }
-  if (Array.isArray(endpoint.deny_rules)) {
-    endpoint.deny_rules = endpoint.deny_rules.map((rule) =>
+  if (value.deny_rules) {
+    endpoint.deny_rules = value.deny_rules.map((rule) =>
       convertMatcher(rule, mcp, allowKnownMethods),
     );
   }
@@ -165,21 +169,21 @@ function convertEndpoint(value: Value): Mapping {
 }
 
 /** Convert released protobuf JSON to the document shape owned by openshell-policy. */
-export function sdkPolicyDocument(value: unknown): Mapping {
-  const policy = { ...mapping(value) };
-  policy.version ??= 0;
-  if (policy.filesystem) {
-    policy.filesystem_policy = { include_workdir: false, ...mapping(policy.filesystem) };
+export function sdkPolicyDocument(value: unknown): PolicyDocument {
+  const input = readValue(PolicyJsonSchema, value);
+  const policy: PolicyDocument = { ...input, version: input.version ?? 0 };
+  if (input.filesystem) {
+    policy.filesystem_policy = { include_workdir: false, ...input.filesystem };
     delete policy.filesystem;
   }
-  if (policy.process && Object.keys(mapping(policy.process)).length === 0) delete policy.process;
-  if (policy.network_policies) {
+  if (input.process && Object.keys(input.process).length === 0) delete policy.process;
+  if (input.network_policies) {
     policy.network_policies = Object.fromEntries(
-      Object.entries(mapping(policy.network_policies)).map(([name, value]) => {
-        const rule = { ...mapping(value) };
-        if (Array.isArray(rule.endpoints)) rule.endpoints = rule.endpoints.map(convertEndpoint);
-        if (Array.isArray(rule.binaries))
-          rule.binaries = rule.binaries.map((binary) => ({ path: mapping(binary).path ?? "" }));
+      Object.entries(input.network_policies).map(([name, value]) => {
+        const rule: PolicyDocument = { ...value };
+        if (value.endpoints) rule.endpoints = value.endpoints.map(convertEndpoint);
+        if (value.binaries)
+          rule.binaries = value.binaries.map((binary) => ({ path: binary.path ?? "" }));
         return [name, rule];
       }),
     );
