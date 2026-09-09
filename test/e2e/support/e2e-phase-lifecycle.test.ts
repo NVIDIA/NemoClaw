@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   type CommandRunner,
@@ -136,6 +137,82 @@ function restoreEnv(name: string, value: string | undefined): void {
   Reflect.deleteProperty(process.env, name);
   Object.assign(process.env, value === undefined ? {} : { [name]: value });
 }
+
+describe("LifecyclePhaseFixture.trackInstallerGatewayUserService", () => {
+  let root: string, config: string, unit: string;
+  let previousConfig: string | undefined, previousPath: string | undefined;
+  let runner: FakeRunner, cleanup: FakeCleanup;
+  const marker = "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n";
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-service-cleanup-"));
+    config = path.join(root, "config");
+    unit = path.join(config, "systemd", "user", "nemoclaw-openshell-gateway.service");
+    previousConfig = process.env.XDG_CONFIG_HOME;
+    previousPath = process.env.PATH;
+    process.env.XDG_CONFIG_HOME = config;
+    process.env.PATH = `${root}:${previousPath ?? ""}`;
+    fs.mkdirSync(path.dirname(unit), { recursive: true });
+    fs.writeFileSync(path.join(root, "systemctl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    runner = new FakeRunner();
+    cleanup = new FakeCleanup();
+    runner.run = async (command, options) => {
+      runner.calls.push({ command: command.command, args: [...command.args], options });
+      const result = spawnSync(command.command, ["-c", command.args[1]!], {
+        env: options?.env,
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      return shellResult(result.status ?? 1, `${result.stdout ?? ""}${result.stderr ?? ""}`);
+    };
+  });
+
+  afterEach(() => {
+    restoreEnv("XDG_CONFIG_HOME", previousConfig);
+    restoreEnv("PATH", previousPath);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("removes a newly installed service last using the captured environment", async () => {
+    fixture(runner, cleanup).trackInstallerGatewayUserService();
+    expect(runner.calls).toHaveLength(0);
+    expect(cleanup.calls).toHaveLength(1);
+    fs.writeFileSync(unit, marker);
+    process.env.XDG_CONFIG_HOME = path.join(root, "changed-config");
+    cleanup.add("sandbox", () => {
+      expect(fs.existsSync(unit)).toBe(true);
+    });
+    await cleanup.calls[1]!.run();
+    await cleanup.calls[0]!.run();
+    expect(fs.existsSync(unit)).toBe(false);
+    expect(runner.calls[0]?.options?.env?.XDG_CONFIG_HOME).toBe(config);
+  });
+
+  it.each([
+    ["file", () => fs.writeFileSync(unit, marker)],
+    ["directory", () => fs.mkdirSync(unit)],
+    ["dangling symlink", () => fs.symlinkSync("missing", unit)],
+  ] as const)("preserves a preexisting %s", (_kind, create) => {
+    create();
+    fixture(runner, cleanup).trackInstallerGatewayUserService();
+    expect(cleanup.calls).toHaveLength(0);
+    expect(fs.lstatSync(unit)).toBeTruthy();
+  });
+
+  it("refuses a foreign replacement during deferred cleanup", async () => {
+    fixture(runner, cleanup).trackInstallerGatewayUserService();
+    fs.writeFileSync(unit, "foreign");
+    await expect(cleanup.calls[0]!.run()).rejects.toThrow(/Refusing to remove foreign/);
+    expect(fs.readFileSync(unit, "utf8")).toBe("foreign");
+  });
+
+  it("propagates inspection errors other than absence", () => {
+    fs.rmSync(config, { recursive: true });
+    fs.writeFileSync(config, "foreign");
+    expect(() => fixture(runner, cleanup).trackInstallerGatewayUserService()).toThrow(/ENOTDIR/);
+    expect(cleanup.calls).toHaveLength(0);
+  });
+});
 
 describe("LifecyclePhaseFixture.preparePostReboot", () => {
   it("installs OpenShell and stages the gateway user service when openshell-gateway is unavailable", async () => {

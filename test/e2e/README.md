@@ -210,6 +210,24 @@ The 90-minute `test-hermes-sandbox-image` job downloads and loads that artifact 
 rebuilding the image.
 Within that job, the secret-boundary and root-entrypoint steps have 45- and 30-minute budgets respectively.
 
+To reproduce root-entrypoint failures locally, load the run's `hermes-isolation-image` artifact into Docker and run:
+
+```bash
+NEMOCLAW_HERMES_TEST_IMAGE=nemoclaw-hermes-production NEMOCLAW_RUN_LIVE_E2E=1 \
+  npx vitest run --project e2e-live test/e2e/live/hermes-root-entrypoint-smoke.test.ts
+```
+
+For Rancher Desktop, also set `DOCKER_HOST=unix://$HOME/.rd/docker.sock`.
+Use a native image for process-identity checks; QEMU can cause the startup guard to reject a valid PID 1.
+To build a native image from the checkout with its pinned published base, run `docker build -f agents/hermes/Dockerfile -t nemoclaw-hermes-local .`.
+Then set `NEMOCLAW_HERMES_TEST_IMAGE=nemoclaw-hermes-local` in the test command.
+Refusal scenarios execute startup as PID 1.
+They require exit code 1 for root preparation or 78 for non-root layout repair.
+They then start the retained container with a verification script to check the refusal reason and filesystem state.
+This second pass does not launch Hermes again.
+The sandbox user owns the config directory and can remove its history file.
+Sticky-bit protection prevents the gateway user from removing sandbox-owned config files.
+
 The former root-level `test/e2e-test.sh` and `test/e2e-gateway-isolation.sh` suites have been
 removed. Their production-image security coverage now belongs to
 `test/e2e-runtime/managed-image-openclaw-security.test.ts` and the
@@ -222,7 +240,9 @@ boundaries are the behavior under test.
 `.github/workflows/platform-vitest-main.yaml` publishes the `CI / Platform Compatibility` workflow.
 It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in four shards on macOS and WSL.
 The matrix disables `fail-fast`.
-The first macOS shard has a 60-minute budget for live E2E; the other shards have 30 minutes.
+The first macOS shard has a 150-minute job timeout. Its live E2E has a
+70-minute timeout, and every other step shares the remaining job time. The
+other shards have 30 minutes.
 The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
 
 On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
@@ -315,6 +335,19 @@ target records the expected release, reported release, public health status,
 and transport. It also stops the gateway and removes its temporary state.
 
 ## Catalogue Targets
+
+The `network-policy` target also owns live configuration-export evidence for #10938 and PR #11065.
+After ordinary restricted OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
+It compares the exported sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
+It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
+The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
+This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
+The assertion budget is unchanged. Nine export assertions replace nine redundant checks in the same target:
+
+- Two CLI-file and two OpenShell-version checks are covered by the retained successful onboarding checks.
+- Two intermediate process-start comparisons are covered by the retained comparison after all policy and traffic probes.
+- The approved HTTP status check is redundant with the marker server response, which always returns that marker with status 200.
+- Two web-fetch success-marker checks duplicate the retained probe exit-status check; the probe rejects missing approved content and unexpected denied-port access.
 
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
@@ -479,11 +512,15 @@ The host must provide that user a secure, independently writable OS runtime auth
 The host must provide the util-linux `script` command and GNU `timeout` command.
 
 The helper rebuilds the candidate CLI, runs `connect --probe-only`, and then
-runs two `launch` sessions during the same fixed lease.
-Each real pseudo-terminal session sends two distinct messages and `/exit`, then
-requires process exit status `0`. The OpenClaw session store must append two
-nonempty `user` and `assistant` record pairs in one session. The helper does not
-compare message content. Terminal output is a bounded failure diagnostic only.
+runs two logical `launch` sessions during the same fixed lease. Each logical
+session may retry once with a fresh run ID and input only when the OpenClaw
+session store contains a structured transient provider-unavailability record
+and cleanup succeeds. Authentication, authorization, policy, malformed-response,
+cleanup, and unknown failures stop the acceptance test without retrying.
+Each successful real pseudo-terminal attempt sends two distinct messages and
+`/exit`, then requires process exit status `0`. The OpenClaw session store must
+append two nonempty `user` and `assistant` record pairs in one session. The helper
+does not compare message content. Terminal output is a bounded failure diagnostic only.
 Deterministic unit tests separately prove selection of the complete preflight
 and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
 refusal to recover when prior evidence cannot be durably fenced, and the named
@@ -649,13 +686,19 @@ mode.
 
 The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
 
-1. Onboard the custom weather plugin as v1.
-2. Install v1 with OpenClaw across distinct filesystems.
-3. Restart the gateway and verify v1.
+1. Onboard the custom weather plugin as v1 and verify it through `tools.invoke`.
+2. Install v1-exdev with OpenClaw across distinct filesystems.
+3. Restart the gateway and verify v1-exdev.
 4. Recreate the sandbox with the plugin changed to v2 and verify v2.
 
-The recreation remains the replacement boundary. One `tools.invoke` assertion
-per phase proves the plugin version after onboarding, restart, and recreation.
+The recreation remains the replacement boundary. Initial onboarding and
+recreation each run once. If onboarding or recreation reports missing canonical
+CLI device pairing or a bounded CLI scope warm-up failure, the test attempts to
+record structured diagnostics, attempts to write bounded `failed-no-retry`
+evidence, and then stops without automatically resuming the ambiguously mutated
+session. An evidence
+write failure propagates, so that retry artifact may be absent. `tools.invoke`
+assertions prove the plugin version after onboarding, restart, and recreation.
 The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
 across the proven filesystem boundary before restart. `e2e-support` tests own
 deterministic wrapper argument rewriting. Deterministic tests own exact package
@@ -664,10 +707,10 @@ permutations are outside this live contract. Workspace preservation and policy
 selection retain their focused coverage instead of another assertion in this
 target. The `rebuild-openclaw` job remains the canonical live rebuild coverage.
 
-The current-checkout fixture locally prebuilds its repository-controlled v1
-and v2 Dockerfiles with BuildKit, then hands only those local image references
-to OpenShell. User-supplied `--from` Dockerfiles retain the gateway-builder
-trust boundary and are never host-prebuilt by this fixture.
+The current-checkout fixture locally prebuilds repository-controlled images
+with BuildKit. It verifies each local tag, then passes the matching immutable
+image ID to OpenShell. User-supplied `--from` Dockerfiles retain the
+gateway-builder trust boundary and are never host-prebuilt by this fixture.
 The current-checkout fixture enables local base-image resolution after the
 workflow removes Docker Hub credentials.
 
@@ -1404,9 +1447,12 @@ It does not run GitHub's synthetic merge commit.
 Before candidate execution, the workflow uploads a `nemoclaw-e2e-dispatch-v2` receipt for the trusted manual run.
 The full-main `Release qualification` aggregate does not use this receipt.
 
-The `base-image-publication` job selects the nearest fully successful base and managed-image publication on the PR base first-parent history.
-It binds the selected run ID, attempt, revision, cohort contract artifact ID, and artifact digest before it emits `managed_image_revision`.
-The job validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
+The `base-image-publication` job first resolves any authenticated PR managed-image catalog.
+When a PR catalog is selected, explicit targets with no `jobs` selector and no `managed-image-` target use it without waiting for main's base images.
+Other selections with a PR catalog retain the Deep Agents Code base prerequisite, including full runs and protected managed-image build targets.
+Runs without a PR catalog require a trusted main base and managed-image publication; PR runs select the nearest fully successful publication on the PR base first-parent history.
+For that publication, the job binds the run ID, attempt, revision, cohort artifact ID, and artifact digest before it emits `managed_image_revision`.
+It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
 `generate-matrix` and every stock-onboarding job depend on this publication job, so incomplete publication creates no onboarding fanout.
 Direct `main` runs use the same publication workflow and artifact contract.
 

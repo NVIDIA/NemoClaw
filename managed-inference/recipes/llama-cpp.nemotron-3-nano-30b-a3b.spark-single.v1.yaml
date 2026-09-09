@@ -48,7 +48,6 @@ spec:
     platforms:
       - linux/amd64
       - linux/arm64
-    containerRuntime: docker
     networkExposure: loopback
     restartPolicy: unless-stopped
     hosts: 1
