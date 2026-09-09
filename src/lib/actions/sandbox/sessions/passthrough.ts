@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { OpenShellSandboxBufferedCommandCompletion } from "../../../adapters/openshell/sandbox-command";
-import { createCliOpenShellSandboxCommandExecutor } from "../../../adapters/openshell/sandbox-command-cli";
+import type {
+  OpenShellSandboxBufferedCommandCompletion,
+  OpenShellSandboxBufferedCommandExecutor,
+} from "../../../adapters/openshell/sandbox-command";
 import { CLI_NAME } from "../../../cli/branding";
-import { REPOSITORY_ROOT } from "../../../core/repository-root";
 import {
   deferSandboxLifecycleExit,
   runWithDeferredSandboxLifecycleExit,
@@ -18,15 +19,16 @@ import { isWarmupSessionId, WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
 import { balancedJsonCandidates, parseSessionIndex } from "./session-index";
 
 const SESSIONS_LIST_CAPTURE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
-const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({
-  hostCwd: REPOSITORY_ROOT,
-});
 
 export type SessionsPassthroughVerb = "list";
 
 export interface SessionsPassthroughOptions {
   verb?: SessionsPassthroughVerb;
   extraArgs?: readonly string[];
+}
+
+export interface SessionsPassthroughDependencies {
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor;
 }
 
 export function hasSessionsPassthroughHelpToken(args: readonly string[]): boolean {
@@ -212,19 +214,27 @@ export function filterWarmupSessionsListText(output: string): string {
     .join("\n");
 }
 
-export async function runSessionsPassthrough(
-  sandboxName: string,
-  { verb, extraArgs = [] }: SessionsPassthroughOptions = {},
-): Promise<void> {
-  return runWithDeferredSandboxLifecycleExit(async () => {
-    await withMcpLifecycleLock(sandboxName, () => {
-      assertHermesPortableCommandUnavailable(sandboxName, `sandbox:sessions:${verb ?? "list"}`);
-      return runSessionsPassthroughUnlocked(sandboxName, { verb, extraArgs });
+export function createSessionsPassthrough({
+  sandboxCommandExecutor,
+}: SessionsPassthroughDependencies) {
+  return async function runSessionsPassthrough(
+    sandboxName: string,
+    { verb, extraArgs = [] }: SessionsPassthroughOptions = {},
+  ): Promise<void> {
+    return runWithDeferredSandboxLifecycleExit(async () => {
+      await withMcpLifecycleLock(sandboxName, () => {
+        assertHermesPortableCommandUnavailable(sandboxName, `sandbox:sessions:${verb ?? "list"}`);
+        return runSessionsPassthroughUnlocked(sandboxCommandExecutor, sandboxName, {
+          verb,
+          extraArgs,
+        });
+      });
     });
-  });
+  };
 }
 
 async function runSessionsPassthroughUnlocked(
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
   sandboxName: string,
   { verb, extraArgs = [] }: SessionsPassthroughOptions = {},
 ): Promise<void> {

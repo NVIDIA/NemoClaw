@@ -10,7 +10,6 @@ import type {
 const runBufferedMock = vi.hoisted(() =>
   vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(),
 );
-const commandExecutorFactoryArgs = vi.hoisted(() => [] as unknown[]);
 const execMock = vi.hoisted(() => vi.fn(async () => {}));
 const ensureLiveMock = vi.hoisted(() => vi.fn(async () => ({})));
 const getSandboxMock = vi.hoisted(() => vi.fn(() => null as { agent?: string } | null));
@@ -18,12 +17,6 @@ const withLifecycleLockMock = vi.hoisted(() =>
   vi.fn(async (_sandboxName: string, operation: () => unknown) => await operation()),
 );
 
-vi.mock("../../../adapters/openshell/sandbox-command-cli", () => ({
-  createCliOpenShellSandboxCommandExecutor: (deps: unknown) => {
-    commandExecutorFactoryArgs.push(deps);
-    return { runBuffered: runBufferedMock };
-  },
-}));
 vi.mock("../exec", async () => {
   const actual = await vi.importActual<typeof import("../exec")>("../exec");
   return { ...actual, execSandbox: execMock };
@@ -35,13 +28,16 @@ vi.mock("../../../state/mcp-lifecycle-lock-acquisition", () => ({
 }));
 
 import { WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
-import { REPOSITORY_ROOT } from "../../../core/repository-root";
 import {
+  createSessionsPassthrough,
   filterWarmupSessionsListJson,
   filterWarmupSessionsListText,
   printSessionsPassthroughHelp,
-  runSessionsPassthrough,
 } from "./passthrough";
+
+const runSessionsPassthrough = createSessionsPassthrough({
+  sandboxCommandExecutor: { runBuffered: runBufferedMock },
+});
 
 function completedBufferedCommand(
   stdout: string,
@@ -261,10 +257,6 @@ describe("runSessionsPassthrough", () => {
     stdoutSpy.mockRestore();
     stderrSpy.mockRestore();
     consoleErrorSpy.mockRestore();
-  });
-
-  it("binds buffered session capture to the repository working directory", () => {
-    expect(commandExecutorFactoryArgs).toContainEqual({ hostCwd: REPOSITORY_ROOT });
   });
 
   it("captures and filters `sessions list --json` instead of streaming warm-up entries", async () => {
