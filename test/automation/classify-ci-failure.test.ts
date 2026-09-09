@@ -311,6 +311,7 @@ describe("reviewed npm root-cause correlation", () => {
   test.each([
     ["npm@12.0.2 archive integrity mismatch", "dependency-audit/bootstrap-integrity"],
     ["npm audit threshold failed", "dependency-audit/unaccepted-advisory"],
+    ["The operation timed out", "runtime/timeout/unclassified"],
   ])("separates %s (#8253)", (signature, expectedKey) => {
     const input = {
       changedFiles: [],
@@ -464,7 +465,6 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     expect(JSON.parse(result.stdout).categories).not.toContain("reviewed-npm-audit");
   });
   test.each([
-    ["known audit job", "PR npm audit", "Process completed with exit code 1"],
     ["threshold failure", "CLI tests", "npm audit threshold failed"],
     ["unused exception", "Dependency policy", "unused npm audit exceptions: GHSA-example"],
     ["unaccepted advisory", "Release policy", "1 unaccepted at or above high"],
@@ -474,6 +474,13 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     const result = run(item.env);
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout).categories).toContain("reviewed-npm-audit");
+  });
+  test("does not classify an npm audit job without audit-policy evidence", () => {
+    const item = fixture("The operation timed out");
+    item.env.JOB_NAME = "PR npm audit";
+    const result = run(item.env);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).categories).not.toContain("reviewed-npm-audit");
   });
   test.each([
     ["archive integrity mismatch", "ERROR: npm@12.0.2 archive integrity mismatch."],

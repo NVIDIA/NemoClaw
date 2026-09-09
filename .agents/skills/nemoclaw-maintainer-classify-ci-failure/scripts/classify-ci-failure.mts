@@ -1088,10 +1088,6 @@ async function classifyCiFailureWithRuntime(
       "The environment-variable documentation gate failed.",
       "Document the new NEMOCLAW_* variable in the required reference or remove it.",
     );
-  const isNpmAuditJob =
-    /^(?:reviewed-npm-audit|PR npm audit|npm audit for managed image publication)$/i.test(
-      job.name.trim(),
-    );
   const hasNpmAuditFailure = NPM_AUDIT_FAILURE_PATTERN.test(text);
   const hasNpmBootstrapFailure = NPM_BOOTSTRAP_FAILURE_PATTERN.test(text);
   if (hasNpmBootstrapFailure)
@@ -1100,7 +1096,7 @@ async function classifyCiFailureWithRuntime(
       "The reviewed npm bootstrap rejected the pinned npm archive or identity.",
       "Inspect the pinned npm identity and downloaded archive; do not change the advisory exception baseline.",
     );
-  else if (isNpmAuditJob || hasNpmAuditFailure)
+  else if (hasNpmAuditFailure)
     add(
       "reviewed-npm-audit",
       "The npm audit check reported advisory drift.",

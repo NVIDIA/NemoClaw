@@ -70,16 +70,12 @@ export default async function e2e_root_cause_correlator(input: {
   }
   if (relevantPathCount > 2000) throw new Error("relevantPaths exceed the total item bound");
   if (inputCharacters > 400000) throw new Error("correlation input exceeds 400000 code units");
-  const signatureKey = (jobName: string, lines: string[]) => {
+  const signatureKey = (lines: string[]) => {
     const text = lines.join(" ").toLowerCase();
     if (text.includes("failedstage=publication") || text.includes("launch-readiness evidence"))
       return "launch-readiness/publication/evidence-failed";
     if (text.includes("sandbox_phase=deleting") || text.includes("sandbox in deleting"))
       return "openshell/lifecycle/sandbox-deleting";
-    const isNpmAuditJob =
-      /^(?:reviewed-npm-audit|pr npm audit|npm audit for managed image publication)$/.test(
-        jobName.trim().toLowerCase(),
-      );
     const hasNpmBootstrapFailure =
       /npm(?:@[0-9a-z.-]+ archive integrity mismatch| archive version [0-9a-z.-]+ does not match reviewed npm@[0-9a-z.-]+| audit configuration (?:is not valid json|has an invalid npm(?:version|integrity|archivesha256)))/.test(
         text,
@@ -89,7 +85,7 @@ export default async function e2e_root_cause_correlator(input: {
         text,
       );
     if (hasNpmBootstrapFailure) return "dependency-audit/bootstrap-integrity";
-    if (isNpmAuditJob || hasNpmAuditFailure) return "dependency-audit/unaccepted-advisory";
+    if (hasNpmAuditFailure) return "dependency-audit/unaccepted-advisory";
     if (text.includes("timed out") || text.includes("timeout"))
       return "runtime/timeout/unclassified";
     const first =
@@ -103,7 +99,7 @@ export default async function e2e_root_cause_correlator(input: {
   };
   const byKey = new Map<string, any[]>();
   for (const failure of input.failures) {
-    const key = signatureKey(failure.jobName, failure.signatureLines);
+    const key = signatureKey(failure.signatureLines);
     const group = byKey.get(key) ?? [];
     group.push(failure);
     byKey.set(key, group);
