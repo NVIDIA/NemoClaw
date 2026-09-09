@@ -249,3 +249,149 @@ export function resolveGatewayCredentialMutationAuthority(
 ): GatewayOwner {
   return resolveGatewayEffectAuthority(target, "credential mutation", deps);
 }
+
+export interface GatewayRegistrationCommandResult {
+  status: number | null;
+  stdout?: string;
+  stderr?: string;
+}
+
+export type GatewayRegistrationCommandRunner = (args: string[]) => GatewayRegistrationCommandResult;
+
+export type GatewayRegistrationRemovalOutcome =
+  | { ok: true; operation: "destroy" | "remove"; state: "absent" | "removed" }
+  | {
+      ok: false;
+      operation: "destroy" | "remove";
+      reason: "command-failed" | "legacy-disabled";
+      result: GatewayRegistrationCommandResult;
+    };
+
+const GATEWAY_REMOVE_UNSUPPORTED =
+  /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/iu;
+
+function gatewayRegistrationCommandOutput(result: GatewayRegistrationCommandResult): string {
+  return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+}
+
+function isExplicitGatewayRegistrationAbsence(output: string, gatewayLabel: string): boolean {
+  const clean = output.replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "");
+  const escapedLabel = gatewayLabel.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const namedGateway = `(?:['"]${escapedLabel}['"]|${escapedLabel})`;
+  const structuredNotFound =
+    `(?:status:\\s*['"]?NotFound['"]?|` + `code:\\s*['"]Some requested entity was not found['"])`;
+  const completeDiagnostic = clean
+    .trim()
+    .replace(/^Error:\s*/iu, "")
+    .replace(/^×\s*/u, "");
+  if (
+    /^gateway not found\.?$/iu.test(completeDiagnostic) ||
+    /^No active gateway\.?$/iu.test(completeDiagnostic) ||
+    new RegExp(
+      `^${structuredNotFound},\\s*message:\\s*['"]gateway\\s+(?:does not exist|not found)['"]\\.?$`,
+      "iu",
+    ).test(completeDiagnostic)
+  ) {
+    return true;
+  }
+  return (
+    new RegExp(`^No gateway metadata found for ${namedGateway}\\.?$`, "iu").test(
+      completeDiagnostic,
+    ) ||
+    new RegExp(`^gateway\\s+${namedGateway}\\s+(?:does not exist|not found)\\.?$`, "iu").test(
+      completeDiagnostic,
+    ) ||
+    new RegExp(
+      `^${structuredNotFound},\\s*message:\\s*['"]gateway\\s+${escapedLabel}\\s+(?:does not exist|not found)['"]\\.?$`,
+      "iu",
+    ).test(completeDiagnostic)
+  );
+}
+
+export function collectOpenShellGatewayNames(
+  run: GatewayRegistrationCommandRunner,
+): Set<string> | null {
+  const result = run(["gateway", "list", "-o", "json"]);
+  if (result.status !== 0) return null;
+  try {
+    const parsed: unknown = JSON.parse(result.stdout ?? "");
+    if (!Array.isArray(parsed)) return null;
+    const names = new Set<string>();
+    for (const item of parsed) {
+      if (item === null || typeof item !== "object") return null;
+      const name = (item as { name?: unknown }).name;
+      if (typeof name !== "string" || name.length === 0) return null;
+      names.add(name);
+    }
+    return names;
+  } catch {
+    return null;
+  }
+}
+
+function confirmsGatewayRegistrationAbsence(
+  run: GatewayRegistrationCommandRunner,
+  gatewayLabel: string,
+): boolean {
+  const gatewayNames = collectOpenShellGatewayNames(run);
+  return gatewayNames !== null && !gatewayNames.has(gatewayLabel);
+}
+
+export function removeGatewayRegistrationWithPolicy({
+  allowLegacyDestroy,
+  gatewayLabel,
+  run,
+}: {
+  allowLegacyDestroy: boolean;
+  gatewayLabel: string;
+  run: GatewayRegistrationCommandRunner;
+}): GatewayRegistrationRemovalOutcome {
+  const removeResult = run(["gateway", "remove", gatewayLabel]);
+  if (removeResult.status === 0) {
+    return { ok: true, operation: "remove", state: "removed" };
+  }
+
+  const removeOutput = gatewayRegistrationCommandOutput(removeResult);
+  if (
+    isExplicitGatewayRegistrationAbsence(removeOutput, gatewayLabel) &&
+    confirmsGatewayRegistrationAbsence(run, gatewayLabel)
+  ) {
+    return { ok: true, operation: "remove", state: "absent" };
+  }
+  if (!GATEWAY_REMOVE_UNSUPPORTED.test(removeOutput)) {
+    return {
+      ok: false,
+      operation: "remove",
+      reason: "command-failed",
+      result: removeResult,
+    };
+  }
+  if (!allowLegacyDestroy) {
+    return {
+      ok: false,
+      operation: "remove",
+      reason: "legacy-disabled",
+      result: removeResult,
+    };
+  }
+
+  const destroyResult = run(["gateway", "destroy", "-g", gatewayLabel]);
+  if (destroyResult.status === 0) {
+    return { ok: true, operation: "destroy", state: "removed" };
+  }
+  if (
+    isExplicitGatewayRegistrationAbsence(
+      gatewayRegistrationCommandOutput(destroyResult),
+      gatewayLabel,
+    ) &&
+    confirmsGatewayRegistrationAbsence(run, gatewayLabel)
+  ) {
+    return { ok: true, operation: "destroy", state: "absent" };
+  }
+  return {
+    ok: false,
+    operation: "destroy",
+    reason: "command-failed",
+    result: destroyResult,
+  };
+}

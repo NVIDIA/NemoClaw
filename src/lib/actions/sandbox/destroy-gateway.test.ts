@@ -21,7 +21,8 @@ vi.mock("../../onboard/host-gateway-process", () => ({
   resolveOwnedHostGatewayRuntimeProviderId: mocks.resolveOwnedHostGatewayRuntimeProviderId,
   stopHostGatewayProcesses: mocks.stopHostGatewayProcesses,
 }));
-vi.mock("../../onboard/gateway-teardown-authority", () => ({
+vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/gateway-teardown-authority")>()),
   resolveGatewayTeardownAuthority: mocks.resolveGatewayTeardownAuthority,
   GatewayAuthorityError: mocks.GatewayAuthorityError,
   gatewayAuthorityFailureLines: (error: unknown, operation: string) => [
@@ -163,6 +164,27 @@ describe("cleanupGatewayAfterLastSandbox", () => {
       );
     },
   );
+
+  it("does not use legacy destroy after a current gateway-removal failure", () => {
+    const runOpenshell = vi.fn((args: string[]) =>
+      args[1] === "remove"
+        ? { status: 1, stdout: "", stderr: "connection refused" }
+        : { status: 0, stdout: "", stderr: "" },
+    );
+
+    expect(() => cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell)).toThrow(
+      /Failed to remove gateway registration 'nemoclaw'.*rerun destroy/,
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "destroy", "-g", "nemoclaw"],
+      expect.anything(),
+    );
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
 
   it("fails before local cleanup when the gateway authority cannot be revalidated (#6576)", () => {
     // A failure that is not an authority refusal still aborts outright: #6576's

@@ -19,6 +19,7 @@ import {
   GatewayAuthorityError,
   type GatewayTeardownAuthorityResolver,
   gatewayAuthorityFailureLines,
+  removeGatewayRegistrationWithPolicy,
   resolveGatewayTeardownAuthority,
 } from "../../onboard/gateway-teardown-authority";
 import {
@@ -249,9 +250,10 @@ export function cleanupGatewayAfterLastSandbox(
    * Source boundary: the installed CLI may predate the blueprint floor while
    * an existing installation is being recovered or removed.
    * Source-fix constraint: NemoClaw cannot add the modern verb to historical
-   * OpenShell builds, so cleanup tries their legacy verb best-effort.
+   * OpenShell builds, so cleanup tries their legacy verb only when the modern
+   * command explicitly reports that it is unsupported.
    * Regression proof: test/cli/destroy-gateway-cleanup.test.ts covers successful
-   * remove and remove-nonzero fallback while preserving Docker-volume cleanup.
+   * remove and unsupported-command fallback while preserving Docker-volume cleanup.
    * Removal condition: remove the fallback when every supported recovery and
    * teardown entry point upgrades OpenShell to the blueprint minimum (currently
    * 0.0.99) before this function can run.
@@ -266,22 +268,24 @@ export function cleanupGatewayAfterLastSandbox(
    * Docker-driver sandbox-operations run proves final unattended destroy
    * releases the gateway port without this fallback.
    */
-  const removeResult = openshell(["gateway", "remove", gatewayName], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (removeResult.status !== 0) {
-    if (externallySupervised) {
-      console.warn(
-        `Could not remove local registration for externally supervised gateway '${gatewayName}'. ` +
-          "NemoClaw will not use the legacy gateway destroy command for an externally supervised gateway.",
-      );
-    } else {
-      openshell(["gateway", "destroy", "-g", gatewayName], {
+  const registrationRemoval = removeGatewayRegistrationWithPolicy({
+    allowLegacyDestroy: !externallySupervised,
+    gatewayLabel: gatewayName,
+    run: (args) =>
+      openshell(args, {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
-      });
-    }
+      }),
+  });
+  if (!registrationRemoval.ok && registrationRemoval.reason === "legacy-disabled") {
+    console.warn(
+      `Could not remove local registration for externally supervised gateway '${gatewayName}'. ` +
+        "NemoClaw will not use the legacy gateway destroy command for an externally supervised gateway.",
+    );
+  } else if (!registrationRemoval.ok) {
+    throw new Error(
+      `Failed to remove gateway registration '${gatewayName}' with openshell gateway ${registrationRemoval.operation}. Resolve the reported OpenShell error, then rerun destroy.`,
+    );
   }
   if (externallySupervised) {
     return;
