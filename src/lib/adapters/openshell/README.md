@@ -25,6 +25,10 @@ not-found response returns `null`. Other failures use the existing sandbox error
 fixed messages. There is no CLI fallback after an SDK failure. Resource versions stay decimal
 strings so uint64 values cannot lose precision.
 
+`sdk-read-schema.ts` defines TypeBox schemas for consumed response fields. Validate before
+projection, keep credential values opaque, and check response identities against the request.
+Schema failures use fixed messages without rejected values.
+
 Provider reads return credential names and requested non-secret config values. They retain the
 complete config-key inventory so export can reject unsupported configuration. Sandbox reads omit
 environment values. Configuration reads return revision metadata, not settings or credential values.

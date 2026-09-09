@@ -45,18 +45,7 @@ function publishedDiagnostic(
 function stagingDiagnostic(failure: YamlExportFailure): string {
   if (failure.fileState.stagingCleanup !== "incomplete") return "";
   const reference = failure.stagingReference;
-  if (
-    reference === null ||
-    !/^\.nemoclaw-export\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.tmp$/u.test(
-      reference.name,
-    ) ||
-    ![
-      reference.directoryDevice,
-      reference.directoryInode,
-      reference.fileDevice,
-      reference.fileInode,
-    ].every((value) => Number.isSafeInteger(value) && value >= 0)
-  ) {
+  if (reference === null) {
     return " The staging identity is unavailable. Do not remove files by name alone.";
   }
   return (

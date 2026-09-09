@@ -156,34 +156,4 @@ describe("config export diagnostics", () => {
       "Locate that directory, which may have moved. Before manual removal, verify both identities and that the staging entry is a regular file. Do not remove the requested output file.",
     );
   });
-
-  it.each([
-    { name: "path-bearing filename", filename: "../CANARY\n", inode: 2 },
-    {
-      name: "negative inode",
-      filename: ".nemoclaw-export.123e4567-e89b-42d3-a456-426614174000.tmp",
-      inode: -1,
-    },
-    {
-      name: "imprecise inode",
-      filename: ".nemoclaw-export.123e4567-e89b-42d3-a456-426614174000.tmp",
-      inode: Number.MAX_SAFE_INTEGER + 1,
-    },
-  ])("omits an unsafe recovery reference with a $name", ({ filename, inode }) => {
-    const diagnostic = formatConfigExportFailure({
-      kind: "output",
-      target: "file",
-      category: "unsafe-output",
-      fileState: { publication: "not-published", stagingCleanup: "incomplete" },
-      stagingReference: {
-        name: filename,
-        directoryDevice: 1,
-        directoryInode: inode,
-        fileDevice: 1,
-        fileInode: 3,
-      },
-    });
-    expect(diagnostic).toContain(missingIdentity);
-    expect(diagnostic).not.toMatch(/CANARY|Staging file:/u);
-  });
 });

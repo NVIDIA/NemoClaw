@@ -3,16 +3,15 @@
 
 import { createHash } from "node:crypto";
 
-const SANDBOX_ID_RE = /^[A-Za-z0-9._-]+$/u;
-const SANDBOX_ID_MAX_LENGTH = 512;
+import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
+import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
+
+const { Type } = require("typebox") as typeof TypeBoxModule;
+const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
+const SandboxIdSchema = Type.String({ minLength: 1, maxLength: 512, pattern: "^[A-Za-z0-9._-]+$" });
 
 export function isOpenShellSandboxId(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= SANDBOX_ID_MAX_LENGTH &&
-    SANDBOX_ID_RE.test(value)
-  );
+  return Check(SandboxIdSchema, value);
 }
 
 export function fingerprintOpenShellSandboxId(sandboxId: string): string | null {

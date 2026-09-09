@@ -91,6 +91,80 @@ describe("OpenShell provider evidence", () => {
     expect(result?.config.OPENAI_BASE_URL).toBe("https://api.example/v1");
   });
 
+  it.each([
+    { name: "empty text", value: "" },
+    { name: "control character", value: "openai\n" },
+    { name: "format character", value: "openai\u200b" },
+    { name: "oversized ASCII", value: "a".repeat(4097) },
+    { name: "oversized UTF-16", value: "😀".repeat(2049) },
+  ])("rejects $name without exposing the response", async ({ value }) => {
+    const { connect, raw } = fixture();
+    raw.getProvider.mockResolvedValue({ provider: { ...provider().provider, type: value } });
+    await expect(createProviders(connect).get(request())).rejects.toMatchObject({
+      kind: "schema",
+      message: "OpenShell read failed (schema).",
+    });
+  });
+
+  it("accepts bounded Unicode text and leaves unrequested values opaque", async () => {
+    const { connect, raw } = fixture();
+    const response = provider();
+    const type = "😀".repeat(2048);
+    raw.getProvider.mockResolvedValue({
+      provider: {
+        ...response.provider,
+        type,
+        credentials: { API_KEY: { secret: canary } },
+        credentialHandles: null,
+        config: { ...response.provider.config, UNUSED: { secret: canary } },
+      },
+    });
+    const result = await createProviders(connect).get(request());
+    expect(result).toMatchObject({ type, credentialKeys: ["API_KEY"] });
+    expect(JSON.stringify(result)).not.toContain(canary);
+  });
+
+  it.each(["0", "18446744073709551615", 0n])(
+    "preserves a supported resource revision %s",
+    async (resourceVersion) => {
+      const { connect, raw } = fixture();
+      raw.getProvider.mockResolvedValue({
+        provider: { ...provider().provider, metadata: { ...metadata(), resourceVersion } },
+      });
+      await expect(createProviders(connect).get(request())).resolves.toMatchObject({
+        resourceVersion: String(resourceVersion),
+      });
+    },
+  );
+
+  it.each(["18446744073709551616", 18446744073709551616n, -1n, "01", "1\n", "no-version"])(
+    "rejects an invalid resource revision %s",
+    async (resourceVersion) => {
+      const { connect, raw } = fixture();
+      raw.getProvider.mockResolvedValue({
+        provider: { ...provider().provider, metadata: { ...metadata(), resourceVersion } },
+      });
+      await expect(createProviders(connect).get(request())).rejects.toMatchObject({
+        kind: "schema",
+      });
+    },
+  );
+
+  it.each([
+    { credentials: [] },
+    { config: null },
+    { credentialHandles: [] },
+    { config: { OPENAI_BASE_URL: { secret: canary } } },
+    { credentials: { ["BAD\nKEY"]: canary } },
+  ])("rejects malformed consumed provider fields %#", async (change) => {
+    const { connect, raw } = fixture();
+    raw.getProvider.mockResolvedValue({ provider: { ...provider().provider, ...change } });
+    await expect(createProviders(connect).get(request())).rejects.toMatchObject({
+      kind: "schema",
+      message: "OpenShell read failed (schema).",
+    });
+  });
+
   it("returns null only for a confirmed missing provider", async () => {
     const { connect, raw } = fixture();
     raw.getProvider.mockRejectedValue({ code: 5, message: canary });
@@ -176,6 +250,19 @@ describe("OpenShell sandbox export evidence", () => {
       { name: "alpha", workspace: "default" },
       { signal: input.signal },
     );
+  });
+
+  it.each([
+    { spec: { template: { image: "image" }, providers: "provider" } },
+    { spec: { template: { image: "image" }, providers: [42] } },
+    { spec: { template: [], providers: [] } },
+    { status: { currentPolicyVersion: Number.MAX_SAFE_INTEGER + 1 } },
+    { status: { currentPolicyVersion: -1 } },
+  ])("rejects malformed sandbox evidence %#", async (change) => {
+    const { connect, raw } = fixture();
+    const response = await raw.getSandbox();
+    raw.getSandbox.mockResolvedValue({ sandbox: { ...response.sandbox, ...change } });
+    await expect(createSandboxes(connect).get(request())).rejects.toMatchObject({ kind: "schema" });
   });
 
   it("distinguishes a missing sandbox from a failed read", async () => {

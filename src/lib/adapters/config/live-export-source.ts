@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import os from "node:os";
+import { isValidNemoClawPort } from "../../config/model";
 
 import { createProviders } from "../openshell/providers";
 import { createSandboxes, type Sandbox } from "../openshell/sandboxes";
@@ -44,7 +45,7 @@ function registryEvidence(entry: Readonly<SandboxEntry>): ObservedExportRegistry
 
 function resolveGatewayBinding(entry: Readonly<SandboxEntry>): { name: string; port: number } {
   const port = entry.gatewayPort;
-  if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) {
+  if (!isValidNemoClawPort(port)) {
     throw new Error("The persisted gateway port is incomplete or invalid.");
   }
   const name = resolveGatewayName(port);

@@ -3,16 +3,16 @@
 
 import {
   connectOpenShellReader,
-  integer,
   OpenShellReadError,
   owned,
   readOpenShell,
-  record,
+  readValue,
   text,
-  version,
   type ConnectOpenShellReader,
   type ReadRequest,
 } from "./sdk-read";
+
+import { SandboxConfigResponseSchema } from "./sdk-read-schema";
 
 export type SandboxConfig = Readonly<{
   sandboxId: string;
@@ -34,24 +34,22 @@ export function createSandboxConfig(connect: ConnectOpenShellReader = connectOpe
         const client = await connect(request.target);
         request.signal.throwIfAborted();
         // sandbox.getConfig(name) performs a new name lookup and omits workspace identity.
-        const config = record(
+        const config = readValue(
+          SandboxConfigResponseSchema,
           await client.raw.getSandboxConfig({ sandboxId }, { signal: request.signal }),
         );
-        if (
-          config.workspace !== request.workspace ||
-          (config.policySource !== 1 && config.policySource !== 2)
-        ) {
+        if (config.workspace !== request.workspace) {
           throw new OpenShellReadError("schema");
         }
         return owned({
           sandboxId,
           workspace: request.workspace,
-          revision: integer(config.version),
-          policyHash: text(config.policyHash),
-          configRevision: version(config.configRevision),
-          providerEnvRevision: version(config.providerEnvRevision),
+          revision: config.version,
+          policyHash: config.policyHash,
+          configRevision: String(config.configRevision),
+          providerEnvRevision: String(config.providerEnvRevision),
           policySource: config.policySource === 1 ? "sandbox" : "global",
-          globalPolicyVersion: integer(config.globalPolicyVersion),
+          globalPolicyVersion: config.globalPolicyVersion,
         });
       }),
   };

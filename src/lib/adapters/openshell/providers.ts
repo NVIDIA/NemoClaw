@@ -7,11 +7,13 @@ import {
   metadata,
   owned,
   readOpenShell,
-  record,
+  readValue,
   text,
   type ConnectOpenShellReader,
   type ReadRequest,
 } from "./sdk-read";
+
+import { ProviderResponseSchema } from "./sdk-read-schema";
 
 import type { OpenShellProviderMetadata } from "./provider-adapter";
 
@@ -50,15 +52,15 @@ export function createProviders(
           if (isNotFound(error)) return null;
           throw error;
         }
-        const provider = record(record(response).provider);
-        const config = record(provider.config);
+        const { provider } = readValue(ProviderResponseSchema, response);
+        const { config } = provider;
         return owned({
           ...metadata(provider.metadata, name, request.workspace),
-          type: text(provider.type),
+          type: provider.type,
           credentialKeys: [
             ...new Set([
-              ...Object.keys(record(provider.credentials)),
-              ...Object.keys(record(provider.credentialHandles ?? {})),
+              ...Object.keys(provider.credentials),
+              ...Object.keys(provider.credentialHandles ?? {}),
             ]),
           ]
             .map(text)

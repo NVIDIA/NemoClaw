@@ -2,11 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { publishExportFile } from "./config-export-file";
+
+vi.mock("node:crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:crypto")>();
+  return { ...actual, randomUUID: vi.fn(actual.randomUUID) };
+});
 
 const roots: string[] = [];
 
@@ -313,6 +319,46 @@ describe("publishExportFile", () => {
       unlinkSync(path.join(retainedParent, name!));
     },
   );
+
+  it("omits a staging reference whose filename contains a control character", () => {
+    const root = temporaryRoot();
+    vi.mocked(randomUUID).mockReturnValueOnce("123e4567-e89b-42d3-a456-426614174000\n");
+    vi.spyOn(fs, "unlinkSync").mockImplementation(() => {
+      throw new Error("injected cleanup failure");
+    });
+    expect(publishExportFile(path.join(root, "selected.yaml"), "content")).toMatchObject({
+      ok: false,
+      failure: {
+        fileState: { publication: "published", stagingCleanup: "incomplete" },
+        stagingReference: null,
+      },
+    });
+  });
+
+  it.each([
+    { name: "negative", inode: -1 },
+    { name: "imprecise", inode: Number.MAX_SAFE_INTEGER + 1 },
+  ])("omits a staging reference with a $name inode", ({ inode }) => {
+    const root = temporaryRoot();
+    const lstatSync = fs.lstatSync;
+    const fstatSync = fs.fstatSync;
+    vi.spyOn(fs, "lstatSync").mockImplementation((candidate) =>
+      Object.assign(lstatSync(candidate), { ino: inode }),
+    );
+    vi.spyOn(fs, "fstatSync").mockImplementation((descriptor) =>
+      Object.assign(fstatSync(descriptor), { ino: inode }),
+    );
+    vi.spyOn(fs, "unlinkSync").mockImplementation(() => {
+      throw new Error("injected cleanup failure");
+    });
+    expect(publishExportFile(path.join(root, "selected.yaml"), "content")).toMatchObject({
+      ok: false,
+      failure: {
+        fileState: { publication: "published", stagingCleanup: "incomplete" },
+        stagingReference: null,
+      },
+    });
+  });
 
   it("reports when publication succeeds but parent fsync fails (#10938)", () => {
     const root = temporaryRoot();

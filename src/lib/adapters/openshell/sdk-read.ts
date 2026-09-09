@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
+import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
+import { MetadataSchema, ReadTextSchema, WorkspaceSchema } from "./sdk-read-schema";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { connectManagedOpenShellSdk } from "./sdk";
 import type { OpenShellGatewayTarget, OpenShellSandboxError } from "./sandbox-observer";
+
+const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 
 export type ReadRequest = Readonly<{
   target: OpenShellGatewayTarget;
@@ -33,33 +38,25 @@ export class OpenShellReadError extends Error {
   }
 }
 
-export function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new OpenShellReadError("schema");
-  return value as Record<string, unknown>;
+export function readValue<Schema extends TypeBoxModule.Type.TSchema>(
+  schema: Schema,
+  value: unknown,
+): TypeBoxModule.Type.Static<Schema> {
+  if (!Check(schema, value)) throw new OpenShellReadError("schema");
+  return value;
 }
+
 export function text(value: unknown): string {
-  if (typeof value !== "string" || !value || value.length > 4096 || /[\p{Cc}\p{Cf}]/u.test(value)) {
-    throw new OpenShellReadError("schema");
-  }
-  return value;
+  return readValue(ReadTextSchema, value);
 }
-export function version(value: unknown): string {
-  const string = typeof value === "bigint" ? String(value) : text(value);
-  if (!/^(0|[1-9][0-9]{0,19})$/u.test(string) || BigInt(string) > 18446744073709551615n) {
-    throw new OpenShellReadError("schema");
-  }
-  return string;
-}
-export function integer(value: unknown): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
-    throw new OpenShellReadError("schema");
-  return value;
-}
-export function metadata(value: unknown, name: string, workspace: string) {
-  const meta = record(value);
+
+export function metadata(
+  meta: TypeBoxModule.Type.Static<typeof MetadataSchema>,
+  name: string,
+  workspace: string,
+) {
   if (meta.name !== name || meta.workspace !== workspace) throw new OpenShellReadError("schema");
-  return { id: text(meta.id), name, workspace, resourceVersion: version(meta.resourceVersion) };
+  return { id: meta.id, name, workspace, resourceVersion: String(meta.resourceVersion) };
 }
 export const owned = cloneAndDeepFreeze;
 
@@ -68,7 +65,7 @@ export async function readOpenShell<T>(
   request: ReadRequest,
   operation: () => Promise<T>,
 ): Promise<T> {
-  if (request.target.kind !== "named" || !/^[a-z0-9][a-z0-9-]{0,62}$/u.test(request.workspace)) {
+  if (request.target.kind !== "named" || !Check(WorkspaceSchema, request.workspace)) {
     throw new OpenShellReadError("schema");
   }
   const { signal } = request;

@@ -184,6 +184,10 @@ export const NEMOCLAW_INFERENCE_APIS = [
 
 export const NemoClawInferenceApiSchema = Type.Enum(NEMOCLAW_INFERENCE_APIS);
 
+export function isSupportedInferenceApi(value: unknown): value is InferenceApi {
+  return Check(NemoClawInferenceApiSchema, value);
+}
+
 const CredentialEnvironmentReferenceSchema = Type.Object(
   { env: CredentialEnvironmentReferenceNameSchema },
   { additionalProperties: false },

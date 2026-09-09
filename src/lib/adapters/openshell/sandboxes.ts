@@ -3,17 +3,17 @@
 
 import {
   connectOpenShellReader,
-  integer,
-  OpenShellReadError,
   isNotFound,
   metadata,
   owned,
   readOpenShell,
-  record,
+  readValue,
   text,
   type ConnectOpenShellReader,
   type ReadRequest,
 } from "./sdk-read";
+
+import { SandboxResponseSchema } from "./sdk-read-schema";
 
 export type Sandbox = Readonly<{
   id: string;
@@ -43,15 +43,13 @@ export function createSandboxes(connect: ConnectOpenShellReader = connectOpenShe
           if (isNotFound(error)) return null;
           throw error;
         }
-        const sandbox = record(record(response).sandbox);
-        const status = record(sandbox.status);
-        const spec = record(sandbox.spec);
-        if (!Array.isArray(spec.providers)) throw new OpenShellReadError("schema");
+        const { sandbox } = readValue(SandboxResponseSchema, response);
+        const { status, spec } = sandbox;
         return owned({
           ...metadata(sandbox.metadata, name, request.workspace),
-          policyVersion: integer(status.currentPolicyVersion),
-          image: text(record(spec.template).image),
-          providers: spec.providers.map(text).sort(),
+          policyVersion: status.currentPolicyVersion,
+          image: spec.template.image,
+          providers: [...spec.providers].sort(),
         });
       }),
   };

@@ -5,6 +5,23 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
+import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
+
+const { Type } = require("typebox") as typeof TypeBoxModule;
+const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
+
+const FileIdentityNumberSchema = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
+const StagingReferenceSchema = Type.Object({
+  name: Type.String({
+    pattern: "^\\.nemoclaw-export\\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\\.tmp$",
+  }),
+  directoryDevice: FileIdentityNumberSchema,
+  directoryInode: FileIdentityNumberSchema,
+  fileDevice: FileIdentityNumberSchema,
+  fileInode: FileIdentityNumberSchema,
+});
+
 type ErrnoException = Error & { code?: string };
 
 function isErrnoException(error: unknown): error is ErrnoException {
@@ -12,13 +29,9 @@ function isErrnoException(error: unknown): error is ErrnoException {
 }
 
 export type YamlExportFailureKind = "output-conflict" | "unsafe-output";
-export type YamlExportStagingReference = Readonly<{
-  name: string;
-  directoryDevice: number;
-  directoryInode: number;
-  fileDevice: number;
-  fileInode: number;
-}>;
+export type YamlExportStagingReference = Readonly<
+  TypeBoxModule.Type.Static<typeof StagingReferenceSchema>
+>;
 export type YamlExportFileState =
   | {
       readonly publication: "not-published";
@@ -216,13 +229,14 @@ function stagingReference(
   stat: fs.Stats | undefined,
 ): YamlExportStagingReference | undefined {
   if (!stat?.isFile()) return undefined;
-  return {
+  const reference = {
     name: path.basename(temporary),
     directoryDevice: parent.stat.dev,
     directoryInode: parent.stat.ino,
     fileDevice: stat.dev,
     fileInode: stat.ino,
   };
+  return Check(StagingReferenceSchema, reference) ? reference : undefined;
 }
 
 function stageExport(

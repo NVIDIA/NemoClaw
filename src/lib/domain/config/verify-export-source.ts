@@ -18,8 +18,7 @@ import {
   isValidNemoClawPort,
   isValidNemoClawRuntimeProvider,
   isValidNemoClawSandboxName,
-  NEMOCLAW_INFERENCE_APIS,
-  type InferenceApi,
+  isSupportedInferenceApi,
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import type {
@@ -33,9 +32,6 @@ import type {
   VerifiedExportSource,
 } from "./export-evidence";
 
-function isSupportedInferenceApi(value: string): value is InferenceApi {
-  return (NEMOCLAW_INFERENCE_APIS as readonly string[]).includes(value);
-}
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
   "gateway" | "inference" | "policy" | "runtime" | "sandboxName"
