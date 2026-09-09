@@ -196,6 +196,77 @@ function Read-HermesPtyRequirement {
     return $entries[0].Value + [Environment]::NewLine
 }
 
+function Invoke-CapturedHermesPtyPreflight {
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [Parameter(Mandatory)][string[]]$Arguments,
+        [Parameter(Mandatory)][string]$LogPath
+    )
+
+    # Windows PowerShell transcripts can omit native stderr. Drain both pipes
+    # directly, retaining bounded diagnostics without changing the native result.
+    $start = [Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $FilePath
+    $start.Arguments = ($Arguments | ForEach-Object {
+        '"' + [regex]::Replace([regex]::Replace($_, '(\\*)"', '$1$1\"'), '(\\+)$', '$1$1') + '"'
+    }) -join ' '
+    $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $start
+    $log = [IO.File]::Open($LogPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+    $started = $false
+    $retained = 0
+    $truncated = $false
+    $encoding = [Text.UTF8Encoding]::new($false)
+    $notice = $encoding.GetBytes("`n[native console output truncated at 64 KiB]`n")
+    $limit = 64 * 1024 - $notice.Length
+    try {
+        $started = $process.Start()
+        if (-not $started) { Fail-PayloadPreparation 'The native Hermes ConPTY preflight could not start.' }
+        $readers = @($process.StandardOutput, $process.StandardError) | ForEach-Object {
+            $buffer = [char[]]::new(2048)
+            [pscustomobject]@{ Stream = $_; Buffer = $buffer; Read = $_.ReadAsync($buffer, 0, $buffer.Length) }
+        }
+        while (@($readers | Where-Object { $null -ne $_.Read }).Count -ne 0) {
+            foreach ($reader in $readers) {
+                if ($null -eq $reader.Read -or -not $reader.Read.IsCompleted) { continue }
+                $count = $reader.Read.GetAwaiter().GetResult()
+                if ($count -eq 0) { $reader.Read = $null; continue }
+                $bytes = $encoding.GetBytes([string]::new($reader.Buffer, 0, $count))
+                $keep = [Math]::Min($bytes.Length, $limit - $retained)
+                if ($keep -gt 0) {
+                    $log.Write($bytes, 0, $keep)
+                    $log.Flush()
+                    Write-Host -NoNewline $encoding.GetString($bytes, 0, $keep)
+                    $retained += $keep
+                }
+                if ($keep -lt $bytes.Length) { $truncated = $true }
+                $reader.Read = $reader.Stream.ReadAsync($reader.Buffer, 0, $reader.Buffer.Length)
+            }
+            if (@($readers | Where-Object { $null -ne $_.Read }).Count -ne 0) { Start-Sleep -Milliseconds 20 }
+        }
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
+        if ($truncated) {
+            $log.Write($notice, 0, $notice.Length)
+            Write-Host -NoNewline $encoding.GetString($notice)
+        }
+    } finally {
+        try {
+            if ($started -and -not $process.HasExited) {
+                $process.Kill()
+                $process.WaitForExit(5000) | Out-Null
+            }
+        } finally {
+            $log.Dispose()
+            $process.Dispose()
+        }
+    }
+    if ($exitCode -ne 0) { Fail-PayloadPreparation "Native Hermes ConPTY preflight exited with status $exitCode." }
+}
+
 function Invoke-HermesPtyControl {
     param(
         [Parameter(Mandatory)][string]$Candidate,
@@ -241,10 +312,11 @@ function Invoke-HermesPtyControl {
             '-I', '-m', 'pip', 'install', '--disable-pip-version-check',
             '--no-deps', '--no-index', '--no-compile', '--target', $site, $wheel
         ) -Label 'Early Hermes pinned runtime restore'
-        Invoke-Checked -FilePath $builder -Arguments @(
+        Write-Host 'Running the authentic Hermes Windows ConPTY input/output/resize control.'
+        Invoke-CapturedHermesPtyPreflight -FilePath $builder -Arguments @(
             '-I', (Join-Path $Candidate 'packaging\windows\python\native-hermes-preflight.py'),
             $site, '--pty-only', '--receipt', (Join-Path $Output 'console-bridge.json')
-        ) -Label 'Early authentic Hermes Windows ConPTY input/output/resize control'
+        ) -LogPath (Join-Path $Output 'native-console.log')
         if (-not (Test-Path -LiteralPath (Join-Path $Output 'console-bridge.json') -PathType Leaf)) {
             Fail-PayloadPreparation 'The early Hermes ConPTY control did not produce its receipt.'
         }

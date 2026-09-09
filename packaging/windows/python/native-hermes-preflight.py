@@ -5,7 +5,7 @@
 
 import argparse
 import ctypes
-from ctypes import wintypes
+import ctypes.wintypes as wintypes
 import json
 import os
 from pathlib import Path
@@ -32,17 +32,57 @@ def verify_console_files(site):
     return package
 
 
-def verify_loaded_console(package):
+def console_kernel():
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
     kernel.GetModuleHandleW.restype = wintypes.HMODULE
     kernel.GetModuleFileNameW.argtypes = [wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
     kernel.GetModuleFileNameW.restype = wintypes.DWORD
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel.TerminateProcess.restype = wintypes.BOOL
+    kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    return kernel
+
+
+def verify_loaded_console(package, kernel):
     handle = kernel.GetModuleHandleW("conpty.dll")
     buffer = ctypes.create_unicode_buffer(32768)
     length = kernel.GetModuleFileNameW(handle, buffer, len(buffer)) if handle else 0
     if not length or length >= len(buffer) or not os.path.samefile(buffer.value, package / "conpty.dll"):
         raise RuntimeError("The Windows PTY did not load its packaged ConPTY library")
+
+
+def wait_for_child_exit(kernel, handle):
+    # Keep the process object opened before exchanging input, so PID reuse and
+    # pywinpty's derived liveness state cannot change which child is observed.
+    result = kernel.WaitForSingleObject(handle, 5000)
+    if result != 0:
+        terminated = bool(kernel.TerminateProcess(handle, 1))
+        stopped = kernel.WaitForSingleObject(handle, 5000) == 0
+        raise RuntimeError(
+            f"Hermes did not stop the native PTY child (wait={result}, "
+            f"forcedCleanupRequested={terminated}, forcedCleanupCompleted={stopped})"
+        )
+    code = wintypes.DWORD()
+    if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return code.value
+
+
+def raise_preflight_failures(primary_error, cleanup_errors):
+    if primary_error is not None:
+        for error in cleanup_errors:
+            print(f"Native PTY cleanup also failed: {error}", file=sys.stderr, flush=True)
+        raise primary_error
+    if cleanup_errors:
+        raise ExceptionGroup("Native PTY cleanup failed", cleanup_errors)
 
 
 def verify_messaging(site):
@@ -84,7 +124,8 @@ def main():
     from winpty import PtyProcess
     from hermes_cli.win_pty_bridge import WinPtyBridge
 
-    verify_loaded_console(package)
+    kernel = console_kernel()
+    verify_loaded_console(package, kernel)
     if not WinPtyBridge.is_available() or not callable(PtyProcess.spawn):
         raise RuntimeError("The authentic Hermes Windows PTY bridge is unavailable")
     if not options.pty_only:
@@ -92,10 +133,25 @@ def main():
 
     # A native PTY read may block inside Windows. Bound the whole real round trip
     # independently, including cleanup; this fixture contains no provider key.
-    watchdog = threading.Timer(25, lambda: os._exit(124))
+    process_handle = None
+    handle_lock = threading.Lock()
+
+    def expire():
+        # Only this freshly created fixture process may be terminated. Keep the
+        # handle locked against close/reuse while requesting failure cleanup.
+        with handle_lock:
+            if process_handle:
+                kernel.TerminateProcess(process_handle, 124)
+        os._exit(124)
+
+    watchdog = threading.Timer(25, expire)
     watchdog.daemon = True
     watchdog.start()
     bridge = None
+    child_exit_code = None
+    round_trip_complete = False
+    primary_error = None
+    cleanup_errors = []
     marker = "NEMOCLAW_CONPTY_" + uuid.uuid4().hex
     child = """import os, sys, time
 print('READY', flush=True)
@@ -106,9 +162,14 @@ while tuple(size) != (100, 30) and time.monotonic() < deadline:
     time.sleep(0.01)
     size = os.get_terminal_size()
 print('ECHO:' + value + ':' + str(size.columns) + 'x' + str(size.lines), flush=True)
+time.sleep(60)  # Remain alive until the real bridge's Stop/close terminates us.
 """
     try:
         bridge = WinPtyBridge.spawn([sys.executable, "-c", child], cwd=str(site), cols=80, rows=24)
+        with handle_lock:
+            process_handle = kernel.OpenProcess(0x00101001, False, bridge.pid)
+        if not process_handle:
+            raise ctypes.WinError(ctypes.get_last_error())
         output = b""
         while b"READY" not in output:
             chunk = bridge.read()
@@ -128,16 +189,35 @@ print('ECHO:' + value + ':' + str(size.columns) + 'x' + str(size.lines), flush=T
             output += chunk
             if len(output) > 64 * 1024:
                 raise RuntimeError("The native PTY fixture exceeded its output bound")
+        round_trip_complete = True
+    except Exception as error:
+        primary_error = error
     finally:
+        alive_before_close = bool(process_handle) and kernel.WaitForSingleObject(process_handle, 0) == 258
         try:
             if bridge is not None:
                 bridge.close()
-                if bridge._proc.isalive():
-                    raise RuntimeError("The native PTY child did not stop during cleanup")
-        finally:
-            watchdog.cancel()
+        except Exception as error:
+            cleanup_errors.append(error)
+        try:
+            if process_handle:
+                child_exit_code = wait_for_child_exit(kernel, process_handle)
+        except Exception as error:
+            cleanup_errors.append(error)
+        if round_trip_complete and not alive_before_close:
+            cleanup_errors.append(RuntimeError("The native PTY fixture exited before Hermes Stop was requested"))
+        watchdog.cancel()
+        with handle_lock:
+            if process_handle:
+                handle = process_handle
+                process_handle = None
+                if not kernel.CloseHandle(handle):
+                    cleanup_errors.append(ctypes.WinError(ctypes.get_last_error()))
+    raise_preflight_failures(primary_error, cleanup_errors)
     receipt = {"schemaVersion": 1, "nativeConPty": True, "packagedConsoleLoaded": True,
                "childObservedSize": [100, 30], "childStopped": True,
+               "childExitCode": child_exit_code, "exitObservedByWindowsHandle": True,
+               "stopRequestedWhileChildAlive": True,
                "messagingImports": [] if options.pty_only else ["telegram", "discord", "slack"]}
     text = json.dumps(receipt) + "\n"
     if options.receipt is not None:
