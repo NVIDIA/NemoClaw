@@ -18,6 +18,7 @@ import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebu
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
 import { capturePodmanSocketAuthority } from "../../../src/lib/adapters/podman/index.ts";
 import { captureHermesPortableOpenShellExecutableAuthority } from "../../../src/lib/adapters/openshell/resolve-shared.ts";
+import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../../src/lib/adapters/openshell/timeouts.ts";
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
 import {
   createHermesPortableForwardRecoveryInput,
@@ -370,7 +371,9 @@ function captureOpenShell(
           ? 30_000
           : timeoutMs <= 40_000
             ? 40_000
-            : 240_000,
+            : timeoutMs <= 60_000
+              ? 60_000
+              : 240_000,
   });
   return {
     status: result.status,
@@ -657,6 +660,9 @@ async function proveHistoricalHermesPortableLifecycle(input: {
     "OpenShell Hermes sandbox creation",
   );
 
+  let primaryFailed = false;
+  let primaryFailure: unknown;
+  let lifecycleEvidence: Record<string, unknown> | undefined;
   try {
     const live = readOpenShellSandbox(input.openshellBin, input.openshellClientEnv, sandboxName);
     const liveIdentityFingerprint = createHash("sha256").update(live.id).digest("hex");
@@ -749,7 +755,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       readRegistry: () => registry,
     };
 
-    return await withPortableHostFence(input.runtimeAuthority.homeDir, async () => {
+    lifecycleEvidence = await withPortableHostFence(input.runtimeAuthority.homeDir, async () => {
       const gatewayEvidence: {
         forwardRecovery: ReturnType<typeof recoverHermesPortableLaunchForwards> | null;
         health: string;
@@ -942,18 +948,41 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       );
       return evidence;
     });
-  } finally {
+  } catch (error) {
+    primaryFailed = true;
+    primaryFailure = error;
+  }
+  let cleanupFailed = false;
+  let cleanupFailure: unknown;
+  try {
     requireOpenShellResult(
       captureOpenShell(
         input.openshellBin,
         input.openshellClientEnv,
         ["sandbox", "delete", "-g", HERMES_PORTABLE_E2E_GATEWAY_NAME, sandboxName],
-        40_000,
+        OPENSHELL_HEAVY_TIMEOUT_MS,
       ),
       "OpenShell Hermes sandbox deletion",
     );
     waitForOpenShellSandboxAbsent(input.openshellBin, input.openshellClientEnv, sandboxName);
+  } catch (error) {
+    cleanupFailed = true;
+    cleanupFailure = error;
   }
+  const primaryMessage =
+    primaryFailure instanceof Error ? primaryFailure.message : String(primaryFailure);
+  const cleanupMessage =
+    cleanupFailure instanceof Error ? cleanupFailure.message : String(cleanupFailure);
+  const failure = primaryFailed
+    ? cleanupFailed
+      ? new AggregateError(
+          [primaryFailure, cleanupFailure],
+          `Hermes lifecycle failed before cleanup (${primaryMessage}); exact sandbox cleanup also failed (${cleanupMessage})`,
+          { cause: primaryFailure },
+        )
+      : primaryFailure
+    : cleanupFailure;
+  return primaryFailed || cleanupFailed ? Promise.reject(failure) : lifecycleEvidence!;
 }
 
 async function main(progress: TestProgress): Promise<void> {
