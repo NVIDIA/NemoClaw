@@ -143,6 +143,7 @@ describe("buildInferenceProviderMenu", () => {
         hermesProviderAvailable: false,
         readRecordedProvider: () => null,
         readRecordedNimContainer: () => null,
+        readRecordedManagedLlamaCpp: () => false,
         readRecordedModel: () => null,
       }),
     ).toEqual({
@@ -192,7 +193,7 @@ describe("buildInferenceProviderMenu", () => {
     });
   });
 
-  it("offers Windows-host Ollama start when detected but not currently selected", () => {
+  it("offers Windows-host Ollama repair when a Docker-reachable route is unprotected", () => {
     const result = buildMenu({
       isWsl: true,
       hasWindowsOllama: true,
@@ -204,7 +205,7 @@ describe("buildInferenceProviderMenu", () => {
 
     expect(result.options.at(-2)).toEqual({
       key: "start-windows-ollama",
-      label: "Use Ollama on Windows host - running",
+      label: "Start Ollama on Windows host",
     });
   });
 

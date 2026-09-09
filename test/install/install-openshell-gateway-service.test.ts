@@ -163,6 +163,76 @@ function writeUpstreamSystemctlStub(
   return { bin, log };
 }
 
+function writeQualifiedDefaultPortActivation(home: string) {
+  const gatewayBin = path.join(home, "usr", "bin", "openshell-gateway");
+  const unitPath = path.join(home, ".config", "systemd", "user", "openshell-gateway.service");
+  const activationPath = path.join(
+    home,
+    ".config",
+    "systemd",
+    "user",
+    "default.target.wants",
+    "openshell-gateway.service",
+  );
+  const gatewayEnv = path.join(home, ".config", "openshell", "gateway.env");
+  const probeBin = path.join(home, "probe-bin");
+  fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
+  fs.mkdirSync(path.dirname(unitPath), { recursive: true });
+  fs.mkdirSync(path.dirname(activationPath), { recursive: true });
+  fs.mkdirSync(path.dirname(gatewayEnv), { recursive: true });
+  fs.mkdirSync(probeBin, { recursive: true });
+  writeExecutable(gatewayBin, "#!/usr/bin/env bash\nexit 0\n");
+  fs.writeFileSync(
+    unitPath,
+    `[Service]\nEnvironmentFile=-%E/openshell/gateway.env\nExecStart=${gatewayBin}\n`,
+  );
+  fs.writeFileSync(gatewayEnv, "OPENSHELL_SERVER_PORT=8080\n");
+  fs.symlinkSync(unitPath, activationPath);
+  writeExecutable(path.join(probeBin, "lsof"), "#!/usr/bin/env bash\nexit 1\n");
+  return { activationPath, gatewayBin, gatewayEnv, probeBin, unitPath };
+}
+
+function writeUnavailableUserManagerStub(home: string) {
+  return writeUpstreamSystemctlStub(home, {
+    diagnostic: "Failed to connect to bus: No medium found",
+    status: 1,
+  });
+}
+
+function qualifiedInstallBody(
+  fixture: { gatewayBin: string; unitPath: string },
+  commands: string[],
+): string {
+  return [
+    "upstream_openshell_gateway_user_service_installed() { return 0; }",
+    `trusted_upstream_openshell_gateway_unit_for_service() { [[ "$1" == ${JSON.stringify(fixture.unitPath)} ]]; }`,
+    `trusted_upstream_openshell_gateway_bin_for_service() { [[ "$1" == ${JSON.stringify(fixture.gatewayBin)} ]]; }`,
+    ...commands,
+  ].join("\n");
+}
+
+function runCandidateCheck(home: string, env: NodeJS.ProcessEnv = {}) {
+  return runInstallHelper(
+    home,
+    'candidate_gateway_port_is_available 8990 && echo "AVAILABLE" || echo "UNAVAILABLE"',
+    env,
+  );
+}
+
+function runForcedCandidateProbe(home: string, probeName: "ss" | "fuser", source: string) {
+  const probeBin = path.join(home, `${probeName}-probe-bin`);
+  fs.mkdirSync(probeBin, { recursive: true });
+  writeExecutable(path.join(probeBin, probeName), source);
+  return runInstallHelper(
+    home,
+    [
+      `command_exists() { [[ "$1" == ${JSON.stringify(probeName)} ]]; }`,
+      'candidate_gateway_port_is_available 8990 && echo "AVAILABLE" || echo "UNAVAILABLE"',
+    ].join("\n"),
+    { PATH: `${probeBin}:${TEST_SYSTEM_PATH}` },
+  );
+}
+
 describe("install.sh OpenShell gateway service", () => {
   it.each([
     "user-local",
@@ -389,7 +459,7 @@ describe("install.sh OpenShell gateway service", () => {
   it.each([
     "openshell-gateway",
     "nemoclaw-openshell-gateway",
-  ])("blocks standalone fallback when an enabled %s user service could claim port 8080 (#8926)", (serviceName) => {
+  ])("blocks standalone fallback when an enabled %s user service could claim explicit port 8080 (#8926)", (serviceName) => {
     const home = makeTempRoot();
     const activationPath = path.join(
       home,
@@ -412,7 +482,10 @@ describe("install.sh OpenShell gateway service", () => {
         "upstream_openshell_gateway_user_service_installed() { return 0; }",
         "install_nemoclaw_openshell_gateway_user_service",
       ].join("\n"),
-      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+      {
+        PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_GATEWAY_PORT: "8080",
+      },
     );
 
     expect(result.status).toBe(1);
@@ -421,6 +494,466 @@ describe("install.sh OpenShell gateway service", () => {
     expect(result.stderr).toContain("Restore the systemd user manager");
     expect(fs.lstatSync(activationPath).isSymbolicLink()).toBe(true);
     expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
+  it("passes the qualified alternate port to onboarding when the default-port service is enabled (#10824)", () => {
+    const home = makeTempRoot();
+    const fixture = writeQualifiedDefaultPortActivation(home);
+    const cli = path.join(home, "nemoclaw");
+    writeExecutable(
+      cli,
+      '#!/usr/bin/env bash\nbash "$NEMOCLAW_REPO_ROOT/scripts/install.sh" --internal-complete-automatic-gateway-port\nprintf "SELECTED_PORT=%s\\n" "$NEMOCLAW_GATEWAY_PORT"\n',
+    );
+    const systemctl = writeUnavailableUserManagerStub(home);
+
+    const result = runInstallHelper(
+      home,
+      qualifiedInstallBody(fixture, [
+        "install_nemoclaw_openshell_gateway_user_service",
+        "show_usage_notice() { :; }",
+        `NON_INTERACTIVE=1 _CLI_PATH=${JSON.stringify(cli)} run_onboard`,
+      ]),
+      {
+        PATH: `${systemctl.bin}:${fixture.probeBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(fixture.activationPath);
+    expect(result.stdout).toContain("Automatically selected safe alternate gateway port 8990");
+    expect(result.stdout).toContain("SELECTED_PORT=8990");
+    expect(
+      fs.readFileSync(
+        path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port"),
+        "utf8",
+      ),
+    ).toBe("8990\n");
+    expect(fs.lstatSync(fixture.activationPath).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
+  it("retains an automatic port across deferred Hermes onboarding (#10824)", () => {
+    const home = makeTempRoot();
+    const fixture = writeQualifiedDefaultPortActivation(home);
+    const systemctl = writeUnavailableUserManagerStub(home);
+
+    const result = runInstallHelper(
+      home,
+      qualifiedInstallBody(fixture, [
+        "install_nemoclaw_openshell_gateway_user_service",
+        "DEFER_ONBOARDING=1 NEMOCLAW_AGENT=hermes should_defer_hermes_onboarding 0",
+        'printf "DEFERRED_PORT=%s\\n" "$NEMOCLAW_GATEWAY_PORT"',
+      ]),
+      {
+        PATH: `${systemctl.bin}:${fixture.probeBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+        NVIDIA_API_KEY: "",
+        NVIDIA_INFERENCE_API_KEY: "",
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("DEFERRED_PORT=8990");
+    expect(
+      fs.readFileSync(
+        path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port.pending"),
+        "utf8",
+      ),
+    ).toBe("8990\n");
+  });
+
+  it("retains a failed automatic selection for installer resume on the same port (#10824)", () => {
+    const home = makeTempRoot();
+    const fixture = writeQualifiedDefaultPortActivation(home);
+    const failedCli = path.join(home, "failed-nemoclaw");
+    const session = JSON.stringify({
+      status: "in_progress",
+      resumable: true,
+      sandboxName: "partial-sandbox",
+      steps: { sandbox: { status: "complete" } },
+    });
+    writeExecutable(
+      failedCli,
+      [
+        "#!/usr/bin/env bash",
+        'mkdir -p "$HOME/.nemoclaw/gateways/8990"',
+        `printf '%s\\n' ${JSON.stringify(session)} >"$HOME/.nemoclaw/gateways/8990/onboard-session.json"`,
+        "exit 9",
+        "",
+      ].join("\n"),
+    );
+    const systemctl = writeUnavailableUserManagerStub(home);
+
+    const failed = runInstallHelper(
+      home,
+      qualifiedInstallBody(fixture, [
+        "install_nemoclaw_openshell_gateway_user_service",
+        "show_usage_notice() { :; }",
+        `NON_INTERACTIVE=1 _CLI_PATH=${JSON.stringify(failedCli)} run_onboard || printf 'ONBOARD_FAILED=%s\\n' "$?"`,
+      ]),
+      {
+        PATH: `${systemctl.bin}:${fixture.probeBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+      },
+    );
+
+    expect(failed.status, failed.stderr).toBe(0);
+    expect(failed.stdout).toContain("ONBOARD_FAILED=9");
+    expect(
+      fs.existsSync(
+        path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port"),
+      ),
+    ).toBe(false);
+    expect(
+      fs.readFileSync(
+        path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port.pending"),
+        "utf8",
+      ),
+    ).toBe("8990\n");
+
+    const successfulCli = path.join(home, "successful-nemoclaw");
+    writeExecutable(
+      successfulCli,
+      '#!/usr/bin/env bash\nbash "$NEMOCLAW_REPO_ROOT/scripts/install.sh" --internal-complete-automatic-gateway-port\nprintf "SELECTED_PORT=%s AUTOMATIC=%s ARGS=%s\\n" "$NEMOCLAW_GATEWAY_PORT" "$_NEMOCLAW_AUTOMATIC_GATEWAY_PORT" "$*"\n',
+    );
+    const retried = runInstallHelper(
+      home,
+      qualifiedInstallBody(fixture, [
+        "apply_persisted_automatic_gateway_port",
+        'if is_explicit_nemoclaw_gateway_port; then printf "PORT_PROVENANCE=explicit\\n"; else printf "PORT_PROVENANCE=automatic\\n"; fi',
+        "install_nemoclaw_openshell_gateway_user_service",
+        "show_usage_notice() { :; }",
+        `NON_INTERACTIVE=1 _CLI_PATH=${JSON.stringify(successfulCli)} run_onboard`,
+      ]),
+      {
+        PATH: `${systemctl.bin}:${fixture.probeBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+      },
+    );
+
+    expect(retried.status, retried.stderr).toBe(0);
+    expect(retried.stdout).toContain("PORT_PROVENANCE=automatic");
+    expect(retried.stdout).toContain("Found an interrupted onboarding session — resuming it");
+    expect(retried.stdout).toContain(
+      "SELECTED_PORT=8990 AUTOMATIC=1 ARGS=onboard --resume",
+    );
+    expect(
+      fs.readFileSync(
+        path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port"),
+        "utf8",
+      ),
+    ).toBe("8990\n");
+    expect(
+      fs.existsSync(
+        path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port.pending"),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses automatic selection for an unqualified activation link (#10824)", () => {
+    const home = makeTempRoot();
+    const activationPath = path.join(
+      home,
+      ".config",
+      "systemd",
+      "user",
+      "default.target.wants",
+      "openshell-gateway.service",
+    );
+    fs.mkdirSync(path.dirname(activationPath), { recursive: true });
+    fs.symlinkSync(path.join(home, "missing-package-unit.service"), activationPath);
+    const systemctl = writeUnavailableUserManagerStub(home);
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("effective port is not proven to be limited to 8080");
+    expect(result.stderr).toContain(activationPath);
+  });
+
+  it("refuses automatic selection when the enabled service uses a candidate port (#10824)", () => {
+    const home = makeTempRoot();
+    const fixture = writeQualifiedDefaultPortActivation(home);
+    fs.writeFileSync(fixture.gatewayEnv, "OPENSHELL_SERVER_PORT=8990\n");
+    const systemctl = writeUnavailableUserManagerStub(home);
+
+    const result = runInstallHelper(
+      home,
+      qualifiedInstallBody(fixture, [
+        "install_nemoclaw_openshell_gateway_user_service",
+      ]),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("effective port is not proven to be limited to 8080");
+    expect(result.stdout).not.toContain("Automatically selected");
+  });
+
+  it("selects port 8991 when the Hermes dashboard uses candidate port 8990 (#10824)", () => {
+    const home = makeTempRoot();
+    const fixture = writeQualifiedDefaultPortActivation(home);
+    const systemctl = writeUnavailableUserManagerStub(home);
+
+    const result = runInstallHelper(
+      home,
+      qualifiedInstallBody(fixture, [
+        "install_nemoclaw_openshell_gateway_user_service",
+        'printf "SELECTED_PORT=%s\\n" "$NEMOCLAW_GATEWAY_PORT"',
+      ]),
+      {
+        NEMOCLAW_HERMES_DASHBOARD_PORT: "8990",
+        PATH: `${systemctl.bin}:${fixture.probeBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Automatically selected safe alternate gateway port 8991");
+    expect(result.stdout).toContain("SELECTED_PORT=8991");
+  });
+
+  it("fails closed when no alternate candidate port is available (#10824)", () => {
+    const home = makeTempRoot();
+    const fixture = writeQualifiedDefaultPortActivation(home);
+    const systemctl = writeUnavailableUserManagerStub(home);
+
+    const result = runInstallHelper(
+      home,
+      qualifiedInstallBody(fixture, [
+        "candidate_gateway_port_is_available() { return 1; }",
+        "install_nemoclaw_openshell_gateway_user_service",
+      ]),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Could not automatically select a safe alternate gateway port");
+  });
+
+  it("treats aliased unit roots as one activation directory (#10824)", () => {
+    const home = makeTempRoot();
+    const physicalConfig = path.join(home, "physical-config");
+    const aliasedConfig = path.join(home, "aliased-config");
+    const activationPath = path.join(
+      physicalConfig,
+      "systemd",
+      "user",
+      "default.target.wants",
+      "openshell-gateway.service",
+    );
+    fs.mkdirSync(path.dirname(activationPath), { recursive: true });
+    fs.symlinkSync(path.join(home, "missing-package-unit.service"), activationPath);
+    fs.symlinkSync(physicalConfig, aliasedConfig, "dir");
+
+    const result = runInstallHelper(
+      home,
+      "enabled_openshell_gateway_user_service_activation_path",
+      { XDG_CONFIG_DIRS: `${physicalConfig}:${aliasedConfig}` },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe(activationPath);
+  });
+
+  it("refuses automatic selection when a global service drop-in can override the unit (#10824)", () => {
+    const home = makeTempRoot();
+    const fixture = writeQualifiedDefaultPortActivation(home);
+    const dropin = path.join(home, ".config", "systemd", "user", "service.d", "override.conf");
+    fs.mkdirSync(path.dirname(dropin), { recursive: true });
+    fs.writeFileSync(dropin, "[Service]\nEnvironment=OPENSHELL_SERVER_PORT=8990\n");
+    const systemctl = writeUnavailableUserManagerStub(home);
+
+    const result = runInstallHelper(
+      home,
+      qualifiedInstallBody(fixture, ["install_nemoclaw_openshell_gateway_user_service"]),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("effective port is not proven to be limited to 8080");
+  });
+
+  it("uses systemd load precedence instead of the activation link target (#10824)", () => {
+    const home = makeTempRoot();
+    const fixture = writeQualifiedDefaultPortActivation(home);
+    const lowerUnit = path.join(
+      home,
+      ".local",
+      "share",
+      "systemd",
+      "user",
+      "openshell-gateway.service",
+    );
+    fs.mkdirSync(path.dirname(lowerUnit), { recursive: true });
+    fs.writeFileSync(
+      lowerUnit,
+      `[Service]\nEnvironmentFile=-%E/openshell/gateway.env\nExecStart=${fixture.gatewayBin}\n`,
+    );
+    fs.writeFileSync(
+      fixture.unitPath,
+      `[Service]\nEnvironmentFile=-%E/openshell/gateway.env\nEnvironment=OPENSHELL_SERVER_PORT=8990\nExecStart=${fixture.gatewayBin}\n`,
+    );
+    fs.unlinkSync(fixture.activationPath);
+    fs.symlinkSync(lowerUnit, fixture.activationPath);
+    const systemctl = writeUnavailableUserManagerStub(home);
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        `trusted_upstream_openshell_gateway_unit_for_service() { [[ "$1" == ${JSON.stringify(fixture.unitPath)} || "$1" == ${JSON.stringify(lowerUnit)} ]]; }`,
+        `trusted_upstream_openshell_gateway_bin_for_service() { [[ "$1" == ${JSON.stringify(fixture.gatewayBin)} ]]; }`,
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("effective port is not proven to be limited to 8080");
+    expect(result.stdout).not.toContain("Automatically selected");
+  });
+
+  it("rejects candidate port when per-port gateway state directory exists with missing or stale PID (#10824, #10936)", () => {
+    const home = makeTempRoot();
+    const stateDir = path.join(home, ".nemoclaw", "gateways", "8990");
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const result = runCandidateCheck(home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
+  it("rejects a candidate that overlaps a configured service port (#10824)", () => {
+    const home = makeTempRoot();
+    const result = runCandidateCheck(home, { NEMOCLAW_VLLM_PORT: "8990" });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
+  it("rejects a persisted automatic marker with extra trailing bytes (#10824)", () => {
+    const home = makeTempRoot();
+    const marker = path.join(
+      home,
+      ".nemoclaw",
+      "gateways",
+      "8990",
+      "automatic-gateway-port",
+    );
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+    fs.writeFileSync(marker, "8990\n\n");
+
+    const result = runInstallHelper(home, "resolve_nemoclaw_gateway_port");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Could not safely resolve the automatically selected NemoClaw gateway port",
+    );
+  });
+
+  it("rejects a candidate with an existing OpenShell gateway registration (#10824)", () => {
+    const home = makeTempRoot();
+    fs.mkdirSync(path.join(home, ".config", "openshell", "gateways", "nemoclaw-8990"), {
+      recursive: true,
+    });
+
+    const result = runCandidateCheck(home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
+  it("fails closed when none of lsof, ss, or fuser is available (#10824, #10936)", () => {
+    const home = makeTempRoot();
+    const result = runInstallHelper(
+      home,
+      [
+        "command_exists() { return 1; }",
+        'candidate_gateway_port_is_available 8990 && echo "AVAILABLE" || echo "UNAVAILABLE"',
+      ].join("\n"),
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
+  it("fails closed when probe command exits with an error status (#10824, #10936)", () => {
+    const home = makeTempRoot();
+    const probeBin = path.join(home, "probe-bin");
+    fs.mkdirSync(probeBin, { recursive: true });
+    writeExecutable(path.join(probeBin, "lsof"), "#!/usr/bin/env bash\nexit 2\n");
+
+    const result = runCandidateCheck(home, { PATH: `${probeBin}:${TEST_SYSTEM_PATH}` });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
+  it("rejects a candidate when the listener probe finds a live listener (#10824)", () => {
+    const home = makeTempRoot();
+    const probeBin = path.join(home, "probe-bin");
+    fs.mkdirSync(probeBin, { recursive: true });
+    writeExecutable(path.join(probeBin, "lsof"), "#!/usr/bin/env bash\nprintf '4242\\n'\n");
+
+    const result = runCandidateCheck(home, { PATH: `${probeBin}:${TEST_SYSTEM_PATH}` });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
+  it("fails closed when lsof reports an inconclusive no-match status (#10824)", () => {
+    const home = makeTempRoot();
+    const probeBin = path.join(home, "probe-bin");
+    fs.mkdirSync(probeBin, { recursive: true });
+    writeExecutable(
+      path.join(probeBin, "lsof"),
+      "#!/usr/bin/env bash\nprintf 'permission denied\\n' >&2\nexit 1\n",
+    );
+
+    const result = runCandidateCheck(home, { PATH: `${probeBin}:${TEST_SYSTEM_PATH}` });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
+  it.each([
+    ["accepts an empty successful ss result", "ss", "#!/usr/bin/env bash\nexit 0\n", "AVAILABLE"],
+    [
+      "rejects a nonempty ss listener result",
+      "ss",
+      "#!/usr/bin/env bash\nprintf 'LISTEN 0 128 127.0.0.1:8990\\n'\n",
+      "UNAVAILABLE",
+    ],
+    [
+      "rejects an ss error",
+      "ss",
+      "#!/usr/bin/env bash\nprintf 'permission denied\\n' >&2\nexit 2\n",
+      "UNAVAILABLE",
+    ],
+    ["accepts the empty fuser no-listener result", "fuser", "#!/usr/bin/env bash\nexit 1\n", "AVAILABLE"],
+    [
+      "rejects a fuser listener result",
+      "fuser",
+      "#!/usr/bin/env bash\nprintf '8990/tcp: 42\\n'\n",
+      "UNAVAILABLE",
+    ],
+    [
+      "rejects an inconclusive fuser result",
+      "fuser",
+      "#!/usr/bin/env bash\nprintf 'permission denied\\n' >&2\nexit 1\n",
+      "UNAVAILABLE",
+    ],
+  ] as const)("%s (#10824)", (_label, probeName, source, expected) => {
+    const home = makeTempRoot();
+    const result = runForcedCandidateProbe(home, probeName, source);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(expected);
   });
 
   it.each([
@@ -434,7 +967,7 @@ describe("install.sh OpenShell gateway service", () => {
     ["transient", "runtime/systemd/transient/default.target.requires"],
     ["upheld", "xdg-data/systemd/user/default.target.upholds"],
     ["data directory", "xdg-data/systemd/user/default.target.requires"],
-  ])("blocks standalone fallback for an activation link in the %s root (#8926)", (_root, relativeDirectory) => {
+  ])("blocks standalone fallback for an activation link in the %s root when port 8080 is explicit (#8926)", (_root, relativeDirectory) => {
     const home = makeTempRoot();
     const activationDirectory = path.join(home, relativeDirectory);
     const activationPath = path.join(activationDirectory, "openshell-gateway.service");
@@ -446,6 +979,7 @@ describe("install.sh OpenShell gateway service", () => {
     });
     const env: NodeJS.ProcessEnv = {
       PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+      NEMOCLAW_GATEWAY_PORT: "8080",
       ...(relativeDirectory.startsWith("runtime/")
         ? { XDG_RUNTIME_DIR: path.join(home, "runtime") }
         : {}),

@@ -203,9 +203,9 @@ validate_tmp_permissions() {
 #     after dropping cap_dac_override (see #2659).
 #   cap_setuid, cap_setgid — required by setpriv to step down from root into
 #     the sandbox/gateway UIDs during entrypoint privilege separation.
-#   cap_kill — sandbox user signals gateway-user processes via the UID
-#     separation enforced by the entrypoint (see test 13 in
-#     e2e-gateway-isolation.sh).
+#   cap_kill — root PID 1 terminates stepped-down gateway and sandbox child
+#     processes during supervised shutdown. The managed-image security test
+#     separately verifies that sandbox cannot signal gateway-user processes.
 # When the runtime cannot drop the bounding set (no CAP_SETPCAP, or capsh
 # missing), the default is to warn and continue. Set NEMOCLAW_REQUIRE_CAP_DROP=1
 # to make that case fail-closed instead — see enforce_cap_drop_if_required.
@@ -520,7 +520,7 @@ lock_rc_files() {
       continue
     fi
     if [ -f "$rc_file" ]; then
-      if ! python3 - "$rc_file" "$(id -u)" <<'PY' 2>/dev/null; then
+      if ! python3 -I - "$rc_file" "$(id -u)" <<'PY' 2>/dev/null; then
 import errno
 import os
 import stat
@@ -645,7 +645,7 @@ EOF
 }
 
 read_messaging_plan_channels() {
-  python3 - <<'PY'
+  python3 -I - <<'PY'
 import base64
 import json
 import os

@@ -119,6 +119,46 @@ describe("base image resolution flow", () => {
     expect(context.preResolvedMetadata).toBe(resolvedMetadata);
   });
 
+  it("uses the authenticated outer rebuild resolution instead of the source sandbox hint", () => {
+    const targetMetadata: SandboxBaseImageResolutionMetadata = {
+      ...recordedMetadata,
+      key: "target-key",
+      ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:target",
+      digest: "sha256:target",
+      imageId: "sha256:target-image",
+    };
+    const context = createBaseImageResolutionContext({
+      fresh: false,
+      initialHint: recordedMetadata,
+      initialPreResolvedMetadata: targetMetadata,
+      env: {},
+    });
+    const createAgentSandbox = vi.fn(() => ({
+      buildCtx: "/tmp/hermes-build",
+      stagedDockerfile: "/tmp/hermes-build/Dockerfile",
+      baseImageResolutionMetadata: targetMetadata,
+    }));
+
+    createAgentSandboxWithResolution(
+      context,
+      { name: "hermes" } as AgentDefinition,
+      createAgentSandbox,
+    );
+
+    expect(createAgentSandbox).toHaveBeenCalledWith(
+      { name: "hermes" },
+      {
+        resolutionHint: targetMetadata,
+        forceBaseImageRefresh: false,
+      },
+    );
+    expect(getBaseImageResolutionPatchOptions(context)).toEqual({
+      resolutionHint: targetMetadata,
+      preResolvedBaseImageMetadata: targetMetadata,
+      forceBaseImageRefresh: false,
+    });
+  });
+
   it("retains canonical outer metadata when a bound local lease emits no metadata", () => {
     const imageId = `sha256:${"a".repeat(64)}`;
     const stableMetadata: SandboxBaseImageResolutionMetadata = {

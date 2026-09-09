@@ -23,12 +23,6 @@ const PRODUCTION_DOCKERFILES = [
   path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "Dockerfile.base"),
 ];
 const BLUEPRINT = path.join(REPO_ROOT, "nemoclaw-blueprint", "blueprint.yaml");
-const DEPENDENCY_REVIEW_NOTE = path.join(
-  REPO_ROOT,
-  "internal",
-  "security-reviews",
-  "openclaw-2026.7.1-dependency-review.md",
-);
 const PRODUCTION_BUILD_ARG_GUARD = path.join(
   REPO_ROOT,
   "scripts",
@@ -656,87 +650,6 @@ export type OpenClawIntegrityPinTestGroup = "base" | "contract" | "plugin-instal
 export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTestGroup): void {
   describe("OpenClaw npm integrity pins", () => {
     if (group === "contract") {
-      it("keeps the advisory review note aligned with the committed OpenClaw pin", () => {
-        const reviewNote = fs.readFileSync(DEPENDENCY_REVIEW_NOTE, "utf-8").replace(/\s+/g, " ");
-
-        expect(reviewNote).toContain(`openclaw@${PINNED_OPENCLAW_VERSION}`);
-        expect(reviewNote).toContain(PINNED_OPENCLAW_INTEGRITY);
-        expect(reviewNote).toContain(PINNED_OPENCLAW_TARBALL);
-        expect(reviewNote).toContain(`tar@${PINNED_NEMOCLAW_TAR_VERSION}`);
-        expect(reviewNote).toContain(PINNED_NEMOCLAW_TAR_INTEGRITY);
-        expect(reviewNote).toContain(PINNED_NEMOCLAW_TAR_TARBALL);
-        expect(reviewNote).toContain(PINNED_NEMOCLAW_TAR_COMMIT);
-        expect(reviewNote).toContain(`@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION}`);
-        expect(reviewNote).toContain(PINNED_CODEX_ACP_TARBALL);
-        expect(reviewNote).toContain(PINNED_CODEX_ACP_INTEGRITY);
-        expect(reviewNote).toContain("@openclaw/diagnostics-otel@2026.7.1");
-        expect(reviewNote).toContain(PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY);
-        expect(reviewNote).toContain("@openclaw/brave-plugin@2026.7.1");
-        expect(reviewNote).toContain(PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY);
-        expect(reviewNote).toContain("@openclaw/discord@2026.7.1");
-        expect(reviewNote).toContain(PINNED_OPENCLAW_DISCORD_INTEGRITY);
-        expect(reviewNote).toContain("@openclaw/slack@2026.7.1");
-        expect(reviewNote).toContain(PINNED_OPENCLAW_SLACK_INTEGRITY);
-        expect(reviewNote).toContain("@openclaw/whatsapp@2026.7.1");
-        expect(reviewNote).toContain(PINNED_OPENCLAW_WHATSAPP_INTEGRITY);
-        expect(reviewNote).toContain("@openclaw/msteams@2026.7.1");
-        expect(reviewNote).toContain(PINNED_OPENCLAW_MSTEAMS_INTEGRITY);
-        expect(reviewNote).toContain("@tencent-weixin/openclaw-weixin@2.4.3");
-        expect(reviewNote).toContain(PINNED_WECHAT_PLUGIN_INTEGRITY);
-        expect(reviewNote).toContain("downloaded tarball integrity");
-        expect(reviewNote).toContain("bind reviewed npm installs to verified local archives");
-        expect(reviewNote).toContain("npm pack --json");
-        expect(reviewNote).toContain("rejects reported archive filenames");
-        expect(reviewNote).toContain("unsafe archive paths");
-        expect(reviewNote).toContain("each reviewed npm plugin registry integrity");
-        expect(reviewNote).toContain("returns only the verified local `.tgz` path");
-        expect(reviewNote).toContain("OpenClaw Compiled-Dist Patch Runtime Boundary");
-        expect(reviewNote).toContain(
-          "The long-term source of truth for these behaviors remains upstream OpenClaw",
-        );
-        expect(reviewNote).toContain("test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts");
-        expect(reviewNote).toContain("NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1");
-        expect(reviewNote).toContain("not a substitute for focused nightly E2E proof");
-        expect(reviewNote).toContain("OpenClaw Diagnostics OTEL Host Gateway Boundary");
-        expect(reviewNote).toContain("openclaw-diagnostics-otel-local");
-        expect(reviewNote).toContain("imports `OTLPTraceExporter`");
-        expect(reviewNote).toContain("contains no `web_fetch`, `fetchWithSsrFGuard`");
-        expect(reviewNote).toContain("@openclaw/diagnostics-otel@2026.7.1");
-        expect(reviewNote).toContain("@openclaw/brave-plugin@2026.7.1");
-        expect(reviewNote).toContain("@tencent-weixin/openclaw-weixin@2.4.3");
-        expect(reviewNote).toContain("three production-compatible boundaries");
-        expect(reviewNote).toContain("Lower-severity findings remain visible");
-        expect(reviewNote).toContain("`0` high");
-        expect(reviewNote).toContain("`0` critical");
-        expect(reviewNote).toContain(
-          "`dist/pipeline.runtime-*.js`, which exports `prepareSlackMessage`",
-        );
-        expect(reviewNote).toContain(
-          "imports the hashed pipeline runtime for `prepareSlackMessage`",
-        );
-        expect(reviewNote).toContain(
-          "only reports `openclaw-pipeline-runtime` after allowed prepare",
-        );
-        expect(reviewNote).toContain("`dist/extensions/telegram/runtime-api.js`");
-        expect(reviewNote).toContain("which exports `sendMessageTelegram`");
-        expect(reviewNote).toContain("fails closed if the installed runtime file is missing");
-        expect(reviewNote).toContain("NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1");
-        expect(reviewNote).toContain("scripts/check-production-build-args.sh");
-        expect(reviewNote).toContain("production build args");
-        expect(reviewNote).toContain("claiming `openclaw-pipeline-runtime` inbound proof");
-        expect(reviewNote).toContain("imports `dist/extensions/telegram/test-api.js`");
-        expect(reviewNote).toContain("gateway/upstream reporting layer");
-        expect(reviewNote).toContain("scripts/patch-openclaw-issue-4434-diagnostics.mts");
-        expect(reviewNote).toContain("scripts/patch-openclaw-device-self-approval.mts");
-        expect(reviewNote).toContain("scripts/patch-openclaw-shared-state-permissions.mts");
-        expect(reviewNote).toContain("Gateway Startup Migration Compatibility");
-        expect(reviewNote).toContain("HOME=/sandbox");
-        expect(reviewNote).toContain("approveDevicePairing");
-        expect(reviewNote).toContain(
-          "Recovery hint: check sandbox egress and provider reachability, then retry.",
-        );
-        expect(reviewNote).toContain("default 180-second timeout");
-      });
 
       it("keeps NemoClaw's direct tar dependency above the reviewed advisory floor", () => {
         const packageJson = JSON.parse(

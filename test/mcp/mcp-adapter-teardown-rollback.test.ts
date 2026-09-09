@@ -43,6 +43,7 @@ const entry: McpBridgeEntry = {
   addedAt: "2026-06-27T00:00:00.000Z",
 };
 const sandbox: SandboxEntry = { name: "alpha" };
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" } as const;
 
 describe("MCP adapter teardown rollback", () => {
   beforeEach(() => {
@@ -54,15 +55,19 @@ describe("MCP adapter teardown rollback", () => {
     const opaqueRevision = "v4067750153477477215";
     testState.observeCredentialRevision.mockReturnValue(opaqueRevision);
 
-    const failures = rollbackScrubbedMcpAdapters("alpha", sandbox, [
-      { ...entry, credentialRevision: "v1" },
-    ]);
+    const failures = rollbackScrubbedMcpAdapters(
+      "alpha",
+      sandbox,
+      [{ ...entry, credentialRevision: "v1" }],
+      runtimeSelection,
+    );
 
     expect(failures).toEqual([]);
     expect(testState.registerAdapter).toHaveBeenCalledWith(
       "alpha",
       "mcporter",
       expect.objectContaining({ server: "github" }),
+      runtimeSelection,
       {},
       opaqueRevision,
       { replaceExisting: true, teardownRollback: true },
@@ -74,9 +79,12 @@ describe("MCP adapter teardown rollback", () => {
     (observation) => {
       testState.observeCredentialRevision.mockReturnValue(observation);
 
-      const failures = rollbackScrubbedMcpAdapters("alpha", sandbox, [
-        { ...entry, credentialRevision: "v4067750153477477215" },
-      ]);
+      const failures = rollbackScrubbedMcpAdapters(
+        "alpha",
+        sandbox,
+        [{ ...entry, credentialRevision: "v4067750153477477215" }],
+        runtimeSelection,
+      );
 
       expect(failures).toEqual([
         "Could not restore the managed adapter entry for MCP server 'github' without its observed credential revision.",
