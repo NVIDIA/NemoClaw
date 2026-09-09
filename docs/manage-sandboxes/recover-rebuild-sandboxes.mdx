@@ -321,10 +321,6 @@ Custom and host-edited policy entries are preserved as part of that one OpenShel
 A policy-required provider attachment is the narrow exception: when a preserved custom policy still credential-binds stopped Hermes Discord, rebuild attaches its exact validated static provider without starting Discord.
 If that required provider is missing or incompatible, restore or re-add the channel credentials, then rerun the rebuild.
 A rebuild creates a new sandbox home and a new Hermes API bearer token.
-It also restores supported non-gateway configuration values that you previously wrote with `config set`.
-The rebuild result lists the restored keys and any keys it dropped.
-If it cannot capture those values before replacement, rebuild stops before it deletes the existing sandbox.
-If it cannot restore them after replacement, rebuild exits nonzero and retains recovery state.
 After the rebuild succeeds, retrieve the replacement token before reconnecting API clients:
 
 <Warning>
