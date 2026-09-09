@@ -60,6 +60,7 @@ export {
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
 };
+export { hasLegacyDgxStationQualificationAuthority } from "./registry/rebuild-authority";
 export {
   addExtraProvider,
   listExtraProviders,

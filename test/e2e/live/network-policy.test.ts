@@ -18,6 +18,10 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  buildNetworkPolicyCurlProbe,
+  parseNetworkPolicyCurlOutput,
+} from "../support/network-policy-probe.ts";
 import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-net-policy";
@@ -93,12 +97,8 @@ async function probeUrl(
   url: string,
   artifactName: string,
 ): Promise<string> {
-  const result = await sandboxBash(
-    sandbox,
-    `curl -sS --connect-timeout 10 --max-time 20 -w '\nSTATUS_%{http_code}\n' '${url}' 2>&1`,
-    artifactName,
-  );
-  return text(result).trim();
+  const result = await sandboxBash(sandbox, buildNetworkPolicyCurlProbe(url), artifactName);
+  return text(result);
 }
 
 async function startMarkerServer(
@@ -391,8 +391,11 @@ test(
       `http://host.openshell.internal:${deniedServer.port}/`,
       "network-policy-denied-host-gateway-port",
     );
+    const deniedResult = parseNetworkPolicyCurlOutput(denied);
+    const deniedEvidence = "shell/network-policy-denied-host-gateway-result.json";
+    await artifacts.writeJson(deniedEvidence, deniedResult ?? { response: denied, status: null });
     expect(denied).not.toContain(deniedMarker);
-    expect(denied).toMatch(/\b403\b/);
+    expect(deniedResult?.status, denied).toBe(403);
 
     progress.phase("prove the installed OpenClaw web_fetch path obeys the host-gateway policy");
     const webFetch = await sandboxBash(
@@ -415,6 +418,7 @@ NEMOCLAW_WEB_FETCH_PROBE`,
     await artifacts.target.complete({
       id: "network-policy",
       sandboxName: SANDBOX_NAME,
+      evidence: { deniedHostGateway: deniedEvidence },
       assertions: {
         defaultDeny: true,
         hotReloadWithoutRestart: true,

@@ -42,6 +42,8 @@ export interface ManagedLlamaCppStatePaths {
   readonly receiptPath: string;
 }
 
+export type ManagedLlamaCppOwnership = "owned" | "other" | "absent" | "unknown";
+
 export interface ManagedLlamaCppOwnerReservation {
   readonly owner: ManagedLlamaCppOwner;
   readonly created: boolean;
@@ -201,6 +203,21 @@ export function loadManagedLlamaCppOwner(
     throw new Error("Managed llama.cpp owner state is unreadable.");
   }
   return normalizeOwner(value as ManagedLlamaCppOwner);
+}
+
+/** Read the local ownership receipt without inspecting or starting the runtime. */
+export function inspectManagedLlamaCppOwnership(
+  sandboxName: string,
+  gatewayPort?: number,
+): ManagedLlamaCppOwnership {
+  const paths = managedLlamaCppStatePaths(process.env.HOME || "/tmp", gatewayPort);
+  if (!fs.existsSync(paths.ownerPath)) return "absent";
+  try {
+    const owner = loadManagedLlamaCppOwner(paths);
+    return owner?.sandboxName === sandboxName ? "owned" : "other";
+  } catch {
+    return "unknown";
+  }
 }
 
 /** Claim one gateway-scoped managed runtime before any download or engine mutation. */

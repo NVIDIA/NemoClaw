@@ -1,11 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  canonicalEndpoint,
-  normalizeProviderBaseUrl,
-  unsafeEndpointUrlViolation,
-} from "../core/url-utils";
+import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
+import { canonicalEndpoint, normalizeProviderBaseUrl } from "../core/url-utils";
 import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
 import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";

@@ -31,17 +31,19 @@ import {
   type ServingProcessHealth,
 } from "./status-snapshot";
 
-export interface SandboxStatusTextContext extends Pick<
-  SandboxStatusSnapshot,
-  | "sb"
-  | "lookup"
-  | "currentModel"
-  | "currentProvider"
-  | "routeDrift"
-  | "inferenceHealth"
-  | "terminalRuntimeHealth"
-  | "servingProcessHealth"
-> {
+export interface SandboxStatusTextContext
+  extends Pick<
+    SandboxStatusSnapshot,
+    | "sb"
+    | "lookup"
+    | "currentModel"
+    | "currentProvider"
+    | "routeDrift"
+    | "llamaCpp"
+    | "inferenceHealth"
+    | "terminalRuntimeHealth"
+    | "servingProcessHealth"
+  > {
   sandboxName: string;
   statusAgent: SandboxStatusAgentInfo;
 }
@@ -309,6 +311,15 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
     console.log(`    Serving profile: ${provenance.preset.displayName} (${provenance.preset.id})`);
     console.log(`    Serving recipe:  ${provenance.recipe.id}`);
     console.log(`    Catalog digest:  ${provenance.catalogDigest}`);
+  }
+  if (context.llamaCpp) {
+    console.log(`    Llama.cpp: ${context.llamaCpp.kind}`);
+    if (context.llamaCpp.kind === "attached") {
+      console.log(`    Endpoint: ${context.llamaCpp.endpointUrl}`);
+    } else if (context.llamaCpp.kind === "unavailable") {
+      console.log(`    Ownership: ${context.llamaCpp.diagnostic}`);
+      console.log(`    Recovery: ${context.llamaCpp.recovery}`);
+    }
   }
   const reasoningEffort = getEffectiveReasoningEffort(sb);
   if (reasoningEffort) console.log(`    Reasoning effort: ${reasoningEffort}`);

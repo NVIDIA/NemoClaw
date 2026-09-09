@@ -18,6 +18,7 @@ const testState = vi.hoisted(() => {
     HOME: process.env.HOME,
     NEMOCLAW_OPENSHELL_BIN: process.env.NEMOCLAW_OPENSHELL_BIN,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY,
+    OPENSHELL_WORKSPACE: process.env.OPENSHELL_WORKSPACE,
     SLACK_TOKEN: process.env.SLACK_TOKEN,
   };
   process.env.HOME = home;
@@ -51,6 +52,10 @@ const testState = vi.hoisted(() => {
     runOpenshell: vi.fn(),
     runOpenshellProviderCommand: vi.fn(),
     runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+    runtimeSelectionsAtProviderCommand: [] as Array<{
+      gateway: string | undefined;
+      workspace: string | undefined;
+    }>,
     stopNimContainer: vi.fn(),
     stopNimContainerByName: vi.fn(),
     warnUnpreservedUserManagedFiles: vi.fn(),
@@ -65,15 +70,12 @@ vi.mock("../../src/lib/adapters/dns/resolve", () => ({
   resolveHostAddresses: testState.resolveHostAddresses,
 }));
 
-vi.mock(
-  "../../src/lib/actions/sandbox/mcp-bridge-provider-inspection",
-  async (importOriginal) => ({
-    ...(await importOriginal<
-      typeof import("../../src/lib/actions/sandbox/mcp-bridge-provider-inspection")
-    >()),
-    getMcpProviderInspectionRuntimeSelection: () => testState.runtimeSelection,
-  }),
-);
+vi.mock("../../src/lib/actions/sandbox/mcp-bridge-provider-inspection", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../src/lib/actions/sandbox/mcp-bridge-provider-inspection")
+  >()),
+  getMcpProviderInspectionRuntimeSelection: () => testState.runtimeSelection,
+}));
 
 vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/lib/adapters/openshell/runtime")>()),
@@ -81,10 +83,9 @@ vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
   runOpenshell: testState.runOpenshell,
 }));
 
-vi.mock("../../src/lib/gateway-runtime-action", () => ({
+vi.mock("../../src/lib/gateway-runtime-action", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/gateway-runtime-action")>()),
   recoverNamedGatewayRuntime: testState.recoverNamedGatewayRuntime,
-  replaceOpenShellRuntimeSelectionEnv: () => undefined,
-  snapshotOpenShellEnv: () => () => undefined,
 }));
 
 vi.mock("../../src/lib/policy", async (importOriginal) => ({
@@ -115,6 +116,7 @@ vi.mock("../../src/lib/inference/nim", () => ({
 import * as bridge from "../../src/lib/actions/sandbox/mcp-bridge";
 import { runRebuildDestroyPhase } from "../../src/lib/actions/sandbox/rebuild-destroy-phase";
 import type { RebuildRecreateJournal } from "../../src/lib/actions/sandbox/rebuild-recreate-journal";
+import { snapshotOpenShellEnv } from "../../src/lib/gateway-runtime-action";
 import * as registry from "../../src/lib/state/registry";
 
 function stubRecreateJournal(): RebuildRecreateJournal {
@@ -200,6 +202,7 @@ beforeEach(() => {
   delete process.env.GITHUB_TOKEN;
   delete process.env.SLACK_TOKEN;
   delete process.env.OPENSHELL_GATEWAY;
+  delete process.env.OPENSHELL_WORKSPACE;
 
   testState.providers.clear();
   testState.providers.set("alpha-mcp-github", {
@@ -214,6 +217,7 @@ beforeEach(() => {
   testState.attachedProviders.add("alpha-mcp-github");
   testState.attachedProviders.add("alpha-mcp-slack");
   testState.calls.length = 0;
+  testState.runtimeSelectionsAtProviderCommand.length = 0;
   testState.adapterCalls.length = 0;
   testState.adapterRegistered = true;
   testState.policyApplyCalls = 0;
@@ -271,6 +275,10 @@ beforeEach(() => {
   testState.runOpenshell.mockReturnValue({ status: 0, stdout: "", stderr: "" });
   testState.resolveHostAddresses.mockImplementation(async (host: string) => [{ address: host }]);
   testState.runOpenshellProviderCommand.mockImplementation((args: string[]) => {
+    testState.runtimeSelectionsAtProviderCommand.push({
+      gateway: process.env.OPENSHELL_GATEWAY,
+      workspace: process.env.OPENSHELL_WORKSPACE,
+    });
     testState.calls.push(args.join(" "));
     switch (args.join(" ")) {
       case "status --output json":
@@ -290,7 +298,7 @@ beforeEach(() => {
         return provider
           ? {
               status: 0,
-              stdout: `Id: ${provider.id}\nType: nemoclaw-mcp-v1\nResource version: ${provider.resourceVersion ?? 1}\nCredential keys: ${provider.credential}\n`,
+              stdout: `Name: ${args[2]}\nId: ${provider.id}\nType: nemoclaw-mcp-v1\nResource version: ${provider.resourceVersion ?? 1}\nCredential keys: ${provider.credential}\nConfig keys: <none>\n`,
               stderr: "",
             }
           : { status: 1, stdout: "", stderr: "Provider not found" };
@@ -991,19 +999,26 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     });
     const onDeleted = vi.fn();
 
-    const result = await runRebuildDestroyPhase({
-      sandboxName: "alpha",
-      sandboxEntry: before ?? { name: "alpha", agent: "openclaw" },
-      staleRecovery: false,
-      recreateJournal: stubRecreateJournal(),
-      backupManifest: null,
-      force: true,
-      log: vi.fn(),
-      bail: vi.fn((message: string): never => {
-        throw new Error(message);
-      }),
-      onDeleted,
-    });
+    const result = await (async () => {
+      const restoreOpenShellEnv = snapshotOpenShellEnv();
+      try {
+        return await runRebuildDestroyPhase({
+          sandboxName: "alpha",
+          sandboxEntry: before ?? { name: "alpha", agent: "openclaw" },
+          staleRecovery: false,
+          recreateJournal: stubRecreateJournal(),
+          backupManifest: null,
+          force: true,
+          log: vi.fn(),
+          bail: vi.fn((message: string): never => {
+            throw new Error(message);
+          }),
+          onDeleted,
+        });
+      } finally {
+        restoreOpenShellEnv();
+      }
+    })();
 
     expect(result?.entries).toEqual([bridgeEntries.github]);
     expect(testState.executeSandboxExecCommand).toHaveBeenCalledOnce();
@@ -1014,6 +1029,12 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":", {
       runtimeSelection: testState.runtimeSelection,
     });
+    expect(testState.runtimeSelectionsAtProviderCommand).toContainEqual({
+      gateway: "nemoclaw",
+      workspace: "default",
+    });
+    expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
+    expect(process.env.OPENSHELL_WORKSPACE).toBeUndefined();
     expect(testState.runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
       expect.any(Object),

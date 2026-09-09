@@ -69,7 +69,7 @@ describe("rebuild policy handoff", () => {
     ...overrides,
   });
 
-  it("captures the current OpenShell base policy in a private transaction file", () => {
+  it("captures the current OpenShell base policy in a private transaction file", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-test-"));
     temporaryDirectories.push(directory);
     const policyPath = path.join(directory, "policy.yaml");
@@ -77,9 +77,9 @@ describe("rebuild policy handoff", () => {
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
       "version: 1\nnetwork_policies:\n  host_changed: {}\n",
     );
-    const result = runRebuildBackupPhase(
+    const result = await runRebuildBackupPhase(
       input(),
-      vi.fn(() => null),
+      vi.fn(async () => null),
     );
 
     expect(result?.policySourcePath).toBe(policyPath);
@@ -93,7 +93,7 @@ describe("rebuild policy handoff", () => {
     );
   });
 
-  it("rejects a literal credential before creating a rebuild policy handoff", () => {
+  it("rejects a literal credential before creating a rebuild policy handoff", async () => {
     const credential = "opaque-url-credential";
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
       [
@@ -105,25 +105,25 @@ describe("rebuild policy handoff", () => {
         "",
       ].join("\n"),
     );
-    const backup = vi.fn(() => null);
+    const backup = vi.fn(async () => null);
 
-    expect(() => runRebuildBackupPhase(input(), backup)).toThrow(
+    await expect(runRebuildBackupPhase(input(), backup)).rejects.toThrow(
       "Cannot prepare a rebuild policy handoff for sandbox 'alpha' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.",
     );
     expect(backup).not.toHaveBeenCalled();
     expect(mocks.secureTempFile).not.toHaveBeenCalled();
   });
 
-  it("never reconstructs a missing live policy from NemoClaw state", () => {
-    expect(() =>
+  it("never reconstructs a missing live policy from NemoClaw state", async () => {
+    await expect(
       runRebuildBackupPhase(
         input({ staleRecovery: true }),
-        vi.fn(() => null),
+        vi.fn(async () => null),
       ),
-    ).toThrow(/will not reconstruct policy from NemoClaw state/);
+    ).rejects.toThrow(/will not reconstruct policy from NemoClaw state/);
   });
 
-  it("binds an unsafe legacy handoff to a supported recovery transaction", () => {
+  it("binds an unsafe legacy handoff to a supported recovery transaction", async () => {
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unsafe-recovery-"));
     temporaryDirectories.push(backupPath);
     const legacyCredentialPolicy = [
@@ -155,12 +155,12 @@ describe("rebuild policy handoff", () => {
 
     let refusal: Error | null = null;
     try {
-      runRebuildBackupPhase(
+      await runRebuildBackupPhase(
         input({
           staleRecovery: true,
           preparedRecoveryManifest,
         }),
-        vi.fn(),
+        vi.fn(async () => null),
       );
     } catch (error) {
       refusal = error as Error;
@@ -233,23 +233,23 @@ describe("rebuild backup safety", () => {
     } as RebuildBackupPhaseInput;
   }
 
-  it("blocks a live custom image with missing plugin provenance before backup", () => {
+  it("blocks a live custom image with missing plugin provenance before backup", async () => {
     const backup = vi.fn();
     const input = customOpenClawInput();
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(() => runRebuildBackupPhase(input, backup)).toThrow(
+    await expect(runRebuildBackupPhase(input, backup)).rejects.toThrow(
       "Custom-image OpenClaw plugin provenance is unavailable.",
     );
     expect(backup).not.toHaveBeenCalled();
   });
 
-  it("uses a marked prepared manifest while still capturing live OpenShell policy", () => {
+  it("uses a marked prepared manifest while still capturing live OpenShell policy", async () => {
     const backup = vi.fn();
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-recovery-"));
     temporaryDirectories.push(backupPath);
     const preparedManifest = { ...completeMarkedManifest, backupPath } as never;
-    const result = runRebuildBackupPhase(
+    const result = await runRebuildBackupPhase(
       customOpenClawInput({ preparedRecoveryManifest: preparedManifest }),
       backup,
     );
@@ -259,7 +259,7 @@ describe("rebuild backup safety", () => {
     expect(backup).not.toHaveBeenCalled();
   });
 
-  it("blocks an unmarked legacy prepared manifest before replacement", () => {
+  it("blocks an unmarked legacy prepared manifest before replacement", async () => {
     const backup = vi.fn();
     const input = customOpenClawInput({
       preparedRecoveryManifest: {
@@ -271,14 +271,14 @@ describe("rebuild backup safety", () => {
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(() => runRebuildBackupPhase(input, backup)).toThrow(
+    await expect(runRebuildBackupPhase(input, backup)).rejects.toThrow(
       "Custom-image OpenClaw plugin provenance is unavailable.",
     );
     expect(backup).not.toHaveBeenCalled();
   });
 
-  it("revalidates a newly generated backup manifest before replacement", () => {
-    const backup = vi.fn(() => ({
+  it("revalidates a newly generated backup manifest before replacement", async () => {
+    const backup = vi.fn(async () => ({
       agentType: "openclaw",
       dir: "/sandbox/.openclaw",
       backupPath: "/tmp/incomplete-custom-openclaw-backup",
@@ -294,7 +294,7 @@ describe("rebuild backup safety", () => {
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(() => runRebuildBackupPhase(input, backup as never)).toThrow(
+    await expect(runRebuildBackupPhase(input, backup as never)).rejects.toThrow(
       "Custom-image OpenClaw plugin provenance is unavailable.",
     );
     expect(backup).toHaveBeenCalledOnce();

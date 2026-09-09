@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  boundedOllamaRestartRecoveryDetail,
   maybeWarmOllamaAfterDaemonRestart,
   OLLAMA_LOCAL_PROVIDER,
   type OllamaRestartRecoveryFailureReason,
+  type OllamaRestartRecoveryOptions,
   type OllamaRestartRecoveryResult,
   type OllamaRestartRecoveryRoute,
 } from "./ollama-restart-recovery";
@@ -13,10 +15,22 @@ export { OLLAMA_LOCAL_PROVIDER };
 
 export type OllamaRestartRecoveryFn = (
   route: OllamaRestartRecoveryRoute,
-) => OllamaRestartRecoveryResult;
+  options?: OllamaRestartRecoveryOptions,
+) => OllamaRestartRecoveryResult | Promise<OllamaRestartRecoveryResult>;
 
 export interface OllamaRestartRecoveryProcess {
   stderr: { write(s: string): unknown };
+}
+
+function boundedRecoveryEndpoint(value: unknown, fallback: string): string {
+  const original = String(value ?? "").trim();
+  const endpoint = boundedOllamaRestartRecoveryDetail(value, fallback);
+  return endpoint.endsWith("/") && !original.endsWith("/") ? endpoint.slice(0, -1) : endpoint;
+}
+
+function recordedEndpointLabel(route: OllamaRestartRecoveryRoute): string {
+  const endpoint = boundedRecoveryEndpoint(route.endpointUrl, "");
+  return endpoint ? `at the recorded endpoint ${endpoint}` : "at the saved local Ollama endpoint";
 }
 
 function describeWarmFailure(reason: OllamaRestartRecoveryFailureReason): string {
@@ -36,28 +50,32 @@ function describeWarmFailure(reason: OllamaRestartRecoveryFailureReason): string
 
 function reportRecovery(
   route: OllamaRestartRecoveryRoute,
-  result: OllamaRestartRecoveryResult,
+  result: Exclude<OllamaRestartRecoveryResult, { kind: "cancelled" }>,
   proc: OllamaRestartRecoveryProcess,
 ): void {
-  const model = String(route.model ?? "").trim() || "the registered model";
+  const model = boundedOllamaRestartRecoveryDetail(route.model, "the registered model");
   if (result.kind === "warmed") {
     if (result.ok) {
       proc.stderr.write(`  Ollama model '${model}' is loaded and ready.\n`);
       return;
     }
+    const endpoint = boundedRecoveryEndpoint(result.endpoint, "the saved local Ollama endpoint");
+    const detail = boundedOllamaRestartRecoveryDetail(result.detail, "unknown warm-up error");
     proc.stderr.write(
-      `  Ollama warm-up for '${model}' at ${result.endpoint} ${describeWarmFailure(result.reason)} ` +
-        `(${result.detail}). OpenClaw dispatch will continue. To retry the warm-up, restore ` +
-        `Ollama access to ${result.endpoint} and confirm that it serves '${model}', then rerun ` +
-        `this command.\n`,
+      `  Ollama warm-up for '${model}' at ${endpoint} ${describeWarmFailure(result.reason)} ` +
+        `(${detail}). OpenClaw dispatch will continue. Restore Ollama access to ${endpoint} ` +
+        `and confirm that it serves '${model}'. NemoClaw will check the model before the next ` +
+        `\`nemoclaw <sandbox> agent\` command and warm it if necessary.\n`,
     );
     return;
   }
 
   if (result.reason === "model-absent") {
+    const endpoint = boundedRecoveryEndpoint(result.endpoint, "the saved local Ollama endpoint");
+    const inventoryLabel = boundedOllamaRestartRecoveryDetail(result.inventoryLabel, "none");
     proc.stderr.write(
-      `  Ollama at ${result.endpoint} reports '${model}' as unavailable ` +
-        `(reported models: ${result.inventoryLabel}); continuing to OpenClaw dispatch.\n`,
+      `  Ollama at ${endpoint} reports '${model}' as unavailable ` +
+        `(reported models: ${inventoryLabel}); continuing to OpenClaw dispatch.\n`,
     );
     proc.stderr.write(
       `  Either the daemon answering that endpoint changed, or the model was removed from ` +
@@ -67,16 +85,30 @@ function reportRecovery(
     return;
   }
 
+  if (result.reason === "deadline-exhausted") {
+    const endpoint = boundedRecoveryEndpoint(result.endpoint, "the saved local Ollama endpoint");
+    proc.stderr.write(
+      `  Ollama warm-up for '${model}' at ${endpoint} was skipped because the agent command ` +
+        `timeout left no recovery budget; continuing to OpenClaw dispatch.\n`,
+    );
+    return;
+  }
+
   const reason = result.reason;
   switch (reason) {
     case "already-loaded":
       proc.stderr.write(`  Ollama model '${model}' is already loaded.\n`);
       break;
-    case "unreachable":
+    case "unreachable": {
+      const endpoint = boundedRecoveryEndpoint(result.endpoint, "the saved local Ollama endpoint");
       proc.stderr.write(
-        "  Ollama was unreachable during the model check; continuing to OpenClaw dispatch.\n",
+        `  Ollama at ${endpoint} was unreachable while checking '${model}'; continuing to ` +
+          `OpenClaw dispatch. Restore Ollama access to ${endpoint}, confirm that it serves ` +
+          `'${model}'. NemoClaw will check the model before the next ` +
+          `\`nemoclaw <sandbox> agent\` command and warm it if necessary.\n`,
       );
       break;
+    }
     case "missing-model":
       proc.stderr.write(
         "  No Ollama model is recorded for this sandbox; continuing to OpenClaw dispatch.\n",
@@ -91,18 +123,28 @@ function reportRecovery(
   }
 }
 
-/** Run best-effort Ollama recovery without blocking the canonical agent error path. */
-export function runOllamaRestartRecovery(
+/** Continue after best-effort recovery failures, but preserve an operator cancellation. */
+export async function runOllamaRestartRecovery(
   route: OllamaRestartRecoveryRoute,
   proc: OllamaRestartRecoveryProcess,
+  options: OllamaRestartRecoveryOptions = {},
   recoverOllama: OllamaRestartRecoveryFn = maybeWarmOllamaAfterDaemonRestart,
-): void {
+): Promise<NodeJS.Signals | null> {
   proc.stderr.write("  Checking whether the Ollama model is loaded...\n");
   try {
-    reportRecovery(route, recoverOllama(route), proc);
-  } catch {
+    const result = await recoverOllama(route, options);
+    if (result.kind === "cancelled") return result.signal;
+    reportRecovery(route, result, proc);
+  } catch (error) {
+    const model = boundedOllamaRestartRecoveryDetail(route.model, "the registered model");
+    const endpoint = recordedEndpointLabel(route);
+    const detail = boundedOllamaRestartRecoveryDetail(error, "unknown recovery error");
     proc.stderr.write(
-      "  Ollama restart recovery failed unexpectedly; continuing to OpenClaw dispatch.\n",
+      `  Ollama restart recovery for '${model}' ${endpoint} failed unexpectedly: ${detail}. ` +
+        `OpenClaw dispatch will continue. Restore Ollama access to that endpoint, confirm it ` +
+        `serves '${model}'. NemoClaw will check the model before the next ` +
+        `\`nemoclaw <sandbox> agent\` command and warm it if necessary.\n`,
     );
   }
+  return null;
 }
