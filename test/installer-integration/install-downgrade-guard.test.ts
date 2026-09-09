@@ -356,6 +356,7 @@ describe("public installer downgrade guard", () => {
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(payloadMarker)).toBe(true);
+    expect(fs.readFileSync(payloadMarker, "utf8")).toBe("target-commit|v0.0.109|v0.0.109");
   });
 
   it("runs an older release when the user selects another explicit ref", () => {
@@ -365,6 +366,7 @@ describe("public installer downgrade guard", () => {
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(payloadMarker)).toBe(true);
+    expect(fs.readFileSync(payloadMarker, "utf8")).toBe("target-commit|latest|latest");
   });
 
   it("keeps the installed CLI when lkg is selected explicitly", () => {
@@ -514,7 +516,10 @@ describe("public installer downgrade guard", () => {
             .filter((entry) => entry.isDirectory())
             .map((entry) => entry.name),
         ).toEqual(["bin"]);
-        expect(() => process.kill(pid, 0)).toThrow();
+        const processState = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], {
+          encoding: "utf8",
+        });
+        expect(processState.status === 1 || processState.stdout.trim().startsWith("Z")).toBe(true);
       } finally {
         try {
           process.kill(pid, "SIGKILL");
