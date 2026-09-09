@@ -408,7 +408,8 @@ Without `--yes`, a closed standard input or non-TTY shell aborts before backup o
 During gateway-scoped cleanup, uninstall removes the selected sandbox entry from `sandboxes.json` after a successful or already-absent sandbox deletion.
 During full uninstall, a preserved `sandboxes.json` file can retain entries for removed sandboxes.
 After gateway registration cleanup succeeds or confirms that the selected gateway is absent, uninstall continues even when it preserves other `sandboxes.json` entries.
-If gateway registration cleanup fails, uninstall exits nonzero, preserves the remaining state, and requires a rerun after you restore OpenShell access.
+If gateway registration cleanup fails, uninstall exits nonzero and preserves the remaining state.
+Resolve the reported gateway-registration error, then rerun uninstall.
 The warning identifies recognized connection refusals and permission denials with fixed text; it redacts other command output and reports only the failed command and exit status.
 Outside portable cleanup, after uninstall confirms that no sibling gateways remain, it also removes the provider registrations and Docker image that the recorded sandboxes depend on.
 

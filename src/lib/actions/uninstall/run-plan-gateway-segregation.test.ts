@@ -332,6 +332,22 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     },
     { name: "an unverified generic absence", diagnostic: "gateway not found" },
     { name: "a named absence while still registered", diagnostic: NAMED_GATEWAY_ABSENCE },
+    {
+      name: "an absence with a failed gateway-list postcondition",
+      postcondition: { status: 1, stdout: "", stderr: "connection refused" } satisfies RunResult,
+    },
+    {
+      name: "an absence with an invalid-JSON gateway-list postcondition",
+      postcondition: ok("{"),
+    },
+    {
+      name: "an absence with a non-array gateway-list postcondition",
+      postcondition: ok("{}"),
+    },
+    {
+      name: "an absence with an invalid-entry gateway-list postcondition",
+      postcondition: ok(JSON.stringify([{}])),
+    },
     { name: "an unrelated not-found error", diagnostic: "gateway service endpoint not found" },
     {
       name: "a generic absence plus another failure",
@@ -358,14 +374,15 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     },
   ])(
     "preserves state when gateway cleanup reports $name (#9859)",
-    ({ diagnostic, expectedCause = "exit 1).", legacyDestroyDiagnostic }) => {
+    ({ diagnostic, expectedCause = "exit 1).", legacyDestroyDiagnostic, postcondition }) => {
       const calls: Array<{ args: string[]; command: string }> = [];
       const logs: string[] = [];
       const rmSync = vi.fn();
       const warnings: string[] = [];
+      let removeAttempted = false;
+      const removeDiagnostic = diagnostic ?? NAMED_GATEWAY_ABSENCE;
       const responses = new Map<string, RunResult>([
-        ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
-        ["openshell gateway remove nemoclaw", { status: 1, stdout: "", stderr: diagnostic }],
+        ["openshell gateway remove nemoclaw", { status: 1, stdout: "", stderr: removeDiagnostic }],
       ]);
       responses.set(
         "openshell gateway destroy -g nemoclaw",
@@ -389,7 +406,13 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           rmSync,
           run: (command, args) => {
             calls.push({ args, command });
-            return responses.get([command, ...args].join(" ")) ?? ok();
+            const key = [command, ...args].join(" ");
+            removeAttempted ||= key === "openshell gateway remove nemoclaw";
+            return key === "openshell gateway list -o json"
+              ? removeAttempted && postcondition !== undefined
+                ? postcondition
+                : ok(JSON.stringify([{ name: "nemoclaw" }]))
+              : (responses.get(key) ?? ok());
           },
           runDocker: () => ok(""),
         },
