@@ -336,6 +336,19 @@ and transport. It also stops the gateway and removes its temporary state.
 
 ## Catalogue Targets
 
+The `network-policy` target also owns live configuration-export evidence for #10938 and PR #11065.
+After ordinary restricted OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
+It compares the exported sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
+It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
+The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
+This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
+The assertion budget is unchanged. Nine export assertions replace nine redundant checks in the same target:
+
+- Two CLI-file and two OpenShell-version checks are covered by the retained successful onboarding checks.
+- Two intermediate process-start comparisons are covered by the retained comparison after all policy and traffic probes.
+- The approved HTTP status check is redundant with the marker server response, which always returns that marker with status 200.
+- Two web-fetch success-marker checks duplicate the retained probe exit-status check; the probe rejects missing approved content and unexpected denied-port access.
+
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
 

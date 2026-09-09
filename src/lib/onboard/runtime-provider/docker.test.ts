@@ -209,9 +209,11 @@ describe("Docker runtime provider NVIDIA container capture", () => {
 
 describe("Docker provider portable lifecycle dispatch", () => {
   it("routes active Hermes start before every Docker dependency (#9203)", () => {
+    const requalifyPortableSandbox = vi.fn(() => ({ kind: "not-hermes" as const }));
     const recoverPortableSandbox = vi.fn(() => ({ kind: "already-running" as const }));
     const provider = createDockerRuntimeProviderBundle({
       hasPortableLifecycleReceipt: () => true,
+      requalifyPortableSandbox,
       recoverPortableSandbox,
       findLabeledSandboxContainers: poison,
       recoverSandbox: poison,
@@ -224,7 +226,28 @@ describe("Docker provider portable lifecycle dispatch", () => {
       exitCode: 0,
       hermesPortableVerified: true,
     });
+    expect(requalifyPortableSandbox).toHaveBeenCalledOnce();
     expect(recoverPortableSandbox).toHaveBeenCalledOnce();
+    expect(requalifyPortableSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      recoverPortableSandbox.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("fails closed before recovery when Hermes requalification fails (#11248)", () => {
+    const recoverPortableSandbox = vi.fn(poison);
+    const provider = createDockerRuntimeProviderBundle({
+      requalifyPortableSandbox: () => {
+        throw new Error("startup authority changed");
+      },
+      recoverPortableSandbox,
+      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    });
+
+    expect(supportedLifecycle(provider).start(lifecycleInput())).toEqual({
+      exitCode: 1,
+      message: "startup authority changed",
+    });
+    expect(recoverPortableSandbox).not.toHaveBeenCalled();
   });
 
   it("routes active Hermes stop before Docker capture or mutation (#9203)", () => {
