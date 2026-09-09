@@ -456,6 +456,10 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
       "archive version mismatch",
       "ERROR: npm archive version 12.0.1 does not match reviewed npm@12.0.2.",
     ],
+    [
+      "archive package metadata",
+      "ERROR: npm@12.0.2 archive package/package.json is missing or invalid.",
+    ],
     ["invalid archive identity", "npm audit configuration has an invalid npmArchiveSha256"],
   ])("classifies a reviewed npm bootstrap %s separately", (_caseName, log) => {
     const item = fixture(log);

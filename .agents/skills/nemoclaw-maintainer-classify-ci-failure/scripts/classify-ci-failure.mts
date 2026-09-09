@@ -110,7 +110,7 @@ const SYSTEM_EXECUTABLES = {
 const NPM_AUDIT_FAILURE_PATTERN =
   /npm audit (?:threshold failed|scan remained incomplete|failed without vulnerability findings|requires npm [^\n;]+; running npm)|unused npm audit exceptions|\d+ unaccepted at or above (?:high|critical)/i;
 const NPM_BOOTSTRAP_FAILURE_PATTERN =
-  /npm(?:@[0-9A-Za-z.-]+ archive integrity mismatch| archive version [0-9A-Za-z.-]+ does not match reviewed npm@[0-9A-Za-z.-]+| audit configuration (?:is not valid JSON|has an invalid npm(?:Version|Integrity|ArchiveSha256)))/i;
+  /npm(?:@[0-9A-Za-z.-]+ archive (?:integrity mismatch|package\/package\.json is missing or invalid)| archive version [0-9A-Za-z.-]+ does not match reviewed npm@[0-9A-Za-z.-]+| audit configuration (?:is not valid JSON|has an invalid npm(?:Version|Integrity|ArchiveSha256)))/i;
 
 type TrustedExecutableStat = {
   isFile: () => boolean;

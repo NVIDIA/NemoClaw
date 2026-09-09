@@ -59,7 +59,7 @@ if [ "$actual_integrity" != "$expected_integrity" ] || [ "$actual_sha256" != "$e
   exit 1
 fi
 
-archive_version="$(
+if ! archive_version="$(
   tar -xOf "$archive" package/package.json | node -e '
     let source = "";
     process.stdin.setEncoding("utf8");
@@ -70,7 +70,10 @@ archive_version="$(
       process.stdout.write(version);
     });
   '
-)"
+)"; then
+  echo "ERROR: npm@$version archive package/package.json is missing or invalid." >&2
+  exit 1
+fi
 if [ "$archive_version" != "$version" ]; then
   echo "ERROR: npm archive version $archive_version does not match reviewed npm@$version." >&2
   exit 1

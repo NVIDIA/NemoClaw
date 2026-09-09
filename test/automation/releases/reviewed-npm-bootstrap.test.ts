@@ -118,7 +118,7 @@ esac
   };
 }
 
-function createRealArchive(version?: string): { archive: Buffer; cleanup: () => void } {
+function createRealArchive(version?: string | null): { archive: Buffer; cleanup: () => void } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-archive-"));
   const packageRoot = path.join(root, "package");
   const archivePath = path.join(root, "fixture.tgz");
@@ -126,7 +126,10 @@ function createRealArchive(version?: string): { archive: Buffer; cleanup: () => 
   const entry =
     version === undefined
       ? { contents: "missing package manifest\n", name: "README.md" }
-      : { contents: `${JSON.stringify({ version })}\n`, name: "package.json" };
+      : {
+          contents: version === null ? "{invalid json\n" : `${JSON.stringify({ version })}\n`,
+          name: "package.json",
+        };
   fs.writeFileSync(path.join(packageRoot, entry.name), entry.contents);
   const packed = spawnSync("tar", ["-czf", archivePath, "-C", root, "package"], {
     encoding: "utf8",
@@ -197,18 +200,24 @@ describe("reviewed npm bootstrap", () => {
   });
 
   it.each([
-    ["matching", "12.0.2", true],
-    ["mismatched", "12.0.3", false],
-    ["missing", undefined, false],
+    ["matching", "12.0.2", true, false],
+    ["mismatched", "12.0.3", false, false],
+    ["missing", undefined, false, true],
+    ["invalid", null, false, true],
   ] as const)(
     "%s real tar package metadata reaches installation only for the reviewed version (#8253)",
-    (_condition, archiveVersion, expectedInstall) => {
+    (_condition, archiveVersion, expectedInstall, expectedMetadataError) => {
       const archiveFixture = createRealArchive(archiveVersion);
       const fixture = runBootstrapFixture({ archive: archiveFixture.archive, realTar: true });
       try {
         expect(fixture.result.status === 0).toBe(expectedInstall);
         expect(fixture.installCalled).toBe(expectedInstall);
         expect(fixture.npmInvocations).toHaveLength(expectedInstall ? 2 : 1);
+        expect(
+          fixture.result.stderr.includes(
+            "npm@12.0.2 archive package/package.json is missing or invalid",
+          ),
+        ).toBe(expectedMetadataError);
       } finally {
         fixture.cleanup();
         archiveFixture.cleanup();
