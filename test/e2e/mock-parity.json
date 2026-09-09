@@ -123,6 +123,7 @@
       "live": "test/e2e/live/hermes-gpu-startup.test.ts",
       "liveSources": [
         "test/e2e/live/hermes-gpu-startup-integrity.ts",
+        "test/e2e/live/hermes-gpu-startup-fallback.ts",
         "test/e2e/live/hermes-gpu-startup-proof.ts"
       ],
       "fast": [
@@ -1000,6 +1001,10 @@
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts"
       ]
+    },
+    {
+      "live": "test/e2e/live/issue-9880-staging-launchable.test.ts",
+      "fast": ["test/e2e/support/brev-launchable-fixture.test.ts"]
     },
     {
       "live": "test/e2e/live/brev-workspace-cleanup.test.ts",
