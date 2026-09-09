@@ -22,6 +22,19 @@ function replaceRequired(source: string, expected: string, replacement: string):
   return source.replace(expected, replacement);
 }
 
+function payloadCanonicalAgent(agent: string): string {
+  const result = spawnSync(
+    "bash",
+    ["-c", 'source "$INSTALLER_PAYLOAD" >/dev/null; canonical_agent_name "$AGENT"'],
+    {
+      encoding: "utf8",
+      env: { ...process.env, AGENT: agent, INSTALLER_PAYLOAD },
+    },
+  );
+  expect(result.status).toBe(0);
+  return result.stdout;
+}
+
 function runInstall(
   installedVersion: string,
   targetVersion: string,
@@ -29,6 +42,7 @@ function runInstall(
   options: {
     lookupMaxOutputBytes?: number;
     lookupSignal?: "INT" | "TERM";
+    timeoutCleanupSignal?: "INT" | "TERM";
     tagLookupMaxOutputBytes?: number;
     lookupTimeoutSeconds?: number;
     useRealSleep?: boolean;
@@ -39,12 +53,12 @@ function runInstall(
   const bin = path.join(root, "bin");
   const payloadMarker = path.join(root, "payload-ran");
   const lookupPid = path.join(root, "lookup.pid");
-  const cliName =
-    extraEnvironment.NEMOCLAW_AGENT === "hermes"
-      ? "nemohermes"
-      : extraEnvironment.NEMOCLAW_AGENT === "langchain-deepagents-code"
-        ? "nemo-deepagents"
-        : "nemoclaw";
+  const requestedAgent = extraEnvironment.NEMOCLAW_AGENT ?? "openclaw";
+  const cliName = ["hermes", "Hermes", "nemohermes", "Nemo Hermes"].includes(requestedAgent)
+    ? "nemohermes"
+    : ["langchain-deepagents-code", "dcode", "deep_agents"].includes(requestedAgent)
+      ? "nemo-deepagents"
+      : "nemoclaw";
   fs.mkdirSync(bin);
   writeExecutable(
     path.join(bin, cliName),
@@ -52,6 +66,7 @@ function runInstall(
 case "${installedVersion}" in
   hang) /bin/sleep 60 ;;
   ignore-term) trap '' TERM; while :; do :; done ;;
+  cancel-during-cleanup) trap 'touch "\${LOOKUP_PID:?}.term"' TERM; printf '%s' "$$" >"\${LOOKUP_PID:?}"; while :; do :; done ;;
   interrupt) printf '%s' "$$" >"\${LOOKUP_PID:?}"; exec /bin/sleep 60 ;;
   terminate) printf '%s' "$$" >"\${LOOKUP_PID:?}"; exec /bin/sleep 60 ;;
   descendant-ignore-term) (trap '' TERM; printf '%s' "\${BASHPID}" >"\${LOOKUP_PID:?}"; while :; do :; done) & exit 0 ;;
@@ -113,12 +128,20 @@ PAYLOAD
 esac
 `,
   );
-  const sleepBody = options.useRealSleep
-    ? '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n'
-    : ["hang", "ignore-term", "descendant-ignore-term"].includes(installedVersion) ||
-        targetVersion === "hang"
-      ? "#!/usr/bin/env bash\nexit 0\n"
-      : '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n';
+  const sleepBody = options.timeoutCleanupSignal
+    ? `#!/usr/bin/env bash
+if [[ -e "\${LOOKUP_PID:?}.term" && ! -e "\${LOOKUP_PID:?}.cancel" ]]; then
+  touch "\${LOOKUP_PID:?}.cancel"
+  kill -${options.timeoutCleanupSignal} "$PPID"
+fi
+exec /bin/sleep "$@"
+`
+    : options.useRealSleep
+      ? '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n'
+      : ["hang", "ignore-term", "descendant-ignore-term"].includes(installedVersion) ||
+          targetVersion === "hang"
+        ? "#!/usr/bin/env bash\nexit 0\n"
+        : '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n';
   writeExecutable(path.join(bin, "sleep"), sleepBody);
 
   let installerSource = replaceRequired(
@@ -183,6 +206,25 @@ describe("public installer downgrade guard", () => {
     ["Hermes", "hermes"],
     ["Deep Agents", "langchain-deepagents-code"],
   ])("keeps the installed %s CLI when the implicit lkg release is older", (_label, agent) => {
+    const { result, payloadMarker } = runInstall("0.0.118", "0.0.109", {
+      NEMOCLAW_AGENT: agent,
+    });
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Refusing to replace installed NemoClaw v0.0.118 with maintained lkg v0.0.109.",
+    );
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+  });
+
+  it.each([
+    ["Hermes", "hermes"],
+    ["nemohermes", "hermes"],
+    ["Nemo Hermes", "hermes"],
+    ["dcode", "langchain-deepagents-code"],
+    ["deep_agents", "langchain-deepagents-code"],
+  ])("uses the payload's canonical CLI for the %s alias", (agent, canonicalAgent) => {
+    expect(payloadCanonicalAgent(agent)).toBe(canonicalAgent);
     const { result, payloadMarker } = runInstall("0.0.118", "0.0.109", {
       NEMOCLAW_AGENT: agent,
     });
@@ -439,6 +481,42 @@ describe("public installer downgrade guard", () => {
       const pid = Number(fs.readFileSync(lookupPid, "utf8"));
       expect(() => process.kill(pid, 0)).toThrow();
     },
+  );
+
+  it.each([
+    ["INT", 130],
+    ["TERM", 143],
+  ] as const)(
+    "finishes timeout cleanup when it receives SIG%s during termination",
+    (signal, status) => {
+      const { lookupPid, payloadMarker, result, root } = runInstall(
+        "cancel-during-cleanup",
+        "0.0.109",
+        {},
+        { lookupTimeoutSeconds: 1, timeoutCleanupSignal: signal },
+      );
+      const pid = Number(fs.readFileSync(lookupPid, "utf8"));
+
+      try {
+        expect(fs.existsSync(`${lookupPid}.cancel`)).toBe(true);
+        expect(result.status).toBe(status);
+        expect(fs.existsSync(payloadMarker)).toBe(false);
+        const processState = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], {
+          encoding: "utf8",
+        });
+        expect(processState.status === 1 || processState.stdout.trim().startsWith("Z")).toBe(true);
+        expect(
+          fs.readdirSync(root).filter((name) => name.startsWith("nemoclaw-bootstrap-lookup.")),
+        ).toEqual([]);
+      } finally {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch (error) {
+          expect((error as NodeJS.ErrnoException).code).toBe("ESRCH");
+        }
+      }
+    },
+    15_000,
   );
 
   it("kills a lookup descendant after its process-group leader exits", () => {

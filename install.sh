@@ -84,10 +84,11 @@ clone_nemoclaw_ref() {
 }
 
 installed_nemoclaw_release_version() {
-  local cli_name cli_path output status
-  case "${NEMOCLAW_AGENT:-openclaw}" in
-    hermes) cli_name="nemohermes" ;;
-    langchain-deepagents-code) cli_name="nemo-deepagents" ;;
+  local cli_name cli_path normalized_agent output status
+  normalized_agent="$(printf '%s' "${NEMOCLAW_AGENT:-openclaw}" | tr '[:upper:]_ ' '[:lower:]--' | sed -E 's/-+/-/g; s/^-//; s/-$//')"
+  case "$normalized_agent" in
+    nemohermes | nemo-hermes | hermes) cli_name="nemohermes" ;;
+    nemo-deepagents | nemo-deepagent | nemodeepagents | nemodeepagent | dcode | deepagent | deepagents | deep-agent | deep-agents | deepagentcode | deepagentscode | deepagent-code | deepagents-code | deep-agent-code | deep-agents-code | langchain | langchain-code | langchaindeepagent | langchaindeepagents | langchain-deepagent | langchain-deepagents | langchaindeepagentcode | langchaindeepagentscode | langchain-deepagent-code | langchain-deepagents-code | langchain-deep-agent | langchain-deep-agents | langchain-deep-agent-code | langchain-deep-agents-code) cli_name="nemo-deepagents" ;;
     *) cli_name="nemoclaw" ;;
   esac
   cli_path="$(command -v "$cli_name" 2>/dev/null || true)"
@@ -145,9 +146,21 @@ run_bounded_bootstrap_lookup() (
   local label="$1" max_output_bytes="$2" output_file command_pid="" output_bytes status ticks=0
   shift 2
   output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-bootstrap-lookup.XXXXXX")"
-  trap 'trap - INT TERM EXIT; [[ -z "$command_pid" ]] || terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 130' INT
-  trap 'trap - INT TERM EXIT; [[ -z "$command_pid" ]] || terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 143' TERM
-  trap 'status=$?; trap - INT TERM EXIT; [[ -z "$command_pid" ]] || terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit "$status"' EXIT
+  # Invoked indirectly by the signal and exit traps below.
+  # shellcheck disable=SC2329
+  cleanup_bootstrap_lookup() {
+    local cleanup_status="$1"
+    # Preserve cancellation status without interrupting or reentering cleanup.
+    trap 'cleanup_status=130' INT
+    trap 'cleanup_status=143' TERM
+    trap - EXIT
+    [[ -z "$command_pid" ]] || terminate_bootstrap_lookup_group "$command_pid"
+    rm -f "$output_file"
+    exit "$cleanup_status"
+  }
+  trap 'cleanup_bootstrap_lookup 130' INT
+  trap 'cleanup_bootstrap_lookup 143' TERM
+  trap 'cleanup_bootstrap_lookup "$?"' EXIT
   set -m
   (
     set -o pipefail
@@ -157,9 +170,6 @@ run_bounded_bootstrap_lookup() (
   set +m
   while bootstrap_lookup_group_is_alive "$command_pid"; do
     if ((ticks >= BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS * 10)); then
-      trap - INT TERM EXIT
-      terminate_bootstrap_lookup_group "$command_pid"
-      rm -f "$output_file"
       printf '[ERROR] Timed out during %s after %s seconds.\n' "$label" "$BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS" >&2
       printf '        The installed CLI was not changed. Retry or select an explicit immutable release tag.\n' >&2
       return 124
@@ -172,6 +182,7 @@ run_bounded_bootstrap_lookup() (
   else
     status=$?
   fi
+  command_pid=""
   output_bytes="$(wc -c <"$output_file")"
   if ((output_bytes > max_output_bytes)); then
     status=2
@@ -180,8 +191,6 @@ run_bounded_bootstrap_lookup() (
   elif ((status >= 128)); then
     status=2
   fi
-  trap - INT TERM EXIT
-  rm -f "$output_file"
   return "$status"
 )
 
