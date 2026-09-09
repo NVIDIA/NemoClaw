@@ -24,9 +24,10 @@ const HELPER = path.join(
 const OPENCLAW_START = path.join(import.meta.dirname, "..", "..", "scripts", "nemoclaw-start.sh");
 const AUTO_PAIR_PARITY_CASES = OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES.flatMap((rule) =>
   (rule.kind === "polls"
-    ? ["1", String(rule.maximum), String(rule.maximum + 1), "0.5", "1e1"]
+    ? ["1", " 1 ", String(rule.maximum), String(rule.maximum + 1), "0.5", "1e1"]
     : [
         "0.05",
+        " 1 ",
         String(rule.maximum),
         String(rule.maximum + 1),
         "1e-324",
@@ -295,6 +296,11 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       name: "an empty value that defers to the built-in default",
       assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=",
       probe: "FAST_REENTRY_INTERVAL=",
+    },
+    {
+      name: "a whitespace-only value that defers to the built-in default",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=   ",
+      probe: "FAST_REENTRY_INTERVAL=   ",
     },
     {
       name: "a poll count at the operational boundary",

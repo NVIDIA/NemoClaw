@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
+import * as probe from "../../../helpers/openclaw-auto-pair-scheduler";
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 import { createCanonicalCliFixture, setupLateCliFixture } from "./auto-pair-settlement-fixture";
 
@@ -205,17 +206,7 @@ function localApprovalPolicyPythonScript(src: string): string {
 }
 
 function autoPairPythonScript(src: string): string {
-  return localApprovalPolicyPythonScript(src)
-    .replaceAll("time.time()", "_nemoclaw_test_time()")
-    .replaceAll("time.sleep(", "_nemoclaw_test_sleep(")
-    .replace(
-      "import time",
-      `import time
-_nemoclaw_test_clock = [time.time()]
-_nemoclaw_test_time = lambda: _nemoclaw_test_clock[0]
-def _nemoclaw_test_sleep(seconds): _nemoclaw_test_clock.__setitem__(0, _nemoclaw_test_clock[0] + min(max(float(seconds), 0), 0.25))
-`,
-    );
+  return probe.instrumentAutoPairPythonScript(localApprovalPolicyPythonScript(src));
 }
 
 describe("nemoclaw-start non-root fallback", () => {
@@ -1020,6 +1011,13 @@ setImmediate(function () {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("downstream=true");
     expect(result.stderr).not.toContain("provider failed to start");
+  });
+});
+
+describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
+  it.each(probe.AUTO_PAIR_SCHEDULER_CASES)("$name (#11161)", ({ kind, options, env, expected }) => {
+    const resolved = probe.runAutoPairSchedulerProbe(START_SCRIPT, kind, options, env);
+    expect(resolved).toMatchObject(expected);
   });
 });
 

@@ -170,6 +170,7 @@ polls = re.compile(r"\+?[0-9]+\Z")
 try:
     for index in range(1, len(sys.argv), 4):
         kind, raw, minimum, maximum = sys.argv[index:index + 4]
+        raw = raw.strip()
         if not raw:
             continue
         grammar = seconds if kind == "seconds" else polls
