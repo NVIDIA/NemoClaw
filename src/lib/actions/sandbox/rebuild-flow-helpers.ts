@@ -520,7 +520,9 @@ export async function backupSandboxStateForRebuild(
       } finally {
         returnedToStopped = returnSandboxContainerToStopped(started);
         if (!returnedToStopped) {
-          log(`Could not return '${sandboxName}' container to its stopped state after backup retry`);
+          log(
+            `Could not return '${sandboxName}' container to its stopped state after backup retry`,
+          );
         }
       }
       // A container this recovery started must be reported whenever it cannot

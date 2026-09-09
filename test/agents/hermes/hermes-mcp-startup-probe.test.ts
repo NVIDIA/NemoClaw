@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   runOpenshellProviderCommand: vi.fn(),
   sleepMs: vi.fn(),
   waitUntil: vi.fn(),
+  waitUntilAsync: vi.fn(),
 }));
 
 vi.mock("../../../src/lib/adapters/openshell/provider-command", () => ({
@@ -23,6 +24,7 @@ vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
 vi.mock("../../../src/lib/core/wait", () => ({
   sleepMs: mocks.sleepMs,
   waitUntil: mocks.waitUntil,
+  waitUntilAsync: mocks.waitUntilAsync,
 }));
 
 import { assertAgentMcpMutationRuntimeCapability } from "../../../src/lib/actions/sandbox/mcp-bridge-adapters";

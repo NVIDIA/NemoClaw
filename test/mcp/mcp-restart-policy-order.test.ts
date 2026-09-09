@@ -83,7 +83,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       return {
         status: 0,
         stdout:
-          "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: SECOND_MCP_TOKEN\n",
+          "Name: foreign-attached\nId: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: SECOND_MCP_TOKEN\nConfig keys: <none>\n",
         stderr: "",
       };
     }
@@ -91,7 +91,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     if (!entry) return { status: 1, stdout: "", stderr: "NotFound: provider" };
     return {
       status: 0,
-      stdout: "Id: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + (updatedProviders.has(entry.providerName) ? "2" : "1") + "\nCredential keys: " + entry.env[0] + "\n",
+      stdout: "Name: " + entry.providerName + "\nId: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + (updatedProviders.has(entry.providerName) ? "2" : "1") + "\nCredential keys: " + entry.env[0] + "\nConfig keys: <none>\n",
       stderr: "",
     };
   }
@@ -229,13 +229,13 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       registeredProviderGets += 1;
       return {
         status: 0,
-        stdout: "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: OTHER_TOKEN\n",
+        stdout: "Name: foreign-registered\nId: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: OTHER_TOKEN\nConfig keys: <none>\n",
         stderr: "",
       };
     }
     return {
       status: 0,
-      stdout: "Id: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersion + "\nCredential keys: MCP_TOKEN\n",
+      stdout: "Name: " + entry.providerName + "\nId: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersion + "\nCredential keys: MCP_TOKEN\nConfig keys: <none>\n",
       stderr: "",
     };
   }
@@ -416,7 +416,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersion + "\nCredential keys: MCP_TOKEN\n",
+      stdout: "Name: " + entry.providerName + "\nId: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersion + "\nCredential keys: MCP_TOKEN\nConfig keys: <none>\n",
       stderr: "",
     };
   }

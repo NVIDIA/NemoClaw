@@ -23,8 +23,7 @@ export { classifyManagedGatewayEndpointBinding };
 import { cliName as resolveCliName } from "../onboard/branding";
 import {
   getConfiguredGatewayPort,
-  getDockerDriverGatewayEndpoint,
-  getGatewayPortCheckOptions,
+  observeConfiguredGatewayHostRuntime,
 } from "../onboard/docker-driver-gateway-env";
 import { getDockerDriverGatewayLocalTlsDir } from "../onboard/docker-driver-gateway-local-tls";
 import { createDockerDriverGatewayPortListenerHelpers } from "../onboard/docker-driver-gateway-port-listener";
@@ -50,6 +49,11 @@ import {
 import { ownedHostGatewayTarget } from "../onboard/gateway-process-target-identity";
 import { resolveOpenshell } from "../onboard/openshell-cli";
 import { checkPortAvailable } from "../onboard/preflight";
+import type {
+  RuntimeProviderGatewayHostRuntime,
+  RuntimeProviderGatewaySurface,
+} from "../onboard/runtime-provider/contract";
+import { resolveConfiguredRuntimeProvider } from "../onboard/runtime-provider/selection";
 import { resolveGatewayStateDirForPort } from "../onboard/gateway/state-dir";
 import type {
   GatewayPortConflictState,
@@ -59,8 +63,12 @@ import type {
 import { buildSystemReadinessProbeEnv, type ReadinessProbeEnvironmentControls } from "./probe-env";
 
 export interface ProductionGatewayReadinessOptions {
+  architecture?: NodeJS.Architecture;
+  environment?: NodeJS.ProcessEnv;
   gatewayName?: () => string;
   gatewayPort?: () => number;
+  platform?: NodeJS.Platform;
+  resolveRuntimeProviderGateway?: () => RuntimeProviderGatewaySurface;
   resolveOwner?: GatewayReadinessDependencies["resolveOwner"];
   probeAttachment?: GatewayReadinessDependencies["probeAttachment"];
   isLegacyClusterBound?: () => boolean;
@@ -130,15 +138,7 @@ function normalizeExecutablePath(value: string): string | null {
   }
 }
 
-function resolveManagedGatewayProbeTlsDir(
-  gatewayPort: number,
-  source: NodeJS.ProcessEnv,
-): string | undefined {
-  const stateDir = resolveGatewayStateDirForPort({
-    configured: source.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
-    home: source.HOME || os.homedir(),
-    port: gatewayPort,
-  });
+function resolveManagedGatewayProbeTlsDir(stateDir: string): string | undefined {
   const localTlsDir = getDockerDriverGatewayLocalTlsDir(stateDir);
   return ["ca.crt", "client/tls.crt", "client/tls.key"].every((relativePath) =>
     fs.existsSync(path.join(localTlsDir, relativePath)),
@@ -185,8 +185,11 @@ function resolveTrustedOpenshellBinary(env: NodeJS.ProcessEnv): string | null {
   });
 }
 
-function resolveTrustedGatewayBinary(openshell: string | null): string | null {
-  const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN?.trim();
+function resolveTrustedGatewayBinary(
+  openshell: string | null,
+  env: NodeJS.ProcessEnv,
+): string | null {
+  const configured = env.NEMOCLAW_OPENSHELL_GATEWAY_BIN?.trim();
   const candidates = [
     ...(configured ? [path.resolve(configured)] : []),
     ...(openshell ? [path.join(path.dirname(openshell), "openshell-gateway")] : []),
@@ -307,14 +310,28 @@ function observeReuseState(
   gatewayPort: number,
   openshell: string | null,
   env: NodeJS.ProcessEnv,
-): { endpointBinding: ManagedGatewayEndpointBinding; reuseState: GatewayReuseState | "unknown" } {
-  if (!openshell) return { endpointBinding: "not-applicable", reuseState: "missing" };
+): {
+  endpointBinding: ManagedGatewayEndpointBinding;
+  managedGatewayOutputs: string[];
+  reuseState: GatewayReuseState | "unknown";
+} {
+  if (!openshell) {
+    return { endpointBinding: "not-applicable", managedGatewayOutputs: [], reuseState: "missing" };
+  }
 
   const status = captureReadonly([openshell, "status", "-g", gatewayName], env);
   const named = captureReadonly([openshell, "gateway", "info", "-g", gatewayName], env);
   const active = captureReadonly([openshell, "gateway", "info"], env);
   if ([status, named, active].some(({ exitCode, timedOut }) => timedOut || exitCode === null)) {
-    return { endpointBinding: "unknown", reuseState: "unknown" };
+    return {
+      endpointBinding: "unknown",
+      managedGatewayOutputs: [
+        combinedOutput(active),
+        combinedOutput(status),
+        combinedOutput(named),
+      ],
+      reuseState: "unknown",
+    };
   }
 
   const statusOutput = combinedOutput(status);
@@ -333,6 +350,7 @@ function observeReuseState(
   const liveManagedState = reuseState === "healthy" || reuseState === "active-unnamed";
   return {
     reuseState,
+    managedGatewayOutputs: [combinedOutput(active), statusOutput, combinedOutput(named)],
     endpointBinding: liveManagedState
       ? classifyManagedGatewayEndpointBinding(
           [combinedOutput(active), statusOutput, combinedOutput(named)],
@@ -577,14 +595,33 @@ function rejectUnexpectedGatewayEffect(): never {
 export function createProductionGatewayReadinessDependencies(
   options: ProductionGatewayReadinessOptions = {},
 ): GatewayReadinessDependencies {
+  const environment = options.environment ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const architecture = options.architecture ?? process.arch;
   const gatewayPort = options.gatewayPort?.() ?? getConfiguredGatewayPort();
   const gatewayName = options.gatewayName?.() ?? resolveDockerDriverGatewayName(gatewayPort);
-  const probeEnv = buildGatewayReadinessProbeEnv(process.env, {
+  let runtimeProviderGateway: RuntimeProviderGatewaySurface | null = null;
+  const resolveRuntimeProviderGateway = () =>
+    (runtimeProviderGateway ??=
+      options.resolveRuntimeProviderGateway?.() ??
+      resolveConfiguredRuntimeProvider(platform, architecture, environment).gateway);
+  let gatewayHostRuntime: RuntimeProviderGatewayHostRuntime | null = null;
+  const observeGatewayHostRuntime = () =>
+    (gatewayHostRuntime ??=
+      options.resolveRuntimeProviderGateway !== undefined
+        ? resolveRuntimeProviderGateway().observeHostRuntime({ environment, platform })
+        : observeConfiguredGatewayHostRuntime({ architecture, environment, platform }));
+  const gatewayStateDir = resolveGatewayStateDirForPort({
+    configured: environment.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    home: environment.HOME || os.homedir(),
+    port: gatewayPort,
+  });
+  const probeEnv = buildGatewayReadinessProbeEnv(environment, {
     gatewayName,
-    localTlsDir: resolveManagedGatewayProbeTlsDir(gatewayPort, process.env),
+    localTlsDir: resolveManagedGatewayProbeTlsDir(gatewayStateDir),
   });
   const openshellBin = resolveTrustedOpenshellBinary(probeEnv);
-  const trustedGatewayBin = resolveTrustedGatewayBinary(openshellBin);
+  const trustedGatewayBin = resolveTrustedGatewayBinary(openshellBin, environment);
   const trustedVersionBinaryByPid = new Map<number, string>();
   const trustedTargetBoundPids = new Set<number>();
   const homebrewFormulaOperation = createOpenShellHomebrewFormulaOperation({ env: probeEnv });
@@ -612,12 +649,12 @@ export function createProductionGatewayReadinessDependencies(
   }
 
   function observeDirectGatewayBinary(pid: number): string | null {
-    if ((process.platform !== "linux" && process.platform !== "darwin") || !trustedGatewayBin) {
+    if ((platform !== "linux" && platform !== "darwin") || !trustedGatewayBin) {
       return null;
     }
-    const generationBefore = process.platform === "linux" ? readLinuxProcessStartTime(pid) : null;
+    const generationBefore = platform === "linux" ? readLinuxProcessStartTime(pid) : null;
     const executableBefore =
-      process.platform === "linux"
+      platform === "linux"
         ? readLinuxProcessExecutable(pid)
         : readDarwinProcessExecutable(pid, probeEnv);
     let targetBoundIdentity = false;
@@ -635,7 +672,7 @@ export function createProductionGatewayReadinessDependencies(
           gatewayName,
           gatewayPort,
           executableBefore,
-          process.platform,
+          platform,
         );
         if (matches) {
           const argv0 = cleanGatewayProcessToken(identity.trim().split(/\s+/, 1)[0] ?? "");
@@ -644,21 +681,21 @@ export function createProductionGatewayReadinessDependencies(
         }
         return matches;
       },
-      requireDockerDriverEnv: process.platform === "linux",
+      requireDockerDriverEnv: platform === "linux",
       hasDockerDriverGatewayEnv: (candidatePid) =>
         hasDockerDriverGatewayEnvironment(
           readDockerDriverGatewayProcessEnvironment(candidatePid),
-          getDockerDriverGatewayEndpoint(gatewayPort),
+          `https://${observeGatewayHostRuntime().grpcHost}:${String(gatewayPort)}`,
         ),
     });
     const executableAfter =
-      process.platform === "linux"
+      platform === "linux"
         ? readLinuxProcessExecutable(pid)
         : readDarwinProcessExecutable(pid, probeEnv);
-    const generationAfter = process.platform === "linux" ? readLinuxProcessStartTime(pid) : null;
+    const generationAfter = platform === "linux" ? readLinuxProcessStartTime(pid) : null;
     const stableTrustedBinary =
       exactTrustedBinary &&
-      (process.platform === "linux"
+      (platform === "linux"
         ? gatewayProcessSamplesMatchTrustedBinary(
             generationBefore,
             generationAfter,
@@ -677,16 +714,16 @@ export function createProductionGatewayReadinessDependencies(
   }
 
   function observePackagedServiceGatewayBinary(pid: number): string | null {
-    if (process.platform !== "linux" && process.platform !== "darwin") return null;
+    if (platform !== "linux" && platform !== "darwin") return null;
     const serviceBefore = getTrustedActiveOpenShellGatewayUserServiceIdentity({
       env: probeEnv,
       homebrewFormulaOperation: runObservedHomebrewFormulaOperation,
       suppressUnsupportedVersionWarning: true,
     });
     if (serviceBefore?.pid !== pid || !serviceBefore.executablePath) return null;
-    const generationBefore = process.platform === "linux" ? readLinuxProcessStartTime(pid) : null;
+    const generationBefore = platform === "linux" ? readLinuxProcessStartTime(pid) : null;
     const executableBefore =
-      process.platform === "linux"
+      platform === "linux"
         ? readLinuxProcessExecutable(pid)
         : readDarwinProcessExecutable(pid, probeEnv);
     const serviceAfter = getTrustedActiveOpenShellGatewayUserServiceIdentity({
@@ -697,17 +734,16 @@ export function createProductionGatewayReadinessDependencies(
     // Bracket the complete service-identity probe so PID reuse or re-exec
     // cannot preserve a stale trusted executable sample.
     const executableAfter =
-      process.platform === "linux"
+      platform === "linux"
         ? readLinuxProcessExecutable(pid)
         : readDarwinProcessExecutable(pid, probeEnv);
-    const generationAfter = process.platform === "linux" ? readLinuxProcessStartTime(pid) : null;
+    const generationAfter = platform === "linux" ? readLinuxProcessStartTime(pid) : null;
     const expected = normalizeExecutablePath(serviceBefore.executablePath);
     const confirmed = serviceAfter?.executablePath
       ? normalizeExecutablePath(serviceAfter.executablePath)
       : null;
     const stableGeneration =
-      process.platform !== "linux" ||
-      (generationBefore !== null && generationAfter === generationBefore);
+      platform !== "linux" || (generationBefore !== null && generationAfter === generationBefore);
     if (
       serviceAfter?.pid !== pid ||
       !expected ||
@@ -734,7 +770,7 @@ export function createProductionGatewayReadinessDependencies(
   });
   const checkGatewayPortAvailable = () =>
     checkPortAvailable(gatewayPort, {
-      ...getGatewayPortCheckOptions(),
+      host: observeGatewayHostRuntime().portCheckHost,
       // Public readiness is observation-only. The independent bind probe tells
       // us whether the port is occupied, and the unprivileged listener scan
       // below supplies any ownership evidence available to this user. If that
@@ -767,7 +803,7 @@ export function createProductionGatewayReadinessDependencies(
   });
 
   async function collectManagedGatewayObservations(): Promise<ManagedGatewayObservations> {
-    const { endpointBinding, reuseState } = observeReuseState(
+    const { endpointBinding, managedGatewayOutputs, reuseState } = observeReuseState(
       gatewayName,
       gatewayPort,
       openshellBin,
@@ -776,16 +812,49 @@ export function createProductionGatewayReadinessDependencies(
     const portCheck = await checkGatewayPortAvailable();
     trustedVersionBinaryByPid.clear();
     trustedTargetBoundPids.clear();
-    const listenerScan = listenerHelpers.getDockerDriverGatewayPortListenerScan(portCheck, {
-      gatewayBin: trustedGatewayBin,
-    });
+    const providerGateway = resolveRuntimeProviderGateway();
+    let installedOpenShellVersion: string | null | undefined;
+    const getInstalledOpenShellVersion = () => {
+      if (installedOpenShellVersion === undefined) {
+        installedOpenShellVersion = observeInstalledOpenshellVersion(openshellBin, probeEnv);
+      }
+      return installedOpenShellVersion;
+    };
+    const providerObservation = providerGateway.ownsHostReadiness
+      ? providerGateway.observeOwnedGateway({
+          environment: {
+            ...probeEnv,
+            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: gatewayStateDir,
+          },
+          platform,
+          architecture,
+          gatewayName,
+          gatewayPort,
+          expectedEndpoint: `https://${observeGatewayHostRuntime().grpcHost}:${String(gatewayPort)}`,
+          managedGatewayOutputs,
+          portAvailable: portCheck.ok,
+          installedOpenShellVersion: getInstalledOpenShellVersion(),
+          trustedGatewayBin,
+        })
+      : null;
+    const listenerScan = providerObservation
+      ? {
+          pids: [...providerObservation.listenerScan.pids],
+          unverifiedPids: [...providerObservation.listenerScan.unverifiedPids],
+          complete: providerObservation.listenerScan.complete,
+        }
+      : listenerHelpers.getDockerDriverGatewayPortListenerScan(portCheck, {
+          gatewayBin: trustedGatewayBin,
+        });
     const managedGatewayCanBeRunning =
       reuseState === "healthy" || reuseState === "stale" || reuseState === "active-unnamed";
     let legacyClusterBound = false;
     let legacyClusterImageRef: string | null = null;
     if (!portCheck.ok && managedGatewayCanBeRunning) {
       try {
-        if (options.isLegacyClusterBound) {
+        if (providerGateway.ownsHostReadiness) {
+          legacyClusterBound = false;
+        } else if (options.isLegacyClusterBound) {
           legacyClusterBound = options.isLegacyClusterBound();
         } else {
           const legacyCluster = inspectLegacyCluster(
@@ -801,8 +870,9 @@ export function createProductionGatewayReadinessDependencies(
         legacyClusterBound = false;
       }
     }
-    let compatibility: GatewayVersionCompatibility | null = null;
-    if (!portCheck.ok) {
+    let compatibility: GatewayVersionCompatibility | null =
+      providerObservation?.versionCompatibility ?? null;
+    if (!portCheck.ok && !providerObservation) {
       const source = classifyManagedGatewayVersionSource(
         legacyClusterBound,
         listenerScan,
@@ -811,7 +881,6 @@ export function createProductionGatewayReadinessDependencies(
       try {
         if (source) {
           const hostProcessPid = source === "host-process" ? listenerScan.pids[0] : null;
-          const installedVersion = observeInstalledOpenshellVersion(openshellBin, probeEnv);
           compatibility =
             options.observeVersionCompatibility?.(source, hostProcessPid) ??
             observeOpenShellGatewayVersionCompatibility({
@@ -820,12 +889,12 @@ export function createProductionGatewayReadinessDependencies(
               deps:
                 source === "legacy-cluster"
                   ? {
-                      getInstalledOpenshellVersion: () => installedVersion,
+                      getInstalledOpenshellVersion: getInstalledOpenShellVersion,
                       getGatewayClusterImageRef: () => legacyClusterImageRef,
                       isGatewayClusterActive: () => true,
                     }
                   : {
-                      getInstalledOpenshellVersion: () => installedVersion,
+                      getInstalledOpenshellVersion: getInstalledOpenShellVersion,
                       getGatewayClusterImageRef: () => null,
                       getHostProcessGatewayRuntime: () =>
                         hostProcessPid === null
@@ -842,13 +911,17 @@ export function createProductionGatewayReadinessDependencies(
       }
     }
     const driftState = classifyManagedGatewayVersionDrift(portCheck.ok, reuseState, compatibility);
+    const effectiveEndpointBinding = providerObservation?.endpointBinding ?? endpointBinding;
     const portConflictState = classifyManagedGatewayPortConflict(
       portCheck.ok,
       listenerScan,
       reuseState,
       legacyClusterBound,
-      endpointBinding,
-      listenerScan.pids.length === 1 && trustedTargetBoundPids.has(listenerScan.pids[0] ?? -1),
+      effectiveEndpointBinding,
+      listenerScan.pids.length === 1 &&
+        (providerObservation
+          ? providerObservation.targetBoundListenerPids.includes(listenerScan.pids[0] ?? -1)
+          : trustedTargetBoundPids.has(listenerScan.pids[0] ?? -1)),
     );
     const portConflictOwners =
       portConflictState === "none"

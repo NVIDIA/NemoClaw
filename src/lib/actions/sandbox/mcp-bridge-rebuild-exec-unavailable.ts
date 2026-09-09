@@ -123,7 +123,9 @@ function snapshotCompleteEntries(sandboxName: string): {
   };
 }
 
-function providerFingerprint(provider: ReturnType<typeof inspectExactMcpDestroyProvider>): string {
+function providerFingerprint(
+  provider: Awaited<ReturnType<typeof inspectExactMcpDestroyProvider>>,
+): string {
   return JSON.stringify({
     exists: provider.exists,
     id: provider.id,
@@ -173,14 +175,14 @@ async function inspectReadOnlyRecoveryState(
   const targetsByServer = new Map<string, string>();
   for (const entry of entries) {
     const target = resolvedTargets.get(entry.server);
-    const provider = inspectExactMcpDestroyProvider(entry, {
+    const provider = await inspectExactMcpDestroyProvider(entry, {
       allowMissing: false,
       runtimeSelection: providerRuntimeSelection,
     });
     providerByServer.set(entry.server, providerFingerprint(provider));
     targetsByServer.set(entry.server, targetFingerprint(target));
   }
-  assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
+  await assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
   return { providerByServer, runtimeSelection: providerRuntimeSelection, targetsByServer };
 }
 
