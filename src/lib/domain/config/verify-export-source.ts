@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
+import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
 import type { ManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
@@ -29,7 +30,6 @@ import type {
   ExportSourceFailureCategory,
   ExportSourceVerificationResult,
   NonEmptyExportFindings,
-  ObservedExportEndpointEvidence,
   ObservedExportRegistry,
   QualifiedExportSnapshot,
   VerifiedExportSource,
@@ -326,10 +326,27 @@ function classifyManagedStartupProfile(
   return findings;
 }
 
-function endpointConfigKey(api: string): ObservedExportEndpointEvidence["configKey"] | null {
-  if (api === "anthropic-messages") return "ANTHROPIC_BASE_URL";
-  if (api === "openai-completions" || api === "openai-responses") return "OPENAI_BASE_URL";
-  return null;
+function endpointEvidenceMatchesRoute(inference: QualifiedExportSnapshot["inference"]): boolean {
+  const evidence = inference.endpointEvidence;
+  if (!evidence) return false;
+  if (evidence.source.kind === "builtin-profile") {
+    return (
+      inference.credentialEnv !== null &&
+      isDeepStrictEqual(
+        [evidence.source.profileId, inference.provider, inference.api, evidence.endpoint],
+        ["nvidia", "nvidia-prod", "openai-completions", BUILD_ENDPOINT_URL],
+      )
+    );
+  }
+  let expectedConfigKey: string | null = null;
+  if (inference.api === "anthropic-messages") expectedConfigKey = "ANTHROPIC_BASE_URL";
+  else if (["openai-completions", "openai-responses"].includes(inference.api))
+    expectedConfigKey = "OPENAI_BASE_URL";
+  return (
+    evidence.source.kind === "provider-config" &&
+    expectedConfigKey !== null &&
+    evidence.source.key === expectedConfigKey
+  );
 }
 
 function validateSandboxIdentity(
@@ -529,7 +546,7 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
     ];
   }
   const findings: ExportFinding[] = [];
-  const expectedConfigKey = endpointConfigKey(inference.api);
+
   if (!isValidNemoClawInferenceEndpoint(evidence.endpoint))
     findings.push(
       finding(
@@ -547,12 +564,12 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
       ),
     );
   if (
-    !evidence.providerId ||
-    !evidence.resourceVersion ||
-    expectedConfigKey === null ||
+    !evidence.provider.id ||
+    !evidence.provider.resourceVersion ||
+    !endpointEvidenceMatchesRoute(inference) ||
     !isDeepStrictEqual(
-      [evidence.workspace, evidence.gatewayName, evidence.providerName, evidence.configKey],
-      [sandbox.workspace, gateway.name, inference.provider, expectedConfigKey],
+      [evidence.provider.workspace, evidence.provider.gatewayName, evidence.provider.name],
+      [sandbox.workspace, gateway.name, inference.provider],
     )
   )
     findings.push(

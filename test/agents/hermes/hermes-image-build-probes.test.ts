@@ -107,7 +107,8 @@ exit ${doctorExit}
     node,
     `#!/usr/bin/env bash
 set -euo pipefail
-test "$1" = "--experimental-strip-types"
+test "$#" -eq 1
+test "$1" = "${generator}"
 printf 'generate\n' >> "$ORDER_LOG"
 printf 'model: trusted\n' > "$HERMES_HOME/config.yaml"
 printf 'SAFE=1\n' > "$HERMES_HOME/.env"

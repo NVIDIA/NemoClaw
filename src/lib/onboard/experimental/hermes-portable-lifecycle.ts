@@ -8,7 +8,7 @@ import { TextDecoder } from "node:util";
 import {
   fingerprintOpenShellSandboxId,
   fingerprintOpenShellSandboxLiveIdentity,
-  parseOpenShellSandboxId,
+  observeOpenShellSandboxId,
 } from "../../adapters/openshell/sandbox-identity";
 import {
   classifyOpenShellSandboxPresence,
@@ -549,6 +549,13 @@ function fail(message: string): never {
   throw new Error(`Hermes portable lifecycle ${message}`);
 }
 
+class IncompleteOpenShellIdentityError extends Error {
+  constructor() {
+    super("Hermes portable lifecycle OpenShell sandbox identity disagrees with the receipt container");
+    this.name = "IncompleteOpenShellIdentityError";
+  }
+}
+
 function defaultSleep(milliseconds: number): void {
   if (milliseconds > 0) Atomics.wait(SLEEP_BUFFER, 0, 0, milliseconds);
 }
@@ -759,13 +766,23 @@ function observeOpenShellIdentity(
   );
   if (current.status !== 0 || current.error) fail("cannot prove the current OpenShell sandbox");
   const output = commandOutput(current.stdout, "sandbox identity output");
-  const sandboxId = parseOpenShellSandboxId(output);
+  const observedSandboxId = observeOpenShellSandboxId(output);
   const liveIdentityFingerprint = fingerprintOpenShellSandboxLiveIdentity(output);
   if (
     listed.kind !== "present" ||
     !acceptedPhases.includes(listed.phase) ||
-    !sandboxId ||
-    !liveIdentityFingerprint ||
+    listed.id !== receipt.container.sandboxId
+  ) {
+    fail("OpenShell sandbox identity disagrees with the receipt container");
+  }
+  if (observedSandboxId.kind === "absent") {
+    throw new IncompleteOpenShellIdentityError();
+  }
+  if (observedSandboxId.kind !== "present" || !liveIdentityFingerprint) {
+    fail("OpenShell sandbox identity disagrees with the receipt container");
+  }
+  const sandboxId = observedSandboxId.id;
+  if (
     listed.id !== sandboxId ||
     sandboxId !== receipt.container.sandboxId ||
     fingerprintOpenShellSandboxId(listed.id) !== liveIdentityFingerprint
@@ -1074,7 +1091,7 @@ function rollbackStartedHermesPortableRecovery(
       ...(deps.sleep ? { sleep: deps.sleep } : {}),
     });
     failureClass = "openshell-terminal-settlement";
-    settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified.snapshot, timing);
+    settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified, timing);
   } catch (error) {
     throw new HermesPortableRollbackAttemptError(failureClass, error);
   }
@@ -1084,13 +1101,25 @@ function settleStoppedHermesPortableLifecycle(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
   deps: HermesPortableLifecycleDeps,
-  expected: HermesPortableReceiptSnapshot,
+  authority: QualifiedHermesPortableLifecycle,
   timing?: HermesPortableLifecycleTimingRecorder,
 ): QualifiedHermesPortableLifecycle {
   let stopped: QualifiedHermesPortableLifecycle | null = null;
   const settled = waitFor(STOP_SETTLEMENT_TIMEOUT_MS, deps, () => {
     timing?.increment("qualification");
-    const current = qualify(sandboxName, context, deps, expected, ["Ready", "Error", "Stopped"]);
+    let current: QualifiedHermesPortableLifecycle;
+    try {
+      current = qualify(sandboxName, context, deps, authority.snapshot, ["Ready", "Error", "Stopped"]);
+    } catch (error) {
+      if (!(error instanceof IncompleteOpenShellIdentityError)) throw error;
+      authority.assertTransactionCurrent();
+      const container = assertCurrentHermesPortableContainer(authority.receipt, authority.containerDeps);
+      authority.assertTransactionCurrent();
+      if (container.authority.running || container.status !== "exited") {
+        fail("exact container changed after stop settlement");
+      }
+      return false;
+    }
     if (current.container.authority.running || current.container.status !== "exited") {
       fail("exact container changed after stop settlement");
     }
@@ -1909,7 +1938,7 @@ export function stopHermesPortableSandboxLifecycle(
 ): PortableDemoLifecycleStopResult {
   let qualified = qualify(sandboxName, context, deps, undefined, ["Ready", "Error", "Stopped"]);
   if (!qualified.container.authority.running && qualified.container.status === "exited") {
-    settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified.snapshot);
+    settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified);
     return { kind: "already-stopped" };
   }
   if (qualified.container.authority.running && qualified.openShellPhase === "Stopped") {
@@ -1929,7 +1958,7 @@ export function stopHermesPortableSandboxLifecycle(
     ...(deps.now ? { now: deps.now } : {}),
     ...(deps.sleep ? { sleep: deps.sleep } : {}),
   });
-  settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified.snapshot);
+  settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified);
   return { kind: result };
 }
 

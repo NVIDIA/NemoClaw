@@ -68,13 +68,26 @@ function parseOpenShellSandboxListJson(output: string): readonly unknown[] | nul
   return Array.isArray(rows) ? rows : null;
 }
 
-export function parseOpenShellSandboxId(output: string): string | null {
-  const matches = [
+export type OpenShellSandboxIdObservation =
+  | { readonly kind: "present"; readonly id: string }
+  | { readonly kind: "absent" }
+  | { readonly kind: "invalid" };
+
+export function observeOpenShellSandboxId(output: string): OpenShellSandboxIdObservation {
+  const fields = [
     ...String(output)
       .replace(ANSI_RE, "")
-      .matchAll(/^\s*(?:Id|ID):\s*(\S+)\s*$/gm),
-  ].map((match) => match[1] ?? "");
-  return matches.length === 1 && isOpenShellSandboxId(matches[0]) ? (matches[0] as string) : null;
+      .matchAll(/^[\t ]*(?:Id|ID):[\t ]*(.*)$/gmu),
+  ].map((match) => (match[1] ?? "").trim());
+  if (fields.length === 0) return { kind: "absent" };
+  return fields.length === 1 && isOpenShellSandboxId(fields[0])
+    ? { kind: "present", id: fields[0] as string }
+    : { kind: "invalid" };
+}
+
+export function parseOpenShellSandboxId(output: string): string | null {
+  const observed = observeOpenShellSandboxId(output);
+  return observed.kind === "present" ? observed.id : null;
 }
 
 /** Hash the one durable OpenShell ID without importing sandbox mutation owners. */

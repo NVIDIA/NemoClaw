@@ -435,31 +435,31 @@ COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 
 # npm 10.9.8 in the pinned Node 22 image bundles an affected node-tar copy.
 # Replace it before npm processes the reviewed npm archive.
-RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+RUN node /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # Upgrade the complete private npm tree so its sigstore, brace-expansion, and
 # picomatch packages meet the reviewed security floors.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
+RUN node /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # npm 11.18.0 restores affected tar 7.5.19. Replace it from the
 # registry- and SRI-verified 7.5.21 archive before any npm consumers run.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+RUN node /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # npm 11.18.0 contains brace-expansion 5.0.7. Replace only that private
 # package from the reviewed 5.0.9 archive after the complete npm upgrade.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
+RUN node /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # npm 11.18.0 contains ip-address 10.2.0. Replace only that private package
 # with the reviewed 10.3.1 archive after the complete npm upgrade.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
+RUN node /scripts/lib/patch-bundled-npm-ip-address.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker
@@ -510,7 +510,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "Error: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)"; exit 1; }; \
-        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-lock \
+        node /scripts/lib/reviewed-npm-archive.mts --verify-lock \
             --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
             --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
             --registry-origin https://registry.npmjs.org/ \
@@ -520,7 +520,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         npm --prefix /usr/local/lib/nemoclaw/openclaw-runtime ci \
             --ignore-scripts --omit=dev --no-audit --no-fund --no-progress \
             --userconfig /dev/null --registry https://registry.npmjs.org/; \
-        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+        node /scripts/lib/reviewed-npm-archive.mts \
             --verify-installed-lock --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
             --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
             --install-root /usr/local/lib/nemoclaw/openclaw-runtime \
@@ -531,7 +531,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw /usr/local/bin/openclaw; \
         OPENCLAW_RECIPE='locked-ci+reviewed-lifecycle-v2'; \
     else \
-        OPENCLAW_SOURCE_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+        OPENCLAW_SOURCE_PACK_PATH="$(node /scripts/lib/reviewed-npm-archive.mts \
             --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
             --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}")"; \
         if [ -z "$OPENCLAW_SOURCE_PACK_PATH" ] || [ ! -f "$OPENCLAW_SOURCE_PACK_PATH" ] || [ -L "$OPENCLAW_SOURCE_PACK_PATH" ]; then \
@@ -540,7 +540,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         OPENCLAW_PACK_PATH="$OPENCLAW_SOURCE_PACK_PATH"; \
         OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"; \
         if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
-            OPENCLAW_REMEDIATION_JSON="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
+            OPENCLAW_REMEDIATION_JSON="$(node /scripts/lib/openclaw-npm-remediation.mts \
                 --archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@${OPENCLAW_VERSION}" \
                 --working-directory "$OPENCLAW_PACK_DIR")"; \
             OPENCLAW_PACK_PATH="$(node -e 'const value = JSON.parse(process.argv[1]); if (!value.remediated || typeof value.archivePath !== "string") process.exit(1); process.stdout.write(value.archivePath)' "$OPENCLAW_REMEDIATION_JSON")"; \
@@ -567,7 +567,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && if [ -z "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
         echo "ERROR: mcporter ${MCPORTER_VERSION} has no committed npm integrity pin" >&2; exit 1; \
     fi \
-    && node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only \
+    && node /scripts/lib/reviewed-npm-archive.mts --verify-only \
         --package-spec "mcporter@${MCPORTER_VERSION}" --integrity "$MCPORTER_EXPECTED_INTEGRITY" \
         --tarball-url "$MCPORTER_EXPECTED_TARBALL" --label "mcporter ${MCPORTER_VERSION}" \
     && rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter \
@@ -585,7 +585,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         [ -f "$MCPORTER_RECEIPT" ] && [ -f "$MCPORTER_RAW_REPORT" ] && printf %s "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" | grep -qxE '[0-9a-f]{64}' \
             || { echo "ERROR: cached mcporter audit requires paired receipt, raw report, and receipt SHA-256" >&2; exit 1; }; \
         printf '%s  %s\n' "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" "$MCPORTER_RECEIPT" | sha256sum -c -; \
-        node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
+        node /scripts/lib/npm-audit-receipt.mts \
             --receipt "$MCPORTER_RECEIPT" \
             --package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
             --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
@@ -596,7 +596,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
             --result /tmp/mcporter-npm-audit-policy.json \
         && cp "$MCPORTER_RAW_REPORT" /tmp/mcporter-npm-audit.json; \
       else \
-        node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
+        node /scripts/lib/reviewed-npm-audit.mts \
             --directory /usr/local/lib/nemoclaw/mcporter-runtime \
             --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high \
             --report /tmp/mcporter-npm-audit.json --result /tmp/mcporter-npm-audit-policy.json; \

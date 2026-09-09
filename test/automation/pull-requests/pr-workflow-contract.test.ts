@@ -921,7 +921,7 @@ describe("pull request and main workflow contracts", () => {
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
     expect(fetch.run).toContain(
-      "node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts",
+      "node scripts/checks/package-openshell-sdk-for-pr.mts",
     );
     expect(fetch.run).toContain("artifact_path=");
     expect(

@@ -213,7 +213,7 @@ function createPlan(
   const result = runScript(
     fixture.work,
     [
-      "node", "--experimental-strip-types", "--no-warnings", planScriptPath,
+      "node", "--no-warnings", planScriptPath,
       "--version", version, "--output", planPath,
     ],
     { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
@@ -368,14 +368,13 @@ describe("release-latest-tag.sh", () => {
 
     const missing = runScript(
       fixture.work,
-      ["node", "--experimental-strip-types", "--no-warnings", planScriptPath, "--output", planPath],
+      ["node", "--no-warnings", planScriptPath, "--output", planPath],
       { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
     );
     const derived = runScript(
       fixture.work,
       [
         "node",
-        "--experimental-strip-types",
         "--no-warnings",
         planScriptPath,
         "--bump",
@@ -389,7 +388,6 @@ describe("release-latest-tag.sh", () => {
       fixture.work,
       [
         "node",
-        "--experimental-strip-types",
         "--no-warnings",
         planScriptPath,
         "--version",
@@ -403,7 +401,6 @@ describe("release-latest-tag.sh", () => {
       fixture.work,
       [
         "node",
-        "--experimental-strip-types",
         "--no-warnings",
         planScriptPath,
         "--version",
@@ -439,7 +436,6 @@ describe("release-latest-tag.sh", () => {
       fixture.work,
       [
         "node",
-        "--experimental-strip-types",
         "--no-warnings",
         planScriptPath,
         "--version",
@@ -469,7 +465,6 @@ describe("release-latest-tag.sh", () => {
       fixture.work,
       [
         "node",
-        "--experimental-strip-types",
         "--no-warnings",
         planScriptPath,
         "--version",
@@ -509,7 +504,6 @@ describe("release-latest-tag.sh", () => {
       fixture.work,
       [
         "node",
-        "--experimental-strip-types",
         "--no-warnings",
         planScriptPath,
         "--version",
@@ -582,7 +576,6 @@ describe("release-latest-tag.sh", () => {
       fixture.work,
       [
         "node",
-        "--experimental-strip-types",
         "--no-warnings",
         planScriptPath,
         "--version",
@@ -1403,7 +1396,6 @@ describe("release-latest-tag.sh", () => {
       fixture.work,
       [
         "node",
-        "--experimental-strip-types",
         "--no-warnings",
         planScriptPath,
         "--version",

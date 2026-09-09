@@ -102,7 +102,7 @@ export interface VerifyDeploymentDeps {
   getMessagingChannels: (name: string) => string[];
 
   /** Check if a messaging bridge is polling (provider exists in gateway). */
-  providerExistsInGateway: (providerName: string) => boolean;
+  providerExistsInGateway: (providerName: string) => boolean | Promise<boolean>;
 
   /**
    * Probe the in-sandbox agent config to learn which channels the runtime
@@ -369,7 +369,10 @@ function detectAccessMethod(chain: DashboardDeliveryChain): AccessMethod {
   if (chain.bindAddress === "0.0.0.0") return "proxy";
   if (chain.accessUrl.includes("127.0.0.1") || chain.accessUrl.includes("localhost"))
     return "localhost";
-  return "ssh-tunnel";
+  // A non-loopback CHAT_UI_URL names the operator's external proxy route.
+  // The host forward behind that proxy remains on loopback unless the
+  // operator separately opts into a wider bind (#10861).
+  return "proxy";
 }
 
 export interface MessagingBridgeStatus {
@@ -402,10 +405,10 @@ export interface MessagingBridgeStatus {
  * the channel?) so the "No channels found" dashboard symptom from #4156
  * surfaces here as a warning.
  */
-function verifyMessagingBridges(
+async function verifyMessagingBridges(
   sandboxName: string,
   deps: VerifyDeploymentDeps,
-): MessagingBridgeStatus {
+): Promise<MessagingBridgeStatus> {
   const channels = deps.getMessagingChannels(sandboxName);
   if (channels.length === 0) {
     return {
@@ -424,7 +427,10 @@ function verifyMessagingBridges(
       continue;
     }
     const expectedProviders = providerNames.length > 0 ? providerNames : [channel];
-    if (!expectedProviders.every((providerName) => deps.providerExistsInGateway(providerName))) {
+    const providersExist = await Promise.all(
+      expectedProviders.map((providerName) => deps.providerExistsInGateway(providerName)),
+    );
+    if (!providersExist.every(Boolean)) {
       missingProviders.push(channel);
     }
   }
@@ -643,7 +649,7 @@ export async function verifyDeployment(
 
   // 5. Messaging bridges (providers attached AND runtime config exposes
   // each configured channel — #4156).
-  const messaging = verifyMessagingBridges(sandboxName, deps);
+  const messaging = await verifyMessagingBridges(sandboxName, deps);
   if (!messaging.healthy) {
     diagnostics.push({
       link: "messaging",

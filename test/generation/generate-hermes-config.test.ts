@@ -182,7 +182,7 @@ function runConfigScriptRaw(
   const env = buildHermesTestEnv(envOverrides);
   return spawnSync(
     process.execPath,
-    ["--experimental-strip-types", opts.scriptPath || SCRIPT_PATH],
+    [opts.scriptPath || SCRIPT_PATH],
     {
       encoding: "utf-8",
       cwd: opts.cwd,

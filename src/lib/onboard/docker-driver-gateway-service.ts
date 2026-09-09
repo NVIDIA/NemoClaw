@@ -1441,7 +1441,7 @@ export async function startPackageManagedDockerDriverGateway({
     return false;
   }
 
-  console.log("  Starting OpenShell Docker-driver gateway via managed service...");
+  console.log("  Starting OpenShell gateway via managed service...");
   let serviceStart: OpenShellGatewayUserServiceStartResult;
   try {
     serviceStart = startService({

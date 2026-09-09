@@ -22,9 +22,9 @@ Use the maintainer's `vX.Y.Z` when supplied. Otherwise, read the current target 
 merged and open work:
 
 ```bash
-node --experimental-strip-types --no-warnings \
+node --no-warnings \
   .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
-node --experimental-strip-types --no-warnings \
+node --no-warnings \
   .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts vX.Y.Z
 ```
 
