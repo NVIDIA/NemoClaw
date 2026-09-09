@@ -65,42 +65,84 @@ After authorized recovery, read the new attempt and verify the prerequisite befo
 Use this preliminary check to plan recovery. It does not replace publisher verification or the
 candidate's required `base-image-publication` result.
 
-The [OpenClaw platform build](../../../../.github/workflows/base-image-platform.yaml) consumes the
-audit producer's `mcporter-runtime` receipt. Read the selected run's `run_attempt` with
-`gh api repos/NVIDIA/NemoClaw/actions/runs/<run-id>`, then inspect the run and attempt with
-`gh api repos/NVIDIA/NemoClaw/actions/runs/<run-id>/attempts/<attempt>`. Confirm its workflow, commit,
-and successful `reviewed-npm-audit` producer job using
+Start from the pending or failed [OpenClaw platform build](../../../../.github/workflows/base-image-platform.yaml),
+not a successful audit producer. Record its run ID, attempt, commit, and workflow event.
+Export those values as `IMAGE_RUN_ID`, `IMAGE_ATTEMPT`, `IMAGE_SHA`, and `IMAGE_EVENT`.
+Read the attempt's jobs with
 `gh api repos/NVIDIA/NemoClaw/actions/runs/<run-id>/attempts/<attempt>/jobs --paginate`.
-A retained producer may belong to an earlier attempt; inspect that attempt's jobs before using its output.
+Confirm the successful `reviewed-npm-audit` producer in that run. A retained producer may belong to
+an earlier attempt; inspect that attempt's jobs before using its output.
 
 Read that producer's upload log with `gh run view <run-id> --repo NVIDIA/NemoClaw --job <job-id> --log`.
-Record its artifact ID and SHA-256 digest. Read
-`gh api repos/NVIDIA/NemoClaw/actions/artifacts/<artifact-id>` and require the name `reviewed-npm-audit`,
-the expected run and commit, and an unexpired artifact. Do not select by name alone: one run can
-contain multiple audit artifacts with the same name.
+Export its artifact ID and archive SHA-256 digest as `AUDIT_ARTIFACT_ID` and `AUDIT_ARCHIVE_SHA256`.
+Match that ID to the consumer's download log. If download has not started, inspect the run's artifacts
+and require an unambiguous selection under the consumer's same-run, `reviewed-npm-audit` name lookup.
+Multiple same-name artifacts without a proven consumer selection are unverified. A producer from
+another run or commit cannot supply this consumer, even when its receipt is fresh.
 
-Run the audit inspection in a dedicated shell. Create a private `AUDIT_EVIDENCE_DIR` with `mktemp -d`.
-Before downloading, register an exit trap that removes only this procedure-owned directory.
-Handle catchable termination by exiting through cleanup. Report the retained path if cleanup fails;
-do not continue recovery with retained evidence from a failed check.
-Download the exact ID with
-`gh api repos/NVIDIA/NemoClaw/actions/artifacts/<artifact-id>/zip`, saving the response in that directory.
-Verify its SHA-256 digest against the producer's upload log with `shasum -a 256 <archive>`.
-Use `unzip -p <archive> <entry>` to extract only `mcporter-runtime.receipt.json` and
-`mcporter-runtime.raw.json` into files with those names in the evidence directory.
-Stop if the producer, artifact, digest, or either entry cannot be verified.
-Set `IMAGE_SOURCE_DIR` to an existing, maintainer-supplied isolated checkout. Record its owner;
-this check neither creates nor removes that checkout. If it is unavailable, report unverified.
-Require the publisher's recorded commit, not the release candidate or current `main`. Verify its commit and
-clean tracked files before using its package and policy inputs. Do not execute artifact contents.
-High or critical findings also require the matching installed dependency metadata under that
-checkout's `agents/openclaw/mcporter-runtime/node_modules`. If it is unavailable, report policy
+Set `IMAGE_SOURCE_DIR` to a maintainer-supplied isolated checkout at the consumer's recorded commit.
+Set `AUDIT_TOOL_DIR` to a separate isolated checkout of canonical `NVIDIA/NemoClaw` main.
+Record each checkout's owner. Require exclusive use during this check; preserve both checkouts afterward.
+The block below verifies the tool checkout against the canonical API commit before executing it.
+It uses the consumer commit's package and policy inputs, not candidate or current-main inputs.
+Do not execute artifact contents.
+High or critical findings also require the matching installed dependency metadata under
+`IMAGE_SOURCE_DIR/agents/openclaw/mcporter-runtime/node_modules`. If it is unavailable, report policy
 verification as unverified; a clean source checkout alone does not supply it.
 
-From the trusted release-tool checkout, run the existing verifier with the build's input mapping:
+After proving the consumer selection above, run this block in a dedicated Bash shell.
+Missing inputs or a failed command stop the check. The existing verifier owns receipt and policy validation.
 
 ```bash
-node --experimental-strip-types scripts/lib/npm-audit-receipt.mts \
+set -euo pipefail
+: "${IMAGE_RUN_ID:?}" "${IMAGE_ATTEMPT:?}" "${IMAGE_SHA:?}" "${IMAGE_EVENT:?}"
+: "${AUDIT_ARTIFACT_ID:?}" "${AUDIT_ARCHIVE_SHA256:?}" "${IMAGE_SOURCE_DIR:?}" "${AUDIT_TOOL_DIR:?}"
+AUDIT_EVIDENCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-audit.XXXXXXXX")"
+cleanup_audit_evidence() {
+  local status=$?
+  trap - EXIT
+  if ! rm -rf -- "$AUDIT_EVIDENCE_DIR" || [[ -e "$AUDIT_EVIDENCE_DIR" ]]; then
+    printf 'Audit evidence cleanup failed: %s\n' "$AUDIT_EVIDENCE_DIR" >&2
+    status=1
+  fi
+  exit "$status"
+}
+trap cleanup_audit_evidence EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+chmod 700 "$AUDIT_EVIDENCE_DIR"
+
+AUDIT_TOOL_SHA="$(gh api repos/NVIDIA/NemoClaw/git/ref/heads/main --jq '.object.sha')"
+[[ "$AUDIT_TOOL_SHA" =~ ^[0-9a-f]{40}$ ]]
+test "$(git -C "$AUDIT_TOOL_DIR" rev-parse HEAD)" = "$AUDIT_TOOL_SHA"
+AUDIT_TOOL_STATUS="$(git -C "$AUDIT_TOOL_DIR" status --porcelain --untracked-files=no)"
+test -z "$AUDIT_TOOL_STATUS"
+test "$(git -C "$IMAGE_SOURCE_DIR" rev-parse HEAD)" = "$IMAGE_SHA"
+IMAGE_SOURCE_STATUS="$(git -C "$IMAGE_SOURCE_DIR" status --porcelain --untracked-files=no)"
+test -z "$IMAGE_SOURCE_STATUS"
+gh api "repos/NVIDIA/NemoClaw/actions/runs/$IMAGE_RUN_ID/attempts/$IMAGE_ATTEMPT" \
+  >"$AUDIT_EVIDENCE_DIR/consumer.json"
+jq -e --arg run "$IMAGE_RUN_ID" --arg attempt "$IMAGE_ATTEMPT" \
+  --arg sha "$IMAGE_SHA" --arg event "$IMAGE_EVENT" '
+  (.id | tostring) == $run and (.run_attempt | tostring) == $attempt and
+  .head_sha == $sha and .event == $event and .path == ".github/workflows/base-image.yaml" and
+  .repository.full_name == "NVIDIA/NemoClaw"
+' "$AUDIT_EVIDENCE_DIR/consumer.json"
+gh api "repos/NVIDIA/NemoClaw/actions/artifacts/$AUDIT_ARTIFACT_ID" \
+  >"$AUDIT_EVIDENCE_DIR/artifact.json"
+jq -e --arg id "$AUDIT_ARTIFACT_ID" --arg run "$IMAGE_RUN_ID" --arg sha "$IMAGE_SHA" '
+  (.id | tostring) == $id and .name == "reviewed-npm-audit" and .expired == false and
+  (.workflow_run.id | tostring) == $run and .workflow_run.head_sha == $sha
+' "$AUDIT_EVIDENCE_DIR/artifact.json"
+gh api "repos/NVIDIA/NemoClaw/actions/artifacts/$AUDIT_ARTIFACT_ID/zip" \
+  >"$AUDIT_EVIDENCE_DIR/audit.zip"
+AUDIT_DOWNLOADED_SHA256="$(shasum -a 256 "$AUDIT_EVIDENCE_DIR/audit.zip")"
+test "${AUDIT_DOWNLOADED_SHA256%% *}" = "$AUDIT_ARCHIVE_SHA256"
+for entry in mcporter-runtime.receipt.json mcporter-runtime.raw.json; do
+  unzip -p "$AUDIT_EVIDENCE_DIR/audit.zip" "$entry" >"$AUDIT_EVIDENCE_DIR/$entry"
+done
+node --experimental-strip-types "$AUDIT_TOOL_DIR/scripts/lib/npm-audit-receipt.mts" \
   --receipt "$AUDIT_EVIDENCE_DIR/mcporter-runtime.receipt.json" \
   --raw-report "$AUDIT_EVIDENCE_DIR/mcporter-runtime.raw.json" \
   --package-json "$IMAGE_SOURCE_DIR/agents/openclaw/mcporter-runtime/package.json" \
@@ -109,6 +151,8 @@ node --experimental-strip-types scripts/lib/npm-audit-receipt.mts \
   --audit-config "$IMAGE_SOURCE_DIR/ci/reviewed-npm-audit.json" \
   --graph mcporter-runtime --registry https://registry.yarnpkg.com --threshold high \
   --legacy-npmjs true
+printf 'Preliminary audit check passed: consumer %s attempt %s, artifact %s, source %s, verifier %s\n' \
+  "$IMAGE_RUN_ID" "$IMAGE_ATTEMPT" "$AUDIT_ARTIFACT_ID" "$IMAGE_SHA" "$AUDIT_TOOL_SHA"
 ```
 
 The verifier enforces the existing legacy-receipt deadline; this option does not extend it.
@@ -341,7 +385,13 @@ if [[ "$DOCS_PR_NUMBER" != 'None' ]]; then
   IFS= read -r DOCS_COVERAGE_SHA <"$EVIDENCE_DIR/docs-coverage-sha"
   run_or_stop "documentation coverage ancestry" git merge-base --is-ancestor \
     "$DOCS_COVERAGE_SHA" "$CANDIDATE_SHA"
-  run_or_stop "documentation changed-path read" jq -r '.[].[] | .filename' \
+  run_or_stop "documentation changed-path read" jq -r '.[][] |
+    .filename,
+    (if .status == "renamed" then
+      if (.previous_filename | type) == "string" and (.previous_filename | length) > 0
+      then .previous_filename else error("renamed file lacks previous_filename") end
+    else empty end)
+  ' \
     "$DOCS_PR_FILES" >"$EVIDENCE_DIR/docs-changed-paths.txt"
 else
   printf '[]\n' >"$DOCS_PR_COMMITS"
