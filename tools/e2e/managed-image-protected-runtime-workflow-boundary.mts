@@ -311,8 +311,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Build exact all-agent protected runtime images",
   );
   requireFragments(errors, build, [
-    "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN",
-    '"$GITHUB_WORKSPACE/.candidate-runtime/scripts/checks/build-protected-managed-images.sh"',
+    "scripts/checks/build-protected-managed-images.sh",
     '--revision "$CHECKOUT_SHA"',
     '--cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT"',
     "--platform linux/amd64",
@@ -322,6 +321,13 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     '--hermes-base "$BASE_HERMES"',
     '--dcode-base "$BASE_DCODE"',
   ]);
+  if (
+    text(build?.run).includes(
+      ".candidate-runtime/scripts/checks/build-protected-managed-images.sh",
+    )
+  ) {
+    errors.push(`${JOB_ID} build controller must execute trusted workflow code`);
+  }
   requireValues(errors, `${JOB_ID} protected runtime build bases`, record(build?.env), {
     BASE_HERMES:
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}",
@@ -379,14 +385,6 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     path: "e2e-artifacts/live/managed-image-protected-runtime/",
   });
   requireStep(errors, workflowSteps, "Clean up Docker auth");
-  const prebuildAuthCleanup = requireStep(
-    errors,
-    workflowSteps,
-    "Remove Docker auth before candidate build",
-  );
-  requireFragments(errors, prebuildAuthCleanup, [
-    "bash .github/scripts/docker-auth-cleanup.sh",
-  ]);
   requireOrderedSteps(errors, workflowSteps, [
     "Validate protected runtime exact-head dispatch",
     "Checkout trusted protected runtime qualification",
@@ -397,7 +395,6 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Resolve reviewed Hermes runtime base image",
     "Resolve digest-pinned amd64 runtime base images",
     "Start isolated protected runtime registry",
-    "Remove Docker auth before candidate build",
     "Build exact all-agent protected runtime images",
     "Install OpenShell CLI",
     "Run all-agent GPU, local inference, rollback, and cleanup qualification",

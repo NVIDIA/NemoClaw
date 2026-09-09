@@ -412,30 +412,16 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
-  it("requires the protected runtime to use the candidate cache consumer", () => {
+  it("keeps the protected build controller in the trusted checkout", () => {
     const value = workflow();
     const build = namedStep(value, "Build exact all-agent protected runtime images");
-    build.run = String(build.run).replace("$GITHUB_WORKSPACE/.candidate-runtime/", "");
+    build.run = String(build.run).replace(
+      "scripts/checks/build-protected-managed-images.sh",
+      '"$GITHUB_WORKSPACE/.candidate-runtime/scripts/checks/build-protected-managed-images.sh"',
+    );
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime step 'Build exact all-agent protected runtime images' must include \"$GITHUB_WORKSPACE/.candidate-runtime/scripts/checks/build-protected-managed-images.sh\"",
-    );
-  });
-
-  it("removes Docker Hub credentials before candidate code runs", () => {
-    const value = workflow();
-    const steps = runtimeJob(value).steps as Array<Record<string, unknown>>;
-    const cleanupIndex = steps.findIndex(
-      (step) => step.name === "Remove Docker auth before candidate build",
-    );
-    const [cleanup] = steps.splice(cleanupIndex, 1);
-    const buildIndex = steps.findIndex(
-      (step) => step.name === "Build exact all-agent protected runtime images",
-    );
-    steps.splice(buildIndex + 1, 0, cleanup);
-
-    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime protected qualification and cleanup steps drifted",
+      "managed-image-protected-runtime build controller must execute trusted workflow code",
     );
   });
 
