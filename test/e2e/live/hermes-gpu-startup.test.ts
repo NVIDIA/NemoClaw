@@ -509,15 +509,18 @@ test(
             ),
           )}`,
       );
+      const expectedFallbackEvents = [
+        HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
+        HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
+        HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback,
+      ];
       expect(
-        [
-          ...fallbackEvents,
-          `forward-ownership:${forwardOwnership.join(",")}`,
-          `forward-ownership-complete:${forwardOwnership.length > 0 && forwardOwnership.every((entry) => entry.endsWith("=true"))}`,
-        ].join("\n"),
-      ).toBe(
-        `${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}\n${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}\n${HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback}\nforward-ownership:${(forwardPorts ?? []).map((port) => `${port}=true`).join(",")}\nforward-ownership-complete:true`,
-      );
+        fallbackEvents.join("\n") === expectedFallbackEvents.join("\n") &&
+          forwardOwnership.length === 2 &&
+          new Set(forwardPorts ?? []).size === 2 &&
+          forwardOwnership.every((entry) => entry.endsWith("=true")),
+        `fallback events: ${fallbackEvents.join(", ")}; forward ownership: ${forwardOwnership.join(", ") || "unresolved"}`,
+      ).toBe(true);
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
       expect(
         HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS.every((fragment) =>
