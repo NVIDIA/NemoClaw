@@ -48,6 +48,7 @@ on:
       - "src/lib/actions/sandbox/mcp-bridge-*.ts"
       - "src/lib/actions/sandbox/rebuild-post-restore-phase.ts"
       - "src/lib/agent/candidate-authority.ts"
+      - "src/lib/extra-agents-validation.ts"
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
       - "src/lib/messaging/**"
@@ -1009,7 +1010,7 @@ jobs:
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
-          node --experimental-strip-types --no-warnings \
+          node --no-warnings \
             tools/e2e/pr-managed-image-publication.mts assemble \
             "$CANDIDATE_SHA" \
             "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG" \
@@ -1111,7 +1112,7 @@ jobs:
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
-          node --experimental-strip-types --no-warnings \
+          node --no-warnings \
             tools/e2e/pr-managed-image-publication.mts assemble \
             "$CANDIDATE_SHA" \
             "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG" \
@@ -1556,7 +1557,7 @@ jobs:
               startupProfileContractVersion: 1,
               capabilityContractVersion: 1
             }' > "$contract_dir/contract.json"
-          node --experimental-strip-types tools/managed-images/validate-candidate-contract.mts \
+          node tools/managed-images/validate-candidate-contract.mts \
             --contract "$contract_dir/contract.json" \
             --platform "$PLATFORM"
       # The all-agent activation job downloads managed-pr-contract-* artifacts.
@@ -2092,10 +2093,11 @@ jobs:
               throw new Error(`managed OpenClaw plugin ${id} is missing, duplicated, or active`);
             }
           }
-          for (const id of ["telegram", "tavily"]) {
-            if (config.plugins?.entries?.[id]?.enabled !== false) {
-              throw new Error(`bundled OpenClaw plugin ${id} is not explicitly disabled`);
-            }
+          if (config.plugins?.entries?.telegram?.enabled !== false) {
+            throw new Error("bundled OpenClaw plugin telegram is not explicitly disabled");
+          }
+          if (config.plugins?.entries?.tavily !== undefined) {
+            throw new Error("uninstalled OpenClaw plugin tavily is present in managed configuration");
           }
           for (const id of [
             "telegram",

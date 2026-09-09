@@ -39,7 +39,7 @@ def prepare_generated_config(
     )
     _run_required_build_command(
         "Hermes config generator",
-        [str(node), "--experimental-strip-types", str(generator)],
+        [str(node), str(generator)],
         env=child_env,
     )
 

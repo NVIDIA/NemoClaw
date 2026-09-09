@@ -2183,7 +2183,9 @@ function createPodmanRuntimePatch(
       },
       ensureApplied: () => undefined,
       waitForSupervisorReconnectIfNeeded: () => undefined,
-      commitAfterReady: async () => {
+      commitAfterReady: async (options?: {
+        readonly beforeFinalHandoff?: (replacementRuntimeId: string | null) => void;
+      }) => {
         await finalizer?.commit();
       },
       selectedMode: () => selectedMode,

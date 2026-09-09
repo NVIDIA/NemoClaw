@@ -21,6 +21,7 @@ import {
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
+import { isWsl as detectWsl } from "../platform";
 import { runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
 import {
@@ -41,7 +42,7 @@ import {
   isPlausibleNvidiaGpuName,
   nvidiaHostLooksGenuine,
 } from "./gpu-trust";
-import { collectN1xIdentity } from "./platform-identity/n1x";
+import { collectN1xIdentity, isN1xWslGpuName } from "./platform-identity/n1x";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_UNIFIED_MEMORY_UTILIZATION = 0.5;
@@ -471,8 +472,24 @@ export function adoptServedModelId(catalogModel: string | null, port = VLLM_PORT
   return served;
 }
 
+function classifyWslNvidiaPlatform(
+  detectedPlatform: NvidiaPlatform,
+  runningInWsl: boolean,
+  containerGpuProofPassed: boolean,
+  gpus: readonly Pick<NimGpu, "name">[],
+): NvidiaPlatform {
+  return detectedPlatform === "linux" &&
+    runningInWsl &&
+    containerGpuProofPassed &&
+    gpus.length === 1 &&
+    isN1xWslGpuName(gpus[0]!.name)
+    ? "n1x"
+    : detectedPlatform;
+}
+
 export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
   const runCaptureImpl = deps.runCaptureImpl ?? runCapture;
+  const runningInWsl = deps.isWsl ?? detectWsl();
   // Try NVIDIA first — query name, total, and free VRAM in a single call so
   // the preflight line can show the GPU model alongside the memory size and
   // the bootstrap-model selector can pick a model that fits currently
@@ -480,7 +497,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
   try {
     const output = captureNvidiaSmi(
       ["--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"],
-      { isWsl: deps.isWsl, runCaptureImpl },
+      { isWsl: runningInWsl, runCaptureImpl },
     );
     if (output) {
       type ParsedGpu = { name: string; memoryMB: number; freeMemoryMB: number };
@@ -506,7 +523,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         });
       }
       if (parsed.length > 0) {
-        const platform = detectNvidiaPlatform();
+        const detectedPlatform = detectNvidiaPlatform();
         // Off qualified NVIDIA platform identity, layer a denylist check and the
         // trust-tier gate before trusting the nvidia-smi probe. The observed
         // Windows-on-ARM WSL2 nvidia-smi shim emits a `JMJWOA-Generic-*`
@@ -517,10 +534,10 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         // probe — partial filtering would let a mixed-row spoof surface a
         // non-placeholder row as a real GPU.
         const firmwareConfirmsNvidia =
-          platform === "spark" ||
-          platform === "station" ||
-          platform === "n1x" ||
-          platform === "jetson";
+          detectedPlatform === "spark" ||
+          detectedPlatform === "station" ||
+          detectedPlatform === "n1x" ||
+          detectedPlatform === "jetson";
         // The all-GPU CUDA workload proves that at least one usable device
         // exists. It does not establish which nvidia-smi rows or capacities
         // are genuine, so a multi-row response stays untrusted.
@@ -600,6 +617,12 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           deps.onTrustGateRejection?.("nvidia-smi reported no recognized NVIDIA GPU product names");
           return null;
         }
+        const platform = classifyWslNvidiaPlatform(
+          detectedPlatform,
+          runningInWsl,
+          containerGpuProofPassed,
+          trusted,
+        );
         const totalMemoryMB = trusted.reduce((sum: number, p: ParsedGpu) => sum + p.memoryMB, 0);
         const availableMemoryMB = trusted.reduce(
           (sum: number, p: ParsedGpu) => sum + p.freeMemoryMB,
@@ -665,7 +688,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
   // Fallback: unified-memory NVIDIA devices
   try {
     const nameOutput = captureNvidiaSmi(["--query-gpu=name", "--format=csv,noheader,nounits"], {
-      isWsl: deps.isWsl,
+      isWsl: runningInWsl,
       runCaptureImpl,
     });
     const gpuNames = nameOutput

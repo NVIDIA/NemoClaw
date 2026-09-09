@@ -117,7 +117,13 @@ describe("onboarding inference gateway scope", () => {
     await withProcessEnv({ COMPATIBLE_API_KEY: undefined }, async () => {
       const harness = createHarness({
         runOpenshell: (args) =>
-          args.slice(0, 2).join(" ") === "provider get" ? { status: 0 } : undefined,
+          args.slice(0, 2).join(" ") === "provider get"
+            ? {
+                status: 0,
+                stdout:
+                  "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+              }
+            : undefined,
       });
       const model = "deepseek-ai/DeepSeek-V4-Flash";
 
@@ -148,7 +154,7 @@ describe("onboarding inference gateway scope", () => {
       const providerUpdate = harness.commands.find(({ command }) =>
         command.startsWith("provider update "),
       );
-      expect(providerUpdate?.env).toEqual({});
+      expect(providerUpdate?.env).toBeUndefined();
       expect(harness.commands.every(({ env }) => env?.COMPATIBLE_API_KEY === undefined)).toBe(true);
       expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
       expect(harness.verifyInferenceRoute).toHaveBeenCalledWith(

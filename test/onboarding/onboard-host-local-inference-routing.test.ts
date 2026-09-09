@@ -586,7 +586,7 @@ describe("onboard host-local inference routing", () => {
 
   it("uses a transaction-owned provider create instead of the generic gateway upsert", async () => {
     const exactProviderCreate = vi.fn(() => ({ ok: true }));
-    const genericUpsertProvider = vi.fn(() => ({ ok: true }));
+    const genericUpsertProvider = vi.fn(async () => ({ ok: true }));
     const route = fixture("hermes", "ollama", {
       gatewayUpsertProvider: exactProviderCreate,
     });

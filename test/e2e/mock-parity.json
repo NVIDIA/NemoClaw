@@ -38,6 +38,7 @@
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
         "src/lib/inference/llama-cpp/managed-installer.test.ts",
         "src/lib/onboard/setup-nim-flow.test.ts",
+        "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts"
       ]
     },
@@ -120,7 +121,10 @@
     },
     {
       "live": "test/e2e/live/hermes-gpu-startup.test.ts",
-      "liveSources": ["test/e2e/live/hermes-gpu-startup-proof.ts"],
+      "liveSources": [
+        "test/e2e/live/hermes-gpu-startup-fallback.ts",
+        "test/e2e/live/hermes-gpu-startup-proof.ts"
+      ],
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
         "test/e2e/support/hermes-gpu-startup-integrity.test.ts",
@@ -155,11 +159,14 @@
       "liveSources": [
         "test/e2e/live/agent-turn-latency-helpers.ts",
         "test/e2e/live/full-e2e-inference-probe.ts",
-        "test/e2e/live/full-e2e-workload-evidence.ts"
+        "test/e2e/live/full-e2e-workload-evidence.ts",
+        "test/e2e/live/launch-agent-turn.ts"
       ],
       "fast": [
+        "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
+        "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -170,10 +177,12 @@
     },
     {
       "live": "test/e2e/live/launch-readiness-lease-acceptance.test.ts",
+      "liveSources": ["test/e2e/live/launch-agent-turn.ts"],
       "fast": [
         "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
         "src/lib/actions/sandbox/launch-readiness.test.ts",
         "src/lib/state/launch-readiness-lease.test.ts",
+        "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e-runtime/launch-readiness-forward-observation.test.ts"
       ]
@@ -232,6 +241,9 @@
       "live": "test/e2e/live/network-policy.test.ts",
       "liveSources": ["test/e2e/live/restricted-onboard-helpers.ts"],
       "fast": [
+        "src/commands/config/export.test.ts",
+        "src/lib/adapters/config/live-export-source.test.ts",
+        "src/lib/domain/config/verify-export-source.test.ts",
         "src/lib/actions/sandbox/exec-policy-hint-detection.test.ts",
         "src/lib/actions/sandbox/policy-channel-add-drift.test.ts",
         "src/lib/actions/sandbox/policy-channel-policy.test.ts",
@@ -529,6 +541,7 @@
       "fast": [
         "src/lib/actions/sandbox/skill-install.test.ts",
         "test/agents/hermes/hermes-image-build-probes.test.ts",
+        "test/agents/hermes/hermes-start.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
@@ -536,6 +549,7 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/inference-adapter.test.ts",
+        "test/e2e/support/security-posture.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"
       ]
@@ -909,6 +923,7 @@
       "live": "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
       "fast": [
         "test/agents/hermes/hermes-start.test.ts",
+        "test/runtime/sandbox/sandbox-init.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
@@ -991,6 +1006,10 @@
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts"
       ]
+    },
+    {
+      "live": "test/e2e/live/issue-9880-staging-launchable.test.ts",
+      "fast": ["test/e2e/support/brev-launchable-fixture.test.ts"]
     },
     {
       "live": "test/e2e/live/brev-workspace-cleanup.test.ts",

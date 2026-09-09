@@ -90,6 +90,37 @@ describe("Hermes authentication exit boundaries", () => {
   });
 });
 
+describe("Hermes provider store availability", () => {
+  it("lists providers through the selected gateway", async () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: "hermes-provider\n",
+      stderr: "",
+    }));
+    const helpers = createHermesAuthHelpers(createDeps({ runOpenshell }));
+
+    await expect(helpers.checkHermesProviderStoreReachable()).resolves.toEqual({ ok: true });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "list", "--names"],
+      expect.objectContaining({ timeout: 10_000 }),
+    );
+  });
+
+  it("reports malformed provider inventory as unavailable", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "bad/name\n", stderr: "" }));
+    const helpers = createHermesAuthHelpers(createDeps({ runOpenshell }));
+
+    await expect(helpers.checkHermesProviderStoreReachable()).resolves.toEqual({
+      ok: false,
+      message: "OpenShell returned an invalid provider inventory.",
+    });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "list", "--names"],
+      expect.objectContaining({ timeout: 10_000 }),
+    );
+  });
+});
+
 describe("Hermes authentication selection", () => {
   it("selects API key authentication non-interactively when a key already exists", async () => {
     clearHermesAuthEnvironment();

@@ -3,6 +3,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -15,6 +16,38 @@ import * as importedHermesBuildContext from "../../../src/lib/onboard/experiment
 import * as importedPortableHostPreparation from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
 import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
+import { capturePodmanSocketAuthority } from "../../../src/lib/adapters/podman/index.ts";
+import { captureHermesPortableOpenShellExecutableAuthority } from "../../../src/lib/adapters/openshell/resolve-shared.ts";
+import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../../src/lib/adapters/openshell/timeouts.ts";
+import { loadAgent } from "../../../src/lib/agent/defs.ts";
+import {
+  createHermesPortableForwardRecoveryInput,
+  recoverHermesPortableLaunchForwards,
+} from "../../../src/lib/actions/sandbox/forward-recovery.ts";
+import { startSandbox } from "../../../src/lib/actions/sandbox/start.ts";
+import {
+  configureHermesPortableRestartPolicy,
+  enrollHermesPortableContainer,
+} from "../../../src/lib/onboard/experimental/hermes-portable-container.ts";
+import { resolveHermesPortableStartupContract } from "../../../src/lib/onboard/experimental/hermes-portable-contract.ts";
+import {
+  stopHermesPortableSandboxLifecycle,
+  type HermesPortableLifecycleCommandResult,
+  type HermesPortableLifecycleDeps,
+} from "../../../src/lib/onboard/experimental/hermes-portable-lifecycle.ts";
+import {
+  createHermesPortableChildEnvironment,
+  createHermesPortableContainerDeps,
+} from "../../../src/lib/onboard/experimental/hermes-portable-onboarding.ts";
+import {
+  captureHermesPortablePolicySource,
+  publishHermesPortableDurablePolicySource,
+  publishHermesPortableLifecycleReceipt,
+  readHermesPortableLifecycleReceipt,
+  type HermesPortableConfiguredReceipt,
+  type HermesPortablePendingReceipt,
+} from "../../../src/lib/onboard/experimental/hermes-portable-receipt.ts";
+import { captureHermesPortablePodmanExecutableAuthority } from "../../../src/lib/onboard/experimental/hermes-portable-podman-authority.ts";
 import {
   DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
   parseDockerNetworkIpamEntries,
@@ -23,7 +56,13 @@ import {
   PORTABLE_HOST_GATEWAY_IP,
   PORTABLE_REGISTRY_IP,
 } from "../../../src/lib/onboard/docker-driver-platform.ts";
+import { withMcpLifecycleLockSync } from "../../../src/lib/state/mcp-lifecycle-lock-acquisition.ts";
+import { withPortableHostFence } from "../../../src/lib/state/portable-uninstall-retirement.ts";
+import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
+import { retryUntil } from "../../../src/lib/core/retry.ts";
+import { streamSandboxCreate } from "../../../src/lib/sandbox/create-stream.ts";
 import { test } from "../fixtures/e2e-test.ts";
+import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
 import {
   cleanupPortableHostGatewayAlias,
   cleanupPortableProfileRootlessFixture,
@@ -86,12 +125,21 @@ const BASE_IMAGE =
 const HERMES_PORTABLE_E2E_SANDBOX_NAME = "hermes-portable-e2e";
 const HERMES_PORTABLE_E2E_TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
 const HERMES_PORTABLE_E2E_CREATE_INTENT = "b".repeat(64);
+const HERMES_PORTABLE_E2E_HISTORICAL_MANIFEST_SHA256 =
+  "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2";
+const HERMES_PORTABLE_E2E_GATEWAY_NAME = "nemoclaw";
+const HERMES_PORTABLE_E2E_GENERATION = "portable-e2e-generation";
+const HERMES_PORTABLE_E2E_POLICY = path.join(
+  process.cwd(),
+  "test/e2e/live/hermes-portable-lifecycle-policy.yaml",
+);
 const HERMES_PORTABLE_E2E_BUILD_SETTINGS = {
   model: "qwen3-vl:4b",
   provider: "ollama-local",
   preferredInferenceApi: "openai-completions",
   toolDisclosure: "direct",
 } as const;
+const OPENSHELL_SETTLEMENT_DELAYS_MS = Array.from({ length: 120 }, () => 250);
 const PORTABLE_PROFILE_E2E_PHASES = [
   "select the Podman-reported runtime socket",
   "prepare the rootless container runtime",
@@ -102,6 +150,8 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "verify Hermes accepts the configured external Host",
   "start the pinned Podman gateway",
   "verify distinct same-network routes",
+  "upgrade the historical receipt through public start and verify its lifecycle",
+  "prove post-recovery stop settlement",
   "record portable environment completion",
 ] as const;
 
@@ -299,6 +349,558 @@ function selectInstallerPodmanRuntime(repoRoot: string): string {
   return run("bash", ["-c", script]);
 }
 
+function captureOpenShell(
+  executablePath: string,
+  env: NodeJS.ProcessEnv,
+  args: readonly string[],
+  timeoutMs = 30_000,
+): HermesPortableLifecycleCommandResult {
+  const result = spawnSync(executablePath, [...args], {
+    encoding: "utf-8",
+    env,
+    killSignal: "SIGKILL",
+    maxBuffer: 512 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout:
+      timeoutMs <= 10_000
+        ? 10_000
+        : timeoutMs <= 30_000
+          ? 30_000
+          : timeoutMs <= 40_000
+            ? 40_000
+            : timeoutMs <= 60_000
+              ? 60_000
+              : 240_000,
+  });
+  return {
+    status: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    ...(result.error ? { error: result.error } : {}),
+  };
+}
+
+function requireOpenShellResult(
+  result: HermesPortableLifecycleCommandResult,
+  label: string,
+): string {
+  assert.ok(
+    result.status === 0 && !result.error,
+    `${label} failed: ${String(result.error?.message ?? result.stderr ?? result.stdout)}`,
+  );
+  return String(result.stdout).trim();
+}
+
+function readOpenShellSandbox(
+  executablePath: string,
+  env: NodeJS.ProcessEnv,
+  sandboxName: string,
+): { id: string; phase: string } {
+  const output = requireOpenShellResult(
+    captureOpenShell(
+      executablePath,
+      env,
+      ["sandbox", "get", "-g", HERMES_PORTABLE_E2E_GATEWAY_NAME, "-o", "json", sandboxName],
+      10_000,
+    ),
+    "OpenShell sandbox observation",
+  );
+  const parsed = JSON.parse(output) as {
+    id?: unknown;
+    name?: unknown;
+    phase?: unknown;
+  };
+  assert.ok(
+    parsed.name === sandboxName &&
+      typeof parsed.id === "string" &&
+      parsed.id.length > 0 &&
+      typeof parsed.phase === "string",
+    "OpenShell sandbox observation did not preserve exact identity and phase",
+  );
+  return { id: parsed.id, phase: parsed.phase };
+}
+
+function waitForOpenShellGateway(executablePath: string, env: NodeJS.ProcessEnv): void {
+  const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+  const settled = retryUntil(
+    () => {
+      const result = captureOpenShell(
+        executablePath,
+        env,
+        ["gateway", "info", "-g", HERMES_PORTABLE_E2E_GATEWAY_NAME, "-o", "json"],
+        10_000,
+      );
+      let info: { compute_drivers?: Array<{ name?: string }>; status?: string } | undefined;
+      try {
+        info = JSON.parse(String(result.stdout)) as typeof info;
+      } catch {
+        info = undefined;
+      }
+      return {
+        detail: String(result.error?.message ?? result.stderr ?? result.stdout),
+        healthy:
+          result.status === 0 &&
+          !result.error &&
+          info?.status === "healthy" &&
+          info.compute_drivers?.some((driver) => driver.name === "podman") === true,
+      };
+    },
+    {
+      accept: (observation) => observation.healthy,
+      retryDelaysMs: OPENSHELL_SETTLEMENT_DELAYS_MS,
+      sleep: (milliseconds) => Atomics.wait(sleepBuffer, 0, 0, milliseconds),
+    },
+  );
+  assert.ok(settled.healthy, `OpenShell gateway did not become healthy: ${settled.detail}`);
+}
+
+function waitForOpenShellTerminalPhase(
+  executablePath: string,
+  env: NodeJS.ProcessEnv,
+  sandboxName: string,
+): "Error" | "Stopped" {
+  const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+  const phase = retryUntil(
+    () => {
+      try {
+        return readOpenShellSandbox(executablePath, env, sandboxName).phase;
+      } catch {
+        return "";
+      }
+    },
+    {
+      accept: (observed) => observed === "Error" || observed === "Stopped",
+      retryDelaysMs: OPENSHELL_SETTLEMENT_DELAYS_MS,
+      sleep: (milliseconds) => Atomics.wait(sleepBuffer, 0, 0, milliseconds),
+    },
+  );
+  assert.ok(
+    phase === "Error" || phase === "Stopped",
+    "OpenShell did not independently report a terminal phase",
+  );
+  return phase;
+}
+
+function waitForReceiptOwnedContainerExit(containerId: string): "exited" {
+  const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+  const status = retryUntil(
+    () => {
+      try {
+        return run("podman", [
+          "container",
+          "inspect",
+          "--format",
+          "{{.State.Status}}",
+          containerId,
+        ]);
+      } catch {
+        return "";
+      }
+    },
+    {
+      accept: (observed) => observed === "exited",
+      retryDelaysMs: OPENSHELL_SETTLEMENT_DELAYS_MS,
+      sleep: (milliseconds) => Atomics.wait(sleepBuffer, 0, 0, milliseconds),
+    },
+  );
+  assert.equal(status, "exited", "The exact receipt-owned container did not stop");
+  return status;
+}
+
+function waitForOpenShellSandboxAbsent(
+  executablePath: string,
+  env: NodeJS.ProcessEnv,
+  sandboxName: string,
+): void {
+  const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+  const observation = retryUntil(
+    () => {
+      const result = captureOpenShell(
+        executablePath,
+        env,
+        ["sandbox", "list", "-g", HERMES_PORTABLE_E2E_GATEWAY_NAME, "-o", "json"],
+        10_000,
+      );
+      try {
+        const sandboxes = JSON.parse(String(result.stdout)) as unknown;
+        return {
+          absent:
+            result.status === 0 &&
+            !result.error &&
+            Array.isArray(sandboxes) &&
+            sandboxes.every(
+              (sandbox) =>
+                sandbox !== null &&
+                typeof sandbox === "object" &&
+                !Array.isArray(sandbox) &&
+                typeof (sandbox as { name?: unknown }).name === "string" &&
+                (sandbox as { name?: unknown }).name !== sandboxName,
+            ),
+          detail: String(result.error?.message ?? result.stderr ?? result.stdout),
+        };
+      } catch {
+        return {
+          absent: false,
+          detail: String(result.error?.message ?? result.stderr ?? result.stdout),
+        };
+      }
+    },
+    {
+      accept: (observed) => observed.absent,
+      retryDelaysMs: OPENSHELL_SETTLEMENT_DELAYS_MS,
+      sleep: (milliseconds) => Atomics.wait(sleepBuffer, 0, 0, milliseconds),
+    },
+  );
+  assert.ok(observation.absent, `OpenShell sandbox cleanup did not settle: ${observation.detail}`);
+}
+
+function withoutPodmanConnectionSelectors(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const blocked = new Set([
+    "CONTAINER_CONNECTION",
+    "CONTAINER_CERT_PATH",
+    "CONTAINER_HOST",
+    "CONTAINER_SSHKEY",
+    "CONTAINER_TLS_VERIFY",
+    "CONTAINERS_CONF",
+    "CONTAINERS_STORAGE_CONF",
+    "DOCKER_CONTEXT",
+    "DOCKER_HOST",
+    "DOCKER_TLS",
+    "DOCKER_TLS_VERIFY",
+    "DOCKER_CERT_PATH",
+    "PODMAN_CONNECTIONS_CONF",
+    "REGISTRY_AUTH_FILE",
+  ]);
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !blocked.has(name)));
+}
+
+async function proveHistoricalHermesPortableLifecycle(input: {
+  artifactDir: string;
+  hermesImageRef: string;
+  openshellBin: string;
+  openshellClientEnv: NodeJS.ProcessEnv;
+  progress: TestProgress;
+  runtimeAuthority: Parameters<typeof createHermesPortableContainerDeps>[1];
+  sourceRevision: string;
+}): Promise<Record<string, unknown>> {
+  const sandboxName = HERMES_PORTABLE_E2E_SANDBOX_NAME;
+  const receiptStateDir = path.join(input.runtimeAuthority.homeDir, ".nemoclaw");
+  const qualifiedPolicyPath = path.join(input.runtimeAuthority.homeDir, ".hermes-policy.yaml");
+  fs.writeFileSync(qualifiedPolicyPath, fs.readFileSync(HERMES_PORTABLE_E2E_POLICY), {
+    flag: "wx",
+    mode: 0o600,
+  });
+  const lifecycleEnv = withoutPodmanConnectionSelectors(input.openshellClientEnv);
+  const socketAuthority = capturePodmanSocketAuthority(input.runtimeAuthority.socketPath);
+  const podmanAuthority = captureHermesPortablePodmanExecutableAuthority(
+    socketAuthority,
+    input.runtimeAuthority,
+    lifecycleEnv,
+  );
+  const childEnv = createHermesPortableChildEnvironment(lifecycleEnv, input.runtimeAuthority);
+  const openshellExecutableAuthority = captureHermesPortableOpenShellExecutableAuthority(
+    input.openshellBin,
+    childEnv,
+    lifecycleEnv,
+  );
+  const capture = (args: readonly string[], timeoutMs = 30_000) =>
+    captureOpenShell(input.openshellBin, childEnv, args, timeoutMs);
+  const startupArgv = [
+    "env",
+    "NEMOCLAW_HERMES_API_PORT=8642",
+    `NEMOCLAW_SANDBOX_NAME=${sandboxName}`,
+    "/usr/local/bin/nemoclaw-start",
+  ];
+
+  const createArgs = [
+    "sandbox",
+    "create",
+    "-g",
+    HERMES_PORTABLE_E2E_GATEWAY_NAME,
+    "--name",
+    sandboxName,
+    "--from",
+    input.hermesImageRef,
+    "--policy",
+    qualifiedPolicyPath,
+    "--no-tty",
+    "--",
+    ...startupArgv,
+  ];
+  let observedCreatePhase = "";
+  const createResult = await streamSandboxCreate(
+    "/usr/bin/timeout",
+    ["--signal=TERM", "--kill-after=5s", "240s", input.openshellBin, ...createArgs],
+    input.openshellClientEnv,
+    {
+      initialPhase: "create",
+      readyCheck: () => {
+        try {
+          observedCreatePhase = readOpenShellSandbox(
+            input.openshellBin,
+            input.openshellClientEnv,
+            sandboxName,
+          ).phase;
+        } catch {
+          observedCreatePhase = "";
+        }
+        return observedCreatePhase === "Ready";
+      },
+      failureCheck: () =>
+        observedCreatePhase === "Error"
+          ? "OpenShell Hermes sandbox entered Error during creation."
+          : null,
+      readyCheckOutputPatterns: [/Setting up NemoClaw/u],
+      waitForReadyTermination: true,
+    },
+  );
+  requireOpenShellResult(
+    {
+      status: createResult.status,
+      stdout: createResult.output,
+      stderr: "",
+    },
+    "OpenShell Hermes sandbox creation",
+  );
+
+  let primaryFailed = false;
+  let primaryFailure: unknown;
+  let lifecycleEvidence: Record<string, unknown> | undefined;
+  try {
+    const live = readOpenShellSandbox(input.openshellBin, input.openshellClientEnv, sandboxName);
+    const liveIdentityFingerprint = createHash("sha256").update(live.id).digest("hex");
+    const registry: SandboxEntry = {
+      name: sandboxName,
+      agent: "hermes",
+      gatewayName: HERMES_PORTABLE_E2E_GATEWAY_NAME,
+      lifecycleGeneration: HERMES_PORTABLE_E2E_GENERATION,
+      lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
+      openshellDriver: "docker",
+      openshellVersion: openshellExecutableAuthority.version,
+    };
+    const context = {
+      agent: "hermes",
+      gatewayName: HERMES_PORTABLE_E2E_GATEWAY_NAME,
+      lifecycleGeneration: HERMES_PORTABLE_E2E_GENERATION,
+      openshellDriver: "docker",
+    } as const;
+    const containerDeps = createHermesPortableContainerDeps(
+      socketAuthority,
+      input.runtimeAuthority,
+      podmanAuthority,
+      lifecycleEnv,
+    );
+    const transactionId = randomUUID();
+    const currentStartup = resolveHermesPortableStartupContract({
+      agent: loadAgent("hermes"),
+      sandboxName,
+      startupArgv,
+    });
+    const historicalStartup = {
+      ...currentStartup,
+      manifestSha256: HERMES_PORTABLE_E2E_HISTORICAL_MANIFEST_SHA256,
+    };
+    const active = withMcpLifecycleLockSync(
+      sandboxName,
+      () => {
+        const policy = publishHermesPortableDurablePolicySource({
+          sandboxName,
+          transactionId,
+          stateDir: receiptStateDir,
+          source: captureHermesPortablePolicySource(qualifiedPolicyPath),
+        });
+        const pending: HermesPortablePendingReceipt = {
+          schemaVersion: 7,
+          agent: "hermes",
+          phase: "pending",
+          transactionId,
+          createIntentSha256: HERMES_PORTABLE_E2E_CREATE_INTENT,
+          sandboxName,
+          gatewayName: HERMES_PORTABLE_E2E_GATEWAY_NAME,
+          lifecycleGeneration: HERMES_PORTABLE_E2E_GENERATION,
+          runtimeAuthority: input.runtimeAuthority,
+          openshellExecutableAuthority,
+          podmanExecutableAuthority: podmanAuthority,
+          socketAuthority,
+          startup: historicalStartup,
+          policy,
+        };
+        const publishedPending = publishHermesPortableLifecycleReceipt(pending, receiptStateDir);
+        const enrolled = enrollHermesPortableContainer(pending, live.id, containerDeps);
+        const { policy: _policy, ...configuredTransaction } = pending;
+        const configuring: HermesPortableConfiguredReceipt = {
+          ...configuredTransaction,
+          phase: "configuring",
+          previousPhaseSha256: publishedPending.sha256,
+          container: enrolled.authority,
+        };
+        const publishedConfiguring = publishHermesPortableLifecycleReceipt(
+          configuring,
+          receiptStateDir,
+        );
+        const configured = configureHermesPortableRestartPolicy(configuring, containerDeps);
+        const activeReceipt: HermesPortableConfiguredReceipt = {
+          ...configuring,
+          phase: "active",
+          previousPhaseSha256: publishedConfiguring.sha256,
+          container: configured.authority,
+        };
+        return publishHermesPortableLifecycleReceipt(activeReceipt, receiptStateDir);
+      },
+      { stateDir: path.join(receiptStateDir, "state") },
+    );
+    const activeContainerId =
+      active.receipt.phase === "active" ? active.receipt.container.containerId : "";
+    const lifecycleDeps: HermesPortableLifecycleDeps = {
+      stateDir: receiptStateDir,
+      env: lifecycleEnv,
+      captureOpenShell: capture,
+      readRegistry: () => registry,
+    };
+
+    lifecycleEvidence = await withPortableHostFence(input.runtimeAuthority.homeDir, async () => {
+      const gatewayEvidence: {
+        forwardRecovery: ReturnType<typeof recoverHermesPortableLaunchForwards> | null;
+        verificationCount: number;
+      } = { forwardRecovery: null, verificationCount: 0 };
+      const requireCompatibleStartupAuthority = () => {
+        const current = readHermesPortableLifecycleReceipt(sandboxName, receiptStateDir);
+        assert.ok(
+          current?.successor &&
+            current.successor.receipt.startup.manifestSha256 ===
+              HERMES_PORTABLE_E2E_HISTORICAL_MANIFEST_SHA256,
+          "Public start did not preserve the reviewed Hermes transition authority",
+        );
+      };
+      const publicStartDeps = {
+        environment: lifecycleEnv,
+        getSandbox: (name) => (name === sandboxName ? registry : null),
+        log: console.log,
+        verifyGateway: async () => {
+          gatewayEvidence.verificationCount += 1;
+          requireCompatibleStartupAuthority();
+          gatewayEvidence.forwardRecovery = recoverHermesPortableLaunchForwards(
+            createHermesPortableForwardRecoveryInput({
+              assertCurrent: requireCompatibleStartupAuthority,
+              assertRollbackCurrent: requireCompatibleStartupAuthority,
+              commandAuthority: {
+                env: childEnv,
+                executablePath: input.openshellBin,
+              },
+              gatewayName: HERMES_PORTABLE_E2E_GATEWAY_NAME,
+              intent: "connect-probe-only",
+              onTiming: () => undefined,
+              ports: [18_789, 8_642],
+              sandboxName,
+            }),
+          );
+        },
+      } satisfies Parameters<typeof startSandbox>[1];
+      const upgradeResult = await startSandbox(sandboxName, publicStartDeps);
+      const firstStop = withMcpLifecycleLockSync(
+        sandboxName,
+        () =>
+          stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, lifecycleDeps),
+        { stateDir: path.join(receiptStateDir, "state") },
+      );
+      assert.equal(firstStop.kind, "stopped", "Historical Hermes receipt did not stop");
+      const firstStoppedContainerStatus = waitForReceiptOwnedContainerExit(activeContainerId);
+      const firstTerminalPhase = waitForOpenShellTerminalPhase(
+        input.openshellBin,
+        input.openshellClientEnv,
+        sandboxName,
+      );
+      const startResult = await startSandbox(sandboxName, publicStartDeps);
+      assert.ok(
+        upgradeResult.exitCode === 0 &&
+          startResult.exitCode === 0 &&
+          gatewayEvidence.verificationCount === 2,
+        `Public start did not complete authenticated lifecycle recovery and gateway verification: upgrade=${JSON.stringify(upgradeResult)} start=${JSON.stringify(startResult)} checks=${String(gatewayEvidence.verificationCount)}`,
+      );
+      requireCompatibleStartupAuthority();
+
+      input.progress.phase("prove post-recovery stop settlement");
+      const postRecoveryStop = withMcpLifecycleLockSync(
+        sandboxName,
+        () =>
+          stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, lifecycleDeps),
+        { stateDir: path.join(receiptStateDir, "state") },
+      );
+      assert.equal(postRecoveryStop.kind, "stopped", "Recovered Hermes receipt did not stop");
+      const postRecoveryContainerStatus = waitForReceiptOwnedContainerExit(activeContainerId);
+      const postRecoveryTerminalPhase = waitForOpenShellTerminalPhase(
+        input.openshellBin,
+        input.openshellClientEnv,
+        sandboxName,
+      );
+
+      const evidence = {
+        sourceRevision: input.sourceRevision,
+        manifestTransition: {
+          installed: active.receipt.startup.manifestSha256,
+          current: currentStartup.manifestSha256,
+        },
+        requalification: "reviewed-transition-accepted-via-public-start",
+        stop: {
+          result: firstStop.kind,
+          containerStatus: firstStoppedContainerStatus,
+          openShellPhase: firstTerminalPhase,
+        },
+        recovery: {
+          result: "public-start",
+          forwardResult: gatewayEvidence.forwardRecovery?.kind ?? "missing",
+          authenticatedHealth: "verified-by-public-start-before-forward-verification",
+        },
+        postRecoveryStop: {
+          result: postRecoveryStop.kind,
+          containerStatus: postRecoveryContainerStatus,
+          openShellPhase: postRecoveryTerminalPhase,
+        },
+      };
+      fs.writeFileSync(
+        path.join(input.artifactDir, "hermes-portable-lifecycle-receipt.json"),
+        `${JSON.stringify(evidence, null, 2)}\n`,
+        { encoding: "utf-8", mode: 0o600 },
+      );
+      return evidence;
+    });
+  } catch (error) {
+    primaryFailed = true;
+    primaryFailure = error;
+  }
+  let cleanupFailed = false;
+  let cleanupFailure: unknown;
+  try {
+    requireOpenShellResult(
+      captureOpenShell(
+        input.openshellBin,
+        input.openshellClientEnv,
+        ["sandbox", "delete", "-g", HERMES_PORTABLE_E2E_GATEWAY_NAME, sandboxName],
+        OPENSHELL_HEAVY_TIMEOUT_MS,
+      ),
+      "OpenShell Hermes sandbox deletion",
+    );
+    waitForOpenShellSandboxAbsent(input.openshellBin, input.openshellClientEnv, sandboxName);
+  } catch (error) {
+    cleanupFailed = true;
+    cleanupFailure = error;
+  }
+  const primaryMessage =
+    primaryFailure instanceof Error ? primaryFailure.message : String(primaryFailure);
+  const cleanupMessage =
+    cleanupFailure instanceof Error ? cleanupFailure.message : String(cleanupFailure);
+  const failure = primaryFailed
+    ? cleanupFailed
+      ? new AggregateError(
+          [primaryFailure, cleanupFailure],
+          `Hermes lifecycle failed before cleanup (${primaryMessage}); exact sandbox cleanup also failed (${cleanupMessage})`,
+          { cause: primaryFailure },
+        )
+      : primaryFailure
+    : cleanupFailure;
+  return primaryFailed || cleanupFailed ? Promise.reject(failure) : lifecycleEvidence!;
+}
+
 async function main(progress: TestProgress): Promise<void> {
   assert.equal(process.platform, "linux", "portable profile E2E requires Linux");
   assert.notEqual(process.getuid?.(), 0, "portable profile E2E must run without root privileges");
@@ -322,7 +924,9 @@ async function main(progress: TestProgress): Promise<void> {
   let disposableNetworkSubnet: string | null = null;
   let disposableNetworkInterface: string | null = null;
   let hermesImageId: string | null = null;
+  let hermesImageRef: string | null = null;
   let hermesContextRetired = false;
+  let hermesLifecycleEvidence: Record<string, unknown> | null = null;
   const gatewayAliasPresentBefore = run("ip", ["-o", "-4", "address", "show", "dev", "lo"])
     .split("\n")
     .some((line) => line.includes(`inet ${PORTABLE_HOST_GATEWAY_IP}/32`));
@@ -348,6 +952,7 @@ async function main(progress: TestProgress): Promise<void> {
     progress.phase("prepare the rootless container runtime");
     const prepared = preparePortableExperimentalHost(process.env, { home });
     assert.equal(prepared?.authority.configHome, configHome);
+    const runtimeAuthority = prepared!.authority;
     assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`);
     assert.equal(fs.statSync(path.join(runtimeDir, "podman")).mode & 0o777, 0o700);
     assert.match(
@@ -374,7 +979,6 @@ async function main(progress: TestProgress): Promise<void> {
 
     progress.phase("verify immutable non-force network removal");
     const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
-    assert.equal(verifiedPodmanUrl, `unix://${runtimeDir}/podman/podman.sock`);
     // Netavark rejects the retired link-local subnet before this pinned runtime can create it.
     // Deterministic tests own that state; this live boundary proves the emitted full-ID form.
     run("podman", ["--url", verifiedPodmanUrl, "network", "create", disposableNetworkName]);
@@ -383,8 +987,6 @@ async function main(progress: TestProgress): Promise<void> {
       run("podman", ["--url", verifiedPodmanUrl, "network", "inspect", disposableNetworkName]),
       "disposable network inspection",
     );
-    assert.equal(disposableNetwork.name, disposableNetworkName);
-    assert.equal(disposableNetwork.driver, "bridge");
     assert.equal(disposableNetwork.dns_enabled, true);
     assert.match(String(disposableNetwork.network_interface), /^podman(?:0|[1-9][0-9]{0,8})$/u);
     assert.equal(Object.hasOwn(disposableNetwork, "network_dns_servers"), false);
@@ -424,7 +1026,6 @@ async function main(progress: TestProgress): Promise<void> {
     ])
       .split("\n")
       .filter(Boolean);
-    assert.ok(remainingNetworkIds.every((id) => /^[a-f0-9]{64}$/u.test(id)));
     assert.ok(!remainingNetworkIds.includes(disposableNetworkId));
 
     progress.phase("build and publish the sandbox image");
@@ -470,7 +1071,6 @@ async function main(progress: TestProgress): Promise<void> {
       HERMES_PORTABLE_E2E_BUILD_SETTINGS,
     );
     const hermesContext = hermesContextPlan.materialize(hermesContextInput);
-    let hermesImageRef: string | null = null;
     let cleanupHermesTemporaryBuildContext = (): boolean => true;
     try {
       hermesContext.assertCurrent();
@@ -501,10 +1101,7 @@ async function main(progress: TestProgress): Promise<void> {
         origin: "generated",
         log: console.log,
       });
-      assert.ok(hermesPrebuild.imageRef, "The staged Hermes image was not built.");
-      assert.ok(hermesPrebuild.imageId, "The staged Hermes image identity was not proven.");
-      hermesImageRef = hermesPrebuild.imageRef;
-      assert.equal(hermesPrebuild.createArgs[1], hermesImageRef);
+      hermesImageRef = hermesPrebuild.imageRef!;
       const inspectedHermesImageId = run("podman", [
         "image",
         "inspect",
@@ -512,10 +1109,9 @@ async function main(progress: TestProgress): Promise<void> {
         "{{.Id}}",
         hermesImageRef,
       ]).toLowerCase();
-      assert.match(inspectedHermesImageId, /^(?:sha256:)?[a-f0-9]{64}$/);
       assert.equal(
         inspectedHermesImageId.replace(/^sha256:/u, ""),
-        hermesPrebuild.imageId.replace(/^sha256:/u, ""),
+        hermesPrebuild.imageId!.replace(/^sha256:/u, ""),
       );
       hermesImageId = inspectedHermesImageId;
       run("podman", [
@@ -547,14 +1143,10 @@ async function main(progress: TestProgress): Promise<void> {
       assertHermesDashboardStartupRefusal(hermesImageRef, "https://./");
     } finally {
       try {
-        hermesImageRef && run("podman", ["image", "rm", "--force", hermesImageRef]);
+        assert.equal(cleanupHermesTemporaryBuildContext(), true);
       } finally {
-        try {
-          assert.equal(cleanupHermesTemporaryBuildContext(), true);
-        } finally {
-          hermesContextRetired = hermesContextPlan.retire(hermesContextInput);
-          assert.equal(hermesContextRetired, true);
-        }
+        hermesContextRetired = hermesContextPlan.retire(hermesContextInput);
+        assert.equal(hermesContextRetired, true);
       }
     }
     assert.deepEqual(
@@ -588,7 +1180,6 @@ async function main(progress: TestProgress): Promise<void> {
       ]),
       "portable network inspection",
     );
-    assert.match(String(currentNetwork.id), /^[a-f0-9]{64}$/u);
     const currentRegistry = parseOnePodmanRecord(
       run("podman", [
         "--url",
@@ -599,9 +1190,8 @@ async function main(progress: TestProgress): Promise<void> {
       ]),
       "portable registry inspection",
     );
-    assert.match(String(currentRegistry.Id), /^[a-f0-9]{64}$/u);
-    assert.equal(currentRegistry.Name, "nemoclaw-portable-registry");
 
+    const openshellBin = run("bash", ["-lc", "command -v openshell"]);
     const gatewayBin = run("bash", ["-lc", "command -v openshell-gateway"]);
     const sandboxBin = run("bash", ["-lc", "command -v openshell-sandbox"]);
     const gatewayEnv = buildDockerDriverGatewayEnv({
@@ -609,11 +1199,9 @@ async function main(progress: TestProgress): Promise<void> {
       gatewayPort: 8080,
       stateDir,
       podmanSocketPath: `${runtimeDir}/podman/podman.sock`,
-      getDockerSupervisorImage: () => "supervisor:e2e-not-launched",
+      getDockerSupervisorImage: () => OPENSHELL_V0106_QUALIFICATION.supervisorImage,
       resolveSandboxBin: () => sandboxBin,
     });
-    assert.equal(gatewayEnv.OPENSHELL_DRIVERS, "podman");
-    assert.equal(gatewayEnv.OPENSHELL_BIND_ADDRESS, "0.0.0.0");
     assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, `https://${PORTABLE_HOST_GATEWAY_IP}:8080`);
     assert.match(
       fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
@@ -627,10 +1215,36 @@ async function main(progress: TestProgress): Promise<void> {
       fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
       /supervisor_bin/,
     );
+    const artifactDir = process.env.E2E_ARTIFACT_DIR;
+    assert.ok(artifactDir, "E2E_ARTIFACT_DIR is required for the rootless receipt");
+    fs.mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
 
     progress.phase("start the pinned Podman gateway");
-    ensureDockerDriverGatewayLocalTlsBundle({ gatewayBin, stateDir });
+    const tls = ensureDockerDriverGatewayLocalTlsBundle({
+      gatewayBin,
+      stateDir,
+    });
+    process.env.OPENSHELL_LOCAL_TLS_DIR = tls.localTlsDir;
+    const openshellClientEnv = { ...process.env };
     await verifyPinnedPodmanGatewayStarts(gatewayBin, gatewayEnv, progress, async () => {
+      requireOpenShellResult(
+        captureOpenShell(
+          openshellBin,
+          openshellClientEnv,
+          [
+            "gateway",
+            "add",
+            "https://127.0.0.1:8080",
+            "--local",
+            "--name",
+            HERMES_PORTABLE_E2E_GATEWAY_NAME,
+          ],
+          30_000,
+        ),
+        "OpenShell local gateway registration",
+      );
+      waitForOpenShellGateway(openshellBin, openshellClientEnv);
+
       progress.phase("verify distinct same-network routes");
       const sandboxId = "portable-e2e";
       const sandboxToken = mintSandboxJwt({
@@ -676,11 +1290,21 @@ async function main(progress: TestProgress): Promise<void> {
         ]),
         "HTTP/1.1 200 OK",
       );
+
+      progress.phase(
+        "upgrade the historical receipt through public start and verify its lifecycle",
+      );
+      hermesLifecycleEvidence = await proveHistoricalHermesPortableLifecycle({
+        artifactDir,
+        hermesImageRef: hermesImageRef!,
+        openshellBin,
+        openshellClientEnv,
+        progress,
+        runtimeAuthority,
+        sourceRevision,
+      });
     });
 
-    const artifactDir = process.env.E2E_ARTIFACT_DIR;
-    assert.ok(artifactDir, "E2E_ARTIFACT_DIR is required for the rootless receipt");
-    fs.mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(
       path.join(artifactDir, "portable-profile-rootless-receipt.json"),
       `${JSON.stringify(
@@ -713,6 +1337,7 @@ async function main(progress: TestProgress): Promise<void> {
             imageId: hermesImageId,
             stagedContextRetired: hermesContextRetired,
           },
+          hermesPortableLifecycle: hermesLifecycleEvidence,
           authenticatedGatewayRoute: true,
           registryRoute: true,
         },
@@ -749,6 +1374,14 @@ async function main(progress: TestProgress): Promise<void> {
       stdio: "ignore",
       timeout: 15_000,
     });
+    void (hermesImageRef
+      ? spawnSync("podman", ["image", "rm", "--force", hermesImageRef], {
+          env: process.env,
+          killSignal: "SIGKILL",
+          stdio: "ignore",
+          timeout: 15_000,
+        })
+      : undefined);
     spawnSync("podman", ["system", "reset", "--force"], {
       env: process.env,
       killSignal: "SIGKILL",

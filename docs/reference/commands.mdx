@@ -198,13 +198,16 @@ Start a new shell session to refresh the cached sandbox names after creating or 
 
 Export a supported registered OpenClaw sandbox as a secret-free `NemoClawConfig` document. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
+The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
+If OpenShell cannot supply the required evidence, the command stops without writing output.
+
 Write a file on Linux:
 
 ```bash
 $$nemoclaw config export my-assistant --output nemoclaw.yaml
 ```
 
-Use `--output -` to write YAML to standard output on another supported host or in a pipeline:
+Use `--output -` to write YAML to standard output on any supported host or in a pipeline:
 
 ```bash
 $$nemoclaw config export my-assistant --output -
@@ -219,7 +222,15 @@ $$nemoclaw config export my-assistant --output -
 
 The export contains credential environment-variable references, not credential values. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
 
-Version 1 exports managed OpenClaw sandboxes that use hosted external inference, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy. Other profiles fail with a diagnostic instead of producing an incomplete document.
+If staging cleanup fails, the diagnostic identifies the temporary file and its original directory by device and inode when that evidence is available.
+The directory can have moved from the requested output location.
+Before manual removal, use `stat` to verify both identities and confirm that the temporary entry is a regular file.
+If either identity cannot be verified, do not remove files by name alone.
+Do not remove the requested output file to clean up a temporary link.
+
+Version 1 exports managed OpenClaw sandboxes in the default workspace.
+Supported sandboxes use hosted external inference, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
+Other profiles fail with a diagnostic instead of producing an incomplete document.
 
 ### `$$nemoclaw resources`
 
@@ -579,10 +590,14 @@ NEMOCLAW_SANDBOX_NAME=my-assistant \
 
 Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer recipe explicitly.
 
-On a qualifying Windows WSL N1x host, Windows Express selects the explicit Experimental managed Qwen 3.6 recipe.
-Before selection, unset `DOCKER_HOST` and select Docker's `default` context.
-Onboarding also requires local Docker Desktop, Arm64, N1x product identity, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, NVIDIA integration, and successful Docker Desktop GPU passthrough.
-Select that recipe non-interactively with these values:
+On a qualifying Windows WSL N1x host, Windows Express leaves provider selection to onboarding.
+During Windows Express, onboarding recognizes one proof-backed GPU only when its normalized NVIDIA identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`, verifies the remaining N1x readiness requirements, and automatically selects the Experimental managed Qwen 3.6 recipe.
+The Windows chassis product name does not participate in selection.
+Before onboarding, unset `DOCKER_HOST` and select Docker's `default` context.
+Onboarding also requires local Docker Desktop, Arm64, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, NVIDIA integration, and successful Docker Desktop GPU passthrough.
+No provider or recipe variable is required for the automatic path.
+If `NEMOCLAW_PROVIDER` remains unset, a compatible `NEMOCLAW_LLAMACPP_RECIPE` value still selects managed llama.cpp and makes its recipe explicit.
+For automation that must make the selection explicit, use these values:
 
 ```bash
 NEMOCLAW_PROVIDER=install-llama-cpp \
@@ -747,7 +762,7 @@ If you run onboarding again with the same sandbox name and choose a different in
 
 Before deleting an existing sandbox during recreation, NemoClaw backs up the workspace state declared by the selected agent profile and restores it into the new sandbox once it is live. This applies whether the existing sandbox is ready or marked not-ready, so cross-version upgrades that pass `NEMOCLAW_RECREATE_SANDBOX=1` no longer drop user files from the selected agent workspace. The behaviour matches `$$nemoclaw <name> rebuild --force`. NemoClaw aborts the recreate when the backup cannot complete in full, including when individual state directories or files fail mid-backup, so failed entries are not silently dropped on delete. If restoration into the replacement does not complete, NemoClaw reports the failed directories, files, and restore reason that are available, preserves the snapshot, leaves the replacement unregistered, and exits nonzero. Recovery remains blocked while that unregistered sandbox exists. Do not delete it by mutable name. Preserve the snapshot, and run `$$nemoclaw <sandbox-name> destroy` to check for authoritative absence before you retry onboarding. Set `NEMOCLAW_RECREATE_WITHOUT_BACKUP=1` to skip the pre-recreate backup. The destination sandbox starts with a fresh workspace.
 
-Before deletion, onboarding prints a `Journaled replacement` diagnostic with the replacement identifier, recorded OpenShell gateway, and current phase. If the process stops after this point, a later same-target onboarding run continues the active replacement without requiring `--resume`. It accepts a ready same-name replacement only when the live identity and sandbox registry generation match the journal. It fails closed if the gateway, source, target, durable source registry fields, or replacement settings changed.
+Before deletion, onboarding prints a `Journaled replacement` diagnostic with the replacement identifier, recorded OpenShell gateway, and current phase. If the process stops after this point, rerun the original onboarding command with the same target settings. The rerun continues the active replacement without requiring `--resume`. It accepts a same-name replacement only after its live identity and sandbox registry generation match the journal and it completes or verifies the recorded final handoff. A matching replacement can report not-ready after that handoff. It fails closed if the gateway, source, target, durable source registry fields, or replacement settings changed.
 
 <AgentOnly variant="openclaw">
 
@@ -1646,7 +1661,7 @@ If the sandbox is running an older Deep Agents Code version than this NemoClaw r
 ### `$$nemoclaw <name> doctor`
 
 Run a focused health check for one sandbox and the host services it depends on. The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw gateway container, gateway port mapping, live sandbox state, inference route, configured-provider model invocation, Ollama reachability, and the cloudflared tunnel state.
-Use `$$nemoclaw doctor` when you need only the host and gateway checks or when no sandbox exists yet. If a sandbox is named `doctor`, use `$$nemoclaw doctor --text` to select the global text report explicitly; bare `$$nemoclaw doctor` keeps the existing name-first sandbox connection behavior.
+Use `$$nemoclaw doctor` when you need only the host and gateway checks or when no sandbox exists yet. A sandbox named `doctor` does not change the bare global command; use `$$nemoclaw doctor connect` to connect to that sandbox explicitly.
 
 <AgentOnly variant="openclaw,hermes">
   For gateway-based agents, it also reports messaging channel conflicts within the selected
@@ -2580,7 +2595,9 @@ $$nemoclaw my-assistant agents delete work --force --json
 
 ### `$$nemoclaw <name> agents apply`
 
-Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../configure-agents/declarative-agents-manifest). The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and adds missing secondaries or deletes orphan ones through `openclaw agents add|delete`. Per-agent `model`, `subagents.*`, `tools`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `$$nemoclaw onboard --agents <agents.yaml> --recreate-sandbox` to bake those fields. When the diff removes orphan agents, NemoClaw invokes OpenClaw's confirmation-skipping delete mode internally. `--non-interactive` controls the host-side `agents apply` prompt and is not forwarded to OpenClaw's delete command.
+Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../configure-agents/declarative-agents-manifest). The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and adds missing secondaries or deletes orphan ones through `openclaw agents add|delete`. Supported per-agent `model`, `subagents`, and `tools` overrides, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `$$nemoclaw onboard --agents <agents.yaml> --recreate-sandbox` to bake those fields. When the diff removes orphan agents, NemoClaw invokes OpenClaw's confirmation-skipping delete mode internally. `--non-interactive` controls the host-side `agents apply` prompt and is not forwarded to OpenClaw's delete command.
+
+Per-agent `subagents.maxSpawnDepth` is invalid and is rejected while loading the manifest; move it to `defaults.subagents.maxSpawnDepth` before retrying `agents apply` or onboarding.
 
 ```bash
 $$nemoclaw my-assistant agents apply -f ./agents.yaml
@@ -3369,7 +3386,7 @@ It checks the NemoClaw CLI build, the selected host runtime provider, the OpenSh
 It does not start, select, restart, or repair a gateway.
 It does not run sandbox, inference, messaging, agent-version, config-permission, or agent-service checks.
 Use `$$nemoclaw <name> doctor` when you need those sandbox checks.
-If a sandbox is named `doctor`, bare `$$nemoclaw doctor` connects to that sandbox under the name-first grammar. Use `$$nemoclaw doctor --text` for the global human-readable report or `$$nemoclaw doctor --json` for the global JSON report.
+If a sandbox is named `doctor`, the bare command still selects this global report. Use `$$nemoclaw doctor connect` to connect to that sandbox explicitly.
 
 ```bash
 $$nemoclaw doctor [--json | --text]
@@ -3813,7 +3830,7 @@ The following variables let you tune onboarding without editing the Dockerfile o
 
 | Variable | Format | Effect |
 | --- | --- | --- |
-| `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `llama-cpp`, `install-llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. On a qualified N1x host, `install-vllm` supplies Deferred preview intent, while another provider supplies standard-onboarding intent and retains its existing requirements. Local NVIDIA NIM remains unavailable on N1x. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. `install-llama-cpp` selects the experimental DGX Spark managed path and rejects `NEMOCLAW_MODEL`; use `NEMOCLAW_LLAMACPP_RECIPE` for its declarative selection. If an operator-managed server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
+| `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `llama-cpp`, `install-llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. On a qualified N1x host, `install-vllm` supplies Deferred preview intent, while another provider supplies standard-onboarding intent and retains its existing requirements. Local NVIDIA NIM remains unavailable on N1x. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. `install-llama-cpp` selects the compatible experimental managed path on DGX Spark, generic NVIDIA GPU, or Windows WSL N1x hosts and rejects `NEMOCLAW_MODEL`; use `NEMOCLAW_LLAMACPP_RECIPE` for an explicit declarative selection. A qualifying Windows WSL N1x host automatically selects this provider and its Qwen 3.6 recipe when no provider is requested or recorded. If an operator-managed server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
 | `NEMOCLAW_LLAMACPP_RECIPE` | repository-owned managed-inference recipe ID | Selects the managed llama.cpp recipe when `NEMOCLAW_PROVIDER=install-llama-cpp`, including a compatible lower-priority profile. When unset, NemoClaw selects the unique highest-priority compatible automatic profile. An unknown recipe, an ambiguous selection, or a stale or incompatible readiness report fails before image, model, or runtime effects. |
 | `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. NemoClaw preserves it across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
 | `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or the prior direct-exposure behavior outside the Portable experimental profile. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. Fresh Portable onboarding ignores this variable and defaults to `direct` unless the flag explicitly selects a mode. |
