@@ -449,6 +449,27 @@ function checkBufferedExecHelperImport(
     }
 
     if (
+      ts.isExportDeclaration(statement) &&
+      !statement.isTypeOnly &&
+      statement.moduleSpecifier &&
+      ts.isStringLiteralLike(statement.moduleSpecifier) &&
+      resolveInternalImport(absPath, statement.moduleSpecifier.text) === LEGACY_BUFFERED_EXEC_HELPER
+    ) {
+      const bindings = statement.exportClause;
+      if (!bindings || ts.isNamespaceExport(bindings)) {
+        addNamedBindingViolation(bindings ?? statement);
+        continue;
+      }
+      for (const binding of bindings.elements) {
+        if (binding.isTypeOnly) continue;
+        if ((binding.propertyName?.text ?? binding.name.text) === "buildOpenshellExecArgs") {
+          addNamedBindingViolation(binding);
+        }
+      }
+      continue;
+    }
+
+    if (
       ts.isImportEqualsDeclaration(statement) &&
       ts.isExternalModuleReference(statement.moduleReference) &&
       statement.moduleReference.expression &&
@@ -642,23 +663,33 @@ export function findLayerImportBoundaryViolations(root = SRC_ROOT): Violation[] 
     const commandFile = isCommandFile(repoPath);
     const source = readFileSync(absPath, "utf8");
     const preprocessedImports = collectPreprocessedImportRefs(source);
+    let parsedImports: ImportRef[] | null = null;
+    let parsedSourceFile: ts.SourceFile | null = null;
+    const getParsedSourceFile = (): ts.SourceFile =>
+      (parsedSourceFile ??= sourceFileFor(absPath, source));
+    const getParsedImports = (): ImportRef[] =>
+      (parsedImports ??= collectImportRefs(getParsedSourceFile()));
     const importsBufferedExecHelper =
       repoPath !== LEGACY_BUFFERED_EXEC_HELPER &&
       !INTERACTIVE_EXEC_HELPER_IMPORTERS.has(repoPath) &&
-      preprocessedImports.some(
+      (preprocessedImports.some(
         (ref) => resolveInternalImport(absPath, ref.specifier) === LEGACY_BUFFERED_EXEC_HELPER,
-      );
+      ) ||
+        (source.includes("export") &&
+          getParsedImports().some(
+            (ref) => resolveInternalImport(absPath, ref.specifier) === LEGACY_BUFFERED_EXEC_HELPER,
+          )));
     const layerFile =
       domainFile || actionFile || adapterFile || messagingManifestFile || commandFile;
     if (!layerFile && !importsBufferedExecHelper) {
       checkNoBinLibShimImport(absPath, repoPath, preprocessedImports, violations);
       continue;
     }
-    const sourceFile = sourceFileFor(absPath, source);
+    const sourceFile = getParsedSourceFile();
     if (importsBufferedExecHelper) {
       checkBufferedExecHelperImport(absPath, repoPath, sourceFile, violations);
     }
-    const imports = collectImportRefs(sourceFile);
+    const imports = getParsedImports();
     checkNoBinLibShimImport(absPath, repoPath, imports, violations);
     if (domainFile) {
       checkDomainFile(absPath, repoPath, sourceFile, imports, violations);

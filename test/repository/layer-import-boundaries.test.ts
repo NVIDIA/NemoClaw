@@ -112,6 +112,13 @@ describe("CLI layer import boundaries (#6245)", () => {
       "awaited dynamic import binding",
       'export async function value() {\n  const { buildOpenshellExecArgs } = await import("../actions/sandbox/exec");\n  return buildOpenshellExecArgs;\n}\n',
     ],
+    ["named re-export", 'export { buildOpenshellExecArgs } from "../actions/sandbox/exec";\n'],
+    [
+      "aliased named re-export",
+      'export { buildOpenshellExecArgs as legacyBuild } from "../actions/sandbox/exec";\n',
+    ],
+    ["namespace re-export", 'export * as legacy from "../actions/sandbox/exec";\n'],
+    ["star re-export", 'export * from "../actions/sandbox/exec";\n'],
   ])("rejects buffered sandbox commands through %s (#10991)", (_label, source) => {
     const violations = scanFixture(
       fixturePath("src/lib/onboard", "buffered-exec-helper-alternate"),
@@ -119,6 +126,30 @@ describe("CLI layer import boundaries (#6245)", () => {
     );
 
     expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: "buffered-exec-uses-async-executor" }),
+      ]),
+    );
+  });
+
+  it.each([
+    ["another named export", 'export { execSandbox } from "../actions/sandbox/exec";\n'],
+    [
+      "another export renamed to the legacy name",
+      'export { execSandbox as buildOpenshellExecArgs } from "../actions/sandbox/exec";\n',
+    ],
+    [
+      "a type-only named export",
+      'export type { buildOpenshellExecArgs } from "../actions/sandbox/exec";\n',
+    ],
+    ["a type-only star export", 'export type * from "../actions/sandbox/exec";\n'],
+  ])("allows %s from the legacy helper module (#10991)", (_label, source) => {
+    const violations = scanFixture(
+      fixturePath("src/lib/onboard", "buffered-exec-helper-allowed-export"),
+      source,
+    );
+
+    expect(violations).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ rule: "buffered-exec-uses-async-executor" }),
       ]),
