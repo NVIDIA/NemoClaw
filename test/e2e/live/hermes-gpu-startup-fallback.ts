@@ -11,6 +11,7 @@ export const HERMES_GPU_FALLBACK_EVENTS = {
   rejectNativeCreateBeforeProgress: "reject-native-create-before-progress",
   delegateCompatibilityCreate: "delegate-compatibility-create",
 } as const;
+export const HERMES_GPU_FALLBACK_COMMIT_EVENT = "commit-compatibility-handoff";
 
 export const HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF = [
   "set -eu;",
@@ -121,12 +122,13 @@ export function createHermesGpuFallbackWrapper(
     `REAL_OPENSHELL=${quoteShellLiteral(realOpenshellPath)}`,
     `FALLBACK_STATE_DIR=${quoteShellLiteral(stateDir)}`,
     'NATIVE_CREATE_REJECTED="$FALLBACK_STATE_DIR/native-create-rejected"',
-    'SANDBOX_NAME="$(printf \'%s\\n\' "$@" | awk \'previous == "--name" { print; exit } { previous = $0 }\')"',
+    'SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-}"',
     "",
     "commit_compatibility_handoff() {",
     '  REAL_OPENSHELL_LINK="$FALLBACK_STATE_DIR/openshell-real.$$"',
     '  ln -s "$REAL_OPENSHELL" "$REAL_OPENSHELL_LINK"',
     '  mv -f "$REAL_OPENSHELL_LINK" "$0"',
+    `  printf '%s\\n' '${HERMES_GPU_FALLBACK_COMMIT_EVENT}' >>"$FALLBACK_STATE_DIR/events.log"`,
     "}",
     "",
     "sandbox_is_ready() {",

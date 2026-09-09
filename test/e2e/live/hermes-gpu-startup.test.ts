@@ -23,6 +23,7 @@ import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.t
 import {
   createHermesGpuFallbackWrapper,
   extractHermesGpuDiagnosticsDirectory,
+  HERMES_GPU_FALLBACK_COMMIT_EVENT,
   HERMES_GPU_FALLBACK_EVENTS,
   readHermesGpuFallbackEvents,
   resolveHermesGpuStartupScenario,
@@ -474,6 +475,12 @@ test(
     await (install.exitCode !== 0
       ? captureFailedGpuContainer(host, runtimeProvider, gpuDiagnosticsDir)
       : Promise.resolve());
+    const fallbackEvents = fallbackWrapper
+      ? readHermesGpuFallbackEvents(fallbackWrapper.eventsPath)
+      : [];
+    await (fallbackWrapper
+      ? artifacts.writeJson("gpu-fallback-events.json", fallbackEvents)
+      : Promise.resolve());
     expect(install.exitCode, resultText(install)).toBe(0);
     assertStockManagedImageReceipt({
       environment: env,
@@ -481,13 +488,10 @@ test(
       sandboxName: SANDBOX_NAME,
     });
 
-    const verifyFallback = async (wrapper: ReturnType<typeof createHermesGpuFallbackWrapper>) => {
-      const fallbackEvents = readHermesGpuFallbackEvents(wrapper.eventsPath);
-      await artifacts.writeJson("gpu-fallback-events.json", fallbackEvents);
-      expect(fallbackEvents).toEqual([
-        HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
-        HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
-      ]);
+    const verifyFallback = () => {
+      expect(fallbackEvents.join("\n")).toBe(
+        `${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}\n${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}\n${HERMES_GPU_FALLBACK_COMMIT_EVENT}`,
+      );
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
       expect(
         HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS.every((fragment) =>
@@ -495,7 +499,7 @@ test(
         ),
       ).toBe(true);
     };
-    await (fallbackWrapper ? verifyFallback(fallbackWrapper) : Promise.resolve());
+    await (fallbackWrapper ? Promise.resolve(verifyFallback()) : Promise.resolve());
 
     progress.phase("validate GPU startup and supervisor proof");
     const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {

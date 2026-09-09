@@ -16,6 +16,7 @@ import {
 import {
   createHermesGpuFallbackWrapper,
   extractHermesGpuDiagnosticsDirectory,
+  HERMES_GPU_FALLBACK_COMMIT_EVENT,
   HERMES_GPU_FALLBACK_EVENTS,
   HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF,
   readHermesGpuFallbackEvents,
@@ -210,6 +211,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     expect(readHermesGpuFallbackEvents(wrapper.eventsPath)).toEqual([
       HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
       HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
+      HERMES_GPU_FALLBACK_COMMIT_EVENT,
     ]);
     const wrapperArtifacts = fs
       .readdirSync(path.dirname(wrapper.eventsPath), { withFileTypes: true })
@@ -411,7 +413,12 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
       ].join("\n"),
     });
     const ready = path.join(root, "compatibility-ready");
-    const env = { ...process.env, ...wrapper.componentEnv, E2E_FAKE_READY: ready };
+    const env = {
+      ...process.env,
+      ...wrapper.componentEnv,
+      E2E_FAKE_READY: ready,
+      NEMOCLAW_SANDBOX_NAME: "alpha",
+    };
     const compatibility = spawnWrapper(
       wrapper.wrapperPath,
       ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
@@ -447,7 +454,12 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
       },
     );
     const ready = path.join(root, "compatibility-ready");
-    const env = { ...process.env, ...wrapper.componentEnv, E2E_FAKE_READY: ready };
+    const env = {
+      ...process.env,
+      ...wrapper.componentEnv,
+      E2E_FAKE_READY: ready,
+      NEMOCLAW_SANDBOX_NAME: "alpha",
+    };
     const compatibility = spawnWrapper(
       wrapper.wrapperPath,
       ["sandbox", "create", "--from", "image", "--name", "alpha", "--gpu-device", "all"],
@@ -460,6 +472,10 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     expect(await compatibilityStatus).toBe(143);
     expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
     expect(fs.realpathSync(wrapper.wrapperPath)).toBe(fs.realpathSync(realOpenshell));
+    expect(readHermesGpuFallbackEvents(wrapper.eventsPath)).toEqual([
+      HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
+      HERMES_GPU_FALLBACK_COMMIT_EVENT,
+    ]);
   });
 
   it("preserves the fallback wrapper while staging the existing OpenShell service (#7140)", () => {
