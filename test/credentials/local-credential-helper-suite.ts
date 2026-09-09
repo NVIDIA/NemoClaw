@@ -528,6 +528,20 @@ export function registerLocalCredentialHelperTests(group: LocalCredentialHelperT
         expect(csp).toContain("style-src 'sha256-");
       });
 
+      it("matches the checked-in form CSP to its inline resources (#11160)", () => {
+        const formBytes = fs.readFileSync(FORM_PATH);
+        const formSource = formBytes.toString("utf8");
+        const metaCsp = formSource.match(
+          /http-equiv="Content-Security-Policy"\s+content="([^"]+)"/,
+        )?.[1];
+        const expectedMetaCsp = `${buildCredentialFormCsp(formBytes).replace(
+          "; frame-ancestors 'none'",
+          "",
+        )};`;
+
+        expect(metaCsp).toBe(expectedMetaCsp);
+      });
+
       it("drops every ambient entry without mutating the source environment (#5048)", () => {
         const ambient = {
           ...CONFIG_ROOT_ENV_OVERRIDES,
