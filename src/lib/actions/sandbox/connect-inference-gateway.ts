@@ -11,10 +11,6 @@ import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 
-export function isGatewayRouteConflictError(error: unknown): error is GatewayRouteConflictError {
-  return error instanceof GatewayRouteConflictError;
-}
-
 /** Identify the legacy cluster gateway without branching on managed provider IDs. */
 export function sandboxUsesLegacyClusterGateway(sandbox: SandboxEntry | null): boolean {
   const driver = sandbox?.openshellDriver;
