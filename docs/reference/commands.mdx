@@ -763,7 +763,7 @@ For Hermes, the backed-up paths come from `agents/hermes/manifest.yaml`, includi
 Before creating the gateway, the wizard runs preflight checks.
 Docker is the default runtime provider. It verifies that the selected provider is reachable and prints host remediation guidance when prerequisites are missing.
 On Linux, set `NEMOCLAW_GATEWAY_RUNTIME=podman` to select the qualified native rootless Podman provider for standard onboarding.
-Native Podman must pass its provider-owned socket, rootless service, cgroups v2, bridge-container, DNS, architecture, and managed-image checks; an auto-detected Podman compatibility socket is not enough to opt in.
+Native Podman must pass its provider-owned socket, rootless service, cgroups v2, bridge-container, DNS, architecture, managed-image, and `lsof` listener-enumeration checks; an auto-detected Podman compatibility socket is not enough to opt in. NemoClaw does not install `lsof`; install it through the host's package-management policy before retrying onboarding.
 The portable experimental profile remains a separate selection with its existing installer-preflight admission and lifecycle behavior. It does not read `NEMOCLAW_GATEWAY_RUNTIME` or become synonymous with native Podman.
 The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
 If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.

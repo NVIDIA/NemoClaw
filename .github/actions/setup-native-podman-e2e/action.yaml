@@ -86,36 +86,59 @@ runs:
           .rustVersion == "1.88.0"
         ' "$TOOLCHAIN_DIRECTORY/manifest.json" >/dev/null
 
-        sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
-        sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
-          --yes --no-install-recommends \
-          apparmor btrfs-progs conmon fuse-overlayfs \
-          golang-github-containers-common iptables nftables runc slirp4netns uidmap
-
-        toolchain_install_root=/usr/lib/nemoclaw-native-podman-e2e
-        sudo install -d --owner=root --group=root --mode=0755 \
-          "$toolchain_install_root" "$toolchain_install_root/bin"
-        podman_executable="$toolchain_install_root/bin/podman"
-        sudo install --owner=root --group=root --mode=0755 \
-          "$TOOLCHAIN_DIRECTORY/bin/podman" "$podman_executable"
-        sudo install --owner=root --group=root --mode=0755 \
-          "$TOOLCHAIN_DIRECTORY/bin/pasta" "$toolchain_install_root/bin/pasta"
-        export PATH="$toolchain_install_root/bin:$PATH"
-        printf '%s\n' "$toolchain_install_root/bin" >>"$GITHUB_PATH"
-        for helper in aardvark-dns netavark rootlessport; do
-          sudo install -D --owner=root --group=root --mode=0755 \
-            "$TOOLCHAIN_DIRECTORY/libexec/podman/$helper" \
-            "/usr/local/libexec/podman/$helper"
-        done
-        sudo install --owner=root --group=root --mode=0644 \
-          "$TOOLCHAIN_DIRECTORY/share/containers/containers.conf" \
-          /usr/share/containers/containers.conf
-        [[ "$("$podman_executable" --version)" == "podman version 6.1.0" ]]
-
+        uid="$(id -u)"
+        gid="$(id -g)"
         execution_user="$(id -un)"
-        ensure_subordinate_range() {
+        runtime_directory="/run/user/$uid"
+        socket_path="$runtime_directory/podman/podman.sock"
+        service_name=nemoclaw-native-podman-e2e
+        service_environment="$RUNNER_TEMP/native-podman-e2e-service.env"
+        service_unit_directory="$HOME/.config/systemd/user"
+        service_unit="$service_unit_directory/$service_name.service"
+        socket_unit="$service_unit_directory/$service_name.socket"
+        storage_directory="$RUNNER_TEMP/native-podman-e2e-storage"
+        storage_config="$RUNNER_TEMP/native-podman-e2e-storage.conf"
+        containers_config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
+        toolchain_install_root=/usr/lib/nemoclaw-native-podman-e2e
+        helper_install_root=/usr/local/libexec/podman
+        cleanup_state_path="$toolchain_install_root/cleanup.json"
+        podman_profile="$toolchain_install_root/podman.apparmor"
+        pasta_profile="$toolchain_install_root/pasta.apparmor"
+        service_unit_directory_preexisting=false
+        [[ ! -d "$service_unit_directory" ]] || service_unit_directory_preexisting=true
+        helper_directory_preexisting=false
+        [[ ! -d "$helper_install_root" ]] || helper_directory_preexisting=true
+        for target in \
+          "$toolchain_install_root" \
+          "$service_environment" \
+          "$service_unit" \
+          "$socket_unit" \
+          "$storage_directory" \
+          "$storage_config" \
+          "$containers_config" \
+          "$helper_install_root/aardvark-dns" \
+          "$helper_install_root/netavark" \
+          "$helper_install_root/rootlessport"; do
+          [[ ! -e "$target" && ! -L "$target" ]]
+        done
+        [[ ! -S "$socket_path" && ! -L "$socket_path" ]]
+        podman_directory_preexisting=false
+        [[ ! -d "$runtime_directory/podman" ]] || podman_directory_preexisting=true
+        loopback_address_added=true
+        if ip -o -4 address show dev lo | awk '{print $4}' | grep -Fxq '169.254.2.2/32'; then
+          loopback_address_added=false
+        fi
+        capture_active_state() {
+          local state
+          state="$("$@" 2>/dev/null || true)"
+          [[ "$state" == "active" || "$state" == "inactive" || -z "$state" ]]
+          [[ "$state" == "active" ]] && printf 'active\n' || printf 'inactive\n'
+        }
+        user_runtime_active="$(capture_active_state systemctl is-active "user-runtime-dir@${uid}.service")"
+        user_manager_active="$(capture_active_state systemctl is-active "user@${uid}.service")"
+        dbus_active="$(capture_active_state env XDG_RUNTIME_DIR="$runtime_directory" /usr/bin/systemctl --user is-active dbus.socket)"
+        select_subordinate_range() {
           local file="$1"
-          local option="$2"
           local range_start=100000
           local range_end
           local conflict_end
@@ -139,24 +162,84 @@ runs:
             range_start=$((conflict_end + 1))
           done
           range_end=$((range_start + 65535))
-          sudo usermod "$option" "${range_start}-${range_end}" "$execution_user"
+          printf '%s-%s\n' "$range_start" "$range_end"
         }
-        ensure_subordinate_range /etc/subuid --add-subuids
-        ensure_subordinate_range /etc/subgid --add-subgids
+        subuid_range="$(select_subordinate_range /etc/subuid)"
+        subgid_range="$(select_subordinate_range /etc/subgid)"
+        sudo install -d --owner=root --group=root --mode=0755 "$toolchain_install_root"
+        jq -n \
+          --argjson uid "$uid" \
+          --arg userRuntimeActive "$user_runtime_active" \
+          --arg userManagerActive "$user_manager_active" \
+          --arg dbusActive "$dbus_active" \
+          --argjson podmanDirectoryPreexisting "$podman_directory_preexisting" \
+          --argjson serviceUnitDirectoryPreexisting "$service_unit_directory_preexisting" \
+          --argjson helperDirectoryPreexisting "$helper_directory_preexisting" \
+          --argjson loopbackAddressAdded "$loopback_address_added" \
+          --arg subuidRange "$subuid_range" \
+          --arg subgidRange "$subgid_range" \
+          '{schemaVersion: 1, uid: $uid, userRuntimeActive: $userRuntimeActive, userManagerActive: $userManagerActive, dbusActive: $dbusActive, podmanDirectoryPreexisting: $podmanDirectoryPreexisting, serviceUnitDirectoryPreexisting: $serviceUnitDirectoryPreexisting, helperDirectoryPreexisting: $helperDirectoryPreexisting, loopbackAddressAdded: $loopbackAddressAdded, subuidRange: (if $subuidRange == "" then null else $subuidRange end), subgidRange: (if $subgidRange == "" then null else $subgidRange end)}' |
+          sudo tee "$cleanup_state_path" >/dev/null
+        sudo chmod 0600 "$cleanup_state_path"
+        [[ "$(sudo stat -c '%u:%g:%a' "$cleanup_state_path")" == "0:0:600" ]]
+
+        required_host_commands=(
+          conmon
+          fuse-overlayfs
+          iptables
+          newgidmap
+          newuidmap
+          nft
+          runc
+          slirp4netns
+        )
+        if [[ -r /sys/module/apparmor/parameters/enabled ]] && grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
+          required_host_commands+=(aa-exec apparmor_parser)
+        fi
+        for command_name in "${required_host_commands[@]}"; do
+          command_path="$(command -v -- "$command_name" || true)"
+          if [[ -z "$command_path" ]]; then
+            echo "::error::Native Podman E2E requires the preinstalled host command '$command_name'; refusing mutable privileged package acquisition" >&2
+            exit 1
+          fi
+          command_path="$(realpath "$command_path")"
+          command_mode="$(stat -c '%a' "$command_path")"
+          [[ -f "$command_path" && ! -L "$command_path" ]]
+          [[ "$(stat -c '%u' "$command_path")" == "0" ]]
+          (( (8#$command_mode & 022) == 0 ))
+        done
+
+        sudo install -d --owner=root --group=root --mode=0755 \
+          "$toolchain_install_root" "$toolchain_install_root/bin"
+        podman_executable="$toolchain_install_root/bin/podman"
+        sudo install --owner=root --group=root --mode=0755 \
+          "$TOOLCHAIN_DIRECTORY/bin/podman" "$podman_executable"
+        sudo install --owner=root --group=root --mode=0755 \
+          "$TOOLCHAIN_DIRECTORY/bin/pasta" "$toolchain_install_root/bin/pasta"
+        export PATH="$toolchain_install_root/bin:$PATH"
+        printf '%s\n' "$toolchain_install_root/bin" >>"$GITHUB_PATH"
+        for helper in aardvark-dns netavark rootlessport; do
+          sudo install -D --owner=root --group=root --mode=0755 \
+            "$TOOLCHAIN_DIRECTORY/libexec/podman/$helper" \
+            "$helper_install_root/$helper"
+        done
+        [[ "$("$podman_executable" --version)" == "podman version 6.1.0" ]]
+
+        [[ -z "$subuid_range" ]] || sudo usermod --add-subuids "$subuid_range" "$execution_user"
+        [[ -z "$subgid_range" ]] || sudo usermod --add-subgids "$subgid_range" "$execution_user"
 
         podman_command=("$podman_executable")
         podman_service_exec="$podman_executable system service --time=0"
         if [[ -r /sys/module/apparmor/parameters/enabled ]] && grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
-          profile="$RUNNER_TEMP/nemoclaw-native-podman-e2e.apparmor"
-          pasta_profile="$RUNNER_TEMP/nemoclaw-native-pasta-e2e.apparmor"
           printf '%s\n' \
             'abi <abi/4.0>,' \
             'include <tunables/global>' \
             '' \
             'profile nemoclaw-native-podman-e2e /usr/lib/nemoclaw-native-podman-e2e/bin/podman flags=(unconfined, attach_disconnected) {' \
             '  userns,' \
-            '}' >"$profile"
-          sudo apparmor_parser -r "$profile"
+            '}' | sudo tee "$podman_profile" >/dev/null
+          sudo chmod 0600 "$podman_profile"
+          sudo apparmor_parser -r "$podman_profile"
           command -v aa-exec >/dev/null
           aa_exec_path="$(command -v aa-exec)"
           podman_command=("$aa_exec_path" -p nemoclaw-native-podman-e2e -- "$podman_executable")
@@ -167,14 +250,11 @@ runs:
             '' \
             'profile nemoclaw-native-pasta-e2e /usr/lib/nemoclaw-native-podman-e2e/bin/pasta flags=(unconfined) {' \
             '  userns,' \
-            '}' >"$pasta_profile"
+            '}' | sudo tee "$pasta_profile" >/dev/null
+          sudo chmod 0600 "$pasta_profile"
           sudo apparmor_parser -r "$pasta_profile"
         fi
 
-        uid="$(id -u)"
-        gid="$(id -g)"
-        runtime_directory="/run/user/$uid"
-        socket_path="$runtime_directory/podman/podman.sock"
         sudo systemctl start "user-runtime-dir@${uid}.service" "user@${uid}.service"
         systemctl is-active --quiet "user-runtime-dir@${uid}.service"
         systemctl is-active --quiet "user@${uid}.service"
@@ -185,15 +265,12 @@ runs:
         [[ -S "$runtime_directory/bus" && ! -L "$runtime_directory/bus" ]]
         [[ "$(stat -c '%u' "$runtime_directory/bus")" == "$uid" ]]
         install -d -m 0700 "$runtime_directory/podman"
-        storage_directory="$RUNNER_TEMP/native-podman-e2e-storage"
-        storage_config="$RUNNER_TEMP/native-podman-e2e-storage.conf"
         install -d -m 0700 "$storage_directory/runroot" "$storage_directory/graphroot"
         printf '%s\n' \
           '[storage]' \
           'driver = "overlay"' \
           "runroot = \"$storage_directory/runroot\"" \
           "graphroot = \"$storage_directory/graphroot\"" >"$storage_config"
-        containers_config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
         printf '%s\n' \
           '[containers]' \
           'log_driver = "k8s-file"' \
@@ -207,11 +284,6 @@ runs:
         export CONTAINERS_STORAGE_CONF="$storage_config"
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus"
         export XDG_RUNTIME_DIR="$runtime_directory"
-        service_name=nemoclaw-native-podman-e2e
-        service_environment="$RUNNER_TEMP/native-podman-e2e-service.env"
-        service_unit_directory="$HOME/.config/systemd/user"
-        service_unit="$service_unit_directory/$service_name.service"
-        socket_unit="$service_unit_directory/$service_name.socket"
         install -d -m 0700 "$service_unit_directory"
         printf '%s\n' \
           "CONTAINERS_CONF=$containers_config" \
@@ -281,10 +353,53 @@ runs:
         # satisfy an accidental legacy probe or resource operation. Keep this
         # enforcement at the reusable runtime-setup boundary, never in an E2E
         # scenario, so every Podman row proves the same provider isolation.
+        restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore
+        runtime_state_path="$restore_root/runtime.json"
+        if sudo -n test -e "$restore_root" || sudo -n test -L "$restore_root"; then
+          echo "::error::Docker runtime restore authority already exists" >&2
+          exit 1
+        fi
+        capture_unit_state() {
+          local unit="$1"
+          local load_state
+          local active_state
+          local unit_file_state
+          load_state="$(systemctl show "$unit" --property=LoadState --value 2>/dev/null || true)"
+          active_state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+          unit_file_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+          if [[ "$load_state" == "not-found" && -z "$unit_file_state" ]]; then
+            unit_file_state=not-found
+          fi
+          [[ "$load_state" =~ ^(loaded|masked|not-found)$ ]]
+          [[ "$active_state" =~ ^(active|inactive)$ ]]
+          [[ "$unit_file_state" =~ ^[a-z-]+$ ]]
+          jq -n \
+            --arg loadState "$load_state" \
+            --arg activeState "$active_state" \
+            --arg unitFileState "$unit_file_state" \
+            '{loadState: $loadState, activeState: $activeState, unitFileState: $unitFileState}'
+        }
+        docker_service_state="$(capture_unit_state docker.service)"
+        docker_socket_state="$(capture_unit_state docker.socket)"
+        sudo -n install -d --owner=root --group=root --mode=0700 "$restore_root"
+        jq -n \
+          --argjson dockerService "$docker_service_state" \
+          --argjson dockerSocket "$docker_socket_state" \
+          '{schemaVersion: 1, dockerService: $dockerService, dockerSocket: $dockerSocket}' |
+          sudo -n tee "$runtime_state_path" >/dev/null
+        sudo -n chmod 0600 "$runtime_state_path"
+        sudo -n test -f "$runtime_state_path"
+        sudo -n test ! -L "$runtime_state_path"
+        [[ "$(sudo -n stat -c '%u:%g:%a' "$runtime_state_path")" == "0:0:600" ]]
+
         sudo systemctl stop docker.service docker.socket 2>/dev/null || true
         sudo systemctl mask --runtime docker.service docker.socket 2>/dev/null || true
         sudo pkill -TERM -x dockerd 2>/dev/null || true
         sudo rm -f /var/run/docker.sock /run/docker.sock
+        for unit in docker.service docker.socket; do
+          unit_file_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+          [[ "$unit_file_state" == "masked" || "$unit_file_state" == "masked-runtime" ]]
+        done
         ! systemctl is-active --quiet docker.service
         ! systemctl is-active --quiet docker.socket
         ! pgrep -x dockerd >/dev/null
@@ -294,7 +409,9 @@ runs:
           exit 1
         fi
 
-        sudo ip address replace 169.254.2.2/32 dev lo
+        if [[ "$loopback_address_added" == true ]]; then
+          sudo ip address add 169.254.2.2/32 dev lo
+        fi
         {
           printf 'CONTAINERS_CONF=%s\n' "$containers_config"
           printf 'CONTAINERS_STORAGE_CONF=%s\n' "$storage_config"
@@ -304,3 +421,52 @@ runs:
           printf 'PATH=%s:%s\n' "$toolchain_install_root/bin" "$PATH"
           printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_directory"
         } >>"$GITHUB_ENV"
+
+    - name: Remove Docker CLI from native Podman execution
+      if: ${{ inputs.enabled == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore
+        disabled_path="$restore_root/docker"
+        metadata_path="$restore_root/metadata"
+        runtime_state_path="$restore_root/runtime.json"
+        if ! sudo -n test -d "$restore_root" || sudo -n test -L "$restore_root"; then
+          echo "::error::Docker runtime restore authority is missing or unsafe" >&2
+          exit 1
+        fi
+        [[ "$(sudo -n stat -c '%u:%g:%a' "$restore_root")" == "0:0:700" ]]
+        mapfile -t restore_files < <(
+          sudo -n find -P "$restore_root" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort
+        )
+        [[ "${restore_files[*]}" == "runtime.json" ]]
+        sudo -n test -f "$runtime_state_path"
+        sudo -n test ! -L "$runtime_state_path"
+        docker_cli="$(command -v docker || true)"
+        if [[ -z "$docker_cli" ]]; then
+          exit 0
+        fi
+        case "$docker_cli" in
+          /usr/bin/docker | /usr/local/bin/docker | /snap/bin/docker) ;;
+          *)
+            echo "::error::Refusing to move unexpected Docker CLI path: $docker_cli" >&2
+            exit 1
+            ;;
+        esac
+        sudo -n test -f "$docker_cli"
+        sudo -n test ! -L "$docker_cli"
+        [[ "$(sudo -n stat -c '%u:%g' "$docker_cli")" == "0:0" ]]
+        docker_sha256="$(sudo -n sha256sum -- "$docker_cli" | awk '{print $1}')"
+        [[ "$docker_sha256" =~ ^[a-f0-9]{64}$ ]]
+        printf '%s\n%s\n' "$docker_cli" "$docker_sha256" |
+          sudo -n tee "$metadata_path" >/dev/null
+        sudo -n chmod 0600 "$metadata_path"
+        sudo -n mv -- "$docker_cli" "$disabled_path"
+        sudo -n test -f "$disabled_path"
+        sudo -n test ! -L "$disabled_path"
+        [[ "$(sudo -n stat -c '%u:%g' "$disabled_path")" == "0:0" ]]
+        [[ "$(sudo -n sha256sum -- "$disabled_path" | awk '{print $1}')" == "$docker_sha256" ]]
+        if command -v docker >/dev/null 2>&1; then
+          echo "::error::Native Podman E2E still resolves a Docker CLI" >&2
+          exit 1
+        fi
