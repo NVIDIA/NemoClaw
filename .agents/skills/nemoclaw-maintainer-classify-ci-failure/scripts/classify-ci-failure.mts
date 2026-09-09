@@ -107,6 +107,8 @@ const SYSTEM_EXECUTABLES = {
   tail: "/usr/bin/tail",
   wc: "/usr/bin/wc",
 } as const;
+const NPM_AUDIT_FAILURE_PATTERN =
+  /npm audit (?:threshold failed|scan remained incomplete|failed without vulnerability findings|requires npm [^\n;]+; running npm)|unused npm audit exceptions|\d+ unaccepted at or above (?:high|critical)/i;
 
 type TrustedExecutableStat = {
   isFile: () => boolean;
@@ -801,7 +803,8 @@ async function classifyCiFailureWithRuntime(
   const selectedIndexes = new Set<number>();
   let matchedLines = 0;
   for (let index = 0; index < logLines.length; index += 1) {
-    if (!logPattern.test(logLines[index])) continue;
+    if (!logPattern.test(logLines[index]) && !NPM_AUDIT_FAILURE_PATTERN.test(logLines[index]))
+      continue;
     matchedLines += 1;
     const first = Math.max(0, index - 20);
     const last = Math.min(logLines.length - 1, index + 20);
@@ -1083,10 +1086,7 @@ async function classifyCiFailureWithRuntime(
     /^(?:reviewed-npm-audit|PR npm audit|npm audit for managed image publication)$/i.test(
       job.name.trim(),
     );
-  const hasNpmAuditFailure =
-    /npm audit (?:threshold failed|scan remained incomplete|failed without vulnerability findings|requires npm [^\n;]+; running npm)|unused npm audit exceptions|\d+ unaccepted at or above (?:high|critical)/i.test(
-      text,
-    );
+  const hasNpmAuditFailure = NPM_AUDIT_FAILURE_PATTERN.test(text);
   if (isNpmAuditJob || hasNpmAuditFailure)
     add(
       "reviewed-npm-audit",

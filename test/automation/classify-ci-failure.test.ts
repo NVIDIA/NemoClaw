@@ -435,9 +435,11 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     expect(JSON.parse(result.stdout).categories).not.toContain("reviewed-npm-audit");
   });
   test.each([
-    ["PR npm audit", "Process completed with exit code 1"],
-    ["CLI tests", "npm audit threshold failed\n1 unaccepted at or above high"],
-  ])("classifies an npm audit failure from %s", (jobName, log) => {
+    ["known audit job", "PR npm audit", "Process completed with exit code 1"],
+    ["threshold failure", "CLI tests", "npm audit threshold failed"],
+    ["unused exception", "Dependency policy", "unused npm audit exceptions: GHSA-example"],
+    ["unaccepted advisory", "Release policy", "1 unaccepted at or above high"],
+  ])("classifies an npm audit failure from %s", (_caseName, jobName, log) => {
     const item = fixture(log);
     item.env.JOB_NAME = jobName;
     const result = run(item.env);
