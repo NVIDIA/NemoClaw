@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runOpenshell } from "../../adapters/openshell/runtime";
-import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import type { RunProviderCommand } from "../../adapters/openshell/provider-adapter-cli";
+import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import {
+  createManagedProviderAdapter,
+  managedProviderGatewayTarget,
+} from "../../adapters/openshell/managed-provider-adapter";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import {
@@ -15,91 +20,55 @@ import {
   isRecoveredProviderCredentialReuseSelectionKey,
 } from "../../onboard/recovered-provider-reuse";
 import * as registry from "../../state/registry";
-import {
-  OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-  openshellReportsProviderNotFound,
-} from "../inference-set-error";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import { isLocalInferenceProvider } from "./rebuild-resume-config";
 
 const hermesProviderAuth = require("../../hermes-provider-auth") as {
   HERMES_PROVIDER_NAME: string;
 };
-const { readGatewayProviderMetadata, REMOTE_PROVIDER_CONFIG } =
-  require("../../onboard/providers") as {
-    readGatewayProviderMetadata: (
-      name: string,
-      runOpenshellFn: typeof runOpenshell,
-    ) => GatewayProviderMetadata | null;
-    REMOTE_PROVIDER_CONFIG: Record<
-      string,
-      {
-        providerName: string;
-        providerType: string;
-        credentialEnv: string | null;
-      }
-    >;
-  };
+const { REMOTE_PROVIDER_CONFIG } = require("../../onboard/providers") as {
+  REMOTE_PROVIDER_CONFIG: Record<
+    string,
+    {
+      providerName: string;
+      providerType: string;
+      credentialEnv: string | null;
+    }
+  >;
+};
 
 export type RebuildGatewayProviderRegistration = "registered" | "missing" | "indeterminate";
 
-/** Match OpenShell's rendered gRPC absence without accepting transport failures. */
-function openshellReportsStructuredProviderNotFound(detail: string): boolean {
-  const bounded = detail.slice(0, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER);
-  return bounded
-    .split(/\r?\n/)
-    .some((line) =>
-      /\b(?:status:\s*NotFound|code:\s*["']Some requested entity was not found["'])\s*,\s*message:\s*["']provider not found["'](?:\s*,|$)/i.test(
-        line,
-      ),
-    );
+function rebuildProviderAdapter(
+  runtimeSelection?: OpenShellRuntimeSelection,
+): OpenShellProviderAdapter {
+  return createManagedProviderAdapter(
+    runtimeSelection
+      ? (((args, options) =>
+          runOpenshellProviderCommand(args, {
+            ...options,
+            runtimeSelection,
+          })) as RunProviderCommand)
+      : undefined,
+  );
 }
 
-export function classifyRebuildGatewayProviderRegistration(
-  result: {
-    status: number | null;
-    stdout?: unknown;
-    stderr?: unknown;
-    output?: unknown;
-  },
-  provider: string,
-): RebuildGatewayProviderRegistration {
-  if (result.status === 0) return "registered";
-  const detail = [result.stderr, result.stdout, result.output]
-    .filter((value) => value !== undefined && value !== null)
-    .map(String)
-    .join("\n");
-  const explicitMissing =
-    openshellReportsProviderNotFound(detail, provider) ||
-    openshellReportsStructuredProviderNotFound(detail) ||
-    detail
-      .slice(0, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER)
-      .split(/\r?\n/)
-      .some((line) =>
-        /^(?:error:\s*)?provider\s+(?:(?:was|is)\s+)?not found(?:\s+in\s+(?:the\s+)?gateway)?[.!]?\s*$/i.test(
-          line.trim(),
-        ),
-      );
-  return explicitMissing ? "missing" : "indeterminate";
-}
-
-export function inspectRebuildGatewayProviderRegistration(
+export async function inspectRebuildGatewayProviderRegistration(
   provider: string,
   log: (msg: string) => void,
   phase = "Preflight",
   runtimeSelection?: OpenShellRuntimeSelection,
-): RebuildGatewayProviderRegistration {
-  const result = runOpenshell(["provider", "get", provider], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    ...(runtimeSelection
-      ? {
-          env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
-          replaceEnv: true,
-        }
-      : {}),
+  providerAdapter = rebuildProviderAdapter(runtimeSelection),
+): Promise<RebuildGatewayProviderRegistration> {
+  const result = await providerAdapter.getProvider({
+    providerName: provider,
+    target: managedProviderGatewayTarget,
   });
-  const registration = classifyRebuildGatewayProviderRegistration(result, provider);
+  const registration = result.ok
+    ? "registered"
+    : result.error.kind === "command" && result.error.reason === "not_found"
+      ? "missing"
+      : "indeterminate";
   log(
     `${phase} gateway provider check: provider '${provider}' is ${
       registration === "registered"
@@ -114,7 +83,7 @@ export function inspectRebuildGatewayProviderRegistration(
 
 type GatewayCredentialReusePreflightDeps = {
   hasBedrockRuntimeAwsAuth?(): boolean;
-  readGatewayProviderMetadata(provider: string): GatewayProviderMetadata | null;
+  readGatewayProviderMetadata(provider: string): Promise<GatewayProviderMetadata | null>;
   readRecordedProviderEndpoints(provider: string, excludeSandboxName: string): string[] | null;
 };
 
@@ -152,8 +121,8 @@ export function shouldVerifyRebuildGatewayProvider(
   // upsert the local provider with locally available credentials.
   return Boolean(
     provider &&
-      !isLocalInferenceProvider(provider) &&
-      provider !== hermesProviderAuth.HERMES_PROVIDER_NAME,
+    !isLocalInferenceProvider(provider) &&
+    provider !== hermesProviderAuth.HERMES_PROVIDER_NAME,
   );
 }
 
@@ -170,7 +139,7 @@ export function canRecreateMissingRebuildGatewayProvider(
   return config?.credentialEnv === credentialEnv;
 }
 
-export function checkRebuildGatewayProviderOrBail(
+export async function checkRebuildGatewayProviderOrBail(
   provider: string | null | undefined,
   credentialEnv: string | null,
   log: (msg: string) => void,
@@ -180,10 +149,10 @@ export function checkRebuildGatewayProviderOrBail(
     hostCredentialAvailable?: boolean;
     onProviderReconfigureRequired?: (provider: string, credentialEnv: string) => void;
   } = {},
-): boolean {
+): Promise<boolean> {
   if (!shouldVerifyRebuildGatewayProvider(provider)) return true;
 
-  const registration = inspectRebuildGatewayProviderRegistration(provider, log);
+  const registration = await inspectRebuildGatewayProviderRegistration(provider, log);
   if (registration === "registered") return true;
   if (
     registration === "missing" &&
@@ -211,8 +180,15 @@ export function checkRebuildGatewayProviderOrBail(
 }
 
 function defaultGatewayCredentialReusePreflightDeps(): GatewayCredentialReusePreflightDeps {
+  const providerAdapter = rebuildProviderAdapter();
   return {
-    readGatewayProviderMetadata: (provider) => readGatewayProviderMetadata(provider, runOpenshell),
+    readGatewayProviderMetadata: async (provider) => {
+      const result = await providerAdapter.getProvider({
+        providerName: provider,
+        target: managedProviderGatewayTarget,
+      });
+      return result.ok ? result.value : null;
+    },
     readRecordedProviderEndpoints: (provider, excludeSandboxName) => {
       try {
         return registry
@@ -229,14 +205,14 @@ function defaultGatewayCredentialReusePreflightDeps(): GatewayCredentialReusePre
 }
 
 /** Validate keyless gateway-provider reuse before a rebuild deletes the sandbox. */
-export function checkRebuildGatewayCredentialReuseOrBail(
+export async function checkRebuildGatewayCredentialReuseOrBail(
   sandboxName: string,
   config: RebuildResumeConfig,
   hostCredentialAvailable: boolean,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
   deps: GatewayCredentialReusePreflightDeps = defaultGatewayCredentialReusePreflightDeps(),
-): boolean {
+): Promise<boolean> {
   if (hostCredentialAvailable || !config.provider || !config.credentialEnv) return true;
   const isBedrockRuntime =
     config.provider === "compatible-anthropic-endpoint" &&
@@ -282,7 +258,7 @@ export function checkRebuildGatewayCredentialReuseOrBail(
     recoveredPreferredInferenceApi: route?.preferredInferenceApi,
     expectedProviderType: remoteConfig.providerType,
     expectedCredentialEnv: config.credentialEnv,
-    gatewayProvider: deps.readGatewayProviderMetadata(config.provider),
+    gatewayProvider: await deps.readGatewayProviderMetadata(config.provider),
     endpointIdentity: endpointFlavor
       ? {
           flavor: endpointFlavor,
