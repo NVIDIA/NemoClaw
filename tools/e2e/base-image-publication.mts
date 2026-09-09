@@ -108,6 +108,7 @@ export interface FirstParentHistory {
 export interface PublicationRun {
   id: number;
   attempt: number;
+  event: "push" | "workflow_dispatch";
   workflowId: number;
   headSha: string;
   status: string;
@@ -429,7 +430,12 @@ export function validateWorkflow(payload: unknown): number {
   return workflowId;
 }
 
-function validateRun(value: unknown, index: number, expectedWorkflowId: number): PublicationRun {
+function validateRun(
+  value: unknown,
+  index: number,
+  expectedWorkflowId: number,
+  allowWorkflowDispatch = false,
+): PublicationRun {
   const run = asRecord(value);
   const id = positiveSafeInteger(run.id, `workflow run ${index} id`);
   const attempt = positiveSafeInteger(run.run_attempt, `workflow run ${index} attempt`);
@@ -439,7 +445,12 @@ function validateRun(value: unknown, index: number, expectedWorkflowId: number):
     throw new Error(`workflow run ${index} workflow id does not match the base-image workflow`);
   }
   const headSha = sha(run.head_sha, `workflow run ${index} head SHA`);
-  exactString(run.event, "push", `workflow run ${index} event`);
+  const event = run.event;
+  if (event !== "push" && !(allowWorkflowDispatch && event === "workflow_dispatch")) {
+    throw new Error(
+      `workflow run ${index} event must be push${allowWorkflowDispatch ? " or workflow_dispatch" : ""}`,
+    );
+  }
   exactString(run.head_branch, MAIN_BRANCH, `workflow run ${index} branch`);
   exactString(run.path, WORKFLOW_PATH, `workflow run ${index} path`);
   trustedWorkflowName(run.name, `workflow run ${index} name`);
@@ -468,6 +479,7 @@ function validateRun(value: unknown, index: number, expectedWorkflowId: number):
   return {
     id,
     attempt,
+    event,
     workflowId: expectedWorkflowId,
     headSha,
     status,
@@ -480,7 +492,10 @@ export function selectPublicationRun(
   payload: unknown,
   history: FirstParentHistory,
   workflowId: number,
-  options: { readonly completedSuccessOnly?: boolean } = {},
+  options: {
+    readonly allowWorkflowDispatch?: boolean;
+    readonly completedSuccessOnly?: boolean;
+  } = {},
 ): PublicationSelection {
   positiveSafeInteger(workflowId, "base-image workflow id");
   const response = asRecord(payload);
@@ -495,7 +510,7 @@ export function selectPublicationRun(
   const runs = response.workflow_runs.flatMap((value, index) => {
     const run = asRecord(value);
     return typeof run.head_sha === "string" && history.distanceBySha.has(run.head_sha)
-      ? [validateRun(run, index, workflowId)]
+      ? [validateRun(run, index, workflowId, options.allowWorkflowDispatch === true)]
       : [];
   });
   if (new Set(runs.map((run) => run.id)).size !== runs.length) {
@@ -596,10 +611,16 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
 }
 
 export function validateBoundRun(payload: unknown, expected: PublicationRun): PublicationRun {
-  const actual = validateRun(payload, 0, expected.workflowId);
+  const actual = validateRun(
+    payload,
+    0,
+    expected.workflowId,
+    expected.event === "workflow_dispatch",
+  );
   if (
     actual.id !== expected.id ||
     actual.attempt !== expected.attempt ||
+    actual.event !== expected.event ||
     actual.headSha !== expected.headSha
   ) {
     throw new Error(
@@ -753,10 +774,13 @@ export async function waitForBaseImagePublication(
   const workflowId = validateWorkflow(
     await request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
   );
-  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&event=push&per_page=100`;
+  const allowWorkflowDispatch = options.selectNearestSuccessfulRun === true;
+  const eventFilter = allowWorkflowDispatch ? "" : "&event=push";
+  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}${eventFilter}&per_page=100`;
   while (true) {
     const runs = await collectPaginated(request, runsPath, "workflow_runs");
     const selection = selectPublicationRun(runs, options.history, workflowId, {
+      allowWorkflowDispatch,
       completedSuccessOnly: options.selectNearestSuccessfulRun === true,
     });
     if (selection.state === "selected") {
