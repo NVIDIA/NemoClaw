@@ -2418,6 +2418,7 @@ Use `--tools` only with a configured endpoint you trust to advertise names while
 
 The `toolDiscovery` JSON field contains `ok`, `count`, `tools`, `truncated`, and `commandStatus`.
 A failed result also contains `failedStage`, `failureClass`, and a redacted `detail`.
+An invalid JSON, JSON-RPC envelope, or tool-list schema reports `failureClass: "protocol"`.
 A runtime-emitted precondition reports `commandStatus` as `0`.
 A bridge-level precondition that skips runtime execution reports `null`.
 An unreachable sandbox also reports `null` when no runtime exit status exists.
@@ -3376,6 +3377,8 @@ $$nemoclaw doctor [--json | --text]
 
 The command exits nonzero when a required check fails.
 Pass `--json` for a redacted, schema-versioned report with `scope: "global"` and no sandbox field.
+`--json` and `--text` are mutually exclusive.
+With both flags, `doctor` exits before it runs checks, writes one JSON error to standard output, and writes the conflict diagnostic to standard error.
 
 | Flag | Description |
 | --- | --- |
