@@ -83,7 +83,7 @@ export function unsafeEndpointUrlViolation(
   // character (ASCII %0A as well as UTF-8 forms such as %C2%80 and %E2%80%8B)
   // cannot pass while its literal form is rejected. Downstream consumers
   // decode at most once, so a double-encoded sequence stays inert text.
-  let decoded = raw;
+  let decoded: string;
   try {
     decoded = decodeURIComponent(raw);
   } catch {
