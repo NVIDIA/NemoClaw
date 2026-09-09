@@ -227,7 +227,7 @@ describe("MCP tool discovery image contract", () => {
       relativePath: "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
     },
     {
-      expectedHash: "e98d0875b06923ca023da35ef53193c0e72037afec954f63d26a2c5a02e9b705",
+      expectedHash: "14957aab5f36c3fa6d9af86f4070865fda167fed609cacaa99032b5a8b609900",
       relativePath: "mcp-tool-discovery/mcp-tool-discovery.bundle",
     },
   ])("pins the reviewed image runtime artifacts exactly", ({ expectedHash, relativePath }) => {
