@@ -336,8 +336,10 @@ describe("fixed catalog vLLM installs", () => {
     process.env.NEMOCLAW_SERVING_PRESET = selected.presetId;
     const readinessReports = vllmInstallTestReadiness(profile, modelIntent);
     await withActualSelectionGuard(readinessReports);
+    const servedModelId = selected.model.servedModelId ?? selected.model.id;
     mockSuccessfulVllmInstall(mocks, selected.profile.containerName);
-    mockSuccessfulAuthenticatedReadiness(selected.model.servedModelId ?? selected.model.id);
+    mockSuccessfulAuthenticatedReadiness(servedModelId);
+    const beforeInstall = vi.fn();
 
     const result = await installVllm(profile, {
       hasImage: true,
@@ -345,6 +347,7 @@ describe("fixed catalog vLLM installs", () => {
       promptFn: vi.fn(),
       modelIntent,
       readinessReports,
+      beforeInstall,
       resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
@@ -352,10 +355,9 @@ describe("fixed catalog vLLM installs", () => {
       expect.stringContaining("NEMOCLAW_SERVING_PRESET conflicts with NEMOCLAW_VLLM_MODEL"),
     );
     expect(result).toEqual({ ok: true });
-    // The preset stays the model authority: the checkpoint must not reappear
-    // as an operator override in the environment the selection reads.
-    const firstCall = mocks.resolveHostLocalVllmSelection.mock.calls[0];
-    expect(firstCall?.[1]?.NEMOCLAW_VLLM_MODEL).toBeUndefined();
+    // The preset stays the model authority, so the install that onboarding
+    // records is the one the preset selects.
+    expect(beforeInstall).toHaveBeenCalledWith(servedModelId);
   });
 
   it("rejects a resumed model the serving preset does not select", async () => {
