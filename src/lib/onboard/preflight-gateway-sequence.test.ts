@@ -127,6 +127,20 @@ describe("full preflight gateway sequence under external supervision (#6576)", (
 });
 
 describe("full preflight gateway sequence when NemoClaw owns the gateway (#6576)", () => {
+  it("skips Docker reuse and cleanup when the selected provider owns readiness (#10984)", async () => {
+    const h = harness({
+      gatewayReuseState: "healthy",
+      externallySupervised: false,
+      containerState: "missing",
+      orphanContainerPresent: true,
+      httpReady: false,
+    });
+    h.deps.managedGatewayObservationAuthoritative = true;
+
+    await expect(runPreflightGatewaySequence(h.deps)).resolves.toBe("healthy");
+    expectNoDestructiveEffect(h);
+  });
+
   it("still removes a genuinely orphaned container end-to-end", async () => {
     const h = harness({
       gatewayReuseState: "missing",

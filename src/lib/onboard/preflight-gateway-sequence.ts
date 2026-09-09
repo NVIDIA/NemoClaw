@@ -13,6 +13,8 @@ export interface PreflightGatewaySequenceDeps {
   externallySupervised: boolean;
   supportsLifecycleCommands: boolean;
   isDockerDriverGatewayEnabled: boolean;
+  /** Provider readiness already owns reuse, listener, and runtime absence decisions. */
+  managedGatewayObservationAuthoritative?: boolean;
   gatewayName: string;
   cliDisplayName: string;
   dashboardPort?: number;
@@ -62,6 +64,7 @@ export interface PreflightGatewaySequenceDeps {
 export async function runPreflightGatewaySequence(
   deps: PreflightGatewaySequenceDeps,
 ): Promise<GatewayReuseState> {
+  if (deps.managedGatewayObservationAuthoritative) return deps.gatewayReuseState;
   let gatewayReuseState = await reconcilePreflightGatewayReuseState({
     gatewayReuseState: deps.gatewayReuseState,
     supportsLifecycleCommands: deps.supportsLifecycleCommands,
