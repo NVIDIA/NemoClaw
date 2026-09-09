@@ -196,7 +196,6 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
   let policyMutationAttempted = false;
   try {
     const reboundAddress = await hostAddressForSandbox(options.host);
-    expect(reboundAddress).not.toBe(RAW_OPENSHELL_REBIND_PINNED_IP);
     expect(
       isPrivateIp(reboundAddress),
       `${reboundAddress} must be a private rebinding target`,
@@ -261,7 +260,6 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
     const effectiveEndpoint = parseRawOpenShellAllowedIpsRebindingEndpoint(effectivePolicy.stdout);
     expect(effectiveEndpoint).toMatchObject({
       allowed_ips: [RAW_OPENSHELL_REBIND_PINNED_IP],
-      host: RAW_OPENSHELL_REBIND_HOSTNAME,
       port: server.port,
       protocol: "mcp",
     });

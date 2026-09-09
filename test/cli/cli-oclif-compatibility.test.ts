@@ -26,6 +26,42 @@ describe("oclif compatibility dispatch", () => {
     vi.restoreAllMocks();
   });
 
+  it.each(["alpha", "connect", "doctor"])(
+    "routes %s MCP before registry lookup, migration, or recovery",
+    async (name) => {
+      await withDirectPublicDispatch(
+        async (harness) => {
+          await harness.dispatchCli([name, "mcp", "list", "--json"]);
+          expect(harness.runOclifCommandById).toHaveBeenCalledWith(
+            "sandbox:mcp",
+            [name, "list", "--json"],
+            expect.any(Object),
+          );
+          expect(harness.getSandbox).not.toHaveBeenCalled();
+          expect(harness.migrateLegacyPortState).not.toHaveBeenCalled();
+          expect(harness.recoverRegistryEntries).not.toHaveBeenCalled();
+        },
+        { registryReadError: new Error("corrupt registry must reach the MCP owner") },
+      );
+    },
+  );
+
+  it("routes native MCP without legacy registry migration", async () => {
+    await withDirectPublicDispatch(
+      async (harness) => {
+        await harness.dispatchCli(["sandbox", "mcp", "alpha", "status"]);
+        expect(harness.runOclifArgv).toHaveBeenCalledWith(
+          ["sandbox", "mcp", "alpha", "status"],
+          expect.any(Object),
+        );
+        expect(harness.getSandbox).not.toHaveBeenCalled();
+        expect(harness.migrateLegacyPortState).not.toHaveBeenCalled();
+        expect(harness.recoverRegistryEntries).not.toHaveBeenCalled();
+      },
+      { migrationError: new Error("corrupt registry must not block native MCP") },
+    );
+  });
+
   it("renders native sandbox help without registry recovery", async () => {
     const cliPath = require.resolve("../../src/nemoclaw.js");
     const registryPath = require.resolve("../../src/lib/state/registry.js");

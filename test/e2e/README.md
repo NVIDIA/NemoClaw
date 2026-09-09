@@ -166,9 +166,9 @@ This baseline measures only the replaced build step.
 Artifact upload, download, validation, and the dependency on `generate-matrix` add runtime and can affect the workflow critical path.
 Do not use the build-step median to claim savings in runner time or workflow elapsed time.
 
-A manual PR E2E run tests candidate code but executes `.github/workflows/e2e.yaml` from trusted `main`.
-The PR run cannot measure this workflow change before merge.
-After merge, use a passing `main` run and complete these steps:
+The default manual PR E2E dispatch executes `.github/workflows/e2e.yaml` from trusted `main`, so it cannot measure candidate workflow changes before merge.
+The explicit NVIDIA-owned branch-controller mode described above executes the workflow at the latest PR commit and can exercise those changes.
+For the post-merge performance comparison, use a passing `main` run and complete these steps:
 
 1. Match the job selection, runner labels, and first attempt to the baseline.
 2. Record durations for the candidate build, artifact upload, artifact download, combined verification and restore step, job, and workflow.

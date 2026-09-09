@@ -40,6 +40,7 @@ export function applyGeneratedPolicy(
     runtimeSelection: McpProviderInspectionRuntimeSelection;
   },
 ): void {
+  assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const addresses = assertMcpBridgePolicyTarget(entry, target);
   if (addresses.length === 0) {
     throw new McpBridgeError(
@@ -135,6 +136,12 @@ export function assertGeneratedPolicyMutationSafe(
   if (entry.policyName !== buildMcpBridgePolicyName(entry.server)) {
     throw new McpBridgeError("Generated MCP policy name does not match its bridge definition.");
   }
+  if (entry.policyConflict) {
+    throw new McpBridgeError(
+      `MCP server '${entry.server}' has conflicting live policy. Reconcile the live policy with the native MCP configuration before retrying.`,
+      2,
+    );
+  }
 }
 
 export function removeGeneratedPolicy(
@@ -145,6 +152,7 @@ export function removeGeneratedPolicy(
     runtimeSelection: McpProviderInspectionRuntimeSelection;
   },
 ): void {
+  assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const policyKey = buildMcpBridgePolicyKey(entry.server);
   const content = `network_policies:\n  ${policyKey}: {}\n`;
   const removed = policies.removePreset(sandboxName, entry.policyName, {
@@ -173,7 +181,7 @@ export function getPolicyPresence(
     ) as { network_policies?: Record<string, unknown> } | null;
     return Boolean(
       document?.network_policies &&
-        Object.hasOwn(document.network_policies, buildMcpBridgePolicyKey(entry.server)),
+      Object.hasOwn(document.network_policies, buildMcpBridgePolicyKey(entry.server)),
     );
   } catch {
     return null;

@@ -22,10 +22,7 @@ const {
   sandboxActionTokensForDispatch,
 } = require("./command-registry");
 
-import {
-  hasMigratableLegacySandbox,
-  migrateLegacyPortState,
-} from "../state/legacy-port-migration";
+import { hasMigratableLegacySandbox, migrateLegacyPortState } from "../state/legacy-port-migration";
 import {
   isGlobalCommandInvocation,
   type NormalizedArgv,
@@ -569,6 +566,23 @@ function printUnknownSandboxOrCommand(cmd: string): never {
 
 /** Normalize public argv and route it to oclif or sandbox-first command handlers. */
 export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promise<void> {
+  // MCP resolves live sources itself. Generic registry migration/recovery can
+  // publish rows or select another gateway before that command owner runs.
+  if (argv[0] === "sandbox" && argv[1] === "mcp") {
+    await runNativeOclifArgv(argv);
+    return;
+  }
+  if (argv[1] === "mcp") {
+    const mcp = normalizeArgv(argv, { ...PUBLIC_ARGV_OPTIONS, isRegisteredSandbox: () => false });
+    if (mcp.kind === "sandbox" && mcp.action === "mcp") {
+      validateName(mcp.sandboxName, "sandbox name");
+      await runPublicTranslationResult(
+        translatePublicSandboxArgv(mcp.sandboxName, mcp.action, mcp.actionArgs),
+        { sandboxName: mcp.sandboxName },
+      );
+      return;
+    }
+  }
   const stateFreeInvocation =
     argv.length === 0 ||
     argv.includes("--help") ||
@@ -601,8 +615,5 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
     return;
   }
 
-  await dispatchNormalizedArgv(
-    normalizeArgv(argv, PUBLIC_ARGV_OPTIONS),
-    argv,
-  );
+  await dispatchNormalizedArgv(normalizeArgv(argv, PUBLIC_ARGV_OPTIONS), argv);
 }

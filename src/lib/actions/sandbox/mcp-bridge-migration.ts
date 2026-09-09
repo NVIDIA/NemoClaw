@@ -9,7 +9,7 @@ import * as registry from "../../state/registry";
 import * as policies from "../../policy";
 import { REGISTRY_FILE } from "../../state/registry/persistence";
 import {
-  registerAgentAdapter,
+  registerAgentAdapterAtCurrentCredentialRevision,
   reloadOpenClawGatewayAfterMcpMutation,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
@@ -25,6 +25,7 @@ import {
   assertMcpProviderRecoverable,
   preflightMcpEntryTargets,
   providerAttached,
+  waitForAttachedMcpCredential,
 } from "./mcp-bridge-provider";
 import {
   inspectAgentMcpSources,
@@ -36,8 +37,10 @@ import {
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
   getSandboxAgent,
+  getSandboxOrThrow,
 } from "./mcp-bridge-state";
 import { normalizeMcpDenyTools, validateSandboxName } from "./mcp-bridge-validation";
+import { discoverMcpTools } from "./mcp-bridge-tool-discovery";
 
 export type McpMigrationItem = {
   server: string;
@@ -220,6 +223,30 @@ async function preflightMigrationOpenShellState(
   }
 }
 
+async function verifyMigratedMcpRuntime(
+  sandboxName: string,
+  entries: readonly McpSourceEntry[],
+  adapter: ReturnType<typeof getBridgeAdapter>,
+  runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
+): Promise<void> {
+  for (const entry of entries) {
+    await waitForAttachedMcpCredential(sandboxName, entry, runtimeSelection);
+    await preflightMigrationOpenShellState(sandboxName, [entry], runtimeSelection);
+    const discovery = discoverMcpTools(
+      sandboxName,
+      entry,
+      adapter,
+      { policyGatewayPresent: true, providerAttached: true, providerCredentialReady: true },
+      runtimeSelection,
+    );
+    if (!discovery.ok) {
+      throw new McpBridgeError(
+        `MCP migration could not verify authenticated tool discovery for '${entry.server}' (${discovery.failureClass ?? "unknown"} at ${discovery.failedStage ?? "unknown"}). Legacy configuration was preserved.`,
+      );
+    }
+  }
+}
+
 export async function migrateMcpBridges(
   sandboxName: string,
   options: {
@@ -229,8 +256,7 @@ export async function migrateMcpBridges(
 ): Promise<McpMigrationPlan> {
   return withMcpLifecycleLock(sandboxName, async () => {
     validateSandboxName(sandboxName);
-    const sandbox = registry.getSandbox(sandboxName);
-    if (!sandbox) throw new McpBridgeError(`Sandbox '${sandboxName}' not found.`, 1);
+    const sandbox = getSandboxOrThrow(sandboxName);
     const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
     await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
     const observed = await inspectLegacyBridgeState(sandbox, runtimeSelection);
@@ -332,12 +358,18 @@ export async function migrateMcpBridges(
         let native = inspectAgentMcpSources(rebuilt, rebuiltRuntimeSelection).native;
         for (const entry of entries) {
           if (!native[entry.server]) {
-            registerAgentAdapter(
+            const credentialRevision = await waitForAttachedMcpCredential(
+              sandboxName,
+              entry,
+              rebuiltRuntimeSelection,
+            );
+            registerAgentAdapterAtCurrentCredentialRevision(
               sandboxName,
               adapter,
               entry,
               rebuiltRuntimeSelection,
               {},
+              credentialRevision,
               { replaceExisting: false },
             );
             created.push(entry);
@@ -352,6 +384,7 @@ export async function migrateMcpBridges(
             `Deep Agents rebuild did not verify native MCP server${missing.length === 1 ? "" : "s"}: ${missing.map((entry) => entry.server).join(", ")}.`,
           );
         }
+        await verifyMigratedMcpRuntime(sandboxName, entries, adapter, rebuiltRuntimeSelection);
         for (const entry of entries) {
           if (observed.sources.legacy[entry.server]) {
             cleanupStarted = true;
@@ -380,12 +413,18 @@ export async function migrateMcpBridges(
     try {
       for (const entry of entries) {
         if (!observed.sources.native[entry.server]) {
-          registerAgentAdapter(
+          const credentialRevision = await waitForAttachedMcpCredential(
+            sandboxName,
+            entry,
+            runtimeSelection,
+          );
+          registerAgentAdapterAtCurrentCredentialRevision(
             sandboxName,
             adapter,
             entry,
             runtimeSelection,
             {},
+            credentialRevision,
             {
               replaceExisting: false,
             },
@@ -400,6 +439,7 @@ export async function migrateMcpBridges(
         }
       }
       reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter]);
+      await verifyMigratedMcpRuntime(sandboxName, entries, adapter, runtimeSelection);
       for (const entry of entries) {
         if (observed.sources.legacy[entry.server]) {
           cleanupStarted = true;
@@ -407,7 +447,9 @@ export async function migrateMcpBridges(
         }
       }
       // Force a normal non-MCP registry serialization so legacy MCP fields are
-      // omitted immediately after the explicit migration succeeds.
+      // omitted immediately after verification. Publication may retire the last
+      // legacy source before reporting a durability failure.
+      cleanupStarted = true;
       registry.updateSandbox(sandboxName, {});
       return { sandbox: sandboxName, items, applied: true };
     } catch (error) {

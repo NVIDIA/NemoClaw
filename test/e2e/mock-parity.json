@@ -615,6 +615,8 @@
         "src/lib/actions/sandbox/mcp-bridge-adapter-teardown.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-input-targets.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-provider.test.ts",
+        "test/mcp/mcp-artifact-secret-scan.test.ts",
+        "test/mcp/mcp-bridge-servers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/e2e-redaction-entry.test.ts",

@@ -56,7 +56,9 @@ OpenClaw translates the managed Mcporter `baseUrl` entry into `openclaw.json` `m
 
 Migration treats the current OpenShell policy as authoritative, including its denied-tool selectors. A stale registry selector that differs from the live policy stops before mutation. Apply also requires the existing restrictive policy, exact provider identity, and attachment to verify before it writes native configuration.
 
-Migration writes the native configuration atomically, reloads or rebuilds the agent, verifies native enumeration, and only then retires the legacy adapter or projection. OpenClaw must activate the new Tool Search catalog before legacy cleanup, and Deep Agents removes the migrated entry from `.deepagents/.nemoclaw-mcp.json` before reporting success. Failure restores newly created native entries and leaves the legacy configuration, OpenShell policy, provider, and attachment available for retry.
+Migration writes the native configuration atomically, reloads or rebuilds the agent, verifies native enumeration, fresh credential readiness, and authenticated tool discovery, and only then retires the legacy adapter or projection. OpenClaw must activate the new Tool Search catalog before legacy cleanup, and Deep Agents removes the migrated entry from `.deepagents/.nemoclaw-mcp.json` before reporting success.
+
+If migration fails before legacy cleanup starts, it attempts to remove newly created native entries and retains the legacy configuration for retry. Rollback can leave native entries when their removal fails. Once legacy cleanup starts, migration preserves the verified native entries and any remaining legacy configuration, so a cleanup failure can leave a partially migrated state. The existing OpenShell policy, provider, and attachment remain available. Run the migration preview again and inspect the reported sources before retrying `mcp migrate --apply`.
 
 For a trusted private server, status resolves the endpoint without changing managed state. Text output reports `private address pins: match`, `drift`, or `unresolved`. JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins. Status never adds a new address to the policy.
 
@@ -128,18 +130,27 @@ The bare `mcp list` and `mcp status` forms never probe, so they stay fast. Endpo
 
 ## Rotate a Credential
 
-Export the replacement under the same host environment name used by `mcp add`, remove the native registration, and add it again so NemoClaw creates a fresh provider binding:
+Export the replacement under the same host environment name used by `mcp add`, then remove the native registration:
 
 ```bash
 export GITHUB_MCP_TOKEN='replacement-value'
 $$nemoclaw my-sandbox mcp remove github
+```
+
+`remove` detaches the exact managed provider and preserves the provider object. After confirming no sandbox uses that provider, delete it using the exact name reported by `remove`:
+
+```bash
+openshell provider delete PROVIDER_NAME
+```
+
+Add the server again to create a fresh provider binding:
+
+```bash
 $$nemoclaw my-sandbox mcp add github \
   --url https://api.githubcopilot.com/mcp/ \
   --env GITHUB_MCP_TOKEN
 unset GITHUB_MCP_TOKEN
 ```
-
-`remove` deletes the agent-native registration and detaches the exact managed provider, but conservatively preserves the provider object. Remove that preserved provider explicitly after confirming no sandbox uses it; then `add` creates a new provider with the replacement credential and reconnects the native registration.
 
 For a trusted-private entry, pass the same reviewed `--trusted-private-host` value to `add`; NemoClaw resolves and records the replacement pins again. For a public entry, `add` resolves the hostname and creates a policy for the current validated public addresses.
 
@@ -183,6 +194,11 @@ If the endpoint moves to another address, remove and re-add the server:
 ```bash
 export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
 $$nemoclaw my-sandbox mcp remove local-tools
+```
+
+Delete the retained provider using the [credential rotation cleanup](#rotate-a-credential) above, then re-add the server:
+
+```bash
 $$nemoclaw my-sandbox mcp add local-tools \
   --url https://mcp-host.corp.example/mcp \
   --env LOCAL_MCP_TOKEN \
@@ -200,13 +216,13 @@ $$nemoclaw my-sandbox mcp remove github
 
 Removing a server blocks new requests and reconnects but does not terminate a response or SSE stream that is already open. For immediate revocation, revoke the upstream credential first, then run `$$nemoclaw <sandbox> rebuild --yes` or destroy the sandbox to terminate an existing stream.
 
-`remove --force` may remove a modified same-name native entry so an operator can clear agent configuration. It never claims or deletes an ambiguous OpenShell provider.
+`remove --force` may remove a modified same-name native entry after credential and policy cleanup is proven. It never claims or deletes an ambiguous OpenShell provider.
 
 Policy removal targets the deterministic current MCP policy key. Force never claims an unrelated policy or provider.
 
-NemoClaw removes the agent registration first, removes the policy key, and then detaches a provider only when the live policy binding, provider ID, type, and credential key agree. This ordering blocks new agent use before cleanup. The workspace provider is retained because current OpenShell provider deletion is name-based.
+NemoClaw refuses conflicting native configuration and live policy before changing either source. It detaches a provider only when the live policy binding, provider ID, type, and credential key agree, then verifies that fresh sandbox processes no longer receive the credential. It removes the policy key and finally the native registration. If the policy is already absent, it preserves providers and still requires credential absence before removing an authenticated native entry. The workspace provider is retained for explicit cleanup.
 
-If cleanup leaves a residual, the command reports the exact policy or attachment warning and the provider name to inspect. It never detaches the provider from another sandbox or silently reports that the provider was deleted.
+If credential or policy cleanup cannot be proven, the command fails and retains the native registration for recovery, including with `--force`. Inspect the reported policy or provider state, correct the cause, and retry `mcp remove`. It never detaches the provider from another sandbox or silently reports that the provider was deleted.
 
 ## Rebuild with Managed MCP State
 

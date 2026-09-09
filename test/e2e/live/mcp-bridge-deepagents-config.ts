@@ -20,7 +20,7 @@ export async function assertDeepAgentsMcpConfig(
     "set -eu",
     "python3 - <<'PY'",
     "import json, pathlib, re",
-    "path = pathlib.Path('/sandbox/.deepagents/.nemoclaw-mcp.json')",
+    "path = pathlib.Path('/sandbox/.deepagents/.mcp.json')",
     "text = path.read_text(encoding='utf-8')",
     "data = json.loads(text)",
     `entry = data['mcpServers'][${JSON.stringify(options.serverName)}]`,

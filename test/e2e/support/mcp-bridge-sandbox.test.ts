@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { inspect } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
@@ -22,6 +23,11 @@ import {
   restoreDnsRebindingHostsFixture,
 } from "../live/mcp-bridge-sandbox.ts";
 import {
+  buildLegacyMcpMigrationFixtureScript,
+  withMcpRegistryUnavailable,
+  assertMcpRestartWithoutRegistry,
+} from "../live/mcp-bridge-reliability.ts";
+import {
   assertRawOpenShellAllowedIpsRebindingDenied,
   buildRawOpenShellAllowedIpsRebindingPolicy,
   buildRawOpenShellAllowedIpsRebindingProbeScript,
@@ -34,6 +40,164 @@ import {
 
 const SUITE_OPTIONS = { timeout: testTimeout(15_000) };
 const tempDirs: string[] = [];
+
+describe("MCP registry independence fixture", () => {
+  it("keeps managed-image discovery on its existing restart without registry mutation", async () => {
+    const restart = vi.fn().mockResolvedValue(undefined);
+    const nemoclaw = vi.fn();
+    const writeJson = vi.fn();
+    await assertMcpRestartWithoutRegistry(
+      { nemoclaw } as unknown as HostCliClient,
+      { writeJson } as unknown as ArtifactSink,
+      {
+        sandboxName: "fixture",
+        registryFile: "/nonexistent-mcp-fixture/sandboxes.json",
+        mode: "missing",
+        scope: "managed-image-discovery",
+      },
+      restart,
+    );
+    expect(restart).toHaveBeenCalledOnce();
+    expect(nemoclaw).not.toHaveBeenCalled();
+    expect(writeJson).not.toHaveBeenCalled();
+  });
+
+  it.each(["missing", "corrupt"] as const)(
+    "restores the exact registry after a %s registry operation fails",
+    async (mode) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-registry-"));
+      tempDirs.push(directory);
+      const registryFile = path.join(directory, "sandboxes.json");
+      const original = '{"preserved":"original registry"}\n';
+      fs.writeFileSync(registryFile, original, { mode: 0o640 });
+      await expect(
+        withMcpRegistryUnavailable(registryFile, mode, async () => {
+          expect(fs.existsSync(registryFile)).toBe(mode === "corrupt");
+          throw new Error("MCP operation failed");
+        }),
+      ).rejects.toThrow("MCP operation failed");
+      expect(fs.readFileSync(registryFile, "utf8")).toBe(original);
+      expect(fs.statSync(registryFile).mode & 0o777).toBe(0o640);
+      expect(fs.readdirSync(directory)).toEqual(["sandboxes.json"]);
+    },
+  );
+
+  it.each(["missing", "corrupt"] as const)(
+    "rejects registry writes during the %s registry proof",
+    async (mode) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-registry-write-"));
+      tempDirs.push(directory);
+      const registryFile = path.join(directory, "sandboxes.json");
+      fs.writeFileSync(registryFile, "original");
+      const error = await withMcpRegistryUnavailable(registryFile, mode, async () => {
+        fs.writeFileSync(registryFile, "fixture-private-provider-token");
+      }).then(
+        () => null,
+        (failure: unknown) => failure,
+      );
+      expect(error).toBeInstanceOf(Error);
+      expect(String(error)).toMatch(/MCP (?:recreated|rewrote)/);
+      expect(inspect(error)).not.toContain("fixture-private-provider-token");
+      expect(fs.readFileSync(registryFile, "utf8")).toBe("original");
+    },
+  );
+});
+
+describe("legacy MCP migration fixture", () => {
+  it.each(["openclaw", "langchain-deepagents-code"] as const)(
+    "stages and verifies %s without changing unrelated configuration",
+    (agent) => {
+      const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-migration-fixture-"));
+      tempDirs.push(configDir);
+      const openclaw = agent === "openclaw";
+      const nativePath = path.join(configDir, openclaw ? "openclaw.json" : ".mcp.json");
+      const legacyPath = path.join(
+        configDir,
+        openclaw ? "workspace/config/mcporter.json" : ".nemoclaw-mcp.json",
+      );
+      const entry = {
+        type: "http",
+        url: "https://mcp.example.test/mcp",
+        headers: { Authorization: "Bearer openshell:resolve:env:v123_FAKE_MCP_SECRET" },
+      };
+      const servers = { fake: entry, sibling: { url: "https://other.example.test" } };
+      const native = openclaw
+        ? { retained: true, mcp: { servers } }
+        : { retained: true, mcpServers: servers };
+      fs.writeFileSync(nativePath, JSON.stringify(native));
+      fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
+      fs.writeFileSync(
+        legacyPath,
+        JSON.stringify({ retained: true, mcpServers: { unrelated: { marker: "keep" } } }),
+      );
+      const options = { agent, configDir, serverName: "fake" };
+      const run = (verifyMigrated = false) =>
+        spawnSync(
+          "/bin/sh",
+          ["-c", buildLegacyMcpMigrationFixtureScript({ ...options, verifyMigrated })],
+          { encoding: "utf8", timeout: 5_000 },
+        );
+
+      const staged = run();
+      expect([staged.status, staged.stdout.trim(), staged.stderr]).toEqual([
+        0,
+        "legacy-migration-staged",
+        "",
+      ]);
+      const after = JSON.parse(fs.readFileSync(nativePath, "utf8"));
+      expect(openclaw ? after.mcp.servers : after.mcpServers).toEqual({ sibling: servers.sibling });
+      expect(after.retained).toBe(true);
+      const legacy = JSON.parse(fs.readFileSync(legacyPath, "utf8"));
+      expect(legacy).toEqual({
+        retained: true,
+        mcpServers: {
+          unrelated: { marker: "keep" },
+          fake: openclaw ? { baseUrl: entry.url, headers: entry.headers } : entry,
+        },
+      });
+      expect(run(true).status).not.toBe(0);
+
+      fs.writeFileSync(nativePath, JSON.stringify(native));
+      expect(run(true).status).not.toBe(0);
+      delete legacy.mcpServers.fake;
+      fs.writeFileSync(legacyPath, JSON.stringify(legacy));
+      const verified = run(true);
+      expect([verified.status, verified.stdout.trim(), verified.stderr]).toEqual([
+        0,
+        "native-migration-verified",
+        "",
+      ]);
+    },
+  );
+
+  it.each(["openclaw", "langchain-deepagents-code"] as const)(
+    "refuses raw credentials before staging %s",
+    (agent) => {
+      const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-migration-secret-"));
+      tempDirs.push(configDir);
+      const entry = {
+        url: "https://mcp.example.test",
+        headers: { Authorization: "Bearer private-fixture-secret" },
+      };
+      const nativePath = path.join(configDir, agent === "openclaw" ? "openclaw.json" : ".mcp.json");
+      const original = JSON.stringify(
+        agent === "openclaw"
+          ? { mcp: { servers: { fake: entry } } }
+          : { mcpServers: { fake: entry } },
+      );
+      fs.writeFileSync(nativePath, original);
+      const result = spawnSync(
+        "/bin/sh",
+        ["-c", buildLegacyMcpMigrationFixtureScript({ agent, configDir, serverName: "fake" })],
+        { encoding: "utf8", timeout: 5_000 },
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).not.toContain("private-fixture-secret");
+      expect(fs.readFileSync(nativePath, "utf8")).toBe(original);
+      expect(fs.readdirSync(configDir)).toEqual([path.basename(nativePath)]);
+    },
+  );
+});
 
 afterEach(() => {
   for (const tempDir of tempDirs.splice(0)) {

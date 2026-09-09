@@ -364,6 +364,7 @@ async function updateMcpBridgeDenyToolsUnlocked(
   if (!storedEntry) {
     throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
   }
+  assertGeneratedPolicyMutationSafe(sandboxName, storedEntry);
   assertAuthenticatedBridgeEntry(storedEntry);
   const target = (await preflightMcpEntryTargets([storedEntry])).get(server);
   if (!target || target.addresses.length === 0) {
@@ -377,7 +378,6 @@ async function updateMcpBridgeDenyToolsUnlocked(
     ...(normalizedDenyTools.length > 0 ? { denyTools: normalizedDenyTools } : {}),
     allowedIps: [...target.addresses],
   };
-  assertGeneratedPolicyMutationSafe(sandboxName, updatedEntry);
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
   await assertMcpProviderRecoverable(updatedEntry, runtimeSelection);

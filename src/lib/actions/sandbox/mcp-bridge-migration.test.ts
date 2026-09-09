@@ -18,6 +18,7 @@ const entry = {
 const mocks = vi.hoisted(() => ({
   assertProviderRecoverable: vi.fn(),
   getSandbox: vi.fn(),
+  resolveTarget: vi.fn(),
   getPolicyPresence: vi.fn(() => true),
   getPolicyState: vi.fn(() => "match"),
   getAgent: vi.fn(),
@@ -28,6 +29,8 @@ const mocks = vi.hoisted(() => ({
   joinEntries: vi.fn((_sandbox: unknown, entries: unknown) => entries),
   removeLegacy: vi.fn(),
   register: vi.fn(),
+  waitForCredential: vi.fn(),
+  discoverTools: vi.fn(),
   reloadOpenClaw: vi.fn(),
   unregister: vi.fn(),
   selectGateway: vi.fn(),
@@ -47,6 +50,7 @@ vi.mock("../../state/config-io", () => ({
 }));
 vi.mock("./mcp-bridge-adapters", () => ({
   registerAgentAdapter: mocks.register,
+  registerAgentAdapterAtCurrentCredentialRevision: mocks.register,
   reloadOpenClawGatewayAfterMcpMutation: mocks.reloadOpenClaw,
   unregisterAgentAdapter: mocks.unregister,
 }));
@@ -58,6 +62,10 @@ vi.mock("./mcp-bridge-provider", () => ({
   }),
   providerAttached: () => true,
   preflightMcpEntryTargets: mocks.preflightTargets,
+  waitForAttachedMcpCredential: mocks.waitForCredential,
+}));
+vi.mock("./mcp-bridge-tool-discovery", () => ({
+  discoverMcpTools: mocks.discoverTools,
 }));
 vi.mock("./mcp-bridge-source", () => ({
   inspectLegacyBridgeState: mocks.inspectLegacy,
@@ -76,6 +84,7 @@ vi.mock("./mcp-bridge-state", () => ({
   ensureSandboxGatewaySelected: mocks.selectGateway,
   getSandboxAgent: mocks.getAgent,
   getBridgeAdapter: mocks.getAdapter,
+  getSandboxOrThrow: mocks.resolveTarget,
 }));
 
 import { migrateMcpBridges } from "./mcp-bridge-migration";
@@ -84,6 +93,7 @@ describe("explicit MCP migration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getSandbox.mockReturnValue({ name: "alpha", agent: "openclaw" });
+    mocks.resolveTarget.mockImplementation((name) => mocks.getSandbox(name));
     mocks.getAgent.mockReturnValue({
       name: "openclaw",
       displayName: "OpenClaw",
@@ -94,6 +104,15 @@ describe("explicit MCP migration", () => {
     mocks.readConfig.mockReturnValue({});
     mocks.getPolicyPresence.mockReturnValue(true);
     mocks.getPolicyState.mockReturnValue("match");
+    mocks.register.mockReset();
+    mocks.waitForCredential.mockReset().mockResolvedValue("v12");
+    mocks.discoverTools.mockReset().mockReturnValue({
+      ok: true,
+      count: 1,
+      tools: ["lookup"],
+      truncated: false,
+      commandStatus: 0,
+    });
     mocks.joinEntries.mockImplementation((_sandbox: unknown, entries: unknown) => entries);
     mocks.inspectLegacy.mockReturnValue({
       bridges: { github: entry },
@@ -128,19 +147,116 @@ describe("explicit MCP migration", () => {
     });
   });
 
+  it("previews legacy agent sources through an ephemeral target without a registry row", async () => {
+    mocks.getSandbox.mockReturnValue(undefined);
+    mocks.resolveTarget.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+    });
+
+    await expect(migrateMcpBridges("alpha")).resolves.toMatchObject({
+      applied: false,
+      items: [{ server: "github", source: "legacy-agent" }],
+    });
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("materializes native config, verifies it, then retires legacy state", async () => {
     await expect(migrateMcpBridges("alpha", { apply: true })).resolves.toMatchObject({
       applied: true,
     });
     expect(mocks.register).toHaveBeenCalledOnce();
+    expect(mocks.register).toHaveBeenCalledWith(
+      "alpha",
+      "openclaw-config",
+      entry,
+      expect.any(Object),
+      {},
+      "v12",
+      { replaceExisting: false },
+    );
     expect(mocks.inspectSources).toHaveBeenCalledOnce();
     expect(mocks.reloadOpenClaw).toHaveBeenCalledWith("alpha", ["openclaw-config"]);
     expect(mocks.removeLegacy).toHaveBeenCalledOnce();
     expect(mocks.reloadOpenClaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.discoverTools.mock.invocationCallOrder[0],
+    );
+    expect(mocks.discoverTools.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.removeLegacy.mock.invocationCallOrder[0],
     );
     expect(mocks.updateSandbox).toHaveBeenCalledWith("alpha", {});
   });
+
+  it("retains legacy configuration when its credential is not ready for native registration", async () => {
+    mocks.waitForCredential.mockRejectedValueOnce(new Error("attached credential unavailable"));
+
+    await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toThrow(
+      "attached credential unavailable",
+    );
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.discoverTools).not.toHaveBeenCalled();
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("retains legacy configuration when live policy changes after native activation", async () => {
+    mocks.getPolicyState.mockReturnValueOnce("match").mockReturnValue("drift");
+
+    await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toThrow(
+      /does not match the current restrictive OpenShell policy/,
+    );
+    expect(mocks.reloadOpenClaw).toHaveBeenCalledOnce();
+    expect(mocks.discoverTools).not.toHaveBeenCalled();
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
+    expect(mocks.unregister).toHaveBeenCalledOnce();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { agent: "openclaw", adapter: "openclaw-config" as const },
+    { agent: "langchain-deepagents-code", adapter: "deepagents-config" as const },
+  ])(
+    "retains legacy $agent configuration when authenticated discovery fails",
+    async ({ agent, adapter }) => {
+      const legacyEntry = { ...entry, agent, adapter };
+      const legacy = { github: legacyEntry };
+      const native: Record<string, Omit<typeof legacyEntry, "source"> & { source: "native" }> = {};
+      mocks.getSandbox.mockReturnValue({ name: "alpha", agent });
+      mocks.getAgent.mockReturnValue({ name: agent });
+      mocks.getAdapter.mockReturnValue(adapter);
+      mocks.inspectLegacy.mockReturnValue({ bridges: legacy, sources: { native: {}, legacy } });
+      mocks.inspectSources.mockImplementation(() => ({ native, legacy }));
+      mocks.register.mockImplementation(() => {
+        native.github = { ...legacyEntry, source: "native" };
+      });
+      mocks.discoverTools.mockReturnValue({
+        ok: false,
+        count: 0,
+        tools: [],
+        truncated: false,
+        commandStatus: 1,
+        failedStage: "initialization",
+        failureClass: "authentication",
+        detail: "MCP endpoint rejected the request (HTTP 401)",
+      });
+      mocks.unregister.mockImplementationOnce(() => {
+        throw new Error("native rollback failed");
+      });
+
+      await expect(
+        migrateMcpBridges("alpha", {
+          apply: true,
+          rebuildSandbox: vi.fn().mockResolvedValue(undefined),
+        }),
+      ).rejects.toThrow(/authenticated tool discovery/);
+      expect(mocks.removeLegacy).not.toHaveBeenCalled();
+      expect(mocks.unregister).toHaveBeenCalledOnce();
+      expect(legacy).toEqual({ github: legacyEntry });
+      expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    },
+  );
 
   it("validates restrictive live policy before the first native write", async () => {
     mocks.getPolicyState.mockReturnValue("drift");
@@ -409,6 +525,30 @@ describe("explicit MCP migration", () => {
       "legacy cleanup failed",
     );
     expect(mocks.register).toHaveBeenCalledOnce();
+    expect(mocks.unregister).not.toHaveBeenCalled();
+  });
+
+  it("preserves verified native state when legacy registry retirement writes then fails", async () => {
+    let legacyRegistry: unknown = {
+      sandboxes: {
+        alpha: { mcp: { bridges: { github: { ...entry, adapter: "mcporter" } } } },
+      },
+    };
+    mocks.inspectLegacy.mockReturnValue({
+      bridges: {},
+      sources: { native: {}, legacy: {} },
+    });
+    mocks.readConfig.mockImplementation(() => legacyRegistry);
+    mocks.updateSandbox.mockImplementationOnce(() => {
+      legacyRegistry = { sandboxes: { alpha: {} } };
+      throw new Error("registry publication failed after rename");
+    });
+
+    await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toThrow(
+      "registry publication failed after rename",
+    );
+    expect(legacyRegistry).toEqual({ sandboxes: { alpha: {} } });
+    expect(mocks.discoverTools).toHaveBeenCalledOnce();
     expect(mocks.unregister).not.toHaveBeenCalled();
   });
 });
