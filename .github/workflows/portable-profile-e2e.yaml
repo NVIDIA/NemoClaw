@@ -90,6 +90,20 @@ jobs:
           env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      - name: Qualify the user-local OpenShell executable path
+        shell: bash
+        run: |
+          set -euo pipefail
+          openshell_bin="$(command -v openshell)"
+          test "$openshell_bin" = "$HOME/.local/bin/openshell"
+          test -f "$openshell_bin"
+          test ! -L "$HOME"
+          test ! -L "$HOME/.local"
+          test ! -L "$HOME/.local/bin"
+          test ! -L "$openshell_bin"
+          chmod go-w "$HOME" "$HOME/.local" "$HOME/.local/bin" "$openshell_bin"
+          test "$(realpath "$openshell_bin")" = "$openshell_bin"
+
       - name: Provision restricted rootless Linux runtime
         shell: bash
         run: |
