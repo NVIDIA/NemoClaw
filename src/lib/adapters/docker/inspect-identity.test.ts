@@ -15,7 +15,7 @@ describe("inspectDockerSandboxIdentities", () => {
   it("queries only the sandbox-name label and parses one exact row", () => {
     const inspect = vi.fn((_args: readonly string[]) => ({
       status: 0,
-      stdout: "aaaa000000000000\topenshell\tdefault\tsb-real\topenshell",
+      stdout: "aaaa000000000000\topenshell\tdefault\tsb-real\topenshell\tend",
     }));
 
     expect(
@@ -41,7 +41,7 @@ describe("inspectDockerSandboxIdentities", () => {
   it("queries a separate driver-specific marker when managedAlt differs from managedBy", () => {
     const inspect = vi.fn((_args: readonly string[]) => ({
       status: 0,
-      stdout: "aaaa000000000000\t\tdefault\tsb-real\ttrue",
+      stdout: "aaaa000000000000\t\tdefault\tsb-real\ttrue\tend",
     }));
 
     expect(
@@ -73,7 +73,7 @@ describe("inspectDockerSandboxIdentities", () => {
     expect(
       inspectDockerSandboxIdentities("openshell.ai/sandbox-name=alpha", LABELS, () => ({
         status: 0,
-        stdout: `aaaa000000000000\t${managedBy}\tdefault\tsb-real\topenshell`,
+        stdout: `aaaa000000000000\t${managedBy}\tdefault\tsb-real\topenshell\tend`,
       })),
     ).toEqual({ status: "observed", rows: [], malformedRows: 1 });
   });

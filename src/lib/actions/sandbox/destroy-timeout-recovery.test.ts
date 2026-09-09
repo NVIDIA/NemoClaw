@@ -63,7 +63,7 @@ describe("destroy timeout recovery", () => {
     const harness = createDestroyHarness({
       dockerRunResult: {
         status: 0,
-        stdout: "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\t\n",
+        stdout: "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\t\tend\n",
       },
       mcpServers: ["github"],
       registeredSandboxCount: 1,

@@ -26,6 +26,15 @@ type DockerSandboxIdentityInspect = (
   opts?: DockerRunOptions,
 ) => Partial<Pick<ReturnType<typeof dockerRun>, "error" | "status" | "stderr" | "stdout">>;
 
+/**
+ * Literal final column. `run()` trims captured stdout, so a row whose last
+ * column is empty would silently lose that field and be rejected as
+ * malformed. The alternate ownership marker is empty for every container the
+ * Docker driver labels, so without this terminator destroy would fail closed
+ * on the ordinary case. Keeping it non-empty makes the row width independent
+ * of which labels a driver happens to stamp.
+ */
+const IDENTITY_ROW_TERMINATOR = "end";
 const DOCKER_IDENTITY_PROBE_TIMEOUT_MS = 30_000;
 const DOCKER_IDENTITY_PROBE_MAX_BUFFER_BYTES = 256 * 1024;
 const IDENTITY_VALUE_MAX_LENGTH = 256;
@@ -58,6 +67,7 @@ export function inspectDockerSandboxIdentities(
     `{{.Label "${labelKeys.workspace}"}}`,
     `{{.Label "${labelKeys.sandboxId}"}}`,
     `{{.Label "${altLabelKey}"}}`,
+    IDENTITY_ROW_TERMINATOR,
   ].join("\t");
   const result = inspect(
     ["ps", "-a", "--no-trunc", "--filter", `label=${sandboxNameLabel}`, "--format", format],
@@ -83,7 +93,8 @@ export function inspectDockerSandboxIdentities(
     if (rawLine.length === 0) continue;
     const fields = rawLine.split("\t");
     if (
-      fields.length !== 5 ||
+      fields.length !== 6 ||
+      fields[5] !== IDENTITY_ROW_TERMINATOR ||
       !DOCKER_CONTAINER_ID_PATTERN.test(fields[0] ?? "") ||
       !fields.every(isExactBoundedIdentityText)
     ) {
@@ -91,6 +102,7 @@ export function inspectDockerSandboxIdentities(
       continue;
     }
     const [id, managedBy, workspace, sandboxId, managedAlt] = fields as [
+      string,
       string,
       string,
       string,
