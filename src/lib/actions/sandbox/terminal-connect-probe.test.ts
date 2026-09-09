@@ -4,7 +4,32 @@
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import type { AgentDefinition } from "../../agent/defs";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
+
+function commandExecutorThrough(
+  capture: () => { status: number; output: string } | undefined,
+): OpenShellSandboxBufferedCommandExecutor {
+  return {
+    runBuffered: vi.fn(async () => {
+      const result = capture();
+      return result
+        ? {
+            outcome: { kind: "completed" as const, exitCode: result.status },
+            stdout: result.output,
+            stderr: "",
+          }
+        : {
+            outcome: {
+              kind: "failed" as const,
+              error: { kind: "invocation" as const, message: "unavailable" },
+            },
+            stdout: "",
+            stderr: "",
+          };
+    }),
+  };
+}
 
 const dcodeAgent = {
   name: "langchain-deepagents-code",
@@ -42,19 +67,19 @@ describe("terminal-agent connect inference route", () => {
     vi.restoreAllMocks();
   });
 
-  it("fails dcode probe-only before smoke checks when inference.local stays broken (#6191)", () => {
+  it("fails dcode probe-only before smoke checks when inference.local stays broken (#6191)", async () => {
     const capture = vi.fn();
     const ensureInferenceRoute = vi.fn(() => ({ routeHealthy: false }));
 
-    expect(() =>
+    await expect(
       runTerminalAgentConnectProbe({
         agent: dcodeAgent,
         agentName: "LangChain Deep Agents Code",
-        capture: capture as never,
+        commandExecutor: commandExecutorThrough(capture),
         ensureInferenceRoute,
         sandboxName: "deep-code",
       }),
-    ).toThrow("process.exit(1)");
+    ).rejects.toThrow("process.exit(1)");
 
     expect(ensureInferenceRoute).toHaveBeenCalledWith("deep-code", { quiet: true });
     expect(capture).not.toHaveBeenCalled();
@@ -64,19 +89,19 @@ describe("terminal-agent connect inference route", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("preserves smoke-only probing for non-dcode terminal agents with no route (#6191)", () => {
+  it("preserves smoke-only probing for non-dcode terminal agents with no route (#6191)", async () => {
     const capture = vi.fn();
     const ensureInferenceRoute = vi.fn(() => ({ routeHealthy: null }));
 
-    expect(() =>
+    await expect(
       runTerminalAgentConnectProbe({
         agent: otherTerminalAgent,
         agentName: "Other Terminal Agent",
-        capture: capture as never,
+        commandExecutor: commandExecutorThrough(capture),
         ensureInferenceRoute,
         sandboxName: "other-box",
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
 
     expect(ensureInferenceRoute).toHaveBeenCalledWith("other-box", { quiet: true });
     expect(capture).not.toHaveBeenCalled();
@@ -86,22 +111,22 @@ describe("terminal-agent connect inference route", () => {
     );
   });
 
-  it("lets dcode continue to terminal smoke checks when its route probe is inconclusive (#6191)", () => {
+  it("lets dcode continue to terminal smoke checks when its route probe is inconclusive (#6191)", async () => {
     const capture = vi.fn(() => ({
       status: 0,
       output: "NEMOCLAW_AGENT_SMOKE_BEGIN\ndcode 0.1.12\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
     }));
     const ensureInferenceRoute = vi.fn(() => ({ routeHealthy: null }));
 
-    expect(() =>
+    await expect(
       runTerminalAgentConnectProbe({
         agent: dcodeAgent,
         agentName: "LangChain Deep Agents Code",
-        capture: capture as never,
+        commandExecutor: commandExecutorThrough(capture),
         ensureInferenceRoute,
         sandboxName: "deep-code",
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
 
     expect(ensureInferenceRoute).toHaveBeenCalledWith("deep-code", { quiet: true });
     expect(capture).toHaveBeenCalledOnce();
@@ -111,22 +136,22 @@ describe("terminal-agent connect inference route", () => {
     );
   });
 
-  it("fails dcode connect when a hostile profile forges markers before a nonzero exit (#8624)", () => {
+  it("fails dcode connect when a hostile profile forges markers before a nonzero exit (#8624)", async () => {
     const capture = vi.fn(() => ({
       status: 97,
       output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
     }));
     const ensureInferenceRoute = vi.fn(() => ({ routeHealthy: true }));
 
-    expect(() =>
+    await expect(
       runTerminalAgentConnectProbe({
         agent: dcodeAgent,
         agentName: "LangChain Deep Agents Code",
-        capture: capture as never,
+        commandExecutor: commandExecutorThrough(capture),
         ensureInferenceRoute,
         sandboxName: "deep-code",
       }),
-    ).toThrow("process.exit(1)");
+    ).rejects.toThrow("process.exit(1)");
 
     expect(capture).toHaveBeenCalledOnce();
     expect(errorSpy).toHaveBeenCalledWith(

@@ -8,6 +8,7 @@ import path from "node:path";
 import { expect, vi } from "vitest";
 
 import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import type { SandboxGpuProofResult } from "../../state/registry";
 import type { ManagedBootstrapRuntimeCreateLifecycleInput } from "../managed-bootstrap/runtime-create";
@@ -89,6 +90,13 @@ export function createGpuFlowDeps(
     return "";
   });
   return {
+    commandExecutor: {
+      runBuffered: vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: 0, signal: null },
+        stdout: "",
+        stderr: "",
+      })),
+    } satisfies OpenShellSandboxBufferedCommandExecutor,
     runOpenshell: vi.fn((args: string[]) => {
       assertSandboxProbeTarget(args);
       return args[0] === "sandbox" && args[1] === "get"
