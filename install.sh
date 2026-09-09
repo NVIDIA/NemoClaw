@@ -143,7 +143,7 @@ release_version_is_newer() {
 }
 
 run_bounded_bootstrap_lookup() (
-  local label="$1" max_output_bytes="$2" output_file command_pid="" output_bytes status ticks=0
+  local label="$1" max_output_bytes="$2" output_file command_pid="" output_bytes status ticks=0 pending_signal=0
   shift 2
   output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-bootstrap-lookup.XXXXXX")"
   # Invoked indirectly by the signal and exit traps below.
@@ -158,8 +158,9 @@ run_bounded_bootstrap_lookup() (
     rm -f "$output_file"
     exit "$cleanup_status"
   }
-  trap 'cleanup_bootstrap_lookup 130' INT
-  trap 'cleanup_bootstrap_lookup 143' TERM
+  # Defer cancellation until the newly launched process group has an owned PID.
+  trap 'pending_signal=130' INT
+  trap 'pending_signal=143' TERM
   trap 'cleanup_bootstrap_lookup "$?"' EXIT
   set -m
   (
@@ -168,6 +169,9 @@ run_bounded_bootstrap_lookup() (
   ) >"$output_file" 2>/dev/null &
   command_pid=$!
   set +m
+  trap 'cleanup_bootstrap_lookup 130' INT
+  trap 'cleanup_bootstrap_lookup 143' TERM
+  ((pending_signal == 0)) || cleanup_bootstrap_lookup "$pending_signal"
   while bootstrap_lookup_group_is_alive "$command_pid"; do
     if ((ticks >= BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS * 10)); then
       printf '[ERROR] Timed out during %s after %s seconds.\n' "$label" "$BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS" >&2

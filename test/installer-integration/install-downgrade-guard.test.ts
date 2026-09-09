@@ -42,10 +42,12 @@ function runInstall(
   options: {
     lookupMaxOutputBytes?: number;
     lookupSignal?: "INT" | "TERM";
+    lookupSignalBeforePid?: boolean;
     timeoutCleanupSignal?: "INT" | "TERM";
     tagLookupMaxOutputBytes?: number;
     lookupTimeoutSeconds?: number;
     useRealSleep?: boolean;
+    useRealPayload?: boolean;
   } = {},
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-downgrade-"));
@@ -92,7 +94,14 @@ case "\${1:-}" in
     cat >"$target/scripts/install.sh" <<'PAYLOAD'
 #!/usr/bin/env bash
 # NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1
-printf '%s|%s|%s' "\${NEMOCLAW_BOOTSTRAP_FETCH_REF:-}" "\${NEMOCLAW_INSTALL_REF:-}" "\${NEMOCLAW_INSTALL_TAG:-}" >"\${EXECUTION_MARKER:?}"
+${
+  options.useRealPayload
+    ? `source "$INSTALLER_PAYLOAD" >/dev/null
+resolve_repo_root() { printf '%s' "$NON_SOURCE_ROOT"; }
+export RECORD_MANAGED_FETCH=1
+install_nemoclaw`
+    : `printf '%s|%s|%s' "\${NEMOCLAW_BOOTSTRAP_FETCH_REF:-}" "\${NEMOCLAW_INSTALL_REF:-}" "\${NEMOCLAW_INSTALL_TAG:-}" >"\${EXECUTION_MARKER:?}"`
+}
 PAYLOAD
     chmod +x "$target/scripts/install.sh"
     ;;
@@ -100,10 +109,12 @@ PAYLOAD
     [[ "$*" == 'remote add origin https://github.com/NVIDIA/NemoClaw.git' ]] || exit 91
     ;;
   fetch)
-    [[ "$2" == '--quiet' && "$3" == '--depth' && "$4" == '1' && "$5" == 'origin' && "$6" == +*:refs/nemoclaw-install/target ]] || exit 92
+    [[ "$2" == '--quiet' && "$3" == '--depth' && "$4" == '1' && "$5" == 'origin' && "$6" == +*:refs/nemoclaw-install/target && -z "\${7:-}" ]] || exit 92
+    if [[ "\${RECORD_MANAGED_FETCH:-}" == 1 ]]; then printf '%s' "$6" >"\${EXECUTION_MARKER:?}"; fi
     ;;
   -c)
     [[ "$*" == '-c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target' ]] || exit 93
+    if [[ "\${RECORD_MANAGED_FETCH:-}" == 1 ]]; then exit 73; fi
     ;;
   rev-parse)
     printf 'target-commit\n'
@@ -158,13 +169,17 @@ exec /bin/sleep "$@"
     "BOOTSTRAP_TAG_LOOKUP_MAX_OUTPUT_BYTES=1048576",
     `BOOTSTRAP_TAG_LOOKUP_MAX_OUTPUT_BYTES=${options.tagLookupMaxOutputBytes ?? 1048576}`,
   );
+  const signalAnchor = options.lookupSignalBeforePid
+    ? "  command_pid=$!"
+    : '  while bootstrap_lookup_group_is_alive "$command_pid"; do';
   installerSource = options.lookupSignal
-    ? installerSource.replace(
-        "  command_pid=$!\n  set +m",
-        `  command_pid=$!
+    ? replaceRequired(
+        installerSource,
+        signalAnchor,
+        `
   while [[ ! -s "\${LOOKUP_PID:?}" ]]; do :; done
   /bin/bash -c 'kill -${options.lookupSignal} "$PPID"'
-  set +m`,
+${signalAnchor}`,
       )
     : installerSource;
 
@@ -176,6 +191,8 @@ exec /bin/sleep "$@"
       HOME: root,
       PATH: `${bin}:/usr/bin:/bin`,
       EXECUTION_MARKER: payloadMarker,
+      INSTALLER_PAYLOAD,
+      NON_SOURCE_ROOT: path.join(root, "not-a-checkout"),
       LOOKUP_PID: lookupPid,
       TMPDIR: root,
       ...extraEnvironment,
@@ -453,33 +470,44 @@ describe("public installer downgrade guard", () => {
   }, 15_000);
 
   it.each([
-    ["interrupted", "interrupt", "INT", 130],
-    ["terminated", "terminate", "TERM", 143],
+    ["interrupted during lookup", "interrupt", "INT", 130, false],
+    ["terminated during lookup", "terminate", "TERM", 143, false],
+    ["interrupted before PID recording", "interrupt", "INT", 130, true],
+    ["terminated before PID recording", "terminate", "TERM", 143, true],
   ] as const)(
     "cleans up an active lookup when the installer is %s",
-    (_label, mode, signal, status) => {
+    (_label, mode, signal, status, beforePid) => {
       const { lookupPid, payloadMarker, result, root } = runInstall(
         mode,
         "0.0.109",
         {},
         {
           lookupSignal: signal,
+          lookupSignalBeforePid: beforePid,
         },
       );
 
-      expect(result.status).toBe(status);
-      expect(fs.existsSync(payloadMarker)).toBe(false);
-      expect(
-        fs.readdirSync(root).filter((name) => name.startsWith("nemoclaw-bootstrap-lookup.")),
-      ).toEqual([]);
-      expect(
-        fs
-          .readdirSync(root, { withFileTypes: true })
-          .filter((entry) => entry.isDirectory())
-          .map((entry) => entry.name),
-      ).toEqual(["bin"]);
       const pid = Number(fs.readFileSync(lookupPid, "utf8"));
-      expect(() => process.kill(pid, 0)).toThrow();
+      try {
+        expect(result.status).toBe(status);
+        expect(fs.existsSync(payloadMarker)).toBe(false);
+        expect(
+          fs.readdirSync(root).filter((name) => name.startsWith("nemoclaw-bootstrap-lookup.")),
+        ).toEqual([]);
+        expect(
+          fs
+            .readdirSync(root, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => entry.name),
+        ).toEqual(["bin"]);
+        expect(() => process.kill(pid, 0)).toThrow();
+      } finally {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch (error) {
+          expect((error as NodeJS.ErrnoException).code).toBe("ESRCH");
+        }
+      }
     },
   );
 
@@ -536,61 +564,20 @@ describe("public installer downgrade guard", () => {
 });
 
 describe("versioned installer payload ref selection", () => {
-  it("passes the bootstrap commit to the managed clone boundary", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-payload-ref-"));
-    temporaryDirectories.push(root);
-    const bin = path.join(root, "bin");
-    const fetchMarker = path.join(root, "fetch-ref");
-    fs.mkdirSync(bin);
-    writeExecutable(
-      path.join(bin, "git"),
-      `#!/usr/bin/env bash
-if [[ "\${1:-}" == '-C' ]]; then shift 2; fi
-case "\${1:-}" in
-  init)
-    [[ "$2" == '--quiet' && -n "\${3:-}" && -z "\${4:-}" ]] || exit 91
-    mkdir -p "$3"
-    ;;
-  remote)
-    [[ "$*" == 'remote add origin https://github.com/NVIDIA/NemoClaw.git' ]] || exit 92
-    ;;
-  fetch)
-    [[ "$2" == '--quiet' && "$3" == '--depth' && "$4" == '1' && "$5" == 'origin' && "$6" == '+target-commit:refs/nemoclaw-install/target' && -z "\${7:-}" ]] || exit 93
-    printf 'target-commit' >"\${FETCH_MARKER:?}"
-    ;;
-  -c)
-    [[ "$*" == '-c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target' ]] || exit 94
-    exit 73
-    ;;
-  *) exit 95 ;;
-esac
-`,
-    );
-    const result = spawnSync(
-      "bash",
-      [
-        "-c",
-        `source "$INSTALLER_PAYLOAD" >/dev/null
-resolve_repo_root() { printf '%s' "$NON_SOURCE_ROOT"; }
-install_nemoclaw`,
-      ],
+  it("passes the public bootstrap commit through the real payload to the managed clone", () => {
+    const { result, payloadMarker } = runInstall(
+      "0.0.108",
+      "0.0.109",
       {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          FETCH_MARKER: fetchMarker,
-          HOME: root,
-          INSTALLER_PAYLOAD,
-          NEMOCLAW_BOOTSTRAP_FETCH_REF: "target-commit",
-          NEMOCLAW_INSTALL_REF: "v0.0.109",
-          NEMOCLAW_INSTALL_TAG: "lkg",
-          NON_SOURCE_ROOT: path.join(root, "not-a-checkout"),
-          PATH: `${bin}:/usr/bin:/bin`,
-        },
+        NEMOCLAW_INSTALL_REF: "lkg",
+        NEMOCLAW_INSTALL_TAG: "v0.0.108",
       },
+      { useRealPayload: true },
     );
 
     expect(result.status).toBe(73);
-    expect(fs.readFileSync(fetchMarker, "utf8")).toBe("target-commit");
+    expect(fs.readFileSync(payloadMarker, "utf8")).toBe(
+      "+target-commit:refs/nemoclaw-install/target",
+    );
   });
 });
