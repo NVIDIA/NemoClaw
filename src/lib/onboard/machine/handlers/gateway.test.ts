@@ -611,7 +611,7 @@ describe("handleGatewayState", () => {
     const result = await handleGatewayState(baseOptions(deps, "foreign-active"));
 
     expect(calls.retireLegacy).not.toHaveBeenCalled();
-    expect(calls.note).not.toHaveBeenCalledWith("  Replacing legacy OpenShell gateway metadata.");
+    expect(calls.note).not.toHaveBeenCalled();
     expect(calls.startGateway).toHaveBeenCalledOnce();
     expect(result.gatewayReuseState).toBe("missing");
   });
