@@ -501,6 +501,49 @@ describe("publishExportFile", () => {
     expect(closed).toHaveLength(1);
   });
 
+  it("removes staging and closes both descriptors when writing fails (#10938)", () => {
+    const root = temporaryRoot();
+    const outputPath = path.join(root, "selected.yaml");
+    const closed = vi.spyOn(fs, "closeSync");
+    vi.spyOn(fs, "writeSync").mockImplementationOnce(() => {
+      throw Object.assign(new Error("injected staging write failure"), { code: "EIO" });
+    });
+
+    expect(() => publishExportFile(outputPath, "content")).toThrowError(
+      expect.objectContaining<Partial<YamlExportOutputError>>({
+        category: "unsafe-output",
+        fileState: { publication: "not-published", stagingCleanup: "complete" },
+        stagingReference: null,
+      }),
+    );
+    expect(closed).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(outputPath)).toBe(false);
+    expect(temporaryEntries(root)).toEqual([]);
+  });
+
+  it("retains staging without identity and closes both descriptors when its fstat fails (#10938)", () => {
+    const root = temporaryRoot();
+    const outputPath = path.join(root, "selected.yaml");
+    const closed = vi.spyOn(fs, "closeSync");
+    const fstatSync = fs.fstatSync;
+    vi.spyOn(fs, "fstatSync")
+      .mockImplementationOnce((descriptor) => fstatSync(descriptor))
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("injected staging identity failure"), { code: "EIO" });
+      });
+
+    expect(() => publishExportFile(outputPath, "content")).toThrowError(
+      expect.objectContaining<Partial<YamlExportOutputError>>({
+        category: "unsafe-output",
+        fileState: { publication: "not-published", stagingCleanup: "incomplete" },
+        stagingReference: null,
+      }),
+    );
+    expect(closed).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(outputPath)).toBe(false);
+    expect(temporaryEntries(root)).toHaveLength(1);
+  });
+
   it("does not retry a staged descriptor close that reports failure after publication (#10938)", () => {
     const root = temporaryRoot();
     const outputPath = path.join(root, "selected.yaml");
