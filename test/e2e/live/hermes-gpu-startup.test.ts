@@ -482,9 +482,7 @@ test(
     const fallbackEvents = fallbackWrapper
       ? readHermesGpuFallbackEvents(fallbackWrapper.eventsPath)
       : [];
-    await (fallbackWrapper
-      ? artifacts.writeJson("gpu-fallback-events.json", fallbackEvents)
-      : Promise.resolve());
+    await (fallbackWrapper && artifacts.writeJson("gpu-fallback-events.json", fallbackEvents));
     expect(install.exitCode, resultText(install)).toBe(0);
     assertStockManagedImageReceipt({
       environment: env,
@@ -528,7 +526,7 @@ test(
         ),
       ).toBe(true);
     };
-    await (fallbackWrapper ? Promise.resolve(verifyFallback(fallbackWrapper)) : Promise.resolve());
+    fallbackWrapper && verifyFallback(fallbackWrapper);
 
     progress.phase("validate GPU startup and supervisor proof");
     const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {
