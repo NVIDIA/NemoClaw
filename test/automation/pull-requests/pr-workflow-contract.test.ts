@@ -597,7 +597,7 @@ describe("pull request and main workflow contracts", () => {
     try {
       const result = runWorkflowShellStep(installStep, {
         APT_ARGS: aptArgs,
-        PATH: `${fakeBin}:${process.env.PATH}`,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
       });
       expect(result.status).toBe(86);
       expect(readFileSync(aptArgs, "utf8").trim().split("\n")).toEqual([
