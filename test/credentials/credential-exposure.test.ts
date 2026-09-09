@@ -7,8 +7,8 @@
 // there is no reason to pass the secret itself on the command line where it
 // would be visible in `ps aux` output.
 
-import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
+import { createCliOpenShellProviderAdapter } from "../../src/lib/adapters/openshell/provider-adapter-cli";
 import {
   buildSubprocessEnv as buildPluginSubprocessEnv,
   withLocalNoProxy as withPluginLocalNoProxy,
@@ -18,31 +18,34 @@ import {
   withLocalNoProxy as withCliLocalNoProxy,
 } from "../../src/lib/subprocess-env";
 
-const require = createRequire(import.meta.url);
-const { buildProviderArgs } = require("../../src/lib/onboard/providers.js") as {
-  buildProviderArgs: (
-    action: "create" | "update",
-    name: string,
-    type: string,
-    credentialEnv: string,
-    baseUrl: string | null,
-  ) => string[];
-};
-
 describe("credential exposure in process arguments", () => {
-  it("onboard.js --credential flags pass env var names only", () => {
-    const args = buildProviderArgs(
-      "create",
-      "inference",
-      "openai",
-      "NVIDIA_INFERENCE_API_KEY",
-      "https://api.example.test/v1",
-    );
+  it("provider adapter --credential flags pass env var names only", async () => {
+    const secret = "nvapi-test-secret";
+    const calls: Array<{ args: string[]; env?: Record<string, string | undefined> }> = [];
+    const adapter = createCliOpenShellProviderAdapter({
+      run: (args, options) => {
+        calls.push({ args, env: options.env });
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
 
+    await expect(
+      adapter.createProvider({
+        target: { kind: "selected" },
+        name: "inference",
+        type: "openai",
+        credentials: [{ name: "NVIDIA_INFERENCE_API_KEY", value: secret }],
+        config: [{ key: "OPENAI_BASE_URL", value: "https://api.example.test/v1" }],
+        fromExisting: false,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    const [{ args, env }] = calls;
     expect(args).toContain("--credential");
     expect(args).toContain("NVIDIA_INFERENCE_API_KEY");
     expect(args.join(" ")).not.toContain("NVIDIA_INFERENCE_API_KEY=");
-    expect(args.join(" ")).not.toContain("nvapi-");
+    expect(args.join(" ")).not.toContain(secret);
+    expect(env).toEqual({ NVIDIA_INFERENCE_API_KEY: secret });
   });
 
   it("subprocess-env TLS allowlist includes git, curl, and python CA vars (#2270)", () => {

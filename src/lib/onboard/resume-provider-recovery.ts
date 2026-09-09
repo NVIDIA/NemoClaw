@@ -25,7 +25,7 @@ export type ResumeProviderRecoveryDeps = {
   remoteProviderConfig: Record<string, RemoteProviderConfigEntry>;
   defaultRouteCredentialEnv: string;
   isRoutedInferenceProvider: (provider: string) => boolean;
-  providerExistsInGateway: (name: string) => boolean;
+  providerExistsInGateway: (name: string) => boolean | Promise<boolean>;
   hydrateCredentialEnv: (envName: string) => string | null;
   getProviderLabel: (key: string) => string;
   isNonInteractive: () => boolean;
@@ -96,7 +96,7 @@ export async function ensureResumeProviderReady(
   if (!provider || (!config && !deps.isRoutedInferenceProvider(provider))) {
     return { forceInferenceSetup: false, credentialEnv: credentialEnv ?? null };
   }
-  if (deps.providerExistsInGateway(provider)) {
+  if (await deps.providerExistsInGateway(provider)) {
     return { forceInferenceSetup: false, credentialEnv: credentialEnv ?? null };
   }
 

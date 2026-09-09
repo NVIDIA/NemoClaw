@@ -6,6 +6,8 @@
  * formatting helpers used across the CLI.
  */
 
+import { MAX_CANONICAL_ENDPOINT_LENGTH } from "./endpoint-url-safety.ts";
+
 export function compactText(value = ""): string {
   return String(value).replace(/\s+/g, " ").trim();
 }
@@ -21,8 +23,6 @@ export function stripEndpointSuffix(pathname = "", suffixes: string[] = []): str
 }
 
 export type EndpointFlavor = "anthropic" | "openai";
-
-const MAX_CANONICAL_ENDPOINT_LENGTH = 2048;
 
 export function normalizeProviderBaseUrl(
   value: string | URL | null | undefined,

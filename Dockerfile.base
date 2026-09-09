@@ -340,8 +340,7 @@ RUN mkdir -p /sandbox/.openclaw/agents/main/agent \
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 
 # Pre-create shell init files for the sandbox user. Runtime environment hooks
-# are installed system-wide below; user rc files stay clean and locked so
-# per-user startup files are not part of the trust boundary.
+# are installed system-wide below; personal files belong to the agent.
 # hadolint ignore=SC2028
 RUN printf '%s\n' \
         '# NemoClaw sandbox shell init' \
@@ -349,8 +348,8 @@ RUN printf '%s\n' \
     && printf '%s\n' \
         '# NemoClaw sandbox login init' \
         > /sandbox/.profile \
-    && chown root:root /sandbox/.bashrc /sandbox/.profile \
-    && chmod 444 /sandbox/.bashrc /sandbox/.profile
+    && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile \
+    && chmod 644 /sandbox/.bashrc /sandbox/.profile
 
 # System-wide proxy hooks. The per-home rc files above only fire for shells
 # that find `~/.bashrc` / `~/.profile` (sandbox user, HOME=/sandbox). SSH

@@ -35,6 +35,8 @@ const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const MANAGED_SOURCE_CONDITION =
   "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
+const BASE_PUBLICATION_CONDITION =
+  "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' || inputs.jobs != '' || inputs.targets == '' || contains(inputs.targets, 'managed-image-') }}";
 const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
   [
     "set -euo pipefail",
@@ -439,6 +441,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "Launchable PR E2E requires a branch in NVIDIA/NemoClaw",
     `"$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA"`,
     `"$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization"`,
+    `"$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw"`,
+    "Manual PR E2E requires a source branch in NVIDIA/NemoClaw.",
     "nvidia_owned=false",
     "nvidia_owned=true",
     `printf 'nvidia_owned=%s\\n' "$nvidia_owned" >> "$GITHUB_OUTPUT"`,
@@ -506,6 +510,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '[[ -n "$GITHUB_TOKEN" ]]',
     'auth_args=(--header "Authorization: Bearer ${GITHUB_TOKEN}")',
     '"${auth_args[@]}"',
+    `"$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw"`,
     "PR source repository ownership changed before execution",
   ]) {
     if (!validationSource.includes(fragment)) {
@@ -541,6 +546,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const authorizationSource = String(credentialAuthorization.run ?? "");
   for (const fragment of [
     '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
+    '"$CHECKOUT_REPOSITORY" == "NVIDIA/NemoClaw"',
     '"$NVIDIA_OWNED" == "true"',
     '"$EVENT_NAME" == "workflow_dispatch"',
     '"$REF" == refs/heads/*',
@@ -662,7 +668,15 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
           step.name === "Check out the qualification aggregator" &&
           step.with?.repository === "${{ github.repository }}" &&
           step.with?.ref === "${{ github.workflow_sha }}");
+      const trustedCompilerCheckout =
+        jobName === "generate-matrix" &&
+        step.name === "Check out trusted compiled artifact action" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ github.workflow_sha }}" &&
+        step.with?.path === ".trusted-ci-actions" &&
+        step.with?.["persist-credentials"] === false;
       const trustedCheckout =
+        trustedCompilerCheckout ||
         trustedHermesFixtureCheckout ||
         trustedE2ePlannerCheckout ||
         trustedReportHelperCheckout ||
@@ -764,6 +778,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         id: "publication",
         name: "Select base and optional managed-image publication",
+        if: BASE_PUBLICATION_CONDITION,
         env: {
           EXPECTED_SHA: "${{ steps.publication_mode.outputs.expected_sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
@@ -789,6 +804,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       },
       {
         name: "Download immutable Deep Agents Code base contract",
+        if: BASE_PUBLICATION_CONDITION,
         env: {
           GITHUB_TOKEN: "${{ github.token }}",
           PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
@@ -800,6 +816,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         id: "validate_dcode_base",
         name: "Validate immutable Deep Agents Code base",
+        if: BASE_PUBLICATION_CONDITION,
         env: {
           PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
           PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
@@ -1532,9 +1549,7 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   }
 }
 
-export function validateE2eOperationsWorkflow(
-  workflow: OperationsWorkflow,
-): string[] {
+export function validateE2eOperationsWorkflow(workflow: OperationsWorkflow): string[] {
   const errors = validateStandardProfileWorkflowBoundary(
     workflow as unknown as Record<string, unknown>,
   );

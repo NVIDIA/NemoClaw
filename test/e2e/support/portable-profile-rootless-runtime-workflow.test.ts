@@ -16,6 +16,11 @@ type PortableProfileWorkflow = Workflow & {
   };
 };
 
+type SandboxPolicy = {
+  filesystem_policy?: { read_only?: string[] };
+  process?: { run_as_user?: string; run_as_group?: string };
+};
+
 describe("portable profile rootless runtime workflow", () => {
   // source-shape-contract: security -- The rootless-linux install must skip redundant advisory requests on automated runs while manual dispatches retain an explicit audit without a reviewed prerequisite
   it("routes rootless job dependency auditing by workflow trigger (#11028)", () => {
@@ -53,6 +58,9 @@ describe("portable profile rootless runtime workflow", () => {
       "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "utf-8",
     );
+    const hermesPolicy = readYaml<SandboxPolicy>(
+      "test/e2e/live/hermes-portable-lifecycle-policy.yaml",
+    );
     const job = workflow.jobs["rootless-linux"];
     const steps = job?.steps ?? [];
     const provision = steps.find(
@@ -88,8 +96,15 @@ describe("portable profile rootless runtime workflow", () => {
         "agents/hermes/Dockerfile",
         "agents/hermes/dashboard-external-host.patch",
         "agents/hermes/start.sh",
+        "src/lib/actions/sandbox/forward-recovery.ts",
+        "src/lib/actions/sandbox/probe/hermes-portable-forward-recovery.ts",
+        "src/lib/actions/sandbox/start.ts",
+        "src/lib/adapters/openshell/forward-service.ts",
         "src/lib/onboard/experimental/hermes-portable-build-context-files.ts",
         "src/lib/onboard/experimental/hermes-portable-build-context.ts",
+        "src/lib/onboard/experimental/hermes-portable-contract.ts",
+        "src/lib/onboard/experimental/hermes-portable-lifecycle.ts",
+        "src/lib/onboard/runtime-provider/docker.ts",
       ]),
     );
     expect(Array.isArray(actionlintLabels)).toBe(true);
@@ -123,6 +138,17 @@ describe("portable profile rootless runtime workflow", () => {
     );
     expect(liveTest).toContain("preparePortableExperimentalHost(process.env, { home });");
     expect(liveTest).toContain("createHermesPortableBuildContextPlan(");
+    expect(liveTest).toContain('"test/e2e/live/hermes-portable-lifecycle-policy.yaml"');
+    expect(liveTest).toContain('".hermes-policy.yaml"');
+    expect(liveTest).toContain('flag: "wx"');
+    expect(liveTest).toContain("mode: 0o600");
+    expect(liveTest).toContain("await streamSandboxCreate(");
+    expect(liveTest).toContain("waitForReadyTermination: true");
+    expect(hermesPolicy.filesystem_policy?.read_only).toContain("/opt/hermes");
+    expect(hermesPolicy.process).toEqual({
+      run_as_user: "sandbox",
+      run_as_group: "sandbox",
+    });
     expect(liveTest).toContain('buildId: "hermes-rootless-e2e"');
     expect(liveTest).toContain("hermesContextPlan.retire(hermesContextInput)");
     expect(liveTest).toContain("assert.equal(prepared?.authority.configHome, configHome);");
@@ -259,6 +285,8 @@ ${serviceIdentityCheck}`,
     const revisionExpression = "${{ github.event.pull_request.head.sha || github.sha }}";
 
     expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
+    expect(workflow.on.push.paths).toContain("tools/e2e/full-e2e-timeout-contract.mts");
+    expect(workflow.on.pull_request.paths).not.toContain("tools/e2e/full-e2e-timeout-contract.mts");
     expect(workflow.on.pull_request.paths).toEqual(
       expect.arrayContaining([
         "src/lib/onboard/experimental/portable-host-preparation.ts",
@@ -274,6 +302,7 @@ ${serviceIdentityCheck}`,
     expect(upload?.if).toBe("always()");
     expect(upload?.with?.name).toContain(revisionExpression);
     expect(workflow.jobs["portable-launch"]?.if).toBe("${{ github.ref == 'refs/heads/main' }}");
+    expect(workflow.jobs["portable-launch"]?.["timeout-minutes"]).toBe(135);
     expect(liveSource).toContain('run("git", ["rev-parse", "HEAD"])');
     expect(liveSource).toContain('"network", "rm", disposableNetworkId');
     expect(liveSource).not.toContain('"network", "rm", "--force"');
