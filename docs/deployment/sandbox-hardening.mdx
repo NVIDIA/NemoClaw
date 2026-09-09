@@ -135,6 +135,7 @@ System paths remain read-only for these protections:
 
 Personal shell files `.bashrc` and `.profile` belong to the sandbox user and can be edited.
 System-wide shell hooks load runtime proxy settings from `/tmp/nemoclaw-proxy-env.sh`, which retains mode `0444`.
+After updating NemoClaw, [rebuild existing sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes) to apply these profile permissions.
 
 ### Landlock Kernel Requirements
 
