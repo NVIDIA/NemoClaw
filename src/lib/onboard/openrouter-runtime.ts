@@ -7,19 +7,12 @@ import { ensureOpenRouterRuntimeAdapter } from "../inference/openrouter-runtime-
 import { redact } from "../runner";
 import * as registry from "../state/registry";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "./env";
+import type { UpsertProvider } from "./inference-providers/types";
 
 type RunOpenshell = (
   args: string[],
   options?: { ignoreError?: boolean; suppressOutput?: boolean; timeout?: number },
 ) => { status: number | null; stdout?: unknown; stderr?: unknown };
-
-type UpsertProvider = (
-  name: string,
-  type: string,
-  credentialEnv: string,
-  baseUrl: string | null,
-  env?: NodeJS.ProcessEnv,
-) => { ok: boolean; message?: string; status?: number };
 
 type SetupInferenceResult = { ok: true; retry?: undefined } | { retry: "selection" };
 
@@ -83,7 +76,7 @@ export async function setupOpenRouterRuntimeInference(
   }
 
   const env = options.credentialValue ? { [credentialEnv]: options.credentialValue } : {};
-  const providerResult = options.upsertProvider(
+  const providerResult = await options.upsertProvider(
     options.provider,
     "openai",
     credentialEnv,

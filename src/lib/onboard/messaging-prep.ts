@@ -58,8 +58,12 @@ export interface CreateSandboxMessagingPrepInput {
     sources?: ExtraPlaceholderCredentialSources,
   ): string[];
   getMessagingChannelForEnvKey(envKey: string): string | null;
-  providerExistsInGateway(name: string): boolean;
-  providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
+  providerExistsInGateway(name: string): boolean | Promise<boolean>;
+  providerMatchesGatewayCredential(
+    name: string,
+    type: string,
+    credentialEnv: string,
+  ): boolean | Promise<boolean>;
 }
 
 export interface CreateSandboxMessagingPrepResult {
@@ -74,9 +78,9 @@ export interface CreateSandboxMessagingPrepResult {
   missingWebSearchCredentialEnv: string | null;
 }
 
-export function prepareCreateSandboxMessaging(
+export async function prepareCreateSandboxMessaging(
   input: CreateSandboxMessagingPrepInput,
-): CreateSandboxMessagingPrepResult {
+): Promise<CreateSandboxMessagingPrepResult> {
   const requiresExactOpenClawProviderBinding =
     input.requireExactProviderBinding === true &&
     (!input.agentName || input.agentName.trim().toLowerCase() === "openclaw");
@@ -142,11 +146,11 @@ export function prepareCreateSandboxMessaging(
     requiresExactOpenClawProviderBinding &&
     webSearchEnabled &&
     !webSearchApiKey &&
-    input.providerMatchesGatewayCredential(
+    (await input.providerMatchesGatewayCredential(
       webSearchProviderName,
       webSearchProviderType,
       webSearchCredentialEnv,
-    );
+    ));
   const missingWebSearchCredentialEnv =
     webSearchEnabled && !webSearchApiKey && !reusableWebSearchProvider
       ? webSearchCredentialEnv
@@ -235,10 +239,10 @@ export function prepareCreateSandboxMessaging(
       // provider already holding that authority.
       if (token && !channelDisabled) continue;
       const providerReusable = providerType
-        ? input.providerMatchesGatewayCredential(name, providerType, envKey)
+        ? await input.providerMatchesGatewayCredential(name, providerType, envKey)
         : requiresExactOpenClawProviderBinding
-          ? input.providerMatchesGatewayCredential(name, "generic", envKey)
-          : input.providerExistsInGateway(name);
+          ? await input.providerMatchesGatewayCredential(name, "generic", envKey)
+          : await input.providerExistsInGateway(name);
       if (!providerReusable) continue;
       reusableMessagingProviders.push(name);
       if (!channelDisabled && !reusableMessagingChannels.includes(channel)) {
@@ -261,7 +265,13 @@ export function prepareCreateSandboxMessaging(
       for (const name of bridgeProviderNamesForChannel(input.sandboxName, channel, [profile])) {
         if (messagingTokenDefs.some((def) => def.name === name && def.token)) continue;
         if (reusableMessagingProviders.includes(name)) continue;
-        if (!input.providerMatchesGatewayCredential(name, profile.profileId, profile.credentialKey))
+        if (
+          !(await input.providerMatchesGatewayCredential(
+            name,
+            profile.profileId,
+            profile.credentialKey,
+          ))
+        )
           continue;
         reusableMessagingProviders.push(name);
         if (!reusableMessagingChannels.includes(channel)) {
