@@ -450,7 +450,7 @@ describe("inventory commands", () => {
     expect(lines.some((line) => line.includes("base-img-reject"))).toBe(false);
   });
 
-  it("normalizes invalid configured inference fields out of status rows", async () => {
+  it("awaits gateway health and normalizes invalid configured inference fields", async () => {
     const report = await getStatusReport({
       listSandboxes: () => ({
         sandboxes: [
@@ -461,6 +461,8 @@ describe("inventory commands", () => {
         defaultSandbox: "blank-provider",
       }),
       getLiveInference: () => null,
+      getGatewayHealth: () =>
+        Promise.resolve({ healthy: false, state: "named_unreachable", reason: "offline" }),
       showServiceStatus: vi.fn(),
     });
 
@@ -469,6 +471,11 @@ describe("inventory commands", () => {
       { name: "blank-model", provider: "nvidia-prod", model: null },
       { name: "configured", provider: "nvidia-prod", model: "nvidia/test" },
     ]);
+    expect(report.gatewayHealth).toEqual({
+      healthy: false,
+      state: "named_unreachable",
+      reason: "offline",
+    });
   });
 
   it("reports schema-5 phase without ambient global probes", async () => {
@@ -1386,7 +1393,7 @@ describe("inventory commands", () => {
     expect(lines.some((l) => l.includes("SSH sessions:"))).toBe(false);
   });
 
-  it("emits a gateway-down diagnostic and sets process.exitCode when the gateway is unhealthy (#3386)", async () => {
+  it("awaits asynchronous gateway health, emits its diagnostic, and sets process.exitCode (#3386)", async () => {
     const previousExitCode = process.exitCode;
     process.exitCode = 0;
     const lines: string[] = [];
@@ -1398,11 +1405,12 @@ describe("inventory commands", () => {
         }),
         getLiveInference: () => null,
         showServiceStatus: vi.fn(),
-        getGatewayHealth: () => ({
-          healthy: false,
-          state: "named_unreachable",
-          reason: "host port held or container not running",
-        }),
+        getGatewayHealth: () =>
+          Promise.resolve({
+            healthy: false,
+            state: "named_unreachable",
+            reason: "host port held or container not running",
+          }),
         getGatewayStartGuidance: () => "Start the gateway with its lifecycle owner.",
         log: (message = "") => lines.push(message),
       });

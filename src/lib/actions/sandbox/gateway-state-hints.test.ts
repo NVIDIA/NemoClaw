@@ -418,15 +418,27 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     exitSpy.mockRestore();
   });
 
-  it("prints restart guidance when the named gateway remains unreachable", async () => {
+  it.each([
+    {
+      state: "named_unreachable" as const,
+      observation: {
+        state: "named_unreachable" as const,
+        status: "Gateway: nemoclaw\nConnection refused",
+      },
+    },
+    {
+      state: "named_unhealthy" as const,
+      observation: {
+        state: "named_unhealthy" as const,
+        diagnostic: "Gateway is not connected.",
+      },
+    },
+  ])("prints restart guidance when the named gateway remains $state", async ({ observation }) => {
     captureOpenshellSpy.mockReturnValue({
       status: 1,
       output: "Error: transport error: Connection refused",
     });
-    getNamedGatewayLifecycleStateSpy.mockResolvedValue({
-      state: "named_unreachable",
-      status: "Gateway: nemoclaw\nConnection refused",
-    });
+    getNamedGatewayLifecycleStateSpy.mockResolvedValue(observation);
     const lines: string[] = [];
     const errorSpy = vi.spyOn(console, "error").mockImplementation((line = "") => {
       lines.push(String(line));

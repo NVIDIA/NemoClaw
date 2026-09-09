@@ -399,7 +399,6 @@ describe("CLI dispatch", () => {
     },
   );
 
-
   it(
     "doctor does not query sandbox state from a different active gateway",
     testTimeoutOptions(15_000),
@@ -418,7 +417,7 @@ describe("CLI dispatch", () => {
 
       expect(r.code).toBe(1);
       expect(r.out).toContain("OpenShell status");
-      expect(r.out).toContain("Gateway: other");
+      expect(r.out).toContain("Connected to gateway 'other' instead of 'nemoclaw'.");
       expect(setup.readCalls().some((call) => /^sandbox list(\s|$)/.test(call))).toBe(false);
     },
   );

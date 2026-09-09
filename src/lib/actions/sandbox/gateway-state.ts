@@ -818,6 +818,7 @@ export function printGatewayLifecycleHint(
   }
   if (
     observation?.state === "named_unreachable" ||
+    observation?.state === "named_unhealthy" ||
     (/Connection refused|client error \(Connect\)|tcp connect error/i.test(cleanOutput) &&
       gatewayNamePattern(targetGatewayName).test(cleanOutput))
   ) {

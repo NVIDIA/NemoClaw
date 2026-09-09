@@ -17,9 +17,36 @@ afterEach(() => vi.unstubAllEnvs());
 
 describe("CLI gateway observation", () => {
   it.each([
-    [connected, info, 0, 0, "healthy_named", false],
-    ["Status: Connected\nGateway: foreign", info, 0, 0, "connected_other", false],
-    ["Gateway: nemoclaw-8090\nConnection refused", info, 1, 0, "named_unreachable", true],
+    [
+      connected,
+      info,
+      0,
+      0,
+      "healthy_named",
+      false,
+      "nemoclaw-8090",
+      "Connected to gateway 'nemoclaw-8090'.",
+    ],
+    [
+      "Status: Connected\nGateway: foreign",
+      info,
+      0,
+      0,
+      "connected_other",
+      false,
+      "foreign",
+      "Connected to gateway 'foreign' instead of 'nemoclaw-8090'.",
+    ],
+    [
+      "Gateway: nemoclaw-8090\nConnection refused",
+      info,
+      1,
+      0,
+      "named_unreachable",
+      true,
+      "nemoclaw-8090",
+      "Gateway 'nemoclaw-8090' is unreachable.",
+    ],
     [
       "Gateway: nemoclaw-8090\nError: client error (Connect): Connection refused",
       info,
@@ -27,9 +54,29 @@ describe("CLI gateway observation", () => {
       0,
       "named_unreachable",
       true,
+      "nemoclaw-8090",
+      "Gateway 'nemoclaw-8090' is unreachable.",
     ],
-    ["Gateway: nemoclaw-8090\nStatus: Disconnected", info, 0, 0, "named_unhealthy", true],
-    ["No gateway configured", "No gateway metadata found", 1, 1, "missing_named", true],
+    [
+      "Gateway: nemoclaw-8090\nStatus: Disconnected",
+      info,
+      0,
+      0,
+      "named_unhealthy",
+      true,
+      "nemoclaw-8090",
+      "Gateway 'nemoclaw-8090' is not connected.",
+    ],
+    [
+      "No gateway configured",
+      "No gateway metadata found",
+      1,
+      1,
+      "missing_named",
+      true,
+      null,
+      "Gateway 'nemoclaw-8090' is not configured.",
+    ],
     [
       connected,
       "gateway info is not supported by this gateway version",
@@ -37,11 +84,31 @@ describe("CLI gateway observation", () => {
       1,
       "healthy_named",
       false,
+      "nemoclaw-8090",
+      "Connected to gateway 'nemoclaw-8090'.",
     ],
-    ["\u001b[32m" + connected + "\u001b[0m", info, 0, 0, "healthy_named", false],
+    [
+      "\u001b[32m" + connected + "\u001b[0m",
+      info,
+      0,
+      0,
+      "healthy_named",
+      false,
+      "nemoclaw-8090",
+      "Connected to gateway 'nemoclaw-8090'.",
+    ],
   ])(
     "classifies status %s and metadata %s as %s",
-    async (status, metadata, statusCode, infoCode, state, unavailable) => {
+    async (
+      status,
+      metadata,
+      statusCode,
+      infoCode,
+      state,
+      unavailable,
+      activeGateway,
+      diagnostic,
+    ) => {
       const capture = captureFor(
         String(status),
         String(metadata),
@@ -51,6 +118,8 @@ describe("CLI gateway observation", () => {
       const result = await createCliOpenShellGatewayObserver(capture).observeGateway(request);
       expect(result.state).toBe(state);
       expect(result.unavailable).toBe(unavailable);
+      expect(result.activeGateway).toBe(activeGateway);
+      expect(result.diagnostic).toBe(diagnostic);
       expect(result).not.toHaveProperty("status");
       expect(result).not.toHaveProperty("gatewayInfo");
       expect(capture.mock.calls.map(([args]) => args)).toEqual([
