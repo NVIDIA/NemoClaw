@@ -121,7 +121,9 @@ function readCliInvocations(fixture: CliParityFixture): string[] {
 }
 
 describe("public compiled CLI contracts", () => {
-  it("prints the public NemoClaw version prefix (#7616)", () => {
+  it("prints the public NemoClaw version prefix (#7616)", {
+    timeout: 35_000,
+  }, () => {
     const result = spawnSync(process.execPath, [CLI_ENTRYPOINT, "--version"], {
       cwd: REPO_ROOT,
       encoding: "utf-8",

@@ -1010,7 +1010,7 @@ jobs:
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
-          node --experimental-strip-types --no-warnings \
+          node --no-warnings \
             tools/e2e/pr-managed-image-publication.mts assemble \
             "$CANDIDATE_SHA" \
             "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG" \
@@ -1112,7 +1112,7 @@ jobs:
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
-          node --experimental-strip-types --no-warnings \
+          node --no-warnings \
             tools/e2e/pr-managed-image-publication.mts assemble \
             "$CANDIDATE_SHA" \
             "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG" \
@@ -1557,7 +1557,7 @@ jobs:
               startupProfileContractVersion: 1,
               capabilityContractVersion: 1
             }' > "$contract_dir/contract.json"
-          node --experimental-strip-types tools/managed-images/validate-candidate-contract.mts \
+          node tools/managed-images/validate-candidate-contract.mts \
             --contract "$contract_dir/contract.json" \
             --platform "$PLATFORM"
       # The all-agent activation job downloads managed-pr-contract-* artifacts.

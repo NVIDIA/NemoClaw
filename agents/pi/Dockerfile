@@ -123,12 +123,12 @@ COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 
 # The final managed image owns the shipped dependency boundary independently
 # of base freshness. Reassert the idempotent npm-private node-tar fix here.
-RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+RUN node /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # Reassert the npm-private brace-expansion fix for the final filesystem.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
+RUN node /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # Reassert the npm-private ip-address fix for the final filesystem. When
@@ -137,7 +137,7 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.m
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
-    node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
+    node /scripts/lib/patch-bundled-npm-ip-address.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
 ARG PI_VERSION=0.84.1
@@ -229,7 +229,7 @@ USER sandbox
 RUN umask 077 \
     && mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/ \
-    && node --experimental-strip-types /opt/nemoclaw-pi/generate-config.ts \
+    && node /opt/nemoclaw-pi/generate-config.ts \
     && test "$(stat -c %a /sandbox/.pi/agent/models.json)" = "600"
 
 # hadolint ignore=DL3066
