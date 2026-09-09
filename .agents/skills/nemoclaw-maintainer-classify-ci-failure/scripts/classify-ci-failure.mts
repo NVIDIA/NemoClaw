@@ -1079,10 +1079,15 @@ async function classifyCiFailureWithRuntime(
       "The environment-variable documentation gate failed.",
       "Document the new NEMOCLAW_* variable in the required reference or remove it.",
     );
-  if (
-    /reviewed-npm-audit/i.test(job.name) ||
-    /\bnpm audit\b|audit-reviewed-npm-graph/i.test(text)
-  )
+  const isNpmAuditJob =
+    /^(?:reviewed-npm-audit|PR npm audit|npm audit for managed image publication)$/i.test(
+      job.name.trim(),
+    );
+  const hasNpmAuditFailure =
+    /npm audit (?:threshold failed|scan remained incomplete|failed without vulnerability findings|requires npm [^\n;]+; running npm)|unused npm audit exceptions|\d+ unaccepted at or above (?:high|critical)/i.test(
+      text,
+    );
+  if (isNpmAuditJob || hasNpmAuditFailure)
     add(
       "reviewed-npm-audit",
       "The npm audit check reported advisory drift.",

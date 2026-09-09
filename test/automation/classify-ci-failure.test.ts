@@ -425,6 +425,25 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout).result).toBe("unclassified");
   });
+  test("does not classify an unrelated job that mentions npm audit", () => {
+    const item = fixture(
+      "The documentation mentions npm audit.\nProcess completed with exit code 1",
+    );
+    item.env.JOB_NAME = "Documentation checks";
+    const result = run(item.env);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).categories).not.toContain("reviewed-npm-audit");
+  });
+  test.each([
+    ["PR npm audit", "Process completed with exit code 1"],
+    ["CLI tests", "npm audit threshold failed\n1 unaccepted at or above high"],
+  ])("classifies an npm audit failure from %s", (jobName, log) => {
+    const item = fixture(log);
+    item.env.JOB_NAME = jobName;
+    const result = run(item.env);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).categories).toContain("reviewed-npm-audit");
+  });
   test.each(REDACTION_CASES)(
     "redacts a standalone %s from returned process logs",
     (_name, secret, exposed) => {

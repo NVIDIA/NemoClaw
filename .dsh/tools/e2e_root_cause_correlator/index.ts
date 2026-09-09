@@ -70,18 +70,21 @@ export default async function e2e_root_cause_correlator(input: {
   }
   if (relevantPathCount > 2000) throw new Error("relevantPaths exceed the total item bound");
   if (inputCharacters > 400000) throw new Error("correlation input exceeds 400000 code units");
-  const signatureKey = (lines: string[]) => {
+  const signatureKey = (jobName: string, lines: string[]) => {
     const text = lines.join(" ").toLowerCase();
     if (text.includes("failedstage=publication") || text.includes("launch-readiness evidence"))
       return "launch-readiness/publication/evidence-failed";
     if (text.includes("sandbox_phase=deleting") || text.includes("sandbox in deleting"))
       return "openshell/lifecycle/sandbox-deleting";
-    if (
-      text.includes("npm audit") ||
-      text.includes("unaccepted at or above high") ||
-      text.includes("advisory")
-    )
-      return "dependency-audit/unaccepted-advisory";
+    const isNpmAuditJob =
+      /^(?:reviewed-npm-audit|pr npm audit|npm audit for managed image publication)$/.test(
+        jobName.trim().toLowerCase(),
+      );
+    const hasNpmAuditFailure =
+      /npm audit (?:threshold failed|scan remained incomplete|failed without vulnerability findings|requires npm [^\n;]+; running npm)|unused npm audit exceptions|\d+ unaccepted at or above (?:high|critical)/.test(
+        text,
+      );
+    if (isNpmAuditJob || hasNpmAuditFailure) return "dependency-audit/unaccepted-advisory";
     if (text.includes("timed out") || text.includes("timeout"))
       return "runtime/timeout/unclassified";
     const first =
@@ -95,7 +98,7 @@ export default async function e2e_root_cause_correlator(input: {
   };
   const byKey = new Map<string, any[]>();
   for (const failure of input.failures) {
-    const key = signatureKey(failure.signatureLines);
+    const key = signatureKey(failure.jobName, failure.signatureLines);
     const group = byKey.get(key) ?? [];
     group.push(failure);
     byKey.set(key, group);

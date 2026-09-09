@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -68,9 +69,18 @@ const REVIEWED_NPM_ACTION = YAML.parse(
     "utf8",
   ),
 ) as CompositeAction;
-const REVIEWED_NPM_BOOTSTRAP_COMMAND = REVIEWED_NPM_ACTION.runs?.steps?.find(
+const reviewedNpmBootstrapCommand = REVIEWED_NPM_ACTION.runs?.steps?.find(
   (step) => step.name === "Download and verify production npm",
 )?.run;
+const FIRST_TRUSTED_AUDIT_ACTION_CHECKOUT = TRUSTED_AUDIT_ACTION_CHECKOUTS[0];
+assert.ok(
+  FIRST_TRUSTED_AUDIT_ACTION_CHECKOUT,
+  "No trusted audit checkout includes the npm audit action",
+);
+const REVIEWED_NPM_BOOTSTRAP_COMMAND =
+  typeof reviewedNpmBootstrapCommand === "string"
+    ? reviewedNpmBootstrapCommand
+    : assert.fail("The npm audit action does not define the production npm bootstrap command");
 
 function stageSparseCheckout(root: string, sparseCheckout: string): void {
   sparseCheckout
@@ -145,7 +155,7 @@ printf '{"version":"12.0.2"}\\n'
 `,
     { mode: 0o755 },
   );
-  const result = spawnSync("bash", ["-c", REVIEWED_NPM_BOOTSTRAP_COMMAND ?? "exit 99"], {
+  const result = spawnSync("bash", ["-c", REVIEWED_NPM_BOOTSTRAP_COMMAND], {
     cwd: root,
     encoding: "utf8",
     env: {
@@ -210,7 +220,7 @@ describe("npm audit handoff", () => {
 
   it("fails before installation when the trusted checkout omits the reviewed npm bootstrap", () => {
     const fixture = runTrustedBootstrapHandoff(
-      TRUSTED_AUDIT_ACTION_CHECKOUTS[0]?.sparseCheckout ?? "",
+      FIRST_TRUSTED_AUDIT_ACTION_CHECKOUT.sparseCheckout,
       (root) =>
         fs.rmSync(path.join(root, ".github", "actions", "setup-reviewed-npm"), {
           recursive: true,

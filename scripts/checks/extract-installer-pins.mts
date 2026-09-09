@@ -420,12 +420,12 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     version: "0.0.103",
   },
   {
-    // The third template is pre-authorized because dependent installer validation reads this
-    // trust record from the base branch.
+    // The final template pre-authorizes the exact Brev Node/npm bootstrap in #11080 because
+    // dependent installer validation reads this trust record from the base branch.
     brevTemplateSha256: [
       "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
       "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
-      "5674b528f6604b30b31fbf3877e4f5d53abc08e88c0a352070a898cfd7eaa7bf",
+      "9a30f006ac59b6acdcef843bff62ce3fd0fe0d681df993ec1c6a24811690caf5",
     ],
     formula: {
       asset: "openshell.rb",
