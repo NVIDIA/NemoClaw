@@ -539,9 +539,12 @@ export function selectPublicationRun(
     const distance = history.distanceBySha.get(run.headSha);
     return distance === undefined ? [] : [{ run, distance }];
   });
-  const selectable = options.completedSuccessOnly
-    ? eligible.filter(({ run }) => run.status === "completed" && run.conclusion === "success")
-    : eligible;
+  const selectable = eligible.filter(({ run }) => {
+    if (options.completedSuccessOnly || run.event === "workflow_dispatch") {
+      return run.status === "completed" && run.conclusion === "success";
+    }
+    return true;
+  });
   if (selectable.length === 0) return { state: "missing" };
 
   const nearestDistance = Math.min(...selectable.map(({ distance }) => distance));

@@ -474,28 +474,39 @@ describe("base-image publication evidence", () => {
     });
   });
 
-  it("selects the nearest fully successful trusted run for branch reuse", () => {
-    const failedRunId = RUN_ID + 1;
-    const selection = selectPublicationRun(
-      runsPayload([
-        workflowRun({
-          id: failedRunId,
-          head_sha: DESCENDANT_SHA,
-          conclusion: "failure",
-          html_url: `${RUN_URL_ROOT}/${failedRunId}`,
-        }),
-        workflowRun(),
-      ]),
-      history(),
-      WORKFLOW_ID,
-      { completedSuccessOnly: true },
-    );
+  it.each([
+    ["push", "completed", "failure", true],
+    ["workflow_dispatch", "completed", "failure", false],
+    ["workflow_dispatch", "completed", "cancelled", false],
+    ["workflow_dispatch", "completed", "timed_out", false],
+    ["workflow_dispatch", "in_progress", null, false],
+  ] as const)(
+    "keeps a valid publication when a newer %s rebuild is %s/%s",
+    (event, status, conclusion, completedSuccessOnly) => {
+      const newerRunId = RUN_ID + 1;
+      const selection = selectPublicationRun(
+        runsPayload([
+          workflowRun({
+            id: newerRunId,
+            head_sha: DESCENDANT_SHA,
+            html_url: `${RUN_URL_ROOT}/${newerRunId}`,
+            event,
+            status,
+            conclusion,
+          }),
+          workflowRun(),
+        ]),
+        history(),
+        WORKFLOW_ID,
+        { allowWorkflowDispatch: true, completedSuccessOnly },
+      );
 
-    expect(selection).toMatchObject({
-      state: "selected",
-      run: { id: RUN_ID, headSha: RELEVANT_SHA, conclusion: "success" },
-    });
-  });
+      expect(selection).toMatchObject({
+        state: "selected",
+        run: { id: RUN_ID, headSha: RELEVANT_SHA, conclusion: "success" },
+      });
+    },
+  );
 
   it("accepts an exact successful manual main publication for branch reuse", () => {
     const selection = selectPublicationRun(
