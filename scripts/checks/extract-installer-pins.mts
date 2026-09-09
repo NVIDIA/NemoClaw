@@ -543,6 +543,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
         "593ced09573f8cea5d2323b6d388ebb5d30f6da241d4f511e5364a3057887911",
         // Exact #11251 template after stable supervisor override binding.
         "56c0cdf06734b45b235b7426de260245b03a6806a3d09a328d9bbd9161733d3e",
+        // Exact #11251 template after fail-closed gateway recovery validation.
+        "3d0f00a56ecb90e4077b6a1c455df8a659818cf8949b58e41ccc4f410ff9c13d",
       ],
     },
     pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
