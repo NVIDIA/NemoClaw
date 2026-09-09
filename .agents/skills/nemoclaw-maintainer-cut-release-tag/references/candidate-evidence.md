@@ -9,7 +9,7 @@ read-only; preparation and recovery retain their existing authorization requirem
 
 ## Start Independent Checks at Kickoff
 
-Inspect documentation, images, audit freshness, general E2E context, and local tooling before waiting
+Inspect documentation, images, general E2E context, and local tooling before waiting
 on any one prerequisite. Before planning, inspect the intended range and label those results
 preliminary. Do not initialize candidate evidence until `plan.json` exists.
 
@@ -19,8 +19,6 @@ preliminary. Do not initialize candidate evidence until `plan.json` exists.
 - Before planning, inspect recent image runs with the command below. Their status is preliminary,
   not proof of candidate eligibility. After planning, use [Image Evidence](#image-evidence).
   Inspect retry prerequisites before proposing recovery from a pending or failed publication.
-- Check [audit receipts](#check-audit-receipt-reuse) that a pending image build or retry will consume.
-  Do not infer freshness from a green producer job or artifact retention. Recheck before reuse.
 - Read the newest full E2E context through `nemoclaw-maintainer-e2e`; do not dispatch a run automatically.
 - Run `npm run dev:doctor` when local docs preparation or review is needed.
   Follow the [documentation review requirements](../../../../docs/CONTRIBUTING.md#obtain-independent-review).
@@ -45,8 +43,8 @@ evidence or maintainer decisions. Recheck affected evidence when the intended ca
 ## Check Prerequisites Before a Retry
 
 Inspect the failed job and its upstream producer before asking for a rerun. Name the run, attempt,
-commit, workflow event, upstream result, and receipt validity. Classify the failure before choosing
-the smallest permitted recovery.
+commit, workflow event, upstream result, and relevant failure diagnostics.
+Classify the failure before choosing the smallest permitted recovery.
 
 - **Canceled publisher:** establish eligible successful publication evidence before retrying dependent
   E2E. A dependent rerun does not repair its publisher.
@@ -58,109 +56,10 @@ the smallest permitted recovery.
   Identify a supported producer-inclusive rerun before requesting approval; stop if none is available.
 
 Keep existing rerun authorization requirements. Do not add retries or waive evidence checks.
+Use existing build diagnostics to identify expired audit evidence.
+Do not infer validity from producer success or artifact retention.
+If validity is not established, report it as unverified. Existing image-build verification remains authoritative.
 After authorized recovery, read the new attempt and verify the prerequisite before retrying a dependent job.
-
-### Check Audit Receipt Reuse
-
-Use this preliminary check to plan recovery. It does not replace publisher verification or the
-candidate's required `base-image-publication` result.
-
-Start from the pending or failed [OpenClaw platform build](../../../../.github/workflows/base-image-platform.yaml),
-not a successful audit producer. Record its run ID, attempt, commit, and workflow event.
-Export those values as `IMAGE_RUN_ID`, `IMAGE_ATTEMPT`, `IMAGE_SHA`, and `IMAGE_EVENT`.
-Read the attempt's jobs with
-`gh api repos/NVIDIA/NemoClaw/actions/runs/<run-id>/attempts/<attempt>/jobs --paginate`.
-Confirm the successful `reviewed-npm-audit` producer in that run. A retained producer may belong to
-an earlier attempt; inspect that attempt's jobs before using its output.
-
-Read that producer's upload log with `gh run view <run-id> --repo NVIDIA/NemoClaw --job <job-id> --log`.
-Export its artifact ID and archive SHA-256 digest as `AUDIT_ARTIFACT_ID` and `AUDIT_ARCHIVE_SHA256`.
-Match that ID to the consumer's download log. If download has not started, inspect the run's artifacts
-and require an unambiguous selection under the consumer's same-run, `reviewed-npm-audit` name lookup.
-Multiple same-name artifacts without a proven consumer selection are unverified. A producer from
-another run or commit cannot supply this consumer, even when its receipt is fresh.
-
-Set `IMAGE_SOURCE_DIR` to a maintainer-supplied isolated checkout at the consumer's recorded commit.
-Set `AUDIT_TOOL_DIR` to a separate isolated checkout of canonical `NVIDIA/NemoClaw` main.
-Record each checkout's owner. Require exclusive use during this check; preserve both checkouts afterward.
-The block below verifies the tool checkout against the canonical API commit before executing it.
-It uses the consumer commit's package and policy inputs, not candidate or current-main inputs.
-Do not execute artifact contents.
-High or critical findings also require the matching installed dependency metadata under
-`IMAGE_SOURCE_DIR/agents/openclaw/mcporter-runtime/node_modules`. If it is unavailable, report policy
-verification as unverified; a clean source checkout alone does not supply it.
-
-After proving the consumer selection above, run this block in a dedicated Bash shell.
-Missing inputs or a failed command stop the check. The existing verifier owns receipt and policy validation.
-
-```bash
-set -euo pipefail
-: "${IMAGE_RUN_ID:?}" "${IMAGE_ATTEMPT:?}" "${IMAGE_SHA:?}" "${IMAGE_EVENT:?}"
-: "${AUDIT_ARTIFACT_ID:?}" "${AUDIT_ARCHIVE_SHA256:?}" "${IMAGE_SOURCE_DIR:?}" "${AUDIT_TOOL_DIR:?}"
-AUDIT_EVIDENCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-audit.XXXXXXXX")"
-cleanup_audit_evidence() {
-  local status=$?
-  trap - EXIT
-  if ! rm -rf -- "$AUDIT_EVIDENCE_DIR" || [[ -e "$AUDIT_EVIDENCE_DIR" ]]; then
-    printf 'Audit evidence cleanup failed: %s\n' "$AUDIT_EVIDENCE_DIR" >&2
-    status=1
-  fi
-  exit "$status"
-}
-trap cleanup_audit_evidence EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-trap 'exit 129' HUP
-chmod 700 "$AUDIT_EVIDENCE_DIR"
-
-AUDIT_TOOL_SHA="$(gh api repos/NVIDIA/NemoClaw/git/ref/heads/main --jq '.object.sha')"
-[[ "$AUDIT_TOOL_SHA" =~ ^[0-9a-f]{40}$ ]]
-test "$(git -C "$AUDIT_TOOL_DIR" rev-parse HEAD)" = "$AUDIT_TOOL_SHA"
-AUDIT_TOOL_STATUS="$(git -C "$AUDIT_TOOL_DIR" status --porcelain --untracked-files=no)"
-test -z "$AUDIT_TOOL_STATUS"
-test "$(git -C "$IMAGE_SOURCE_DIR" rev-parse HEAD)" = "$IMAGE_SHA"
-IMAGE_SOURCE_STATUS="$(git -C "$IMAGE_SOURCE_DIR" status --porcelain --untracked-files=no)"
-test -z "$IMAGE_SOURCE_STATUS"
-gh api "repos/NVIDIA/NemoClaw/actions/runs/$IMAGE_RUN_ID/attempts/$IMAGE_ATTEMPT" \
-  >"$AUDIT_EVIDENCE_DIR/consumer.json"
-jq -e --arg run "$IMAGE_RUN_ID" --arg attempt "$IMAGE_ATTEMPT" \
-  --arg sha "$IMAGE_SHA" --arg event "$IMAGE_EVENT" '
-  (.id | tostring) == $run and (.run_attempt | tostring) == $attempt and
-  .head_sha == $sha and .event == $event and .path == ".github/workflows/base-image.yaml" and
-  .repository.full_name == "NVIDIA/NemoClaw"
-' "$AUDIT_EVIDENCE_DIR/consumer.json"
-gh api "repos/NVIDIA/NemoClaw/actions/artifacts/$AUDIT_ARTIFACT_ID" \
-  >"$AUDIT_EVIDENCE_DIR/artifact.json"
-jq -e --arg id "$AUDIT_ARTIFACT_ID" --arg run "$IMAGE_RUN_ID" --arg sha "$IMAGE_SHA" '
-  (.id | tostring) == $id and .name == "reviewed-npm-audit" and .expired == false and
-  (.workflow_run.id | tostring) == $run and .workflow_run.head_sha == $sha
-' "$AUDIT_EVIDENCE_DIR/artifact.json"
-gh api "repos/NVIDIA/NemoClaw/actions/artifacts/$AUDIT_ARTIFACT_ID/zip" \
-  >"$AUDIT_EVIDENCE_DIR/audit.zip"
-AUDIT_DOWNLOADED_SHA256="$(shasum -a 256 "$AUDIT_EVIDENCE_DIR/audit.zip")"
-test "${AUDIT_DOWNLOADED_SHA256%% *}" = "$AUDIT_ARCHIVE_SHA256"
-for entry in mcporter-runtime.receipt.json mcporter-runtime.raw.json; do
-  unzip -p "$AUDIT_EVIDENCE_DIR/audit.zip" "$entry" >"$AUDIT_EVIDENCE_DIR/$entry"
-done
-node --experimental-strip-types "$AUDIT_TOOL_DIR/scripts/lib/npm-audit-receipt.mts" \
-  --receipt "$AUDIT_EVIDENCE_DIR/mcporter-runtime.receipt.json" \
-  --raw-report "$AUDIT_EVIDENCE_DIR/mcporter-runtime.raw.json" \
-  --package-json "$IMAGE_SOURCE_DIR/agents/openclaw/mcporter-runtime/package.json" \
-  --package-lock "$IMAGE_SOURCE_DIR/agents/openclaw/mcporter-runtime/package-lock.json" \
-  --exceptions "$IMAGE_SOURCE_DIR/ci/npm-audit-exceptions.json" \
-  --audit-config "$IMAGE_SOURCE_DIR/ci/reviewed-npm-audit.json" \
-  --graph mcporter-runtime --registry https://registry.yarnpkg.com --threshold high \
-  --legacy-npmjs true
-printf 'Preliminary audit check passed: consumer %s attempt %s, artifact %s, source %s, verifier %s\n' \
-  "$IMAGE_RUN_ID" "$IMAGE_ATTEMPT" "$AUDIT_ARTIFACT_ID" "$IMAGE_SHA" "$AUDIT_TOOL_SHA"
-```
-
-The verifier enforces the existing legacy-receipt deadline; this option does not extend it.
-Record the producer, attempt, artifact ID, input commit, and result outside the temporary directory.
-Exit the audit shell and confirm that its evidence directory was removed. Preserve the supplied source checkout.
-Missing or unbound evidence is unverified; expired or mismatched evidence is blocked. Neither permits receipt reuse.
-For an expired receipt, propose rerunning the audit producer and its dependent image jobs, not only failed jobs.
-After authorization, verify the replacement receipt before proposing any remaining dependent E2E retry.
 
 ## Initialize Candidate Evidence After Planning
 
@@ -385,13 +284,7 @@ if [[ "$DOCS_PR_NUMBER" != 'None' ]]; then
   IFS= read -r DOCS_COVERAGE_SHA <"$EVIDENCE_DIR/docs-coverage-sha"
   run_or_stop "documentation coverage ancestry" git merge-base --is-ancestor \
     "$DOCS_COVERAGE_SHA" "$CANDIDATE_SHA"
-  run_or_stop "documentation changed-path read" jq -r '.[][] |
-    .filename,
-    (if .status == "renamed" then
-      if (.previous_filename | type) == "string" and (.previous_filename | length) > 0
-      then .previous_filename else error("renamed file lacks previous_filename") end
-    else empty end)
-  ' \
+  run_or_stop "documentation changed-path read" jq -r '.[].[] | .filename' \
     "$DOCS_PR_FILES" >"$EVIDENCE_DIR/docs-changed-paths.txt"
 else
   printf '[]\n' >"$DOCS_PR_COMMITS"
