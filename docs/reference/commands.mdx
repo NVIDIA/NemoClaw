@@ -229,7 +229,7 @@ If either identity cannot be verified, do not remove files by name alone.
 Do not remove the requested output file to clean up a temporary link.
 
 Version 1 exports managed OpenClaw sandboxes in the default workspace.
-Supported sandboxes use hosted external inference, including native NVIDIA hosted inference, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
+Supported sandboxes use hosted external inference, including NVIDIA Endpoints through OpenShell's built-in NVIDIA profile, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
 Other profiles fail with a diagnostic instead of producing an incomplete document.
 
 ### `$$nemoclaw resources`
@@ -426,7 +426,7 @@ Completed onboarding sessions are not resumable. Use `--resume` only for resumab
 
 An active same-name replacement is separate from ordinary onboarding-step resume. If onboarding printed `Journaled replacement` before it stopped, rerun the original onboarding command with the same target settings. The replacement can continue without an explicit `--resume` flag. Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement) for the identity checks and failure conditions.
 
-Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning. This clears stale or failed session state before NemoClaw creates a new session record. It also bypasses locally recorded sandbox base-image resolution metadata and reruns normal candidate resolution. `--fresh` takes precedence over a base-image hint carried from a rebuild, so NemoClaw does not use that recorded hint. The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, which skips automatic resume detection. `--resume` and `--fresh` are mutually exclusive. For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or startup setting. Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the sandbox from its recorded registry metadata without changing those selections.
+Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning. This clears stale or failed session state before NemoClaw creates a new session record. When an earlier run left an abandoned route-only inference reservation, onboarding releases it before reserving the route again. It also bypasses locally recorded sandbox base-image resolution metadata and reruns normal candidate resolution. `--fresh` takes precedence over a base-image hint carried from a rebuild, so NemoClaw does not use that recorded hint. The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, which skips automatic resume detection. `--resume` and `--fresh` are mutually exclusive. For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or startup setting. Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the sandbox from its recorded registry metadata without changing those selections.
 
 <AgentOnly variant="openclaw">
 
@@ -1423,11 +1423,7 @@ $$nemoclaw my-assistant stop
 
 <AgentOnly variant="hermes">
 
-For an active Portable Hermes receipt, `stop` targets only the exact receipt-owned Podman container and waits for its terminal stopped state and for OpenShell to report `Error` or `Stopped`.
-It does not use Docker as a fallback.
-If either state does not settle, the command exits nonzero.
-A `pending` or `configuring` receipt instead directs you to resume Portable onboarding.
-Portable Hermes does not run the Docker provider's channel hook or the generic post-stop dashboard-forward cleanup.
+For an active Portable Hermes receipt, `stop` targets only the exact receipt-owned Podman container and waits for its terminal stopped state without using Docker as a fallback. A `pending` or `configuring` receipt instead directs you to resume Portable onboarding. Portable Hermes does not run the Docker provider's channel hook or the generic post-stop dashboard-forward cleanup.
 
 </AgentOnly>
 
