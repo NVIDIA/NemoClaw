@@ -12,6 +12,7 @@
 # An empty value is admitted: the watcher reads it as "use the built-in
 # default", which is what an unset name already does.
 _nemoclaw_bounded_seconds_value() {
+  local LC_ALL=C
   local _nemoclaw_value
   local _nemoclaw_maximum="${2:?maximum is required}"
   local _nemoclaw_normalized
@@ -20,11 +21,73 @@ _nemoclaw_bounded_seconds_value() {
   local _nemoclaw_maximum_exponent
   local _nemoclaw_value_digits
   local _nemoclaw_maximum_digits
+  local _nemoclaw_mantissa
+  local _nemoclaw_integer
+  local _nemoclaw_fraction
+  local _nemoclaw_decimal_digits
+  local _nemoclaw_leading_zeros
+  local _nemoclaw_significant_digits
+  local _nemoclaw_explicit_exponent=0
+  local _nemoclaw_effective_exponent
+  local _nemoclaw_half_min_subnormal
+  local _nemoclaw_padding
   [ -n "${1-}" ] || return 0
   _nemoclaw_value="${1#+}"
   if [[ ! "$_nemoclaw_value" =~ ^([0123456789]+(\.[0123456789]*)?|\.[0123456789]+)([eE][+-]?[0123456789]{1,3})?$ ]]; then
     return 1
   fi
+
+  # Linux Bash parses printf operands as long doubles, whose range extends
+  # below binary64. Reject exact decimal values at or below 2^-1075 before
+  # printf so values that JavaScript rounds to zero cannot cross this shell
+  # boundary. The coefficient is the exact finite decimal expansion of
+  # 5^1075; comparing zero-padded significant digits keeps this dependency-free.
+  _nemoclaw_mantissa="${_nemoclaw_value%%[eE]*}"
+  if [[ "$_nemoclaw_value" == *[eE]* ]]; then
+    _nemoclaw_explicit_exponent="${_nemoclaw_value##*[eE]}"
+    case "$_nemoclaw_explicit_exponent" in
+      -*) _nemoclaw_explicit_exponent="-$((10#${_nemoclaw_explicit_exponent#-}))" ;;
+      *) _nemoclaw_explicit_exponent="$((10#${_nemoclaw_explicit_exponent#+}))" ;;
+    esac
+  fi
+  if [[ "$_nemoclaw_mantissa" == *.* ]]; then
+    _nemoclaw_integer="${_nemoclaw_mantissa%%.*}"
+    _nemoclaw_fraction="${_nemoclaw_mantissa#*.}"
+  else
+    _nemoclaw_integer="$_nemoclaw_mantissa"
+    _nemoclaw_fraction=""
+  fi
+  _nemoclaw_decimal_digits="${_nemoclaw_integer}${_nemoclaw_fraction}"
+  _nemoclaw_leading_zeros="${_nemoclaw_decimal_digits%%[!0]*}"
+  _nemoclaw_significant_digits="${_nemoclaw_decimal_digits#"$_nemoclaw_leading_zeros"}"
+  [ -n "$_nemoclaw_significant_digits" ] || return 1
+  _nemoclaw_effective_exponent=$((\
+    _nemoclaw_explicit_exponent + ${#_nemoclaw_integer} - ${#_nemoclaw_leading_zeros} - 1))
+  if [ "$_nemoclaw_effective_exponent" -lt -324 ]; then
+    return 1
+  fi
+  if [ "$_nemoclaw_effective_exponent" -eq -324 ]; then
+    _nemoclaw_half_min_subnormal="247032822920623272088284396434110686182529901307162382212792841250337753635104375932649918180817"
+    _nemoclaw_half_min_subnormal+="996189898282347722858865463328355177969898199387398005390939063150356595155702263922908583924491"
+    _nemoclaw_half_min_subnormal+="051844359318028499365361525003193704576782492193656236698636584807570015857692699037063119282795"
+    _nemoclaw_half_min_subnormal+="585513329278343384093519780155312465972635795746227664652728272200563740064854999770965994704540"
+    _nemoclaw_half_min_subnormal+="208281662262378573934507363390079677619305775067401763246736009689513405355374585166611342237666"
+    _nemoclaw_half_min_subnormal+="786041621596804619144672918403005300575308490487653917113865916462395249126236538818796362393732"
+    _nemoclaw_half_min_subnormal+="804238910186723484976682350898633885879256283027559956575244555072551893136908362547791869486679"
+    _nemoclaw_half_min_subnormal+="94968324049705821028513185451396213837722826145437693412532098591327667236328125"
+    if [ "${#_nemoclaw_significant_digits}" -lt "${#_nemoclaw_half_min_subnormal}" ]; then
+      printf -v _nemoclaw_padding '%*s' \
+        "$((${#_nemoclaw_half_min_subnormal} - ${#_nemoclaw_significant_digits}))" ''
+      _nemoclaw_significant_digits+="${_nemoclaw_padding// /0}"
+    elif [ "${#_nemoclaw_significant_digits}" -gt "${#_nemoclaw_half_min_subnormal}" ]; then
+      printf -v _nemoclaw_padding '%*s' \
+        "$((${#_nemoclaw_significant_digits} - ${#_nemoclaw_half_min_subnormal}))" ''
+      _nemoclaw_half_min_subnormal+="${_nemoclaw_padding// /0}"
+    fi
+    # shellcheck disable=SC2071 # equal-width decimal strings require lexical order
+    [[ "$_nemoclaw_significant_digits" > "$_nemoclaw_half_min_subnormal" ]] || return 1
+  fi
+
   _nemoclaw_normalized=""
   _nemoclaw_normalized_maximum=""
   LC_NUMERIC=C printf -v _nemoclaw_normalized '%.17e' "$_nemoclaw_value" 2>/dev/null || :

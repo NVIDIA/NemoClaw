@@ -25,7 +25,16 @@ const OPENCLAW_START = path.join(import.meta.dirname, "..", "..", "scripts", "ne
 const AUTO_PAIR_PARITY_CASES = OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES.flatMap((rule) =>
   (rule.kind === "polls"
     ? ["1", String(rule.maximum), String(rule.maximum + 1), "0.5", "1e1"]
-    : ["0.05", String(rule.maximum), String(rule.maximum + 1), "1e-324", "3e-324", ".1e309"]
+    : [
+        "0.05",
+        String(rule.maximum),
+        String(rule.maximum + 1),
+        "1e-324",
+        "2.4703282292062327e-324",
+        "2.4703282292062328e-324",
+        "3e-324",
+        ".1e309",
+      ]
   ).map((value) => ({ rule, value })),
 );
 
