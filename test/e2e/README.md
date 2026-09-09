@@ -673,10 +673,11 @@ The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
 4. Recreate the sandbox with the plugin changed to v2 and verify v2.
 
 The recreation remains the replacement boundary. Initial onboarding and
-recreation each run once. If canonical CLI device pairing does not appear or the
-bounded CLI scope warm-up fails, the test attempts to record structured
-diagnostics, attempts to write bounded `failed-no-retry` evidence, and then stops
-without automatically resuming the ambiguously mutated session. An evidence
+recreation each run once. If onboarding or recreation reports missing canonical
+CLI device pairing or a bounded CLI scope warm-up failure, the test attempts to
+record structured diagnostics, attempts to write bounded `failed-no-retry`
+evidence, and then stops without automatically resuming the ambiguously mutated
+session. An evidence
 write failure propagates, so that retry artifact may be absent. `tools.invoke`
 assertions prove the plugin version after onboarding, restart, and recreation.
 The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
