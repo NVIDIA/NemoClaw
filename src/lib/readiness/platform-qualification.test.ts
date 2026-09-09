@@ -163,6 +163,23 @@ describe("platform readiness qualification (#7410)", () => {
     });
   });
 
+  it("rejects NUL-bearing OS release evidence as malformed (#11026)", () => {
+    const missing = (): never => {
+      const error = new Error("missing fixture") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    };
+    const identity = collectPlatformIdentity({
+      readFile: () => "",
+      readdir: () => [],
+      openFile: missing,
+      readBoundedOsRelease: () => 'ID=ubu\0ntu\nVERSION_ID="24.04"\n',
+    });
+
+    expect(identity.osId).toBeUndefined();
+    expect(identity.osVersionId).toBeUndefined();
+  });
+
   it.each([
     ["Docker Desktop integration", true, true, "docker-desktop", "present", "absent", "present"],
     ["native Docker", true, true, "docker", "absent", "present", "present"],
