@@ -1797,7 +1797,7 @@ export async function runCatalogueTarget(id: string, testFile: string): Promise<
   const runPressureCommand = (command: string): void => {
     const result = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", "--no-warnings", "tools/e2e/runner-pressure.mts", command],
+      ["--no-warnings", "tools/e2e/runner-pressure.mts", command],
       { env: process.env, stdio: "inherit", timeout: 60_000 },
     );
     if (result.error) throw result.error;

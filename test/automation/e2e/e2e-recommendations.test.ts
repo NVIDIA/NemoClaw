@@ -153,7 +153,7 @@ describe("E2E recommendation normalizer", () => {
       const script = `const module = await import(${JSON.stringify(moduleUrl)}); const inventory = module.trustedE2eRecommendationInventory(); if (!inventory.allowedJobIds.includes("onboard-resume") || !inventory.allowedJobIds.includes("vllm-docker-storage")) process.exit(2);`;
       const result = spawnSync(
         process.execPath,
-        ["--experimental-strip-types", "--input-type=module", "--eval", script],
+        ["--input-type=module", "--eval", script],
         {
           cwd: tmp,
           encoding: "utf8",
