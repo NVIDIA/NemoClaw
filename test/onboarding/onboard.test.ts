@@ -710,7 +710,6 @@ runner.runCapture = (command) => {
 	registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
-	  dashboardRemoteBindPrepared: true,
 	}, { sandboxId: existingSandbox.state.sandboxId });
 
 childProcess.spawn = (...args) => {
@@ -730,7 +729,6 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.CHAT_UI_URL = "https://chat.example.com";
-  process.env.NEMOCLAW_DASHBOARD_BIND = "0.0.0.0";
   const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -762,7 +760,7 @@ const { createSandbox } = require(${onboardPath});
         (entry: CommandEntry) =>
           entry.command.includes("forward service my-assistant") &&
           entry.command.includes("--target-port 18789") &&
-          entry.command.includes("--local 0.0.0.0:18789"),
+          entry.command.includes("--local 127.0.0.1:18789"),
       ),
       "expected dashboard forward restore on sandbox reuse",
     );
