@@ -314,8 +314,8 @@ RUN printf '%s\n' \
         'export HOME=/sandbox' \
         'export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"' \
         > /sandbox/.profile \
-    && chown root:root /sandbox/.bashrc /sandbox/.profile \
-    && chmod 444 /sandbox/.bashrc /sandbox/.profile
+    && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile \
+    && chmod 644 /sandbox/.bashrc /sandbox/.profile
 
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 

@@ -577,18 +577,22 @@ export function modelsForPlatform(platform: VllmPlatform): readonly VllmModelDef
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 export const VLLM_EXTRA_ARGS_ENV = "NEMOCLAW_VLLM_EXTRA_ARGS_JSON";
 
+/** True when `value` names this model by slug, Hugging Face ID, or served name. */
+export function vllmModelMatchesAlias(model: VllmModelDef, value: string): boolean {
+  const requested = value.trim().toLowerCase();
+  if (!requested) return false;
+  return (
+    model.envValue.toLowerCase() === requested ||
+    model.id.toLowerCase() === requested ||
+    model.servedModelId?.toLowerCase() === requested
+  );
+}
+
 /** Resolve any unique model name owned by the managed inference catalog. */
 export function resolveVllmModelAlias(value: string): VllmModelDef | null {
-  const requested = value.trim().toLowerCase();
+  const requested = value.trim();
   if (!requested) return null;
-  return (
-    VLLM_MODELS.find(
-      (model) =>
-        model.envValue.toLowerCase() === requested ||
-        model.id.toLowerCase() === requested ||
-        model.servedModelId?.toLowerCase() === requested,
-    ) ?? null
-  );
+  return VLLM_MODELS.find((model) => vllmModelMatchesAlias(model, requested)) ?? null;
 }
 
 /**

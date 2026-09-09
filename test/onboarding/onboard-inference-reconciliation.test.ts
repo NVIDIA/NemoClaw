@@ -210,8 +210,8 @@ describe("onboard helpers", () => {
       const preflightPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
       );
-      const bridgeDnsPreflightPath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "onboard", "bridge-dns-preflight.ts"),
+      const runtimeEffectfulPreflightPath = JSON.stringify(
+        path.join(repoRoot, "src/lib/onboard/machine/runtime-effectful-preflight.ts"),
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
@@ -250,8 +250,8 @@ preflight.assessHost = () => ({
   nvidiaContainerToolkitInstalled: false,
   notes: [],
 });
-const bridgeDnsPreflight = require(${bridgeDnsPreflightPath});
-bridgeDnsPreflight.assertDockerBridgeAndContainerDnsHealthy = () => {};
+const runtimeEffectfulPreflight = require(${runtimeEffectfulPreflightPath});
+runtimeEffectfulPreflight.bindConfiguredRuntimeProviderHealth = () => () => {};
 const preflightGatewayAuthority = require(${preflightGatewayAuthorityPath});
 const createPreflightGatewayAuthority =
   preflightGatewayAuthority.createOnboardPreflightGatewayAuthority;
