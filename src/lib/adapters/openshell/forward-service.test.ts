@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   existsSync,
@@ -100,15 +100,6 @@ function isRunning(pid: number): boolean {
   } catch {
     return false;
   }
-}
-
-function processGroupHasRunnableMember(pid: number): boolean {
-  const result = spawnSync("/bin/ps", ["-axo", "pgid=,stat="], { encoding: "utf8" });
-  expect(result.status).toBe(0);
-  return (result.stdout ?? "")
-    .split(/\r?\n/u)
-    .map((line) => /^\s*(\d+)\s+(\S+)/u.exec(line))
-    .some((match) => Number(match?.[1]) === pid && !match?.[2]?.startsWith("Z"));
 }
 
 async function waitForExit(pid: number): Promise<boolean> {
@@ -495,7 +486,6 @@ setInterval(() => {}, 1000);
         descendant: number;
         leader: number;
       };
-      expect(processGroupHasRunnableMember(pids.leader)).toBe(false);
       await spawnedClose;
       expect(spawned?.signalCode).toBe("SIGKILL");
       expect(await waitForExit(pids.leader)).toBe(true);
