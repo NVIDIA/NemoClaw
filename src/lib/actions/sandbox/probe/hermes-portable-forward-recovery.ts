@@ -19,6 +19,8 @@ type CommandResult = {
   readonly error?: unknown;
   readonly output?: string | null;
   readonly status?: number | null;
+  readonly stderr?: string | null;
+  readonly stdout?: string | null;
 };
 
 type MutationResult = Pick<CommandResult, "error" | "status">;
@@ -275,6 +277,19 @@ function parseStrictForwardList(
   }));
 }
 
+function nonEmptyCommandStream(value: string | null | undefined): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function selectForwardListOutput(result: CommandResult): string | null {
+  const output = nonEmptyCommandStream(result.output);
+  if (output !== null) return output;
+  const stdout = nonEmptyCommandStream(result.stdout);
+  const stderr = nonEmptyCommandStream(result.stderr);
+  if (stdout !== null && stderr !== null) return null;
+  return stdout ?? stderr;
+}
+
 function forwardServiceTarget(
   input: HermesPortableForwardRecoveryInput,
   port: number,
@@ -348,7 +363,7 @@ function captureForwardEntries(
       rollback ? undefined : { cause: "forward-list-failed" },
     );
   }
-  const entries = parseStrictForwardList(result.output, new Set(input.ports));
+  const entries = parseStrictForwardList(selectForwardListOutput(result), new Set(input.ports));
   if (!entries) {
     failure(
       rollback ? "restoration-unproved" : "forward-state-unavailable",

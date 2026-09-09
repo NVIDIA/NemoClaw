@@ -98,6 +98,45 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.forwardServiceLaunches).toEqual([]);
   });
 
+  it.each(["stdout", "stderr"] as const)(
+    "accepts OpenShell 0.0.106's exact empty-list response from %s",
+    (stream) => {
+      const fixture = createRecoveryFixture();
+      Object.assign(fixture.input.deps, {
+        captureCurrentList: () => ({
+          status: 0,
+          output: "",
+          stdout: "",
+          stderr: "",
+          [stream]: "No active forwards.\n",
+        }),
+      });
+
+      expect(verifyHermesPortableLaunchForwards(fixture.input)).toEqual({ kind: "unhealthy" });
+      expect(fixture.forwardServiceLaunches).toEqual([]);
+    },
+  );
+
+  it("fails closed when stdout and stderr both contain forward-list data", () => {
+    const fixture = createRecoveryFixture();
+    Object.assign(fixture.input.deps, {
+      captureCurrentList: () => ({
+        status: 0,
+        output: "",
+        stdout: "No active forwards.\n",
+        stderr: "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 running\n",
+      }),
+    });
+
+    expect(() => verifyHermesPortableLaunchForwards(fixture.input)).toThrow(
+      expect.objectContaining({
+        context: { cause: "forward-list-invalid" },
+        failure: "forward-state-unavailable",
+      }),
+    );
+    expect(fixture.forwardServiceLaunches).toEqual([]);
+  });
+
   it("accepts a reachable unlisted direct forward only with exact ownership", () => {
     const fixture = createRecoveryFixture({ listOutput: "No active forwards." });
     fixture.records.set(18_789, {
