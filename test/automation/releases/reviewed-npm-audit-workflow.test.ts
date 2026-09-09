@@ -77,6 +77,7 @@ function runConsolidatedAuditFixture(
 ): ConsolidatedAuditFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-audit-entry-"));
   const trustedRoot = path.join(root, "trusted");
+  const trustedRootAlias = path.join(root, "trusted-alias");
   const targetRoot = path.join(root, "target");
   const bin = path.join(root, "bin");
   const cacheModesFile = path.join(root, "cache-modes");
@@ -84,6 +85,7 @@ function runConsolidatedAuditFixture(
   const artifactDirectory = path.join(targetRoot, "artifacts", "reviewed-npm-audit");
   try {
     fs.mkdirSync(path.join(trustedRoot, "ci"), { recursive: true });
+    fs.symlinkSync(trustedRoot, trustedRootAlias, "junction");
     fs.mkdirSync(path.join(targetRoot, "agents", "openclaw", "wechat-runtime"), {
       recursive: true,
     });
@@ -229,7 +231,7 @@ process.exit(0);
       process.execPath,
       [
         "--experimental-strip-types",
-        fs.realpathSync(path.join(trustedRoot, "scripts/audit-reviewed-npm-graph.mts")),
+        path.join(trustedRootAlias, "scripts/audit-reviewed-npm-graph.mts"),
       ],
       {
         cwd: trustedRoot,
@@ -604,7 +606,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     );
   });
 
-  // source-shape-contract: security -- One reviewed package field prevents a second package identity from bypassing the credential-isolation workflow
+  // source-shape-contract: security -- One active package plus one same-package replacement prevents an open-ended identity list from bypassing the credential-isolation workflow
   it("rejects the removed plural source-registry package shape", () => {
     const configFile = path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json");
     const config = JSON.parse(fs.readFileSync(configFile, "utf-8")) as Record<string, unknown>;

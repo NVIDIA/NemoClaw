@@ -7,6 +7,7 @@ import { isDirectSandboxFallbackUnavailableError } from "../../sandbox/privilege
 import type { GatewayRestartResult } from "./gateway-restart";
 import {
   checkAndRecoverSandboxProcesses,
+  executeGatewaySupervisorAction,
   executePrivilegedSandboxCommand,
   restartSandboxGateway,
   type SandboxCommandResult,
@@ -97,7 +98,6 @@ type GatewayRecoveryObservation = {
   recovered: boolean;
   forwardRecoveryFailed?: boolean;
   secretBoundaryRefused?: boolean;
-  mcpReconciliationRefused?: boolean;
 };
 
 interface HermesPostRestoreGatewayDeps {
@@ -113,6 +113,7 @@ interface HermesPostRestoreGatewayDeps {
     sandboxName: string,
     originalIdentity: HermesCronRestoreIdentity,
   ) => HermesCronRestoreIdentity;
+  frozenTargetGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
   runtimeSelection?: OpenShellRuntimeSelection;
 }
 
@@ -147,17 +148,16 @@ export function restartHermesGatewayAfterStateRestore(
 ): HermesPostRestoreGatewayRestartState {
   if (agentName !== "hermes") return "not-applicable";
   const restart = deps.restartSandboxGateway ?? restartSandboxGateway;
+  const requestGatewaySupervisorAction = deps.frozenTargetGatewaySupervisorAction;
   const result = restart(sandboxName, {
     quiet: true,
+    ...(requestGatewaySupervisorAction
+      ? { deps: { requestGatewaySupervisorAction } }
+      : {}),
     ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
   });
   if (result.ok) return "restarted";
-  const mcpRestoreCanSupersede =
-    result.failureLayer === "MCP reconciliation refusal" &&
-    result.restarted === true &&
-    result.healthPassed === true;
-  // Final verification still requires MCP reconciliation after restoration.
-  return mcpRestoreCanSupersede ? "restarted" : "restart-failed";
+  return "restart-failed";
 }
 
 export function verifyHermesGatewayAfterStateRestore(
@@ -220,13 +220,12 @@ function verifyHermesGatewayAfterStateRestoreImpl(
     }
     const observation: GatewayRecoveryObservation = checkAndRecover(sandboxName, {
       quiet: true,
+      ...(deps.frozenTargetGatewaySupervisorAction
+        ? { requestGatewaySupervisorAction: deps.frozenTargetGatewaySupervisorAction }
+        : {}),
       ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
     });
-    if (
-      observation.forwardRecoveryFailed === true ||
-      observation.secretBoundaryRefused === true ||
-      observation.mcpReconciliationRefused === true
-    ) {
+    if (observation.forwardRecoveryFailed === true || observation.secretBoundaryRefused === true) {
       return { state: "unverified" };
     }
     if (!observation.checked) continue;

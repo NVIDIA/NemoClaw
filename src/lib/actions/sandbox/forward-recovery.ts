@@ -6,6 +6,8 @@ import {
   withSelectedOpenShellCommandOptions,
 } from "../../adapters/openshell/command-argv";
 import {
+  createForwardServiceTarget,
+  isForwardServiceListenerOwner,
   launchForwardService,
   type ForwardServiceTarget,
 } from "../../adapters/openshell/forward-service";
@@ -49,6 +51,7 @@ export {
   verifyHermesPortableLaunchForwards,
 } from "./probe/hermes-portable-forward-recovery";
 export type {
+  HermesPortableForwardRecoveryContext,
   HermesPortableForwardRecoveryFailure,
   HermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryResult,
@@ -178,16 +181,16 @@ function forwardServiceTarget(
   expectedBind = "127.0.0.1",
   workspace = "default",
 ): ForwardServiceTarget {
-  return {
-    executable,
-    gatewayName,
-    workspace,
-    sandboxName,
-    localHost: expectedBind === "0.0.0.0" ? ("0.0.0.0" as const) : ("127.0.0.1" as const),
-    localPort: port,
-    targetHost: "127.0.0.1",
-    targetPort: port,
-  };
+  return createForwardServiceTarget(
+    {
+      executable,
+      gatewayName,
+      workspace,
+      sandboxName,
+      localHost: expectedBind === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1",
+    },
+    port,
+  );
 }
 
 function isValidPort(value: unknown): value is number {
@@ -350,7 +353,7 @@ export function isSandboxForwardHealthy(
 export function isSandboxPortForwardHealthy(
   sandboxName: string,
   port: number,
-  _expectedBind?: string,
+  expectedBind?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
 ): SandboxForwardHealth {
   const sandbox = registry.getSandbox(sandboxName);
@@ -376,7 +379,18 @@ export function isSandboxPortForwardHealthy(
   ) {
     return false;
   }
-  return true;
+  const executable = resolveOpenshell();
+  if (!executable) return false;
+  return isForwardServiceListenerOwner(
+    forwardServiceTarget(
+      executable,
+      gatewayName,
+      sandboxName,
+      port,
+      expectedBind ?? "127.0.0.1",
+      runtimeSelection?.workspace ?? "default",
+    ),
+  );
 }
 
 export function ensureSandboxPortForwardForPort(

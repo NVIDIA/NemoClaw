@@ -262,6 +262,10 @@ describe("incomplete-onboard --resume backstop (#6003)", () => {
       createAttemptNonce: "c".repeat(62),
     });
     const beforeExit = requireLoadedSession();
+    expect(beforeExit.failure?.message).toContain(
+      "retained recovery blocks this sandbox name until destroy confirms absence",
+    );
+    expect(beforeExit.failure?.message).not.toContain("administrator");
 
     const output = runExitHandler(1);
 
