@@ -867,7 +867,7 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     [ -n "$MCPORTER_LOCK_SHA256" ] \
         || { echo "ERROR: Could not hash the committed mcporter lockfile" >&2; exit 1; }; \
     MCPORTER_AUDIT_EVIDENCE=0; \
-    if [ -n "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256$NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256" ]; then \
+    if [ -n "${NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256:-}${NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256:-}" ]; then \
         NEMOCLAW_MCPORTER_AUDIT_REPORT_PATH=/tmp/mcporter-npm-audit.json \
             NEMOCLAW_MCPORTER_AUDIT_RESULT_PATH=/tmp/mcporter-npm-audit-policy.json \
             bash /scripts/lib/verify-mcporter-audit.sh; \
