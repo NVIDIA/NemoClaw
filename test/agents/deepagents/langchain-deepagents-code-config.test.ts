@@ -52,7 +52,7 @@ function runGeneratorProcess(
     .filter(([, value]) => value === undefined)
     .forEach(([name]) => Reflect.deleteProperty(childEnv, name));
   return {
-    ...spawnSync(process.execPath, ["--experimental-strip-types", script], {
+    ...spawnSync(process.execPath, [script], {
       cwd: process.cwd(),
       encoding: "utf8",
       env: childEnv,

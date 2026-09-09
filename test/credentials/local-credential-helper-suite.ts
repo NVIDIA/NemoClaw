@@ -304,7 +304,6 @@ export function registerLocalCredentialHelperTests(group: LocalCredentialHelperT
     commandCwd?: string,
   ): string[] {
     return [
-      "--experimental-strip-types",
       HELPER_PATH,
       ...helperCliArguments(fields, command, formPath, executionProfile, commandCwd),
     ];

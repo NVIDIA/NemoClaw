@@ -60,7 +60,6 @@ function createFixture(opts: {
   const gatewayProcess = spawn(
     process.execPath,
     [
-      "--experimental-strip-types",
       path.join(REPO_ROOT, "test", "helpers", "ephemeral-gateway-listener.ts"),
       gatewayReadyMarker,
     ],

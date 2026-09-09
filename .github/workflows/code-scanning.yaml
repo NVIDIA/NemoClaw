@@ -140,7 +140,7 @@ jobs:
           esac
 
           conversion_exit=0
-          if env -i PATH="$PATH" node --experimental-strip-types \
+          if env -i PATH="$PATH" node \
             "$GITHUB_WORKSPACE/trusted-shellcheck-converter/scripts/shellcheck-json1-to-sarif.mts" \
             "$GITHUB_WORKSPACE/shellcheck.json" "$GITHUB_WORKSPACE/shellcheck.sarif"; then
             conversion_exit=0
