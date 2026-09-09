@@ -143,6 +143,54 @@ function selectSharedGatewayStateResolver(source: string): string {
   return prospective;
 }
 
+function selectPreparedGatewayRuntime(source: string): string {
+  return replaceRequired(source, [
+    [
+      "  getDockerDriverGatewayPid(): number | null;",
+      `  getDockerDriverGatewayPreparation(
+    versionOutput?: string | null,
+    platform?: NodeJS.Platform,
+  ): import("./docker-driver-gateway-env").DockerDriverGatewayPreparation;
+  getDockerDriverGatewayPid(): number | null;`,
+    ],
+    [
+      `  function getDockerDriverGatewayEnv(
+    versionOutput: string | null = null,
+    platform: NodeJS.Platform = process.platform,
+  ): Record<string, string> {`,
+      `  function getDockerDriverGatewayPreparation(
+    versionOutput: string | null = null,
+    platform: NodeJS.Platform = process.platform,
+  ): import("./docker-driver-gateway-env").DockerDriverGatewayPreparation {`,
+    ],
+    [
+      "const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({",
+      "const preparation = dockerDriverGatewayEnv.prepareDockerDriverGatewayEnv({",
+    ],
+    [
+      `    if (gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
+      process.env.OPENSHELL_LOCAL_TLS_DIR = gatewayEnv.OPENSHELL_LOCAL_TLS_DIR;
+    }
+    return gatewayEnv;`,
+      `    if (preparation.gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
+      process.env.OPENSHELL_LOCAL_TLS_DIR = preparation.gatewayEnv.OPENSHELL_LOCAL_TLS_DIR;
+    }
+    return preparation;
+  }
+
+  function getDockerDriverGatewayEnv(
+    versionOutput: string | null = null,
+    platform: NodeJS.Platform = process.platform,
+  ): Record<string, string> {
+    return getDockerDriverGatewayPreparation(versionOutput, platform).gatewayEnv;`,
+    ],
+    [
+      "    getDockerDriverGatewayEnv,",
+      "    getDockerDriverGatewayEnv,\n    getDockerDriverGatewayPreparation,",
+    ],
+  ]);
+}
+
 type RunOptions = {
   candidateParserBypass?: boolean;
   selectV00103?: boolean;
@@ -220,6 +268,23 @@ function runParser(options: RunOptions = {}) {
 }
 
 describe("OpenShell supervisor manifest trust", () => {
+  it("accepts the reviewed prepared gateway runtime template (#11212)", () => {
+    const result = runParser({ transformSupervisor: selectPreparedGatewayRuntime });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("rejects an operational mutation of the prepared gateway runtime template (#11212)", () => {
+    const result = runParser({
+      transformSupervisor: (source) =>
+        selectPreparedGatewayRuntime(source).replace(
+          "ghcr.io/nvidia/openshell/supervisor@${manifestDigest}",
+          "registry.invalid/openshell/supervisor@${manifestDigest}",
+        ),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("supervisor runtime operational template is not base-trusted");
+  });
+
   it("accepts the selected base-trusted OpenShell 0.0.106 supervisor identity (#6256)", () => {
     const result = runParser();
 
