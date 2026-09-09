@@ -198,12 +198,17 @@ function abbreviateImageDigests(text: string): string {
   return text.replace(/@sha256:([0-9a-f]{12})[0-9a-f]{52}(?![0-9a-f])/gu, "@sha256:$1...");
 }
 
-/** Keep the head and the ending of an over-long diagnostic and say how much was cut. */
+/** Keep the head and the ending of an over-long diagnostic within `limit` and say how much was cut. */
 function clampDiagnostic(text: string, limit: number, tailLength: number): string {
   if (text.length <= limit) return text;
-  const head = text.slice(0, limit - tailLength);
+  const omissionMarker = (count: number): string => ` ... [${count} characters omitted] ... `;
+  // Reserve the marker at its widest: the omitted count never exceeds the text length.
+  const head = text.slice(
+    0,
+    Math.max(0, limit - tailLength - omissionMarker(text.length).length),
+  );
   const tail = text.slice(-tailLength);
-  return `${head} ... [${text.length - head.length - tail.length} characters omitted] ... ${tail}`;
+  return `${head}${omissionMarker(text.length - head.length - tail.length)}${tail}`;
 }
 
 export function formatDockerGpuModeFailureDetails(

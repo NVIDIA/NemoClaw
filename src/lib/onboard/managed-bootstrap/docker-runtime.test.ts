@@ -323,7 +323,19 @@ describe("Docker managed-bootstrap GPU probe diagnostics", () => {
 
     expect(details).toMatch(/ \.\.\. \[\d+ characters omitted\] \.\.\. /u);
     expect(details).toContain("unauthorized: authentication required");
-    expect(details.length).toBeLessThan(700);
+    expect(details.length).toBeLessThanOrEqual(" Attempts: --gpus all: ".length + 400);
+  });
+
+  it("keeps the joined attempt detail within its budget and keeps its ending (#11197)", () => {
+    const details = formatDockerGpuModeFailureDetails(
+      Array.from({ length: 6 }, (_, index) =>
+        failedGpuModeAttempt(`attempt ${index} ${"context ".repeat(40)}reason ${index}`),
+      ),
+    );
+
+    expect(details.length).toBeLessThanOrEqual(1_600);
+    expect(details).toContain("characters omitted");
+    expect(details).toContain("reason 5");
   });
 });
 
