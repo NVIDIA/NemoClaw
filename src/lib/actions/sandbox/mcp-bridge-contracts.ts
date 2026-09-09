@@ -55,6 +55,30 @@ export interface McpSourceEntry {
 
 export interface McpBridgeAddOptions extends ParsedMcpAddArgs {}
 
+export type McpBridgeToolDiscoveryFailedStage =
+  | "preflight"
+  | "runtime"
+  | "initialization"
+  | "tool-discovery";
+export type McpBridgeToolDiscoveryFailureClass =
+  | "precondition"
+  | "runtime"
+  | "connection"
+  | "authentication"
+  | "protocol"
+  | "tool-operation";
+
+export interface McpBridgeToolDiscoveryResult {
+  ok: boolean;
+  count: number;
+  tools: string[];
+  truncated: boolean;
+  commandStatus: number | null;
+  detail?: string;
+  failedStage?: McpBridgeToolDiscoveryFailedStage;
+  failureClass?: McpBridgeToolDiscoveryFailureClass;
+}
+
 export interface ParsedMcpUpdateArgs {
   server: string;
   denyTools: string[];
@@ -113,13 +137,7 @@ export interface McpBridgeStatus {
     detail?: string;
   };
   /** Names advertised by the MCP endpoint when live discovery is requested. */
-  toolDiscovery?: {
-    ok: boolean;
-    count: number;
-    tools: string[];
-    truncated: boolean;
-    detail?: string;
-  };
+  toolDiscovery?: McpBridgeToolDiscoveryResult;
 }
 
 export function isAgentMcpAdapter(value: unknown): value is AgentMcpAdapter {

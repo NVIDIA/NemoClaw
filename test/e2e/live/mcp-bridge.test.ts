@@ -82,9 +82,9 @@ import {
 } from "./mcp-bridge-servers.ts";
 import {
   assertAuthenticatedMcpDiscovery,
-  assertAuthenticatedMcpDiscoveryWithOneRestart,
   assertAuthenticatedMcpRediscovery,
   assertAuthenticatedMcpToolDiscovery,
+  assertHermesInitialMcpDiscovery,
   runHermesInitialMcpReadiness,
 } from "./mcp-bridge-tool-discovery.ts";
 import { assertTrustedPrivateMcpRebindingDenied } from "./mcp-bridge-trusted-private.ts";
@@ -847,6 +847,7 @@ test("mcp-bridge", {
     artifacts,
     sandboxName: OPENCLAW_SANDBOX_NAME,
     artifactPrefix: "openclaw",
+    deniedSecret: ROTATED_HOST_SECRET,
     hostSecret: HOST_SECRET,
     progress,
   });
@@ -1146,35 +1147,24 @@ mcpBridgeShardTest("hermes")(
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
     });
-    const initialDiscoveryRequestOffset = fakeMcp.requests.length;
-    const initialDiscoveryObservationOffset = fakeMcp.observations.length;
     await runHermesInitialMcpReadiness({
       discover: () =>
-        assertAuthenticatedMcpDiscoveryWithOneRestart(fakeMcp, {
-          requestOffset: initialDiscoveryRequestOffset,
-          observationOffset: initialDiscoveryObservationOffset,
-          expectedSecret: HOST_SECRET,
-          label: "Hermes initial MCP discovery",
+        assertHermesInitialMcpDiscovery(fakeMcp, {
           artifacts,
-          artifactName: "hermes-initial-mcp-discovery-retry-evidence.json",
-          restart: async () => {
-            progress.event(
-              "Hermes initial MCP discovery classified no-request-observed after the initial-discovery offset; restarting once",
-            );
-            await restartBridgeWithoutHostSecret(
-              host,
-              HERMES_SANDBOX_NAME,
-              "hermes-discovery-retry",
-            );
-          },
+          expectedSecret: HOST_SECRET,
+          progress,
+          restart: () =>
+            restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes-discovery-retry"),
         }),
       inspectToolStatus: () =>
         assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
           artifacts,
           sandboxName: HERMES_SANDBOX_NAME,
           artifactPrefix: "hermes",
+          deniedSecret: ROTATED_HOST_SECRET,
           hostSecret: HOST_SECRET,
           progress,
+          sandbox,
         }),
       prepareModelTurn: async () => {
         await assertBridgeInfrastructure(host, sandbox, {
