@@ -9,6 +9,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { describe, expect, it } from "vitest";
+import { lockedArchives } from "../../scripts/checks/materialize-locked-npm-cache-seed.mts";
 import { expectManagedToolDiscoveryRuntimeImageContract } from "../support/managed-bootstrap-image-contract";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
@@ -146,8 +147,7 @@ describe("MCP tool discovery image contract", () => {
 
   it.each([
     {
-      archiveCount: 85,
-      label: "NemoClaw CLI",
+      label: "NemoClaw plugin",
       lockfile: "nemoclaw/package-lock.json",
       seedDirectory: "tools/mcp-tool-discovery-runtime/npm-cache-seed",
     },
@@ -158,13 +158,20 @@ describe("MCP tool discovery image contract", () => {
       .readdirSync(seedDirectory)
       .filter((seedName) => seedName !== "manifest.json")
       .sort();
-    const lock = JSON.parse(fs.readFileSync(path.join(repoRoot, fixture.lockfile), "utf8"));
+    const lockSource = fs.readFileSync(path.join(repoRoot, fixture.lockfile), "utf8");
+    const lock = JSON.parse(lockSource);
+    const target = { cpu: "x64", libc: "glibc", os: "linux" };
+    const expectedArchives = lockedArchives(lockSource, target);
 
     expect(manifest).toMatchObject({
-      archiveCount: fixture.archiveCount,
+      archiveCount: expectedArchives.length,
       kind: "nemoclaw-locked-npm-cache-seed-v1",
-      target: { cpu: "x64", libc: "glibc", os: "linux" },
+      lockSha256: crypto.createHash("sha256").update(lockSource).digest("hex"),
+      target,
     });
+    expect(manifest.archives).toEqual(
+      expectedArchives.map((archive) => expect.objectContaining(archive)),
+    );
     expect(manifest.archives).toHaveLength(manifest.archiveCount);
     expect(
       seedNames

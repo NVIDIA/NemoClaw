@@ -1,5 +1,5 @@
 {
-  "archiveCount": 85,
+  "archiveCount": 89,
   "archives": [
     {
       "archive": "assertion-error-2.0.1.tgz",
@@ -24,6 +24,24 @@
       "integrity": "sha512-rRdISSYegj6VganMZ9tjRjijowfHJ09IZU01i0toBAqr6n5LEtwHq2IeS4FjW2RoskOHlb6efB26H5izYb3GEQ==",
       "resolved": "https://registry.npmjs.org/@oxlint/binding-linux-x64-gnu/-/binding-linux-x64-gnu-1.78.0.tgz",
       "size": 6738988
+    },
+    {
+      "archive": "binding-linux-x64-musl-0.63.0.tgz",
+      "integrity": "sha512-5eGyTJuMZNwBSHCivXt8Yuta6GeTYksOPXRk2MIhajiyFGQx7bjaHIwY+ZusAoFHhT157A9x6sktLjYo9D5oMQ==",
+      "resolved": "https://registry.npmjs.org/@oxfmt/binding-linux-x64-musl/-/binding-linux-x64-musl-0.63.0.tgz",
+      "size": 3695601
+    },
+    {
+      "archive": "binding-linux-x64-musl-1.1.5.tgz",
+      "integrity": "sha512-Me+PfPI2TMeOQk0gYWfLQZtTktrmzbr8cDboqX83XKc7UrgAi55gF+2dUkWdxd19n55Essp2yeca+O9N5rBxHg==",
+      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-x64-musl/-/binding-linux-x64-musl-1.1.5.tgz",
+      "size": 7753314
+    },
+    {
+      "archive": "binding-linux-x64-musl-1.78.0.tgz",
+      "integrity": "sha512-GmsP4rW0xTL6u5CVdcDsaN5Fbc7hBc382Wmar1kttbnwSEviM+rSINKOMQ+UQ6iH+AGwC+8gaAiwu134Tgh6Lg==",
+      "resolved": "https://registry.npmjs.org/@oxlint/binding-linux-x64-musl/-/binding-linux-x64-musl-1.78.0.tgz",
+      "size": 6670571
     },
     {
       "archive": "chai-5.2.3.tgz",
@@ -174,6 +192,12 @@
       "integrity": "sha512-V7Qr52IhZmdKPVr+Vtw8o+WLsQJYCTd8loIfpDaMRWGUZfBOYEJeyJIkqGIDMZPwPx24pUMfwSxxI8phr/MbOA==",
       "resolved": "https://registry.npmjs.org/lightningcss-linux-x64-gnu/-/lightningcss-linux-x64-gnu-1.32.0.tgz",
       "size": 3848191
+    },
+    {
+      "archive": "lightningcss-linux-x64-musl-1.32.0.tgz",
+      "integrity": "sha512-bYcLp+Vb0awsiXg/80uCRezCYHNg1/l3mt0gzHnWV9XP1W5sKa5/TCdGWaR/zBM2PeF/HbsQv/j2URNOiVuxWg==",
+      "resolved": "https://registry.npmjs.org/lightningcss-linux-x64-musl/-/lightningcss-linux-x64-musl-1.32.0.tgz",
+      "size": 3846393
     },
     {
       "archive": "linux-x64-7.0.2001.tgz",
@@ -513,7 +537,7 @@
     }
   ],
   "kind": "nemoclaw-locked-npm-cache-seed-v1",
-  "lockSha256": "66bef669196bb1c61385871e369542d3c321c277adb0f0e2e9f0ad972106b163",
+  "lockSha256": "55a512d782f8a4ad0eac39078b0e652400bf8580767b3a9ac5282a05bae47042",
   "target": {
     "cpu": "x64",
     "libc": "glibc",
