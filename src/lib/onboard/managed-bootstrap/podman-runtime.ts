@@ -2186,7 +2186,6 @@ function createPodmanRuntimePatch(
       commitAfterReady: async (options?: {
         readonly beforeFinalHandoff?: (replacementRuntimeId: string | null) => void;
       }) => {
-        options?.beforeFinalHandoff?.(null);
         await finalizer?.commit();
       },
       selectedMode: () => selectedMode,
