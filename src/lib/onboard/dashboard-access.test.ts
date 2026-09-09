@@ -18,9 +18,7 @@ describe("dashboard access helpers", () => {
   it("derives forward port and target from chat UI URLs", () => {
     expect(getDashboardForwardPort("http://127.0.0.1:18789", { isWsl: false })).toBe("18789");
     expect(getDashboardForwardTarget("http://127.0.0.1:18789", { isWsl: false })).toBe("18789");
-    expect(getDashboardForwardTarget("http://10.0.0.25:18789", { isWsl: false })).toBe(
-      "0.0.0.0:18789",
-    );
+    expect(getDashboardForwardTarget("http://10.0.0.25:18789", { isWsl: false })).toBe("18789");
   });
 
   it("redacts token fragments for display", () => {
@@ -119,21 +117,17 @@ describe("NEMOCLAW_DASHBOARD_BIND remote-bind opt-in gate (#3259)", () => {
     expect(chain.forwardTarget).toBe("18789");
   });
 
-  it.each([
-    "0.0.0.0; rm -rf",
-    "1.2.3.4",
-    "true",
-    "10.0.0.5",
-    " 0.0.0.0",
-    "0.0.0.0 ",
-  ])("does NOT open a remote bind for invalid env value %j", (value) => {
-    const chain = buildDashboardChain(LOOPBACK_URL, {
-      env: { NEMOCLAW_DASHBOARD_BIND: value },
-      isWsl: false,
-    });
-    expect(chain.bindAddress).toBe("127.0.0.1");
-    expect(chain.forwardTarget).toBe("18789");
-  });
+  it.each(["0.0.0.0; rm -rf", "1.2.3.4", "true", "10.0.0.5", " 0.0.0.0", "0.0.0.0 "])(
+    "does NOT open a remote bind for invalid env value %j",
+    (value) => {
+      const chain = buildDashboardChain(LOOPBACK_URL, {
+        env: { NEMOCLAW_DASHBOARD_BIND: value },
+        isWsl: false,
+      });
+      expect(chain.bindAddress).toBe("127.0.0.1");
+      expect(chain.forwardTarget).toBe("18789");
+    },
+  );
 
   it("falls back to process.env when no options.env override is provided", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");

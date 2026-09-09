@@ -185,7 +185,6 @@ describe("ensureAgentDashboardForward", () => {
 
   it("preserves the canonical WebUI forward for an API-kind agent with an optional dashboard", async () => {
     process.env.CHAT_UI_URL = "https://hermes.example.test:9120/ui";
-    const warn = vi.fn();
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
       return Number(new URL(chatUiUrl).port);
     });
@@ -203,7 +202,6 @@ describe("ensureAgentDashboardForward", () => {
         hermesApiPort: 8642,
         chatUiUrl: process.env.CHAT_UI_URL,
         controlUiPort: 9120,
-        warn,
       }),
     ).toBe(8642);
 
@@ -221,96 +219,6 @@ describe("ensureAgentDashboardForward", () => {
         allowPortReallocation: false,
       },
     );
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("forward for port 9120 binds 0.0.0.0"),
-    );
     expect(process.env.CHAT_UI_URL).toBe("https://hermes.example.test:9120/ui");
-  });
-});
-
-describe("dashboard bind widening disclosure", () => {
-  it("reports the wider bind when a non-loopback CHAT_UI_URL causes it", async () => {
-    const warn = vi.fn();
-    const ensureDashboardForward = vi.fn(() => 18789);
-
-    await ensureAgentDashboardForward({
-      sandboxName: "hm",
-      agent: { forwardPort: 18789, forward_ports: [18789] },
-      ensureDashboardForward,
-      chatUiUrl: "https://dashboard.example.com:18789",
-      warn,
-    });
-
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("binds 0.0.0.0 instead of 127.0.0.1"),
-    );
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("CHAT_UI_URL"));
-  });
-
-  it("denies that the Host header check restricts access to the wider bind (#10861)", async () => {
-    const warn = vi.fn();
-    const ensureDashboardForward = vi.fn(() => 18789);
-
-    await ensureAgentDashboardForward({
-      sandboxName: "hm",
-      agent: { forwardPort: 18789, forward_ports: [18789] },
-      ensureDashboardForward,
-      chatUiUrl: "https://dashboard.example.com:18789",
-      warn,
-    });
-
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("Host header check is not an access control"),
-    );
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("serve it through an authenticating proxy"),
-    );
-  });
-
-  it("stays quiet on WSL, where the bind is already wide for another reason (#10861)", async () => {
-    const warn = vi.fn();
-    const ensureDashboardForward = vi.fn(() => 18789);
-
-    await ensureAgentDashboardForward({
-      sandboxName: "hm",
-      agent: { forwardPort: 18789, forward_ports: [18789] },
-      ensureDashboardForward,
-      chatUiUrl: "https://dashboard.example.com:18789",
-      warn,
-      dashboardAccess: { isWsl: true, wslHostAddress: "172.20.0.2", env: {} },
-    });
-
-    expect(warn).not.toHaveBeenCalled();
-  });
-
-  it("stays quiet when the operator opted in with NEMOCLAW_DASHBOARD_BIND (#10861)", async () => {
-    const warn = vi.fn();
-    const ensureDashboardForward = vi.fn(() => 18789);
-
-    await ensureAgentDashboardForward({
-      sandboxName: "hm",
-      agent: { forwardPort: 18789, forward_ports: [18789] },
-      ensureDashboardForward,
-      chatUiUrl: "https://dashboard.example.com:18789",
-      warn,
-      dashboardAccess: { isWsl: false, env: { NEMOCLAW_DASHBOARD_BIND: "0.0.0.0" } },
-    });
-
-    expect(warn).not.toHaveBeenCalled();
-  });
-
-  it("stays quiet when the dashboard keeps its loopback bind", async () => {
-    const warn = vi.fn();
-    const ensureDashboardForward = vi.fn(() => 18789);
-
-    await ensureAgentDashboardForward({
-      sandboxName: "hm",
-      agent: { forwardPort: 18789, forward_ports: [18789] },
-      ensureDashboardForward,
-      chatUiUrl: "http://127.0.0.1:18789",
-      warn,
-    });
-
-    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("binds 0.0.0.0"));
   });
 });

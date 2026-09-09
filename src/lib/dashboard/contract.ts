@@ -45,14 +45,6 @@ export interface DashboardDeliveryChain {
   gatewayHealthEndpoint: string;
   port: number;
   bindAddress: string;
-  /**
-   * True when a non-loopback `CHAT_UI_URL` is the only reason the forward left
-   * the loopback bind — the operator did not pass `NEMOCLAW_DASHBOARD_BIND`
-   * and the host is not WSL. Naming an external browser URL is not a request
-   * to widen the listening surface, so callers that act on this chain must
-   * disclose the widening rather than apply it silently (#10861).
-   */
-  bindWidenedByChatUiUrl: boolean;
   shouldDisableDeviceAuth: boolean;
 }
 
@@ -125,10 +117,8 @@ export function buildChain(hints?: PlatformHints): DashboardDeliveryChain {
   // hosts (Brev, cloud workstations). Only "0.0.0.0" is honored; arbitrary IPs are
   // rejected silently to keep the surface narrow.
   const remoteBindOptIn = h.bindOverride === "0.0.0.0";
-  const forwardTarget =
-    h.isWsl || hasNonLoopbackUrl || remoteBindOptIn ? `0.0.0.0:${port}` : String(port);
+  const forwardTarget = h.isWsl || remoteBindOptIn ? `0.0.0.0:${port}` : String(port);
   const bindAddress = forwardTarget.includes(":") ? "0.0.0.0" : "127.0.0.1";
-  const bindWidenedByChatUiUrl = hasNonLoopbackUrl && !remoteBindOptIn && !h.isWsl;
   const loopbackOrigin = `http://127.0.0.1:${port}`;
   const toOrigin = (value: string): string | null => {
     try {
@@ -164,7 +154,6 @@ export function buildChain(hints?: PlatformHints): DashboardDeliveryChain {
     gatewayHealthEndpoint,
     port,
     bindAddress,
-    bindWidenedByChatUiUrl,
     shouldDisableDeviceAuth,
   };
 }

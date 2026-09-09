@@ -369,7 +369,10 @@ function detectAccessMethod(chain: DashboardDeliveryChain): AccessMethod {
   if (chain.bindAddress === "0.0.0.0") return "proxy";
   if (chain.accessUrl.includes("127.0.0.1") || chain.accessUrl.includes("localhost"))
     return "localhost";
-  return "ssh-tunnel";
+  // A non-loopback CHAT_UI_URL names the operator's external proxy route.
+  // The host forward behind that proxy remains on loopback unless the
+  // operator separately opts into a wider bind (#10861).
+  return "proxy";
 }
 
 export interface MessagingBridgeStatus {

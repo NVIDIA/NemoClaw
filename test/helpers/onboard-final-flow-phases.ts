@@ -285,7 +285,6 @@ export function createPhases(
         gatewayHealthEndpoint: "/health",
         port: 45123,
         bindAddress: "127.0.0.1",
-        bindWidenedByChatUiUrl: false,
         shouldDisableDeviceAuth: false,
       }),
       verifyDeployment:
