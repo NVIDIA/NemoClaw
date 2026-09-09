@@ -5,6 +5,13 @@
   "npmIntegrity": "sha512-OnUG836FwboQIbqtefDNlyR0gTHzIfwRfE3DuiNewBvnMnWEpB0VEXwBlFVgqpNzIgYo/MHh3d2Hel/pszapAA==",
   "registryOrigin": "https://registry.npmjs.org/",
   "sourceRegistryPackage": {
+    "artifactName": "nvidia-openshell-sdk-0.0.106.tgz",
+    "label": "OpenShell TypeScript SDK 0.0.106",
+    "packageSpec": "@nvidia/openshell-sdk@0.0.106",
+    "integrity": "sha512-dB4mLex23Pnw61caGMR2CMHQihy9bj7IK2elJJd718k3yevm+fOt/vG6dJg8/5us4la2BwcOdRwLvOia3tdwFw==",
+    "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/dc32180ba1d658fc4ec309bdf89d2b162196928d"
+  },
+  "sourceRegistryPackageReplacement": {
     "artifactName": "nvidia-openshell-sdk-0.0.116.tgz",
     "label": "OpenShell TypeScript SDK 0.0.116",
     "packageSpec": "@nvidia/openshell-sdk@0.0.116",
