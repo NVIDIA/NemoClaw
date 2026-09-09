@@ -3505,7 +3505,6 @@ install_core_runtime_preloads || exit 1
 # lowercase (no_proxy) over uppercase (NO_PROXY) when both are set.
 # curl/wget use uppercase.  gRPC C-core uses lowercase.
 _RUNTIME_SHELL_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
-_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"
 
 write_runtime_shell_env() {
   _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
@@ -3632,9 +3631,8 @@ GATEWAYURLENVEOF
 # nemoclaw-configure-guard begin
 # #4538: a raw in-sandbox `openclaw doctor --fix` (run directly from a connect
 # shell, outside any NemoClaw wrapper command) tightens the mutable OpenClaw
-# config tree back to single-user 700/600 — even when it exits nonzero (e.g. it
-# hits EACCES on a root-locked shell init file). That blocks the gateway UID,
-# a member of the sandbox group, from persisting config writes. Restore the
+# config tree back to single-user 700/600, even after a failed command. This
+# blocks the gateway UID, a sandbox group member, from persisting config. Restore the
 # setgid + group-writable contract (2770 dir / 660 config) after every openclaw
 # invocation routed through this guard, regardless of exit code. Best-effort and
 # idempotent: it skips a root-owned active config transaction and is a no-op
@@ -4254,61 +4252,6 @@ GATEWAYTOKENENVEOF
 # Each code path arms the trap before launching the gateway. These values are
 # populated as children start; cleanup refreshes and validates them before
 # signaling anything.
-
-# Keep per-user rc files out of runtime proxy wiring. Older images and prior
-# entrypoint versions wrote a two-line shim into .bashrc/.profile; remove that
-# managed stanza before lock_rc_files makes the files read-only again.
-#
-# The Python body lives in scripts/lib/clean_runtime_shell_env_shim.py so it
-# can be unit-tested with controlled rc fixtures. Installed location in the
-# sandbox image: /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py.
-ensure_runtime_shell_env_shim() {
-  local failed=0
-  local rc_file
-  # Resolution order is deliberately fixed: the immutable installed helper at
-  # /usr/local/lib/nemoclaw/ ALWAYS wins when present. That path is set up
-  # by the Dockerfile, chmod 644, root-owned (or build-time owned), and lives
-  # under a system directory the sandbox user cannot write to. We refuse to
-  # honour any environment-supplied override when that file is in place so a
-  # malicious envvar cannot swap in arbitrary Python.
-  #
-  # The NEMOCLAW_RC_CLEAN_SCRIPT override is consulted ONLY when the installed
-  # helper is missing — i.e. running the unit-test wrappers against the
-  # repository tree, where the script lives at scripts/lib/ instead.
-  # The final fallback resolves the script relative to nemoclaw-start.sh so
-  # `bash scripts/nemoclaw-start.sh` works out-of-the-box for ad-hoc dev runs.
-  local clean_script="/usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py"
-  if [ ! -f "$clean_script" ]; then
-    if [ -n "${NEMOCLAW_RC_CLEAN_SCRIPT:-}" ] && [ -f "${NEMOCLAW_RC_CLEAN_SCRIPT}" ]; then
-      clean_script="${NEMOCLAW_RC_CLEAN_SCRIPT}"
-    else
-      clean_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/clean_runtime_shell_env_shim.py"
-    fi
-  fi
-
-  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-    if [ -L "$rc_file" ]; then
-      echo "[SECURITY] refusing symlinked rc file: $rc_file" >&2
-      failed=1
-      continue
-    fi
-    if [ -e "$rc_file" ] && [ ! -f "$rc_file" ]; then
-      echo "[SECURITY] refusing non-regular rc file: $rc_file" >&2
-      failed=1
-      continue
-    fi
-    if [ ! -f "$rc_file" ]; then
-      continue
-    fi
-
-    if ! command python3 "$clean_script" "$rc_file" "$_RUNTIME_SHELL_ENV_SHIM" "$(id -u)"; then
-      failed=1
-      continue
-    fi
-  done
-
-  return "$failed"
-}
 
 # ── Legacy layout migration ──────────────────────────────────────
 # Sandboxes created with the OLD base image have:
@@ -5899,8 +5842,6 @@ if [ "$(id -u)" -ne 0 ]; then
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH
   write_messaging_runtime_setup_plan
   write_runtime_shell_env
-  ensure_runtime_shell_env_shim
-  lock_rc_files "$_SANDBOX_HOME" || true
   # Apply manifest-declared runtime env aliases before any child inherits the
   # env. This covers both one-shot commands and the gateway launch.
   apply_messaging_runtime_env_aliases
@@ -6054,8 +5995,6 @@ write_openclaw_config_baseline
 export_gateway_token
 write_messaging_runtime_setup_plan
 write_runtime_shell_env
-ensure_runtime_shell_env_shim
-lock_rc_files "$_SANDBOX_HOME"
 # Apply manifest-declared runtime env aliases before any child (the one-shot
 # "${NEMOCLAW_CMD[@]}" exec or the stepped-down gateway) inherits the env.
 # setpriv preserves the environment, so the export reaches the gateway user.

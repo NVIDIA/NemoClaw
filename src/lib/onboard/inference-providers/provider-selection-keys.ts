@@ -71,11 +71,14 @@ export function isN1xOnboardingProviderKey(value: string | null | undefined): bo
 /** Resolve the provider representation persisted in an onboarding session. */
 export function persistedProviderNameToSelectionKey(
   value: string | null | undefined,
-  options: { hasNimContainer?: boolean } = {},
+  options: { hasManagedLlamaCpp?: boolean; hasNimContainer?: boolean } = {},
   remoteProviderConfig: Readonly<Record<string, RemoteProviderConfigEntryLike>> = {},
 ): string | null {
   const name = String(value ?? "").trim();
   if (!name) return null;
+  if (name === "llama-cpp-local") {
+    return options.hasManagedLlamaCpp ? "install-llama-cpp" : "llama-cpp";
+  }
   // Local NIM and standalone vLLM both persist as vllm-local. Only the
   // owner-only NIM container record distinguishes the excluded NIM route.
   if (name === "vllm-local") return options.hasNimContainer ? "nim-local" : "vllm";
