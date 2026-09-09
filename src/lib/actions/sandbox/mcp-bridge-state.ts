@@ -22,9 +22,11 @@ import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import * as registry from "../../state/registry";
 import { ConfigCorruptError } from "../../state/config-io";
 import { getReportedGatewayName } from "../../state/gateway";
-import { resolveGatewayPortFromName } from "../../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
-import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
+import {
+  getPersistedSandboxTargetGateway,
+  getPersistedSandboxTargetGatewayName,
+} from "./gateway-target";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import { validateSandboxName } from "./mcp-bridge-validation";
@@ -35,6 +37,18 @@ function registeredMcpSandbox(sandboxName: string): SandboxEntry | null {
   } catch (error) {
     if (!(error instanceof ConfigCorruptError)) throw error;
     return null;
+  }
+}
+
+function requireMcpTargetGateway(gatewayName: string | null) {
+  try {
+    if (!gatewayName) throw new Error("Gateway identity is missing.");
+    return getPersistedSandboxTargetGateway({ gatewayName });
+  } catch {
+    throw new McpBridgeError(
+      "The selected OpenShell gateway is not a supported exact NemoClaw MCP target.",
+      1,
+    );
   }
 }
 
@@ -155,20 +169,12 @@ export function getSandboxOrThrow(sandboxName: string): SandboxEntry {
   if (registered) return registered;
   assertNoOpenShellGatewayEndpointOverride();
   const explicitGateway = process.env.OPENSHELL_GATEWAY;
-  if (explicitGateway && resolveGatewayPortFromName(explicitGateway) === null) {
-    throw new McpBridgeError(
-      "The selected OpenShell gateway is not a supported exact NemoClaw MCP target.",
-      1,
-    );
-  }
+  if (explicitGateway) requireMcpTargetGateway(explicitGateway);
   const args = ["gateway", "info", ...(explicitGateway ? ["-g", explicitGateway] : [])];
-  const gatewayName = getReportedGatewayName(captureMcpTarget(args, undefined, "combined"));
-  const gatewayPort = gatewayName ? resolveGatewayPortFromName(gatewayName) : null;
-  if (
-    !gatewayName ||
-    gatewayPort === null ||
-    (explicitGateway && explicitGateway !== gatewayName)
-  ) {
+  const { gatewayName, gatewayPort } = requireMcpTargetGateway(
+    getReportedGatewayName(captureMcpTarget(args, undefined, "combined")),
+  );
+  if (explicitGateway && explicitGateway !== gatewayName) {
     throw new McpBridgeError(
       "The selected OpenShell gateway is not a supported exact NemoClaw MCP target.",
       1,
