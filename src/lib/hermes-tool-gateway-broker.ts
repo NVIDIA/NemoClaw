@@ -493,7 +493,7 @@ function probeHermesToolGatewayBrokerStart(options = {}) {
   try {
     const result = spawnProbe(
       process.execPath,
-      ["--experimental-strip-types", HERMES_TOOL_GATEWAY_SCRIPT],
+      [HERMES_TOOL_GATEWAY_SCRIPT],
       {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
@@ -732,7 +732,7 @@ function spawnHermesToolGatewayBroker(refreshToken, initialSandboxName = null) {
   }
   const child = spawn(
     process.execPath,
-    ["--experimental-strip-types", HERMES_TOOL_GATEWAY_SCRIPT],
+    [HERMES_TOOL_GATEWAY_SCRIPT],
     {
       detached: true,
       stdio: "ignore",

@@ -154,7 +154,6 @@ describe("buildManagedStartupImageActionPlan", () => {
         runAs: "sandbox",
         argv: [
           "/usr/local/bin/node",
-          "--experimental-strip-types",
           "/opt/nemoclaw-deepagents-code/generate-config.ts",
         ],
       },

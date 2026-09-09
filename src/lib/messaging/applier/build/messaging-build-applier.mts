@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --experimental-strip-types
+#!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -791,7 +791,6 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
         runCommand(
           [
             "node",
-            "--experimental-strip-types",
             install.runtimeLock.verifierPath,
             install.runtimeLock.lockFile,
             install.runtimeLock.projectsRoot,

@@ -33,4 +33,4 @@ for file in "${surface[@]}"; do
   cmp -s "$trusted_root/$file" "$file"
 done
 test -z "$(git status --porcelain -- "${surface[@]}")"
-node --experimental-strip-types "$trusted_root/$path" <"$1"
+node "$trusted_root/$path" <"$1"

@@ -163,7 +163,6 @@ function runApplierProcess(
   return spawnSync(
     "node",
     [
-      "--experimental-strip-types",
       SCRIPT_PATH,
       "--agent",
       agent,
@@ -421,7 +420,6 @@ describe("messaging-build-applier.mts: agent-install", () => {
         const result = spawnSync(
           "node",
           [
-            "--experimental-strip-types",
             SCRIPT_PATH,
             "--agent",
             agent,
@@ -947,7 +945,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         fakeNode,
         [
           "#!/bin/sh",
-          'printf \'verify|%s|%s\\n\' "$3" "$4" >> "$OPENCLAW_TRACE"',
+          'printf \'verify|%s|%s\\n\' "$2" "$3" >> "$OPENCLAW_TRACE"',
           "exit 0",
           "",
         ].join("\n"),
@@ -1222,7 +1220,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         },
         "openclaw",
       );
-      const generatorResult = spawnSync("node", ["--experimental-strip-types", GENERATOR_PATH], {
+      const generatorResult = spawnSync("node", [GENERATOR_PATH], {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
         env: generatorEnv,
