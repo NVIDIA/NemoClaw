@@ -128,6 +128,49 @@ function restoreTmpArtifacts(paths: string[], backups: Record<string, string>): 
 }
 
 describe("scripts/lib/sandbox-init.sh", () => {
+  describe("Python startup isolation", () => {
+    it.each([
+      {
+        operation: "lock_rc_files",
+        observe: (rcFile: string, _stdout: string) => lstatSync(rcFile).mode & 0o777,
+        expected: 0o444,
+      },
+      {
+        operation: "read_messaging_plan_channels",
+        observe: (_rcFile: string, stdout: string) => stdout,
+        expected: "telegram",
+      },
+    ])(
+      "ignores inherited PYTHONPATH in $operation",
+      ({ operation, observe, expected }) => {
+        const workDir = mkdtempSync(join(tmpdir(), "sandbox-init-python-"));
+        const sentinel = join(workDir, "sitecustomize-ran");
+        const rcFile = join(workDir, ".bashrc");
+        writeFileSync(rcFile, "# fixture\n", { mode: 0o600 });
+        writeFileSync(
+          join(workDir, "sitecustomize.py"),
+          'import os\nfrom pathlib import Path\nPath(os.environ["TEST_PYTHON_SENTINEL"]).write_text("executed")\n',
+        );
+        try {
+          const result = runWithLib(`${operation} "$TEST_PYTHON_HOME"`, {
+            env: {
+              PYTHONPATH: workDir,
+              TEST_PYTHON_HOME: workDir,
+              TEST_PYTHON_SENTINEL: sentinel,
+              NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(
+                JSON.stringify({ channels: [{ channelId: "telegram", active: true }] }),
+              ).toString("base64"),
+            },
+          });
+          expect(existsSync(sentinel)).toBe(false);
+          expect(observe(rcFile, result.stdout)).toBe(expected);
+        } finally {
+          rmSync(workDir, { recursive: true, force: true });
+        }
+      },
+    );
+  });
+
   describe("emit_sandbox_sourced_file", () => {
     let workDir: string;
 

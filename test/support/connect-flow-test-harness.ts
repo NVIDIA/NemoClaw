@@ -117,8 +117,6 @@ export type ConnectHarnessOptions = {
     recoveryFailureDetail?: string;
     secretBoundaryRefused?: boolean;
     secretBoundaryReason?: SecretBoundaryRefusalReason;
-    mcpReconciliationRefused?: boolean;
-    mcpReconciliationReason?: string;
   };
   portableRecoveryResult?: { kind: "not-installed" | "already-running" | "recovered" };
   portableReceiptDisposition?:

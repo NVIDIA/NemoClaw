@@ -32,7 +32,7 @@ before those targets run; local runners must provide it themselves.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
-- `.github/workflows/sandbox-images-and-e2e.yaml` provides reusable sandbox-image build and test evidence.
+- `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
 ## CI execution shape
@@ -177,13 +177,23 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Retain the historical installer commit and SHA-256 digest, sandbox image digest, and reviewed OpenClaw npm URL and SHA-512 integrity. Install the historical package before testing the candidate upgrade path. |
+| `openshell-gateway-upgrade` | Retain one v0.0.89 fixture with a pinned installer commit and digest, sandbox image digest, and reviewed OpenClaw archive. Prove that the current gateway upgrade leaves its sandbox Ready, preserves a workspace marker, keeps the raw gateway credential out of the sandbox environment, `/sandbox/.openclaw/openclaw.json`, and recursive `auth-profiles.json` files below `/sandbox/.openclaw/agents`, and supports authenticated agent turns before and after the upgrade. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
 These targets may restore the shared artifact for the candidate CLI.
 They must not replace a historical installer, package, image, or version boundary with that artifact.
 The gateway fixture already binds its remote historical inputs to immutable commits and cryptographic digests.
 The workflow does not republish those inputs as artifacts.
+Deterministic tests own installer identity, OpenShell release asset selection,
+NemoClaw restore behavior, and Dockerfile patch behavior. The live target does not
+assert OpenClaw database tables, migration checkpoints, or other third-party
+storage details.
+
+The retained live target owns the released-gateway upgrade and usable-survivor
+boundary. Deterministic rebuild-flow tests own post-backup recreate failure,
+preserved backup and registry state, recovery-journal retention, and successful
+retry; stale-recovery tests own fail-closed behavior when no authoritative live
+policy remains.
 
 ### Hermes Sandbox Image Artifact
 
@@ -200,9 +210,30 @@ The 90-minute `test-hermes-sandbox-image` job downloads and loads that artifact 
 rebuilding the image.
 Within that job, the secret-boundary and root-entrypoint steps have 45- and 30-minute budgets respectively.
 
-The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
-shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
-E2E tests when those boundaries are the behavior under test.
+To reproduce root-entrypoint failures locally, load the run's `hermes-isolation-image` artifact into Docker and run:
+
+```bash
+NEMOCLAW_HERMES_TEST_IMAGE=nemoclaw-hermes-production NEMOCLAW_RUN_LIVE_E2E=1 \
+  npx vitest run --project e2e-live test/e2e/live/hermes-root-entrypoint-smoke.test.ts
+```
+
+For Rancher Desktop, also set `DOCKER_HOST=unix://$HOME/.rd/docker.sock`.
+Use a native image for process-identity checks; QEMU can cause the startup guard to reject a valid PID 1.
+To build a native image from the checkout with its pinned published base, run `docker build -f agents/hermes/Dockerfile -t nemoclaw-hermes-local .`.
+Then set `NEMOCLAW_HERMES_TEST_IMAGE=nemoclaw-hermes-local` in the test command.
+Refusal scenarios execute startup as PID 1.
+They require exit code 1 for root preparation or 78 for non-root layout repair.
+They then start the retained container with a verification script to check the refusal reason and filesystem state.
+This second pass does not launch Hermes again.
+The sandbox user owns the config directory and can remove its history file.
+Sticky-bit protection prevents the gateway user from removing sandbox-owned config files.
+
+The former root-level `test/e2e-test.sh` and `test/e2e-gateway-isolation.sh` suites have been
+removed. Their production-image security coverage now belongs to
+`test/e2e-runtime/managed-image-openclaw-security.test.ts` and the
+`managed-image-openclaw-security` job in `.github/workflows/sandbox-images.yaml`. Keep real shell,
+installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in E2E tests when those
+boundaries are the behavior under test.
 
 ## Platform Evidence
 
@@ -1607,6 +1638,10 @@ image layers and can otherwise exhaust the runner's default memory and swap
 during Docker layer export. Apart from those rebuild and export paths, E2E jobs
 add swap only through the trusted Hermes main-workflow fallback described in
 [Larger-runner routing](#larger-runner-routing).
+
+The exporters leave swap active through their final image operation. Their
+GitHub-hosted runners own terminal disposal of the swap and its backing file;
+the workflows do not add a failure-prone teardown step for that ephemeral state.
 
 These assertions run inside the existing `full-e2e` lifecycle instead of a
 second standalone onboarding run. This keeps the measurement on the job's first

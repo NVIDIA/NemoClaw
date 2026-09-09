@@ -9,13 +9,13 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { describe, expect, it } from "vitest";
+import { expectManagedToolDiscoveryRuntimeImageContract } from "../support/managed-bootstrap-image-contract";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const runtimeRoot = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
 const managedStartupRuntimeBundle = "managed-startup-image-runtime.bundle";
 const reviewedRuntimeHashOverrides: Readonly<Record<string, string>> = {
-  [managedStartupRuntimeBundle]:
-    "ad20bb9d5a40e91829a62ebca2942687b847dccc67e2cb13ea1f62cbdab25035",
+  [managedStartupRuntimeBundle]: "c267456af3ef655f344eea46caa0f23f93b33c88df8b5c290d7fad174346f04c",
 };
 const dockerfiles = [
   "Dockerfile",
@@ -108,6 +108,12 @@ function createCacheSeedFixture(): {
 }
 
 describe("MCP tool discovery image contract", () => {
+  it.each(dockerfiles)("executes the discovery runtime contract in %s", (dockerfilePath) => {
+    expectManagedToolDiscoveryRuntimeImageContract(
+      fs.readFileSync(path.join(repoRoot, dockerfilePath), "utf8"),
+    );
+  });
+
   it.skipIf(process.platform === "win32")(
     "installs the complete pinned cache seed offline before registry access",
     async () => {
@@ -221,7 +227,7 @@ describe("MCP tool discovery image contract", () => {
       relativePath: "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
     },
     {
-      expectedHash: "47b9c1f7f1f5b6c9d5bf304953701b2cff107a81ced8a9646ea66ec12bc6b7f1",
+      expectedHash: "14957aab5f36c3fa6d9af86f4070865fda167fed609cacaa99032b5a8b609900",
       relativePath: "mcp-tool-discovery/mcp-tool-discovery.bundle",
     },
   ])("pins the reviewed image runtime artifacts exactly", ({ expectedHash, relativePath }) => {
@@ -233,7 +239,9 @@ describe("MCP tool discovery image contract", () => {
       .createHash("sha256")
       .update(fs.readFileSync(path.join(bundleRoot, relativePath)))
       .digest("hex");
-    expect(actualHash, relativePath).toBe(reviewedRuntimeHashOverrides[relativePath] ?? expectedHash);
+    expect(actualHash, relativePath).toBe(
+      reviewedRuntimeHashOverrides[relativePath] ?? expectedHash,
+    );
   });
 
   it("executes the reviewed MCP discovery runtime artifact", () => {
@@ -253,12 +261,14 @@ describe("MCP tool discovery image contract", () => {
       const discoveryResult = spawnSync(process.execPath, [executablePath], { encoding: "utf8" });
       expect(discoveryResult).toMatchObject({ status: 0, stderr: "" });
       expect(JSON.parse(discoveryResult.stdout)).toEqual({
-        protocol: 1,
+        protocol: 2,
         ok: false,
         count: 0,
         tools: [],
         truncated: false,
         detail: "tool discovery received invalid runtime arguments",
+        failedStage: "preflight",
+        failureClass: "precondition",
       });
     } finally {
       fs.rmSync(executableFixture, { force: true, recursive: true });

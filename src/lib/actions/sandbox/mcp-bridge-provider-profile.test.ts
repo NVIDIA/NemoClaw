@@ -27,7 +27,7 @@ function exportedEndpointlessProfile(id: string, inferenceCapable: boolean): str
 }
 
 describe("OpenShell MCP provider profile", () => {
-  it("imports the endpointless profile before managed provider use", () => {
+  it("imports the endpointless profile before managed provider use", async () => {
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider profile not found" })
@@ -46,7 +46,7 @@ describe("OpenShell MCP provider profile", () => {
       });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    expect(() => ensureMcpBridgeProviderProfile(runtimeSelection)).not.toThrow();
+    await expect(ensureMcpBridgeProviderProfile(runtimeSelection)).resolves.toBeUndefined();
     expect(runOpenshell).toHaveBeenCalledTimes(6);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/)],
@@ -58,7 +58,7 @@ describe("OpenShell MCP provider profile", () => {
     );
   });
 
-  it("accepts existing profiles only after proving both exact endpointless boundaries", () => {
+  it("accepts existing profiles only after proving both exact endpointless boundaries", async () => {
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({
@@ -73,7 +73,7 @@ describe("OpenShell MCP provider profile", () => {
       });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    expect(() => ensureMcpBridgeProviderProfile(runtimeSelection)).not.toThrow();
+    await expect(ensureMcpBridgeProviderProfile(runtimeSelection)).resolves.toBeUndefined();
     expect(runOpenshell).toHaveBeenCalledWith(
       ["provider", "profile", "export", "openai", "--output", "json"],
       expect.any(Object),
@@ -84,7 +84,7 @@ describe("OpenShell MCP provider profile", () => {
     );
   });
 
-  it("rejects an existing profile that can supply its own endpoint authority", () => {
+  it("rejects an existing profile that can supply its own endpoint authority", async () => {
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({
@@ -105,12 +105,12 @@ describe("OpenShell MCP provider profile", () => {
       });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    expect(() => ensureMcpBridgeProviderProfile(runtimeSelection)).toThrow(
+    await expect(ensureMcpBridgeProviderProfile(runtimeSelection)).rejects.toThrow(
       /does not match NemoClaw's endpointless credential contract/,
     );
   });
 
-  it("fails closed when the gateway-only OpenAI profile cannot be registered", () => {
+  it("fails closed when the gateway-only OpenAI profile cannot be registered", async () => {
     const secret = "openai-import-secret-must-not-leak";
     const runOpenshell = vi
       .fn()
@@ -120,7 +120,7 @@ describe("OpenShell MCP provider profile", () => {
 
     let message = "";
     try {
-      ensureMcpBridgeProviderProfile(runtimeSelection);
+      await ensureMcpBridgeProviderProfile(runtimeSelection);
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
@@ -133,7 +133,7 @@ describe("OpenShell MCP provider profile", () => {
     expect(runOpenshell).toHaveBeenCalledTimes(2);
   });
 
-  it("suppresses MCP profile import output at the bridge error boundary", () => {
+  it("suppresses MCP profile import output at the bridge error boundary", async () => {
     const secret = "mcp-import-secret-must-not-leak";
     const runOpenshell = vi
       .fn()
@@ -148,7 +148,7 @@ describe("OpenShell MCP provider profile", () => {
 
     let message = "";
     try {
-      ensureMcpBridgeProviderProfile(runtimeSelection);
+      await ensureMcpBridgeProviderProfile(runtimeSelection);
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
@@ -181,11 +181,11 @@ describe("OpenShell MCP provider profile", () => {
       }),
     ],
     ["malformed export output", "not-json"],
-  ])("rejects an existing OpenAI profile with %s before MCP setup", (_case, stdout) => {
+  ])("rejects an existing OpenAI profile with %s before MCP setup", async (_case, stdout) => {
     const runOpenshell = vi.fn().mockReturnValueOnce({ status: 0, stdout, stderr: "" });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    expect(() => ensureMcpBridgeProviderProfile(runtimeSelection)).toThrow(
+    await expect(ensureMcpBridgeProviderProfile(runtimeSelection)).rejects.toThrow(
       /does not match NemoClaw's endpointless inference contract/,
     );
     expect(runOpenshell).toHaveBeenCalledOnce();
@@ -195,7 +195,7 @@ describe("OpenShell MCP provider profile", () => {
     );
   });
 
-  it("fails closed when the OpenAI profile cannot be exported", () => {
+  it("fails closed when the OpenAI profile cannot be exported", async () => {
     const runOpenshell = vi.fn().mockReturnValueOnce({
       status: 1,
       stdout: "",
@@ -203,13 +203,13 @@ describe("OpenShell MCP provider profile", () => {
     });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    expect(() => ensureMcpBridgeProviderProfile(runtimeSelection)).toThrow(
+    await expect(ensureMcpBridgeProviderProfile(runtimeSelection)).rejects.toThrow(
       /could not be read for validation/,
     );
     expect(runOpenshell).toHaveBeenCalledOnce();
   });
 
-  it("fails closed when the MCP profile cannot be exported", () => {
+  it("fails closed when the MCP profile cannot be exported", async () => {
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({
@@ -220,7 +220,7 @@ describe("OpenShell MCP provider profile", () => {
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "export rejected" });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    expect(() => ensureMcpBridgeProviderProfile(runtimeSelection)).toThrow(
+    await expect(ensureMcpBridgeProviderProfile(runtimeSelection)).rejects.toThrow(
       /nemoclaw-mcp-v1.*could not be exported for validation/u,
     );
     expect(runOpenshell).toHaveBeenCalledTimes(2);
