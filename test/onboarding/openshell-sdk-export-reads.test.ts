@@ -241,3 +241,166 @@ describe.skipIf(!hasSdkArtifact())("released OpenShell policy wire safety", () =
     });
   });
 });
+
+describe.skipIf(!hasSdkArtifact())("released OpenShell policy document conversion", () => {
+  it.each([
+    ["single port", { port: 443 }, { port: 443 }],
+    ["single port list", { ports: [443] }, { port: 443 }],
+    ["multiple ports", { port: 80, ports: [443, 8443] }, { ports: [443, 8443] }],
+    [
+      "REST allow and deny query matchers",
+      {
+        port: 443,
+        protocol: "rest",
+        rules: [
+          {
+            allow: {
+              method: "GET",
+              path: "/v1/*",
+              query: { repo: { glob: "NVIDIA/*" }, scope: { any: ["read", "list"] } },
+            },
+          },
+        ],
+        denyRules: [{ method: "DELETE", path: "/v1/*", query: { scope: { glob: "admin" } } }],
+      },
+      {
+        port: 443,
+        protocol: "rest",
+        rules: [
+          {
+            allow: {
+              method: "GET",
+              path: "/v1/*",
+              query: { repo: "NVIDIA/*", scope: { any: ["read", "list"] } },
+            },
+          },
+        ],
+        deny_rules: [{ method: "DELETE", path: "/v1/*", query: { scope: "admin" } }],
+      },
+    ],
+    [
+      "JSON-RPC body limit and flat parameters",
+      {
+        port: 443,
+        protocol: "json-rpc",
+        jsonRpcMaxBodyBytes: 4096,
+        rules: [
+          {
+            allow: {
+              method: "read",
+              params: {
+                name: { glob: "x" },
+                "a.b": { glob: "y" },
+              },
+            },
+          },
+        ],
+      },
+      {
+        port: 443,
+        protocol: "json-rpc",
+        json_rpc: { max_body_bytes: 4096 },
+        rules: [{ allow: { method: "read", params: { name: "x", "a.b": "y" } } }],
+      },
+    ],
+    [
+      "MCP false options, tool selection, and nested parameters",
+      {
+        port: 443,
+        protocol: "mcp",
+        jsonRpcMaxBodyBytes: 4096,
+        mcp: { strictToolNames: false, allowAllKnownMcpMethods: false },
+        rules: [
+          {
+            allow: {
+              method: "tools/call",
+              params: {
+                name: { glob: "search" },
+                "arguments.repo": { glob: "NVIDIA/*" },
+                "arguments.limit": { any: ["1", "2"] },
+              },
+            },
+          },
+        ],
+      },
+      {
+        port: 443,
+        protocol: "mcp",
+        mcp: { max_body_bytes: 4096, strict_tool_names: false, allow_all_known_mcp_methods: false },
+        rules: [
+          {
+            allow: {
+              method: "tools/call",
+              tool: "search",
+              params: { arguments: { repo: "NVIDIA/*", limit: { any: ["1", "2"] } } },
+            },
+          },
+        ],
+      },
+    ],
+    [
+      "MCP method profile and denied tools",
+      {
+        port: 443,
+        protocol: "mcp",
+        mcp: { strictToolNames: true, allowAllKnownMcpMethods: true },
+        rules: [
+          { allow: { method: "tools/call", params: { name: { glob: "search" } } } },
+          { allow: { method: "*" } },
+        ],
+        denyRules: [{ method: "tools/call", params: { name: { any: ["delete", "write"] } } }],
+      },
+      {
+        port: 443,
+        protocol: "mcp",
+        mcp: { strict_tool_names: true, allow_all_known_mcp_methods: true },
+        rules: [{ allow: { tool: "search" } }, { allow: {} }],
+        deny_rules: [{ tool: { any: ["delete", "write"] } }],
+      },
+    ],
+    [
+      "colliding MCP parameter paths",
+      {
+        port: 443,
+        protocol: "mcp",
+        rules: [{ allow: { params: { a: { glob: "x" }, "a.b": { glob: "y" } } } }],
+      },
+      {
+        port: 443,
+        protocol: "mcp",
+        rules: [{ allow: { params: { a: "x", "a.b": "y" } } }],
+      },
+    ],
+  ])(
+    "preserves %s through SDK binary and JSON serialization",
+    async (_case, endpoint, expected) => {
+      const sdkPackage = "@nvidia/openshell-sdk/raw";
+      const protobufPackage = "@bufbuild/protobuf";
+      const [{ SandboxPolicySchema }, { create, toBinary, fromBinary }] = await Promise.all([
+        import(sdkPackage),
+        import(protobufPackage),
+      ]);
+      const input = create(SandboxPolicySchema, {
+        version: 1,
+        networkPolicies: {
+          api: {
+            name: "api",
+            endpoints: [{ host: "api.example", ...endpoint }],
+            binaries: [{ path: "/usr/bin/curl", harness: true }],
+          },
+        },
+      });
+      const policy = fromBinary(SandboxPolicySchema, toBinary(SandboxPolicySchema, input));
+      expect(YAML.parse(await serializeSdkPolicy(policy))).toEqual({
+        version: 1,
+        network_policies: {
+          api: {
+            name: "api",
+            endpoints: [{ host: "api.example", ...expected }],
+            binaries: [{ path: "/usr/bin/curl" }],
+          },
+        },
+      });
+    },
+  );
+});
