@@ -591,7 +591,7 @@ EOF
 }
 
 read_messaging_plan_channels() {
-  python3 - <<'PY'
+  python3 -I - <<'PY'
 import base64
 import json
 import os

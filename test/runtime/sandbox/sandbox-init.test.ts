@@ -128,6 +128,32 @@ function restoreTmpArtifacts(paths: string[], backups: Record<string, string>): 
 }
 
 describe("scripts/lib/sandbox-init.sh", () => {
+  describe("Python startup isolation", () => {
+    it("ignores inherited PYTHONPATH in read_messaging_plan_channels", () => {
+      const workDir = mkdtempSync(join(tmpdir(), "sandbox-init-python-"));
+      const sentinel = join(workDir, "sitecustomize-ran");
+      writeFileSync(
+        join(workDir, "sitecustomize.py"),
+        'import os\nfrom pathlib import Path\nPath(os.environ["TEST_PYTHON_SENTINEL"]).write_text("executed")\n',
+      );
+      try {
+        const result = runWithLib("read_messaging_plan_channels", {
+          env: {
+            PYTHONPATH: workDir,
+            TEST_PYTHON_SENTINEL: sentinel,
+            NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(
+              JSON.stringify({ channels: [{ channelId: "telegram", active: true }] }),
+            ).toString("base64"),
+          },
+        });
+        expect(existsSync(sentinel)).toBe(false);
+        expect(result.stdout).toBe("telegram");
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("emit_sandbox_sourced_file", () => {
     let workDir: string;
 

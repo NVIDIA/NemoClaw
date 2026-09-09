@@ -316,9 +316,9 @@ test(
             trustedSandboxShellScript(
               String.raw`
                 printf '%s\n' '== pid 1 =='
-                tr '\0' ' ' </proc/1/cmdline 2>/dev/null || true
+                cat /proc/1/comm 2>&1 || true
                 printf '\n%s\n' '== process tree =='
-                ps -eo user=,pid=,ppid=,stat=,wchan:32=,etime=,args= 2>&1 || true
+                ps -eo user=,pid=,ppid=,stat=,wchan:32=,etime=,comm= 2>&1 || true
                 head -v -n 32 /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.events /sys/fs/cgroup/pids.current /sys/fs/cgroup/pids.max /sys/fs/cgroup/pids.events 2>&1
                 printf '%s\n' '== entrypoint log =='
                 tail -n 300 /tmp/nemoclaw-start.log 2>&1 || true
