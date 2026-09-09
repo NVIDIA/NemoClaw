@@ -760,7 +760,7 @@ const { createSandbox } = require(${onboardPath});
         (entry: CommandEntry) =>
           entry.command.includes("forward service my-assistant") &&
           entry.command.includes("--target-port 18789") &&
-          entry.command.includes("--local 0.0.0.0:18789"),
+          entry.command.includes("--local 127.0.0.1:18789"),
       ),
       "expected dashboard forward restore on sandbox reuse",
     );
