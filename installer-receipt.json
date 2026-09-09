@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "classification": "unsigned-earlier-qualified-native-windows-arm64-preview",
+  "candidateSha": "0fd3b6ee4f9bdcbc1fc5a0f0d97b10719e6f95c0",
+  "sourceRepository": "https://github.com/NVIDIA/NemoClaw",
+  "sourcePullRequest": 10799,
+  "sourceWorkflowRun": 33996120228,
+  "sourceWorkflowAttempts": [
+    2,
+    3
+  ],
+  "sourceArtifactId": 9980422936,
+  "packageManifestSha256": "a75eed8119f92045477111f26f2a6f380dc905897c2539e67379e38ee39b1b9a",
+  "openshell": {
+    "repository": "https://github.com/NVIDIA/OpenShell",
+    "pullRequest": 2721,
+    "revision": "bcd517bbe08cc80860c9be57699390cd32e8445f"
+  },
+  "files": [
+    {
+      "name": "NemoClawSetup-0.1.0-windows-arm64.exe",
+      "size": 249578791,
+      "sha256": "7b3ac6e595393aecec1ffc1621c08e540089769f352a95422b8fae2f2c1ed70d"
+    }
+  ],
+  "knownDependencyAdvisory": {
+    "package": "js-yaml",
+    "installedVersion": "4.3.1",
+    "advisory": "GHSA-2883-xcg3-v3hh",
+    "patchedVersion": "4.3.2",
+    "replacementBuild": "pending qualification"
+  },
+  "qualification": {
+    "architecture": "arm64",
+    "agents": [
+      "OpenClaw",
+      "Hermes Agent",
+      "Deep Agents Code",
+      "Pi (experimental)",
+      "NemoCUA (experimental)"
+    ],
+    "inference": "deterministic credential-free local endpoint",
+    "repair": true,
+    "reinstall": true,
+    "uninstallCleanup": true,
+    "prohibitedPackageDescendants": 0,
+    "productionSupport": false
+  }
+}
