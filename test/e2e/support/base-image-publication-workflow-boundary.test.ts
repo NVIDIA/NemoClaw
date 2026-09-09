@@ -205,7 +205,7 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ["checkout credentials", (value) => (gateSteps(value)[1].with!["persist-credentials"] = true)],
     ["Node condition", (value) => (gateSteps(value)[2].if = "${{ always() }}")],
     ["Node pin", (value) => (gateSteps(value)[2].uses = "actions/setup-node@v6")],
-    ["Node version", (value) => (gateSteps(value)[2].with!["node-version"] = 20)],
+    ["Node dependency cache", (value) => (gateSteps(value)[2].with!.cache = "npm")],
     ["verifier condition", (value) => (gateSteps(value)[3].if = "${{ always() }}")],
     [
       "base publication selection condition",

@@ -252,7 +252,7 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
 
     const applied = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", PATCH_SCRIPT, dist],
+      [PATCH_SCRIPT, dist],
       {
         encoding: "utf-8",
       },
@@ -263,7 +263,7 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
 
     const audited = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", PATCH_SCRIPT, "--audit", dist],
+      [PATCH_SCRIPT, "--audit", dist],
       { encoding: "utf-8" },
     );
     expect(audited.status).toBe(0);

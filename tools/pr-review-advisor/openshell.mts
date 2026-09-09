@@ -305,7 +305,6 @@ export function createAdvisorSandbox(
       uploads: [],
       command: [
         "/usr/bin/node",
-        "--experimental-strip-types",
         "--no-warnings",
         `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/openshell.mts`,
         "initialize",
@@ -384,7 +383,6 @@ export function runAdvisorSandboxAsync(
       },
       command: [
         "/usr/bin/node",
-        "--experimental-strip-types",
         "--no-warnings",
         `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-specialist.mts`,
         "--base",

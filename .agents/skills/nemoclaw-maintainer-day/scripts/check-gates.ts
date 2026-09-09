@@ -7,7 +7,7 @@
  * Checks all required gates and outputs structured JSON.
  * Claude uses the output to decide: approve, route to salvage, or report blockers.
  *
- * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number> [--repo OWNER/REPO]
+ * Usage: node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number> [--repo OWNER/REPO]
  */
 
 import { isDeepStrictEqual } from "node:util";
