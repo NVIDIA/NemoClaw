@@ -322,12 +322,13 @@ describe("uninstall gateway-port segregation (#3053)", () => {
   it.each([
     {
       name: "a connection refusal",
-      diagnostic: "connection refused; OPENAI_API_KEY=must-not-be-logged",
+      diagnostic: "",
       expectedCause: "connection refused; exit 1).",
+      stdoutDiagnostic: "connection refused; OPENAI_API_KEY=must-not-be-logged",
     },
     {
       name: "a permission error",
-      diagnostic: "permission denied",
+      diagnostic: "permission denied; ACCESS_TOKEN=must-not-be-logged",
       expectedCause: "permission denied; exit 1).",
     },
     { name: "an unverified generic absence", diagnostic: "gateway not found" },
@@ -336,18 +337,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       name: "an absence with a failed gateway-list postcondition",
       postcondition: { status: 1, stdout: "", stderr: "connection refused" } satisfies RunResult,
     },
-    {
-      name: "an absence with an invalid-JSON gateway-list postcondition",
-      postcondition: ok("{"),
-    },
-    {
-      name: "an absence with a non-array gateway-list postcondition",
-      postcondition: ok("{}"),
-    },
-    {
-      name: "an absence with an invalid-entry gateway-list postcondition",
-      postcondition: ok(JSON.stringify([{}])),
-    },
+    { name: "an absence with invalid JSON", postcondition: ok("{") },
+    { name: "an absence with a non-array list", postcondition: ok("{}") },
+    { name: "an absence with an invalid list entry", postcondition: ok(JSON.stringify([{}])) },
     { name: "an unrelated not-found error", diagnostic: "gateway service endpoint not found" },
     {
       name: "a generic absence plus another failure",
@@ -374,7 +366,13 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     },
   ])(
     "preserves state when gateway cleanup reports $name (#9859)",
-    ({ diagnostic, expectedCause = "exit 1).", legacyDestroyDiagnostic, postcondition }) => {
+    ({
+      diagnostic,
+      expectedCause = "exit 1).",
+      legacyDestroyDiagnostic,
+      postcondition,
+      stdoutDiagnostic = "",
+    }) => {
       const calls: Array<{ args: string[]; command: string }> = [];
       const logs: string[] = [];
       const rmSync = vi.fn();
@@ -382,7 +380,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       let removeAttempted = false;
       const removeDiagnostic = diagnostic ?? NAMED_GATEWAY_ABSENCE;
       const responses = new Map<string, RunResult>([
-        ["openshell gateway remove nemoclaw", { status: 1, stdout: "", stderr: removeDiagnostic }],
+        [
+          "openshell gateway remove nemoclaw",
+          { status: 1, stdout: stdoutDiagnostic, stderr: removeDiagnostic },
+        ],
       ]);
       responses.set(
         "openshell gateway destroy -g nemoclaw",
