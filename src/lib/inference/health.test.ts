@@ -186,6 +186,28 @@ describe("inference health", () => {
       expect(payload.model).toBe("meta/llama-3.3-70b-instruct");
     });
 
+    it.each(["nvidia-prod", "nvidia-nim"])(
+      "uses the NVIDIA Endpoints request shape for Nemotron 3 Super health through %s (#10880)",
+      (provider) => {
+        let capturedArgv: string[] = [];
+        const result = probeRemoteProviderHealth(provider, {
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          getCredentialImpl: () => "nvapi-test",
+          runCurlProbeImpl: (argv) => {
+            capturedArgv = argv;
+            return httpOk();
+          },
+        });
+
+        expect(result?.ok).toBe(true);
+        expect(JSON.parse(capturedArgv[capturedArgv.indexOf("-d") + 1])).toMatchObject({
+          temperature: 1,
+          top_p: 0.95,
+          chat_template_kwargs: { enable_thinking: false },
+        });
+      },
+    );
+
     it("always resolves NVIDIA credentials from NVIDIA_INFERENCE_API_KEY, not the route's default credential env", () => {
       let resolvedEnvNames: string[] = [];
       const result = probeRemoteProviderHealth("nvidia-nim", {

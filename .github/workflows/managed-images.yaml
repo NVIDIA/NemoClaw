@@ -77,7 +77,7 @@ jobs:
     name: PR reviewed npm audit
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -100,6 +100,7 @@ jobs:
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
@@ -352,9 +353,14 @@ jobs:
           fi
           if ! node -e '
             const expected = {
-              protocol: 1,
+              protocol: 2,
               ok: false,
+              count: 0,
+              tools: [],
+              truncated: false,
               detail: "tool discovery received invalid runtime arguments",
+              failedStage: "preflight",
+              failureClass: "precondition",
             };
             let result;
             try {
@@ -368,9 +374,16 @@ jobs:
                 : undefined;
             if (
               !record ||
+              Object.keys(record).length !== Object.keys(expected).length ||
               record.protocol !== expected.protocol ||
               record.ok !== expected.ok ||
-              record.detail !== expected.detail
+              record.count !== expected.count ||
+              !Array.isArray(record.tools) ||
+              record.tools.length !== 0 ||
+              record.truncated !== expected.truncated ||
+              record.detail !== expected.detail ||
+              record.failedStage !== expected.failedStage ||
+              record.failureClass !== expected.failureClass
             ) {
               process.exit(1);
             }
@@ -625,6 +638,13 @@ jobs:
         run: |
           set -euo pipefail
           image_json="$(docker image inspect "$IMAGE_REFERENCE")"
+          if [ "$AGENT" = "hermes" ]; then
+            layer_count="$(jq -er '.[0].RootFS.Layers | length' <<< "$image_json")"
+            if [ "$layer_count" -gt 125 ]; then
+              echo "ERROR: Hermes managed image has ${layer_count} filesystem layers; the publication runner compatibility ceiling is 125." >&2
+              exit 1
+            fi
+          fi
           image_id="$(
             jq -er '
               if length == 1 and (.[0].Id | type) == "string"
@@ -733,9 +753,14 @@ jobs:
           fi
           if ! node -e '
             const expected = {
-              protocol: 1,
+              protocol: 2,
               ok: false,
+              count: 0,
+              tools: [],
+              truncated: false,
               detail: "tool discovery received invalid runtime arguments",
+              failedStage: "preflight",
+              failureClass: "precondition",
             };
             let result;
             try {
@@ -749,9 +774,16 @@ jobs:
                 : undefined;
             if (
               !record ||
+              Object.keys(record).length !== Object.keys(expected).length ||
               record.protocol !== expected.protocol ||
               record.ok !== expected.ok ||
-              record.detail !== expected.detail
+              record.count !== expected.count ||
+              !Array.isArray(record.tools) ||
+              record.tools.length !== 0 ||
+              record.truncated !== expected.truncated ||
+              record.detail !== expected.detail ||
+              record.failedStage !== expected.failedStage ||
+              record.failureClass !== expected.failureClass
             ) {
               process.exit(1);
             }
@@ -856,6 +888,13 @@ jobs:
           reference="${IMAGE}@${DIGEST}"
           raw="$RUNNER_TEMP/${AGENT}-published-manifest.raw"
           scripts/checks/pull-public-exact-digest.sh "$reference" linux/amd64
+          if [ "$AGENT" = "hermes" ]; then
+            published_layer_count="$(docker image inspect --format '{{len .RootFS.Layers}}' "$reference")"
+            if [ "$published_layer_count" -gt 125 ]; then
+              echo "ERROR: Hermes managed image has ${published_layer_count} filesystem layers; the publication runner compatibility ceiling is 125." >&2
+              exit 1
+            fi
+          fi
           docker buildx imagetools inspect "$reference" --raw > "$raw"
           [[ "sha256:$(sha256sum "$raw" | awk '{print $1}')" == "$DIGEST" ]] || {
             echo "ERROR: published PR manifest bytes do not match the build digest" >&2
@@ -1347,13 +1386,6 @@ jobs:
             node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
             test -x /usr/local/bin/nemoclaw-managed-bootstrap
           '
-      - name: Remove Pi anonymous Docker configuration
-        if: always() && steps.publish.outputs.docker-config != ''
-        shell: bash
-        env:
-          ANONYMOUS_CONFIG: ${{ steps.publish.outputs.docker-config }}
-        run: rm -rf -- "$ANONYMOUS_CONFIG"
-
       # The checks above bypass /usr/local/bin/nemoclaw-start with a direct
       # --entrypoint override, so they never prove the entrypoint itself runs
       # correctly. Start the published digest through its declared entrypoint
@@ -1566,13 +1598,15 @@ jobs:
           set -euo pipefail
           [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,9}$ ]]
+          # Failed-job reruns retain this successful job's original output,
+          # while rerun-all executes it again and must mint fresh immutable aliases.
           printf 'cohort=ghrun-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
   reviewed-npm-audit:
     name: Reviewed npm audit for managed image publication
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -2125,13 +2159,6 @@ jobs:
               --platform "$PLATFORM"
           printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
-
-      - name: Remove anonymous Docker configuration
-        if: always() && steps.build.outputs.docker-config != ''
-        shell: bash
-        env:
-          ANONYMOUS_CONFIG: ${{ steps.build.outputs.docker-config }}
-        run: rm -rf -- "$ANONYMOUS_CONFIG"
 
       - name: Capture exact managed image publication evidence
         id: evidence
@@ -2920,6 +2947,7 @@ jobs:
                     digest,
                     reference,
                     baseReference,
+                    run,
                     publicationEvidence
                   }
                 }) | from_entries)
@@ -2928,7 +2956,11 @@ jobs:
 
           cohort_manifests="$RUNNER_TEMP/managed-image-cohort-manifests.json"
           jq -s 'sort_by(.agent)' "$manifests" > "$cohort_manifests"
-          if ! jq -e '
+          if ! jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson runId "$GITHUB_RUN_ID" \
+            '
             length == 3
             and ([.[].agent] | sort) == [
               "hermes",
@@ -2949,6 +2981,12 @@ jobs:
               and all(.platforms[];
                 (.digest | test("^sha256:[0-9a-f]{64}$"))
                 and (.baseReference | test("@sha256:[0-9a-f]{64}$"))
+                and (.run | keys | sort) == ["attempt", "id"]
+                and .run.id == $runId
+                and (.run.attempt | type) == "number"
+                and .run.attempt >= 1
+                and (.run.attempt | floor) == .run.attempt
+                and .run.attempt <= $runAttempt
                 and .publicationEvidence.candidateDescriptor.digest == .digest
                 and .publicationEvidence.attestations.manifestDescriptor.annotations[
                   "vnd.docker.reference.digest"
@@ -2957,6 +2995,9 @@ jobs:
                   .publicationEvidence.workloadDescriptor.digest
                 and .publicationEvidence.attestations.spdx.statement.subject.digest ==
                   .publicationEvidence.workloadDescriptor.digest
+                and .publicationEvidence.attestations.slsa.statement.builderId ==
+                  ("https://github.com/" + $repository + "/actions/runs/" +
+                   ($runId | tostring) + "/attempts/" + (.run.attempt | tostring))
               )
             )
           ' "$cohort_manifests" >/dev/null; then
@@ -3102,6 +3143,7 @@ jobs:
             }' > "$cohort_contract"
           jq -e \
             --arg cohort "$cohort" \
+            --arg repository "$GITHUB_REPOSITORY" \
             --arg revision "$GITHUB_SHA" \
             --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             --argjson runId "$GITHUB_RUN_ID" \
@@ -3136,10 +3178,19 @@ jobs:
                and .alias == (.image + ":cohort-" + $cohort)
                and (.platforms | keys | sort) == ["linux/amd64", "linux/arm64"]
                and all(.platforms[];
-                 .publicationEvidence.candidateDescriptor.digest == .digest
+                 (.run | keys | sort) == ["attempt", "id"]
+                 and .run.id == $runId
+                 and (.run.attempt | type) == "number"
+                 and .run.attempt >= 1
+                 and (.run.attempt | floor) == .run.attempt
+                 and .run.attempt <= $runAttempt
+                 and .publicationEvidence.candidateDescriptor.digest == .digest
                  and .publicationEvidence.attestations.manifestDescriptor.annotations[
                    "vnd.docker.reference.digest"
                  ] == .publicationEvidence.workloadDescriptor.digest
+                 and .publicationEvidence.attestations.slsa.statement.builderId ==
+                   ("https://github.com/" + $repository + "/actions/runs/" +
+                    ($runId | tostring) + "/attempts/" + (.run.attempt | tostring))
                )
              )' "$cohort_contract" >/dev/null
 

@@ -395,8 +395,6 @@ RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
 # OpenClaw version: change the OPENCLAW_VERSION ARG default so CI rebuilds
 # the base image on push to main, or use workflow_dispatch on base-image.yaml
 # with the openclaw_version input for a one-off build without editing this file.
-# Dependency review evidence for this runtime pin lives in
-# internal/security-reviews/openclaw-2026.7.1-dependency-review.md.
 ARG OPENCLAW_VERSION=2026.7.1
 ARG OPENCLAW_2026_7_1_INTEGRITY=sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==
 ARG OPENCLAW_2026_7_1_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz
@@ -424,7 +422,7 @@ COPY agents/openclaw/openclaw-runtime/package.json \
 COPY agents/openclaw/mcporter-runtime/package.json \
     agents/openclaw/mcporter-runtime/package-lock.json \
     /usr/local/lib/nemoclaw/mcporter-runtime/
-COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
+COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/
 COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/bundled-npm-package.mts \
     scripts/lib/reviewed-npm-audit.mts \
@@ -593,10 +591,11 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
             --package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
             --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
             --raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
-            --graph mcporter-runtime --npm-version "$(npm --version)" \
-            --registry https://registry.npmjs.org/ --threshold high \
-            --result /tmp/mcporter-npm-audit-policy.json; \
-        cp "$MCPORTER_RAW_REPORT" /tmp/mcporter-npm-audit.json; \
+            --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json \
+            --registry https://registry.yarnpkg.com --threshold high \
+            --legacy-npmjs true \
+            --result /tmp/mcporter-npm-audit-policy.json \
+        && cp "$MCPORTER_RAW_REPORT" /tmp/mcporter-npm-audit.json; \
       else \
         node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
             --directory /usr/local/lib/nemoclaw/mcporter-runtime \

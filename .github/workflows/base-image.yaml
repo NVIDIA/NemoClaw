@@ -6,6 +6,7 @@
 # Triggers:
 #   - Push to main when a base- or managed-image input changes
 #   - Manual dispatch for ad-hoc rebuilds
+# E2E publication verification accepts push builds, not manual rebuilds.
 #
 # Base images contain the expensive, rarely-changing layers. Complete image
 # publication consumes exact base digests from the same trusted workflow run.
@@ -30,6 +31,8 @@ on:
       - ".github/actions/build-base-image-platform/**"
       - ".github/actions/publish-base-image-manifest/**"
       - ".dockerignore"
+      - "package.json"
+      - "package-lock.json"
       # Complete managed-image inputs. Keep these reviewed families synchronized
       # with tools/e2e/base-image-publication.mts.
       - "Dockerfile"
@@ -109,7 +112,7 @@ jobs:
   reviewed-npm-audit:
     if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:

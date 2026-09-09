@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalAuditReceipt,
   createAuditReceipt,
+  LEGACY_NPM_AUDIT_RECEIPT_DEADLINE,
   parseAndVerifyAuditReceipt,
   sha256,
 } from "../../../scripts/lib/npm-audit-receipt.mts";
@@ -23,7 +24,7 @@ const inputs = {
   packageLock: "lock",
   rawResponse:
     '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}',
-  registryOrigin: "https://registry.npmjs.org/",
+  registryOrigin: "https://registry.yarnpkg.com",
   now: NOW,
 } as const;
 function receipt(createdAt = NOW) {
@@ -47,8 +48,46 @@ describe("reviewed npm audit receipt", () => {
   it("canonically binds all receipt inputs and verifies a fresh passing result", () => {
     const parsed = parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt()), inputs);
     expect(parsed.acceptedAdvisoryIds).toEqual(["GHSA-a", "GHSA-b"]);
-    expect(parsed.argv).toEqual(["audit", "--omit=dev", "--json"]);
+    expect(parsed.argv).toEqual([
+      "audit",
+      "--registry=https://registry.yarnpkg.com",
+      "--omit=dev",
+      "--json",
+    ]);
     expect(new Date(parsed.expiresAt).getTime() - NOW.getTime()).toBeLessThan(12 * 60 * 60 * 1000);
+  });
+
+  it("accepts a legacy npmjs receipt only through the explicit transition option", () => {
+    const legacy = {
+      ...receipt(),
+      argv: ["audit", "--omit=dev", "--json"],
+      registryOrigin: "https://registry.npmjs.org/",
+    };
+    expect(() => parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), inputs)).toThrow(
+      /registry/,
+    );
+    expect(
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), {
+        ...inputs,
+        allowLegacyNpmjsReceipt: true,
+      }).registryOrigin,
+    ).toBe("https://registry.npmjs.org/");
+    expect(() =>
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), {
+        ...inputs,
+        allowLegacyNpmjsReceipt: true,
+        now: new Date(LEGACY_NPM_AUDIT_RECEIPT_DEADLINE),
+      }),
+    ).toThrow(/allowed contract/);
+  });
+
+  it("rejects a receipt whose registry identity differs from its audit command", () => {
+    expect(() =>
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt()), {
+        ...inputs,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toThrow(/registry/);
   });
 
   it.each([
@@ -115,14 +154,88 @@ describe("reviewed npm audit receipt", () => {
     ).toThrow(/packageLockSha256/);
   });
 
-  it("provides a local CLI verifier suitable for a BuildKit secret mount", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "receipt-cli-"));
+  it.each([
+    { legacy: false, registry: inputs.registryOrigin, unflaggedStatus: 0, unflaggedStderr: "" },
+    {
+      legacy: true,
+      registry: "https://registry.npmjs.org/",
+      unflaggedStatus: 1,
+      unflaggedStderr: "receipt npm audit registry and arguments do not match an allowed contract",
+    },
+  ])(
+    "provides a local CLI verifier for a BuildKit secret mount ($legacy)",
+    ({ legacy, registry, unflaggedStatus, unflaggedStderr }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "receipt-cli-"));
+      try {
+        fs.writeFileSync(path.join(root, "package.json"), inputs.packageJson);
+        fs.writeFileSync(path.join(root, "package-lock.json"), inputs.packageLock);
+        fs.writeFileSync(path.join(root, "exceptions.json"), inputs.exceptionPolicy);
+        fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
+        fs.writeFileSync(
+          path.join(root, "reviewed-npm-audit.json"),
+          JSON.stringify({ npmVersion: inputs.npmVersion }),
+        );
+        const auditReceipt = legacy
+          ? {
+              ...receipt(new Date()),
+              argv: ["audit", "--omit=dev", "--json"],
+              registryOrigin: registry,
+            }
+          : receipt(new Date());
+        fs.writeFileSync(path.join(root, "receipt.json"), canonicalAuditReceipt(auditReceipt));
+        const verifierArgs = [
+          "--experimental-strip-types",
+          path.join(import.meta.dirname, "../../../scripts/lib/npm-audit-receipt.mts"),
+          "--receipt",
+          path.join(root, "receipt.json"),
+          "--package-json",
+          path.join(root, "package.json"),
+          "--package-lock",
+          path.join(root, "package-lock.json"),
+          "--raw-report",
+          path.join(root, "raw.json"),
+          "--exceptions",
+          path.join(root, "exceptions.json"),
+          "--graph",
+          inputs.graphId,
+          "--audit-config",
+          path.join(root, "reviewed-npm-audit.json"),
+          "--registry",
+          registry,
+          "--threshold",
+          inputs.severityThreshold,
+          ...(legacy ? ["--legacy-npmjs", "true"] : []),
+        ];
+        const result = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain("current policy verified");
+        const unflaggedArgs = legacy ? verifierArgs.slice(0, -2) : verifierArgs;
+        const withoutMigrationFlag = spawnSync(process.execPath, unflaggedArgs, {
+          encoding: "utf8",
+        });
+        expect(withoutMigrationFlag.status).toBe(unflaggedStatus);
+        expect(withoutMigrationFlag.stderr).toContain(unflaggedStderr);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("rejects the removed raw-copy option before writing either output", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "receipt-removed-option-"));
+    const resultFile = path.join(root, "policy.json");
+    const rawCopyFile = path.join(root, "copied-raw.json");
     try {
       fs.writeFileSync(path.join(root, "package.json"), inputs.packageJson);
       fs.writeFileSync(path.join(root, "package-lock.json"), inputs.packageLock);
       fs.writeFileSync(path.join(root, "exceptions.json"), inputs.exceptionPolicy);
       fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
+      fs.writeFileSync(
+        path.join(root, "reviewed-npm-audit.json"),
+        JSON.stringify({ npmVersion: inputs.npmVersion }),
+      );
       fs.writeFileSync(path.join(root, "receipt.json"), canonicalAuditReceipt(receipt(new Date())));
+
       const result = spawnSync(
         process.execPath,
         [
@@ -140,17 +253,24 @@ describe("reviewed npm audit receipt", () => {
           path.join(root, "exceptions.json"),
           "--graph",
           inputs.graphId,
-          "--npm-version",
-          inputs.npmVersion,
+          "--audit-config",
+          path.join(root, "reviewed-npm-audit.json"),
           "--registry",
           inputs.registryOrigin,
           "--threshold",
           inputs.severityThreshold,
+          "--result",
+          resultFile,
+          "--raw-copy",
+          rawCopyFile,
         ],
         { encoding: "utf8" },
       );
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("current policy verified");
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("unexpected or missing keys");
+      expect(fs.existsSync(resultFile)).toBe(false);
+      expect(fs.existsSync(rawCopyFile)).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
