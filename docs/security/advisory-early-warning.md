@@ -54,11 +54,11 @@ With `--output`, it writes the requested local signals file:
 
 ```sh
 # List inventory package names (one per line), the input for advisory queries.
-node --experimental-strip-types scripts/advisory-early-warning-scan.mts \
+node scripts/advisory-early-warning-scan.mts \
   --list-packages
 
 # Correlate fetched advisory records with the inventory.
-node --experimental-strip-types scripts/advisory-early-warning-scan.mts \
+node scripts/advisory-early-warning-scan.mts \
   --advisories advisories.json --output signals.json
 ```
 

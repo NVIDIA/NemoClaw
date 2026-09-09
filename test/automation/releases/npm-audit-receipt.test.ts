@@ -189,7 +189,6 @@ describe("npm audit receipt", () => {
           : receipt(new Date());
         fs.writeFileSync(path.join(root, "receipt.json"), canonicalAuditReceipt(auditReceipt));
         const verifierArgs = [
-          "--experimental-strip-types",
           path.join(import.meta.dirname, "../../../scripts/lib/npm-audit-receipt.mts"),
           "--receipt",
           path.join(root, "receipt.json"),
@@ -244,7 +243,6 @@ describe("npm audit receipt", () => {
       const result = spawnSync(
         process.execPath,
         [
-          "--experimental-strip-types",
           path.join(import.meta.dirname, "../../../scripts/lib/npm-audit-receipt.mts"),
           "--receipt",
           path.join(root, "receipt.json"),

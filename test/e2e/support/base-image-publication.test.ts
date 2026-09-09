@@ -1209,7 +1209,6 @@ describe("base-image publication evidence", () => {
       execFileSync(
         process.execPath,
         [
-          "--experimental-strip-types",
           "--no-warnings",
           "--eval",
           `import(${JSON.stringify(modulePath)})`,

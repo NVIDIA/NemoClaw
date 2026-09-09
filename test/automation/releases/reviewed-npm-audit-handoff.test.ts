@@ -267,7 +267,6 @@ describe("npm audit handoff", () => {
         const result = spawnSync(
           process.execPath,
           [
-            "--experimental-strip-types",
             "--input-type=module",
             "--eval",
             "await import(process.argv[1])",
@@ -402,7 +401,6 @@ describe("npm audit handoff", () => {
       const retainedPackageLock = path.join(root, "temporary-graph.package-lock.json");
       const transportRawReport = path.join(root, "temporary-graph.raw.json");
       const verifierArgs = [
-        "--experimental-strip-types",
         path.join(REPO_ROOT, "scripts", "lib", "npm-audit-receipt.mts"),
         "--receipt",
         receiptFile,
