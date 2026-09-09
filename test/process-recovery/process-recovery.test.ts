@@ -635,6 +635,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
     vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
+    vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: `SANDBOX  BIND  PORT  PID  STATUS\nhermes-box  127.0.0.1  18789  12345  running`,
@@ -686,6 +687,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
     vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
+    vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: `SANDBOX  BIND  PORT  PID  STATUS\nbeta  127.0.0.1  18789  12345  running`,

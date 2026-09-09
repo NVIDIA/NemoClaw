@@ -6,7 +6,8 @@ import path from "node:path";
 
 /**
  * `synthetic` makes every reachable listener count as the sandbox's own
- * ForwardTcp service. `real` keeps the production ownership proof, so a test
+ * ForwardTcp service or legacy OpenShell forward. `real` keeps the production
+ * ownership proof, so a test
  * can stand up a genuine foreign listener and watch recovery refuse it.
  */
 export type ForwardOwnerProof = "synthetic" | "real";
@@ -26,6 +27,7 @@ export function syntheticForwardNodeOptions(
           "  const loaded = originalLoad.call(this, request, parent, isMain);",
           '  if (String(request).endsWith("/adapters/openshell/forward-service")) {',
           "    loaded.isForwardServiceListenerOwner = () => true;",
+          "    loaded.isListenerProcessExecutable = () => true;",
           "  }",
           "  return loaded;",
           "};",

@@ -429,6 +429,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
+    vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: "SANDBOX  BIND  PORT  PID  STATUS\nrecovered-box  127.0.0.1  18789  12345  running",
@@ -844,6 +845,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
+    vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output:
@@ -1132,6 +1134,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
+    vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: "SANDBOX  BIND  PORT  PID  STATUS\ndrifted-box  127.0.0.1  18789  12345  running",
@@ -1204,6 +1207,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
+    vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output:
