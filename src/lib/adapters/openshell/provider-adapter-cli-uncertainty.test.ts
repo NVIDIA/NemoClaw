@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createCliOpenShellProviderAdapter } from "./provider-adapter-cli";
 import { selectedOpenShellGateway } from "./sandbox-observer";
@@ -11,6 +11,21 @@ function captured(status: number | null, stderr: string) {
 }
 
 describe("CLI OpenShell provider adapter uncertain mutations", () => {
+  it("captures delete diagnostics without printing raw command output", async () => {
+    const run = vi.fn(() => captured(1, "provider remains attached"));
+    const adapter = createCliOpenShellProviderAdapter({ run });
+    await adapter.deleteProvider({
+      target: selectedOpenShellGateway(),
+      providerName: "search-prod",
+    });
+    expect(run).toHaveBeenCalledWith(
+      ["provider", "delete", "search-prod"],
+      expect.objectContaining({
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
+  });
   it.each([
     "connection reset; sandbox 'alpha' not found",
     "unauthorized; sandbox 'alpha' not found",

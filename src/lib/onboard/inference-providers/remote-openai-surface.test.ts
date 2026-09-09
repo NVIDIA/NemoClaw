@@ -196,10 +196,14 @@ describe("custom Anthropic provider replacement on the OpenAI surface", () => {
       PROVIDER,
       harness.runOpenshell,
     );
-    expect(harness.runOpenshell).toHaveBeenNthCalledWith(1, ["provider", "delete", PROVIDER], {
-      ignoreError: true,
-      suppressOutput: true,
-    });
+    expect(harness.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["provider", "delete", PROVIDER],
+      expect.objectContaining({
+        ignoreError: true,
+        suppressOutput: true,
+      }),
+    );
     expect(harness.probeOpenAiLikeEndpoint.mock.invocationCallOrder[0]).toBeLessThan(
       harness.runOpenshell.mock.invocationCallOrder[0],
     );

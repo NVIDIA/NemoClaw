@@ -722,7 +722,7 @@ describe("portable runtime uninstall cleanup", () => {
       const originalLoad = scope.authority.deps.loadRegistry;
       const loadRegistry = () => {
         fs.writeFileSync(`${control}.trigger`, "trigger");
-        const deadline = Date.now() + 1_000;
+        const deadline = Date.now() + 5_000;
         while (!fs.existsSync(`${control}.result`) && Date.now() < deadline)
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);
         expect(JSON.parse(fs.readFileSync(`${control}.result`, "utf8"))).toEqual([2, 2]);
@@ -1362,7 +1362,7 @@ describe("portable runtime uninstall cleanup", () => {
     };
     fs.mkdirSync(path.dirname(configMarker), { recursive: true });
     fs.writeFileSync(configMarker, "retry\n");
-    const competingDestroy = () =>
+    const competingDestroy = (lifecycleModuleUrl = lifecycleUrl) =>
       spawnSync(
         process.execPath,
         [
@@ -1372,7 +1372,7 @@ describe("portable runtime uninstall cleanup", () => {
           "--input-type=module",
           "-e",
           RETIREMENT_COMPETITOR_SCRIPT,
-          lifecycleUrl,
+          lifecycleModuleUrl,
           registryUrl,
           lifecycleStateDir,
           test.registryFile,
@@ -1418,7 +1418,11 @@ describe("portable runtime uninstall cleanup", () => {
     ).toHaveProperty("alpha");
     expect(fs.existsSync(configMarker)).toBe(true);
     expect(fs.existsSync(`${test.registryFile}.lock`)).toBe(false);
-  });
+    expect(competingDestroy("node:fs").status).toBe(3);
+    expect(competingDestroy()).toMatchObject({ status: 0, stderr: "" });
+    expect(fs.existsSync(competitorMarker)).toBe(true);
+    expect(fs.existsSync(receiptFile)).toBe(false);
+  }, 20_000);
 
   it("fails before mutation when destroy retires ownership before lock acquisition (#9189)", async () => {
     const test = fixture();

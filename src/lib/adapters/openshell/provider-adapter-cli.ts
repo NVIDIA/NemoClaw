@@ -645,7 +645,13 @@ export function createCliOpenShellProviderAdapter(
   ) => {
     const targetError = namedGatewayEndpointOverrideError(request.target, environment);
     if (targetError) return failure(targetError);
-    const result = invoke(["provider", "delete", request.providerName], request);
+    const result = invoke(
+      ["provider", "delete", request.providerName],
+      request,
+      undefined,
+      2,
+      true,
+    );
     const output = commandOutput(result);
     if (
       !result.error &&

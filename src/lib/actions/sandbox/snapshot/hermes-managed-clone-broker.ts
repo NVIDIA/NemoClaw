@@ -301,7 +301,11 @@ export async function provisionHermesManagedCloneBrokerTransaction(
       );
     }
     const cleanup = providerReceipt
-      ? await cleanupManagedCloneProviderTransaction(providerReceipt, input.runOpenshell)
+      ? await cleanupManagedCloneProviderTransaction(
+          providerReceipt,
+          input.runOpenshell,
+          providerAdapter,
+        )
       : undefined;
     let discarded = false;
     try {
