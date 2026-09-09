@@ -50,6 +50,7 @@ import {
 import { readFullE2eColdWorkloadEvidence } from "./full-e2e-workload-evidence.ts";
 import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
+import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
@@ -400,7 +401,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       "remove full-E2E sandbox",
     ],
   },
-}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup: cleanupRegistry, host, lifecycle, progress, sandbox, secrets, skip }) => {
   const hosted = requireHostedInferenceConfig(secrets);
   const portableHostedDescriptor =
     PORTABLE_PROFILE && !USE_PREINSTALLED_LAUNCHABLE
@@ -447,6 +448,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     skip,
   });
 
+  !USE_PREINSTALLED_LAUNCHABLE && lifecycle.trackInstallerGatewayUserService();
   cleanupRegistry.trackGateway(host, "nemoclaw", {
     artifactName: "cleanup-openshell-gateway-destroy",
     env: env(),
@@ -531,15 +533,17 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     ["/usr/local/bin/openclaw", "doctor", "--lint", "--json"],
     { artifactName: "phase-2-first-native-openclaw-doctor", env: env(), timeoutMs: 180_000 },
   );
-  const doctorReport = JSON.parse(nativeDoctor.stdout);
+  const doctorReports = parseOpenClawJsonDocuments(nativeDoctor.stdout);
+  const doctorReport = doctorReports[0] as Record<string, unknown> | undefined;
   // Exit 1 is a completed diagnostic with findings, including the state modes
   // tracked separately in #11257. Preserve those findings in the raw artifact.
   expect(
-    (nativeDoctor.exitCode === 0 || nativeDoctor.exitCode === 1) &&
-      doctorReport.ok === (nativeDoctor.exitCode === 0) &&
-      Number.isInteger(doctorReport.checksRun) &&
-      doctorReport.checksRun > 0 &&
-      Array.isArray(doctorReport.findings),
+    doctorReports.length === 1 &&
+      (nativeDoctor.exitCode === 0 || nativeDoctor.exitCode === 1) &&
+      doctorReport?.ok === (nativeDoctor.exitCode === 0) &&
+      Number.isInteger(doctorReport?.checksRun) &&
+      Number(doctorReport?.checksRun) > 0 &&
+      Array.isArray(doctorReport?.findings),
     resultText(nativeDoctor),
   ).toBe(true);
   const pathProbe = await host.command(

@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import * as gatewayEnv from "./docker-driver-gateway-env";
 import {
   classifyDockerDriverNetworkInspection,
   createDockerDriverGatewayReuseApplication,
@@ -244,6 +245,22 @@ function createDockerDriverReuseApplication(
 }
 
 describe("Docker-driver gateway reuse application", () => {
+  it("preserves provider-owned readiness without inspecting Docker", async () => {
+    vi.spyOn(gatewayEnv, "configuredRuntimeProviderOwnsHostReadiness").mockReturnValue(true);
+    const resolveOpenShellGatewayBinary = vi.fn(() => "/opt/openshell-gateway");
+    const inspectDockerDriverNetwork = vi.fn(() => ({ kind: "inconclusive" as const }));
+    const application = createDockerDriverReuseApplication({
+      resolveOpenShellGatewayBinary,
+      inspectDockerDriverNetwork,
+    });
+
+    await expect(application.refreshDockerDriverGatewayReuseState("healthy")).resolves.toBe(
+      "healthy",
+    );
+    expect(resolveOpenShellGatewayBinary).not.toHaveBeenCalled();
+    expect(inspectDockerDriverNetwork).not.toHaveBeenCalled();
+  });
+
   it("keeps reuse state unchanged when Docker-driver inspection does not apply (#7695)", async () => {
     const isDockerDriverGatewayEnabled = vi.fn(() => false);
     const checkGatewayPortAvailable = vi.fn(async () => ({ ok: true }));

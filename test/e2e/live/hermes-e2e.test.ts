@@ -196,14 +196,6 @@ async function captureDiagnosticsBestEffort(run: () => Promise<unknown>): Promis
   }
 }
 
-async function postDestroyGatewayBestEffort(run: () => Promise<unknown>): Promise<void> {
-  try {
-    await run();
-  } catch {
-    // The explicit sandbox-destroy assertion remains the primary phase-7 contract.
-  }
-}
-
 // source-shape-contract: security -- Live registry absence proves explicit destroy removes the sandbox record without trusting CLI output
 test(
   "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
@@ -211,7 +203,7 @@ test(
     timeout: testTimeout(HERMES_E2E_TEST_TIMEOUT_MS),
     meta: { e2ePhases: HERMES_E2E_PHASES },
   },
-  async ({ artifacts, cleanup, host, inference, progress, runtimeProvider, sandbox }) => {
+  async ({ artifacts, cleanup, host, inference, lifecycle, progress, runtimeProvider, sandbox }) => {
     await artifacts.target.declare({
       id: "hermes-e2e",
       boundary: `install.sh --non-interactive --fresh + Hermes sandbox runtime + ${inference.mode} inference adapter`,
@@ -273,6 +265,7 @@ test(
     };
 
     const cleanupEnv = commandEnv();
+    lifecycle.trackInstallerGatewayUserService();
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-openshell-gateway-destroy",
       env: cleanupEnv,
@@ -325,7 +318,8 @@ test(
                 printf '%s\n' '== pid 1 =='
                 tr '\0' ' ' </proc/1/cmdline 2>/dev/null || true
                 printf '\n%s\n' '== process tree =='
-                ps -eo user=,pid=,ppid=,stat=,args= 2>&1 || true
+                ps -eo user=,pid=,ppid=,stat=,wchan:32=,etime=,args= 2>&1 || true
+                head -v -n 32 /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.events /sys/fs/cgroup/pids.current /sys/fs/cgroup/pids.max /sys/fs/cgroup/pids.events 2>&1
                 printf '%s\n' '== entrypoint log =='
                 tail -n 300 /tmp/nemoclaw-start.log 2>&1 || true
                 printf '%s\n' '== gateway log =='
@@ -905,13 +899,6 @@ test(
         timeoutMs: 120_000,
       });
       expect(destroy.exitCode, resultText(destroy)).toBe(0);
-      await postDestroyGatewayBestEffort(() =>
-        sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-          artifactName: "phase-7-openshell-gateway-destroy",
-          env: commandEnv(),
-          timeoutMs: 60_000,
-        }),
-      );
       expect(
         registryEntry(SANDBOX_NAME),
         `${SANDBOX_NAME} still in ${REGISTRY_FILE}`,
