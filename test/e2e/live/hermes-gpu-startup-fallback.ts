@@ -84,11 +84,11 @@ function quoteShellLiteral(value: string): string {
  * `--gpu` create before build or sandbox progress. The compatibility create
  * runs the real CLI while the rejecting wrapper stays installed. A normal
  * success, or NemoClaw's expected termination after the sandbox is independently
- * proven Ready, atomically replaces the wrapper with a real-CLI link before
- * host forwarding starts. A failed or pre-Ready interrupted invocation never
- * changes the wrapper path; an overlapping successful invocation may
- * independently commit the link and remains authoritative. Every other
- * invocation transparently delegates its original argv. This
+ * proven Ready, atomically replaces the wrapper with a real-CLI link. A failed
+ * or pre-Ready interrupted invocation never changes the wrapper path; an
+ * overlapping successful invocation may independently commit the link and
+ * remains authoritative. Every other invocation transparently delegates its
+ * original argv. This
  * test-only wrapper never logs argv: its sole artifact is an event log made of
  * fixed labels, so sandbox-create environment arguments never enter artifacts.
  * This interception pattern is specific to the #6110 fallback proof and must
