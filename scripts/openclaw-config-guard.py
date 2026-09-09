@@ -5,7 +5,7 @@
 """Descriptor-safe OpenClaw config writes and gateway restart transactions.
 
 This helper is deliberately self-contained so the host can invoke the installed
-root-only copy or inject the same source through ``python3 -`` into an older
+root-owned copy or inject the same source through ``python3 -`` into an older
 container.  It mutates only ``openclaw.json`` and ``.config-hash``.  All path
 resolution is rooted in directory descriptors and uses ``O_NOFOLLOW``.
 
@@ -35,7 +35,7 @@ import struct
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 
@@ -86,6 +86,7 @@ class Identity:
     root_gid: int
     sandbox_uid: int
     sandbox_gid: int
+    mutable_modes: tuple[int, int] = (0o2770, 0o660)
 
 
 @dataclass(frozen=True)
@@ -1235,6 +1236,24 @@ def _startup_markers_absent(identity: Identity) -> bool:
         os.close(parent_fd)
 
 
+def mutable_config_modes(identity: Identity) -> tuple[int, int]:
+    """Select private modes only from the canonical same-user startup proof."""
+    try:
+        if identity.sandbox_uid != identity.root_uid and _startup_markers_absent(
+            identity
+        ):
+            if _openshell_supervised_nonroot_start_is_live(
+                identity.root_uid, identity.sandbox_uid
+            ) or (
+                _pid1_is_nemoclaw_start()
+                and _pid1_effective_uid() == identity.sandbox_uid
+            ):
+                return 0o700, 0o600
+    except (OSError, GuardError):
+        pass
+    return 0o2770, 0o660
+
+
 def _write_pid1_marker(path: str, identity: Identity) -> None:
     start_time = _process_start_time(1)
     namespace_inode = _process_namespace_inode(1)
@@ -1857,16 +1876,11 @@ def _read_journal(
         try:
             persistent = _read_persistent_journal(opened, identity)
         except GuardError:
-            if secondary is not None and (
-                _is_mutable_dir_posture(opened, identity)
-                or _is_partial_frozen_mutable_posture(opened, identity)
-            ):
+            if secondary is not None and not _has_locked_dir_posture(opened, identity):
                 return secondary
             raise
         if persistent is not None:
-            if _is_mutable_dir_posture(
-                opened, identity
-            ) or _is_partial_frozen_mutable_posture(opened, identity):
+            if not _has_locked_dir_posture(opened, identity):
                 display = posixpath.join(opened.config_path, PERSISTENT_JOURNAL_NAME)
                 if secondary is None:
                     raise GuardError(
@@ -1875,8 +1889,8 @@ def _read_journal(
                         "persistent journal is replayable after mutable handoff",
                     )
                 if _journal_payload(persistent) != _journal_payload(secondary):
-                    # The sandbox can replay a retained persistent inode after
-                    # handoff; private rootfs state wins in mutable posture.
+                    # Only the root-owned locked namespace can authenticate a
+                    # persistent journal without its private rootfs record.
                     return secondary
             return persistent
     return secondary
@@ -2388,12 +2402,12 @@ def _verify_mutable_files(
     identity: Identity,
     *,
     allow_blocking_flags: bool = False,
+    check_mode: bool = True,
 ) -> None:
     for snapshot in snapshots:
         if (
             snapshot.uid != identity.sandbox_uid
             or snapshot.gid != identity.sandbox_gid
-            or snapshot.mode != 0o660
             or (
                 not allow_blocking_flags
                 and snapshot.inode_flags is not None
@@ -2401,9 +2415,15 @@ def _verify_mutable_files(
             )
         ):
             raise GuardError(
+                "unsupported-config-posture",
+                posixpath.join(opened.config_path, snapshot.name),
+                "mutable config requires sandbox ownership without immutable/append flags",
+            )
+        if check_mode and snapshot.mode != identity.mutable_modes[1]:
+            raise GuardError(
                 "config-not-mutable",
                 posixpath.join(opened.config_path, snapshot.name),
-                "write-config requires sandbox:sandbox 0660 without immutable/append flags",
+                "config file does not have the runtime's mutable mode",
             )
 
 
@@ -2423,7 +2443,7 @@ def _verify_mutable_posture(
             opened.config_path,
             identity.sandbox_uid,
             identity.sandbox_gid,
-            0o2770,
+            identity.mutable_modes[0],
         )
     except GuardError as exc:
         raise GuardError(
@@ -2470,7 +2490,7 @@ def _replacement_records(
                 data=replacement_by_name[snapshot.name],
                 uid=identity.sandbox_uid,
                 gid=identity.sandbox_gid,
-                mode=0o660,
+                mode=identity.mutable_modes[1],
                 mtime_ns=commit_time_ns,
                 inode_flags=desired_inode_flags,
             )
@@ -2491,7 +2511,7 @@ def _canonical_targets(
     }
     uid = identity.root_uid if locked else identity.sandbox_uid
     gid = identity.root_gid if locked else identity.sandbox_gid
-    mode = 0o444 if locked else 0o660
+    mode = 0o444 if locked else identity.mutable_modes[1]
     targets: list[FileSnapshot] = []
     for snapshot in source:
         desired_flags = (
@@ -2874,7 +2894,7 @@ def _is_mutable_dir_posture(opened: OpenConfig, identity: Identity) -> bool:
         opened.config_fd,
         identity.sandbox_uid,
         identity.sandbox_gid,
-        0o2770,
+        identity.mutable_modes[0],
     )
 
 
@@ -2978,7 +2998,7 @@ def _is_partial_frozen_mutable_posture(opened: OpenConfig, identity: Identity) -
     ) or (
         config.st_uid == identity.sandbox_uid
         and config.st_gid == identity.sandbox_gid
-        and config_mode in {0o000, 0o500, 0o770, 0o2770}
+        and config_mode in {0o000, 0o500, 0o770, identity.mutable_modes[0]}
     )
     has_root_marker = (
         parent.st_uid == identity.root_uid or config.st_uid == identity.root_uid
@@ -3008,7 +3028,7 @@ def _commit_mutable_dirs(opened: OpenConfig, identity: Identity) -> None:
     os.fchown(opened.config_fd, identity.sandbox_uid, identity.sandbox_gid)
     # This chmod is the irreversible handoff: sandbox code can mutate paths
     # through an existing parent/config descriptor as soon as it succeeds.
-    os.fchmod(opened.config_fd, 0o2770)
+    os.fchmod(opened.config_fd, identity.mutable_modes[0])
     try:
         os.fsync(opened.config_fd)
         os.fchown(opened.parent_fd, identity.sandbox_uid, identity.sandbox_gid)
@@ -3020,7 +3040,7 @@ def _commit_mutable_dirs(opened: OpenConfig, identity: Identity) -> None:
             opened.config_path,
             identity.sandbox_uid,
             identity.sandbox_gid,
-            0o2770,
+            identity.mutable_modes[0],
         )
         _verify_dir_posture(
             opened.parent_fd,
@@ -3149,19 +3169,36 @@ def _verify_file(
 
 def _preflight_restart(opened: OpenConfig, identity: Identity) -> None:
     _assert_config_binding(opened)
-    if not _is_mutable_dir_posture(opened, identity):
-        raise GuardError(
-            "invalid-restart-posture",
-            opened.config_path,
-            "restart preflight requires the mutable config posture",
-        )
+    for fd in (opened.parent_fd, opened.config_fd):
+        metadata = os.fstat(fd)
+        inode_flags = _get_inode_flags(fd)
+        if (
+            metadata.st_uid != identity.sandbox_uid
+            or metadata.st_gid != identity.sandbox_gid
+            or (fd == opened.parent_fd and stat.S_IMODE(metadata.st_mode) != 0o755)
+            or (
+                inode_flags is not None
+                and inode_flags & (FS_IMMUTABLE_FL | FS_APPEND_FL)
+            )
+        ):
+            raise GuardError(
+                "unsupported-config-posture", opened.config_path,
+                "restart preflight requires sandbox-owned mutable directories",
+            )
     config, hash_file = _snapshot_raw_pair(opened)
-    _verify_mutable_files(opened, (config, hash_file), identity)
+    _verify_mutable_files(opened, (config, hash_file), identity, check_mode=False)
     _validate_runtime_config_json5(
         config.data,
         posixpath.join(opened.config_path, "openclaw.json"),
         identity,
     )
+    if not _is_mutable_dir_posture(opened, identity):
+        raise GuardError(
+            "invalid-restart-posture",
+            opened.config_path,
+            "config directory does not have the runtime's mutable mode",
+        )
+    _verify_mutable_files(opened, (config, hash_file), identity)
     _assert_config_binding(opened)
 
 
@@ -3173,7 +3210,6 @@ def _write_hash_record(opened: OpenConfig, config_data: bytes, identity: Identit
         f"{digest}  openclaw.json\n".encode("ascii"),
         identity,
     )
-
 
 
 def _force_fail_closed_lock(opened: OpenConfig, identity: Identity) -> list[str]:
@@ -3241,8 +3277,6 @@ def _force_fail_closed_lock(opened: OpenConfig, identity: Identity) -> list[str]
     return errors
 
 
-
-
 def _install_stored_pair(
     opened: OpenConfig, targets: tuple[FileSnapshot, FileSnapshot]
 ) -> None:
@@ -3294,7 +3328,7 @@ def _validate_recovery_posture(
         if (
             stored.uid != identity.sandbox_uid
             or stored.gid != identity.sandbox_gid
-            or stored.mode != 0o660
+            or stored.mode != identity.mutable_modes[1]
             or (
                 stored.inode_flags is not None
                 and stored.inode_flags & (FS_IMMUTABLE_FL | FS_APPEND_FL)
@@ -3629,7 +3663,7 @@ def _write_config(
                 expected.name,
                 identity.sandbox_uid,
                 identity.sandbox_gid,
-                0o660,
+                identity.mutable_modes[1],
                 expected,
             )
         # Validate the exact pair that will become visible before returning
@@ -3686,7 +3720,7 @@ def _recover_any_transaction(
             mutable_files = all(
                 item.uid == identity.sandbox_uid
                 and item.gid == identity.sandbox_gid
-                and item.mode == 0o660
+                and item.mode == identity.mutable_modes[1]
                 for item in partial
             )
             if mutable_files:
@@ -3804,6 +3838,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"helper is restricted to {PRODUCTION_CONFIG_DIR}",
             )
         identity = _production_identity()
+        identity = replace(identity, mutable_modes=mutable_config_modes(identity))
         _validate_action_readiness(action, args.startup_owner, identity)
         read_only = action == "preflight-restart"
         mutex = _acquire_mutation_mutex(action, identity, exclusive=not read_only)

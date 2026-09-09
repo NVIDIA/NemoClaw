@@ -30,6 +30,12 @@ identity = module.Identity(
 )
 module.os.geteuid = lambda: 0
 module._production_identity = lambda: identity
+if os.environ.get("NEMOCLAW_TEST_PRIVATE_CONFIG") == "1":
+    module.mutable_config_modes = lambda identity: (0o700, 0o600)
+if failure == "immutable-config":
+    module._get_inode_flags = lambda fd: module.FS_IMMUTABLE_FL if module.stat.S_ISREG(os.fstat(fd).st_mode) else 0
+if failure == "append-directory":
+    module._get_inode_flags = lambda fd: module.FS_APPEND_FL if os.fstat(fd).st_ino == os.stat(config_dir).st_ino else 0
 module.PRODUCTION_CONFIG_DIR = config_dir
 module.JOURNAL_PATH = os.path.join(os.path.dirname(config_dir), ".nemoclaw-test", "transaction.json")
 module.MUTEX_PATH = os.path.join(os.path.dirname(config_dir), ".nemoclaw-test", "mutation.lock")
@@ -321,6 +327,81 @@ afterEach(() => {
 });
 
 describe("openclaw-config-guard", () => {
+  it.each([
+    ["shared", 0o2770, 0o660],
+    ["private", 0o700, 0o600],
+  ] as const)(
+    "refuses retained journal replay after a %s directory mode change",
+    (posture, dirMode, fileMode) => {
+      const { configDir, configPath, hashPath } = fixture();
+      const env = { NEMOCLAW_TEST_PRIVATE_CONFIG: posture === "private" ? "1" : "0" };
+      fs.chmodSync(configDir, dirMode);
+      fs.chmodSync(configPath, fileMode);
+      fs.chmodSync(hashPath, fileMode);
+      expect(runGuard("seal-restart", configDir, "none", env).status).toBe(0);
+      const journal = path.join(configDir, ".nemoclaw-config-transaction.json");
+      const retained = fs.readFileSync(journal);
+      expect(runGuard("unseal-restart", configDir, "none", env).status).toBe(0);
+      const current = Buffer.from('{"gateway":{"port":19003}}\n');
+      fs.writeFileSync(configPath, current);
+      fs.writeFileSync(journal, retained, { mode: 0o600 });
+      fs.chmodSync(configDir, 0o750);
+      const recovered = runGuard("recover", configDir, "none", env);
+      expect(recovered.status).toBe(1);
+      expect(recovered.lines[0]).toMatchObject({ code: "persistent-journal-without-secondary" });
+      expect(fs.readFileSync(configPath)).toEqual(current);
+    },
+  );
+
+  it("preserves private modes through config writes, restart seals and interrupted recovery", () => {
+    const { configDir, configPath, hashPath } = fixture();
+    const env = { NEMOCLAW_TEST_PRIVATE_CONFIG: "1" };
+    fs.chmodSync(configDir, 0o700);
+    fs.chmodSync(configPath, 0o600);
+    fs.chmodSync(hashPath, 0o600);
+    const expected = createHash("sha256").update(fs.readFileSync(configPath)).digest("hex");
+    const replacement = Buffer.from('{"gateway":{"port":19002}}\n');
+    const written = runGuard("write-config", configDir, "none", env, expected, replacement);
+    expect(written.status, JSON.stringify(written.lines)).toBe(0);
+    const interrupted = runGuard("seal-restart", configDir, "kill-seal-after-sealed-journal", env);
+    expect(interrupted.status).toBe(106);
+    const recovered = runGuard("recover", configDir, "none", env);
+    expect(recovered.status, JSON.stringify(recovered.lines)).toBe(0);
+    expect(fs.readFileSync(configPath)).toEqual(replacement);
+    expect(mode(configDir)).toBe(0o700);
+    expect(mode(configPath)).toBe(0o600);
+    expect(mode(hashPath)).toBe(0o600);
+    expect(runGuard("preflight-restart", configDir, "none", env).status).toBe(0);
+    expect(fs.existsSync(path.join(configDir, ".nemoclaw-config-transaction.json"))).toBe(false);
+  });
+
+  it("reports only mode mismatches as repairable after validating config and protected state", () => {
+    const { root, configDir, configPath } = fixture();
+    fs.chmodSync(configDir, 0o750);
+    expect(runGuard("preflight-restart", configDir).lines[0]).toMatchObject({
+      code: "invalid-restart-posture",
+    });
+    expect(runGuard("preflight-restart", configDir, "append-directory").lines[0]).toMatchObject({
+      code: "unsupported-config-posture",
+    });
+    fs.chmodSync(configDir, 0o2770);
+    fs.chmodSync(configPath, 0o600);
+    expect(runGuard("preflight-restart", configDir).lines[0]).toMatchObject({
+      code: "config-not-mutable",
+    });
+    expect(runGuard("preflight-restart", configDir, "immutable-config").lines[0]).toMatchObject({
+      code: "unsupported-config-posture",
+    });
+    fs.writeFileSync(configPath, "invalid JSON5");
+    expect(runGuard("preflight-restart", configDir).lines[0]).toMatchObject({
+      code: "invalid-config-json5",
+    });
+    fs.chmodSync(root, 0o1775);
+    expect(runGuard("preflight-restart", configDir).lines[0]).toMatchObject({
+      code: "unsupported-config-posture",
+    });
+  });
+
   it("CAS-writes a fresh mutable config/hash pair and revokes stale descriptors", () => {
     const { root, configDir, configPath, hashPath } = fixture();
     const oldConfig = fs.readFileSync(configPath);
@@ -354,18 +435,14 @@ describe("openclaw-config-guard", () => {
         expect(currentConfig.stat().ino).not.toBe(oldConfigInode);
         expect(currentHash.stat().ino).not.toBe(oldHashInode);
         expect(currentConfig.readBytes(1024 * 1024)).toEqual(replacement);
-        expect(currentHash.readUtf8(1024 * 1024)).toBe(
-          `${replacementDigest}  openclaw.json\n`,
-        );
+        expect(currentHash.readUtf8(1024 * 1024)).toBe(`${replacementDigest}  openclaw.json\n`);
 
         fs.writeSync(staleConfigFd, Buffer.from("STALE!!"), 0, 7, 0);
         fs.writeSync(staleHashFd, Buffer.from("STALE!!"), 0, 7, 0);
         fs.fsyncSync(staleConfigFd);
         fs.fsyncSync(staleHashFd);
         expect(currentConfig.readBytes(1024 * 1024)).toEqual(replacement);
-        expect(currentHash.readUtf8(1024 * 1024)).toBe(
-          `${replacementDigest}  openclaw.json\n`,
-        );
+        expect(currentHash.readUtf8(1024 * 1024)).toBe(`${replacementDigest}  openclaw.json\n`);
       } finally {
         currentConfig.close();
         currentHash.close();
