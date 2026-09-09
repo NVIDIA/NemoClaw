@@ -129,6 +129,95 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Qualify native launcher ownership before OpenShell builds
+        shell: powershell
+        timeout-minutes: 15
+        env:
+          RUST_BACKTRACE: "1"
+          CARGO_TERM_COLOR: never
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
+          $output = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\windows-native-launcher-tests")
+          [IO.Directory]::CreateDirectory($output) | Out-Null
+          $runner = @'
+          # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+          # SPDX-License-Identifier: Apache-2.0
+
+          import json, os, pathlib, re, subprocess, sys, tempfile, threading
+
+          candidate, output = map(pathlib.Path, sys.argv[1:])
+          try:
+              source = (candidate / "scripts/checks/prepare-windows-native-package-payload.ps1").read_text(encoding="utf-8")
+              version = re.search(r"(?m)^\$script:RustVersion = '(\d+\.\d+\.\d+)'$", source)
+              if version is None:
+                  raise RuntimeError("The native launcher Rust version pin is missing")
+              target = tempfile.mkdtemp(prefix="native-launcher-tests-", dir=os.environ["RUNNER_TEMP"])
+              command = ["rustup", "run", version[1], "cargo", "test", "--locked",
+                         "--target", "aarch64-pc-windows-msvc", "--manifest-path",
+                         str(candidate / "packaging/windows/launcher/Cargo.toml"), "--target-dir", target]
+              notice = b"\n[native launcher test output truncated at 256 KiB]\n"
+              limit = 256 * 1024 - len(notice)
+              state = {"bytes": 0, "truncated": False, "error": None}
+              log = (output / "native-tests.log").open("xb", buffering=0)
+              process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
+
+              def drain():
+                  try:
+                      while chunk := process.stdout.read(8192):
+                          kept = chunk[:max(0, limit - state["bytes"])]
+                          log.write(kept)
+                          sys.stdout.buffer.write(kept)
+                          sys.stdout.buffer.flush()
+                          state["bytes"] += len(kept)
+                          state["truncated"] |= len(kept) != len(chunk)
+                  except Exception as error:
+                      state["error"] = str(error)[:2048]
+
+              reader = threading.Thread(target=drain, daemon=True)
+              reader.start()
+              timed_out = False
+              try:
+                  code = process.wait(timeout=600)
+              except subprocess.TimeoutExpired:
+                  timed_out = True
+                  subprocess.run([str(pathlib.Path(os.environ["SystemRoot"]) / "System32/taskkill.exe"),
+                                  "/PID", str(process.pid), "/T", "/F"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
+                  code = process.wait(timeout=10)
+              reader.join(timeout=5)
+              complete = not reader.is_alive()
+              if state["truncated"]:
+                  log.write(notice)
+              log.close()
+              receipt = {"schemaVersion": 1, "candidateSha": os.environ["GITHUB_SHA"],
+                         "rustVersion": version[1], "target": "aarch64-pc-windows-msvc",
+                         "exitCode": code, "timedOut": timed_out, "outputComplete": complete,
+                         "logTruncated": state["truncated"], "captureError": state["error"]}
+              (output / "native-tests.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+              print(json.dumps(receipt), flush=True)
+              sys.exit(124 if timed_out or not complete else (code or int(state["error"] is not None)))
+          except Exception as error:
+              (output / "control-failure.txt").write_text(f"{type(error).__name__}: {error}"[:4096] + "\n", encoding="utf-8")
+              raise
+          '@
+          $runnerPath = Join-Path $output 'run-native-tests.py'
+          [IO.File]::WriteAllText($runnerPath, $runner, [Text.UTF8Encoding]::new($false))
+          & python.exe -I -u $runnerPath $candidate $output
+          if ($LASTEXITCODE -ne 0) {
+            throw "Early native Windows launcher ownership tests exited with status $LASTEXITCODE."
+          }
+
+      - name: Upload early native launcher ownership diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-native-launcher-tests-${{ github.sha }}
+          path: ${{ runner.temp }}/windows-native-launcher-tests/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Build the pinned NVIDIA/OpenShell#2721 candidate
         working-directory: openshell
         shell: powershell

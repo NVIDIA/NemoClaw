@@ -130,8 +130,37 @@ fn a_second_session_is_rejected_until_ownership_is_released() {
 fn an_active_directory_cannot_be_replaced() {
     let fixture = Fixture::new();
     let (handle, _) = state_directory(&fixture.root, &fixture.sid).unwrap();
-    assert!(std::fs::rename(&fixture.root, format!("{}.moved", fixture.root)).is_err());
+    let moved = format!("{}.moved", fixture.root);
+    let rename = std::fs::rename(&fixture.root, &moved);
+    if rename.is_ok() {
+        std::fs::rename(&moved, &fixture.root)
+            .expect("restore the owned fixture after an unexpected rename");
+    }
+    assert!(rename.is_err());
     assert!(Path::new(&fixture.root).is_dir());
+    drop(handle);
+    std::fs::rename(&fixture.root, &moved)
+        .expect("root rename is allowed after releasing the guard");
+    std::fs::rename(&moved, &fixture.root).unwrap();
+}
+
+#[test]
+fn a_held_state_root_allows_child_data_and_nested_atomic_updates() {
+    let fixture = Fixture::new();
+    let (handle, _) = state_directory(&fixture.root, &fixture.sid).unwrap();
+    let marker = Path::new(&fixture.root).join("qualification-marker.txt");
+    std::fs::write(&marker, b"owned root data").unwrap();
+    assert_eq!(std::fs::read(&marker).unwrap(), b"owned root data");
+    let directory = Path::new(&fixture.root).join("agent-home");
+    std::fs::create_dir(&directory).unwrap();
+    let temporary = directory.join("pending");
+    let committed = directory.join("settings");
+    std::fs::write(&temporary, b"owned nested data").unwrap();
+    std::fs::rename(&temporary, &committed).unwrap();
+    assert_eq!(std::fs::read(&committed).unwrap(), b"owned nested data");
+    std::fs::remove_file(&committed).unwrap();
+    std::fs::remove_dir(&directory).unwrap();
+    std::fs::remove_file(&marker).unwrap();
     drop(handle);
 }
 
@@ -224,7 +253,10 @@ fn removal_rejects_a_nested_reparse_point_before_deleting_any_owned_file() {
     std::os::windows::fs::symlink_dir(&target.root, &link).unwrap();
     let error = remove_owned_tree(&fixture.root, &fixture.sid).unwrap_err();
     assert!(error.contains("reparse point"));
-    assert_eq!(std::fs::read(&marker).unwrap(), b"must survive rejected removal");
+    assert_eq!(
+        std::fs::read(&marker).unwrap(),
+        b"must survive rejected removal"
+    );
     assert!(Path::new(&target.root).is_dir());
     std::fs::remove_dir(link).unwrap();
 }
@@ -240,8 +272,16 @@ fn removing_a_readonly_hard_link_preserves_the_other_name_and_its_attributes() {
     permissions.set_readonly(true);
     std::fs::set_permissions(&original, permissions).unwrap();
     assert!(remove_owned_tree(&fixture.root, &fixture.sid).unwrap());
-    assert_eq!(std::fs::read(&original).unwrap(), b"other owned fixture data");
-    assert!(std::fs::metadata(&original).unwrap().permissions().readonly());
+    assert_eq!(
+        std::fs::read(&original).unwrap(),
+        b"other owned fixture data"
+    );
+    assert!(
+        std::fs::metadata(&original)
+            .unwrap()
+            .permissions()
+            .readonly()
+    );
     let mut permissions = std::fs::metadata(&original).unwrap().permissions();
     permissions.set_readonly(false);
     std::fs::set_permissions(&original, permissions).unwrap();

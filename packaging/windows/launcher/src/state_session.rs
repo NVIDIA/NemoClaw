@@ -6,7 +6,10 @@
 //! Releasing a session never removes, migrates, or repairs existing user data.
 
 fn validate_agent(agent: &str) -> Result<(), String> {
-    if matches!(agent, "openclaw" | "pi" | "hermes" | "langchain-deepagents-code" | "nemocua" | "inference") {
+    if matches!(
+        agent,
+        "openclaw" | "pi" | "hermes" | "langchain-deepagents-code" | "nemocua" | "inference"
+    ) {
         Ok(())
     } else {
         Err("The native state agent is invalid.".into())
@@ -48,6 +51,7 @@ mod native {
     const FILE_ALL_ACCESS: u32 = 0x001f_01ff;
     const MUTEX_ALL_ACCESS: u32 = 0x001f_0001;
     const READ_CONTROL: u32 = 0x0002_0000;
+    const FILE_LIST_DIRECTORY: u32 = 0x1;
     const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
 
@@ -384,10 +388,12 @@ mod native {
         // write/delete handles: the root cannot be replaced or turned into a
         // reparse point while the lease is held. Child data IO and WRITE_DAC
         // access for MXC's temporary AppContainer grant remain available.
+        // A query-only handle does not participate in Windows sharing checks.
+        // LIST_DIRECTORY makes the no-write/no-delete sharing guard effective.
         let raw = unsafe {
             CreateFileW(
                 root.as_ptr(),
-                READ_CONTROL | 0x80,
+                READ_CONTROL | FILE_LIST_DIRECTORY | 0x80,
                 0x1,
                 null(),
                 3,
@@ -468,21 +474,55 @@ mod native {
         }
     }
 
-    fn collect_removal_handles(path: &std::path::Path, depth: usize, count: &mut usize, handles: &mut Vec<Handle>, sid: Option<&str>) -> Result<(), String> {
+    fn collect_removal_handles(
+        path: &std::path::Path,
+        depth: usize,
+        count: &mut usize,
+        handles: &mut Vec<Handle>,
+        sid: Option<&str>,
+    ) -> Result<(), String> {
         if depth > 64 || *count >= 16_384 {
-            return Err("The selected state exceeds the bounded native removal limit; no data was removed.".into());
+            return Err(
+                "The selected state exceeds the bounded native removal limit; no data was removed."
+                    .into(),
+            );
         }
         *count += 1;
         use std::os::windows::ffi::OsStrExt;
         let name: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        let raw = unsafe { CreateFileW(name.as_ptr(), READ_CONTROL | 0x80 | 0x0001_0000, 1, null(), 3, 0x0220_0000, null_mut()) };
+        let raw = unsafe {
+            CreateFileW(
+                name.as_ptr(),
+                READ_CONTROL | 0x80 | 0x0001_0000,
+                1,
+                null(),
+                3,
+                0x0220_0000,
+                null_mut(),
+            )
+        };
         if raw.is_null() || raw as isize == -1 {
-            return Err(os_error("The selected state contains a file that cannot be held for safe removal"));
+            return Err(os_error(
+                "The selected state contains a file that cannot be held for safe removal",
+            ));
         }
         let handle = Handle(raw);
-        let mut attributes = AttributeTagInfo { attributes: 0, tag: 0 };
-        if unsafe { GetFileInformationByHandleEx(handle.0, 9, (&mut attributes as *mut AttributeTagInfo).cast(), std::mem::size_of::<AttributeTagInfo>() as u32) } == 0 {
-            return Err(os_error("The selected state file type could not be inspected"));
+        let mut attributes = AttributeTagInfo {
+            attributes: 0,
+            tag: 0,
+        };
+        if unsafe {
+            GetFileInformationByHandleEx(
+                handle.0,
+                9,
+                (&mut attributes as *mut AttributeTagInfo).cast(),
+                std::mem::size_of::<AttributeTagInfo>() as u32,
+            )
+        } == 0
+        {
+            return Err(os_error(
+                "The selected state file type could not be inspected",
+            ));
         }
         if attributes.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             return Err("The selected state contains a reparse point; no data was removed.".into());
@@ -494,8 +534,11 @@ mod native {
             verify_security(&handle, sid, true)?;
         }
         if attributes.attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
-            for entry in std::fs::read_dir(path).map_err(|_| "The selected state directory could not be listed safely.")? {
-                let entry = entry.map_err(|_| "A selected state entry could not be read safely.")?;
+            for entry in std::fs::read_dir(path)
+                .map_err(|_| "The selected state directory could not be listed safely.")?
+            {
+                let entry =
+                    entry.map_err(|_| "A selected state entry could not be read safely.")?;
                 collect_removal_handles(&entry.path(), depth + 1, count, handles, None)?;
             }
         }
@@ -521,7 +564,10 @@ mod native {
             // Ignore read-only status only for this opened link; do not rewrite
             // attributes that may be shared with an unrelated hard-link name.
             let delete: u32 = 0x11; // DELETE | IGNORE_READONLY_ATTRIBUTE; no POSIX override
-            if unsafe { SetFileInformationByHandle(handle.0, 21, (&delete as *const u32).cast(), 4) } == 0 {
+            if unsafe {
+                SetFileInformationByHandle(handle.0, 21, (&delete as *const u32).cast(), 4)
+            } == 0
+            {
                 return Err(os_error("Windows could not remove a selected state entry"));
             }
             drop(handle);
@@ -538,9 +584,15 @@ mod native {
         let root = super::state_location(windows_drive()?, &sid, agent)?;
         let _lease = acquire(&sid, agent)?;
         let removed = remove_owned_tree(&root, &sid)?;
-        let receipt = format!("{{\"schemaVersion\":1,\"kind\":\"native-state-remove\",\"agent\":\"{agent}\",\"stateRoot\":\"{}\",\"removed\":{removed},\"leaseHeld\":true}}\n", root.replace('\\', "\\\\"));
+        let receipt = format!(
+            "{{\"schemaVersion\":1,\"kind\":\"native-state-remove\",\"agent\":\"{agent}\",\"stateRoot\":\"{}\",\"removed\":{removed},\"leaseHeld\":true}}\n",
+            root.replace('\\', "\\\\")
+        );
         let mut stdout = std::io::stdout().lock();
-        stdout.write_all(receipt.as_bytes()).and_then(|_| stdout.flush()).map_err(|_| "The native removal receipt could not be written.")?;
+        stdout
+            .write_all(receipt.as_bytes())
+            .and_then(|_| stdout.flush())
+            .map_err(|_| "The native removal receipt could not be written.")?;
         drop(stdout);
         // The config/credential owner retains this mutex until it finishes its
         // exact metadata deletion. Concurrent agent startup remains excluded.

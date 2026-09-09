@@ -76,11 +76,14 @@ fn remove_fixture(path: &Path) {
         return;
     };
     if metadata.file_attributes() & REPARSE != 0 {
-        let _ = if metadata.is_dir() {
+        // symlink_metadata describes the link, so is_dir() is false for a
+        // directory link. The Windows attribute selects removal of the link itself.
+        if metadata.file_attributes() & DIRECTORY != 0 {
             std::fs::remove_dir(path)
         } else {
             std::fs::remove_file(path)
-        };
+        }
+        .unwrap();
     } else if metadata.is_dir() {
         for child in std::fs::read_dir(path).unwrap() {
             remove_fixture(&child.unwrap().path());
@@ -274,7 +277,24 @@ fn hard_links_and_oversized_frames_are_rejected() {
     let mut fixture = Fixture::new();
     fixture.owner().mkdir(STREAM).unwrap();
     let linked = fixture.root.join(STREAM).join("sandbox-0000000001.bin");
+    // Create the adversarial file before acquiring the directory guards: the
+    // full-path hard-link operation itself is blocked while those guards are held.
+    drop(fixture.owner.take());
     std::fs::hard_link(&fixture.secret, &linked).unwrap();
+    let mut owner = Owner::new(fixture.root.as_os_str()).unwrap();
+    let stream = open_relative(
+        Some(&owner.root),
+        STREAM,
+        DIRECTORY_ACCESS,
+        1,
+        1,
+        true,
+        None,
+    )
+    .unwrap();
+    verify_directory(&stream, Some(&owner.sid)).unwrap();
+    owner.streams.insert(STREAM.to_owned(), stream);
+    fixture.owner = Some(owner);
     assert!(
         fixture
             .owner()
