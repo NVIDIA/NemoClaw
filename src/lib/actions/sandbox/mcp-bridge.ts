@@ -70,12 +70,8 @@ export {
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
 } from "./mcp-bridge-policy";
 export {
-  buildMcpBridgeProviderArgs,
   buildMcpCredentialRevisionObservationCommand,
   detachMissingProviderReference,
-  parseMcpProviderAttachmentNames,
-  parseMcpProviderMetadata,
-  providerDetachChangedState,
 } from "./mcp-bridge-provider";
 export { prepareMcpBridgesForExecUnavailableRebuild } from "./mcp-bridge-rebuild";
 export {
@@ -312,7 +308,7 @@ FLAGS
   --json      Emit MCP server status as JSON
   --probe     Request the wire-level credential-resolution probe for every server
   --no-probe  Skip the probe (it defaults on only when a single server is named)
-  --tools     Discover names advertised by one named MCP server`);
+  --tools     Discover names advertised by one named MCP server; exit nonzero on failure`);
       return;
     case "restart":
       console.log(`USAGE
@@ -373,7 +369,9 @@ export async function dispatchMcpBridgeCommand(
         const agent = getSandboxAgent(sandbox);
         const statuses = await statusMcpBridge(sandboxName);
         if (json)
-          process.stdout.write(`${JSON.stringify(buildJsonSummary(sandboxName, agent, statuses), null, 2)}\n`);
+          process.stdout.write(
+            `${JSON.stringify(buildJsonSummary(sandboxName, agent, statuses), null, 2)}\n`,
+          );
         else renderMcpBridgeList(sandboxName, statuses, agent);
         return;
       }
@@ -403,6 +401,7 @@ export async function dispatchMcpBridgeCommand(
             )}\n`,
           );
         } else renderMcpBridgeStatus(sandboxName, statuses, agent);
+        if (tools && statuses[0]?.toolDiscovery?.ok !== true) process.exitCode = 1;
         return;
       }
       case "restart": {

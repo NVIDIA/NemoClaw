@@ -55,6 +55,7 @@ export {
   verifyHermesPortableLaunchForwards,
 } from "./probe/hermes-portable-forward-recovery";
 export type {
+  HermesPortableForwardRecoveryContext,
   HermesPortableForwardRecoveryFailure,
   HermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryResult,

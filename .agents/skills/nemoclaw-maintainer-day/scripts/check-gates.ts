@@ -1230,6 +1230,8 @@ const INSTALLER_HASH_RUN_TITLE =
   /^Installer Hash PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
 const E2E_GATE_RUN_TITLE =
   /^E2E Gate PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
+const PR_REVIEW_ADVISOR_RUN_TITLE =
+  /^Advisor after CI PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate true$/u;
 const REPOSITORY_NAME_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const REQUIRED_CHECK_WORKFLOW_PATHS = new Map([
   ["checks", ".github/workflows/pr.yaml"],
@@ -1255,6 +1257,7 @@ const PR_METADATA_EDIT_JOB_NAMES = new Set([
 const PR_REVIEW_ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
 const PR_REVIEW_ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
 const ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES = new Set([
+  "Require green PR checks",
   "Discover review specialists and collect GitHub context",
   "Publish advisor link",
 ]);
@@ -1450,6 +1453,18 @@ function currentCheckRollup(
             match[3] === exactDiff.baseSha;
           e2eGateRun = match[4] === "true";
         }
+      }
+    }
+    if (event === "workflow_run" && path === PR_REVIEW_ADVISOR_WORKFLOW_PATH) {
+      const title = typeof record.display_title === "string" ? record.display_title : "";
+      const match = title.match(PR_REVIEW_ADVISOR_RUN_TITLE);
+      if (match) {
+        const titlePrNumber = Number(match[1]);
+        immutablePrDiff =
+          Number.isSafeInteger(titlePrNumber) &&
+          titlePrNumber === exactDiff.number &&
+          match[2] === exactDiff.headSha &&
+          match[3] === exactDiff.baseSha;
       }
     }
 
@@ -1905,8 +1920,9 @@ function currentCheckRollup(
     const job = latestAttemptJobs(identity.runId)?.get(identity.jobId);
     const checkStatus = check.status?.toUpperCase() ?? null;
     const checkConclusion = check.conclusion?.toUpperCase() ?? null;
-    const currentPrBinding =
-      run?.hasPullRequests === true && run.exactDiff === true
+    const currentPrBinding = run?.event === "workflow_run"
+      ? run.immutablePrDiff === true
+      : run?.hasPullRequests === true && run.exactDiff === true
         ? true
         : exactDiff.headRepository !== repo &&
           run !== null &&
@@ -1916,7 +1932,7 @@ function currentCheckRollup(
     return Boolean(
       run &&
         job &&
-        run.event === "pull_request_target" &&
+        (run.event === "pull_request_target" || run.event === "workflow_run") &&
         run.path === PR_REVIEW_ADVISOR_WORKFLOW_PATH &&
         currentPrBinding &&
         job.name === checkName &&

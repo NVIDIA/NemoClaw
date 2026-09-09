@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   assertMcpDestroyNotPending: vi.fn(),
   bridgeState: vi.fn(),
   discardSafeIncompleteMcpAdds: vi.fn(),
+  detachProvider: vi.fn(),
   ensureSandboxGatewaySelected: vi.fn(),
   getMcpProviderInspectionRuntimeSelection: vi.fn(() => ({
     gatewayName: "nemoclaw-8091",
@@ -49,7 +50,7 @@ vi.mock("./mcp-bridge-provider", () => ({
   assertMcpProviderRecoverable: vi.fn(),
   assertNoProviderCredentialCollisions: vi.fn(),
   assertNoRegisteredProviderCredentialCollisions: vi.fn(),
-  detachProvider: vi.fn(),
+  detachProvider: mocks.detachProvider,
   getMcpProviderInspectionRuntimeSelection: mocks.getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider: mocks.inspectMcpProvider,
   preflightMcpEntryTargets: mocks.preflightMcpEntryTargets,
@@ -131,6 +132,7 @@ describe("MCP adapter teardown rollback", () => {
     });
     mocks.bridgeState.mockReset().mockReturnValue({ github: entry });
     mocks.discardSafeIncompleteMcpAdds.mockReset().mockResolvedValue(sandbox);
+    mocks.detachProvider.mockReset().mockResolvedValue("detached");
     mocks.ensureSandboxGatewaySelected.mockReset().mockResolvedValue(undefined);
     mocks.getMcpProviderInspectionRuntimeSelection.mockReset().mockReturnValue(runtimeSelection);
     mocks.getBridgeAdapter.mockReset().mockReturnValue("hermes-config");
@@ -231,6 +233,22 @@ describe("MCP adapter teardown rollback", () => {
     );
     expect(events.slice(0, 2)).toEqual(["gateway-selected", "provider-inspected"]);
   });
+
+  it.each([
+    ["rebuild", prepareMcpBridgesForRebuild],
+    ["destroy", prepareMcpBridgesForDestroy],
+  ] as const)(
+    "awaits %s provider inspection before any later provider mutation (#9806)",
+    async (_lifecycle, prepare) => {
+      mocks.removeGeneratedPolicy.mockReset();
+      mocks.inspectExactMcpDestroyProvider.mockRejectedValueOnce(
+        new Error("provider inspection failed"),
+      );
+
+      await expect(prepare("alpha")).rejects.toThrow("provider inspection failed");
+      expect(mocks.detachProvider).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["live", prepareMcpBridgesForRebuild],
