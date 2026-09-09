@@ -77,7 +77,7 @@ describe("onboard shared gateway route containment", () => {
         stderr: "",
       })),
       updateSandbox: vi.fn(() => true),
-      upsertProvider: vi.fn(() => ({ ok: true })),
+      upsertProvider: vi.fn(async () => ({ ok: true })),
       verifyInferenceRoute: vi.fn(),
       verifyOnboardInferenceSmoke,
       resolveEndpointHost,
@@ -150,7 +150,7 @@ describe("onboard shared gateway route containment", () => {
       events.push("registry-published");
       return true;
     });
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const verifyInferenceRoute = vi.fn();
     const verifyOnboardInferenceSmoke = vi.fn();
     const getGatewayName = vi.fn(() => "nemoclaw-9090");
@@ -262,7 +262,7 @@ describe("onboard shared gateway route containment", () => {
   it("fails before provider mutation when endpoint or credential identity differs (#6315)", async () => {
     const runOpenshell = vi.fn(() => ({ status: 0 }));
     const updateSandbox = vi.fn(() => true);
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
     const exitProcess = vi.fn((code: number): never => {
       throw new Error(`exit ${code}`);
@@ -418,7 +418,7 @@ describe("onboard shared gateway route containment", () => {
       getGatewayName: () => "nemoclaw",
       runOpenshell,
       updateSandbox,
-      upsertProvider: vi.fn(() => ({ ok: true })),
+      upsertProvider: vi.fn(async () => ({ ok: true })),
       verifyInferenceRoute: vi.fn(),
       verifyOnboardInferenceSmoke,
       isNonInteractive: () => true,
@@ -530,7 +530,7 @@ describe("onboard shared gateway route containment", () => {
       getGatewayName: () => "nemoclaw",
       runOpenshell: vi.fn(() => ({ status: 0 })),
       updateSandbox,
-      upsertProvider: vi.fn(() => ({ ok: true })),
+      upsertProvider: vi.fn(async () => ({ ok: true })),
       verifyInferenceRoute: vi.fn(),
       verifyOnboardInferenceSmoke: vi.fn(),
       isNonInteractive: () => true,
