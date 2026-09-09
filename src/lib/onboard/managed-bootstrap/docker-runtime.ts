@@ -194,6 +194,7 @@ const GPU_MODE_ATTEMPT_DETAIL_TAIL = 120;
 const GPU_MODE_FAILURE_DETAILS_LIMIT = 1_600;
 const GPU_MODE_FAILURE_DETAILS_TAIL = 400;
 
+/** Shorten `@sha256:<64 hex>` image digests to twelve hex characters so the reason, not the reference, fills the budget. */
 function abbreviateImageDigests(text: string): string {
   return text.replace(/@sha256:([0-9a-f]{12})[0-9a-f]{52}(?![0-9a-f])/gu, "@sha256:$1...");
 }
@@ -211,6 +212,7 @@ function clampDiagnostic(text: string, limit: number, tailLength: number): strin
   return `${head}${omissionMarker(text.length - head.length - tail.length)}${tail}`;
 }
 
+/** Render each failed GPU-mode probe as `<mode label>: <redacted, clamped Docker error>` for the thrown message. */
 export function formatDockerGpuModeFailureDetails(
   attempts: readonly DockerGpuPatchModeAttempt[],
 ): string {

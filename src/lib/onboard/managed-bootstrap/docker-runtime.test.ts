@@ -270,6 +270,7 @@ describe("Docker managed-bootstrap pre-create GPU fallback", () => {
   });
 });
 
+/** A failed `--gpus all` probe attempt carrying the given Docker error text. */
 function failedGpuModeAttempt(error: string): DockerGpuPatchModeAttempt {
   return {
     mode: { kind: "gpus", label: "--gpus all", device: "all", args: ["--gpus", "all"] },
