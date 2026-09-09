@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "classification": "unsigned-native-windows-arm64-preview-qualification-failed",
-  "candidateSha": "36cdec5a1e8cd5fb0618afd5b20d8055ed051d53",
+  "classification": "unsigned-native-windows-arm64-preview-qualification-pending",
+  "candidateSha": "c140fe10519b728a63af8180e51d54671750f99a",
   "sourceRepository": "https://github.com/NVIDIA/NemoClaw",
   "sourcePullRequest": 10799,
-  "sourceWorkflowRun": 34369256122,
+  "sourceWorkflowRun": 34380426001,
   "sourceWorkflowAttempts": [
     1
   ],
-  "sourceArtifactId": 10113338300,
-  "packageManifestSha256": "17f3ce9cffa5ed8b7b74981b5b63cab0821715e2294f1b5ac583fab7b6f01a0f",
+  "sourceArtifactId": 10117395635,
+  "packageManifestSha256": "ee2fa0fb595ec58af04355f9388f96cc2d65eb638c98bfcdc27450bfda9ca1d3",
   "openshell": {
     "repository": "https://github.com/NVIDIA/OpenShell",
     "pullRequest": 2721,
@@ -19,26 +19,20 @@
   "files": [
     {
       "name": "NemoClaw-0.1.0-windows-arm64.msi",
-      "size": 260346849,
-      "sha256": "b7b497e9f6591b281b6760e67306b7affa803a321387df77b4b9ba7e5b6e9d3f"
+      "size": 260342753,
+      "sha256": "befe5c6e772deaad55f86251c4fc7d3faefef03af5cb143c27b6fcd507f56cfd"
     },
     {
       "name": "NemoClawSetup-0.1.0-windows-arm64.exe",
-      "size": 304428677,
-      "sha256": "96dd27334b75db9954cc91c0b8f7d7cbc58a5b4b34d9d78b2a515b80480bcdef"
+      "size": 304374659,
+      "sha256": "13b5d56f798a214bbc83cf4728380668fe59e9ad5afd46f447a9dd356f761ab0"
     }
   ],
   "qualification": {
     "architecture": "arm64",
     "retainedReferenceInstallerChecks": "passed",
     "earlyAndRepeatedProcessAudit": "passed",
-    "installedAcceptance": "failed",
-    "failure": {
-      "step": "Qualify MSI and setup executable",
-      "reportedError": "Native setup did not prepare a bounded credential binding.",
-      "basicNativeOnboardingSelectionsPassed": 5,
-      "fullPackageQualificationPassed": false
-    },
+    "installedAcceptance": "pending",
     "requiredCompleteNativePasses": 2,
     "completeNativePasses": 0,
     "physicalN1x": "not-qualified",
