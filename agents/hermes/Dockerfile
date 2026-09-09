@@ -1572,7 +1572,9 @@ RUN cp /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash \
 # Keep the shared NemoClaw state root consistent across every shipped agent.
 # The root-owned sticky directory protects the managed-startup transaction
 # receipt while leaving the named plugin state directories sandbox-writable.
-RUN chown root:root /sandbox/.nemoclaw \
+RUN chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile \
+    && chmod 644 /sandbox/.bashrc /sandbox/.profile \
+    && chown root:root /sandbox/.nemoclaw \
     && chmod 1755 /sandbox/.nemoclaw \
     && chown -R root:root /sandbox/.nemoclaw/blueprints \
     && chmod -R 755 /sandbox/.nemoclaw/blueprints \

@@ -319,9 +319,8 @@ test(
     });
 
     progress.phase("validate the exact Pi candidate receipt");
-    expect(receipt.contract.agent).toBe("pi");
-    expect(receipt.contract.platform).toBe(platform);
-    expect(receipt.contract.source.repository).toBe("NVIDIA/NemoClaw");
+    // readPiQualificationReceipt already validates these fields through the
+    // managed-image contract parser; this lane proves source and runtime parity.
     const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"];
     const copiedSources = piDockerfiles.flatMap((dockerfile) =>
       directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
@@ -407,9 +406,26 @@ test(
     const rebuildProof = await runReadTask(artifacts, host, sandbox, env, "after-rebuild");
 
     progress.phase("recover Pi after a gateway restart");
+    const personalProfiles = await execPiShell(
+      sandbox,
+      trustedSandboxShellScript(
+        "set -eu; for f in /sandbox/.bashrc /sandbox/.profile; do printf '\\nexport NEMOCLAW_E2E_PI_PROFILE=preserved\\n' >> \"$f\"; done; sha256sum /sandbox/.bashrc /sandbox/.profile",
+      ),
+      { artifactName: "pi-personal-profiles-before-recovery", env, timeoutMs: 30_000 },
+    );
+    expect(personalProfiles.exitCode, resultText(personalProfiles)).toBe(0);
     await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName: SANDBOX_NAME });
     await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
     const recoveryProof = await runReadTask(artifacts, host, sandbox, env, "after-recovery");
+    const profilesAfterRecovery = await execPiShell(
+      sandbox,
+      trustedSandboxShellScript(
+        "set -eu; bash -lc 'test \"$NEMOCLAW_E2E_PI_PROFILE\" = preserved'; sha256sum /sandbox/.bashrc /sandbox/.profile",
+      ),
+      { artifactName: "pi-personal-profiles-after-recovery", env, timeoutMs: 30_000 },
+    );
+    expect(profilesAfterRecovery.exitCode, resultText(profilesAfterRecovery)).toBe(0);
+    expect(profilesAfterRecovery.stdout).toBe(personalProfiles.stdout);
 
     progress.phase("prove Pi policy and credential boundaries");
     const security = await sandbox.exec(SANDBOX_NAME, ["node", "-e", SECURITY_PROBE], {

@@ -319,58 +319,6 @@ EOF
       });
       expect(stderr).toContain("integrity check FAILED");
     });
-
-  });
-
-  describe("lock_rc_files", () => {
-    let workDir: string;
-
-    beforeEach(() => {
-      workDir = mkdtempSync(join(tmpdir(), "sandbox-init-lock-"));
-    });
-
-    afterEach(() => {
-      // Need to make writable before cleanup
-      try {
-        chmodSync(join(workDir, ".bashrc"), 0o644);
-      } catch {
-        /* ignore */
-      }
-      try {
-        chmodSync(join(workDir, ".profile"), 0o644);
-      } catch {
-        /* ignore */
-      }
-      execFileSync("rm", ["-rf", workDir]);
-    });
-
-    it("sets .bashrc and .profile to 444", () => {
-      writeFileSync(join(workDir, ".bashrc"), "# bashrc");
-      writeFileSync(join(workDir, ".profile"), "# profile");
-
-      runWithLib(`lock_rc_files ${JSON.stringify(workDir)}`);
-
-      const bashrcPerms = getOctalPerms(join(workDir, ".bashrc"));
-      const profilePerms = getOctalPerms(join(workDir, ".profile"));
-      expect(bashrcPerms).toBe("444");
-      expect(profilePerms).toBe("444");
-    });
-
-    it("is a no-op when files do not exist", () => {
-      // Should not throw
-      runWithLib(`lock_rc_files ${JSON.stringify(workDir)}`);
-    });
-
-    it("refuses to chmod symlinked rc files", () => {
-      const target = join(workDir, "target");
-      writeFileSync(target, "# target", { mode: 0o600 });
-      symlinkSync(target, join(workDir, ".bashrc"));
-
-      const { stdout } = runWithLib(`lock_rc_files ${JSON.stringify(workDir)} 2>&1`);
-
-      expect(stdout).toContain("Refusing to lock symlinked rc file");
-      expect(getOctalPerms(target)).toBe("600");
-    });
   });
 
   describe("drop_capabilities", () => {
@@ -983,7 +931,10 @@ EOF
 
   describe("both entrypoints source the shared library", () => {
     it("nemoclaw-start.sh sources sandbox-init.sh", () => {
-      const src = readFileSync(join(import.meta.dirname, "../../../scripts/nemoclaw-start.sh"), "utf-8");
+      const src = readFileSync(
+        join(import.meta.dirname, "../../../scripts/nemoclaw-start.sh"),
+        "utf-8",
+      );
       const start = src.indexOf("_SANDBOX_INIT=");
       // Bound the source block at the harden_resource_limits call line itself
       // (executable, stable) rather than a free-text comment that may be reworded.

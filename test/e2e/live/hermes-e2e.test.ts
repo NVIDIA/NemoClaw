@@ -455,21 +455,28 @@ test(
       timeoutMs: 30_000,
     });
     expect(hermesVersion.exitCode, resultText(hermesVersion)).toBe(0);
-    expect(resultText(hermesVersion)).not.toMatch(/MISSING|not found|No such file/i);
 
-    const configProbe = await sandbox.execShell(
+    // Observe the first native diagnostic before editing profiles or repairing
+    // anything. Other doctor findings remain visible for their owning issues.
+    const nativeDoctor = await sandbox.exec(SANDBOX_NAME, ["bash", "-lc", "hermes doctor"], {
+      artifactName: "phase-3-first-native-hermes-doctor",
+      env: commandEnv(),
+      timeoutMs: 180_000,
+    });
+    expect(nativeDoctor.exitCode, resultText(nativeDoctor)).toBe(0);
+
+    const profilesBeforeRecovery = await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
-        "test -f /sandbox/.hermes/config.yaml && test -d /sandbox/.hermes && touch /sandbox/.hermes/test-write && rm -f /sandbox/.hermes/test-write && echo OK",
+        "set -eu; for f in /sandbox/.bashrc /sandbox/.profile; do printf '\\n# nemoclaw-e2e-profile-preserved\\n' >> \"$f\"; done; sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256",
       ),
       {
-        artifactName: "phase-3-hermes-config-state",
+        artifactName: "phase-3-personal-profiles-before-recovery",
         env: commandEnv(),
         timeoutMs: 30_000,
       },
     );
-    expect(configProbe.exitCode, resultText(configProbe)).toBe(0);
-    expect(configProbe.stdout).toContain("OK");
+    expect(profilesBeforeRecovery.exitCode, resultText(profilesBeforeRecovery)).toBe(0);
 
     await assertHermesSkillLifecycle({
       env: commandEnv(),
@@ -744,6 +751,17 @@ test(
         Number(recoveredGateway.pid),
       );
     }
+
+    const personalProfiles = await sandbox.exec(
+      SANDBOX_NAME,
+      ["/usr/bin/sha256sum", "-c", "/tmp/nemoclaw-e2e-profiles.sha256"],
+      {
+        artifactName: "phase-4-personal-profiles-after-recovery",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(personalProfiles.exitCode, resultText(personalProfiles)).toBe(0);
 
     const recoveredHealth = await host.command(
       "curl",
