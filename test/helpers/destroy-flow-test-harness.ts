@@ -622,6 +622,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   }
   vi.spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup").mockImplementation(
     async () => {
+      await Promise.resolve();
       events.push("detach");
       return { detached: options.detachedProviders ?? [], failures: [] };
     },

@@ -14,9 +14,13 @@ describe("CLI OpenShell provider adapter uncertain mutations", () => {
   it("captures delete diagnostics without printing raw command output", async () => {
     const run = vi.fn(() => captured(1, "provider remains attached"));
     const adapter = createCliOpenShellProviderAdapter({ run });
-    await adapter.deleteProvider({
+    const result = await adapter.deleteProvider({
       target: selectedOpenShellGateway(),
       providerName: "search-prod",
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "command", reason: "failed" },
     });
     expect(run).toHaveBeenCalledWith(
       ["provider", "delete", "search-prod"],
@@ -27,11 +31,14 @@ describe("CLI OpenShell provider adapter uncertain mutations", () => {
     );
   });
   it.each([
-    "connection reset; sandbox 'alpha' not found",
-    "unauthorized; sandbox 'alpha' not found",
+    [
+      "connection reset; sandbox 'alpha' not found",
+      { kind: "transport", reason: "connection_loss" },
+    ],
+    ["unauthorized; sandbox 'alpha' not found", { kind: "authentication" }],
   ])(
     "does not turn a transport or authentication failure into sandbox absence: %s",
-    async (stderr) => {
+    async (stderr, error) => {
       const adapter = createCliOpenShellProviderAdapter({ run: () => captured(1, stderr) });
       const result = await adapter.detachProvider({
         target: selectedOpenShellGateway(),
@@ -40,7 +47,7 @@ describe("CLI OpenShell provider adapter uncertain mutations", () => {
       });
       expect(result).toMatchObject({
         ok: false,
-        error: { kind: expect.not.stringContaining("command") },
+        error,
       });
     },
   );

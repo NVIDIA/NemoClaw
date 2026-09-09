@@ -286,6 +286,29 @@ describe("custom Anthropic provider replacement on the OpenAI surface", () => {
     expect(harness.deleteGatewayProvider).not.toHaveBeenCalled();
     expect(harness.upsertProvider).not.toHaveBeenCalled();
   });
+
+  it("reports a redacted provider lookup failure through the setup result", async () => {
+    const harness = createHarness();
+    harness.runOpenshell.mockReturnValueOnce({
+      status: 1,
+      stdout: "",
+      stderr: "unauthorized token=secret",
+    });
+    harness.deps.redact.mockImplementation((value: string) => value.replaceAll("secret", "safe"));
+
+    await expect(
+      setupRemoteProviderInference(makeArgs(SANDBOX), {
+        ...harness.deps,
+        readGatewayProviderMetadata: undefined,
+      }),
+    ).rejects.toThrow("EXIT_CALLED:1");
+
+    expect(harness.error).toHaveBeenCalledWith(
+      "  Failed to inspect provider 'compatible-anthropic-endpoint' before replacement: OpenShell could not authenticate the provider operation.",
+    );
+    expect(JSON.stringify(harness.error.mock.calls)).not.toContain("secret");
+    expect(harness.upsertProvider).not.toHaveBeenCalled();
+  });
 });
 
 describe("OpenAI-compatible no-auth provider registration", () => {

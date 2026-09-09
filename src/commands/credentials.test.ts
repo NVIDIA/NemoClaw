@@ -123,6 +123,7 @@ describe("credentials oclif adapter source coverage", () => {
       {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
+        suppressOutput: true,
         timeout: 30_000,
       },
     );

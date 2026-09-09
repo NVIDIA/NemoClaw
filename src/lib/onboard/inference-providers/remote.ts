@@ -75,15 +75,27 @@ async function replaceStaleAnthropicProviderForOpenAiSurface(args: {
         typeof result.stderr === "string" || Buffer.isBuffer(result.stderr) ? result.stderr : null,
     };
   });
-  const live = readProviderMetadata
-    ? await readProviderMetadata(provider, runOpenshell)
-    : await adapter
-        .getProvider({ target: { kind: "selected" }, providerName: provider })
-        .then((result) => {
-          if (result.ok) return result.value;
-          if (result.error.kind === "command" && result.error.reason === "not_found") return null;
-          throw new Error(result.error.message);
-        });
+  let live: { type: string } | null;
+  if (readProviderMetadata) {
+    live = await readProviderMetadata(provider, runOpenshell);
+  } else {
+    const result = await adapter.getProvider({
+      target: { kind: "selected" },
+      providerName: provider,
+    });
+    if (!result.ok) {
+      if (result.error.kind === "command" && result.error.reason === "not_found") {
+        return { ok: true };
+      }
+      const detail = compactText(redact(result.error.message));
+      return {
+        ok: false,
+        status: 1,
+        message: `Failed to inspect provider '${provider}' before replacement${detail ? `: ${detail}` : "."}`,
+      };
+    }
+    live = result.value;
+  }
   if (!live || live.type === "openai") return { ok: true };
   const attempt = await adapter.deleteProvider({
     target: { kind: "selected" },
