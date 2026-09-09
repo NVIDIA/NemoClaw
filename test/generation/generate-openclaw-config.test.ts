@@ -26,7 +26,7 @@ const SCRIPT_PATH = path.join(
   "scripts",
   "generate-openclaw-config.mts",
 );
-const SCRIPT_ARGS = ["--experimental-strip-types", SCRIPT_PATH];
+const SCRIPT_ARGS = [SCRIPT_PATH];
 
 /** Minimal env vars required for a valid config generation run. */
 const BASE_ENV = baseOpenClawGenerationEnv();
@@ -218,7 +218,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents).toBeDefined();
   });
 
-  it("runs as a node --experimental-strip-types executable", () => {
+  it("runs as a node executable", () => {
     const config = runConfigSubprocess();
     expect(config.gateway).toBeDefined();
     expect(config.models).toBeDefined();
