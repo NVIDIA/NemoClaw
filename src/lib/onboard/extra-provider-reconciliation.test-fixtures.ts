@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
-import { reconcileRegisteredExtraProviders } from "./extra-provider-reconciliation";
+import { planRegisteredExtraProviders } from "./extra-provider-reconciliation";
 
 export type ProbeResult = {
   status: number | null;
@@ -24,16 +24,15 @@ export const missing = (name: string): ProbeResult => ({
 export function reconcile(
   recorded: string[],
   responses: Record<string, ProbeResult | (() => ProbeResult)> = {},
-  extra: Partial<Parameters<typeof reconcileRegisteredExtraProviders>[1]> = {},
+  extra: Partial<Parameters<typeof planRegisteredExtraProviders>[1]> = {},
 ): Promise<string[]> {
-  return reconcileRegisteredExtraProviders("nemoclaw", {
+  return planRegisteredExtraProviders("nemoclaw", {
     listExtraProviders: () => [...recorded],
-    removeExtraProvider: () => true,
     runOpenshell: vi.fn((args: string[]): ProbeResult => {
       const response = responses[args.at(-1) ?? ""];
       return typeof response === "function" ? response() : (response ?? ok());
     }),
     warn: () => undefined,
     ...extra,
-  });
+  }).then((plan) => [...plan.extraProviders]);
 }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { reconcileRegisteredExtraProviders } from "./extra-provider-reconciliation";
+import { planRegisteredExtraProviders } from "./extra-provider-reconciliation";
 import {
   missing,
   ok,
@@ -14,7 +14,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("reconcileRegisteredExtraProviders probe outcomes", () => {
+describe("planRegisteredExtraProviders probe outcomes", () => {
   it("preserves providers when raw probe failures lack classifiable adapter diagnostics (#6501)", async () => {
     const warn = vi.fn();
     const recorded = [
@@ -67,13 +67,14 @@ describe("reconcileRegisteredExtraProviders probe outcomes", () => {
     const recorded = ["provider-1", "provider-2", "provider-3", "provider-4", "provider-5"];
 
     expect(
-      await reconcileRegisteredExtraProviders("nemoclaw", {
-        listExtraProviders: () => [...recorded],
-        nowMs: () => now,
-        removeExtraProvider: () => true,
-        runOpenshell,
-        warn,
-      }),
+      (
+        await planRegisteredExtraProviders("nemoclaw", {
+          listExtraProviders: () => [...recorded],
+          nowMs: () => now,
+          runOpenshell,
+          warn,
+        })
+      ).extraProviders,
     ).toEqual(recorded);
     expect(runOpenshell).toHaveBeenCalledTimes(3);
     expect(timeouts).toEqual([5_000, 5_000, 5_000]);
@@ -88,17 +89,15 @@ describe("reconcileRegisteredExtraProviders probe outcomes", () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.example.test");
 
     await expect(
-      reconcileRegisteredExtraProviders("nemoclaw", {
+      planRegisteredExtraProviders("nemoclaw", {
         listExtraProviders: () => ["custom-provider"],
-        removeExtraProvider: () => true,
         runOpenshell,
       }),
     ).rejects.toThrow(/OPENSHELL_GATEWAY_ENDPOINT is set/);
     vi.unstubAllEnvs();
     await expect(
-      reconcileRegisteredExtraProviders("", {
+      planRegisteredExtraProviders("", {
         listExtraProviders: () => ["custom-provider"],
-        removeExtraProvider: () => true,
         runOpenshell,
       }),
     ).rejects.toThrow("OpenShell gateway name is required.");
