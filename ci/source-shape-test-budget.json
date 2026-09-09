@@ -203,6 +203,11 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "keeps %s plugin test typechecking after the trusted production build",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "passes only the base-packaged SDK archive to pull request dependency jobs",
       "category": "security"
     },
@@ -234,6 +239,11 @@
     {
       "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
       "test": "rejects malformed reviewed source package specifications",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/hermes/hermes-image-build-probes.test.ts",
+      "test": "binds every image build probe pin to its source digest",
       "category": "security"
     },
     {

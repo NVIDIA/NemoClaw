@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { VLLM_PORT } from "../../core/vllm-port";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import {
   checkOpenAiInferenceProviderProfile,
   OPENAI_GATEWAY_PROVIDER_TYPE,
@@ -71,7 +72,7 @@ export function gatewayReachableCompatibleEndpointUrl(
     : `${parsed.origin}${parsed.pathname}${routeSuffix}`;
 }
 
-export function reuseRegisteredProviderWithGatewayEndpoint(args: {
+export async function reuseRegisteredProviderWithGatewayEndpoint(args: {
   provider: string;
   providerType: string;
   credentialEnv: string | null | undefined;
@@ -79,7 +80,7 @@ export function reuseRegisteredProviderWithGatewayEndpoint(args: {
   gatewayEndpointUrl: string | null | undefined;
   runOpenshell: RunOpenshell;
   upsertProvider: UpsertProvider;
-}): UpsertProviderResult {
+}): Promise<UpsertProviderResult> {
   const {
     provider,
     providerType,
@@ -91,15 +92,34 @@ export function reuseRegisteredProviderWithGatewayEndpoint(args: {
   } = args;
   // The caller has already authorized the recovered provider's non-secret
   // credential/config identity through assessRecoveredProviderCredentialReuse.
-  const existing = runOpenshell(["provider", "get", provider], {
-    ignoreError: true,
-    suppressOutput: true,
+  const adapter = createCliOpenShellProviderAdapter({
+    run: (command, options) => {
+      const result = runOpenshell(command, options);
+      return {
+        status: result.status,
+        stdout:
+          typeof result.stdout === "string" || Buffer.isBuffer(result.stdout)
+            ? result.stdout
+            : null,
+        stderr:
+          typeof result.stderr === "string" || Buffer.isBuffer(result.stderr)
+            ? result.stderr
+            : null,
+      };
+    },
   });
-  if (existing.status !== 0) {
+  const existing = await adapter.getProvider({
+    target: { kind: "selected" },
+    providerName: provider,
+  });
+  if (!existing.ok) {
     return {
       ok: false,
-      status: existing.status || 1,
-      message: `Recovered provider '${provider}' is no longer registered in OpenShell.`,
+      status: 1,
+      message:
+        existing.error.kind === "command" && existing.error.reason === "not_found"
+          ? `Recovered provider '${provider}' is no longer registered in OpenShell.`
+          : existing.error.message,
     };
   }
   if (gatewayEndpointUrl === endpointUrl) {

@@ -179,16 +179,30 @@ export function createSandboxCreateIntentResolver<
       readonly hermesPortable: boolean;
       readonly requestedExtraProviders?: readonly string[];
       readonly resolvedIntent?: SandboxCreateIntent;
-      readonly planOrdinaryExtraProviders: () => {
-        readonly extraProviders: readonly string[];
-        readonly staleExtraProviders: readonly string[];
-      };
+      readonly planOrdinaryExtraProviders: () =>
+        | {
+            readonly extraProviders: readonly string[];
+            readonly staleExtraProviders: readonly string[];
+          }
+        | Promise<{
+            readonly extraProviders: readonly string[];
+            readonly staleExtraProviders: readonly string[];
+          }>;
     },
   ) {
+    const ordinaryExtraProviderPlan =
+      !options.hermesPortable && !options.requestedExtraProviders
+        ? await options.planOrdinaryExtraProviders()
+        : null;
     const extraProviderPlan = selectHermesPortableExtraProviderPlan(
       options.hermesPortable,
       options.requestedExtraProviders,
-      options.planOrdinaryExtraProviders,
+      () => {
+        if (!ordinaryExtraProviderPlan) {
+          throw new Error("Ordinary extra-provider plan is unavailable.");
+        }
+        return ordinaryExtraProviderPlan;
+      },
     );
     const intent =
       options.resolvedIntent ??

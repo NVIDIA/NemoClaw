@@ -139,7 +139,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
 
@@ -162,7 +162,7 @@ jobs:
           SOURCE_RUN_ID: ${{ needs.locate.outputs.source-run-id }}
           SOURCE_WORKFLOW_SHA: ${{ needs.locate.outputs.source-workflow-sha }}
         run: |
-          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
+          node --no-warnings --input-type=module <<'NODE'
           import fs from "node:fs";
           import path from "node:path";
           import { assertRepairArtifactDirectory, parseSelection, parseValidationReceipt, readJson } from "./advisor/tools/pr-review-advisor/repair-contract.mts";
@@ -191,7 +191,7 @@ jobs:
           SELECTION_FILE: ${{ env.REQUEST_DIR }}/selection.json
           VALIDATION_WORKFLOW_SHA: ${{ needs.locate.outputs.validation-workflow-sha }}
           VALIDATION_FILE: ${{ env.REQUEST_DIR }}/validation.json
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-publish.mts" advisor-repair-checks
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-publish.mts" advisor-repair-checks
 
       - name: Upload bounded generated-head evidence
         if: always()

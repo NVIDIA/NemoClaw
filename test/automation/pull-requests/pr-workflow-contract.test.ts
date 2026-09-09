@@ -682,6 +682,65 @@ describe("pull request and main workflow contracts", () => {
     );
   });
 
+  // source-shape-contract: security -- The trusted split must retain test-config coverage after compiling candidate production code
+  it.each([
+    ["pull request", prWorkflow],
+    ["main", mainWorkflow],
+  ] as const)(
+    "keeps %s plugin test typechecking after the trusted production build",
+    (_name, workflow) => {
+      expect([workflow.jobs["build-typecheck"].needs].flat()).toContain("compile-artifacts");
+      expect(requiredStep(sharedActions.buildTypecheck, "Typecheck plugin tests").run).toBe(
+        "npm --prefix nemoclaw exec -- tsc --noEmit -p nemoclaw/tsconfig.test.json",
+      );
+      expect(stepRuns(sharedActions.buildTypecheck)).not.toContain(
+        "npm --prefix nemoclaw run typecheck",
+      );
+    },
+  );
+  it.each([
+    [
+      "CLI shards",
+      requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools"),
+    ],
+    [
+      "Advisor runtime",
+      requiredWorkflowStep(
+        advisorWorkflow.jobs["build-advisor-runtime"],
+        "Install locked runtime",
+      ),
+    ],
+  ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-ubuntu-apt-sources-"));
+    const fakeBin = join(temp, "bin");
+    const aptArgs = join(temp, "apt-args");
+    mkdirSync(fakeBin);
+    writeFileSync(
+      join(fakeBin, "sudo"),
+      '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$APT_ARGS"\nexit 86\n',
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = runWorkflowShellStep(installStep, {
+        APT_ARGS: aptArgs,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      });
+      expect(result.status).toBe(86);
+      expect(readFileSync(aptArgs, "utf8").trim().split("\n")).toEqual([
+        "apt-get",
+        "update",
+        "-qq",
+        "-o",
+        "Dir::Etc::sourcelist=sources.list.d/ubuntu.sources",
+        "-o",
+        "Dir::Etc::sourceparts=-",
+      ]);
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
+    }
+  });
+
   // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
   it("passes only the base-packaged SDK archive to pull request dependency jobs", () => {
     const packageJob = prWorkflow.jobs["openshell-sdk-package"];

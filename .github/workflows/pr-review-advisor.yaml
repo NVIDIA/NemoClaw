@@ -173,11 +173,11 @@ jobs:
           submodules: false
       - name: Read specialist prompts
         id: specialists
-        run: node --experimental-strip-types tools/pr-review-advisor/render-specialist-matrix.mts
+        run: node tools/pr-review-advisor/render-specialist-matrix.mts
       - name: Collect GitHub review context
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor/github-context.mts
+        run: node --no-warnings tools/pr-review-advisor/github-context.mts
       - name: Enforce generated-head advisor scope
         if: ${{ inputs.repair_attempt_key != '' }}
         env:
@@ -225,13 +225,15 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
       - name: Install locked runtime
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
+          sudo apt-get update -qq \
+            -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
+            -o Dir::Etc::sourceparts="-"
           sudo apt-get install -y --no-install-recommends "fd-find=${FD_FIND_VERSION}" "ripgrep=${RIPGREP_VERSION}"
           test "$(dpkg-query -W -f='${Version}' fd-find)" = "$FD_FIND_VERSION"
           test "$(dpkg-query -W -f='${Version}' ripgrep)" = "$RIPGREP_VERSION"
@@ -328,12 +330,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
 
       - name: Load advisor runtime image
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/export-runtime-env.mts"
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/export-runtime-env.mts"
 
       # The source PR is fetched manually so no PR-controlled
       # action, hook, submodule, LFS filter, or package setup can run. The base
@@ -355,7 +357,7 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: "1"
           TARGET_DIR: ${{ github.workspace }}/pr-workdir
         run: |
-          node --experimental-strip-types \
+          node \
             "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"
 
       - name: Prepare exact repair analysis workspace
@@ -371,7 +373,7 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: "1"
           TARGET_DIR: ${{ github.workspace }}/pr-workdir
         run: |
-          node --experimental-strip-types \
+          node \
             "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"
 
       # symlinks first so an untrusted link cannot redirect a read outside the
@@ -407,7 +409,7 @@ jobs:
           BASE_REF: ${{ github.event_name == 'workflow_run' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}
           HEAD_REF: ${{ github.event_name == 'workflow_run' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
           PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: ${{ runner.temp }}/shared-pr-review-advisor-context/github-context.json
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" prepare
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" prepare
 
       # Shared lifecycle phases preserve the configure-only credential boundary.
       - name: Install OpenShell
@@ -420,7 +422,7 @@ jobs:
         id: specialist-analysis
         env:
           OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" analysis
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" analysis
 
       - name: Upload specialist review
         id: upload-specialist-session
@@ -479,13 +481,13 @@ jobs:
       - name: Setup Node for trusted publisher
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
 
       - name: Post PR review advisor link
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/completion-comment.mts" \
+          node "$ADVISOR_DIR/tools/pr-review-advisor/completion-comment.mts" \
             --repo "$GITHUB_REPOSITORY" \
             --pr "$PR_NUMBER" \
             --marker "$PR_REVIEW_ADVISOR_COMMENT_MARKER"
@@ -541,7 +543,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
 
@@ -560,7 +562,7 @@ jobs:
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
             --slurp | jq '{artifacts: [.[].artifacts[]]}' > "$live/artifacts.json"
           ADVISOR_DIR="$ADVISOR_DIR" LIVE="$live" GITHUB_OUTPUT="$GITHUB_OUTPUT" \
-            node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
+            node --no-warnings --input-type=module <<'NODE'
           import fs from "node:fs";
           import path from "node:path";
           import { readBoundedFile } from `${process.env.ADVISOR_DIR}/tools/post-merge-docs/contract.mts`;
@@ -614,7 +616,7 @@ jobs:
           SOURCE_HEAD_SHA: ${{ inputs.repair_head_sha }}
         run: |
           LIVE="$RUNNER_TEMP/live" ARTIFACTS="$RUNNER_TEMP/advisor-artifacts" OUTPUT="$RUNNER_TEMP/repair-context" \
-            node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
+            node --no-warnings --input-type=module <<'NODE'
           import fs from "node:fs";
           import path from "node:path";
           import { readBoundedFile } from `${process.env.ADVISOR_DIR}/tools/post-merge-docs/contract.mts`;
@@ -716,7 +718,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
 
@@ -734,7 +736,7 @@ jobs:
         env:
           SELECTION_FILE: ${{ runner.temp }}/repair-context/selection.json
         run: |
-          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
+          node --no-warnings --input-type=module <<'NODE'
           import fs from "node:fs";
           import path from "node:path";
           import { assertRepairArtifactDirectory, parseSelection, readJson } from "./advisor/tools/pr-review-advisor/repair-contract.mts";
@@ -754,7 +756,7 @@ jobs:
           TARGET_DIR: ${{ runner.temp }}/pr-workdir
           TARGET_PR: ${{ steps.identity.outputs.pr }}
           TARGET_REPO: NVIDIA/NemoClaw
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"
 
       - name: Prepare identity-free sandbox inputs
         env:
@@ -765,7 +767,7 @@ jobs:
           rsync -a --exclude=.git "$RUNNER_TEMP/pr-workdir/" "$RESOLUTION_WORKDIR/"
           find "$RESOLUTION_WORKDIR" -type l -delete
           cp -a "$RESOLUTION_WORKDIR" "$REPAIR_BASE_DIR"
-          node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" prepare
+          node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" prepare
 
       - name: Install OpenShell
         run: |
@@ -775,26 +777,26 @@ jobs:
       - name: Configure inference on the trusted host
         env:
           OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" configure
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" configure
 
       - name: Create the credential-free sandbox
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" create
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" create
 
       - name: Run exactly two Pi turns
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" run
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" run
 
       - name: Download the candidate and proposal
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" download
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" download
 
       - name: Delete the sandbox
         if: always()
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" delete
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" delete
 
       - name: Export the exact-path patch on the trusted host
         env:
           SELECTION_FILE: ${{ runner.temp }}/repair-context/selection.json
           SOURCE_REPOSITORY: ${{ runner.temp }}/pr-workdir
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" export
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" export
 
       - id: upload
         name: Upload untrusted repair artifact
@@ -852,7 +854,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
 
@@ -876,7 +878,7 @@ jobs:
         env:
           SOURCE_DIR: ${{ github.workspace }}/source
         run: |
-          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
+          node --no-warnings --input-type=module <<'NODE'
           import fs from "node:fs";
           import path from "node:path";
           import { assertRepairArtifactDirectory, parseSelection, readJson, validateRepairPatch } from "./advisor/tools/pr-review-advisor/repair-contract.mts";
@@ -898,7 +900,7 @@ jobs:
       - name: Run the trusted validation plan and seal the unchanged candidate
         env:
           OUTPUT_DIR: ${{ runner.temp }}/validated
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-validate.mts"
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-validate.mts"
 
       - id: upload
         name: Upload trusted validation artifact
@@ -959,7 +961,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
 
@@ -983,7 +985,7 @@ jobs:
         env:
           EXPECTED_HEAD_SHA: ${{ inputs.repair_head_sha }}
         run: |
-          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
+          node --no-warnings --input-type=module <<'NODE'
           import fs from "node:fs";
           import path from "node:path";
           import { assertRepairArtifactDirectory, parseSelection, readJson } from "./advisor/tools/pr-review-advisor/repair-contract.mts";
@@ -1027,7 +1029,7 @@ jobs:
           SOURCE_REPOSITORY: ${{ env.PUBLISH_SOURCE_DIR }}
           STATE_FILE: ${{ runner.temp }}/publish-live/state.json
           WORK_DIRECTORY: ${{ env.PUBLISH_WORK_DIR }}
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-publish.mts" advisor-repair-prepare
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-publish.mts" advisor-repair-prepare
 
       - name: Prepare the trusted generated-head request
         env:
@@ -1078,7 +1080,7 @@ jobs:
           REVIEWS_FILE: ${{ runner.temp }}/publish-live/reviews.json
           SELECTION_FILE: ${{ env.PUBLISH_INPUT_DIR }}/context/selection.json
           STATE_FILE: ${{ runner.temp }}/publish-live/state.json
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-publish.mts" advisor-repair-publish
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-publish.mts" advisor-repair-publish
 
   repair-audit:
     name: Preserve bounded repair audit receipt

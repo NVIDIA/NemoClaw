@@ -59,10 +59,7 @@ describe("prepare-e2e workflow boundary", () => {
       });
       const result = spawnSync(
         process.execPath,
-        [
-          "--experimental-strip-types",
-          path.join(root, "scripts/checks/prepare-ci-npm-install.mts"),
-        ],
+        [path.join(root, "scripts/checks/prepare-ci-npm-install.mts")],
         {
           encoding: "utf8",
           cwd: root,

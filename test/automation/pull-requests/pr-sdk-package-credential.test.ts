@@ -47,6 +47,7 @@ describe("OpenShell SDK package credential boundary", () => {
     expect(job["timeout-minutes"]).toBe(5);
 
     const checkout = requiredStep(job, "Checkout base-controlled package verifier");
+    expect(checkout.uses).toBe("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1");
     expect(checkout.with).toMatchObject({
       ref: "${{ inputs.repair_attempt_key != '' && inputs.repair_base_sha || github.event.pull_request.base.sha }}",
       "persist-credentials": false,
@@ -59,9 +60,8 @@ describe("OpenShell SDK package credential boundary", () => {
       NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
-    expect(fetch.run).toContain(
-      "node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts",
-    );
+    expect(fetch.run).toContain("node scripts/checks/package-openshell-sdk-for-pr.mts");
+    expect(fetch.run).toContain("artifact_path=");
     expect(
       (job.steps ?? [])
         .filter((candidate) => candidate.name !== fetch.name)
@@ -70,7 +70,9 @@ describe("OpenShell SDK package credential boundary", () => {
       (job.steps ?? []).filter((candidate) => candidate.name !== fetch.name).map(() => undefined),
     );
 
-    expect(requiredStep(job, "Upload verified OpenShell SDK archive").with).toMatchObject({
+    const upload = requiredStep(job, "Upload verified OpenShell SDK archive");
+    expect(upload.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+    expect(upload.with).toMatchObject({
       name: "openshell-sdk-${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || github.event.pull_request.head.sha }}",
       path: "${{ steps.package.outputs.artifact_path }}",
       "if-no-files-found": "error",
