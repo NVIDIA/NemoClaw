@@ -62,7 +62,8 @@ function captureReadySummary(
 }
 
 describe("onboard dashboard helpers", () => {
-  it("builds a Hermes verification chain with the sandbox's allocated API port (#9290)", () => {
+  it("builds a remotely bound Hermes verification chain with its allocated API port", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const getSandbox = vi.fn(() => ({ hermesApiPort: 8643 }));
     const helpers = createOnboardDashboardHelpers({
       runOpenshell: vi.fn(() => ({ status: 0 })),
@@ -80,19 +81,25 @@ describe("onboard dashboard helpers", () => {
       getSandbox,
     });
 
-    expect(
-      helpers.buildAgentVerifyChain(
-        "http://127.0.0.1:18789",
-        "my-hermes",
-        loadAgent("hermes"),
-      ),
-    ).toMatchObject({
-      port: 18789,
-      dashboardHealthEndpoint: "/api/status",
-      gatewayPort: 8643,
-      gatewayHealthEndpoint: "/health",
-    });
-    expect(getSandbox).toHaveBeenCalledWith("my-hermes");
+    try {
+      expect(
+        helpers.buildAgentVerifyChain(
+          "http://127.0.0.1:18789",
+          "my-hermes",
+          loadAgent("hermes"),
+        ),
+      ).toMatchObject({
+        port: 18789,
+        forwardTarget: "0.0.0.0:18789",
+        bindAddress: "0.0.0.0",
+        dashboardHealthEndpoint: "/api/status",
+        gatewayPort: 8643,
+        gatewayHealthEndpoint: "/health",
+      });
+      expect(getSandbox).toHaveBeenCalledWith("my-hermes");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("prints platform-appropriate service hints for port conflicts", () => {
