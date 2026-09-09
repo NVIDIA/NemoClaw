@@ -13,7 +13,7 @@ describe("config rotate-token", () => {
   it("rotates an OpenAI provider without a compatibility-profile mutation (#11229)", async () => {
     const appendAuditEntry = vi.fn();
     const captureOpenshellCommand = vi.fn();
-    const runOpenshellCommand = vi.fn(
+    const runOpenshellCommand = vi.fn<RotateTokenDeps["runOpenshellCommand"]>(
       (): ReturnType<RotateTokenDeps["runOpenshellCommand"]> =>
         ({ status: 0 }) as ReturnType<RotateTokenDeps["runOpenshellCommand"]>,
     );
@@ -42,6 +42,12 @@ describe("config rotate-token", () => {
     expect(captureOpenshellCommand).not.toHaveBeenCalled();
     expect(saveCredential).toHaveBeenCalledWith("OPENAI_API_KEY", "rotation-secret");
     expect(runOpenshellCommand).toHaveBeenCalledOnce();
+    expect(runOpenshellCommand).toHaveBeenCalledWith(
+      expect.any(String),
+      ["provider", "update", "inference", "--credential", "OPENAI_API_KEY"],
+      expect.objectContaining({ env: { OPENAI_API_KEY: "rotation-secret" } }),
+    );
+    expect(runOpenshellCommand.mock.calls[0]?.[1]).not.toContain("rotation-secret");
     expect(appendAuditEntry).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "rotate_token",
