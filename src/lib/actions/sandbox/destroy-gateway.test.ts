@@ -21,7 +21,8 @@ vi.mock("../../onboard/host-gateway-process", () => ({
   resolveOwnedHostGatewayRuntimeProviderId: mocks.resolveOwnedHostGatewayRuntimeProviderId,
   stopHostGatewayProcesses: mocks.stopHostGatewayProcesses,
 }));
-vi.mock("../../onboard/gateway-teardown-authority", () => ({
+vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/gateway-teardown-authority")>()),
   resolveGatewayTeardownAuthority: mocks.resolveGatewayTeardownAuthority,
   GatewayAuthorityError: mocks.GatewayAuthorityError,
   gatewayAuthorityFailureLines: (error: unknown, operation: string) => [
@@ -163,6 +164,58 @@ describe("cleanupGatewayAfterLastSandbox", () => {
       );
     },
   );
+
+  it("does not use legacy destroy after a current gateway-removal failure", () => {
+    const runOpenshell = vi.fn((args: string[]) =>
+      args[1] === "remove"
+        ? {
+            status: 1,
+            stdout: "",
+            stderr: "connection refused; OPENAI_API_KEY=must-not-be-logged",
+          }
+        : { status: 0, stdout: "", stderr: "" },
+    );
+
+    let thrown: unknown;
+    try {
+      cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toEqual(
+      new Error(
+        "Could not remove gateway registration 'nemoclaw': openshell gateway remove failed (connection refused; exit 1). Resolve the reported OpenShell error, then rerun destroy.",
+      ),
+    );
+    expect(String(thrown)).not.toContain("must-not-be-logged");
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "destroy", "-g", "nemoclaw"],
+      expect.anything(),
+    );
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
+  it("continues volume cleanup only after a reported absence is verified", () => {
+    const results = new Map([
+      ["gateway remove nemoclaw", { status: 1, stdout: "", stderr: "gateway nemoclaw not found" }],
+      ["gateway list -o json", { status: 0, stdout: "[]", stderr: "" }],
+    ]);
+    const runOpenshell = vi.fn((args: string[]) => results.get(args.join(" "))!);
+
+    cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell);
+
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "list", "-o", "json"], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(mocks.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith("openshell-cluster-nemoclaw", {
+      ignoreError: true,
+    });
+  });
 
   it("fails before local cleanup when the gateway authority cannot be revalidated (#6576)", () => {
     // A failure that is not an authority refusal still aborts outright: #6576's

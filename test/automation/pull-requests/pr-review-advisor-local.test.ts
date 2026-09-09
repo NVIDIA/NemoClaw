@@ -167,7 +167,6 @@ describe("local PR review advisor", () => {
     execFileSync(
       process.execPath,
       [
-        "--experimental-strip-types",
         "--no-warnings",
         path.resolve("tools/pr-review-advisor/export-runtime-env.mts"),
       ],
@@ -272,7 +271,7 @@ describe("local PR review advisor", () => {
 
     const result = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", "--no-warnings", "tools/pr-review-advisor/local-review.mts"],
+      ["--no-warnings", "tools/pr-review-advisor/local-review.mts"],
       {
         cwd: source,
         encoding: "utf8",
@@ -343,7 +342,7 @@ describe("local PR review advisor", () => {
     git(source, ["fetch", "origin", "main"]);
     const child = spawn(
       process.execPath,
-      ["--experimental-strip-types", "--no-warnings", "tools/pr-review-advisor/local-review.mts"],
+      ["--no-warnings", "tools/pr-review-advisor/local-review.mts"],
       {
         cwd: source,
         env: {
@@ -387,7 +386,6 @@ describe("local PR review advisor", () => {
     const result = spawnSync(
       process.execPath,
       [
-        "--experimental-strip-types",
         "--no-warnings",
         path.resolve("tools/pr-review-advisor/local-review.mts"),
       ],

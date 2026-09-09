@@ -202,7 +202,6 @@ function runParser(options: RunOptions = {}) {
   return spawnSync(
     "node",
     [
-      "--experimental-strip-types",
       "--no-warnings",
       PARSER,
       "--blueprint",
