@@ -173,10 +173,18 @@ jobs:
       - name: Install locked runtime
         run: |
           set -euo pipefail
+          APT_LISTS_DIR="$RUNNER_TEMP/nemoclaw-apt-lists"
+          sudo mkdir -p "$APT_LISTS_DIR/partial"
           sudo apt-get update -qq \
             -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
-            -o Dir::Etc::sourceparts="-"
-          sudo apt-get install -y --no-install-recommends "fd-find=${FD_FIND_VERSION}" "ripgrep=${RIPGREP_VERSION}"
+            -o Dir::Etc::sourceparts="-" \
+            -o Dir::State::lists="$APT_LISTS_DIR"
+          sudo apt-get install -y --no-install-recommends \
+            -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
+            -o Dir::Etc::sourceparts="-" \
+            -o Dir::State::lists="$APT_LISTS_DIR" \
+            "fd-find=${FD_FIND_VERSION}" \
+            "ripgrep=${RIPGREP_VERSION}"
           test "$(dpkg-query -W -f='${Version}' fd-find)" = "$FD_FIND_VERSION"
           test "$(dpkg-query -W -f='${Version}' ripgrep)" = "$RIPGREP_VERSION"
           (cd "$ADVISOR_DIR" && npm ci --ignore-scripts --no-audit --no-fund)
