@@ -971,9 +971,13 @@ function hasStructuredContent(message) {
   return Array.isArray(message.content) && message.content.length > 0;
 }
 
-const providerUnavailableCodes = new Set(["502", "503", "504", "529"]);
+const providerUnavailableCodes = new Set(["500", "502", "503", "504", "529"]);
+const providerUnavailableError = /^(?:litellm\.)?(?:InternalServerError|ServiceUnavailableError)(?::|$)/;
+const providerAuthenticationError =
+  /(?:authenticat|authori[sz]|unauthori[sz]ed|forbidden|invalid (?:api )?key|credential)/i;
 
 function isStructuredProviderUnavailable(message) {
+  const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
   const identity = [
     message.role,
     hasStructuredContent(message),
@@ -984,7 +988,9 @@ function isStructuredProviderUnavailable(message) {
   return (
     identity === "assistant\nfalse\nerror\nopenai-completions\ninference" &&
     typeof message.errorCode === "string" &&
-    providerUnavailableCodes.has(message.errorCode.trim())
+    providerUnavailableCodes.has(message.errorCode.trim()) &&
+    providerUnavailableError.test(errorMessage) &&
+    !providerAuthenticationError.test(errorMessage)
   );
 }
 

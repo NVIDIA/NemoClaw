@@ -18,48 +18,51 @@ function launchOptions(host: unknown) {
   };
 }
 
-it("retries a transient provider failure in a fresh launch session (#10978)", async () => {
-  const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-  vi.useFakeTimers();
-  const calls: Array<{ artifactName?: string; env?: NodeJS.ProcessEnv }> = [];
-  const host = {
-    command: async (
-      _command: string,
-      _args: string[],
-      options?: { artifactName?: string; env?: NodeJS.ProcessEnv },
-    ) => {
-      calls.push({ artifactName: options?.artifactName, env: options?.env });
-      return calls.length === 1
-        ? {
-            exitCode: 1,
-            signal: null,
-            stderr: `launch did not record the required structured session turns\nlitellm.ServiceUnavailableError: NVIDIA upstream unavailable\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${options?.env?.NEMOCLAW_LAUNCH_RUN_ID}\n`,
-            stdout: "",
-          }
-        : { exitCode: 0, signal: null, stderr: "", stdout: "" };
-    },
-    openshellCommandPath: "/usr/bin/openshell",
-  };
+it.each(["500", "503"] as const)(
+  "retries a transient HTTP %s provider failure in a fresh launch session (#10978)",
+  async (status) => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.useFakeTimers();
+    const calls: Array<{ artifactName?: string; env?: NodeJS.ProcessEnv }> = [];
+    const host = {
+      command: async (
+        _command: string,
+        _args: string[],
+        options?: { artifactName?: string; env?: NodeJS.ProcessEnv },
+      ) => {
+        calls.push({ artifactName: options?.artifactName, env: options?.env });
+        return calls.length === 1
+          ? {
+              exitCode: 1,
+              signal: null,
+              stderr: `launch did not record the required structured session turns\nlitellm.ServiceUnavailableError: HTTP ${status}; NVIDIA upstream unavailable\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${options?.env?.NEMOCLAW_LAUNCH_RUN_ID}\n`,
+              stdout: "",
+            }
+          : { exitCode: 0, signal: null, stderr: "", stdout: "" };
+      },
+      openshellCommandPath: "/usr/bin/openshell",
+    };
 
-  try {
-    const launch = runOpenClawLaunchSession(launchOptions(host));
-    expect(calls).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(999);
-    expect(calls).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(1);
-    const result = await launch;
-    expect(result.exitCode).toBe(0);
-    expect(calls.map((call) => call.artifactName)).toEqual([
-      "provider-turn",
-      "provider-turn-provider-retry-02",
-    ]);
-    expect(new Set(calls.map((call) => call.env?.NEMOCLAW_LAUNCH_RUN_ID)).size).toBe(2);
-    expect(new Set(calls.map((call) => call.env?.NEMOCLAW_LAUNCH_FIRST_INPUT)).size).toBe(2);
-  } finally {
-    vi.useRealTimers();
-    platform.mockRestore();
-  }
-});
+    try {
+      const launch = runOpenClawLaunchSession(launchOptions(host));
+      expect(calls).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(calls).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await launch;
+      expect(result.exitCode).toBe(0);
+      expect(calls.map((call) => call.artifactName)).toEqual([
+        "provider-turn",
+        "provider-turn-provider-retry-02",
+      ]);
+      expect(new Set(calls.map((call) => call.env?.NEMOCLAW_LAUNCH_RUN_ID)).size).toBe(2);
+      expect(new Set(calls.map((call) => call.env?.NEMOCLAW_LAUNCH_FIRST_INPUT)).size).toBe(2);
+    } finally {
+      vi.useRealTimers();
+      platform.mockRestore();
+    }
+  },
+);
 
 it("classifies exhausted transient launch attempts as provider unavailable (#10978)", async () => {
   const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");

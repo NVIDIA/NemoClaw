@@ -283,6 +283,23 @@ it.each<{ after: SessionRecords; status: number }>([
   },
   {
     after: {
+      "session-a": [message("user"), providerUnavailableMessage({ errorCode: "500" })],
+    },
+    status: 3,
+  },
+  {
+    after: {
+      "session-a": [
+        message("user"),
+        providerUnavailableMessage({
+          errorMessage: "litellm.AuthenticationError: invalid API key",
+        }),
+      ],
+    },
+    status: 2,
+  },
+  {
+    after: {
       "session-a": [message("user"), providerUnavailableMessage({ errorCode: "400" })],
     },
     status: 2,

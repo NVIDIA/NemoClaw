@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { FULL_E2E_TARGET_TIMEOUT_MINUTES } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
+import { FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import {
   catalogueTarget,
   E2E_TARGET_CATALOGUE,
@@ -18,7 +18,9 @@ describe("security-posture catalogue boundary", () => {
       const openclaw = catalogueTarget("security-posture-openclaw");
       const hermes = catalogueTarget("security-posture-hermes");
 
-      expect(catalogueTarget("full-e2e").timeoutMinutes).toBe(FULL_E2E_TARGET_TIMEOUT_MINUTES);
+      expect(catalogueTarget("full-e2e").timeoutMinutes).toBe(
+        FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
+      );
 
       const target = ({ OpenClaw: openclaw, Hermes: hermes } as const)[scenario]!;
       expect(target).toMatchObject({
@@ -36,7 +38,7 @@ describe("security-posture catalogue boundary", () => {
       expect(openclaw).toMatchObject({
         shard: "openclaw",
         testFile: "test/e2e/live/full-e2e.test.ts",
-        timeoutMinutes: FULL_E2E_TARGET_TIMEOUT_MINUTES,
+        timeoutMinutes: FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
       });
       expect(hermes).toMatchObject({
         shard: "hermes",
