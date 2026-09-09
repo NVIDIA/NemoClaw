@@ -510,7 +510,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "243f607a1b9a67c116f80844d5cd6e7185d63537e74fb08b3994652f79cb00e9",
       "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
       // Exact #11251 template after immutable stable-override validation.
-      "d570aa89cd5845118ca0797180527e686c264d292340fe6cc54f3133be8d0f7c",
+      "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
     ],
     manifests: [
       {
