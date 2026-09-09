@@ -4010,6 +4010,7 @@ jobs:
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_GATEWAY_RUNTIMES: docker,podman
+      E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "mcp-bridge-dev"
       E2E_OBSERVABLE_OUTCOME: "Development OpenShell MCP bridge reaches tools and inference"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu managed runtime host; local compatible inference and MCP endpoint"

@@ -383,13 +383,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   let hermesCredentialKeys = hermesProviderExists
     ? (overrides.hermesCredentialKeys ?? ["OPENAI_API_KEY"])
     : null;
-  vi.spyOn(hermesProviderAuth, "inspectHermesProviderBinding").mockImplementation(() => ({
+  vi.spyOn(hermesProviderAuth, "inspectHermesProviderBinding").mockImplementation(async () => ({
     exists: hermesProviderExists,
     credentialKeys: hermesCredentialKeys,
   }));
   const registerHermesInferenceProviderSpy = vi
     .spyOn(hermesProviderAuth, "registerHermesInferenceProvider")
-    .mockImplementation((...args: unknown[]) => {
+    .mockImplementation(async (...args: unknown[]) => {
       hermesProviderExists = true;
       hermesCredentialKeys = [String(args[2] ?? "OPENAI_API_KEY")];
     });

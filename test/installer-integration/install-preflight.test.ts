@@ -508,7 +508,6 @@ exit 89
       writeSourceCheckoutNpmStub(fakeBin, { commandLog: true });
 
       writeSourceCheckoutPackages(tmp);
-
       fs.mkdirSync(path.join(tmp, "scripts", "lib"), { recursive: true }); fs.copyFileSync(path.join(import.meta.dirname, "../..", "scripts", "lib", "openshell-gateway.service.in"), path.join(tmp, "scripts", "lib", "openshell-gateway.service.in"));
       writeExecutable(
         path.join(tmp, "scripts", "install-openshell.sh"),
@@ -527,6 +526,7 @@ exit 0
         env: {
           ...process.env,
           HOME: tmp,
+          XDG_CONFIG_HOME: path.join(tmp, ".config"),
           PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",

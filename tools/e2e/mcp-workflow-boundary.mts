@@ -269,9 +269,12 @@ function validateJobIdentity(
       "mcp-bridge must use the trusted execution plan",
     );
   } else {
-    if (Object.hasOwn(env, "E2E_DEFAULT_ENABLED")) {
-      errors.push("mcp-bridge-dev must remain default-enabled");
-    }
+    requireEqual(
+      errors,
+      env.E2E_DEFAULT_ENABLED,
+      "0",
+      "mcp-bridge-dev must remain explicit-only after the stable 0.0.116 cutover",
+    );
     requireEqual(
       errors,
       env.NEMOCLAW_OPENSHELL_CHANNEL,
