@@ -202,7 +202,7 @@ function requireConfiguredRuntimeProviderGateway(
   return gateway;
 }
 
-export function prepareConfiguredGatewayHostRuntime(
+export function observeConfiguredGatewayHostRuntime(
   options: PrepareConfiguredGatewayHostRuntimeOptions = {},
 ): RuntimeProviderGatewayHostRuntime {
   const environment = options.environment ?? process.env;
@@ -215,7 +215,7 @@ export function prepareConfiguredGatewayHostRuntime(
     platform,
     architecture,
     environment,
-  ).prepareHostRuntime({
+  ).observeHostRuntime({
     environment,
     platform,
     socketPath: options.socketPath,
@@ -260,7 +260,7 @@ export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
 
 export function getGatewayPortCheckOptions(env: NodeJS.ProcessEnv = process.env): { host: string } {
   return {
-    host: prepareConfiguredGatewayHostRuntime({ environment: env }).portCheckHost,
+    host: observeConfiguredGatewayHostRuntime({ environment: env }).portCheckHost,
   };
 }
 
@@ -269,7 +269,7 @@ export function getGatewayStartNetworkEnv(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
-  const runtime = prepareConfiguredGatewayHostRuntime({ environment: env, platform });
+  const runtime = observeConfiguredGatewayHostRuntime({ environment: env, platform });
   return {
     OPENSHELL_BIND_ADDRESS: runtime.bindAddress,
     OPENSHELL_SERVER_PORT: String(gatewayPort),
@@ -282,9 +282,11 @@ export function assertDockerDriverGatewayBindAddressSafe(
   gatewayEnv: Record<string, string>,
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
+  gatewayRuntime?: RuntimeProviderGatewayHostRuntime,
 ): void {
   if (gatewayEnv.OPENSHELL_BIND_ADDRESS !== WILDCARD_GATEWAY_BIND_ADDRESS) return;
-  const selectedRuntime = prepareConfiguredGatewayHostRuntime({ environment, platform });
+  const selectedRuntime =
+    gatewayRuntime ?? observeConfiguredGatewayHostRuntime({ environment, platform });
   if (
     selectedRuntime.sandboxHostAddress !== null &&
     gatewayEnv.OPENSHELL_GRPC_ENDPOINT ===
@@ -379,8 +381,15 @@ function assertGatewayJwtFile(key: string, filePath: string): void {
 export function assertDockerDriverGatewayAuthConfigSafe(
   gatewayEnv: Record<string, string>,
   environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  gatewayRuntime?: RuntimeProviderGatewayHostRuntime,
 ): void {
-  assertDockerDriverGatewayBindAddressSafe(gatewayEnv, environment);
+  assertDockerDriverGatewayBindAddressSafe(
+    gatewayEnv,
+    environment,
+    platform,
+    gatewayRuntime,
+  );
   const configPath = gatewayEnv.OPENSHELL_GATEWAY_CONFIG?.trim();
   if (!configPath) {
     throw new Error("OpenShell Docker-driver gateway requires OPENSHELL_GATEWAY_CONFIG");
@@ -429,7 +438,7 @@ export function buildDockerDriverGatewayEnv({
   const portable = isPortableExperimentalProfile();
   const runtime =
     gatewayHostRuntime ??
-    prepareConfiguredGatewayHostRuntime({
+    observeConfiguredGatewayHostRuntime({
       architecture,
       platform,
       socketPath: podmanSocketPath,

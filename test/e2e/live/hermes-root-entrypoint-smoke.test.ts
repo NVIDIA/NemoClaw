@@ -228,7 +228,7 @@ for dir in sessions gateway runtime; do
 done
 history=/sandbox/.hermes/.hermes_history
 stat -c '%U:%G %a' "$history" | grep -Fx 'gateway:sandbox 660'
-/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -lc 'printf "sandbox history probe\n" >>/sandbox/.hermes/.hermes_history'
+/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- python3 -I -c 'import os; fd = os.open("/sandbox/.hermes/.hermes_history", os.O_WRONLY | os.O_APPEND); os.write(fd, b"sandbox history probe\n"); os.close(fd)'
 ! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- rm -f "$history"
 stat -c '%F' "$history" | grep -Fx 'regular file'
 token="$(python3 -I -c 'from pathlib import Path; lines=(line.strip().removeprefix("export ").lstrip() for line in Path("/sandbox/.hermes/.env").read_text(encoding="utf-8").splitlines()); print(next(line.split("=", 1)[1].strip().strip("\\\"'\"'\"'") for line in lines if line.startswith("API_SERVER_KEY=")))')"
@@ -326,7 +326,7 @@ async function assertGatewayProcess(
   const dispatcherProbe =
     expectedDispatcher === undefined
       ? ":"
-      : `pid="$(ps -eo pid=,user=,args= | awk '$2 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1; exit }')" && printf '%s\\n' "$pid" | grep -Ex '[0-9]+' && tr '\\0' '\\n' <"/proc/$pid/environ" | grep -Fx 'HERMES_KANBAN_DISPATCH_IN_GATEWAY=${expectedDispatcher}'`;
+      : `pid="$(ps -eo pid=,user=,args= | awk '$2 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1; exit }')" && printf '%s\\n' "$pid" | grep -Ex '[0-9]+' && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c 'tr "\\0" "\\n" <"/proc/$1/environ"' sh "$pid" | grep -Fx 'HERMES_KANBAN_DISPATCH_IN_GATEWAY=${expectedDispatcher}'`;
   await expectContainerSh(
     probe,
     container,
@@ -436,7 +436,7 @@ ${setup}
 stat -c '%U:%G %a' ${target} >/tmp/nemoclaw-protected-file.stat
 sha256sum ${target} >/tmp/nemoclaw-protected-file.sha256
 set +e
-/usr/bin/timeout 30s /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start >/tmp/nemoclaw-hardlink-start.log 2>&1
+/usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start >/tmp/nemoclaw-hardlink-start.log 2>&1
 startup_status=$?
 set -e
 test "$startup_status" -ne 0
@@ -499,7 +499,7 @@ export NEMOCLAW_TEST_REAL_PYTHON="$real_python"
 stat -c '%U:%G %a %s' /tmp/nemoclaw-layout-external /tmp/nemoclaw-layout-external/sentinel.txt >/tmp/nemoclaw-layout-external.stat
 sha256sum /tmp/nemoclaw-layout-external/sentinel.txt >/tmp/nemoclaw-layout-external.sha256
 set +e
-/usr/bin/timeout 30s /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start >/tmp/nemoclaw-layout-swap-start.log 2>&1
+/usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start >/tmp/nemoclaw-layout-swap-start.log 2>&1
 startup_status=$?
 set -e
 test "$startup_status" -ne 0
@@ -534,7 +534,7 @@ async function runNonRootHistoryOwnershipRefusalVariant(
       "/bin/bash",
       image,
       "-lc",
-      "chown sandbox:root /sandbox/.hermes/.hermes_history && chmod 660 /sandbox/.hermes/.hermes_history && exec /usr/bin/timeout 30s /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start",
+      "chown sandbox:root /sandbox/.hermes/.hermes_history && chmod 660 /sandbox/.hermes/.hermes_history && exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start",
     ],
     { artifactName: "start-nonroot-history-owner-refusal-container", timeoutMs: RUN_TIMEOUT_MS },
   );

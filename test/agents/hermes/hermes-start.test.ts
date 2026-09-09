@@ -15,6 +15,26 @@ import {
 } from "../../support/hermes-shell-harness";
 
 const START_SCRIPT = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
+const ROOT_ENTRYPOINT_SMOKE = path.join(
+  import.meta.dirname,
+  "../..",
+  "e2e",
+  "live",
+  "hermes-root-entrypoint-smoke.test.ts",
+);
+
+describe("Hermes root-entrypoint smoke process boundaries", () => {
+  it("keeps startup as PID 1 while bounding refusal scenarios externally", () => {
+    const source = fs.readFileSync(ROOT_ENTRYPOINT_SMOKE, "utf-8");
+
+    expect(source).not.toContain(
+      "/usr/bin/timeout 30s /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start",
+    );
+    expect(source).not.toContain(
+      "exec /usr/bin/timeout 30s /usr/bin/setpriv --reuid=sandbox",
+    );
+  });
+});
 const ENV_WRAPPER = path.join(
   import.meta.dirname,
   "../../../scripts/lib/entrypoint-env-wrapper.sh",

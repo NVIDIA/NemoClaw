@@ -142,6 +142,30 @@ describe("Hermes GPU boundary", () => {
     );
   });
 
+  it("recovers stale Docker CLI isolation immediately before native Podman setup", () => {
+    const errors = wfErrors((workflow) => {
+      const job = workflow.jobs[GPU];
+      job.steps = job.steps.filter(
+        (candidate: { name?: string }) =>
+          candidate.name !== "Recover Docker CLI before native Podman E2E",
+      );
+    }, validateE2eWorkflowBoundary);
+
+    expect(errors).toContain(
+      "hermes-gpu-startup must recover stale Docker CLI isolation immediately before native Podman setup",
+    );
+  });
+
+  it("rejects fail-open stale Docker CLI recovery", () => {
+    const errors = wfErrors((workflow) => {
+      step(workflow.jobs[GPU], "Recover Docker CLI before native Podman E2E")[
+        "continue-on-error"
+      ] = true;
+    });
+
+    expect(errors).toContain("hermes-gpu-startup trusted runtime boundary failed");
+  });
+
   it("rejects broad drift", () => {
     const errors = wfErrors((workflow) => {
       workflow.jobs["hermes-e2e"].env.NEMOCLAW_MODEL = "provider/unexpected-model";
