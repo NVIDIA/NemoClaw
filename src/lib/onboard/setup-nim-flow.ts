@@ -153,6 +153,10 @@ export interface SetupNimFlowDeps {
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
   ): boolean;
+  readRecordedManagedLlamaCppRecipeId?(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
   readRecordedModel(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -553,25 +557,22 @@ function platformDefaultProviderKey(input: {
 function resolveSelectedManagedLlamaCpp(input: {
   deps: SetupNimFlowDeps;
   gpu: SetupNimGpu;
+  recoveredFromSandbox: boolean;
   selectedFromInteractiveMenu: boolean;
   selectedRecipeId: string | undefined;
 }): {
   resolution: ManagedLlamaCppSelectionResult;
   runtimeProvider: RuntimeProviderBundle;
 } {
-  const { deps, gpu, selectedFromInteractiveMenu, selectedRecipeId } = input;
+  const { deps, gpu, recoveredFromSandbox, selectedFromInteractiveMenu, selectedRecipeId } = input;
   const env =
-    selectedFromInteractiveMenu && selectedRecipeId
+    selectedRecipeId && (recoveredFromSandbox || selectedFromInteractiveMenu)
       ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
       : undefined;
   const runtimeProvider = deps.getRuntimeProvider();
   return {
-    resolution: discoverManagedLlamaCppSafely(
-      deps,
-      env,
-      gpu,
-      runtimeProvider.identity.id,
-    ).resolution,
+    resolution: discoverManagedLlamaCppSafely(deps, env, gpu, runtimeProvider.identity.id)
+      .resolution,
     runtimeProvider,
   };
 }
@@ -979,14 +980,12 @@ export function createSetupNim(
       gpuNimCapable,
     } = providerHostState;
     const agentProviderOptions = deps.getAgentInferenceProviderOptions(agent);
-    const {
-      resolution: managedLlamaCppResolution,
-      options: managedLlamaCppOptions,
-    } = prepareManagedLlamaCppMenu({
-      deps,
-      gpu,
-      requestedProvider,
-    });
+    const { resolution: managedLlamaCppResolution, options: managedLlamaCppOptions } =
+      prepareManagedLlamaCppMenu({
+        deps,
+        gpu,
+        requestedProvider,
+      });
 
     const blueprintRouterCfg = deps.loadRoutedProfile();
     const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
@@ -1175,6 +1174,7 @@ export function createSetupNim(
           const { resolution: resolved, runtimeProvider } = resolveSelectedManagedLlamaCpp({
             deps,
             gpu,
+            recoveredFromSandbox,
             selectedFromInteractiveMenu,
             selectedRecipeId,
           });

@@ -33,6 +33,7 @@ function resolve(overrides: Partial<Parameters<typeof resolveRequestedProviderSe
     readRecordedProvider: () => null,
     readRecordedNimContainer: () => null,
     readRecordedManagedLlamaCpp: () => false,
+    readRecordedManagedLlamaCppRecipeId: () => null,
     readRecordedModel: () => null,
     ...overrides,
   });
@@ -156,19 +157,58 @@ describe("resolveRequestedProviderSelection", () => {
   });
 
   it("recovers managed llama.cpp before applying a platform default", () => {
+    const recorded = {
+      key: "install-llama-cpp",
+      label: "Managed alternate",
+      managedLlamaCppRecipeId: "llama-cpp.alternate.v1",
+    };
     const result = resolve({
-      options: [option("build"), option("install-llama-cpp"), option("install-ollama")],
+      options: [
+        option("build"),
+        {
+          key: "install-llama-cpp",
+          label: "Managed recommended",
+          managedLlamaCppRecipeId: "llama-cpp.recommended.v1",
+        },
+        recorded,
+        option("install-ollama"),
+      ],
       platformDefaultProviderKey: "install-ollama",
       readRecordedProvider: () => "llama-cpp-local",
       readRecordedManagedLlamaCpp: () => true,
+      readRecordedManagedLlamaCppRecipeId: () => "llama-cpp.alternate.v1",
       readRecordedModel: () => "qwen3.6-35b-a3b",
     });
 
     assert.deepEqual(result, {
       kind: "selected",
-      selected: option("install-llama-cpp"),
+      selected: recorded,
       recoveredFromSandbox: true,
       recoveredModel: "qwen3.6-35b-a3b",
+    });
+  });
+
+  it("rejects managed recovery when the recorded recipe is unavailable", () => {
+    const available = {
+      key: "install-llama-cpp",
+      label: "Managed recommended",
+      managedLlamaCppRecipeId: "llama-cpp.recommended.v1",
+    };
+    const result = resolve({
+      options: [option("build"), available],
+      readRecordedProvider: () => "llama-cpp-local",
+      readRecordedManagedLlamaCpp: () => true,
+      readRecordedManagedLlamaCppRecipeId: () => "llama-cpp.removed.v1",
+    });
+
+    assert.deepEqual(result, {
+      kind: "failure",
+      reason: {
+        kind: "recorded-provider-unavailable",
+        recordedProvider: "llama-cpp-local",
+        recoveredKey: "install-llama-cpp",
+        windowsHostKey: null,
+      },
     });
   });
 

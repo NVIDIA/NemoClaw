@@ -60,17 +60,16 @@ function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null)
       spec: { model: { servedName: "qwen3.6-35b-a3b" } },
     },
   } as never;
-  const discoverManagedLlamaCppSelections = vi.fn(
-    (_env?: NodeJS.ProcessEnv, gpu?: SetupNimGpu) =>
-      gpu?.containerGpuProof?.passed === true
-        ? {
-            choices: [{ priority: 500, selection }],
-            resolution: { kind: "selected" as const, selection },
-          }
-        : {
-            choices: [],
-            resolution: { kind: "rejected" as const, reason: "WSL GPU proof is unavailable" },
-          },
+  const discoverManagedLlamaCppSelections = vi.fn((_env?: NodeJS.ProcessEnv, gpu?: SetupNimGpu) =>
+    gpu?.containerGpuProof?.passed === true
+      ? {
+          choices: [{ priority: 500, selection }],
+          resolution: { kind: "selected" as const, selection },
+        }
+      : {
+          choices: [],
+          resolution: { kind: "rejected" as const, reason: "WSL GPU proof is unavailable" },
+        },
   );
   const installManagedLlamaCpp = vi.fn(async () => ({
     ok: true as const,
@@ -213,6 +212,71 @@ describe("managed llama.cpp profile onboarding", () => {
     );
   });
 
+  it("resumes the exact managed llama.cpp recipe recorded for the sandbox", async () => {
+    const selectedProfile = (recipeId: string, model: string) =>
+      ({
+        preset: { metadata: { id: `${recipeId}.preset`, displayName: recipeId } },
+        recipe: {
+          metadata: { id: recipeId, displayName: recipeId },
+          spec: { model: { servedName: model } },
+        },
+      }) as never;
+    const recommended = selectedProfile("llama-cpp.recommended.v1", "recommended-model");
+    const alternate = selectedProfile("llama-cpp.alternate.v1", "alternate-model");
+    const discoverManagedLlamaCppSelections = vi.fn((env?: NodeJS.ProcessEnv) => {
+      const selection =
+        env?.NEMOCLAW_LLAMACPP_RECIPE === "llama-cpp.alternate.v1" ? alternate : recommended;
+      return {
+        choices: [
+          { priority: 500, selection: recommended },
+          { priority: 450, selection: alternate },
+        ],
+        resolution: { kind: "selected" as const, selection },
+      };
+    });
+    const installManagedLlamaCpp = vi.fn(async () => ({
+      ok: true as const,
+      apiKey: "a".repeat(64),
+      model: "alternate-model",
+      receipt: { schemaVersion: 1 } as never,
+    }));
+    const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
+      async (state, requestedModel) => {
+        state.provider = "llama-cpp-local";
+        state.model = requestedModel;
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        discoverManagedLlamaCppSelections,
+        handleLlamaCppSelection,
+        installManagedLlamaCpp,
+        isNonInteractive: () => true,
+        readRecordedProvider: () => "llama-cpp-local",
+        readRecordedManagedLlamaCpp: () => true,
+        readRecordedManagedLlamaCppRecipeId: () => "llama-cpp.alternate.v1",
+        readRecordedModel: () => "alternate-model",
+      }),
+    );
+
+    await expect(setupNim({ platform: "spark" } as never, "spark-agent")).resolves.toMatchObject({
+      provider: "llama-cpp-local",
+      model: "alternate-model",
+    });
+    expect(discoverManagedLlamaCppSelections).toHaveBeenLastCalledWith(
+      expect.objectContaining({ NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.alternate.v1" }),
+      expect.objectContaining({ platform: "spark" }),
+      undefined,
+      undefined,
+      { runtimeProviderId: "docker" },
+    );
+    expect(installManagedLlamaCpp).toHaveBeenCalledWith(
+      alternate,
+      expect.objectContaining({ sandboxName: "spark-agent" }),
+    );
+  });
+
   it("zero-decision onboarding selects managed Qwen on a proven N1x WSL GPU (#10962)", async () => {
     const harness = n1xProofHarness(true, null);
 
@@ -266,22 +330,19 @@ describe("managed llama.cpp profile onboarding", () => {
     } as never;
     const discoverManagedLlamaCppSelections = vi.fn(
       (env, detectedGpu, _catalog, _collectionOptions, selectionOptions) =>
-        discoverManagedLlamaCppSelectionsForGpu(
-          env,
-          detectedGpu,
-          catalog,
-          n1xCollectionOptions(),
-          { ...selectionOptions, dockerContextIsDefault: () => true },
-        ),
+        discoverManagedLlamaCppSelectionsForGpu(env, detectedGpu, catalog, n1xCollectionOptions(), {
+          ...selectionOptions,
+          dockerContextIsDefault: () => true,
+        }),
     );
-    const installManagedLlamaCpp = vi.fn<
-      NonNullable<SetupNimFlowDeps["installManagedLlamaCpp"]>
-    >(async () => ({
-      ok: true as const,
-      apiKey: "a".repeat(64),
-      model: "qwen3.6-35b-a3b",
-      receipt: { schemaVersion: 1 } as never,
-    }));
+    const installManagedLlamaCpp = vi.fn<NonNullable<SetupNimFlowDeps["installManagedLlamaCpp"]>>(
+      async () => ({
+        ok: true as const,
+        apiKey: "a".repeat(64),
+        model: "qwen3.6-35b-a3b",
+        receipt: { schemaVersion: 1 } as never,
+      }),
+    );
     const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
       async (state, requestedModel) => {
         state.provider = "llama-cpp-local";

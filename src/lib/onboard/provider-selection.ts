@@ -65,11 +65,13 @@ export interface ProviderSelectionRecoveryReaders {
   readRecordedProvider(sandboxName: string | null | undefined): string | null;
   readRecordedNimContainer(sandboxName: string | null | undefined): string | null;
   readRecordedManagedLlamaCpp?(sandboxName: string | null | undefined): boolean;
+  readRecordedManagedLlamaCppRecipeId?(sandboxName: string | null | undefined): string | null;
   readRecordedModel(sandboxName: string | null | undefined): string | null;
 }
 
-export interface ResolveRequestedProviderSelectionInput<T extends ProviderOption>
-  extends ProviderSelectionRecoveryReaders {
+export interface ResolveRequestedProviderSelectionInput<
+  T extends ProviderOption,
+> extends ProviderSelectionRecoveryReaders {
   options: T[];
   requestedProvider: string | null;
   sandboxName: string | null;
@@ -91,8 +93,18 @@ export interface ResolveRequestedProviderSelectionInput<T extends ProviderOption
   platformDefaultProviderKey?: "install-llama-cpp" | "install-ollama" | "install-vllm";
 }
 
-function findOption<T extends ProviderOption>(options: T[], key: string): T | undefined {
-  return options.find((option) => option.key === key);
+function findOption<T extends ProviderOption>(
+  options: T[],
+  key: string,
+  managedLlamaCppRecipeId: string | null = null,
+): T | undefined {
+  return options.find(
+    (option) =>
+      option.key === key &&
+      (managedLlamaCppRecipeId === null ||
+        (option as ProviderOption & { managedLlamaCppRecipeId?: string })
+          .managedLlamaCppRecipeId === managedLlamaCppRecipeId),
+  );
 }
 
 function findWindowsHostKey(options: ProviderOption[]): string | null {
@@ -140,6 +152,7 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
   let providerKey = input.requestedProvider;
   let recoveredFromSandbox = false;
   let recoveredModel: string | null = null;
+  let recoveredSelection: T | undefined;
   const canUseWindowsHostOllama =
     input.isWindowsHostOllama &&
     input.windowsHostOllamaSupported &&
@@ -169,7 +182,12 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
         };
       }
 
-      if (!findOption(input.options, recoveredKey)) {
+      const recordedRecipeId =
+        recoveredKey === "install-llama-cpp"
+          ? (input.readRecordedManagedLlamaCppRecipeId?.(input.sandboxName) ?? null)
+          : null;
+      recoveredSelection = findOption(input.options, recoveredKey, recordedRecipeId);
+      if (!recoveredSelection) {
         return {
           kind: "failure",
           reason: {
@@ -222,7 +240,7 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
     return { kind: "selected", selected: runningDaemon, recoveredFromSandbox, recoveredModel };
   }
 
-  const selected = findOption(input.options, providerKey);
+  const selected = recoveredSelection ?? findOption(input.options, providerKey);
   if (selected) {
     return { kind: "selected", selected, recoveredFromSandbox, recoveredModel };
   }

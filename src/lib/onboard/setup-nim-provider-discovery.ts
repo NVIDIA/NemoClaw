@@ -26,6 +26,10 @@ interface ProviderDiscoveryDeps {
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
   ): boolean;
+  readRecordedManagedLlamaCppRecipeId?(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
   readRecordedModel(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -36,6 +40,7 @@ interface RecordedProviderReaders {
   readRecordedProvider(sandboxName: string | null | undefined): string | null;
   readRecordedNimContainer(sandboxName: string | null | undefined): string | null;
   readRecordedManagedLlamaCpp(sandboxName: string | null | undefined): boolean;
+  readRecordedManagedLlamaCppRecipeId(sandboxName: string | null | undefined): string | null;
   readRecordedModel(sandboxName: string | null | undefined): string | null;
 }
 
@@ -76,6 +81,7 @@ function bindRecordedProviderReaders(
       readRecordedProvider: () => null,
       readRecordedNimContainer: () => null,
       readRecordedManagedLlamaCpp: () => false,
+      readRecordedManagedLlamaCppRecipeId: () => null,
       readRecordedModel: () => null,
     };
   }
@@ -85,6 +91,8 @@ function bindRecordedProviderReaders(
     readRecordedNimContainer: (name) => deps.readRecordedNimContainer(name, recoverySessionId),
     readRecordedManagedLlamaCpp: (name) =>
       deps.readRecordedManagedLlamaCpp?.(name, recoverySessionId) ?? false,
+    readRecordedManagedLlamaCppRecipeId: (name) =>
+      deps.readRecordedManagedLlamaCppRecipeId?.(name, recoverySessionId) ?? null,
     readRecordedModel: (name) =>
       recoveredRegistryRoute?.model ?? deps.readRecordedModel(name, recoverySessionId),
   };
