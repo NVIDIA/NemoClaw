@@ -8,7 +8,7 @@ import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
   type RebuildFlowHarness,
-} from "../../../../test/helpers/rebuild-flow-dcode-harness";
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 import {
   setupOllamaLocalInference,
   setupVllmLocalInference,

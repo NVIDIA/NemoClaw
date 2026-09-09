@@ -24,14 +24,41 @@ import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import * as sandboxSession from "../../state/sandbox-session";
 import * as destroy from "./destroy";
+import * as mcpBridgeProvider from "./mcp-bridge-provider";
 import { rebuildSandbox } from "./rebuild";
 import * as rebuildImagePreflight from "./rebuild-custom-image-preflight";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import * as rebuildRoutePreflight from "./rebuild-preflight-guards";
 import * as rebuildRecreateJournal from "./rebuild-recreate-journal";
-import * as rebuildShields from "./rebuild-shields";
 import * as rebuildUsageNotice from "./rebuild-usage-notice";
 import * as policyGet from "./policy-get";
+
+const policyBoundaryMocks = vi.hoisted(() => ({
+  inspectSandboxPolicy: vi.fn(() => ({
+    ok: true as const,
+    value: {
+      policySource: "sandbox" as const,
+      effectivePolicy: { version: 1, network_policies: {} },
+      policyIdentity: { hash: "sha256:resume-policy", activeVersion: 1 },
+    },
+  })),
+  readSandboxPolicy: vi.fn(() => ({
+    ok: true as const,
+    value: {
+      document: "version: 1\nnetwork_policies: {}\n",
+      appliedRevision: null,
+    },
+  })),
+}));
+
+vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
+  syncCliOpenShellSandboxPolicyReader: {
+    inspectSandboxPolicy: policyBoundaryMocks.inspectSandboxPolicy,
+    readSandboxPolicy: policyBoundaryMocks.readSandboxPolicy,
+    readSandboxPolicyRevision: vi.fn(),
+  },
+}));
 
 function cloneSession(session: Session): Session {
   return JSON.parse(JSON.stringify(session));
@@ -70,9 +97,9 @@ describe("rebuild resume snapshot repair", () => {
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     spies.push(
-      vi.spyOn(rebuildRecreateJournal, "recordRebuildRecoveryBackup").mockImplementation(
-        () => undefined,
-      ),
+      vi
+        .spyOn(rebuildRecreateJournal, "recordRebuildRecoveryBackup")
+        .mockImplementation(() => undefined),
     );
 
     session = onboardSession.createSession({
@@ -151,6 +178,12 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw"),
       vi.spyOn(onboardSession, "loadSession").mockImplementation(loadSession),
       vi.spyOn(onboardSession, "updateSession").mockImplementation(updateSession),
+      vi.spyOn(onboardSession, "compareAndSwapSession").mockImplementation((matches, mutator) => {
+        const current = cloneSession(session);
+        return matches(current)
+          ? ((session = cloneSession(mutator(current) ?? current)), "updated")
+          : "mismatch";
+      }),
       vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
         acquired: true,
         lockFile: "/tmp/nemoclaw-onboard.lock",
@@ -171,6 +204,10 @@ describe("rebuild resume snapshot repair", () => {
       } as never),
       vi.spyOn(registry, "updateSandbox").mockReturnValue(true),
       vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] } as never),
+      vi.spyOn(mcpBridgeProvider, "getMcpProviderInspectionRuntimeSelection").mockReturnValue({
+        gatewayName: "nemoclaw",
+        workspace: "default",
+      }),
       vi.spyOn(rebuildRoutePreflight, "commitRebuildRoutePreflight").mockReturnValue({
         ok: true,
         receipt: {
@@ -197,11 +234,6 @@ describe("rebuild resume snapshot repair", () => {
         expectedVersion: "0.1.0",
         sandboxVersion: "0.0.1",
       } as never),
-      vi.spyOn(rebuildShields, "openRebuildShieldsWindow").mockReturnValue({
-        relocked: false,
-        wasLocked: false,
-      }),
-      vi.spyOn(rebuildShields, "relockRebuildShieldsWindow").mockReturnValue(true),
       vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue({
         success: true,
         backedUpDirs: [],
@@ -222,6 +254,22 @@ describe("rebuild resume snapshot repair", () => {
         stdout: "",
         stderr: "Error: sandbox alpha not found",
       } as never),
+      vi
+        .spyOn(openshellRuntime, "captureResolvedOpenshell")
+        .mockImplementation((args: string[]) => {
+          const output = args.includes("--output")
+            ? JSON.stringify({
+                scope: "sandbox",
+                sandbox: "alpha",
+                status: "effective",
+                policy_source: "sandbox",
+                hash: "sha256:resume-policy",
+                active_version: 1,
+                policy: { version: 1, network_policies: {} },
+              })
+            : "Version: 1\nActive: 1\n---\nversion: 1\nnetwork_policies: {}\n";
+          return { status: 0, output, stdout: output, stderr: "" } as never;
+        }),
       vi.spyOn(destroy, "removeSandboxRegistryEntryWithReceipt").mockReturnValue({
         entry: {
           name: "alpha",
@@ -255,7 +303,7 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(policyGet, "getSandboxPolicy").mockReturnValue({
         raw: "version: 1\nnetwork_policies: {}\n",
         yaml: "version: 1\nnetwork_policies: {}\n",
-      }),
+      } as never),
       vi
         .spyOn(rebuildOnboardDependencies, "onboard")
         .mockImplementation(async (options: unknown) => {

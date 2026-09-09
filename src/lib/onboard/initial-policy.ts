@@ -539,11 +539,12 @@ function resolveInitialSandboxCreatePolicy(
       return result(dedupe(existingChannelPresets));
     }
 
-    const existingCreateTimePresets = requestedCreateTimePresets.filter((preset) =>
-      basePolicyNames.has(preset),
+    const messagingPresets = new Set(messagingCreateTimePresets);
+    const existingCreateTimePresets = requestedCreateTimePresets.filter(
+      (preset) => !messagingPresets.has(preset) && basePolicyNames.has(preset),
     );
     const createTimePresets = requestedCreateTimePresets.filter(
-      (preset) => !basePolicyNames.has(preset),
+      (preset) => messagingPresets.has(preset) || !basePolicyNames.has(preset),
     );
     if (createTimePresets.length === 0) {
       return result(dedupe([...existingChannelPresets, ...existingCreateTimePresets]));

@@ -148,6 +148,7 @@ describe("created sandbox identity gate", () => {
 
     expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list", "-g", gatewayName], {
       ignoreError: true,
+      killProcessTreeOnTimeout: true,
       timeout: 5_000,
     });
     expect(deps.runOpenshell).toHaveBeenCalledWith(
@@ -286,7 +287,7 @@ describe("created sandbox identity gate", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
   });
 
-  it("ends the create-client handoff after a nonce-owned ID appears and settles metadata before effects (#10769)", async () => {
+  it("ends the create-client handoff after a nonce-owned ID appears and settles metadata before effects (#10412, #10769)", async () => {
     const events: string[] = [];
     let nonce = "";
     const input = noGpuInput();
@@ -313,15 +314,16 @@ describe("created sandbox identity gate", () => {
     mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
       events.push("create");
       expect(options.onPoll).toBeUndefined();
-      expect(options.waitForReadyTermination).toBe(true);
       expect(args.indexOf("--label")).toBeGreaterThan(0);
       expect(args.indexOf("--label")).toBeLessThan(args.indexOf("--"));
       nonce = createAttemptNonce(args);
       expect(nonce).toMatch(/^[0-9a-f]{62}$/u);
       expect(nonce).toHaveLength(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
       expect(nonce.length).toBeLessThanOrEqual(63);
-      expect(options.readyCheck?.()).toBe(true);
-      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+      const endedAtReady = options.waitForReadyTermination && options.readyCheck?.() === true;
+      return endedAtReady
+        ? { status: 0, output: "Created sandbox: alpha", sawProgress: true }
+        : { status: 1, output: "Sandbox entered Error phase after Ready", sawProgress: true };
     });
     mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation(() => {
       events.push("readiness");
@@ -513,9 +515,11 @@ describe("created sandbox identity gate", () => {
     expect(output).toContain(`Durable sandbox identity fingerprint: ${fingerprint}`);
     expect(output).toContain("Run 'nemoclaw alpha destroy'");
     expect(output).toContain("the command removes nothing and preserves the recovery record");
-    expect(output).toContain("Give the create-attempt label to an OpenShell administrator");
-    expect(output).toContain("After OpenShell confirms removal");
+    expect(output).toContain("Inspection is diagnostic only");
+    expect(output).toContain("Recovery remains blocked while the sandbox is present");
+    expect(output).toContain("after the owning gateway reports absence");
     expect(output).toContain("run 'nemoclaw alpha destroy --yes'");
+    expect(output).not.toContain("administrator");
     expect(output).not.toContain("alpha-sandbox-id");
     expect(output).not.toContain("Recovery:");
     expect(output).not.toContain("Or:      nemoclaw onboard");
@@ -1169,7 +1173,7 @@ describe("created sandbox identity gate", () => {
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.stringMatching(
         new RegExp(
-          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\..*Recovery is blocked until an OpenShell administrator resolves the create-attempt label`,
+          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\..*Do not delete the sandbox by mutable name.*can clear retained recovery only after OpenShell confirms absence`,
           "u",
         ),
       ),
@@ -1178,7 +1182,8 @@ describe("created sandbox identity gate", () => {
     );
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
-    expect(output).toContain("Recovery is blocked");
+    expect(output).toContain("can clear retained recovery only after OpenShell confirms absence");
+    expect(output).not.toContain("administrator");
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.anything(),

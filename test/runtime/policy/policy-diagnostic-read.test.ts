@@ -17,18 +17,6 @@ const registry = requireForTest(
 ) as typeof import("../../../src/lib/state/registry");
 
 describe("OpenShell policy read boundaries", () => {
-  it("uses the base policy for mutation reads", () => {
-    const command = policies.buildPolicyGetCommand("my-assistant");
-    expect(command[0]).toMatch(/openshell$/);
-    expect(command.slice(1)).toEqual(["policy", "get", "--base", "my-assistant"]);
-  });
-
-  it("uses the full effective policy for diagnostic reads", () => {
-    const command = policies.buildPolicyGetFullCommand("my-assistant");
-    expect(command[0]).toMatch(/openshell$/);
-    expect(command.slice(1)).toEqual(["policy", "get", "--full", "my-assistant"]);
-  });
-
   it("queries the sandbox's recorded gateway when matching diagnostic presets", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-diagnostic-"));
     const fakeOpenshell = path.join(tmpDir, "openshell");

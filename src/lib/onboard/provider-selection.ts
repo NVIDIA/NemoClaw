@@ -159,6 +159,10 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
   let providerKey = input.requestedProvider;
   let recoveredFromSandbox = false;
   let recoveredModel: string | null = null;
+  const canUseWindowsHostOllama =
+    input.isWindowsHostOllama &&
+    input.windowsHostOllamaSupported &&
+    input.windowsHostOllamaReachable === true;
 
   if (!providerKey) {
     const recordedProvider = input.readRecordedProvider(input.sandboxName);
@@ -168,7 +172,12 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
     });
 
     if (recoveredKey) {
-      if (input.isWsl && recordedProvider === "ollama-local" && input.isWindowsHostOllama) {
+      if (
+        input.isWsl &&
+        recordedProvider === "ollama-local" &&
+        input.isWindowsHostOllama &&
+        !canUseWindowsHostOllama
+      ) {
         return {
           kind: "failure",
           reason: {
@@ -199,11 +208,6 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
       providerKey = resolveManagedVllmDefaultKey(input) ?? "build";
     }
   }
-
-  const canUseWindowsHostOllama =
-    input.isWindowsHostOllama &&
-    input.windowsHostOllamaSupported &&
-    input.windowsHostOllamaReachable === true;
 
   if (providerKey === "ollama" && input.isWindowsHostOllama && !canUseWindowsHostOllama) {
     if (!input.windowsHostOllamaSupported) {

@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { redact, runCapture } from "../../src/lib/runner";
+import { redact, run, runCapture, runCaptureEx } from "../../src/lib/runner";
 
 const require = createRequire(import.meta.url);
 const runnerPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "runner.ts");
@@ -177,6 +177,41 @@ describe("runner helpers", () => {
 });
 
 describe("runner env merging", () => {
+  it("uses only the explicit environment when replaceEnv is true", () => {
+    const inheritedName = "OPENSHELL_RUNNER_REPLACE_ENV_LEAK";
+    const selectedName = "OPENSHELL_RUNNER_REPLACE_ENV_SELECTED";
+    const command = [
+      process.execPath,
+      "-e",
+      `process.stdout.write(JSON.stringify({ inherited: process.env.${inheritedName} ?? null, selected: process.env.${selectedName} ?? null }))`,
+    ];
+    const selectedEnv = { [selectedName]: "selected-value" };
+
+    try {
+      vi.stubEnv(inheritedName, "ambient-value");
+      const runResult = run(command, {
+        env: selectedEnv,
+        replaceEnv: true,
+        suppressOutput: true,
+      });
+      const captureOutput = runCapture(command, {
+        env: selectedEnv,
+        replaceEnv: true,
+      });
+      const captureExOutput = runCaptureEx(command, {
+        env: selectedEnv,
+        replaceEnv: true,
+      });
+
+      const expected = { inherited: null, selected: "selected-value" };
+      expect(JSON.parse(String(runResult.stdout))).toEqual(expected);
+      expect(JSON.parse(captureOutput)).toEqual(expected);
+      expect(JSON.parse(captureExOutput.stdout)).toEqual(expected);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("clears a named context when initialization selects a socket fallback (#8816)", () => {
     const platform = require(platformPath);
     const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue({

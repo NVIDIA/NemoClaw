@@ -126,6 +126,7 @@ const {
   setupHarness,
   resetHarness,
 } = createGpuFlowTestHarness(mocks);
+const READY_CHECK_ARGS = ["sandbox", "list", "-g", "nemoclaw"];
 
 beforeEach(setupHarness);
 afterEach(resetHarness);
@@ -254,6 +255,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
                   }),
             bootstrapIdentity: "e".repeat(64),
             code: "mxc-recovery-retry",
+            blockingScope: "sandbox",
             retryable: true,
             detail,
           }),
@@ -343,6 +345,8 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
         manifestDigest: `sha256:${"d".repeat(64)}`,
       },
       agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+      workspaceRoot: { uid: 1000, gid: 1000, mode: 0o755 },
+      managedStateRoots: [],
       intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
       expectedSupervisorArgv: ["/mxc/supervisor"],
     };
@@ -404,10 +408,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     ).toEqual([2, 2]);
     vi.mocked(deps.runCaptureOpenshell).mockClear();
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "list", "-g", "nemoclaw"],
-      READY_CHECK_OPTIONS,
-    );
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(READY_CHECK_ARGS, READY_CHECK_OPTIONS);
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
     );
@@ -623,10 +624,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     });
     const result = await runSandboxGpuCreateFlow(createInput(), deps);
     expect(result).toMatchObject({ route: "native" });
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "list", "-g", "nemoclaw"],
-      READY_CHECK_OPTIONS,
-    );
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(READY_CHECK_ARGS, READY_CHECK_OPTIONS);
   });
 
   it("defers restart-safe no-GPU recreation until the create process exits (#8720)", async () => {
@@ -972,7 +970,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
     expect(mocks.verifyGpuSandboxAccessAfterReady).not.toHaveBeenCalled();
     expect(deps.runOpenshell).not.toHaveBeenCalled();
-    expect(errorOutput()).toContain("Verify the sandbox identity before manual cleanup");
+    expect(errorOutput()).toContain("Recovery remains blocked while this sandbox exists");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
   });
 
@@ -1386,7 +1384,7 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(deps.runOpenshell).not.toHaveBeenCalled();
     expect(output).toContain("left sandbox 'alpha' in place");
-    expect(output).toContain("Verify the sandbox identity before manual cleanup");
+    expect(output).toContain("Recovery remains blocked while this sandbox exists");
     expect(output).not.toContain("openshell sandbox delete");
     expect(output).not.toContain("Retry: nemoclaw onboard");
   });
@@ -1403,7 +1401,7 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(deps.runOpenshell).not.toHaveBeenCalled();
     expect(output).toContain("left sandbox 'alpha' in place");
-    expect(output).toContain("Verify the sandbox identity before manual cleanup");
+    expect(output).toContain("Recovery remains blocked while this sandbox exists");
     expect(output).not.toContain("Retry: nemoclaw onboard");
   });
 

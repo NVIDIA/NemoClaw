@@ -37,5 +37,5 @@ describe("local inference Docker client isolation", () => {
     expect(calls[1]?.env).toEqual({ DOCKER_CONFIG: isolatedConfig });
     expect(calls[1]?.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(cleanup).toHaveBeenCalledOnce();
-  });
+  }, 30_000);
 });

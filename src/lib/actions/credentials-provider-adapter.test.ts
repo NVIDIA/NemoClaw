@@ -36,6 +36,13 @@ function providerAdapter(
   const createProvider: OpenShellProviderAdapter["createProvider"] = async () => ({
     ok: true,
   });
+  const getProvider: OpenShellProviderAdapter["getProvider"] = async (request) => ({
+    ok: true,
+    value: { name: request.providerName, type: "generic", credentialKeys: [], configKeys: [] },
+  });
+  const updateProvider: OpenShellProviderAdapter["updateProvider"] = async () => ({
+    ok: true,
+  });
   const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
     ok: true,
   });
@@ -48,14 +55,28 @@ function providerAdapter(
   });
   const detachProvider: OpenShellProviderAdapter["detachProvider"] = async () => ({
     ok: true,
+    value: { changed: true },
   });
+  const attachProvider: OpenShellProviderAdapter["attachProvider"] = async () => ({ ok: true });
+  const listProviderAttachments: OpenShellProviderAdapter["listProviderAttachments"] =
+    async () => ({ ok: true, value: { names: [] } });
+  const configureProviderRefresh: OpenShellProviderAdapter["configureProviderRefresh"] =
+    async () => ({ ok: true });
+  const getProviderRefreshStatus: OpenShellProviderAdapter["getProviderRefreshStatus"] =
+    async () => ({ ok: true, value: { status: "refreshed" } });
   return {
     listProviders: vi.fn(listProviders),
     createProvider: vi.fn(createProvider),
+    getProvider: vi.fn(getProvider),
+    updateProvider: vi.fn(updateProvider),
     importProviderProfile: vi.fn(importProviderProfile),
     inspectProviderProfile: vi.fn(inspectProviderProfile),
     deleteProvider: vi.fn(deleteProvider),
     detachProvider: vi.fn(detachProvider),
+    attachProvider: vi.fn(attachProvider),
+    listProviderAttachments: vi.fn(listProviderAttachments),
+    configureProviderRefresh: vi.fn(configureProviderRefresh),
+    getProviderRefreshStatus: vi.fn(getProviderRefreshStatus),
     ...overrides,
   };
 }
@@ -101,6 +122,62 @@ describe("credential actions use typed OpenShell provider results", () => {
       timeoutMs: 30_000,
     });
     expect(JSON.stringify(result)).not.toContain("credential-value");
+  });
+
+  it("registers both Langfuse keys through the checked-in endpoint profile (#10840)", async () => {
+    vi.stubEnv("LANGFUSE_PUBLIC_KEY", "pk-lf-host-only");
+    vi.stubEnv("LANGFUSE_SECRET_KEY", "sk-lf-host-only");
+    let resolveImport: (() => void) | undefined;
+    const importGate = new Promise<void>((resolve) => {
+      resolveImport = resolve;
+    });
+    let importCompleted = false;
+    const importProviderProfile = vi.fn(async () => {
+      await importGate;
+      importCompleted = true;
+      return { ok: true as const };
+    });
+    const createProvider = vi.fn(async () => {
+      expect(importCompleted).toBe(true);
+      return { ok: true as const };
+    });
+    const adapter = providerAdapter({ importProviderProfile, createProvider });
+
+    const resultPromise = runCredentialsAddAction(
+      {
+        provider: "my-hermes-langfuse",
+        type: "langfuse-hermes-v1",
+        credentials: ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter },
+    );
+    await vi.waitFor(() => expect(importProviderProfile).toHaveBeenCalledOnce());
+    expect(createProvider).not.toHaveBeenCalled();
+    resolveImport?.();
+    const result = await resultPromise;
+
+    expect(result.exitCode).toBe(0);
+    expect(adapter.importProviderProfile).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      profilePath: expect.stringMatching(/provider-profiles\/langfuse-hermes-v1\.yaml$/u),
+      timeoutMs: 30_000,
+    });
+    expect(adapter.createProvider).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      name: "my-hermes-langfuse",
+      type: "langfuse-hermes-v1",
+      credentials: [
+        { name: "LANGFUSE_PUBLIC_KEY", value: "pk-lf-host-only" },
+        { name: "LANGFUSE_SECRET_KEY", value: "sk-lf-host-only" },
+      ],
+      config: [],
+      fromExisting: false,
+      timeoutMs: 30_000,
+    });
+    expect(JSON.stringify(result)).not.toContain("pk-lf-host-only");
+    expect(JSON.stringify(result)).not.toContain("sk-lf-host-only");
   });
 
   it("recommends a supported OpenAI base URL after rejecting a config key (#9806)", async () => {
@@ -802,7 +879,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       });
     const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => {
       operations.push("detach:alpha");
-      return { ok: true };
+      return { ok: true, value: { changed: true } };
     });
     const adapter = providerAdapter({ deleteProvider, detachProvider });
 
@@ -857,6 +934,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       });
     const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
       ok: true,
+      value: { changed: true },
     }));
     const adapter = providerAdapter({ deleteProvider, detachProvider });
 
@@ -1017,6 +1095,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       });
     const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
       ok: true,
+      value: { changed: true },
     }));
     const adapter = providerAdapter({ deleteProvider, detachProvider });
 
@@ -1104,6 +1183,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       });
     const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
       ok: true,
+      value: { changed: true },
     }));
     const adapter = providerAdapter({ deleteProvider, detachProvider });
 

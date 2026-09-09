@@ -313,6 +313,7 @@ describe("WeChat hook implementations", () => {
               },
               channels: {
                 "openclaw-weixin": {
+                  enabled: true,
                   channelConfigUpdatedAt: "2026-05-25T00:00:00.000Z",
                   accounts: {
                     "wechat-account": {

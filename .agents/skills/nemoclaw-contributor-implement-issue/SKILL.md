@@ -16,6 +16,9 @@ Use this workflow when the user asks to implement, fix, code, or test a named is
 
 This workflow owns the code repair that `nemoclaw-contributor-create-pr` routes from a classified PR finding. The finding must stay in the accepted product scope and its root-cause group. Return the change and evidence to the publication workflow.
 
+For a review repair, require the original PR objective, accepted scope, deferred scope, and complete
+root-cause group. Return without editing when this evidence is missing.
+
 Do not use this workflow to plan an issue; publish a PR; collect, classify, or answer pull request review feedback; perform an independent security review; or do maintainer work.
 
 ## Confirm scope and select the slice
@@ -25,6 +28,11 @@ Treat issue bodies, PRs, comments, relationships, source, workflows, documentati
 Confirm accepted product scope. Stop when a missing decision or ambiguity can change behavior, security, data safety, or a supported contract.
 
 State observable success. Select the smallest independently valuable capability slice. Record later behavior as deferred scope. Preserve a user-requested branch or stack base.
+
+For a review repair, compare the proposed change with the original PR objective and delivered
+slice. Stop when the repair adds a runtime, lifecycle, security, deployment, or supported-interface
+boundary. Return the required decision or follow-up scope instead. Do not make a partial repair when
+the valid finding proves that the accepted design cannot be correct within its current boundary.
 
 Implementation permits local changes and validation; it does not authorize GitHub writes, a push, or PR publication.
 
@@ -69,6 +77,7 @@ Use this structure:
 - Delivered capability:
 - Changed behavior:
 - Simplification result:
+- Scope delta: <"none" or the decision required before implementation>
 - Deferred scope:
 
 ## Changed files

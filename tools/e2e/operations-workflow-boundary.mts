@@ -14,7 +14,6 @@ import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
-const DEFAULT_ADVISOR_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
 const META_JOBS = new Set([
   "package-openshell-sdk",
   "native-runtime-qualification-podman-toolchain",
@@ -41,6 +40,16 @@ const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
     "set -euo pipefail",
     'catalog_path="${RUNNER_TEMP}/pr-managed-image-catalog.json"',
     'rm -f -- "$catalog_path"',
+    'if [[ -n "$MANAGED_IMAGE_SHA" ]]; then',
+    '  [[ "$MANAGED_IMAGE_SHA" =~ ^[a-f0-9]{40}$ ]] || {',
+    '    echo "::error::managed_image_revision must be a lowercase 40-character SHA" >&2',
+    "    exit 1",
+    "  }",
+    '  git merge-base --is-ancestor "$MANAGED_IMAGE_SHA" "$CANDIDATE_SHA" || {',
+    '    echo "::error::managed_image_revision must be an ancestor of checkout_sha" >&2',
+    "    exit 1",
+    "  }",
+    "fi",
     'selection="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "$catalog_path")"',
     'case "$selection" in',
     "  base-cohort)",
@@ -147,6 +156,11 @@ export type OperationsWorkflow = {
   permissions?: WorkflowPermissions;
   "run-name"?: unknown;
   on?: {
+    pull_request_target?: unknown;
+    workflow_run?: {
+      types?: unknown;
+      workflows?: unknown;
+    };
     workflow_dispatch?: {
       inputs?: Record<string, Record<string, unknown>>;
     };
@@ -370,6 +384,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
   const authEnvironment = {
+    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
+    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
@@ -377,6 +393,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
+    TARGETS: "${{ inputs.targets }}",
     WORKFLOW_EVENT: "${{ github.event_name }}",
     WORKFLOW_REF: "${{ github.ref }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
@@ -391,7 +408,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
-    '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$WORKFLOW_REF" == refs/heads/*',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
     '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
@@ -400,6 +417,15 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
     `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
+    'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
+    '"$ALLOW_JETSON_DISPATCH" != "true"',
+    '"$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true"',
+    '",${TARGETS}," != *",jetson-nvmap-gpu,"*',
+    '",${JOBS}," != *",jetson-nvmap-gpu,"*',
+    '",${TARGETS}," != *",llama-cpp-dgx-spark-qualification,"*',
+    '",${JOBS}," != *",llama-cpp-dgx-spark-qualification,"*',
+    "exact-base E2E cannot select dedicated hardware jobs",
+    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
@@ -419,6 +445,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ]) {
     if (!authSource.includes(fragment))
       errors.push(`Manual PR authentication must retain ${fragment}`);
+  }
+  if (
+    authSource.includes("Authorization: Bearer") ||
+    Object.hasOwn(authentication.env ?? {}, "GITHUB_TOKEN")
+  ) {
+    errors.push("Manual PR authentication must use public PR metadata without a job token");
   }
 
   const qualificationPlanName = "native-runtime-qualification-producer-plan";
@@ -446,8 +478,13 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR checkout validation must skip qualification producer dispatches");
   }
   const validationSource = String(validation.run ?? "");
-  if (validation.env?.GITHUB_TOKEN !== undefined || validationSource.includes("Authorization:")) {
-    errors.push("Manual PR checkout validation must use the public PR metadata endpoint");
+  if (
+    validation.env?.GITHUB_TOKEN !==
+    "${{ steps.candidate_authorization.outputs.nvidia_owned == 'true' && github.token || '' }}"
+  ) {
+    errors.push(
+      "Manual PR checkout validation token must be limited to authenticated NVIDIA-owned revisions",
+    );
   }
   if (
     validation.env?.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}"
@@ -460,17 +497,21 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "pull request must still be open",
     "pull request base repository changed before execution",
     "pull request base branch changed before execution",
-    "checkout_repository changed before execution",
-    "checkout_sha changed before execution",
     "base_sha changed before execution",
+    'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
+    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
+    `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
+    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     '"$NVIDIA_OWNED" == "true"',
+    '[[ -n "$GITHUB_TOKEN" ]]',
+    'auth_args=(--header "Authorization: Bearer ${GITHUB_TOKEN}")',
+    '"${auth_args[@]}"',
     "PR source repository ownership changed before execution",
   ]) {
     if (!validationSource.includes(fragment)) {
       errors.push(`Manual PR checkout validation must retain ${fragment}`);
     }
   }
-
   const credentialAuthorization =
     credentialAuthorizationIndex >= 0 ? steps[credentialAuthorizationIndex] : {};
   if (
@@ -502,7 +543,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
     '"$NVIDIA_OWNED" == "true"',
     '"$EVENT_NAME" == "workflow_dispatch"',
-    '"$REF" == "refs/heads/main"',
+    '"$REF" == refs/heads/*',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$',
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
@@ -714,6 +755,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
           CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
+          MANAGED_IMAGE_SHA: "${{ inputs.managed_image_revision }}",
           PR_NUMBER: "${{ inputs.pr_number }}",
         },
         shell: "bash",
@@ -730,7 +772,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           REQUIRE_MANAGED_IMAGE_PUBLICATION:
             "${{ steps.select_pr_source.outputs.selection == 'candidate-catalog' && '0' || '1' }}",
           SELECT_NEAREST_SUCCESSFUL_PUBLICATION:
-            "${{ steps.select_pr_source.outputs.selection == 'candidate-catalog' && '0' || steps.publication_mode.outputs.select_nearest_successful }}",
+            "${{ steps.publication_mode.outputs.select_nearest_successful }}",
         },
         shell: "bash",
         run: [
@@ -826,6 +868,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("cloud-onboard must use the exact PR managed-image catalog");
   }
   if (
+    (cloudOnboard.steps ?? []).some(
+      (step) => step.name === "Materialize cloud-onboard managed-image catalog",
+    )
+  ) {
+    errors.push("cloud-onboard must not duplicate the exact inline managed-image catalog");
+  }
+  if (
     live.env?.E2E_MANAGED_IMAGE_REVISION !==
     "${{ needs.base-image-publication.outputs.managed_image_revision }}"
   ) {
@@ -867,7 +916,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     }
     if (
       catalogue.with?.managed_image_revision !==
-      "${{ needs.base-image-publication.outputs.managed_image_revision }}"
+        "${{ needs.base-image-publication.outputs.managed_image_revision }}" ||
+      catalogue.with?.managed_image_catalog !==
+        "${{ needs.base-image-publication.outputs.managed_image_catalog }}"
     ) {
       errors.push(`${jobName} must use the selected managed-image revision`);
     }
@@ -880,9 +931,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   if (
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
-    "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
+    "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
   ) {
-    errors.push("live DCode must use the selected immutable base reference");
+    errors.push("live DCode must use one selected immutable image authority");
   }
   const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
   const upload = findStep(live, "Upload E2E artifacts");
@@ -893,14 +944,16 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const liveSteps = live.steps ?? [];
   if (
     evidence.if !==
-      "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' }}" ||
+      "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' }}" ||
     evidence.env?.BASE_CONTRACT !==
       "${{ needs.base-image-publication.outputs.dcode_base_contract }}" ||
     !String(evidence.run ?? "").includes("dcode-base-image.json") ||
     liveSteps.indexOf(evidence) >= liveSteps.indexOf(findStep(live, "Run live E2E tests")) ||
     !String(upload.with?.path ?? "").includes("dcode-base-image.json")
   ) {
-    errors.push("live DCode must record its immutable base contract before E2E execution");
+    errors.push(
+      "live DCode must record its immutable base contract only without a candidate catalog",
+    );
   }
   if (!uploadPaths.includes(COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH)) {
     errors.push("live E2E must upload cold-onboard performance evidence");
@@ -1277,9 +1330,10 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     .map((entry) => entry.trim())
     .filter(Boolean);
   if (
-    sparseCheckout.length !== 3 ||
+    sparseCheckout.length !== 4 ||
     !sparseCheckout.includes("ci/onboard-performance-budget.json") ||
     !sparseCheckout.includes("scripts/audit-test-runtime.mts") ||
+    !sparseCheckout.includes("scripts/lib/read-artifact-zip.mts") ||
     !sparseCheckout.includes("scripts/scorecard")
   ) {
     errors.push(
@@ -1478,57 +1532,8 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   }
 }
 
-function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): void {
-  const source = readFileSync(advisorPath, "utf8");
-  const advisor = YAML.parse(source) as OperationsWorkflow;
-  const permissionBlocks = [
-    advisor.permissions,
-    ...Object.values(advisor.jobs ?? {}).map((job) => job.permissions),
-  ];
-  if (
-    permissionBlocks.some(
-      (permissions) =>
-        permissions === "write-all" || permissionMap(permissions).actions === "write",
-    )
-  ) {
-    errors.push("Unified advisor must not hold actions: write");
-  }
-  if (/createWorkflowDispatch|workflow_dispatches/u.test(source)) {
-    errors.push("Unified advisor must not auto-dispatch workflows");
-  }
-  const specialistEnv = advisor.jobs?.["review-specialists"]?.env ?? {};
-  const expectedBaseRef =
-    "${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}";
-  const expectedHeadRef =
-    "${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}";
-  if (specialistEnv.BASE_REF !== expectedBaseRef || specialistEnv.HEAD_REF !== expectedHeadRef) {
-    errors.push("Unified advisor specialists must retain target refs through execution");
-  }
-  const discoverySteps = advisor.jobs?.["discover-specialists"]?.steps ?? [];
-  const contextUpload = discoverySteps.find((step) => step.name === "Upload GitHub review context");
-  const specialistSteps = advisor.jobs?.["review-specialists"]?.steps ?? [];
-  const contextDownload = specialistSteps.find(
-    (step) => step.name === "Download GitHub review context",
-  );
-  const specialistUpload = specialistSteps.find((step) => step.name === "Upload specialist review");
-  const contextArtifactName = "pr-review-advisor-context-${{ github.run_id }}";
-  if (
-    contextUpload?.with?.name !== contextArtifactName ||
-    contextDownload?.with?.name !== contextArtifactName ||
-    contextUpload?.with?.overwrite !== true
-  ) {
-    errors.push("Unified advisor context artifact must survive failed-job and full reruns");
-  }
-  if (
-    specialistUpload?.with?.name !== "${{ matrix.advisor.artifact_name }}-${{ github.run_attempt }}"
-  ) {
-    errors.push("Unified advisor specialist artifacts must be unique per rerun attempt");
-  }
-}
-
 export function validateE2eOperationsWorkflow(
   workflow: OperationsWorkflow,
-  advisorPath = DEFAULT_ADVISOR_PATH,
 ): string[] {
   const errors = validateStandardProfileWorkflowBoundary(
     workflow as unknown as Record<string, unknown>,
@@ -1543,13 +1548,11 @@ export function validateE2eOperationsWorkflow(
   validateIssueRoutingRetirement(errors, workflow);
   validateScorecard(errors, workflow);
   validateTraceTiming(errors, workflow);
-  validateUnifiedAdvisorBoundary(errors, advisorPath);
   return errors;
 }
 
 export function validateE2eOperationsWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
-  advisorPath = DEFAULT_ADVISOR_PATH,
 ): string[] {
-  return validateE2eOperationsWorkflow(readE2eOperationsWorkflow(workflowPath), advisorPath);
+  return validateE2eOperationsWorkflow(readE2eOperationsWorkflow(workflowPath));
 }

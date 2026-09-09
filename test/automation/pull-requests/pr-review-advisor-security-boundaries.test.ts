@@ -18,7 +18,7 @@ describe("PR review advisor security boundaries", () => {
     vi.restoreAllMocks();
   });
 
-  it("removes the model credential from the tool environment after in-memory setup", async () => {
+  it("removes the model credential after registering the selected model in memory", async () => {
     const credentialEnv = "PR_REVIEW_ADVISOR_TEST_API_KEY";
     vi.stubEnv(credentialEnv, "test-secret");
     const configDir = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-config-"));

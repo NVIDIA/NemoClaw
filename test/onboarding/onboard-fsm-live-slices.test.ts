@@ -493,9 +493,9 @@ if (scenario.mode === "stale-recovery-admission") {
 }
 
 if (scenario.mode === "stale-session-decision") {
-  const resolveEntryOptions = onboardEntryOptions.resolveDefaultRunEntryOptionsFromState;
+  const resolveEntryOptions = onboardEntryOptions.readOptions;
   let optionReads = 0;
-  onboardEntryOptions.resolveDefaultRunEntryOptionsFromState = (...args) => {
+  onboardEntryOptions.readOptions = (...args) => {
     optionReads += 1;
     const resolved = resolveEntryOptions(...args);
     if (optionReads === 1) {
@@ -656,14 +656,13 @@ describe("live onboard FSM slice boundaries", () => {
     assert.deepEqual(runSliceProbe({ slice: "final" }), ["initial:init", "core", "final"]);
   });
 
-  it("returns the post-recovery dashboard port after agent onboarding (#8214)", () => {
+  it("keeps the single dashboard port established during agent onboarding (#8214)", () => {
     assert.deepEqual(runSliceProbe({ slice: "final", mode: "dashboard-port-composition" }), [
       "initial:init",
       "core",
       "forward-port:18791",
-      "forward-port:18792",
-      "registry-port:18792",
-      "dashboard-url:http://127.0.0.1:18792/",
+      "registry-port:18791",
+      "dashboard-url:http://127.0.0.1:18791/",
     ]);
   }, 60_000);
 
