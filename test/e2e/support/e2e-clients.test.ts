@@ -255,7 +255,7 @@ describe("E2E fixture clients", () => {
     runner.enqueue({ stdout: "/tmp/openshell-wrapper\n" });
     runner.enqueue({
       stdout:
-        "/opt/openshell --gateway nemoclaw --workspace default forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
+        "/tmp/openshell-wrapper --gateway nemoclaw --workspace default forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
     });
     runner.enqueue({ stdout: "4321\n" });
 
