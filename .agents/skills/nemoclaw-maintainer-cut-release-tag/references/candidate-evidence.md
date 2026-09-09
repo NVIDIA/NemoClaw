@@ -66,12 +66,23 @@ The [OpenClaw platform build](../../../../.github/workflows/base-image-platform.
 audit producer's `mcporter-runtime` receipt. Read the selected run's `run_attempt` with
 `gh api repos/NVIDIA/NemoClaw/actions/runs/<run-id>`, then inspect the run and attempt with
 `gh api repos/NVIDIA/NemoClaw/actions/runs/<run-id>/attempts/<attempt>`. Confirm its workflow, commit,
-and successful `reviewed-npm-audit` producer job. A retained producer may belong to an earlier attempt.
+and successful `reviewed-npm-audit` producer job using
+`gh api repos/NVIDIA/NemoClaw/actions/runs/<run-id>/attempts/<attempt>/jobs --paginate`.
+A retained producer may belong to an earlier attempt; inspect that attempt's jobs before using its output.
 
-Download its `reviewed-npm-audit` artifact with
-`gh run download <run-id> --repo NVIDIA/NemoClaw --name reviewed-npm-audit --dir <new-private-directory>`.
-Bind the artifact ID to the producer's upload log; do not use an artifact from an unidentified producer.
-Set `AUDIT_EVIDENCE_DIR` to that directory. Set `IMAGE_SOURCE_DIR` to an isolated checkout of the
+Read that producer's upload log with `gh run view <run-id> --repo NVIDIA/NemoClaw --job <job-id> --log`.
+Record its artifact ID and SHA-256 digest. Read
+`gh api repos/NVIDIA/NemoClaw/actions/artifacts/<artifact-id>` and require the name `reviewed-npm-audit`,
+the expected run and commit, and an unexpired artifact. Do not select by name alone: one run can
+contain multiple audit artifacts with the same name.
+
+Set `AUDIT_EVIDENCE_DIR` to a new private directory. Download the exact ID with
+`gh api repos/NVIDIA/NemoClaw/actions/artifacts/<artifact-id>/zip`, saving the response in that directory.
+Verify its SHA-256 digest against the producer's upload log with `shasum -a 256 <archive>`.
+Use `unzip -p <archive> <entry>` to extract only `mcporter-runtime.receipt.json` and
+`mcporter-runtime.raw.json` into files with those names in the evidence directory.
+Stop if the producer, artifact, digest, or either entry cannot be verified.
+Set `IMAGE_SOURCE_DIR` to an isolated checkout of the
 publisher's recorded commit, not the release candidate or current `main`. Verify its commit and
 clean tracked files before using its package and policy inputs. Do not execute artifact contents.
 High or critical findings also require the matching installed dependency metadata under that
