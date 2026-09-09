@@ -659,6 +659,224 @@ function Stop-ProhibitedProcessAudit {
     }
 }
 
+function Assert-NativeBootstrapConnectivityReceipt {
+    param(
+        [Parameter(Mandatory)]$Receipt,
+        [Parameter(Mandatory)][ValidateSet('console', 'dashboard')][string]$Interface,
+        [int]$ExpectedNodeProcessId = 0
+    )
+    $fields = @('schemaVersion', 'classification', 'agent', 'interface', 'nodeProcessId', 'sandboxName', 'transport', 'containedHost', 'containedPort', 'brokerHost', 'brokerPort', 'hostListener', 'contained', 'verdict', 'failureStage', 'errorCode')
+    if ($Receipt -isnot [pscustomobject] -or @($Receipt.PSObject.Properties.Name | Where-Object { $_ -cnotin $fields }).Count -ne 0) {
+        Fail-PackageQualification 'Bootstrap connectivity evidence contains an invalid or unexpected field.'
+    }
+    foreach ($field in $fields | Where-Object { $_ -cnotin @('failureStage', 'errorCode') }) {
+        if ($null -eq $Receipt.PSObject.Properties[$field]) { Fail-PackageQualification 'Bootstrap connectivity evidence is incomplete.' }
+    }
+    foreach ($field in @('classification', 'agent', 'interface', 'sandboxName', 'transport', 'containedHost', 'brokerHost', 'verdict')) {
+        if ($Receipt.$field -isnot [string]) { Fail-PackageQualification 'Bootstrap connectivity identity must use string values.' }
+    }
+    foreach ($field in @('schemaVersion', 'nodeProcessId')) {
+        if ($Receipt.$field -isnot [int] -and $Receipt.$field -isnot [long]) { Fail-PackageQualification 'Bootstrap connectivity identity must use integer values.' }
+    }
+    if ($Receipt.schemaVersion -ne 1 -or $Receipt.classification -cne 'native-contained-bootstrap-connectivity' -or
+        $Receipt.agent -cne 'hermes' -or $Receipt.interface -cne $Interface -or
+        $Receipt.nodeProcessId -le 0 -or $Receipt.nodeProcessId -gt [int]::MaxValue -or
+        ($ExpectedNodeProcessId -gt 0 -and $Receipt.nodeProcessId -ne $ExpectedNodeProcessId) -or
+        $Receipt.transport -cne 'guarded-file-tcp' -or $Receipt.containedHost -cne '127.0.0.1' -or
+        $Receipt.brokerHost -cne '127.0.0.1' -or
+        $Receipt.sandboxName -isnot [string] -or $Receipt.sandboxName -cnotmatch '^nc-h-[a-f0-9]{10}$' -or
+        $Receipt.verdict -cnotin @('pass', 'fail')) {
+        Fail-PackageQualification 'Bootstrap connectivity evidence does not match the installed Hermes session.'
+    }
+    foreach ($port in @($Receipt.containedPort, $Receipt.brokerPort)) {
+        if ($Receipt.verdict -ceq 'fail' -and $null -eq $port) { continue }
+        if (($port -isnot [int] -and $port -isnot [long]) -or $port -lt 1 -or $port -gt 65535) {
+            Fail-PackageQualification 'Bootstrap connectivity evidence contains an invalid port.'
+        }
+    }
+    foreach ($shape in @(
+        [pscustomobject]@{ value = $Receipt.hostListener; fields = @('httpStatus') },
+        [pscustomobject]@{ value = $Receipt.contained; fields = @('tcpConnected', 'unauthenticatedStatus', 'authenticatedStatus', 'bootstrapConsumedByWorkload') }
+    )) {
+        if ($shape.value -isnot [pscustomobject] -or
+            @($shape.value.PSObject.Properties.Name | Where-Object { $_ -cnotin $shape.fields }).Count -ne 0) {
+            Fail-PackageQualification 'Bootstrap connectivity stages contain an invalid or unexpected field.'
+        }
+        foreach ($field in $shape.fields) {
+            if ($null -eq $shape.value.PSObject.Properties[$field]) { Fail-PackageQualification 'Bootstrap connectivity stage evidence is incomplete.' }
+        }
+    }
+    if ($Receipt.verdict -ceq 'fail') {
+        $stage = if ($Receipt.hostListener.httpStatus -ne 403) { 'host HTTP readiness' }
+            elseif ($Receipt.contained.tcpConnected -ne $true) { 'contained TCP connection' }
+            elseif ($Receipt.contained.unauthenticatedStatus -ne 403) { 'contained unauthenticated HTTP' }
+            elseif ($Receipt.contained.authenticatedStatus -ne 200) { 'contained authenticated HTTP' }
+            else { 'contained bootstrap parsing' }
+        $code = 'UNCLASSIFIED'
+        if ($Receipt.PSObject.Properties['errorCode'] -and $Receipt.errorCode -cin @('ETIMEDOUT', 'ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'ABORT_ERR', 'ERR_SOCKET_CLOSED')) { $code = $Receipt.errorCode }
+        Fail-PackageQualification "The MXC bootstrap check failed at $stage ($code)."
+    }
+    foreach ($status in @($Receipt.hostListener.httpStatus, $Receipt.contained.unauthenticatedStatus, $Receipt.contained.authenticatedStatus)) {
+        if ($status -isnot [int] -and $status -isnot [long]) { Fail-PackageQualification 'Bootstrap HTTP evidence must contain integer status codes.' }
+    }
+    if ($Receipt.hostListener.httpStatus -ne 403 -or
+        $Receipt.contained.tcpConnected -isnot [bool] -or $Receipt.contained.tcpConnected -ne $true -or
+        $Receipt.contained.unauthenticatedStatus -ne 403 -or $Receipt.contained.authenticatedStatus -ne 200 -or
+        $Receipt.contained.bootstrapConsumedByWorkload -isnot [bool] -or $Receipt.contained.bootstrapConsumedByWorkload -ne $true -or
+        ($Receipt.PSObject.Properties['failureStage'] -and $null -ne $Receipt.failureStage) -or
+        ($Receipt.PSObject.Properties['errorCode'] -and $null -ne $Receipt.errorCode)) {
+        Fail-PackageQualification 'The installed MXC workload did not prove TCP, HTTP rejection, and its authenticated bootstrap delivery.'
+    }
+}
+
+function Wait-NativeBootstrapConnectivityReceipt {
+    param(
+        [Parameter(Mandatory)][string]$EvidenceDirectory,
+        [Parameter(Mandatory)][ValidateSet('console', 'dashboard')][string]$Interface,
+        [Parameter(Mandatory)][Diagnostics.Process]$Application,
+        [int]$ExpectedNodeProcessId = 0,
+        [int]$TimeoutMilliseconds = $script:OperationTimeoutMilliseconds
+    )
+    $path = Join-Path $EvidenceDirectory 'bootstrap-connectivity.json'
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while (-not (Test-Path -LiteralPath $path) -and $clock.ElapsedMilliseconds -lt $TimeoutMilliseconds -and -not $Application.HasExited) {
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Fail-PackageQualification 'The installed MXC workload did not publish bootstrap connectivity evidence.' }
+    $info = Get-Item -LiteralPath $path -ErrorAction Stop
+    if ($info.Length -gt 16384 -or ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Fail-PackageQualification 'Bootstrap connectivity evidence is oversized or redirected.'
+    }
+    try { $receipt = [IO.File]::ReadAllText($path, [Text.UTF8Encoding]::new($false, $true)) | ConvertFrom-Json -ErrorAction Stop }
+    catch { Fail-PackageQualification 'Bootstrap connectivity evidence is malformed.' }
+    Assert-NativeBootstrapConnectivityReceipt -Receipt $receipt -Interface $Interface -ExpectedNodeProcessId $ExpectedNodeProcessId
+    Write-Host "[PASS] Installed Hermes $Interface proved contained TCP, unauthenticated HTTP rejection, and authenticated bootstrap delivery"
+    return $receipt
+}
+
+function Read-NativeSessionFailureEvidence {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Interface)
+    $file = Get-Item -LiteralPath $Path -ErrorAction Stop
+    if ($file.PSIsContainer -or $file.Length -gt 1MB -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Invalid native failure evidence file.' }
+    $value = [IO.File]::ReadAllText($Path, [Text.UTF8Encoding]::new($false, $true)) | ConvertFrom-Json -ErrorAction Stop
+    $fields = @('schemaVersion', 'classification', 'agent', 'interface', 'nodeProcessId', 'backendCleanupFinished', 'stage', 'diagnosticPath', 'diagnostics')
+    if ($value -isnot [pscustomobject] -or @($value.PSObject.Properties.Name | Where-Object { $_ -cnotin $fields }).Count -ne 0) { throw 'Invalid native failure evidence fields.' }
+    foreach ($field in $fields | Where-Object { $_ -cne 'diagnosticPath' }) {
+        if ($null -eq $value.PSObject.Properties[$field]) { throw 'Incomplete native failure evidence.' }
+    }
+    foreach ($field in @('classification', 'agent', 'interface', 'stage')) { if ($value.$field -isnot [string]) { throw 'Native failure identity must use strings.' } }
+    $stages = @('inference', 'runtime', 'broker', 'gateway', 'sandbox', 'bootstrap', 'dashboard', 'agent', 'cleanup')
+    if (($value.schemaVersion -isnot [int] -and $value.schemaVersion -isnot [long]) -or $value.schemaVersion -ne 1 -or
+        $value.classification -cne 'native-session-failure-evidence' -or $value.agent -cne 'hermes' -or $value.interface -cne $Interface -or
+        ($value.nodeProcessId -isnot [int] -and $value.nodeProcessId -isnot [long]) -or $value.nodeProcessId -le 0 -or $value.nodeProcessId -gt [int]::MaxValue -or
+        $value.backendCleanupFinished -isnot [bool] -or $value.backendCleanupFinished -ne $true -or $value.stage -cnotin $stages) { throw 'Native failure evidence has an invalid identity.' }
+    if ($value.PSObject.Properties['diagnosticPath'] -and ($value.diagnosticPath -isnot [string] -or $value.diagnosticPath.Length -gt 32768)) { throw 'Invalid diagnostic location.' }
+    $detail = $value.diagnostics
+    $detailFields = @('schemaVersion', 'classification', 'agent', 'stage', 'recordedAt', 'failure', 'cleanupFailures', 'output')
+    if ($detail -isnot [pscustomobject] -or @($detail.PSObject.Properties.Name | Where-Object { $_ -cnotin $detailFields }).Count -ne 0) { throw 'Invalid diagnostic document.' }
+    foreach ($field in $detailFields) { if ($null -eq $detail.PSObject.Properties[$field]) { throw 'Incomplete diagnostic document.' } }
+    foreach ($field in @('classification', 'agent', 'stage')) { if ($detail.$field -isnot [string]) { throw 'Native diagnostic identity must use strings.' } }
+    if (($detail.schemaVersion -isnot [int] -and $detail.schemaVersion -isnot [long]) -or $detail.schemaVersion -ne 1 -or
+        $detail.classification -cne 'native-session-failure' -or $detail.agent -cne 'hermes' -or $detail.stage -cne $value.stage -or
+        ($detail.recordedAt -isnot [string] -and $detail.recordedAt -isnot [datetime]) -or ([string]$detail.recordedAt).Length -gt 64 -or $detail.failure -isnot [pscustomobject] -or
+        $detail.cleanupFailures -isnot [array] -or $detail.cleanupFailures.Count -gt 32 -or
+        @($detail.cleanupFailures | Where-Object { $_ -isnot [string] -or $_.Length -gt 256 }).Count -ne 0 -or
+        $detail.output -isnot [pscustomobject] -or @($detail.output.PSObject.Properties).Count -gt 6 -or
+        @($detail.output.PSObject.Properties | Where-Object { $_.Name.Length -gt 64 -or $_.Value -isnot [string] -or $_.Value.Length -gt 25KB }).Count -ne 0) { throw 'Native diagnostic evidence exceeds its contract.' }
+    return $value
+}
+
+function Get-NativeFailureOwner {
+    param([Parameter(Mandatory)][int]$NodeProcessId, [Parameter(Mandatory)][Diagnostics.Process]$Application)
+    if ($Application.HasExited -or $NodeProcessId -eq $Application.Id) { throw 'The native failure owner is no longer active.' }
+    $owner = [Diagnostics.Process]::GetProcessById($NodeProcessId)
+    try {
+        $null = $owner.Handle
+        $current = Get-CimInstance Win32_Process -Filter "ProcessId=$NodeProcessId" -ErrorAction Stop
+        if (-not $current -or -not [string]::Equals([IO.Path]::GetFullPath([string]$current.ExecutablePath), [IO.Path]::GetFullPath($nodePath), [StringComparison]::OrdinalIgnoreCase) -or
+            $owner.StartTime.ToUniversalTime() -lt $Application.StartTime.ToUniversalTime().AddSeconds(-2)) { throw 'The native failure process does not match the installed Node runtime.' }
+        $seen = @{}; $childStarted = $owner.StartTime.ToUniversalTime()
+        for ($depth = 0; $depth -lt 16; $depth++) {
+            $parentId = [int]$current.ParentProcessId
+            if ($parentId -eq $Application.Id) { return $owner }
+            if ($parentId -le 0 -or $seen.ContainsKey($parentId)) { break }
+            $seen[$parentId] = $true
+            $current = Get-CimInstance Win32_Process -Filter "ProcessId=$parentId" -ErrorAction Stop
+            if (-not $current -or ([datetime]$current.CreationDate).ToUniversalTime() -gt $childStarted) { break }
+            $childStarted = ([datetime]$current.CreationDate).ToUniversalTime()
+        }
+        throw 'The native failure process is outside the owned application tree.'
+    } catch { $owner.Dispose(); throw }
+}
+
+function Send-NativeConsoleFailureClose {
+    param([Parameter(Mandatory)][int]$NodeProcessId, [int]$TimeoutMilliseconds = 5000)
+    # Reuse the controller's exact console input implementation in a separate
+    # helper process, so attaching never detaches the qualification console.
+    $controller = Join-Path $PSScriptRoot 'control-windows-native-hermes-console.ps1'
+    $source = @'
+$ErrorActionPreference = 'Stop'
+$ast = [Management.Automation.Language.Parser]::ParseFile('__CONTROLLER__', [ref]$null, [ref]$null)
+$definitions = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] -and $node.Value.Contains('public static class NemoClawInteractiveConsole') }, $true))
+if ($definitions.Count -ne 1) { throw 'The native console controller definition is unavailable.' }
+Add-Type -AssemblyName System.Drawing
+Add-Type -ReferencedAssemblies @([Drawing.Bitmap].Assembly.Location) -TypeDefinition $definitions[0].Value
+try { [NemoClawInteractiveConsole]::Attach(__NODE__); [NemoClawInteractiveConsole]::TypeLine('') }
+finally { [NemoClawInteractiveConsole]::Detach() }
+'@
+    $source = $source.Replace('__NODE__', [string]$NodeProcessId).Replace('__CONTROLLER__', $controller.Replace("'", "''"))
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = Join-Path $PSHOME 'powershell.exe'
+    $info.Arguments = '-NoLogo -NoProfile -NonInteractive -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($source))
+    $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+    $helper = [Diagnostics.Process]::new(); $helper.StartInfo = $info
+    try {
+        if (-not $helper.Start()) { throw 'The owned console close helper did not start.' }
+        if (-not $helper.WaitForExit($TimeoutMilliseconds)) { $helper.Kill(); [void]$helper.WaitForExit(5000); throw 'The owned console close helper timed out.' }
+        if ($helper.ExitCode -ne 0) { throw 'The owned console close helper failed.' }
+    } finally { $helper.Dispose() }
+}
+
+function Complete-NativeFailedQualificationSession {
+    param([Parameter(Mandatory)][Diagnostics.Process]$Application, [Parameter(Mandatory)][string]$EvidenceDirectory,
+        [Parameter(Mandatory)][ValidateSet('console', 'dashboard')][string]$Interface, [int]$ExpectedNodeProcessId = 0,
+        [int]$TimeoutMilliseconds = 120000)
+    $snapshotPath = Join-Path $EvidenceDirectory 'session-failure.json'
+    $bootstrapPath = Join-Path $EvidenceDirectory 'bootstrap-connectivity.json'
+    $concreteFailure = Test-Path -LiteralPath $snapshotPath -PathType Leaf
+    if (-not $concreteFailure -and (Test-Path -LiteralPath $bootstrapPath -PathType Leaf)) {
+        try {
+            $file = Get-Item -LiteralPath $bootstrapPath
+            if ($file.Length -le 16384 -and ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) {
+                $bootstrap = [IO.File]::ReadAllText($bootstrapPath, [Text.UTF8Encoding]::new($false, $true)) | ConvertFrom-Json
+                $concreteFailure = $bootstrap.schemaVersion -eq 1 -and $bootstrap.classification -ceq 'native-contained-bootstrap-connectivity' -and
+                    $bootstrap.agent -ceq 'hermes' -and $bootstrap.interface -ceq $Interface -and $bootstrap.verdict -ceq 'fail'
+                if ($concreteFailure -and $ExpectedNodeProcessId -eq 0 -and ($bootstrap.nodeProcessId -is [int] -or $bootstrap.nodeProcessId -is [long]) -and
+                    $bootstrap.nodeProcessId -gt 0 -and $bootstrap.nodeProcessId -le [int]::MaxValue) { $ExpectedNodeProcessId = [int]$bootstrap.nodeProcessId }
+            }
+        } catch { $concreteFailure = $false }
+    }
+    if (-not $concreteFailure) { return $false }
+    $clock = [Diagnostics.Stopwatch]::StartNew(); $owner = $null
+    try {
+        while (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf) -and -not $Application.HasExited -and $clock.ElapsedMilliseconds -lt $TimeoutMilliseconds) { Start-Sleep -Milliseconds 100 }
+        if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw 'The native failure snapshot did not arrive.' }
+        $snapshot = Read-NativeSessionFailureEvidence -Path $snapshotPath -Interface $Interface
+        if ($ExpectedNodeProcessId -gt 0 -and $snapshot.nodeProcessId -ne $ExpectedNodeProcessId) { throw 'The native failure snapshot process identity changed.' }
+        Write-Host "[NATIVE FAILURE] Retained bounded $Interface diagnostics after backend cleanup attempts finished ($($snapshot.stage))."
+        if (-not $Application.HasExited) {
+            $owner = Get-NativeFailureOwner -NodeProcessId ([int]$snapshot.nodeProcessId) -Application $Application
+            if ($Interface -ceq 'dashboard') {
+                Stop-NativeHermesDashboardSession -NodeProcessId $owner.Id -EvidenceDirectory $EvidenceDirectory -FailureClose -TimeoutMilliseconds ([Math]::Max(1, $TimeoutMilliseconds - [int]$clock.ElapsedMilliseconds)) | Out-Null
+            } else { Send-NativeConsoleFailureClose -NodeProcessId $owner.Id -TimeoutMilliseconds ([Math]::Max(1, [Math]::Min(5000, $TimeoutMilliseconds - [int]$clock.ElapsedMilliseconds))) }
+        }
+    } catch { Write-Warning 'The owned native failure snapshot or graceful Close was unavailable; preserving the original failure and bounded cleanup wait.' -WarningAction Continue }
+    finally { if ($owner) { $owner.Dispose() } }
+    try { if (-not $Application.HasExited) { [void]$Application.WaitForExit([Math]::Max(1, $TimeoutMilliseconds - [int]$clock.ElapsedMilliseconds)) } }
+    catch { Write-Warning 'The owned native failure process could not be awaited; preserving the original qualification error.' -WarningAction Continue }
+    return $true
+}
+
 function Invoke-InteractiveHermesQualification {
     $evidence = Join-Path $artifactRoot 'interactive-hermes'
     if (Test-Path -LiteralPath $evidence) { Fail-PackageQualification 'Interactive Hermes evidence already exists.' }
@@ -673,6 +891,7 @@ function Invoke-InteractiveHermesQualification {
     $provider = $null
     $application = $null
     $controller = $null
+    $session = $null
     try {
         $providerArgs = @('--experimental-strip-types', '--no-warnings', $providerScript, '--port', '17071', '--input-marker', $inputMarker, '--output-marker', $outputMarker, '--artifact-directory', $evidence)
         $provider = Start-Process -FilePath $nodePath -ArgumentList @($providerArgs | ForEach-Object { ConvertTo-NativeArgument $_ }) `
@@ -700,6 +919,7 @@ function Invoke-InteractiveHermesQualification {
         if ($session.schemaVersion -ne 1 -or $session.agent -cne 'hermes' -or [int]$session.nodeProcessId -le 0) {
             Fail-PackageQualification 'The interactive Hermes session identity is invalid.'
         }
+        $bootstrap = Wait-NativeBootstrapConnectivityReceipt -EvidenceDirectory $evidence -Interface console -Application $application -ExpectedNodeProcessId ([int]$session.nodeProcessId)
         $startInfo = [Diagnostics.ProcessStartInfo]::new()
         $startInfo.FileName = Join-Path $PSHOME 'powershell.exe'
         $controlArgs = @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $controllerScript,
@@ -762,6 +982,7 @@ function Invoke-InteractiveHermesQualification {
             verdict = 'pass'
             hostConsole = $true
             agentOneShotMode = $false
+            bootstrapConnectivity = $bootstrap
             console = $control
             containedWin32Console = $contained
             provider = $providerReceipt
@@ -778,6 +999,7 @@ function Invoke-InteractiveHermesQualification {
             $controller.Dispose()
         }
         if ($application) {
+            if (-not $application.HasExited) { Complete-NativeFailedQualificationSession -Application $application -EvidenceDirectory $evidence -Interface console | Out-Null }
             if (-not $application.HasExited) {
                 & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /PID $application.Id /T /F | Out-Null
                 [void]$application.WaitForExit(10000)
@@ -792,7 +1014,8 @@ function Invoke-InteractiveHermesQualification {
 }
 
 function Stop-NativeHermesDashboardSession {
-    param([Parameter(Mandatory)][int]$NodeProcessId, [Parameter(Mandatory)][string]$EvidenceDirectory)
+    param([Parameter(Mandatory)][int]$NodeProcessId, [Parameter(Mandatory)][string]$EvidenceDirectory,
+        [switch]$FailureClose, [int]$TimeoutMilliseconds = 10000)
     $desktop = [Windows.Automation.AutomationElement]::RootElement
     $condition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'NemoClaw Hermes session')
     $windows = $desktop.FindAll([Windows.Automation.TreeScope]::Children, $condition)
@@ -802,9 +1025,16 @@ function Stop-NativeHermesDashboardSession {
     if ($window.Current.FrameworkId -cne 'WPF' -or $process.Name -cne 'NemoClaw.Bootstrapper.exe' -or [int]$process.ParentProcessId -ne $NodeProcessId) {
         Fail-PackageQualification 'The Hermes native Stop control is not owned by this installed dashboard session.'
     }
-    $stop = Wait-NativeSetupElement -Root $window -AutomationId 'NativeWebSessionStop'
+    if ($FailureClose -and -not [string]::Equals([IO.Path]::GetFullPath([string]$process.ExecutablePath), [IO.Path]::GetFullPath((Join-Path $installRoot 'native-ui\NemoClaw.Bootstrapper.exe')), [StringComparison]::OrdinalIgnoreCase)) { throw 'The failure window is not the installed native UI.' }
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $stop = if ($FailureClose) { Wait-NativeSetupElement -Root $window -AutomationId 'NativeWebSessionStop' -TimeoutMilliseconds $TimeoutMilliseconds }
+        else { Wait-NativeSetupElement -Root $window -AutomationId 'NativeWebSessionStop' }
+    if ($FailureClose) {
+        while ($stop.Current.Name -cne 'Close' -and $clock.ElapsedMilliseconds -lt $TimeoutMilliseconds) { Start-Sleep -Milliseconds 100 }
+        if ($stop.Current.Name -cne 'Close') { throw 'The owned failure window has not received its cleanup-complete notice.' }
+    }
     $window.SetFocus()
-    [NemoClawNativeSetupCapture]::Save([IntPtr]$window.Current.NativeWindowHandle, (Join-Path $EvidenceDirectory 'hermes-dashboard-native-stop.png'))
+    if (-not $FailureClose) { [NemoClawNativeSetupCapture]::Save([IntPtr]$window.Current.NativeWindowHandle, (Join-Path $EvidenceDirectory 'hermes-dashboard-native-stop.png')) }
     $identity = [pscustomobject]@{ automationId = 'NativeWebSessionStop'; framework = 'WPF'; windowTitle = $window.Current.Name; processId = $window.Current.ProcessId; parentNodeProcessId = $NodeProcessId; invoked = $true }
     Invoke-NativeSetupButton -Element $stop
     return $identity
@@ -837,12 +1067,14 @@ function Invoke-HermesDashboardQualification {
         }
         $application = Start-Process -FilePath $nemoclawUiLauncherPath -ArgumentList @($arguments | ForEach-Object { ConvertTo-NativeArgument $_ }) -PassThru
         $null = $application.Handle
+        $bootstrap = Wait-NativeBootstrapConnectivityReceipt -EvidenceDirectory $evidence -Interface dashboard -Application $application
         $startPath = Join-Path $evidence 'dashboard-ready.json'
         $clock.Restart()
         while (-not (Test-Path -LiteralPath $startPath) -and $clock.ElapsedMilliseconds -lt $script:OperationTimeoutMilliseconds -and -not $application.HasExited) { Start-Sleep -Milliseconds 200 }
         if (-not (Test-Path -LiteralPath $startPath) -or (Get-Item -LiteralPath $startPath).Length -gt 16384) { Fail-PackageQualification 'The installed Hermes dashboard did not become ready.' }
         $session = Get-Content -LiteralPath $startPath -Raw | ConvertFrom-Json
         if ($session.schemaVersion -ne 1 -or $session.agent -cne 'hermes' -or [int]$session.nodeProcessId -le 0) { Fail-PackageQualification 'The Hermes dashboard session identity is invalid.' }
+        Assert-NativeBootstrapConnectivityReceipt -Receipt $bootstrap -Interface dashboard -ExpectedNodeProcessId ([int]$session.nodeProcessId)
         $driverArgs = @('--experimental-strip-types', '--no-warnings', $controllerScript, '--install-root', $installRoot, '--artifact-directory', $evidence, '--input-marker', $inputMarker, '--output-marker', $outputMarker)
         Invoke-BoundedProcess -FilePath $nodePath -Arguments $driverArgs -Label 'Real Hermes dashboard three-turn proof' -AllowedExitCodes @(0) | Out-Null
         $nativeStop = Stop-NativeHermesDashboardSession -NodeProcessId ([int]$session.nodeProcessId) -EvidenceDirectory $evidence
@@ -881,13 +1113,16 @@ function Invoke-HermesDashboardQualification {
         Write-Host '[PASS] Real Hermes dashboard accepted three typed turns, displayed three provider responses, and native Stop released its sandbox and state lease'
         return [pscustomobject]@{
             classification = 'installed-configured-hermes-dashboard'; verdict = 'pass'; agentOneShotMode = $false
+            bootstrapConnectivity = $bootstrap
             control = $control; provider = $providerReceipt; cleanup = $end; nativeStop = $nativeStop
             nativeStopScreenshot = [pscustomobject]@{ file = 'hermes-dashboard-native-stop.png'; sha256 = (Get-FileHash -LiteralPath $stopFrame -Algorithm SHA256).Hash.ToLowerInvariant() }
             tooling = [pscustomobject]@{ providerSha256 = (Get-FileHash -LiteralPath $providerScript -Algorithm SHA256).Hash.ToLowerInvariant(); controllerSha256 = (Get-FileHash -LiteralPath $controllerScript -Algorithm SHA256).Hash.ToLowerInvariant() }
         }
     } finally {
         if ($application) {
-            if (-not $application.HasExited -and $session -and -not $stopInvoked) {
+            $failureHandled = $false
+            if (-not $application.HasExited) { $failureHandled = Complete-NativeFailedQualificationSession -Application $application -EvidenceDirectory $evidence -Interface dashboard }
+            if (-not $application.HasExited -and $session -and -not $stopInvoked -and -not $failureHandled) {
                 try { Stop-NativeHermesDashboardSession -NodeProcessId ([int]$session.nodeProcessId) -EvidenceDirectory $evidence | Out-Null; [void]$application.WaitForExit(120000) } catch { }
             }
             if (-not $application.HasExited) { & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /PID $application.Id /T /F | Out-Null; [void]$application.WaitForExit(10000) }

@@ -42,6 +42,7 @@
     <NemoClawRequiredPayload Include="qualification\run-installed-native-hermes-ui.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-remove-data.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-web-session.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-session-diagnostics.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-ui-tunnel.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="desktop-icons\NemoClaw.ico" Phase="Prepared" />
     <NemoClawRequiredPayload Include="desktop-icons\openclaw.ico" Phase="Prepared" />
@@ -51,6 +52,9 @@
     <NemoClawRequiredPayload Include="desktop-icons\nemocua.ico" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-options.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-inference-broker.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-broker-relay.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-broker-tunnel.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-broker-relay-protocol.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-ui-relay.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-ui-lifecycle.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-inference.mts" Phase="Prepared" />

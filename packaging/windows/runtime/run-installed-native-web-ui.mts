@@ -22,6 +22,7 @@ import {
 import { openNativeWebSession } from "./native-web-session.mts";
 import { removeNativeAgentData } from "./native-remove-data.mts";
 import { startNativeInferenceBroker } from "./native-inference-broker.mts";
+import { startNativeBrokerRelay } from "./native-broker-relay.mts";
 import { startFileTcpRelay } from "./native-ui-relay.mts";
 import { acquireNativeStateSession } from "./native-state.mts";
 import { resolveNativeConfiguredInference } from "./native-configured-inference.mts";
@@ -355,6 +356,7 @@ function readNativeAgentConfiguration(agent) {
 function gatewaySource() {
   return String.raw`import fs, { mkdirSync, writeFileSync } from "node:fs";
 import { startNativeUiTunnel } from "./native-ui-tunnel.mts";
+import { startNativeBrokerTunnel } from "./native-broker-tunnel.mts";
 import { createServer } from "node:http";
 import { syncBuiltinESMExports } from "node:module";
 import { join, resolve } from "node:path";
@@ -367,13 +369,23 @@ const required = (name) => {
 };
 const launcher = required("NEMOCLAW_MXC_OPENCLAW_ENTRY");
 const home = required("NEMOCLAW_MXC_HOME");
-const modelPort = Number(required("NEMOCLAW_MXC_MODEL_PORT"));
 const modelId = required("NEMOCLAW_MXC_MODEL_ID");
 const modelToken = required("NEMOCLAW_MXC_MODEL_TOKEN");
 const qualification = required("NEMOCLAW_MXC_QUALIFICATION") === "1";
+const configured = required("NEMOCLAW_NATIVE_SERVICES") === "1";
 const relayRoot = required("NEMOCLAW_MXC_RELAY_ROOT");
 const relayToken = required("NEMOCLAW_MXC_RELAY_TOKEN");
 const uiPort = Number(required("NEMOCLAW_MXC_UI_PORT"));
+let brokerTunnel = null;
+let agentFailed = false;
+try {
+if (configured) {
+  brokerTunnel = await startNativeBrokerTunnel({
+    relayRoot: required("NEMOCLAW_MXC_BROKER_RELAY_ROOT"),
+    relayToken: required("NEMOCLAW_MXC_BROKER_RELAY_TOKEN"),
+  });
+}
+const modelPort = brokerTunnel?.port ?? Number(required("NEMOCLAW_MXC_MODEL_PORT"));
 const sleep = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
 const readBody = async (request) => {
   const chunks = [];
@@ -396,7 +408,7 @@ const responseFor = (body) => {
   const turn = text.match(/NATIVE_WINDOWS_TURN_([123])_OK/u)?.[1];
   return turn ? "NATIVE_WINDOWS_TURN_" + turn + "_OK" : "NEMOCLAW_NATIVE_PREVIEW_OK";
 };
-const mock = qualification ? createServer(async (request, response) => {
+const mock = qualification && brokerTunnel === null ? createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/v1/models") {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ object: "list", data: [{ id: "native-preview", object: "model" }] }));
@@ -498,7 +510,7 @@ fs.realpath = patchedRealpath;
 fs.realpathSync = patchedRealpathSync;
 syncBuiltinESMExports();
 let serviceConfiguration = {};
-if (process.env.NEMOCLAW_NATIVE_SERVICES === "1") {
+if (configured) {
   const response = await fetch("http://127.0.0.1:" + modelPort + "/native/bootstrap", {
     method: "POST", headers: { authorization: "Bearer " + modelToken }, signal: AbortSignal.timeout(15000),
   });
@@ -537,8 +549,22 @@ Object.assign(process.env, {
 process.argv = [process.execPath, launcher, "gateway", "run", "--allow-unconfigured", "--port", String(uiPort), "--bind", "loopback", "--auth", "none"];
 const fileTunnelTask = startNativeUiTunnel({ relayRoot, relayToken, uiPort });
 void fileTunnelTask.catch(() => {});
-await import(pathToFileURL(launcher).href);
-await fileTunnelTask;
+const agentTask = (async () => {
+  await import(pathToFileURL(launcher).href);
+  await fileTunnelTask;
+})();
+await (brokerTunnel ? Promise.race([agentTask, brokerTunnel.failure]) : agentTask);
+} catch (error) {
+  agentFailed = true;
+  throw error;
+} finally {
+  try {
+    await brokerTunnel?.close();
+  } catch (error) {
+    if (!agentFailed) throw error;
+    console.error("The native broker transport also failed to close.");
+  }
+}
 `;
 }
 
@@ -1151,6 +1177,7 @@ async function main() {
     const ownedRoots = [];
     const ownedLogs = [];
     let inferenceBroker = null;
+    let brokerRelay = null;
     let uiRelay = null;
     let gateway = null;
     let create = null;
@@ -1160,7 +1187,9 @@ async function main() {
     let runRoot = "",
       shareRoot = "",
       runtimeRoot = "",
-      relayToken = "";
+      relayToken = "",
+      brokerRelayRoot = "",
+      brokerRelayToken = "";
     let gatewayLogPath = "",
       gatewayErrorPath = "";
     let createOutput = "",
@@ -1184,6 +1213,12 @@ async function main() {
           "UI relay shutdown",
           async () => {
             if (uiRelay) await uiRelay.close();
+          },
+        ],
+        [
+          "inference relay shutdown",
+          async () => {
+            if (brokerRelay) await brokerRelay.close();
           },
         ],
         [
@@ -1241,6 +1276,12 @@ async function main() {
           },
         ],
         [
+          "inference file owner",
+          async () => {
+            if (brokerRelay) await brokerRelay.dispose();
+          },
+        ],
+        [
           "gateway logs",
           async () => {
             let failed = false;
@@ -1272,6 +1313,7 @@ async function main() {
               [
                 [modelToken, "<model-token>"],
                 [relayToken, "<relay-token>"],
+                [brokerRelayToken, "<broker-relay-token>"],
                 [installRoot, "<install-root>"],
                 [runtimeRoot, "<runtime-root>"],
                 [shareRoot, "<share-root>"],
@@ -1344,6 +1386,17 @@ async function main() {
         ownedRoots.push(directory);
       }
       const gatewayConfig = writeNativeGatewayConfig(installRoot, runRoot);
+      if (inferenceBroker) {
+        brokerRelayRoot = path.join(shareRoot, "inference-relay");
+        brokerRelayToken = randomBytes(32).toString("base64url");
+        brokerRelay = await startNativeBrokerRelay({
+          relayRoot: brokerRelayRoot,
+          relayToken: brokerRelayToken,
+          brokerPort: inferenceBroker.port,
+          launcher: launcherPath,
+          signal: webSession?.signal,
+        });
+      }
       relayToken = randomBytes(32).toString("base64url");
       const relayRoot = path.join(shareRoot, "ui-relay");
       uiRelay = await startFileTcpRelay(relayRoot, relayToken, launcherPath);
@@ -1364,6 +1417,11 @@ async function main() {
         path.join(installRoot, "qualification", "native-ui-tunnel.mts"),
         path.join(runtimeRoot, "native-ui-tunnel.mts"),
       );
+      for (const file of ["native-broker-tunnel.mts", "native-broker-relay-protocol.mts"])
+        fs.copyFileSync(
+          path.join(installRoot, "qualification", file),
+          path.join(runtimeRoot, file),
+        );
       const home =
         configuredIdentity === null ? path.join(shareRoot, "home") : stateSession.stateRoot;
       stateSession?.assertHeld();
@@ -1381,6 +1439,7 @@ async function main() {
           "  read_write:",
           `    - ${quoteYamlPath(shareRoot)}`,
           `    - ${quoteYamlPath(relayRoot)}`,
+          ...(brokerRelay === null ? [] : [`    - ${quoteYamlPath(brokerRelayRoot)}`]),
           ...(configuredIdentity === null ? [] : [`    - ${quoteYamlPath(home)}`]),
           "",
         ].join("\n"),
@@ -1393,7 +1452,7 @@ async function main() {
         fs.mkdirSync(directory, { recursive: true });
       const openShellPort = await freePort();
       const uiPort = await freePort();
-      const modelPort = inferenceBroker?.port ?? (await freePort());
+      const modelPort = inferenceBroker === null ? await freePort() : null;
       sandboxName = `nc-ui-${runId}`;
       const gatewayName = `nemoclaw-ui-${runId}`;
       gatewayLogPath = path.join(runRoot, "openshell-gateway.log");
@@ -1458,7 +1517,12 @@ async function main() {
         LOCALAPPDATA: home,
         NEMOCLAW_MXC_HOME: home,
         NEMOCLAW_MXC_MODEL_ID: modelId,
-        NEMOCLAW_MXC_MODEL_PORT: String(modelPort),
+        ...(brokerRelay === null
+          ? { NEMOCLAW_MXC_MODEL_PORT: String(modelPort) }
+          : {
+              NEMOCLAW_MXC_BROKER_RELAY_ROOT: brokerRelayRoot,
+              NEMOCLAW_MXC_BROKER_RELAY_TOKEN: brokerRelayToken,
+            }),
         NEMOCLAW_MXC_MODEL_TOKEN: modelToken,
         NEMOCLAW_MXC_OPENCLAW_ENTRY: openClawEntry,
         NEMOCLAW_MXC_QUALIFICATION: qualification ? "1" : "0",
@@ -1519,6 +1583,7 @@ async function main() {
         Promise.race([
           uiRelay.ready,
           gatewayFailure,
+          ...(brokerRelay ? [brokerRelay.failure] : []),
           ...(webSession
             ? [
                 webSession.stopped.then(() => {
@@ -1586,7 +1651,13 @@ async function main() {
         if (!webSession) fail("the native Web UI control is unavailable");
         webSession.assertRunning();
         webSession.ready(uiUrl);
-        await Promise.race([webSession.stopped, uiRelay.failure, gatewayFailure, monitor]);
+        await Promise.race([
+          webSession.stopped,
+          uiRelay.failure,
+          gatewayFailure,
+          monitor,
+          ...(brokerRelay ? [brokerRelay.failure] : []),
+        ]);
       }
       const cleanupFailures = await cleanup();
       if (cleanupFailures.length)
@@ -1602,7 +1673,8 @@ async function main() {
         nodeSha256: sha256(installedNode),
         openShellSha256: sha256(openshell),
         openShellGatewaySha256: sha256(gatewayExecutable),
-        deterministicLocalModel: qualification,
+        deterministicLocalModel: qualification && configuredIdentity === null,
+        inferenceTransport: brokerRelay?.transport ?? "contained-deterministic-model",
         onboardingSkipped: skipOnboarding,
         onboardingSelection,
         demonstratedAgentChoices: browserProof.demonstratedAgentChoices,

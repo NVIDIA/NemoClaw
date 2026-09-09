@@ -41,8 +41,10 @@ internal static class NativeWebSession
             using var shutdown = new CancellationTokenSource();
             var stopped = false;
             var stopRequested = false;
+            string? diagnosticPath = null;
             var content = new StackPanel { Margin = new Thickness(24) };
             var status = new TextBlock { Text = url is null ? "Preparing your private agent session…" : "Your agent is running. Use Stop session when you have finished.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 20) };
+            AutomationProperties.SetAutomationId(status, "NativeWebSessionStatus");
             var open = new Button { Content = "Open Web UI", Height = 38, Margin = new Thickness(0, 0, 0, 10), IsEnabled = url is not null };
             var stop = new Button { Content = "Stop session", Height = 38 };
             AutomationProperties.SetAutomationId(stop, "NativeWebSessionStop");
@@ -66,6 +68,17 @@ internal static class NativeWebSession
             }
             void OpenBrowser()
             {
+                if (diagnosticPath is not null)
+                {
+                    try
+                    {
+                        var start = new ProcessStartInfo { FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "notepad.exe"), UseShellExecute = false };
+                        start.ArgumentList.Add(diagnosticPath);
+                        Process.Start(start)?.Dispose();
+                    }
+                    catch (Exception) { status.Text += " Open the diagnostic file from the displayed path."; }
+                    return;
+                }
                 if (url is null || stopRequested) return;
                 try { Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true })?.Dispose(); }
                 catch (Exception) { status.Text = "Windows could not open your default browser. Try Open Web UI again, or stop this session."; }
@@ -77,6 +90,7 @@ internal static class NativeWebSession
             window.Loaded += async (_, _) =>
             {
                 var showShutdownFailure = false;
+                var showStartupFailure = false;
                 try
                 {
                     output.WriteLine("{\"kind\":\"ready\"}");
@@ -86,7 +100,23 @@ internal static class NativeWebSession
                         using var message = JsonDocument.Parse(await ReadLineAsync(input, shutdown.Token).WaitAsync(shutdown.Token));
                         var record = message.RootElement;
                         var kind = record.GetProperty("kind").GetString();
-                        if (kind is "stopped" or "failed") { result = kind == "stopped" ? 0 : 1; break; }
+                        if (kind is "stopped" or "failed")
+                        {
+                            result = kind == "stopped" ? 0 : 1;
+                            if (kind == "failed")
+                            {
+                                showStartupFailure = true;
+                                heading.Text = $"{NativeDesktopIntegration.AgentName(agent)} could not finish";
+                                var detail = record.TryGetProperty("message", out var failureMessage) ? failureMessage.GetString() : null;
+                                status.Text = detail is not null && detail.Length <= 2048 ? detail : "The private agent session failed. Open NemoClaw Setup to check its settings.";
+                                var log = record.TryGetProperty("diagnosticPath", out var failurePath) ? failurePath.GetString() : null;
+                                diagnosticPath = ValidDiagnosticPath(log, agent) ? log : null;
+                                open.Content = "Open diagnostics";
+                                open.IsEnabled = diagnosticPath is not null;
+                                window.Height = Math.Max(window.Height, 360);
+                            }
+                            break;
+                        }
                         if (kind == "ready" && url is null)
                         {
                             var address = record.GetProperty("url").GetString() ?? string.Empty;
@@ -105,6 +135,7 @@ internal static class NativeWebSession
                                 "inference" => "Preparing your selected inference connection…",
                                 "runtime" => "Preparing the installed agent runtime…",
                                 "sandbox" => "Starting the private agent session…",
+                                "bootstrap" => "Connecting the private session to its local model broker…",
                                 "dashboard" => "Opening the agent's Web UI…",
                                 _ => throw new InvalidDataException(),
                             };
@@ -122,7 +153,7 @@ internal static class NativeWebSession
                 finally
                 {
                     stopped = true;
-                    if (showShutdownFailure) { stop.Content = "Close"; stop.IsEnabled = true; }
+                    if (showShutdownFailure || showStartupFailure) { stop.Content = "Close"; stop.IsEnabled = true; }
                     else window.Close();
                 }
             };
@@ -137,11 +168,27 @@ internal static class NativeWebSession
     private static bool ValidAddress(string url) => url.Length <= 1600 && Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
         uri.Scheme == "http" && uri.Host == "127.0.0.1" && uri.Port > 0 && string.IsNullOrEmpty(uri.UserInfo);
 
+    private static bool ValidDiagnosticPath(string? file, string agent)
+    {
+        if (file is null || file.Length > 1600) return false;
+        try
+        {
+            var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NVIDIA", "NemoClaw", "agents", agent);
+            var full = Path.GetFullPath(file);
+            var parent = Path.GetDirectoryName(full);
+            return Path.GetFileName(full) == "ready" && parent is not null &&
+                string.Equals(Path.GetDirectoryName(parent), root, StringComparison.OrdinalIgnoreCase) &&
+                System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(parent), "^session-diagnostics-[a-f0-9]{20}$") &&
+                File.Exists(full);
+        }
+        catch (Exception) { return false; }
+    }
+
     private static async Task<string> ReadLineAsync(StreamReader input, CancellationToken cancellation)
     {
         var text = new StringBuilder();
         var character = new char[1];
-        while (text.Length < 2048)
+        while (text.Length < 4096)
         {
             if (await input.ReadAsync(character.AsMemory(), cancellation) == 0) throw new EndOfStreamException();
             if (character[0] == '\n') return text.ToString();

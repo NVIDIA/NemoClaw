@@ -3,6 +3,7 @@
 
 import { spawn } from "node:child_process";
 import { join } from "node:path";
+import type { NativeFailurePresentation } from "./native-session-diagnostics.mts";
 
 function validateAddress(url: string) {
   const address = new URL(url);
@@ -57,6 +58,7 @@ export async function openNativeWebSession(
   let pending = "";
   let sawReady = false;
   let failure: Error | undefined;
+  let completion: Promise<void> | undefined;
   const reject = () => {
     failure ??= new Error("The native web session control stopped unexpectedly.");
     fail(failure);
@@ -128,21 +130,29 @@ export async function openNativeWebSession(
       validateAddress(address);
       child.stdin.write(JSON.stringify({ kind: "ready", url: address }) + "\n");
     },
-    progress(stage: "inference" | "runtime" | "sandbox" | "dashboard") {
+    progress(stage: "inference" | "runtime" | "sandbox" | "bootstrap" | "dashboard") {
       if (!ended && !completing)
         child.stdin.write(JSON.stringify({ kind: "progress", stage }) + "\n");
     },
-    async complete(cleanupSucceeded: boolean) {
-      completing = true;
-      if (!ended)
-        child.stdin.end(JSON.stringify({ kind: cleanupSucceeded ? "stopped" : "failed" }) + "\n");
-      const timer = setTimeout(() => child.kill(), 5000);
-      try {
-        await closed;
-      } finally {
-        clearTimeout(timer);
-      }
-      if (failure) throw failure;
+    async complete(cleanupSucceeded: boolean, detail?: NativeFailurePresentation) {
+      if (completion) return await completion;
+      completion = (async () => {
+        completing = true;
+        if (!ended)
+          child.stdin.end(
+            JSON.stringify({ kind: cleanupSucceeded ? "stopped" : "failed", ...detail }) + "\n",
+          );
+        // A startup error is a visible notice after backend cleanup. Let the user
+        // read/open its diagnostic file and close the window deliberately.
+        const timer = setTimeout(() => child.kill(), cleanupSucceeded ? 5000 : 24 * 60 * 60_000);
+        try {
+          await closed;
+        } finally {
+          clearTimeout(timer);
+        }
+        if (failure) throw failure;
+      })();
+      return await completion;
     },
   };
 }

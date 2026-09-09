@@ -9,6 +9,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { writeNativeGatewayConfig } from "./native-security.mts";
+import { nativeDiagnosticTail } from "./native-session-diagnostics.mts";
 
 const TIMEOUT_MS = 300_000;
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -102,7 +103,16 @@ export async function waitForPort(port, child, label = "OpenShell gateway", time
   fail(`${label} did not become ready`);
 }
 
-export async function run(file, args, environment, label, timeout = TIMEOUT_MS) {
+export async function run(
+  file,
+  args,
+  environment,
+  label,
+  timeout = TIMEOUT_MS,
+  diagnostics?: {
+    capture(channel: string, chunk: Buffer | string): void;
+  },
+) {
   console.log(`NEMOCLAW> ${label}`);
   const child = spawn(file, args, {
     env: environment,
@@ -112,17 +122,28 @@ export async function run(file, args, environment, label, timeout = TIMEOUT_MS) 
   return await new Promise((resolve, reject) => {
     let stdout = "";
     let stderr = "";
+    let outputExceeded = false;
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error(`${label} timed out`));
     }, timeout);
     child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString("utf8");
-      if (stdout.length > 1024 * 1024) child.kill();
+      diagnostics?.capture("cli.stdout", chunk);
+      if (outputExceeded) return;
+      const text = chunk.toString("utf8");
+      if (stdout.length + text.length > 1024 * 1024) {
+        outputExceeded = true;
+        child.kill();
+      } else stdout += text;
     });
     child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-      if (stderr.length > 1024 * 1024) child.kill();
+      diagnostics?.capture("cli.stderr", chunk);
+      if (outputExceeded) return;
+      const text = chunk.toString("utf8");
+      if (stderr.length + text.length > 1024 * 1024) {
+        outputExceeded = true;
+        child.kill();
+      } else stderr += text;
     });
     child.once("error", (error) => {
       clearTimeout(timer);
@@ -131,8 +152,27 @@ export async function run(file, args, environment, label, timeout = TIMEOUT_MS) 
     child.once("close", (code) => {
       clearTimeout(timer);
       const result = { exitCode: code ?? 1, stdout, stderr };
+      if (outputExceeded) {
+        reject(new Error(`${label} exceeded its diagnostic output limit`));
+        return;
+      }
       if (result.exitCode !== 0) {
-        const detail = [stdout.trim(), stderr.trim()].filter(Boolean).join(" | ").slice(0, 1000);
+        const secrets = Object.entries(environment ?? {})
+          .filter(([name]) => /token|key|secret|password/iu.test(name))
+          .map(([, value]) => String(value));
+        for (let index = 0; index + 1 < args.length; index++) {
+          if (args[index] !== "--env") continue;
+          const assignment = String(args[index + 1]);
+          const split = assignment.indexOf("=");
+          if (split >= 0 && /token|key|secret|password/iu.test(assignment.slice(0, split)))
+            secrets.push(assignment.slice(split + 1));
+        }
+        const detail = [
+          stdout.trim() ? `stdout:\n${nativeDiagnosticTail(stdout, secrets)}` : "",
+          stderr.trim() ? `stderr:\n${nativeDiagnosticTail(stderr, secrets)}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
         reject(new Error(`${label} exited ${result.exitCode}${detail ? `: ${detail}` : ""}`));
         return;
       }

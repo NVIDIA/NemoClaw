@@ -56,6 +56,8 @@ function handleTopLevelError(error) {
 }
 
 function applyPersistedAutomaticGatewayPort() {
+  // Native Windows does not use the POSIX installer's automatic-port markers.
+  if (process.platform === "win32") return;
   if (process.env.NEMOCLAW_GATEWAY_PORT) {
     const installerAutomaticPort =
       process.env.NEMOCLAW_INSTALLING === "1" &&
@@ -81,21 +83,17 @@ function applyPersistedAutomaticGatewayPort() {
       process.env[name] === undefined ? [] : [[name, process.env[name]]],
     ),
   );
-  const result = spawnSync(
-    "/bin/bash",
-    [resolver, "--internal-resolve-automatic-gateway-port"],
-    {
-      encoding: "utf8",
-      env: {
-        HOME: process.env.HOME || "/",
-        PATH: "/usr/bin:/bin",
-        NEMOCLAW_GATEWAY_PORT: "",
-        ...configuredPorts,
-      },
-      maxBuffer: 64 * 1024,
-      timeout: 5_000,
+  const result = spawnSync("/bin/bash", [resolver, "--internal-resolve-automatic-gateway-port"], {
+    encoding: "utf8",
+    env: {
+      HOME: process.env.HOME || "/",
+      PATH: "/usr/bin:/bin",
+      NEMOCLAW_GATEWAY_PORT: "",
+      ...configuredPorts,
     },
-  );
+    maxBuffer: 64 * 1024,
+    timeout: 5_000,
+  });
   if (result.error || result.status !== 0 || result.signal) {
     throw new Error(SAFE_AUTOMATIC_GATEWAY_PORT_DIAGNOSTIC);
   }

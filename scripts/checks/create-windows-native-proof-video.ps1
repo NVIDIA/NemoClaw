@@ -165,6 +165,34 @@ function Assert-NativeExperienceReceipt {
         $interactive.tooling.controllerSha256 -cne $script:InteractiveControllerSha256) {
         Fail-ProofVideo 'The receipt does not prove installed configured Hermes prompt, input, provider response, resize, exit and cleanup.'
     }
+    foreach ($evidence in @(
+        [pscustomobject]@{ connectivity = $interactive.bootstrapConnectivity; interface = 'console'; nodeProcessId = $interactive.console.nodeProcessId },
+        [pscustomobject]@{ connectivity = $dashboard.bootstrapConnectivity; interface = 'dashboard'; nodeProcessId = $dashboard.control.nodeProcessId }
+    )) {
+        $connectivity = $evidence.connectivity
+        foreach ($value in @($connectivity.schemaVersion, $connectivity.nodeProcessId, $evidence.nodeProcessId, $connectivity.containedPort, $connectivity.brokerPort,
+            $connectivity.hostListener.httpStatus, $connectivity.contained.unauthenticatedStatus, $connectivity.contained.authenticatedStatus)) {
+            if ($value -isnot [int] -and $value -isnot [long]) { Fail-ProofVideo 'Bootstrap connectivity identity and HTTP status evidence must be integers.' }
+        }
+        foreach ($field in @('classification', 'agent', 'interface', 'sandboxName', 'transport', 'containedHost', 'brokerHost', 'verdict')) {
+            if ($connectivity.$field -isnot [string]) { Fail-ProofVideo 'Bootstrap connectivity identity evidence must use strings.' }
+        }
+        if ($connectivity.schemaVersion -ne 1 -or $connectivity.classification -cne 'native-contained-bootstrap-connectivity' -or
+            $connectivity.agent -cne 'hermes' -or $connectivity.interface -cne $evidence.interface -or $connectivity.verdict -cne 'pass' -or
+            $connectivity.nodeProcessId -le 0 -or $connectivity.nodeProcessId -ne $evidence.nodeProcessId -or
+            $connectivity.sandboxName -cnotmatch '^nc-h-[a-f0-9]{10}$' -or
+            $connectivity.transport -cne 'guarded-file-tcp' -or $connectivity.containedHost -cne '127.0.0.1' -or
+            $connectivity.containedPort -lt 1 -or $connectivity.containedPort -gt 65535 -or
+            $connectivity.brokerHost -cne '127.0.0.1' -or $connectivity.brokerPort -lt 1 -or $connectivity.brokerPort -gt 65535 -or
+            $connectivity.hostListener.httpStatus -ne 403 -or $connectivity.contained.tcpConnected -isnot [bool] -or
+            $connectivity.contained.tcpConnected -ne $true -or $connectivity.contained.unauthenticatedStatus -ne 403 -or
+            $connectivity.contained.authenticatedStatus -ne 200 -or $connectivity.contained.bootstrapConsumedByWorkload -isnot [bool] -or
+            $connectivity.contained.bootstrapConsumedByWorkload -ne $true -or
+            ($connectivity.PSObject.Properties['failureStage'] -and $null -ne $connectivity.failureStage) -or
+            ($connectivity.PSObject.Properties['errorCode'] -and $null -ne $connectivity.errorCode)) {
+            Fail-ProofVideo 'A real Hermes mode lacks contained TCP, HTTP authentication, and workload-owned bootstrap proof.'
+        }
+    }
 }
 
 function Initialize-NativeWindowCapture {

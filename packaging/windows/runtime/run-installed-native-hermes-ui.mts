@@ -18,9 +18,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     );
     await runNativeConsoleAgent({ interface: "dashboard", webSession: session });
     passed = true;
-  } catch {
+  } catch (error) {
     console.error(
-      "The native Hermes Web UI could not finish its session. Open NemoClaw Setup to check its settings.",
+      error instanceof Error
+        ? error.message
+        : "The native Hermes Web UI could not finish its session.",
     );
     process.exitCode = 1;
   } finally {

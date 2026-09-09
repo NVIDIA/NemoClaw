@@ -11,9 +11,14 @@ import { hermesDashboardPythonSource } from "./native-hermes-dashboard.mts";
 import { openNativeUiFileOwner } from "./native-ui-file-owner.mts";
 import { startFileTcpRelay } from "./native-ui-relay.mts";
 import { openNativeWebSession } from "./native-web-session.mts";
+import {
+  createNativeSessionDiagnostics,
+  NativeSessionFailure,
+} from "./native-session-diagnostics.mts";
 
 import { readNativeServiceEnvironment } from "./native-options.mts";
 import { startNativeInferenceBroker } from "./native-inference-broker.mts";
+import { startNativeBrokerRelay } from "./native-broker-relay.mts";
 import { acquireNativeStateSession } from "./native-state.mts";
 
 import { resolveNativeConfiguredInference } from "./native-configured-inference.mts";
@@ -134,6 +139,7 @@ function readConfiguration(agentId) {
 
 export function interactiveWorkloadSource() {
   return String.raw`import { spawn } from "node:child_process";
+import { createConnection } from "node:net";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -147,18 +153,60 @@ const home = required("NEMOCLAW_AGENT_HOME");
 const model = required("NEMOCLAW_AGENT_MODEL");
 const brokerToken = required("NEMOCLAW_AGENT_BROKER_TOKEN");
 const exitReceipt = required("NEMOCLAW_AGENT_EXIT_RECEIPT");
-const proxyPort = required("NEMOCLAW_AGENT_PROXY_PORT");
+const hostBrokerPort = Number(required("NEMOCLAW_AGENT_PROXY_PORT"));
+const bootstrapReceipt = required("NEMOCLAW_AGENT_BOOTSTRAP_RECEIPT");
 const node = required("NEMOCLAW_AGENT_NODE");
 const runtime = required("NEMOCLAW_AGENT_RUNTIME");
 const python = process.env.NEMOCLAW_AGENT_PYTHON;
 const sitePackages = process.env.NEMOCLAW_AGENT_SITE_PACKAGES;
 const dashboard = process.env.NEMOCLAW_AGENT_INTERFACE === "dashboard";
+let brokerTunnel;
+let bootstrapWritten = false;
+const connectivity = {
+  schemaVersion: 1, agent, interface: dashboard ? "dashboard" : "console",
+  sessionId: required("NEMOCLAW_AGENT_SESSION_ID"), transport: "guarded-file-tcp",
+  brokerHost: "127.0.0.1", brokerPort: hostBrokerPort,
+  containedHost: "127.0.0.1", containedPort: null,
+  contained: { tcpConnected: false, unauthenticatedStatus: null, authenticatedStatus: null, bootstrapConsumedByWorkload: false },
+  verdict: "fail", failureStage: "bridge", errorCode: null,
+};
+try {
+const { startNativeBrokerTunnel } = await import("./native-broker-tunnel.mts");
+brokerTunnel = await startNativeBrokerTunnel({
+  relayRoot: required("NEMOCLAW_BROKER_RELAY_ROOT"), relayToken: required("NEMOCLAW_BROKER_RELAY_TOKEN"),
+});
+const proxyPort = String(brokerTunnel.port);
+connectivity.containedPort = brokerTunnel.port;
 const baseUrl = "http://127.0.0.1:" + proxyPort + "/v1";
+connectivity.failureStage = "tcp";
+await new Promise((resolve, reject) => {
+  const socket = createConnection({ host: "127.0.0.1", port: brokerTunnel.port });
+  socket.setTimeout(5000);
+  socket.once("connect", () => { socket.destroy(); resolve(); });
+  socket.once("error", (error) => { socket.destroy(); reject(error); });
+  socket.once("timeout", () => { socket.destroy(); reject(Object.assign(new Error("Local broker TCP probe timed out."), { code: "ETIMEDOUT" })); });
+});
+connectivity.contained.tcpConnected = true;
+connectivity.failureStage = "unauthenticated-http";
+const denied = await fetch("http://127.0.0.1:" + proxyPort + "/native/bootstrap", {
+  method: "POST", signal: AbortSignal.timeout(15000),
+});
+connectivity.contained.unauthenticatedStatus = denied.status;
+await denied.body?.cancel();
+if (denied.status !== 403) throw new Error("The local broker did not reject an unauthenticated bootstrap probe.");
+connectivity.failureStage = "authenticated-bootstrap";
 const bootstrapResponse = await fetch("http://127.0.0.1:" + proxyPort + "/native/bootstrap", {
   method: "POST", headers: { authorization: "Bearer " + brokerToken }, signal: AbortSignal.timeout(15000),
 });
+connectivity.contained.authenticatedStatus = bootstrapResponse.status;
 if (!bootstrapResponse.ok) throw new Error("NemoClaw could not supply the selected optional services.");
+connectivity.failureStage = "bootstrap-json";
 const nativeServices = await bootstrapResponse.json();
+connectivity.contained.bootstrapConsumedByWorkload = true;
+connectivity.verdict = "pass";
+connectivity.failureStage = null;
+writeFileSync(bootstrapReceipt, JSON.stringify(connectivity) + "\n", "utf8");
+bootstrapWritten = true;
 Object.assign(process.env, nativeServices.environment);
 for (const [channel, settings] of Object.entries(nativeServices.options.messaging || {})) {
   process.env[channel.toUpperCase() + "_ALLOWED_USERS"] = settings.allowedUsers.join(",");
@@ -372,8 +420,8 @@ try {
     console.log("Messaging connected: " + selectedChannels.join(", ") + ".");
   }
   child = spawn(executable, args, { cwd: home, env: childEnvironment, stdio: dashboard ? ["ignore", "pipe", "pipe"] : "inherit", windowsHide: dashboard });
-  if (dashboard) { child.stdout.resume(); child.stderr.resume(); }
-  const childExit = observe(child);
+  if (dashboard) { child.stdout.pipe(process.stdout, { end: false }); child.stderr.pipe(process.stderr, { end: false }); }
+  const childExit = Promise.race([observe(child), brokerTunnel.failure]);
   if (messagingExit) {
     messagingExit.then(() => {
       if (child && child.exitCode === null && child.signalCode === null) {
@@ -422,15 +470,26 @@ try {
 if (messagingFailure) exitCode = 1;
 writeFileSync(exitReceipt, JSON.stringify({ schemaVersion: 1, agent, exitCode }) + "\n", "utf8");
 process.exitCode = exitCode;
+} catch (error) {
+  if (!bootstrapWritten) {
+    const code = error?.cause?.code ?? error?.code ?? (error?.name === "TimeoutError" ? "ETIMEDOUT" : "BOOTSTRAP_FAILED");
+    connectivity.errorCode = ["ETIMEDOUT", "ECONNREFUSED", "ECONNRESET", "EACCES", "EPERM", "ENETUNREACH", "EHOSTUNREACH", "ABORT_ERR"].includes(code) ? code : "BOOTSTRAP_FAILED";
+    writeFileSync(bootstrapReceipt, JSON.stringify(connectivity) + "\n", "utf8");
+  }
+  throw error;
+} finally {
+  await brokerTunnel?.close();
+}
 
 `;
 }
 
-export async function runNativeConsoleAgent(
+async function runNativeConsoleAgentInternal(
   options: {
     interface?: "console" | "dashboard";
     webSession?: Awaited<ReturnType<typeof openNativeWebSession>>;
-  } = {},
+  },
+  diagnostics: ReturnType<typeof createNativeSessionDiagnostics>,
 ) {
   if (process.platform !== "win32" || process.arch !== "arm64")
     fail("native Windows ARM64 is required");
@@ -468,6 +527,7 @@ export async function runNativeConsoleAgent(
   const { config: storedConfig } = readConfiguration(agentId);
   options.webSession?.assertRunning();
   options.webSession?.progress("inference");
+  diagnostics.stage("inference");
   const binRoot = requiredDirectory(path.join(installRoot, "bin"), "NemoClaw bin directory");
   const launcher = requiredFile(path.join(binRoot, "NemoClaw.exe"), "NemoClaw launcher");
   const installedNode = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
@@ -492,10 +552,15 @@ export async function runNativeConsoleAgent(
   );
   options.webSession?.assertRunning();
   options.webSession?.progress("runtime");
+  diagnostics.secret(credential);
+  diagnostics.stage("runtime");
   const brokerToken = randomBytes(32).toString("base64url");
+  diagnostics.secret(brokerToken);
   const stateSession = await acquireNativeStateSession(launcher, agentId);
   const agentRuntimeRoot = stateSession.stateRoot;
   let broker;
+  let brokerRelay: Awaited<ReturnType<typeof startNativeBrokerRelay>> | undefined;
+  let brokerRelayRoot: string | undefined;
   let runRoot;
   let runtimeRoot;
   let relay;
@@ -507,13 +572,37 @@ export async function runNativeConsoleAgent(
   let dashboardGatewayStopped = false;
   try {
     const services = await readNativeServiceEnvironment(launcher, agentId, config.options);
+    diagnostics.secret(...Object.values(services.environment));
+    diagnostics.stage("broker");
     broker = await startNativeInferenceBroker(config, credential, brokerToken, services);
+    const hostProbe = await fetch(`http://127.0.0.1:${broker.port}/native/bootstrap`, {
+      method: "POST",
+      signal: AbortSignal.timeout(5000),
+    });
+    await hostProbe.body?.cancel();
+    if (hostProbe.status !== 403)
+      fail("the local broker did not reject its unauthenticated host probe");
+    diagnostics.stage("runtime");
 
     const systemDrive = process.env.SystemDrive;
     if (!systemDrive || !/^[A-Za-z]:$/u.test(systemDrive)) fail("SystemDrive is invalid");
     const systemRoot = requiredDirectory(process.env.SystemRoot ?? "", "Windows system root");
     const runId = randomBytes(5).toString("hex");
     const relayToken = randomBytes(32).toString("base64url");
+    diagnostics.secret(relayToken);
+    const brokerRelayToken = randomBytes(32).toString("base64url");
+    diagnostics.secret(brokerRelayToken);
+    brokerRelayRoot = path.join(agentRuntimeRoot, `broker-relay-${runId}`);
+    diagnostics.stage("broker");
+    brokerRelay = await startNativeBrokerRelay({
+      relayRoot: brokerRelayRoot,
+      relayToken: brokerRelayToken,
+      brokerPort: broker.port,
+      launcher,
+      signal: webSession?.signal,
+    });
+    void brokerRelay.failure.catch(() => {});
+    diagnostics.stage("runtime");
     const relayRoot = path.join(agentRuntimeRoot, `ui-relay-${runId}`);
     if (dashboard) {
       dashboardRelayRoot = relayRoot;
@@ -550,8 +639,10 @@ export async function runNativeConsoleAgent(
     await statusFiles.mkdir(statusSlot);
     const exitRelative = `${statusSlot}/sandbox-0000000000.bin`;
     const probeRelative = `${statusSlot}/sandbox-0000000001.bin`;
+    const bootstrapRelative = `${statusSlot}/sandbox-0000000002.bin`;
     const exitReceipt = path.join(statusRoot, statusSlot, "sandbox-0000000000.bin");
     const consoleProbePath = path.join(statusRoot, statusSlot, "sandbox-0000000001.bin");
+    const bootstrapPath = path.join(statusRoot, statusSlot, "sandbox-0000000002.bin");
     const readStatus = async (relative: string, limit: number) => {
       const bytes = await statusFiles.read(relative);
       if (bytes !== null && bytes.length > limit)
@@ -559,6 +650,11 @@ export async function runNativeConsoleAgent(
       return bytes?.toString("utf8") ?? null;
     };
     fs.writeFileSync(workload, interactiveWorkloadSource(), "utf8");
+    for (const file of ["native-broker-tunnel.mts", "native-broker-relay-protocol.mts"])
+      fs.copyFileSync(
+        requiredFile(path.join(installRoot, "qualification", file), "native broker transport"),
+        path.join(runtimeRoot, file),
+      );
     if (dashboard)
       fs.copyFileSync(
         requiredFile(
@@ -569,6 +665,7 @@ export async function runNativeConsoleAgent(
       );
     webSession?.assertRunning();
     webSession?.progress("sandbox");
+    diagnostics.stage("gateway");
     const policyPath = path.join(runRoot, "policy.yaml");
     fs.writeFileSync(
       policyPath,
@@ -582,6 +679,7 @@ export async function runNativeConsoleAgent(
         "  read_write:",
         `    - ${quoteYamlPath(agentRuntimeRoot)}`,
         `    - ${quoteYamlPath(statusRoot)}`,
+        `    - ${quoteYamlPath(brokerRelayRoot)}`,
         ...(dashboard ? [`    - ${quoteYamlPath(relayRoot)}`] : []),
         "",
       ].join("\n"),
@@ -612,8 +710,14 @@ export async function runNativeConsoleAgent(
         "--log-level",
         "warn",
       ],
-      { env: gatewayEnvironment, stdio: dashboard ? "ignore" : "inherit", windowsHide: dashboard },
+      {
+        env: gatewayEnvironment,
+        stdio: dashboard ? ["ignore", "pipe", "pipe"] : "inherit",
+        windowsHide: dashboard,
+      },
     );
+    gateway.stdout?.on("data", (chunk) => diagnostics.capture("gateway.stdout", chunk));
+    gateway.stderr?.on("data", (chunk) => diagnostics.capture("gateway.stderr", chunk));
     let cliEnvironment = gatewayEnvironment;
     let passed = false;
     try {
@@ -628,22 +732,29 @@ export async function runNativeConsoleAgent(
         ["gateway", "add", `http://127.0.0.1:${gatewayPort}`, "--local", "--name", gatewayName],
         cliEnvironment,
         "Registering the native gateway",
+        undefined,
+        diagnostics,
       );
       await run(
         openshell,
         ["gateway", "select", gatewayName],
         cliEnvironment,
         "Selecting the native gateway",
+        undefined,
+        diagnostics,
       );
       const environment = {
         HOME: agentRuntimeRoot,
         LOCALAPPDATA: agentRuntimeRoot,
         NEMOCLAW_AGENT_HOME: agentRuntimeRoot,
         NEMOCLAW_AGENT_ID: agentId,
+        NEMOCLAW_AGENT_SESSION_ID: runId,
+        NEMOCLAW_AGENT_BOOTSTRAP_RECEIPT: bootstrapPath,
+        NEMOCLAW_BROKER_RELAY_ROOT: brokerRelayRoot,
+        NEMOCLAW_BROKER_RELAY_TOKEN: brokerRelayToken,
         ...(dashboard
           ? {
               NEMOCLAW_AGENT_INTERFACE: "dashboard",
-              NEMOCLAW_AGENT_SESSION_ID: runId,
               NEMOCLAW_UI_RELAY_ROOT: relayRoot,
               NEMOCLAW_UI_RELAY_TOKEN: relayToken,
               NEMOCLAW_UI_SESSION_TOKEN: randomBytes(32).toString("base64url"),
@@ -672,6 +783,11 @@ export async function runNativeConsoleAgent(
         USERPROFILE: agentRuntimeRoot,
         WINDIR: systemRoot,
       };
+      diagnostics.secret(
+        ...Object.entries(environment)
+          .filter(([name]) => /token|key|secret/iu.test(name))
+          .map(([, value]) => String(value)),
+      );
       const createArgs = [
         "sandbox",
         "create",
@@ -685,7 +801,7 @@ export async function runNativeConsoleAgent(
             windows_ui: true,
             command: [node, workload],
             cwd: agentRuntimeRoot,
-            host_loopback: true,
+            host_loopback: false,
             host_console: !dashboard,
             personal_network: true,
           },
@@ -713,7 +829,139 @@ export async function runNativeConsoleAgent(
           { flag: "wx", mode: 0o600 },
         );
       }
-      await run(openshell, createArgs, cliEnvironment, "Creating the native console workload");
+      const publishBootstrap = async (wait: boolean, signal?: AbortSignal) => {
+        const deadline = Date.now() + (wait ? 60_000 : 1000);
+        do {
+          signal?.throwIfAborted();
+          const text = await readStatus(bootstrapRelative, 16 * 1024);
+          signal?.throwIfAborted();
+          if (text?.endsWith("\n")) {
+            diagnostics.stage("bootstrap");
+            const result = JSON.parse(text);
+            const validPort = (value: unknown) =>
+              Number.isInteger(value) && Number(value) > 0 && Number(value) <= 65535;
+            if (
+              result.schemaVersion !== 1 ||
+              result.agent !== agentId ||
+              result.sessionId !== runId ||
+              result.interface !== (dashboard ? "dashboard" : "console") ||
+              result.transport !== "guarded-file-tcp" ||
+              result.brokerHost !== "127.0.0.1" ||
+              result.brokerPort !== broker.port ||
+              result.containedHost !== "127.0.0.1" ||
+              (result.containedPort !== null && !validPort(result.containedPort)) ||
+              !["pass", "fail"].includes(result.verdict) ||
+              !result.contained ||
+              typeof result.contained.tcpConnected !== "boolean" ||
+              ![
+                "bridge",
+                "tcp",
+                "unauthenticated-http",
+                "authenticated-bootstrap",
+                "bootstrap-json",
+                null,
+              ].includes(result.failureStage) ||
+              ![
+                "ETIMEDOUT",
+                "ECONNREFUSED",
+                "ECONNRESET",
+                "EACCES",
+                "EPERM",
+                "ENETUNREACH",
+                "EHOSTUNREACH",
+                "ABORT_ERR",
+                "BOOTSTRAP_FAILED",
+                null,
+              ].includes(result.errorCode)
+            )
+              fail("the contained bootstrap result was invalid");
+            const pass =
+              result.verdict === "pass" &&
+              result.contained.tcpConnected &&
+              validPort(result.containedPort) &&
+              result.contained.unauthenticatedStatus === 403 &&
+              result.contained.authenticatedStatus === 200 &&
+              result.contained.bootstrapConsumedByWorkload === true &&
+              result.failureStage === null &&
+              result.errorCode === null;
+            if (result.verdict === "pass" && !pass)
+              fail("the contained bootstrap did not prove its connection and authentication");
+            const receipt = {
+              schemaVersion: 1,
+              classification: "native-contained-bootstrap-connectivity",
+              agent: agentId,
+              interface: dashboard ? "dashboard" : "console",
+              nodeProcessId: process.pid,
+              sandboxName,
+              transport: "guarded-file-tcp",
+              brokerHost: "127.0.0.1",
+              brokerPort: broker.port,
+              containedHost: "127.0.0.1",
+              containedPort: result.containedPort,
+              hostListener: { httpStatus: hostProbe.status },
+              contained: {
+                tcpConnected: result.contained.tcpConnected,
+                unauthenticatedStatus: Number.isInteger(result.contained.unauthenticatedStatus)
+                  ? result.contained.unauthenticatedStatus
+                  : null,
+                authenticatedStatus: Number.isInteger(result.contained.authenticatedStatus)
+                  ? result.contained.authenticatedStatus
+                  : null,
+                bootstrapConsumedByWorkload: result.contained.bootstrapConsumedByWorkload === true,
+              },
+              verdict: result.verdict,
+              failureStage: result.failureStage,
+              errorCode: result.errorCode,
+            };
+            for (const directory of [consoleEvidenceRoot, dashboardEvidenceRoot]) {
+              if (!directory) continue;
+              const destination = path.join(directory, "bootstrap-connectivity.json");
+              const temporary = `${destination}.${randomBytes(8).toString("hex")}.tmp`;
+              try {
+                fs.writeFileSync(temporary, JSON.stringify(receipt) + "\n", {
+                  flag: "wx",
+                  mode: 0o600,
+                });
+                fs.renameSync(temporary, destination);
+              } finally {
+                fs.rmSync(temporary, { force: true });
+              }
+            }
+            if (!pass)
+              throw new Error(
+                `The sandbox could not connect to its local broker at ${result.failureStage} (${result.errorCode ?? "BOOTSTRAP_FAILED"}).`,
+              );
+            return receipt;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        } while (Date.now() < deadline);
+        if (wait) fail("the contained broker bootstrap did not publish its connectivity result");
+        return null;
+      };
+      diagnostics.stage("sandbox");
+      try {
+        await run(
+          openshell,
+          createArgs,
+          cliEnvironment,
+          "Creating the native console workload",
+          undefined,
+          diagnostics,
+        );
+      } catch (error) {
+        await publishBootstrap(false);
+        throw error;
+      }
+      diagnostics.stage("bootstrap");
+      webSession?.progress("bootstrap");
+      const bootstrapMonitoring = new AbortController();
+      const bootstrapResult = publishBootstrap(true, bootstrapMonitoring.signal);
+      try {
+        await Promise.race([bootstrapResult, brokerRelay.failure]);
+      } finally {
+        bootstrapMonitoring.abort();
+        await bootstrapResult.catch(() => {});
+      }
       const monitoring = new AbortController();
       const agentExit = waitForConsoleAgentExit(
         openshell,
@@ -730,9 +978,11 @@ export async function runNativeConsoleAgent(
       if (dashboard) {
         try {
           webSession?.progress("dashboard");
+          diagnostics.stage("dashboard");
           await Promise.race([
             relay.ready,
             relay.failure,
+            brokerRelay.failure,
             agentExit.then(() => {
               throw new Error("Hermes stopped before its dashboard became ready.");
             }),
@@ -750,6 +1000,8 @@ export async function runNativeConsoleAgent(
             webSession = await openNativeWebSession(installRoot, "hermes", url, {
               qualification: dashboardQualification,
             });
+          options.webSession = webSession;
+          diagnostics.stage("agent");
           if (dashboardEvidenceRoot)
             fs.writeFileSync(
               path.join(dashboardEvidenceRoot, "dashboard-ready.json"),
@@ -769,6 +1021,7 @@ export async function runNativeConsoleAgent(
           await Promise.race([
             webSession.stopped,
             relay.failure,
+            brokerRelay.failure,
             agentExit.then(() => {
               throw new Error("The Hermes dashboard stopped unexpectedly.");
             }),
@@ -795,8 +1048,12 @@ export async function runNativeConsoleAgent(
           monitoring.abort();
           await agentExit.catch(() => {});
         }
-      } else exitCode = await agentExit;
+      } else {
+        diagnostics.stage("agent");
+        exitCode = await Promise.race([agentExit, brokerRelay.failure]);
+      }
       if (exitCode !== 0) fail(`${adapter.displayName} exited with status ${exitCode}`);
+      diagnostics.stage("cleanup");
       await run(
         openshell,
         ["sandbox", "delete", sandboxName],
@@ -814,6 +1071,9 @@ export async function runNativeConsoleAgent(
       passed = true;
       sessionPassed = true;
       console.log(`\n${adapter.displayName} closed. NemoClaw removed the temporary sandbox.`);
+    } catch (error) {
+      diagnostics.fail(error);
+      throw error;
     } finally {
       if (!passed) {
         try {
@@ -862,6 +1122,9 @@ export async function runNativeConsoleAgent(
         );
       }
     }
+  } catch (error) {
+    diagnostics.fail(error);
+    throw error;
   } finally {
     const cleanupFailures: string[] = [];
     const attempt = async (label: string, operation: () => Promise<unknown> | unknown) => {
@@ -882,6 +1145,9 @@ export async function runNativeConsoleAgent(
     await attempt("session status owner shutdown", async () => {
       if (statusFiles) await statusFiles.close();
     });
+    await attempt("broker transport shutdown", async () => {
+      if (brokerRelay) await brokerRelay.dispose();
+    });
     await attempt("inference broker shutdown", async () => {
       if (!broker) return;
       const closed = new Promise<void>((resolve) => broker.server.close(() => resolve()));
@@ -889,7 +1155,13 @@ export async function runNativeConsoleAgent(
       await closed;
     });
     let rootsRemoved = true;
-    for (const directory of [runRoot, runtimeRoot, dashboardRelayRoot, statusRoot]) {
+    for (const directory of [
+      runRoot,
+      runtimeRoot,
+      dashboardRelayRoot,
+      statusRoot,
+      brokerRelayRoot,
+    ]) {
       await attempt("temporary runtime removal", async () => {
         if (directory && !(await removeDirectory(directory))) {
           rootsRemoved = false;
@@ -924,13 +1196,83 @@ export async function runNativeConsoleAgent(
           { flag: "wx", mode: 0o600 },
         );
     });
-    await attempt("native session window shutdown", async () => {
-      if (webSession)
-        await webSession.complete(sessionPassed && cleanupFailures.length === 0 && released);
-    });
+    diagnostics.cleanupFailed(...cleanupFailures);
     if (cleanupFailures.length)
       fail(`native session cleanup failed: ${cleanupFailures.join(", ")}`);
   }
+}
+
+export async function runNativeConsoleAgent(
+  options: {
+    interface?: "console" | "dashboard";
+    webSession?: Awaited<ReturnType<typeof openNativeWebSession>>;
+  } = {},
+) {
+  const agent = argumentValue("--agent") ?? "";
+  if (!Object.hasOwn(AGENT_ADAPTERS, agent)) fail("a supported agent is required");
+  const installRoot = requiredDirectory(
+    process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
+    "NemoClaw installation root",
+  );
+  const localAppData = requiredDirectory(
+    process.env.LOCALAPPDATA ?? "",
+    "Windows local application-data directory",
+  );
+  const diagnostics = createNativeSessionDiagnostics(
+    path.join(installRoot, "bin", "NemoClaw.exe"),
+    path.join(localAppData, "NVIDIA", "NemoClaw", "agents", agent),
+    agent,
+  );
+  let failure: unknown;
+  let presentation;
+  try {
+    await runNativeConsoleAgentInternal(options, diagnostics);
+  } catch (error) {
+    failure = error;
+    presentation = await diagnostics.persist(error);
+    if (
+      process.argv.includes("--console-qualification") ||
+      process.argv.includes("--dashboard-qualification")
+    ) {
+      try {
+        const evidence = requiredDirectory(
+          argumentValue("--artifact-directory") ?? "",
+          "native qualification evidence directory",
+        );
+        const destination = path.join(evidence, "session-failure.json");
+        const temporary = `${destination}.${randomBytes(8).toString("hex")}.tmp`;
+        try {
+          const record =
+            JSON.stringify({
+              schemaVersion: 1,
+              classification: "native-session-failure-evidence",
+              agent,
+              interface: options.interface === "dashboard" ? "dashboard" : "console",
+              nodeProcessId: process.pid,
+              backendCleanupFinished: true,
+              stage: presentation.stage,
+              diagnosticPath: presentation.diagnosticPath,
+              diagnostics: JSON.parse(diagnostics.failureEvidence()),
+            }) + "\n";
+          if (Buffer.byteLength(record) > 1024 * 1024)
+            fail("native failure evidence exceeds its limit");
+          fs.writeFileSync(temporary, record, { flag: "wx", mode: 0o600 });
+          fs.renameSync(temporary, destination);
+        } finally {
+          fs.rmSync(temporary, { force: true });
+        }
+      } catch {
+        console.error("NemoClaw could not retain the qualification failure snapshot.");
+      }
+    }
+  }
+  try {
+    await options.webSession?.complete(failure === undefined, presentation);
+  } catch (error) {
+    failure ??= error;
+    presentation ??= await diagnostics.persist(failure);
+  }
+  if (failure !== undefined) throw new NativeSessionFailure(presentation!, failure);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))

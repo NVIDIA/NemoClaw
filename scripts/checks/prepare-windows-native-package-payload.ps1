@@ -854,10 +854,14 @@ debug = false
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-hermes-ui.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-remove-data.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-web-session.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-session-diagnostics.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-ui-tunnel.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\assets\desktop-icons') -Destination (Join-Path $output 'desktop-icons') -Recurse
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-options.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-inference-broker.mts') -Destination $qualificationRoot
+    foreach ($brokerFile in @('native-broker-relay.mts', 'native-broker-tunnel.mts', 'native-broker-relay-protocol.mts')) {
+        Copy-Item -LiteralPath (Join-Path $candidate "packaging\windows\runtime\$brokerFile") -Destination $qualificationRoot
+    }
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-ui-relay.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-ui-lifecycle.mts') -Destination $qualificationRoot
     foreach ($inferenceFile in @('native-inference.mts', 'native-inference-cli.mts', 'native-inference-host.mts', 'native-inference-install.mts', 'native-inference-download.mts', 'native-inference-manifest.mts', 'native-inference-manifest.json', 'native-inference-guard.mts', 'native-inference-unpack.py', 'native-configured-inference.mts')) {
