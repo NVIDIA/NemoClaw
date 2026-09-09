@@ -307,6 +307,113 @@ describe("fixed catalog vLLM installs", () => {
     expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
   });
 
+  /**
+   * Resume replays NemoClaw's own checkpoint, so the preset-driven install
+   * paths below run the real selection guard rather than a canned result.
+   */
+  async function withActualSelectionGuard(
+    readinessReports: ReturnType<typeof vllmInstallTestReadiness>,
+  ): Promise<void> {
+    const actualSelection = await vi.importActual<
+      typeof import("./serving/host-local-vllm-selection")
+    >("./serving/host-local-vllm-selection");
+    mocks.resolveHostLocalVllmSelection.mockImplementation((base, env, options) =>
+      actualSelection.resolveHostLocalVllmSelection(base, env, {
+        ...options,
+        readinessReports,
+      }),
+    );
+  }
+
+  it("resumes a checkpointed model under an explicitly selected serving preset", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const modelIntent = "muse-glimmer-30b";
+    const selected = await resolveActualHostLocalSelection(
+      profile,
+      { NEMOCLAW_VLLM_MODEL: modelIntent },
+      modelIntent,
+    );
+    process.env.NEMOCLAW_SERVING_PRESET = selected.presetId;
+    const readinessReports = vllmInstallTestReadiness(profile, modelIntent);
+    await withActualSelectionGuard(readinessReports);
+    const servedModelId = selected.model.servedModelId ?? selected.model.id;
+    mockSuccessfulVllmInstall(mocks, selected.profile.containerName);
+    mockSuccessfulAuthenticatedReadiness(servedModelId);
+    const beforeInstall = vi.fn();
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      modelIntent,
+      readinessReports,
+      beforeInstall,
+      resolveManagedBridgeHost: () => "172.18.0.1",
+    });
+
+    expect(spies.errSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("NEMOCLAW_SERVING_PRESET conflicts with NEMOCLAW_VLLM_MODEL"),
+    );
+    expect(result).toEqual({ ok: true });
+    // The preset stays the model authority, so the install that onboarding
+    // records is the one the preset selects.
+    expect(beforeInstall).toHaveBeenCalledWith(servedModelId);
+  });
+
+  it("rejects a resumed model the serving preset does not select", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const presetModel = "muse-glimmer-30b";
+    const selected = await resolveActualHostLocalSelection(
+      profile,
+      { NEMOCLAW_VLLM_MODEL: presetModel },
+      presetModel,
+    );
+    process.env.NEMOCLAW_SERVING_PRESET = selected.presetId;
+    const readinessReports = vllmInstallTestReadiness(profile, presetModel);
+    await withActualSelectionGuard(readinessReports);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      modelIntent: "qwen3.6-35b-a3b-nvfp4",
+      readinessReports,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(spies.errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("the resumed model 'qwen3.6-35b-a3b-nvfp4' does not match"),
+    );
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+  });
+
+  it("still rejects an operator model override against a serving preset", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const presetModel = "muse-glimmer-30b";
+    const selected = await resolveActualHostLocalSelection(
+      profile,
+      { NEMOCLAW_VLLM_MODEL: presetModel },
+      presetModel,
+    );
+    process.env.NEMOCLAW_SERVING_PRESET = selected.presetId;
+    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-35b-a3b-nvfp4";
+    const readinessReports = vllmInstallTestReadiness(profile, presetModel);
+    await withActualSelectionGuard(readinessReports);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      readinessReports,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(spies.errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("NEMOCLAW_SERVING_PRESET conflicts with NEMOCLAW_VLLM_MODEL"),
+    );
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+  });
+
   it("defers non-interactive custom arguments to the established installer", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-35b-a3b-nvfp4";
     process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = '["--max-model-len","32768"]';

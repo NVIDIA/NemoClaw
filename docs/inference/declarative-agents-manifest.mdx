@@ -48,8 +48,9 @@ nemoclaw onboard --agents ./agents.yaml --name my-assistant
 ```
 
 NemoClaw reads the manifest on the host and sets `NEMOCLAW_EXTRA_AGENTS_JSON` for the Dockerfile patcher.
-The build-time validator in `scripts/generate-openclaw-config.mts` is the single source of truth for structured errors.
-A malformed manifest fails the image build with a clear error message.
+Host preflight rejects selected provider-independent errors—including per-agent `subagents.maxSpawnDepth`—before onboarding starts.
+The OpenClaw config generator revalidates the complete payload, including provider-dependent fields, during the image build.
+Managed startup validates its profile before it starts the runtime.
 
 ## Define the Manifest
 
@@ -182,8 +183,9 @@ Use the CLI passthrough for interactive work.
 The command lists current agents with `openclaw agents list --json`.
 It compares the current roster with the manifest and runs `openclaw agents add|delete` for each difference.
 
-Per-agent `model`, `subagents.*`, top-level `defaults`, and `main` overrides require a sandbox rebuild.
+Supported per-agent `model`, `subagents`, and `tools` overrides, top-level `defaults`, and `main` overrides require a sandbox rebuild.
 The command reports those unsupported live changes as warnings before it exits.
+Per-agent `subagents.maxSpawnDepth` is invalid and is rejected while loading the manifest; move it to `defaults.subagents.maxSpawnDepth` before retrying `agents apply` or onboarding.
 Re-run `nemoclaw onboard --agents <file> --recreate-sandbox` to bake them.
 
 ```bash

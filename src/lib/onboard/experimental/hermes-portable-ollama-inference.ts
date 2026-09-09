@@ -99,6 +99,7 @@ const SAFE_CREDENTIAL_ENV = /^[A-Z_][A-Z0-9_]*$/u;
 
 export interface HermesPortableOllamaInferenceResolverOptions {
   readonly runtimeContext: PortableOnboardRuntimeContext | null;
+  readonly gatewayName: string;
   readonly credentialEnv: string;
   readonly getReservationSessionId: () => string | null | undefined;
   readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
@@ -893,6 +894,7 @@ export function inspectHermesPortableOllamaReadinessRuntime(
   const inferenceStateDir = hermesPortableInferenceStateDir(stateDir, input.sandboxName);
   const published = deps.preparePublishedReceiptAuthority({
     directory: inferenceStateDir,
+    gatewayName: input.operatingReceipt.gatewayName,
     sandboxName: input.sandboxName,
     credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
   });
@@ -1076,6 +1078,7 @@ export async function recoverHermesPortableOllamaInference(
       atOllamaRecoveryPhase("PRIVATE_PUBLICATION_AUTHORITY", () => {
         const current = deps.preparePublishedAuthority({
           directory: hermesPortableInferenceStateDir(stateDir, operating.receipt.sandboxName),
+          gatewayName: operating.receipt.gatewayName,
           sandboxName: input.sandboxName,
           credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
           runGatewayOpenshell: input.runGatewayOpenshell,
@@ -1457,6 +1460,7 @@ export function createHermesPortableOllamaInferenceResolver(
       directory: stateDir,
       transactionId,
       targetSha256,
+      gatewayName: options.gatewayName,
       sandboxName: input.sandboxName,
       model,
       credentialEnv: options.credentialEnv,
