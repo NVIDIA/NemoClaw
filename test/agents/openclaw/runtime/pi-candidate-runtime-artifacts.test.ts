@@ -81,7 +81,7 @@ describe("Pi managed model catalog generation", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-config-"));
     const result = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", path.join(root, "agents/pi/generate-config.ts")],
+      [path.join(root, "agents/pi/generate-config.ts")],
       {
         cwd: root,
         encoding: "utf8",

@@ -191,7 +191,7 @@ function runTrustedEntrypoint(
   repoRoot: string,
   environment: NodeJS.ProcessEnv,
 ) {
-  return spawnSync(process.execPath, ["--experimental-strip-types", entrypoint], {
+  return spawnSync(process.execPath, [entrypoint], {
     cwd: repoRoot,
     encoding: "utf8",
     env: { ...process.env, ...environment, GITHUB_WORKSPACE: repoRoot },

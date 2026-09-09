@@ -48,7 +48,7 @@ function syntheticJetsonWorkflow(selector = REQUIRED_SELECTOR): unknown {
           {
             name: "Set up Node for Jetson controller",
             uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-            with: { "node-version": 22 },
+            with: { "node-version": ">=22.19.0 <23" },
           },
           {
             env: {
@@ -59,7 +59,7 @@ function syntheticJetsonWorkflow(selector = REQUIRED_SELECTOR): unknown {
               JETSON_DISPATCH_URL: "${{ vars.JETSON_DISPATCH_URL }}",
             },
             name: "Dispatch exact commit to Jetson through operator backend",
-            run: "node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-client.mts",
+            run: "node --no-warnings tools/e2e/jetson-dispatch-client.mts",
           },
           {
             if: "always()",
