@@ -423,6 +423,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     brevTemplateSha256: [
       "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
       "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
+      // Exact #11080 Node 24/npm 12 template, including failed npm-install cleanup.
+      "ee86b418f29c48e4d4042cdb9bb5424eaaef0d89782134646c4b539e2849703e",
     ],
     formula: {
       asset: "openshell.rb",
