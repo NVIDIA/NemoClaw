@@ -260,6 +260,7 @@ function lifecycleDeps(
     readonly livePolicy?: string;
     readonly registry?: Partial<SandboxEntry>;
     readonly sandboxPhase?: (running: boolean) => string;
+    readonly sandboxIdentity?: (running: boolean) => string | undefined;
     readonly failPostStartInspectOnce?: boolean;
   } = {},
 ) {
@@ -322,7 +323,7 @@ function lifecycleDeps(
       },
       "sandbox:get": {
         status: 0,
-        stdout: `Name: ${SANDBOX}\nID: ${SANDBOX_ID}\nPhase: ${sandboxPhase()}\n`,
+        stdout: options.sandboxIdentity?.(running) ?? `Name: ${SANDBOX}\nID: ${SANDBOX_ID}\nPhase: ${sandboxPhase()}\n`,
         stderr: "",
       },
       "sandbox:exec": { status: 0, stdout: sandboxExecOutput, stderr: "" },
@@ -1177,10 +1178,10 @@ describe("Hermes portable lifecycle", () => {
     expect(captureOpenShell).not.toHaveBeenCalled();
   });
 
-  it("waits for exact Podman exit and delayed OpenShell Error after stopping one full ID (#11248)", () => {
+  it("retries an incomplete identity before delayed OpenShell Error after stopping one full ID (#11302)", () => {
     const receipt = activeReceipt();
     let elapsedMs = 0;
-    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, true, { sandboxPhase: (running) => running || elapsedMs < 2_000 ? "Ready" : "Error" });
+    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, true, { sandboxPhase: (running) => running || elapsedMs < 2_000 ? "Ready" : "Error", sandboxIdentity: (running) => !running && elapsedMs < 1_000 ? `Name: ${SANDBOX}\nPhase: Ready\n` : undefined });
     deps.now = () => elapsedMs; deps.sleep = vi.fn((milliseconds: number) => { elapsedMs += milliseconds; });
     const result = withMcpLifecycleLockSync(
       SANDBOX,
@@ -1268,15 +1269,9 @@ describe("Hermes portable lifecycle", () => {
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
   });
 
-  it("times out a stopped container when OpenShell remains Ready (#11248)", () => {
+  it("times out a stopped container when OpenShell identity remains incomplete (#11302)", () => {
     const receipt = activeReceipt();
-    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt);
-    const defaultCapture = captureOpenShell.getMockImplementation()!;
-    captureOpenShell.mockImplementation((args: readonly string[]) =>
-      args.slice(0, 2).join(":") === "sandbox:list"
-        ? { status: 0, stdout: sandboxListJson(SANDBOX_ID, "Ready"), stderr: "" }
-        : defaultCapture(args),
-    );
+    const { deps, podman } = lifecycleDeps(receipt, true, { sandboxIdentity: (running) => running ? undefined : `Name: ${SANDBOX}\nPhase: Error\n` });
 
     expect(() =>
       withMcpLifecycleLockSync(
