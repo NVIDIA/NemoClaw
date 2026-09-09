@@ -25,7 +25,7 @@ elif [[ -e "$seed" || -L "$seed" ]]; then
   echo "ERROR: build-context mcporter audit evidence is not trusted" >&2
   exit 1
 else
-  node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
+  node /scripts/lib/reviewed-npm-audit.mts \
     --directory /usr/local/lib/nemoclaw/mcporter-runtime \
     --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high \
     "${audit_output_args[@]}"
