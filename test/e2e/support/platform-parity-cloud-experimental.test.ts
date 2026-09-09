@@ -32,6 +32,11 @@ const dcodeApprovalMainEntrypoint = `if [[ "\${BASH_SOURCE[0]}" == "$0" ]]; then
 fi
 `;
 const dcodeFreshReonboardCheck = path.join(cloudChecksDir, "04-deepagents-code-fresh-reonboard.sh");
+const dcodeLandlockCheck = path.join(cloudChecksDir, "05-deepagents-code-landlock-readonly.sh");
+const dcodeObservabilityCheck = path.join(
+  cloudChecksDir,
+  "11-deepagents-code-observability.sh",
+);
 const DEFAULT_TEST_PATH = process.env.PATH ?? "/usr/bin:/bin";
 const tavilyBlocked = "BLOCKED:policy denied";
 const observabilityEnabled = "enabled";
@@ -97,9 +102,26 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toContain("sha256sum /sandbox/.deepagents/config.toml");
     expect(script).toContain("config is baked into the sandbox image at build time");
     expect(script).toContain("re-onboard with the new selection");
-    expect(script).toContain(
+    expect(script).toContain("executePrivilegedSandboxCommand");
+    expect(script).toContain("resolvePrivilegedSandboxTarget");
+    expect(script).not.toMatch(/\bdocker (?:exec|ps)\b/u);
+    expect(script).not.toContain(
       'NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF="$NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF"',
     );
+  });
+
+  it("routes the Landlock sentinel through the selected runtime provider", () => {
+    const script = fs.readFileSync(dcodeLandlockCheck, "utf8");
+
+    expect(script).toContain("executePrivilegedSandboxCommand");
+    expect(script).not.toContain('spawnSync(\n  "docker"');
+  });
+
+  it("accepts only the provider-owned Podman host address outside RFC1918", () => {
+    const script = fs.readFileSync(dcodeObservabilityCheck, "utf8");
+
+    expect(script).toContain("169.254.2.2");
+    expect(script).not.toContain("169.254.*");
   });
 
   it("preserves the repeated env-unset pairs from the failed observability invocation", async () => {
@@ -768,6 +790,17 @@ assert_status_mode disabled
     );
 
     expect(env[DCODE_BASE_IMAGE_ENV]).toBe(baseImageReference);
+  });
+
+  it("allows managed-runtime re-onboard without a Docker base-image override", () => {
+    const env = buildCloudExperimentalCommandEnv(
+      "deepagents-sandbox",
+      "secret-key",
+      { HOME: "/home/runner", PATH: "/usr/bin" },
+      { forwardDcodeBaseImage: true },
+    );
+
+    expect(env[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
   });
 
   it("forwards the contract-selected Deep Agents Code base image reference instead of the ambient publication index", () => {

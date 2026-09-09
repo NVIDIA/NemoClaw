@@ -40,6 +40,7 @@ import {
   liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
   prepareSandboxWorkloadSource,
+  rejectManagedWorkloadBaseImageOverride,
   SandboxWorkloadPreparationError,
 } from "./preparation";
 import {
@@ -142,6 +143,16 @@ export async function prepareManagedWorkloadRebuildHandoff(
 
   let replacement: PreparedSandboxWorkloadSource;
   if (isCandidateManagedImageAgent(authority.agent)) {
+    try {
+      rejectManagedWorkloadBaseImageOverride(authority.agent);
+    } catch (error) {
+      throw new ManagedWorkloadRebuildError(
+        error instanceof Error
+          ? error.message
+          : "the managed workload base-image override is invalid",
+        { cause: error },
+      );
+    }
     // A candidate publishes outside the all-agent release cohort, so its
     // replacement comes from the protected qualification receipt rather than
     // the current release catalog.
@@ -199,7 +210,9 @@ export async function prepareManagedWorkloadRebuildHandoff(
       });
     } catch (error) {
       throw new ManagedWorkloadRebuildError(
-        "the selected managed-image catalog is unavailable or invalid",
+        error instanceof SandboxWorkloadPreparationError
+          ? error.message
+          : "the selected managed-image catalog is unavailable or invalid",
         { cause: error },
       );
     }

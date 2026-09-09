@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import { mockManagedEndpointlessProviderProfileRun } from "../../helpers/onboard-script-mocks.cjs";
 
@@ -147,7 +148,7 @@ beforeEach(() => {
         return providerExists
           ? {
               status: 0,
-              stdout: `Id: ${providerId}\nType: ${providerType}\nResource version: ${providerResourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
+              stdout: `Name: alpha-mcp-github\nId: ${providerId}\nType: ${providerType}\nResource version: ${providerResourceVersion}\nCredential keys: GITHUB_TOKEN\nConfig keys: <none>\n`,
               stderr: "",
             }
           : { status: 1, stdout: "", stderr: "Provider not found" };
@@ -205,7 +206,18 @@ beforeEach(() => {
     .mockImplementation(() =>
       policyState === "absent"
         ? "version: 1\nnetwork_policies: {}\n"
-        : "version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n",
+        : YAML.stringify({
+            version: 1,
+            network_policies: YAML.parse(
+              bridge.buildMcpBridgePolicyYaml(
+                "github",
+                "https://8.8.8.8/github",
+                "deepagents-config",
+                { addresses: ["8.8.8.8"] },
+                "alpha-mcp-github",
+              ),
+            ).network_policies,
+          }),
     );
 
   mocks.executeGatewaySupervisorAction.mockReset();

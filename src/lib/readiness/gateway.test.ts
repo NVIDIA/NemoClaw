@@ -212,6 +212,57 @@ describe("gateway readiness projection (#7411)", () => {
       expect.objectContaining({ id: "gateway.authority.invalid", severity: "blocking" }),
     );
     expect(projection.capabilities.every(({ state }) => state === "unknown")).toBe(true);
+    expect(projection.evidence).toContainEqual(
+      expect.objectContaining({
+        id: "gateway.probe.failure",
+        summary: expect.stringContaining("invalid declaration"),
+      }),
+    );
+  });
+
+  it("reports a redacted externally supervised probe failure", async () => {
+    const owner = externalOwner();
+    const deps = dependencies(owner);
+    const token = `nvapi-${"c".repeat(24)}`;
+    vi.mocked(deps.probeAttachment).mockRejectedValueOnce(
+      new Error(`spawnSync gateway ENOENT at ${owner.stateDir}; Bearer ${token}`),
+    );
+
+    const projection = projectGatewayReadiness(
+      await collectGatewayObservations(deps, { now: () => NOW }),
+      { now: () => NOW },
+    );
+    const failure = projection.evidence.find(({ id }) => id === "gateway.probe.failure");
+
+    expect(failure?.summary).toContain("spawnSync gateway ENOENT");
+    expect(failure?.summary).toContain("<gateway-state>");
+    expect(failure?.summary).not.toContain(owner.stateDir);
+    expect(failure?.summary).not.toContain(token);
+  });
+
+  it("reports a redacted managed gateway observation failure (#10985)", async () => {
+    const owner = managedOwner();
+    const deps = dependencies(owner);
+    const token = `nvapi-${"d".repeat(24)}`;
+    vi.mocked(deps.observeManagedGateway).mockRejectedValueOnce(
+      new Error(`spawnSync podman ENOENT; Authorization: Bearer ${token}`),
+    );
+
+    const projection = projectGatewayReadiness(
+      await collectGatewayObservations(deps, { now: () => NOW }),
+      { now: () => NOW },
+    );
+    const failure = projection.evidence.find(({ id }) => id === "gateway.probe.failure");
+
+    expect(failure?.summary).toContain("spawnSync podman ENOENT");
+    expect(failure?.summary).not.toContain(token);
+    expect(projection.capabilities).toEqual(
+      expect.arrayContaining(
+        ["gateway.reuse.ready", "gateway.version.compatible", "gateway.port.uncontested"].map(
+          (id) => expect.objectContaining({ id, state: "unknown" }),
+        ),
+      ),
+    );
   });
 
   it("rejects observations held longer than 30 seconds and reports the measured age", async () => {

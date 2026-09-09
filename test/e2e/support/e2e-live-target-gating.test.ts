@@ -238,7 +238,7 @@ describe("live E2E target gating", () => {
     ],
     [
       "openshell-gateway-upgrade.test.ts",
-      "openshell-gateway-upgrade: preserves live OpenShell state or fails closed without it",
+      "openshell-gateway-upgrade: preserves a usable sandbox and workspace state (#10517)",
     ],
   ] as const)("applies the Linux gate to %s at real Vitest collection", (file, testName) => {
     const result = listLiveTests({

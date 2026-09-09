@@ -75,6 +75,8 @@ export interface OpenAiSelectionValidationOptions {
   useNvidiaEndpointProbePayload?: boolean;
   /** Provider identity used only for safe, provider-specific diagnostics. */
   provider?: string;
+  /** Provider-owned default model used only for safe, provider-specific diagnostics. */
+  providerDefaultModel?: string;
   revalidateSandboxIdentity?: (operation: string) => void;
 
   skipResponsesProbe?: boolean;
@@ -216,24 +218,67 @@ export function createInferenceSelectionValidationHelpers(
     }
   }
 
+  function hasGeminiChatCompletionsHttpFailure(
+    provider: string | undefined,
+    probe: { failures?: unknown[] },
+    status: number,
+  ): boolean {
+    if (provider !== "gemini-api" || !Array.isArray(probe.failures)) return false;
+    return probe.failures.some((failure) => {
+      if (!failure || typeof failure !== "object") return false;
+      const { name, httpStatus } = failure as Record<string, unknown>;
+      return (
+        typeof name === "string" && name.startsWith("Chat Completions API") && httpStatus === status
+      );
+    });
+  }
+
   function printGeminiRuntimeNotFoundGuidance(
     provider: string | undefined,
     probe: { failures?: unknown[] },
   ): void {
-    if (provider !== "gemini-api" || !Array.isArray(probe.failures)) return;
-    const chatNotFound = probe.failures.some((failure) => {
-      if (!failure || typeof failure !== "object") return false;
-      const { name, httpStatus } = failure as Record<string, unknown>;
-      return (
-        typeof name === "string" && name.startsWith("Chat Completions API") && httpStatus === 404
-      );
-    });
-    if (!chatNotFound) return;
+    if (!hasGeminiChatCompletionsHttpFailure(provider, probe, 404)) return;
     console.error(
       "  This 404 came from Google's OpenAI-compatible Chat Completions runtime route, not the native /v1beta/models catalog.",
     );
     console.error(
       "  NemoClaw cannot continue from catalog availability alone because the sandbox uses that Chat Completions route at runtime.",
+    );
+  }
+
+  function printGeminiBadRequestGuidance(
+    provider: string | undefined,
+    selectedModel: string,
+    providerDefaultModel: string | undefined,
+    credentialEnv: string | null,
+    probe: { failures?: unknown[] },
+  ): void {
+    if (!hasGeminiChatCompletionsHttpFailure(provider, probe, 400)) return;
+
+    const recovery = getProbeRecovery(probe as ProbeLike, { allowModelRetry: true });
+    if (recovery.kind === "credential") {
+      const credentialName = /^[A-Z][A-Z0-9_]*$/.test(credentialEnv ?? "")
+        ? `\`${credentialEnv}\``
+        : "the selected Gemini credential";
+      console.error(
+        `  Google rejected the Gemini credential. Verify or rotate ${credentialName}, then rerun the original onboarding command.`,
+      );
+      return;
+    }
+    const defaultModel = String(providerDefaultModel ?? "").trim();
+    if (defaultModel && selectedModel !== defaultModel) {
+      console.error(
+        `  Google rejected the configured model or Chat Completions request. Retry the original command with \`NEMOCLAW_MODEL=${defaultModel}\`.`,
+      );
+    } else if (defaultModel) {
+      console.error(
+        "  Google rejected the configured model or Chat Completions request. The selected model is already the configured Gemini default.",
+      );
+    } else {
+      console.error("  Google rejected the configured model or Chat Completions request.");
+    }
+    console.error(
+      "  Verify that the selected model has OpenAI-compatible function-calling access for this API key in Google AI Studio before retrying.",
     );
   }
 
@@ -347,6 +392,13 @@ export function createInferenceSelectionValidationHelpers(
       probeOptions.capabilityCache?.invalidate();
       printValidationFailure(label, probe);
       printGeminiRuntimeNotFoundGuidance(provider, probe);
+      printGeminiBadRequestGuidance(
+        provider,
+        model,
+        probeOptions.providerDefaultModel,
+        credentialEnv,
+        probe,
+      );
       if (deps.isNonInteractive()) {
         exitNonInteractiveValidationFailure();
       }
