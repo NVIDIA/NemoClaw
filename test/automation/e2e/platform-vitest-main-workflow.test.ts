@@ -68,6 +68,7 @@ describe("platform evidence workflow", () => {
 
   it("verifies GNU tar without replacing the native macOS tar", () => {
     const install = step("macos-vitest", "Install macOS test dependencies").run ?? "";
+    const vitest = step("macos-vitest", "Run full Vitest suite on macOS").run ?? "";
     expect(install).toContain('test -x "$(command -v gtar)"');
     expect(install.indexOf('test -x "$(command -v gtar)"')).toBeLessThan(
       install.indexOf("brew install"),
@@ -75,6 +76,9 @@ describe("platform evidence workflow", () => {
     expect(install).not.toContain('ln -s "$(command -v gtar)"');
     expect(install).not.toContain('"$RUNNER_TEMP/nemoclaw-bin"');
     expect(install).not.toMatch(/brew install[^\n]*(?:docker|gnu-tar|iproute2mac|podman)/u);
+    expect(vitest).toContain('ln -s "$(command -v gtar)" "$RUNNER_TEMP/nemoclaw-vitest-bin/tar"');
+    expect(vitest).toContain('PATH="$RUNNER_TEMP/nemoclaw-vitest-bin:$PATH"');
+    expect(vitest).not.toContain("GITHUB_PATH");
   });
 
   it("installs container clients before Vitest but starts Docker only afterward", () => {
@@ -86,6 +90,7 @@ describe("platform evidence workflow", () => {
     );
     const suiteIndex = steps.findIndex((entry) => entry.name === "Run full Vitest suite in WSL");
     expect(install).toContain("'docker.io'");
+    expect(install).toContain("'libc6-dev'");
     expect(install).toContain("'podman'");
     expect(install).toContain("'iproute2'");
     expect(install).toContain("'zip'");
@@ -98,6 +103,13 @@ describe("platform evidence workflow", () => {
     expect(runtimeIndex).toBeGreaterThanOrEqual(0);
     expect(suiteIndex).toBeGreaterThanOrEqual(0);
     expect(runtimeIndex).toBeGreaterThan(suiteIndex);
+  });
+
+  it("uses one native WSL npm cache for installation and package-contract tests", () => {
+    const install = step("wsl-vitest", "Install dependencies and build in WSL").run ?? "";
+    const vitest = step("wsl-vitest", "Run full Vitest suite in WSL").run ?? "";
+    expect(install).toContain('export NPM_CONFIG_CACHE="`$HOME/.npm"');
+    expect(vitest).toContain('export NPM_CONFIG_CACHE="`$HOME/.npm"');
   });
 
   it("scopes WSL live-E2E settings to the credentialed live step", () => {

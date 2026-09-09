@@ -224,9 +224,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     );
   vi.spyOn(rebuildFlowHelpers, "removeStaleRebuildDockerOrphan").mockReturnValue(undefined);
   vi.spyOn(onboardSession, "listRetainedSandboxRecoveryRecords").mockReturnValue([]);
-  vi.spyOn(portableRetirementAuthority, "withPortableOnboardRetirementBoundary").mockImplementation(
-    ((_boundary: unknown, operation: () => unknown) => operation()) as never,
-  );
+  if (!overrides.useRealPortableRetirementBoundary) {
+    vi.spyOn(
+      portableRetirementAuthority,
+      "withPortableOnboardRetirementBoundary",
+    ).mockImplementation(((_boundary: unknown, operation: () => unknown) => operation()) as never);
+  }
   const imageIdsByRef = new Map([
     [agentBaseImageRef, agentBaseImageId],
     [agentBaseImageId, agentBaseImageId],

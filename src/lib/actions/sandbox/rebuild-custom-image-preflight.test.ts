@@ -611,6 +611,7 @@ describe("finalizePreparedRebuildImageMessagingPlan", () => {
             removeImage,
             env: { DOCKER_CONFIG: dockerConfig, WSL_DISTRO_NAME: "Ubuntu" },
             credentialHelperResponds: () => false,
+            dockerContextIsDefault: () => true,
             isWslHost: true,
           },
         ),

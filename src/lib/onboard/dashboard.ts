@@ -294,6 +294,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     options: Parameters<typeof dashboardAccess.getDashboardForwardPort>[1] = {},
   ): string {
     return dashboardAccess.getDashboardForwardPort(chatUiUrl, {
+      env: deps.env,
+      isWsl: deps.isWsl(),
       ...options,
       runCapture: options.runCapture || runCapture,
     });
@@ -304,6 +306,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     options: Parameters<typeof dashboardAccess.getDashboardForwardTarget>[1] = {},
   ): string {
     return dashboardAccess.getDashboardForwardTarget(chatUiUrl, {
+      env: deps.env,
+      isWsl: deps.isWsl(),
       ...options,
       runCapture: options.runCapture || runCapture,
     });

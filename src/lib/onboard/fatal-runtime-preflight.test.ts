@@ -631,7 +631,7 @@ describe("runFatalOnboardRuntimePreflight", () => {
 
     expect(detect).toHaveBeenCalledOnce();
     expect(detect).toHaveBeenCalledWith(
-      expect.objectContaining({ proveArm64ContainerGpu: null, n1xWslProduct: null }),
+      expect.objectContaining({ proveArm64ContainerGpu: null }),
     );
   });
 

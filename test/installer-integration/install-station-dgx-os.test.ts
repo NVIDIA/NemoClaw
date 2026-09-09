@@ -1054,6 +1054,7 @@ station_sudo_local_default_docker() {
     *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
   esac
 }
+query_host_docker() { DOCKER_QUERY_OUTPUT=""; return 0; }
 sudo() {
   case "$*" in
     'nvidia-ctk cdi list') printf 'nvidia.com/gpu=all\n' ;;
@@ -1106,6 +1107,7 @@ station_sudo_local_default_docker() {
     *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
   esac
 }
+query_host_docker() { DOCKER_QUERY_OUTPUT=""; return 0; }
 require_docker_mutation_quiescence() { printf 'WORKLOAD_GATE_OK %s\n' "$1"; }
 sudo() {
   case "$*" in

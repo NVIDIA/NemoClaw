@@ -97,7 +97,7 @@ describe("CI performance analysis", () => {
     await writeFile(trustedListing, JSON.stringify(trustedRuns));
     const bin = await installMockGh(
       directory,
-      `const fs=require("node:fs"); const args=process.argv.slice(2); if(args[0]==="run"){process.stdout.write(fs.readFileSync(process.env.TRUSTED));}else if(args.includes("--jq")){process.stdout.write(fs.readFileSync(process.env.LISTING));}else{const endpoint=args.join(" "); const id=endpoint.split("/artifacts/")[1].split("/zip")[0];process.stdout.write(fs.readFileSync(process.env.ARCHIVES+"/"+id+".zip"));}`,
+      `const fs=require("node:fs"); const args=process.argv.slice(2); if(args[0]==="run"){process.stdout.write(fs.readFileSync(process.env.TRUSTED));}else if(args.includes("--jq")){process.stdout.write(fs.readFileSync(process.env.LISTING));}else{const endpoint=args.join(" "); const id=endpoint.split("/artifacts/")[1].split("/zip")[0];fs.writeSync(1,fs.readFileSync(process.env.ARCHIVES+"/"+id+".zip"));}`,
     );
     const result = await runAnalyzer(
       `${skillRoot}/scripts/analyze-recent-cli-timings.mts`,

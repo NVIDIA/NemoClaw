@@ -167,7 +167,12 @@ jobs:
           npm run build
 
       - name: Run full Vitest suite on macOS
-        run: npx vitest run --testTimeout 60000 --shard="${{ matrix.shard }}/4"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/nemoclaw-vitest-bin"
+          ln -s "$(command -v gtar)" "$RUNNER_TEMP/nemoclaw-vitest-bin/tar"
+          PATH="$RUNNER_TEMP/nemoclaw-vitest-bin:$PATH" \
+            npx vitest run --testTimeout 60000 --shard="${{ matrix.shard }}/4"
 
   macos-live-e2e:
     name: macOS live E2E
@@ -313,7 +318,7 @@ jobs:
           . "$env:TRUSTED_WSL_HELPER"
           $packages = @(
             'bash', 'ca-certificates', 'curl', 'git', 'jq', 'lsb-release', 'make',
-            'docker.io', 'gcc', 'iproute2', 'podman',
+            'docker.io', 'gcc', 'iproute2', 'libc6-dev', 'podman',
             'procps', 'python3', 'python3-pip', 'python3-venv',
             'ripgrep', 'rsync', 'tar', 'unzip', 'xz-utils', 'zip'
           )
@@ -348,6 +353,7 @@ jobs:
           set -euo pipefail
           id -un | grep -Fxq $testUser
           cd $workdir
+          export NPM_CONFIG_CACHE="`$HOME/.npm"
           export NODE_AUTH_TOKEN=$nodeAuthToken
           if [ -n "`$NODE_AUTH_TOKEN" ]; then
             bash .github/actions/ci-install-dependencies.sh
@@ -372,6 +378,7 @@ jobs:
           set -euo pipefail
           id -un | grep -Fxq $testUser
           cd $workdir
+          export NPM_CONFIG_CACHE="`$HOME/.npm"
           export NEMOCLAW_EXEC_TIMEOUT=60000
           export NEMOCLAW_TEST_TIMEOUT=60000
           npx vitest run --testTimeout 60000 --shard='${{ matrix.shard }}/4'
