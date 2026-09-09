@@ -12,7 +12,7 @@ user_invocable: true
 Run the classifier from a NemoClaw checkout:
 
 ```bash
-node --experimental-strip-types --no-warnings \
+node --no-warnings \
   .agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts \
   --workdir "$PWD" --job-id <job-id>
 ```

@@ -22,7 +22,7 @@ type Workflow = {
     {
       env?: Record<string, unknown>;
       needs?: string[];
-      steps?: Array<{ name?: string; run?: string }>;
+      steps?: Array<{ name?: string; run?: string; with?: Record<string, unknown> }>;
     }
   >;
 };
@@ -41,6 +41,23 @@ function validateMutatedWorkflow(mutator: (workflow: Workflow) => void): string[
 }
 
 describe("shared E2E workflow boundary", () => {
+  it.each([
+    ["22.19.0", "jetson-nvmap-gpu", "Set up Node for Jetson controller"],
+    ["22.19.0", "generate-matrix", "Set up Node for trusted E2E planning"],
+    ["22.19.0", "base-image-publication", "Set up Node for publication verification"],
+    ["22.19.0", "hermes-gpu-startup", "Reassert trusted Node runtime"],
+    ["^22.19.0", "jetson-nvmap-gpu", "Set up Node for Jetson controller"],
+    ["^22.19.0", "generate-matrix", "Set up Node for trusted E2E planning"],
+    ["^22.19.0", "base-image-publication", "Set up Node for publication verification"],
+    ["^22.19.0", "hermes-gpu-startup", "Reassert trusted Node runtime"],
+  ])("accepts the compatible Node selector %s in %s (%s)", (version, job, stepName) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const step = workflow.jobs[job].steps!.find((candidate) => candidate.name === stepName)!;
+      step.with!["node-version"] = version;
+    });
+    expect(errors).toEqual([]);
+  });
+
   it(
     "keeps every tagged credential-free test visible to Vitest discovery",
     testTimeoutOptions(15_000),

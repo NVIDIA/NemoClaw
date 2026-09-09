@@ -71,7 +71,6 @@ describe("release qualification", () => {
     const result = spawnSync(
       process.execPath,
       [
-        "--experimental-strip-types",
         "--no-warnings",
         path.join(process.cwd(), "tools/e2e/release-qualification.mts"),
       ],

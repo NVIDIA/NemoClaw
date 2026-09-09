@@ -86,7 +86,7 @@ describe("same-commit reliability reporter entrypoint", () => {
   it("loads with the raw Node strip-types runtime used by CI", () => {
     const result = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", "--no-warnings", REPORTER_PATH],
+      ["--no-warnings", REPORTER_PATH],
       {
         encoding: "utf8",
         env: { ...process.env, GITHUB_TOKEN: "", SOURCE_RUN_ID: "" },
