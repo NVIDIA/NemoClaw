@@ -663,6 +663,15 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it("selects only full E2E consumers when the timeout contract changes", () => {
+    const changedFile = "tools/e2e/full-e2e-timeout-contract.mts";
+
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      "full-e2e",
+      "security-posture-openclaw",
+    ]);
+  });
+
   it.each([
     "test/e2e/e2e-cloud-experimental/features/skill/add-sandbox-skill.sh",
     "test/e2e/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh",

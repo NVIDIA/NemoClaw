@@ -41,6 +41,7 @@ on:
       - "test/e2e/live/portable-profile-gateway-proof.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "tools/e2e/check-semantic-phases.mts"
+      - "tools/e2e/full-e2e-timeout-contract.mts"
 
 permissions:
   contents: read
@@ -155,7 +156,8 @@ jobs:
   portable-launch:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-26.04
-    timeout-minutes: 75
+    # The live E2E has a 70m timeout; every other step shares the remaining job time.
+    timeout-minutes: 135
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: portable-launch
