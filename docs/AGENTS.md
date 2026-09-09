@@ -26,7 +26,8 @@ normal documentation task.
 1. Check whether the current agent exposes `dori_handle` or `dori_route` and `dori_collections`.
    If the user explicitly asks not to use DORI, continue with the documentation contributor guide.
 2. When those tools are available, list the installed collections.
-   - If a collection source contains `tech-docs/skill-library`, use DORI for task routing.
+   - Use DORI for task routing only when the collection matches the
+     [canonical Skill Library source](#verify-the-skill-library-source).
    - If the collection is missing, inaccessible, or cannot be verified, continue with the
      documentation contributor guide.
 3. When the DORI tools are unavailable, continue with the documentation contributor guide.
@@ -37,6 +38,17 @@ normal documentation task.
 
 Capability detection does not approve installation or host configuration.
 DORI unavailability must not block documentation work.
+
+### Verify the Skill Library Source
+
+Treat a collection as the NVIDIA Skill Library only when its normalized source is exactly
+`gitlab-master.nvidia.com/tech-docs/skill-library`. Before comparing the source, remove an HTTPS
+scheme and one optional `.git` suffix or trailing slash.
+
+A different host, a hostname with an added prefix or suffix, or a longer project path does not
+qualify even when it contains `tech-docs/skill-library`. A `gitlab:tech-docs/skill-library`
+shorthand value does not establish the host. If the source metadata does not resolve that shorthand
+to the exact normalized source, continue without DORI.
 
 When DORI is available, route the task with the changed source files, user-visible impact, likely
 documentation updates, and required validation.
@@ -55,17 +67,13 @@ Follow the skill or workflow that DORI returns.
 - Read the full target page before editing it.
 - Map code changes to existing pages before proposing a new page.
 - For every target page, use the
-  [agent variant rules](CONTRIBUTING.md#agent-variant-generation) to determine which agent runtimes
+  [agent variant rules](AUTOMATION.md#agent-variant-generation) to determine which agent runtimes
   execute the documented behavior and which guide variants must publish it.
 - Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when AI-agent docs routing guidance changes.
 
 ## Execute the Change
 
-1. Apply the applicable procedures in the documentation contributor guide, including the
-   [changelog](CONTRIBUTING.md#updating-the-changelog),
-   [agent variant](CONTRIBUTING.md#agent-variant-generation),
-   [route-style link](CONTRIBUTING.md#route-style-links), and
-   [writing convention](CONTRIBUTING.md#writing-conventions) rules.
-2. Run the commands required by
-   [Doc-Only PR Verification](CONTRIBUTING.md#doc-only-pr-verification) for the changed surface and
+1. Apply the documentation [style](STYLE.md) and [automation](AUTOMATION.md) contracts for the
+   changed surface.
+2. Follow the contributor guide's [validation](CONTRIBUTING.md#validate-the-change) procedure and
    obtain an independent documentation writer review before a direct documentation-only handoff.

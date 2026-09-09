@@ -354,7 +354,9 @@ describe("portable uninstall retirement state", () => {
             get(current, property) {
               const value = Reflect.get(current, property, current) as unknown;
               return property === "uid"
-                ? current.uid + 1n
+                ? typeof current.uid === "bigint"
+                  ? current.uid + 1n
+                  : current.uid + 1
                 : typeof value === "function"
                   ? value.bind(current)
                   : value;
@@ -629,9 +631,9 @@ describe("portable uninstall retirement state", () => {
     const cases = Object.entries(boundaries).flatMap(([operation, count]) =>
       Array.from({ length: count }, (_value, index) => [operation, index + 1] as const),
     );
-    for (let offset = 0; offset < cases.length; offset += 6) {
+    for (let offset = 0; offset < cases.length; offset += 12) {
       await Promise.all(
-        cases.slice(offset, offset + 6).map(async ([operation, boundary]) => {
+        cases.slice(offset, offset + 12).map(async ([operation, boundary]) => {
           const test = fixture();
           const result = await spawnForSignal([
             "--no-warnings",
@@ -688,9 +690,9 @@ describe("portable uninstall retirement state", () => {
     const cases = Object.entries(boundaries).flatMap(([operation, count]) =>
       Array.from({ length: count }, (_value, index) => [operation, index + 1] as const),
     );
-    for (let offset = 0; offset < cases.length; offset += 6) {
+    for (let offset = 0; offset < cases.length; offset += 12) {
       await Promise.all(
-        cases.slice(offset, offset + 6).map(async ([operation, boundary]) => {
+        cases.slice(offset, offset + 12).map(async ([operation, boundary]) => {
           const scope = retiredFixture();
           const result = await spawnForSignal([
             "--no-warnings",

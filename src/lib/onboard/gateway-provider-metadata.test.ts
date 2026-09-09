@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  inspectGatewayCredentialOnlyProviderBinding,
+  inspectGatewayCredentialFamilyProviderBinding,
   matchesGatewayCredentialOnlyProviderBinding,
   matchesGatewayProviderBinding,
   parseGatewayProviderMetadata,
@@ -102,29 +102,29 @@ describe("gateway provider metadata", () => {
       "Name: alpha-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n";
 
     expect(
-      inspectGatewayCredentialOnlyProviderBinding(expected, () => ({ status: 0, stdout: exact })),
+      inspectGatewayCredentialFamilyProviderBinding(expected, () => ({ status: 0, stdout: exact })),
     ).toEqual({ kind: "exact" });
     expect(
-      inspectGatewayCredentialOnlyProviderBinding(expected, () => ({
+      inspectGatewayCredentialFamilyProviderBinding(expected, () => ({
         status: 0,
         stdout: exact.replace("Type: nemoclaw-mcp-v1", "Type: generic"),
       })),
     ).toEqual({ kind: "collision" });
     expect(
-      inspectGatewayCredentialOnlyProviderBinding(expected, () => ({
+      inspectGatewayCredentialFamilyProviderBinding(expected, () => ({
         status: 1,
         stderr:
           "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
       })),
     ).toEqual({ kind: "missing" });
     expect(
-      inspectGatewayCredentialOnlyProviderBinding(expected, () => ({
+      inspectGatewayCredentialFamilyProviderBinding(expected, () => ({
         status: 1,
         stderr: 'Error: status: Unavailable, message: "provider not found"',
       })),
     ).toEqual({ kind: "indeterminate" });
     expect(
-      inspectGatewayCredentialOnlyProviderBinding(expected, () => {
+      inspectGatewayCredentialFamilyProviderBinding(expected, () => {
         throw new Error("transport failure");
       }),
     ).toEqual({ kind: "indeterminate" });
@@ -279,7 +279,7 @@ describe("gateway provider metadata", () => {
     ["null status", { status: null, stderr: "transport closed" }, "indeterminate"],
   ] as const)("classifies %s without authorizing a create (#9875)", (_label, result, kind) => {
     expect(
-      inspectGatewayCredentialOnlyProviderBinding(
+      inspectGatewayCredentialFamilyProviderBinding(
         {
           name: "alpha-telegram-bridge",
           type: "nemoclaw-mcp-v1",

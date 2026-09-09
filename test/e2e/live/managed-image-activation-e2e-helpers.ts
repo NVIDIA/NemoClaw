@@ -40,20 +40,6 @@ const GATEWAY = "nemoclaw";
 const AGENT_TIMEOUT_MS = 3 * 60_000;
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
 const ONBOARD_FAILURE_STARTUP_SIGNALS = {
-  environmentWrapperMissing: "[SECURITY] Required entrypoint env-wrapper normalizer is missing.",
-  foreignPidOneBoundary: "Hermes runtime config guard refuses mutation under a foreign PID 1",
-  hermesApiPortRejected: "[SECURITY] Invalid NEMOCLAW_HERMES_API_PORT=",
-  hermesRuntimeDirRefused: "[SECURITY] Refusing Hermes startup because /run/nemoclaw",
-  hermesRuntimeMarkerRefused: "could not be published atomically",
-  runtimeMutationCheckpointRefused:
-    "[SECURITY] Runtime state mutation startup checkpoint was refused; holding startup.",
-  runtimeMutationGateFailed: "[SECURITY] Runtime state mutation startup gate failed.",
-  runtimeMutationGateUnavailable:
-    "[SECURITY] Required runtime state mutation startup gate is unavailable.",
-  runtimeMutationReleaseUnauthenticated:
-    "[SECURITY] Runtime state mutation release receipt was not authenticated; holding startup.",
-  runtimeMutationRetryUnauthenticated:
-    "[SECURITY] Runtime state mutation retry was not authenticated; holding startup.",
   setupStarted: "Setting up NemoClaw",
 } as const;
 type OnboardFailureStartupSignal = keyof typeof ONBOARD_FAILURE_STARTUP_SIGNALS;

@@ -20,9 +20,9 @@ Use this procedure only when the maintainer requests a new trusted `main` dispat
 A generic E2E request must not authorize the Brev Launchable path. Do not infer full mode from “all”
 or “complete.” Ask only when the request contains conflicting mode phrases.
 
-Ordinary mode selects the default E2E suite without `Exact staging Brev Launchable`. Focused mode
+Ordinary mode selects the default E2E suite without `Staging Brev Launchable`. Focused mode
 selects named jobs or typed targets; set only one selector input. Launchable mode runs only that
-exact job. Full mode adds it to the default suite.
+job. Full mode adds it to the default suite.
 
 The full `Release qualification` job is strict: every release-required job must succeed. It does not
 waive failed jobs. Its result reports the run; it does not decide whether a release can proceed.
@@ -42,7 +42,7 @@ Before dispatch:
 - remove external resources that target cleanup did not remove; and
 - rotate or revoke any credential that candidate code could have copied.
 
-`Exact staging Brev Launchable` uses `BREV_API_KEY` and `BREV_ORG_ID` during trusted host
+`Staging Brev Launchable` uses `BREV_API_KEY` and `BREV_ORG_ID` during trusted host
 preparation. It exposes `NEMOCLAW_IMAGE_DISPATCH_TOKEN` only to the trusted host script as
 `GH_TOKEN`. It exports `NVIDIA_INFERENCE_API_KEY` into the Brev guest for full E2E. Candidate code in
 that guest can read the inference key. The workflow requires repository `maintain` or `admin`
@@ -133,7 +133,7 @@ RUN_SHA="$(jq -r '.[0].headSha' <<<"$MATCHES")"
 test "$RUN_SHA" = "$CANDIDATE_SHA"
 ```
 
-The exact-SHA comparison proves which commit the selected run tested. It is not a tag-authorization
+The SHA comparison proves which commit the selected run tested. It is not a tag-authorization
 rule. If the run does not appear after the bounded search, inspect GitHub Actions for the correlation
 ID. Do not dispatch again.
 
@@ -162,7 +162,7 @@ Require the selected run to report `head_sha` equal to `CANDIDATE_SHA` and `stat
 `completed`. A successful ordinary, focused, Launchable, or full run has workflow conclusion
 `success`. Otherwise, return each failed, cancelled, skipped, or running job and URL.
 
-For Launchable mode, also require one completed, successful `Exact staging Brev Launchable` job.
+For Launchable mode, also require one completed, successful `Staging Brev Launchable` job.
 Preserve links to `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` for diagnosis.
 
 For full mode, also require one completed, successful `Release qualification` job. A skipped, cancelled, queued, or failed aggregate is not a passing full run.

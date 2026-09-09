@@ -269,6 +269,10 @@ function importedSuiteModules(modules: ReadonlySet<string>): ReadonlySet<string>
   for (const importer of modules) {
     if (!TEST_FILE_PATTERN.test(path.basename(importer))) continue;
     const source = readFileSync(importer, "utf8");
+    const importsSuite = ts
+      .preProcessFile(source, true, true)
+      .importedFiles.some(({ fileName }) => fileName.includes("-suite"));
+    if (!importsSuite) continue;
     const sourceFile = ts.createSourceFile(
       importer,
       source,

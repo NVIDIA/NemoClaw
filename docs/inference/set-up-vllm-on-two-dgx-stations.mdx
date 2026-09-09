@@ -45,13 +45,13 @@ If no trusted pair qualifies, Express retains the single-Station Ultra recipe.
 If the read-only preparation check finds an active vLLM workload on an automatically discovered peer, Express leaves that peer unchanged.
 It retains the single-Station Ultra recipe.
 
-Set `NEMOCLAW_DGX_STATION_PEER` to request one exact already-trusted peer.
+Set `NEMOCLAW_DGX_STATION_PEER` to request one already-trusted peer.
 The installer stops instead of falling back when that peer does not qualify.
 An explicit `NEMOCLAW_VLLM_MODEL` remains authoritative.
 
 <Warning>
 Before installation, inspect any running `nemoclaw-vllm-head` and `nemoclaw-vllm-worker` containers.
-When both containers carry NemoClaw's complete schema-2 ownership labels, the default-port endpoint, and the matching historical launch contracts for this exact pair, NemoClaw authenticates them as prior managed state but does not reuse them.
+When both containers carry NemoClaw's complete schema-2 ownership labels, the default-port endpoint, and the matching historical launch contracts for this pair, NemoClaw authenticates them as prior managed state but does not reuse them.
 Installation interrupts serving while it removes both schema-2 containers and creates a schema-3 pair with the configured vLLM port.
 The replacement preserves the shared Hugging Face model cache and the persisted host bearer key; it does not preserve the old containers.
 If the new pair fails to start or validate, rollback removes only containers from the new transaction and reports any cleanup errors.
@@ -59,7 +59,7 @@ It does not restore the schema-2 pair, so the route remains unavailable until yo
 A missing, malformed, or mismatched ownership field remains foreign state and stops installation without removal.
 </Warning>
 
-For the first non-interactive setup, pass the managed provider and exact peer to the shell installer.
+For the first non-interactive setup, pass the managed provider and peer to the shell installer.
 The installer qualifies the pair and creates the peer binding that managed vLLM requires.
 Do not set `NEMOCLAW_DGX_STATION_SSH_BINDING` yourself or run `$$nemoclaw onboard` directly for the first pair setup.
 
@@ -100,7 +100,7 @@ This result confirms that the sandbox route served one inference request; it doe
 ## Review Reboot and Resume Behavior
 
 If the local host requires a reboot during initial preparation, the installer stops with status `10`.
-Its owner-only receipt preserves the printed exact NemoClaw revision and Express selections.
+Its owner-only receipt preserves the printed NemoClaw revision and Express selections.
 
 After reciprocal qualification starts, pair state binds the preparation helper, SSH host key, GPU identities, and reciprocal rails.
 The state names the host that must be rebooted manually.
@@ -137,7 +137,7 @@ Both containers apply these controls:
 - A read-only root filesystem and model cache.
 - All Linux capabilities dropped.
 - `no-new-privileges`.
-- Only the selected GPU UUID and exact `uverbs` devices.
+- Only the selected GPU UUID and `uverbs` devices.
 
 The worker does not receive the serving key.
 
@@ -161,7 +161,7 @@ A later onboarding run recovers and revalidates this cleanup ownership before it
 
 The receipt contains no serving API key.
 It records the peer, cluster, and GPU identities needed to revalidate and remove both managed containers.
-Full uninstall uses the receipt to remove the exact pair.
+Full uninstall uses the receipt to remove the pair.
 
 If NemoClaw cannot write the receipt, setup stops and rolls back a newly started pair.
 It does not leave a runtime that full uninstall cannot reach.

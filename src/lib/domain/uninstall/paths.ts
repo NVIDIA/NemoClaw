@@ -4,7 +4,7 @@
 import path from "node:path";
 
 import { GATEWAY_PORT } from "../../core/ports";
-import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
+import { resolveGatewayStateDirForPort } from "../../onboard/gateway-binding";
 import { nemoclawStateRoot } from "../../state/state-root";
 
 export const DEFAULT_GATEWAY_NAME = "nemoclaw";
@@ -23,6 +23,7 @@ export const OPENSHELL_MANAGED_BINARIES = [
 ] as const;
 
 export interface UninstallPathOptions {
+  gatewayStateDir?: string;
   home: string;
   repoRoot?: string;
   tmpDir?: string;
@@ -77,10 +78,11 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
     })),
     nemoclawStateDir: nemoclawStateRoot(options.home, GATEWAY_PORT),
     gatewayLocalStateDir,
-    selectedGatewayLocalStateDir: path.join(
-      gatewayLocalStateDir,
-      resolveGatewayStateDirName(GATEWAY_PORT),
-    ),
+    selectedGatewayLocalStateDir: resolveGatewayStateDirForPort({
+      configured: options.gatewayStateDir,
+      home: options.home,
+      port: GATEWAY_PORT,
+    }),
     openshellConfigDir: path.join(options.home, ".config", "openshell"),
     openshellInstallPaths: openshellInstallPathsForBinDirs(["/usr/local/bin", xdgBinHome]),
     repoRoot: options.repoRoot || path.resolve(__dirname, "..", "..", "..", ".."),
@@ -100,15 +102,35 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
   };
 }
 
+export function selectedGatewayStateDirIsWithinDefaultRoot(
+  paths: Pick<UninstallPaths, "gatewayLocalStateDir" | "selectedGatewayLocalStateDir">,
+): boolean {
+  const relative = path.relative(
+    path.resolve(paths.gatewayLocalStateDir),
+    path.resolve(paths.selectedGatewayLocalStateDir),
+  );
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
 export function uninstallStatePaths(
   paths: Pick<
     UninstallPaths,
-    "nemoclawConfigDir" | "nemoclawStateDir" | "openshellConfigDir" | "gatewayLocalStateDir"
+    | "gatewayLocalStateDir"
+    | "nemoclawConfigDir"
+    | "nemoclawStateDir"
+    | "openshellConfigDir"
+    | "selectedGatewayLocalStateDir"
   >,
 ): string[] {
   return [
     paths.nemoclawStateDir,
     paths.gatewayLocalStateDir,
+    ...(selectedGatewayStateDirIsWithinDefaultRoot(paths)
+      ? []
+      : [paths.selectedGatewayLocalStateDir]),
     paths.openshellConfigDir,
     paths.nemoclawConfigDir,
   ];

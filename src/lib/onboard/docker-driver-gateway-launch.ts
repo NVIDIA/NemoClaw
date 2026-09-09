@@ -12,6 +12,7 @@ import {
 } from "./docker-driver-gateway-compat";
 import {
   buildDockerDriverGatewayConfigToml,
+  hasStateScopedSandboxNamespace,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
@@ -24,6 +25,7 @@ import {
   ensureDockerDriverGatewayLocalTlsBundle,
 } from "./docker-driver-gateway-local-tls";
 import { buildOwnedHostGatewayArgv0 } from "./gateway-process-identity";
+import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
 
 export {
   compareDottedVersions,
@@ -34,7 +36,7 @@ export {
   requiredGlibcVersionsForBinary,
   shouldUseContainerizedGateway,
 } from "./docker-driver-gateway-compat";
-export { buildDockerDriverGatewayConfigToml };
+export { buildDockerDriverGatewayConfigToml, hasStateScopedSandboxNamespace };
 
 export type DockerDriverGatewayLaunch = {
   command: string;
@@ -108,6 +110,8 @@ type BuildGatewayLaunchOptions = {
   hostGlibcVersion?: string | null;
   requiredGlibcVersions?: string[];
   ensureLocalTlsBundle?: boolean;
+  /** Exact provider projection when the caller already resolved gateway authority. */
+  gatewayHostRuntime?: RuntimeProviderGatewayHostRuntime;
   // Multi-gateway callers pass the selected name. The hardened config derives
   // its JWT gateway identity from the already gateway-scoped state directory.
   gatewayName?: string;
@@ -135,9 +139,11 @@ function buildGatewayProcessEnv(
 export function buildDockerDriverGatewayLaunch(
   options: BuildGatewayLaunchOptions,
 ): DockerDriverGatewayLaunch {
+  const baseEnv = options.env ?? process.env;
   const gatewayEnv = { ...options.gatewayEnv };
   if (options.ensureLocalTlsBundle) {
     ensureDockerDriverGatewayLocalTlsBundle({
+      env: baseEnv,
       gatewayBin: options.gatewayBin,
       stateDir: options.stateDir,
     });
@@ -148,7 +154,13 @@ export function buildDockerDriverGatewayLaunch(
   if (options.sandboxBin && !gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN) {
     gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN = options.sandboxBin;
   }
-  assertDockerDriverGatewayBindAddressSafe(gatewayEnv);
+  const platform = options.platform ?? process.platform;
+  assertDockerDriverGatewayBindAddressSafe(
+    gatewayEnv,
+    baseEnv,
+    platform,
+    options.gatewayHostRuntime,
+  );
   prepareDockerDriverGatewayConfigEnv(
     gatewayEnv,
     options.stateDir,
@@ -156,10 +168,15 @@ export function buildDockerDriverGatewayLaunch(
     {
       allowOpenShell0044PreAuthDatabase:
         process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1",
+      ...(options.gatewayHostRuntime ? { gatewayRuntime: options.gatewayHostRuntime } : {}),
     },
   );
-  assertDockerDriverGatewayAuthConfigSafe(gatewayEnv);
-  const baseEnv = options.env ?? process.env;
+  assertDockerDriverGatewayAuthConfigSafe(
+    gatewayEnv,
+    baseEnv,
+    platform,
+    options.gatewayHostRuntime,
+  );
   const compat = shouldUseContainerizedGateway(options);
   if (!compat.useContainer) {
     const env = buildGatewayProcessEnv(baseEnv, gatewayEnv);

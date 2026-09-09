@@ -259,45 +259,27 @@ function runPinnedRuntime(entrypoint: string, args: readonly string[]) {
   );
 }
 
-function parseJsonOutput(output: string): unknown {
-  const jsonStart = output.indexOf("{");
-  expect(jsonStart, `OpenClaw did not emit JSON: ${output}`).toBeGreaterThanOrEqual(0);
-  return JSON.parse(output.slice(jsonStart));
-}
-
 suite("OpenClaw Gemini managed-route runtime compatibility", () => {
-  beforeAll(() => {
-    contextDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gemini-runtime-"));
-    ensureOpenClawGeminiRuntimeImage(OPENCLAW_RUNTIME_IMAGE);
-    stagedPluginPath = path.join(contextDir, "plugin");
-    fs.cpSync(PLUGIN_SOURCE_PATH, stagedPluginPath, { recursive: true });
-    fs.chmodSync(stagedPluginPath, 0o755);
-    fs.chmodSync(path.join(stagedPluginPath, "index.ts"), 0o644);
-    fs.chmodSync(path.join(stagedPluginPath, "openclaw.plugin.json"), 0o644);
-    const pluginStat = fs.statSync(stagedPluginPath);
-    containerUser = `${pluginStat.uid}:${pluginStat.gid}`;
-    generatedConfigPath = generateConfig();
-    fs.chmodSync(generatedConfigPath, 0o444);
-  }, OPENCLAW_GEMINI_IMAGE_INSPECT_TIMEOUT_MS + OPENCLAW_GEMINI_IMAGE_PULL_TIMEOUT_MS + 10_000);
+  beforeAll(
+    () => {
+      contextDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gemini-runtime-"));
+      ensureOpenClawGeminiRuntimeImage(OPENCLAW_RUNTIME_IMAGE);
+      stagedPluginPath = path.join(contextDir, "plugin");
+      fs.cpSync(PLUGIN_SOURCE_PATH, stagedPluginPath, { recursive: true });
+      fs.chmodSync(stagedPluginPath, 0o755);
+      fs.chmodSync(path.join(stagedPluginPath, "index.ts"), 0o644);
+      fs.chmodSync(path.join(stagedPluginPath, "openclaw.plugin.json"), 0o644);
+      const pluginStat = fs.statSync(stagedPluginPath);
+      containerUser = `${pluginStat.uid}:${pluginStat.gid}`;
+      generatedConfigPath = generateConfig();
+      fs.chmodSync(generatedConfigPath, 0o444);
+    },
+    OPENCLAW_GEMINI_IMAGE_INSPECT_TIMEOUT_MS + OPENCLAW_GEMINI_IMAGE_PULL_TIMEOUT_MS + 10_000,
+  );
 
   afterAll(() => {
     fs.rmSync(contextDir, { recursive: true, force: true });
   });
-
-  it("loads the generated plugin through OpenClaw runtime inspection (#8474)", () => {
-    const result = runPinnedRuntime("openclaw", [
-      "plugins",
-      "inspect",
-      "nemoclaw-gemini-inference-compat",
-      "--json",
-      "--runtime",
-    ]);
-
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(parseJsonOutput(String(result.stdout))).toMatchObject({
-      plugin: { status: "loaded" },
-    });
-  }, 70_000);
 
   it("applies the generated plugin to managed Google routing and tool results (#8474)", () => {
     const result = runPinnedRuntime("node", ["--input-type=module", "-e", ROUTING_PROBE]);

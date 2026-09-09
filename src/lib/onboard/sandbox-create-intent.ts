@@ -5,7 +5,7 @@ import {
   listMessagingCredentialMetadata,
   type MessagingCredentialMetadata,
 } from "../messaging/channels";
-import type { MessagingTokenDef } from "./messaging-prep";
+import { hasConfiguredMessagingCredential, type MessagingTokenDef } from "./messaging-prep";
 import { resolveQrSelectedChannels } from "./messaging-state";
 import type {
   ResolveSandboxCreateIntentInput,
@@ -127,12 +127,12 @@ export function resolveSandboxCreateMessagingProviderRequests(
   messagingTokenDefs: readonly MessagingTokenDef[],
   getMessagingChannelForEnvKey: (envKey: string) => string | null,
 ): SandboxCreateMessagingProviderRequest[] {
-  return messagingTokenDefs.map(({ name, envKey, providerType, token }) => ({
-    name,
-    envKey,
-    ...(providerType ? { providerType } : {}),
-    credentialConfigured: Boolean(token),
-    channel: getMessagingChannelForEnvKey(envKey),
+  return messagingTokenDefs.map((tokenDef) => ({
+    name: tokenDef.name,
+    envKey: tokenDef.envKey,
+    ...(tokenDef.providerType ? { providerType: tokenDef.providerType } : {}),
+    credentialConfigured: hasConfiguredMessagingCredential(tokenDef),
+    channel: getMessagingChannelForEnvKey(tokenDef.envKey),
   }));
 }
 
@@ -159,8 +159,7 @@ export function resolveSandboxCreateIntent({
   sandboxGpuLogMessage,
   extraPlaceholderKeys = [],
   agentName,
-  policyTier,
-  baselineExclusions = [],
+  policyTier = null,
 }: ResolveSandboxCreateIntentInput): SandboxCreateIntent {
   const selectedChannelNames = enabledChannels == null ? null : new Set(enabledChannels);
   const enabledMessagingProviderRequests = filterMessagingProviderRequestsByEnabledChannel(
@@ -206,7 +205,6 @@ export function resolveSandboxCreateIntent({
         ...(hostLocalInferenceRouteOnly ? { hostLocalInferenceRouteOnly: true as const } : {}),
         ...(agentName !== undefined ? { agentName } : {}),
         policyTier,
-        baselineExclusions: [...baselineExclusions].map((exclusion) => ({ ...exclusion })),
       },
     },
     sandboxGpuDevice: sandboxGpuConfig.sandboxGpuDevice?.trim() || null,

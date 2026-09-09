@@ -9,10 +9,15 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 import {
+  type HermesRevisionScopedCredentialChannel,
+  hermesRevisionScopedCredentialLinePattern,
+} from "../fixtures/hermes-channel-credential-state.ts";
+import {
   type OpenClawChannelConfigState,
   openClawChannelIsActive,
   openClawChannelIsInert,
   openClawChannelStateProbeScript,
+  openClawWechatAccountStateProbeScript,
 } from "../live/channels-stop-start-config-state.ts";
 
 const ABSENT: OpenClawChannelConfigState = {
@@ -59,6 +64,31 @@ function parseRenderedOpenClawState(
 }
 
 describe("channels stop/start OpenClaw configuration state", () => {
+  it("reports WeChat account state without reading credential files", () => {
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-state-"));
+    try {
+      const accountsDir = path.join(fixtureDir, "accounts");
+      fs.mkdirSync(accountsDir);
+      fs.writeFileSync(path.join(fixtureDir, "accounts.json"), "credential-bearing registry");
+      fs.writeFileSync(path.join(accountsDir, "primary.json"), "credential-bearing account");
+
+      const result = spawnSync(
+        "python3",
+        ["-c", openClawWechatAccountStateProbeScript(fixtureDir)],
+        { encoding: "utf8" },
+      );
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        accountDirectoryPresent: true,
+        accountRegistryPresent: true,
+        accountRootPresent: true,
+      });
+      expect(result.stdout).not.toContain("credential-bearing");
+    } finally {
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ["missing entries", ABSENT],
     ["managed-image disabled entries", MANAGED_IMAGE_DISABLED],
@@ -148,4 +178,24 @@ describe("channels stop/start OpenClaw configuration state", () => {
     expect(openClawChannelIsActive(state)).toBe(false);
     expect(openClawChannelIsInert(state)).toBe(false);
   });
+});
+
+describe("channels stop/start Hermes configuration state", () => {
+  it.each<
+    [channel: HermesRevisionScopedCredentialChannel, targetEnvKey: string, credentialEnvKey: string]
+  >([
+    ["wechat", "WEIXIN_TOKEN", "WECHAT_BOT_TOKEN"],
+    ["teams", "TEAMS_CLIENT_SECRET", "MSTEAMS_APP_PASSWORD"],
+  ])(
+    "accepts only a revision-scoped %s credential placeholder (#10079)",
+    (channel, targetEnvKey, credentialEnvKey) => {
+      const pattern = new RegExp(hermesRevisionScopedCredentialLinePattern(channel));
+
+      expect(pattern.test(`${targetEnvKey}=openshell:resolve:env:v17_${credentialEnvKey}`)).toBe(
+        true,
+      );
+      expect(pattern.test(`${targetEnvKey}=openshell:resolve:env:${credentialEnvKey}`)).toBe(false);
+      expect(pattern.test(`${targetEnvKey}=raw-secret`)).toBe(false);
+    },
+  );
 });

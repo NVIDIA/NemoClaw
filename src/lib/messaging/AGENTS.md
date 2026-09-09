@@ -28,7 +28,7 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 | `channels/` | Built-in channel manifests, channel metadata helpers, template resolvers, runtime preload assets, and channel hook implementations. |
 | `compiler/` | Manifest-to-plan compilation. It may resolve env/config inputs and run enrollment/reachability/build hooks, but should not mutate OpenShell or registry state directly. |
 | `hooks/` | Hook contracts, registries, runner validation, common prompt/static-output helpers, and conflict error types. |
-| `applier/` | Host/OpenShell side effects: plan env serialization, provider upsert/reuse, policy apply, agent config writes, hook phase execution, conflict detection, registry persistence, and build-time applier. |
+| `applier/` | Host/OpenShell side effects: plan env serialization, provider profile preparation, upsert/reuse/replacement, refresh, authorized attachment, cleanup recovery, policy apply, agent config writes, hook phase execution, conflict detection, registry persistence, and build-time applier. |
 | `persistence.ts` | Compact persisted plan shape and normalization shared by hydration. |
 | `hydration.ts` | Rebuild derived plan fields from current manifests and hooks. |
 | `plan-validation.ts` | Defensive parsing for persisted or env-provided plans. |
@@ -38,6 +38,7 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 ## Core Invariants
 
 - Manifests and compiled plans are serializable data. Do not put functions, classes, live clients, or raw secret values in them.
+- Ephemeral provider application inputs may retain credential or refresh material in host process memory for the complete provider-application operation. Callers must release those references as soon as the operation settles; JavaScript does not guarantee zeroization. Never serialize, persist, log, diagnose, or return those values from the applier. Transfer provider credentials and refresh secrets to OpenShell child processes through environment values only, never command arguments.
 - Secret inputs must not declare `statePath`; persisted plans may contain `credentialAvailable`, `credentialHash`, and placeholders, never tokens.
 - Hook implementations are resolved by stable handler IDs through `MessagingHookRegistry`. Manifests reference handlers by string; they do not import handler code.
 - Hook outputs must match manifest declarations and be JSON-serializable. Add outputs to the manifest before consuming them.
@@ -81,7 +82,7 @@ Start with `channels/<channel>/manifest.ts`.
 - New prompt, token, allowlist, provider, policy, render, package install, runtime setup, state hydration, or health-check metadata belongs in a channel manifest.
 - Nontrivial render derivation belongs in a channel template resolver.
 - Enrollment, external reachability checks, QR capture, channel-specific conflict checks, runtime status, and health probes belong in hooks.
-- Provider creation/reuse, policy application, config-file writes, plan env encoding, and registry persistence belong in `applier/`.
+- Provider profile preparation, creation/reuse/replacement, refresh, authorized attachment, cleanup recovery, policy application, config-file writes, plan env encoding, and registry persistence belong in `applier/`.
 - Onboard and `actions/sandbox/policy-channel.ts` should orchestrate planner/applier calls, not grow channel-specific rules.
 - Build-time config generation should use the compiled plan and `applier/build/messaging-build-applier.mts`; do not reintroduce channel-specific config rendering in `scripts/generate-openclaw-config.mts` or `agents/hermes/generate-config.ts`.
 

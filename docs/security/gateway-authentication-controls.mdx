@@ -99,7 +99,7 @@ For an explicit remote bind with a loopback `CHAT_UI_URL`, NemoClaw disables dev
 Both settings expand access and must remain explicit; use HTTPS or an SSH local forward when possible.
 
 In that state, NemoClaw does not add the loopback-only audit suppressions, so the resulting device-auth, insecure-auth, and Host-header fallback findings remain active.
-The generated configuration uses exact audit check IDs and flag details, records why each setting is present, and leaves the original severity and remediation under `suppressedFindings` in JSON output.
+The generated configuration uses audit check IDs and flag details, records why each setting is present, and leaves the original severity and remediation under `suppressedFindings` in JSON output.
 
 The audit also reports that suppressions are active so you can review the accepted risk.
 These suppressions change audit reporting only.
@@ -136,14 +136,14 @@ From the host, open the prepared connect shell:
 $$nemoclaw <name> connect
 ```
 
-In that shell, run the administrative command once to create the pending request, and note the exact `requestId` in the failure.
+In that shell, run the administrative command once to create the pending request, and note the `requestId` in the failure.
 Then inspect the pending requests:
 
 ```bash
 openclaw devices list --json
 ```
 
-Find that exact `requestId`, and verify that its client, device, and requested scopes match the operation you just attempted.
+Find that `requestId`, and verify that its client, device, and requested scopes match the operation you just attempted.
 Approve that request by its `requestId`:
 
 ```bash
@@ -153,7 +153,7 @@ openclaw devices approve <requestId>
 Retry the original administrative command after the approval succeeds.
 
 <Warning>
-Approve only the exact `requestId` emitted by your command and only the client, device, and scopes you expect.
+Approve only the `requestId` emitted by your command and only the client, device, and scopes you expect.
 Do not approve an unexpected client or an unrelated `operator.admin` request.
 </Warning>
 
@@ -191,7 +191,7 @@ The scanner intercepts `Write`, `Edit`, and similar tool calls targeting memory 
 | Aspect | Detail |
 |---|---|
 | Default | Enabled. The plugin registers a `before_tool_call` hook that scans for 14 high-confidence secret patterns. |
-| What it covers | Three path classifiers, all enforced through `isMemoryPath()`, plus credential-shaped text such as provider API keys, OpenAI project keys with `sk-proj-` prefixes, and Slack app-level `xapp-` tokens. The path classifiers are: (1) absolute `MEMORY_PATH_SEGMENTS` such as `/.openclaw/memory/`, `/.openclaw/workspace/`, `/.openclaw/agents/`, `/.openclaw/skills/`, `/.openclaw/hooks/`, `/.openclaw/credentials/`, `/.openclaw/openclaw.json`, `/.nemoclaw/`; (2) canonical workspace basenames in `MEMORY_BASENAMES` (`IDENTITY.md`, `MEMORY.md`, `SOUL.md`, `USER.md`, `AGENTS.md`) matched regardless of the surrounding path; and (3) lexically-normalized workspace-relative writes matching `MEMORY_RELATIVE_PREFIXES` (`.openclaw/`, `.nemoclaw/`, `memory/`) or named workspace daily memory paths, for embedded-fallback mode where the host's path resolver is unavailable. |
+| What it covers | Protects OpenClaw state, NemoClaw state, default and named workspaces, and canonical workspace files. It scans 14 high-confidence credential patterns. |
 | What you can change | This is not a user-facing knob. The plugin enforces it automatically. |
 | Risk if relaxed | Without scanning, the agent could persist API keys or tokens in memory files that survive across sessions and backups. |
 | Recommendation | No action needed. If a write is blocked, the agent receives an actionable error listing the detected patterns. |

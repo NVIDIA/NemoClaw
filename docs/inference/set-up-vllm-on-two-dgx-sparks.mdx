@@ -23,7 +23,7 @@ Use it only for evaluation until the required physical validation is complete.
 DGX Spark Express attempts automatic profile selection only after you keep option 1, the default managed-vLLM path.
 Option 2 selects the fixed single-host catalog profile and does not attempt distributed selection.
 A provider other than `install-vllm`, an existing local inference route, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, or `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` remains authoritative.
-Without explicit inference intent, the detector derives one exact counterpart from each qualified private `/30` rail.
+Without explicit inference intent, the detector derives one counterpart from each qualified private `/30` rail.
 It does not scan a subnet, add SSH host keys, add authorized keys, or change SSH configuration.
 
 Both derived addresses must already have strict public-key SSH trust.
@@ -45,9 +45,9 @@ An existing durable managed-cluster or dual-Station runtime receipt also stops s
 A copied runtime binding, an orphaned discovery claim, or an SSH binding conflict also stops setup.
 NemoClaw leaves the existing files, containers, and listeners untouched instead of replacing, repairing, adopting, or removing them.
 
-Set `NEMOCLAW_MANAGED_CLUSTER_PEERS` to a comma-separated list of exact pretrusted peers.
+Set `NEMOCLAW_MANAGED_CLUSTER_PEERS` to a comma-separated list of pretrusted peers.
 The current profile declares `nodeCount: 2`, so its strict selection requires one peer.
-Set `NEMOCLAW_SERVING_PRESET=vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731` to request the exact serving profile.
+Set `NEMOCLAW_SERVING_PRESET=vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731` to request the serving profile.
 Either setting makes qualification strict, so a missed requirement stops setup instead of selecting the single-DGX Spark profile.
 
 ## Prepare Both Systems
@@ -78,7 +78,7 @@ Every other required capability must have the `present` state.
 For these capability definitions, refer to [System Readiness](../../reference/system-readiness).
 
 Refer to the [NVIDIA DGX Spark clustering guide](https://docs.nvidia.com/dgx/dgx-spark/spark-clustering.html) for the physical connection workflow.
-The NemoClaw checks above remain the exact profile requirements.
+The NemoClaw checks above remain the profile requirements.
 
 ### Reserve Storage on Each System
 
@@ -91,7 +91,7 @@ For a cold cache, each system needs these approximate capacities:
 | Docker storage | `32.584 GB` | Three times the `9.788 GB` compressed image size plus a `3.221 GB` staging reserve. |
 | Shared filesystem | `203.520 GB` | The combined cold-cache requirement when both paths share one filesystem. |
 
-NemoClaw reserves the selected recipe's full declared image and model download sizes, staging capacity, and writable allowance even when the exact artifacts are cached.
+NemoClaw reserves the selected recipe's full declared image and model download sizes, staging capacity, and writable allowance even when the artifacts are cached.
 An unavailable capacity, ownership, directory, writability, or inode result leaves the two-node profile unqualified.
 
 ## Restrict Network Access
@@ -103,7 +103,7 @@ The pinned image runs as root in both containers.
 Each container receives all host GPUs, `/dev/infiniband`, Docker host networking, host inter-process communication, `64 GB` of shared memory, and unlimited locked memory.
 The launch does not use a read-only root filesystem, drop Linux capabilities, or set `no-new-privileges`.
 The serving command does not enable vLLM's `--trust-remote-code` switch.
-Before it copies the pinned snapshot's required encoder module into the runtime package, it verifies that file against the recipe's exact SHA-256 digest.
+Before it copies the pinned snapshot's required encoder module into the runtime package, it verifies that file against the recipe's SHA-256 digest.
 The head binds the configured vLLM port, `${NEMOCLAW_VLLM_PORT:-8000}`, only to the qualified primary rail address.
 vLLM applies bearer API key authentication to its authenticated API routes, including the inventory and chat routes that NemoClaw verifies.
 The API key does not authenticate every endpoint on the configured vLLM port.
@@ -114,7 +114,7 @@ The distributed rendezvous and RoCE traffic do not use that bearer credential.
 Treat both DGX Spark systems and every host that can reach the direct rails as one trusted runtime boundary.
 Allow the configured vLLM port only from the OpenShell Docker subnet to the selected head rail address.
 Deny the configured vLLM port on management, LAN, and internet-facing interfaces.
-Restrict port `25000`, NVIDIA Collective Communications Library (NCCL), and RoCE traffic to the exact reciprocal private rail addresses.
+Restrict port `25000`, NVIDIA Collective Communications Library (NCCL), and RoCE traffic to the reciprocal private rail addresses.
 The address-specific bind reduces listener exposure but does not replace these firewall and trusted-boundary controls.
 </Warning>
 
@@ -146,10 +146,10 @@ DGX Spark Express prints the selected topology, immutable image, pinned model re
 For optional authenticated model downloads, follow [Authenticate Hugging Face Downloads](set-up-vllm#authenticate-hugging-face-downloads) before you start the installer.
 The public model can download anonymously, but Hugging Face can rate-limit anonymous transfers.
 
-## Select an Exact Pair
+## Select a Pair
 
 Use strict selection when you already know the pretrusted peer and want setup to stop on any missed requirement.
-The following first-install example also selects the exact serving preset.
+The following first-install example also selects the serving preset.
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
@@ -172,7 +172,7 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 ```
 
 The peer must already pass strict public-key authentication and host-key checking without an interactive prompt.
-The explicit target still must match the exact reciprocal rail topology.
+The explicit target still must match the reciprocal rail topology.
 
 ## Understand the Distributed Runtime
 
@@ -183,7 +183,7 @@ The compiled profile pins these artifacts:
 - The served model ID is `deepseek-v4-flash-0731`.
 - The context window is `1,048,576` tokens, with tensor parallelism `2` and pipeline parallelism `1`.
 
-NemoClaw stages the exact image and model snapshot on both systems.
+NemoClaw stages the image and model snapshot on both systems.
 It mounts the pinned Hugging Face model data read-only into each long-running container.
 It resolves the selected RoCEv2 GID during qualification instead of assuming a fixed GID index.
 
@@ -192,7 +192,7 @@ The worker must remain alive while waiting at the distributed rendezvous before 
 NemoClaw passes the bearer API key only through the head container environment.
 It does not add the credential or an environment-variable expansion to the vLLM process arguments.
 The worker does not receive the API key.
-Setup commits only after both container identities remain exact and authenticated model inventory and chat requests succeed.
+Setup commits only after both containers retain their recorded identities and authenticated model inventory and chat requests succeed.
 
 ## Verify the Installed Route
 
@@ -212,30 +212,30 @@ It does not establish physical two-node E2E validation or product support.
 
 After runtime validation, NemoClaw writes the owner-only host-global receipt `~/.nemoclaw/managed-cluster-vllm-runtime.json`.
 It copies each pinned peer SSH binding to `~/.nemoclaw/managed-cluster-vllm-runtime.json.rank-<rank>.ssh-binding/`.
-The receipt contains the exact plan, ranked node identities, container IDs, peer identities, and API key fingerprint.
+The receipt contains the plan, ranked node identities, container IDs, peer identities, and API key fingerprint.
 It does not contain the API key.
 
 NemoClaw stores the host-global bearer API key in the owner-only `~/.nemoclaw/dual-station-vllm-api-key` file.
 The filename remains stable for managed vLLM compatibility across distributed profiles.
 Users with Docker control can inspect the head container environment, so restrict Docker access to trusted administrators.
 
-If receipt persistence fails, NemoClaw attempts to remove only the exact containers created by that attempt and reports any rollback removal it cannot confirm.
-It does not remove an exact cluster that existed before the attempt.
+If receipt persistence fails, NemoClaw attempts to remove only the containers created by that attempt and reports any rollback removal it cannot confirm.
+It does not remove a cluster that existed before the attempt.
 
 The containers have no Docker restart policy.
 NemoClaw does not provide automatic runtime persistence across a Docker daemon restart or host reboot.
 A stopped, partial, mismatched, or unhealthy cluster remains a conflict and is not repaired automatically.
 
-Run a full uninstall to remove the exact receipt-owned cluster.
+Run a full uninstall to remove the receipt-owned cluster.
 
 ```bash
 $$nemoclaw uninstall
 ```
 
-Full uninstall revalidates every exact container ID before it removes the containers.
-It then retires the receipt, copied SSH bindings, and exact temporary discovery claims recorded by that receipt.
+Full uninstall revalidates every container ID before it removes the containers.
+It then retires the receipt, copied SSH bindings, and temporary discovery claims recorded by that receipt.
 If NemoClaw cannot revalidate or remove a receipt-owned container, uninstall stops before other cleanup and preserves the receipt so you can rerun `$$nemoclaw uninstall`.
-Uninstall also stops and preserves the receipt when NemoClaw cannot retire an exact temporary discovery claim recorded by that receipt.
+Uninstall also stops and preserves the receipt when NemoClaw cannot retire a temporary discovery claim recorded by that receipt.
 A gateway-scoped uninstall preserves the host-global cluster, receipt, SSH bindings, and API key while another gateway remains.
 Cluster cleanup does not delete the Hugging Face model cache.
 

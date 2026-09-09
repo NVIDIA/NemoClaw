@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   acquireProcessBoundLockAt,
   classifyExistingLock,
+  ProcessBoundLockContentionError,
   releaseProcessBoundLock,
   withProcessBoundRegistryLockAt,
   withRegistryLockAt,
@@ -336,9 +337,9 @@ describe("generation-safe registry lock removal", () => {
     const handle = acquireProcessBoundLockAt(test.lockDir, exactDeps());
 
     expect(fs.readFileSync(test.ownerFile, "utf8")).toBe(String(process.pid));
-    expect(() => acquireProcessBoundLockAt(test.lockDir, exactDeps({ maxRetries: 1 }))).toThrow(
-      /after 1 retries/,
-    );
+    expect(() =>
+      acquireProcessBoundLockAt(test.lockDir, exactDeps({ maxRetries: 1 })),
+    ).toThrow(ProcessBoundLockContentionError);
     releaseProcessBoundLock(handle);
     expect(fs.existsSync(test.lockDir)).toBe(false);
     expect(() => releaseProcessBoundLock(handle)).toThrow(/inactive/);

@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   deleteProviderWithRecovery,
   detachSandboxProviders,
+  type DetachSandboxProvidersDeps,
   emitProviderDetachResidualHint,
   parseAttachedSandboxes,
   recoverAttachedProvider,
@@ -67,6 +68,31 @@ describe("detachSandboxProviders", () => {
     );
     expect(result.detached).toHaveLength(SANDBOX_PROVIDER_SUFFIXES.length);
     expect(result.failures).toEqual([]);
+  });
+
+  it("detects a same-name replacement after one detach and stops later detaches (#9833)", () => {
+    const calls: string[][] = [];
+    const expectedIdentity = "identity-a";
+    let liveIdentity = expectedIdentity;
+    const runOpenshell = vi.fn((args: string[]) => {
+      calls.push(args);
+      liveIdentity = "identity-b";
+      return { status: 0 };
+    });
+    const revalidateSandboxIdentity = vi.fn((_operation: string) => {
+      liveIdentity === expectedIdentity ||
+        (() => {
+          throw new Error("sandbox identity changed");
+        })();
+    });
+    const deps: DetachSandboxProvidersDeps = { runOpenshell, revalidateSandboxIdentity };
+
+    expect(() => detachSandboxProviders("alpha", deps)).toThrow(/sandbox identity changed/u);
+    expect(calls).toHaveLength(1);
+    expect(revalidateSandboxIdentity.mock.calls.map(([operation]) => operation)).toEqual([
+      expect.stringMatching(/^detaching provider /u),
+      expect.stringMatching(/^confirming provider /u),
+    ]);
   });
 
   it("treats provider-scoped NotFound / not attached outputs as success-equivalent", () => {

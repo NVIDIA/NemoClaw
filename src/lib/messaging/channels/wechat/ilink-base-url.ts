@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const WECHAT_ILINK_HOSTS = new Set(["ilinkai.weixin.qq.com", "ilinkai.wechat.com"]);
-const WECHAT_ILINK_IDC_HOST_PATTERN = /^idc-[0-9]+[.]weixin[.]qq[.]com$/;
+const WECHAT_ILINK_IDC_HOST_PATTERN = /^idc-[0-9]+[.]weixin[.]qq[.]com$/u;
 
 export function normalizeWechatIlinkBaseUrl(value: unknown): string | undefined {
   const raw = String(value ?? "");
@@ -25,6 +25,10 @@ export function normalizeWechatIlinkBaseUrl(value: unknown): string | undefined 
   if (url.username || url.password) {
     throw new Error("WeChat baseUrl must not include credentials.");
   }
+  const authority = text.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/iu)?.[1] ?? "";
+  if (authority.includes(":")) {
+    throw new Error("WeChat baseUrl must not include an explicit port.");
+  }
   if (!isWechatIlinkHost(url.hostname)) {
     throw new Error("WeChat baseUrl must use an expected iLink host.");
   }
@@ -37,5 +41,18 @@ export function normalizeWechatIlinkBaseUrl(value: unknown): string | undefined 
 
 export function isWechatIlinkHost(hostname: string): boolean {
   const normalized = hostname.toLowerCase();
-  return WECHAT_ILINK_HOSTS.has(normalized) || WECHAT_ILINK_IDC_HOST_PATTERN.test(normalized);
+  return WECHAT_ILINK_HOSTS.has(normalized) || isWechatIlinkIdcHost(normalized);
+}
+
+export function isWechatIlinkIdcHost(hostname: string): boolean {
+  return WECHAT_ILINK_IDC_HOST_PATTERN.test(hostname.toLowerCase());
+}
+
+export function redactWechatIlinkDiagnostic(message: string): string {
+  return message
+    .replace(/\bhttps?:\/\/[^\s"'<>]+/giu, "[redacted URL]")
+    .replace(
+      /\b(?:ilinkai\.weixin\.qq\.com|ilinkai\.wechat\.com|idc-[0-9]+\.weixin\.qq\.com)\b/giu,
+      "[redacted iLink host]",
+    );
 }

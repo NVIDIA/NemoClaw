@@ -15,9 +15,9 @@ const PREFIX = "automation/post-merge-docs-";
 const SIGN_OFF =
   "Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>";
 const SHA = /^[0-9a-f]{40}$/u;
-type Method = "GET" | "PATCH" | "POST";
+type Method = "GET" | "POST";
 export type Request = (method: Method, apiPath: string, body?: unknown) => Promise<unknown>;
-type Repo = { full_name: string };
+type Repo = { full_name: string; node_id?: string };
 type Pull = {
   body: string | null;
   base: { ref: string; repo: Repo };
@@ -40,6 +40,15 @@ type Commit = {
 function fail(message: string): never {
   throw new Error(message);
 }
+function failureDiagnostic(error: unknown): string {
+  const message = error instanceof Error ? error.message : "unknown error";
+  return (
+    message
+      .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+      .trim()
+      .slice(0, 512) || "unknown error"
+  );
+}
 function environment(name: string): string {
   return process.env[name] || fail(`${name} is required`);
 }
@@ -51,14 +60,6 @@ type Approval = {
   rangeStartTag: string;
   targetReleaseTag: string;
 };
-function targetReleaseTag(rangeStartTag: string): string {
-  const match = /^v(\d+)[.](\d+)[.](\d+)$/u.exec(rangeStartTag);
-  if (!match) fail("review range start tag cannot produce a release target");
-  return nextPatchReleaseTag(
-    rangeStartTag,
-    "review range start tag cannot produce a release target",
-  );
-}
 function approvedPatch(directory: string, repository: string, mainSha: string): Approval {
   const patch = readBoundedFile(path.join(directory, "docs.patch"), 5_242_880, true);
   let value: unknown;
@@ -81,7 +82,10 @@ function approvedPatch(directory: string, repository: string, mainSha: string): 
     review.outcome !== "approved" ||
     typeof review.rangeStartTag !== "string" ||
     typeof review.targetReleaseTag !== "string" ||
-    targetReleaseTag(review.rangeStartTag) !== review.targetReleaseTag
+    nextPatchReleaseTag(
+      review.rangeStartTag,
+      "review range start tag cannot produce a release target",
+    ) !== review.targetReleaseTag
   )
     fail("review does not approve the exact patch and release target for this main commit");
   return {
@@ -170,11 +174,13 @@ function checkedPull(
   if (
     pull.state !== "open" ||
     typeof pull.draft !== "boolean" ||
-    !pull.draft ||
     !Number.isSafeInteger(pull.number) ||
     pull.number < 1 ||
     pull.base.ref !== "main" ||
     pull.base.repo.full_name !== repository ||
+    typeof pull.base.repo.node_id !== "string" ||
+    !pull.base.repo.node_id ||
+    pull.base.repo.node_id.length > 256 ||
     pull.head.repo?.full_name !== repository ||
     !SHA.test(pull.head.sha) ||
     (branch !== undefined && pull.head.ref !== branch) ||
@@ -229,31 +235,24 @@ function requireSamePull(expected: Pull | undefined, observed: Pull | undefined)
 function pullTitle(target: string): string {
   return `docs: prepare ${target} documentation`;
 }
-function pullBody(rangeStart: string, target: string): string {
+function managedBranchIdentity(branch: string, commitSha: string): string {
+  return `managed documentation branch ${branch} at ${commitSha}`;
+}
+function orphanRecoveryUrl(repository: string): string {
+  return `https://github.com/${repository}/blob/main/docs/AUTOMATION.md#recover-an-orphaned-managed-branch`;
+}
+function pullBody(repository: string, rangeStart: string, target: string): string {
   return `## Release target
 
 This cumulative draft prepares documentation for \`${target}\`.
-It covers merged changes after \`${rangeStart}\` through the latest PR commit.
+It covers merged changes after \`${rangeStart}\` through the reviewed \`main\` commit recorded as a parent of the latest workflow-created commit.
 The workflow selects \`${target}\` by incrementing the patch component of \`${rangeStart}\`.
 
-## During development
+## Managed state
 
-- Each push to \`main\` that changes a path outside the allowed documentation paths starts a cumulative authoring and independent review run.
-- An approved patch creates a verified merge commit and fast-forwards this branch.
-- Keep this PR as a draft while code PRs merge for \`${target}\`. The workflow owns the draft branch.
-- Mark this PR ready for review only at release cutoff. Ready status transfers branch ownership to maintainers, and later workflow runs leave the PR unchanged.
-- The workflow never force-pushes. While the PR is a draft, it stops if a person changes the branch or PR metadata.
+The workflow owns this branch while the PR is a draft. Ready-for-review status transfers branch ownership to maintainers, and later workflow runs leave the PR unchanged.
 
-## Release cutoff
-
-1. Stop merging code PRs intended for \`${target}\`.
-2. Mark this PR ready for review to transfer branch ownership to maintainers.
-3. Add the dated \`## ${target}\` changelog entry and final documentation to this PR.
-4. Run \`npm run docs\` and complete the final review.
-5. Merge this PR. Its docs-only merge does not start another catch-up run.
-6. Ask the tag session to show this PR's coverage point, later commits and PRs, checks, reviews, and any open managed docs PR.
-7. Decide whether to proceed, create or update a docs PR for the uncovered range, or stop.
-8. Cut \`${target}\` only after you choose to proceed with the displayed documentation coverage.
+Follow [Post-Merge Documentation Catch-Up](https://github.com/${repository}/blob/main/docs/AUTOMATION.md#post-merge-documentation-catch-up) for development, recovery, validation, and release-cutoff routing.
 
 ## Verification
 
@@ -287,24 +286,28 @@ async function legacyCoverageSha(
   const previous = await managedCommit(repository, firstParent, request);
   return previous.parents?.length === 1 ? previous.parents[0]?.sha : undefined;
 }
-async function pullMetadataMode(
+async function requireCurrentPullMetadata(
   pull: Pull,
   commit: Commit,
   repository: string,
   rangeStart: string,
   target: string,
   request: Request,
-): Promise<"current" | "legacy"> {
-  if (pull.title === pullTitle(target) && pull.body === pullBody(rangeStart, target))
-    return "current";
+): Promise<void> {
+  if (pull.title === pullTitle(target) && pull.body === pullBody(repository, rangeStart, target))
+    return;
   const coverageSha = await legacyCoverageSha(repository, commit, request);
   if (
     coverageSha &&
     pull.title === "docs: catch up after merged changes" &&
     pull.body === legacyPullBody(coverageSha)
   )
-    return "legacy";
-  return fail("managed documentation PR metadata does not match the reviewed release target");
+    fail(
+      `managed documentation PR ${pull.html_url} uses previous workflow metadata; close this legacy draft so a later qualifying push can create a current workflow-owned draft, or mark the PR ready for review to transfer ownership`,
+    );
+  return fail(
+    `managed documentation PR ${pull.html_url} title or body no longer matches the workflow-owned release target; restore the previous workflow-authored title and body to resume updates on the next qualifying push, or mark the PR ready for review to transfer ownership`,
+  );
 }
 async function managedCommit(
   repository: string,
@@ -325,6 +328,29 @@ async function managedCommit(
   )
     fail("managed documentation branch contains a commit not created by the workflow");
   return commit;
+}
+async function recoverableOrphan(
+  repository: string,
+  mainSha: string,
+  finalTree: string,
+  ref: { object?: { sha?: string } } | null,
+  request: Request,
+): Promise<string | undefined> {
+  if (ref === null) return undefined;
+  const commitSha = sha(ref.object?.sha ?? "", "existing documentation branch SHA");
+  let commit: Commit;
+  try {
+    commit = await managedCommit(repository, commitSha, request);
+  } catch {
+    return fail("an unmanaged documentation branch already exists for this main commit");
+  }
+  if (
+    commit.parents?.length !== 1 ||
+    commit.parents[0]?.sha !== mainSha ||
+    commit.tree?.sha !== finalTree
+  )
+    fail("an unmanaged documentation branch already exists for this main commit");
+  return commitSha;
 }
 async function createCommit(input: {
   changes: Change[];
@@ -366,50 +392,78 @@ async function createCommit(input: {
   return commitSha;
 }
 async function updateRef(
-  repository: string,
   branch: string,
+  beforeSha: string,
   commitSha: string,
+  repositoryId: string,
   request: Request,
 ): Promise<void> {
-  const readPath = `/repos/${repository}/git/ref/heads/${branch}`;
-  const updatePath = `/repos/${repository}/git/refs/heads/${branch}`;
-  try {
-    const updated = (await request("PATCH", updatePath, {
-      force: false,
-      sha: commitSha,
-    })) as { object?: { sha?: string }; ref?: string };
-    if (updated.ref !== `refs/heads/${branch}` || updated.object?.sha !== commitSha)
-      fail("GitHub did not confirm documentation branch update");
-  } catch (error) {
-    const reconciled = (await request("GET", readPath)) as { object?: { sha?: string } } | null;
-    if (reconciled?.object?.sha !== commitSha) throw error;
-  }
+  const clientMutationId = commitSha;
+  const mutation = `
+    mutation UpdatePostMergeDocumentationRef($input: UpdateRefsInput!) {
+      updateRefs(input: $input) {
+        clientMutationId
+      }
+    }
+  `;
+  const result = (await request("POST", "/graphql", {
+    query: mutation,
+    variables: {
+      input: {
+        clientMutationId,
+        refUpdates: [
+          {
+            afterOid: commitSha,
+            beforeOid: beforeSha,
+            force: false,
+            name: `refs/heads/${branch}`,
+          },
+        ],
+        repositoryId,
+      },
+    },
+  })) as { updateRefs?: { clientMutationId?: string } };
+  if (result.updateRefs?.clientMutationId !== clientMutationId)
+    fail("GitHub did not confirm the conditional documentation branch update");
 }
-
-async function updatePullMetadata(
-  pull: Pull,
-  repository: string,
-  rangeStart: string,
-  target: string,
-  request: Request,
-): Promise<Pull> {
-  const body = pullBody(rangeStart, target);
-  const title = pullTitle(target);
-  let updated: Pull;
+async function createPull(input: {
+  body: string;
+  branch: string;
+  commitSha: string;
+  repository: string;
+  request: Request;
+  title: string;
+}): Promise<Pull> {
+  const refPath = `/repos/${input.repository}/git/ref/heads/${input.branch}`;
+  let pull: Pull;
   try {
-    updated = (await request("PATCH", `/repos/${repository}/pulls/${pull.number}`, {
-      body,
-      title,
+    pull = (await input.request("POST", `/repos/${input.repository}/pulls`, {
+      base: "main",
+      body: input.body,
+      draft: true,
+      head: input.branch,
+      title: input.title,
     })) as Pull;
   } catch (error) {
-    const reconciled = await managed(repository, request);
-    if (reconciled.length !== 1 || reconciled[0]?.number !== pull.number) throw error;
-    updated = reconciled[0];
+    const reconciled = await managed(input.repository, input.request);
+    const matching = reconciled.filter((candidate) => candidate.head.ref === input.branch);
+    if (matching.length !== 1 || reconciled.length !== 1) {
+      const orphaned = (await input.request("GET", refPath)) as {
+        object?: { sha?: string };
+      } | null;
+      if (!matching.length && orphaned?.object?.sha === input.commitSha)
+        fail(
+          `${managedBranchIdentity(input.branch, input.commitSha)} remains without a draft PR; PR creation failed: ${failureDiagnostic(error)}; follow ${orphanRecoveryUrl(input.repository)}`,
+        );
+      throw error;
+    }
+    pull = matching[0]!;
   }
-  checkedPull(updated, repository, pull.head.ref, body, title);
-  if (updated.head.sha !== pull.head.sha)
-    fail("managed documentation PR changed during metadata update");
-  return updated;
+  checkedPull(pull, input.repository, input.branch, input.body, input.title);
+  if (!pull.draft) fail("GitHub did not create a draft documentation PR");
+  if (pull.head.sha !== input.commitSha)
+    fail("documentation PR does not point to the verified commit");
+  return pull;
 }
 
 export async function publishDocumentation(input: {
@@ -424,9 +478,10 @@ export async function publishDocumentation(input: {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) fail("GITHUB_REPOSITORY is invalid");
   const approval = approvedPatch(input.artifactDirectory, repository, mainSha);
   const { patch, rangeStartTag, targetReleaseTag: target } = approval;
-  const body = pullBody(rangeStartTag, target);
+  const body = pullBody(repository, rangeStartTag, target);
   const title = pullTitle(target);
-  let active = await checkpoint(repository, mainSha, request);
+  const active = await checkpoint(repository, mainSha, request);
+  if (active && !active.draft) return;
   const temporary = fs.mkdtempSync(path.join(tmpdir(), "nemoclaw-docs-publish-"));
   try {
     const destination = path.join(temporary, "repository");
@@ -437,27 +492,28 @@ export async function publishDocumentation(input: {
     const branch = active?.head.ref ?? `${PREFIX}${mainSha.slice(0, 12)}`;
     const refPath = `/repos/${repository}/git/ref/heads/${branch}`;
     const ref = (await request("GET", refPath)) as { object?: { sha?: string } } | null;
+    const orphanSha = active
+      ? undefined
+      : await recoverableOrphan(repository, mainSha, prepared.finalTree, ref, request);
     if (active) {
       if (ref?.object?.sha !== active.head.sha)
         fail("managed documentation PR and branch point to different commits");
       const current = await managedCommit(repository, active.head.sha, request);
-      const metadataMode = await pullMetadataMode(
-        active,
-        current,
-        repository,
-        rangeStartTag,
-        target,
-        request,
-      );
-      if (metadataMode === "legacy") {
-        requireSamePull(active, await checkpoint(repository, mainSha, request));
-        active = await updatePullMetadata(active, repository, rangeStartTag, target, request);
-      }
+      await requireCurrentPullMetadata(active, current, repository, rangeStartTag, target, request);
       if (!prepared.changes.length || current.tree?.sha === prepared.finalTree) {
         fail(`Documentation remains pending in ${active.html_url}`);
       }
-    } else if (ref !== null) {
-      fail("an unmanaged documentation branch already exists for this main commit");
+    } else if (orphanSha) {
+      requireSamePull(undefined, await checkpoint(repository, mainSha, request));
+      const pull = await createPull({
+        body,
+        branch,
+        commitSha: orphanSha,
+        repository,
+        request,
+        title,
+      });
+      fail(`Documentation remains pending in ${pull.html_url}`);
     }
 
     const commitSha = await createCommit({
@@ -472,7 +528,14 @@ export async function publishDocumentation(input: {
     requireSamePull(active, await checkpoint(repository, mainSha, request));
 
     if (active) {
-      await updateRef(repository, branch, commitSha, request);
+      try {
+        await updateRef(branch, active.head.sha, commitSha, active.base.repo.node_id!, request);
+      } catch (error) {
+        const reconciled = (await request("GET", refPath)) as {
+          object?: { sha?: string };
+        } | null;
+        if (reconciled?.object?.sha !== commitSha) throw error;
+      }
       fail(`Documentation remains pending in ${active.html_url}`);
     }
 
@@ -488,23 +551,11 @@ export async function publishDocumentation(input: {
       if (reconciled?.object?.sha !== commitSha) throw error;
     }
 
+    console.error(
+      `${managedBranchIdentity(branch, commitSha)} was created; if publication stops before draft PR creation, follow ${orphanRecoveryUrl(repository)}`,
+    );
     requireSamePull(undefined, await checkpoint(repository, mainSha, request));
-    let pull: Pull;
-    try {
-      pull = (await request("POST", `/repos/${repository}/pulls`, {
-        base: "main",
-        body,
-        draft: true,
-        head: branch,
-        title,
-      })) as Pull;
-    } catch (error) {
-      const reconciled = await managed(repository, request);
-      if (reconciled.length !== 1 || reconciled[0]?.head.ref !== branch) throw error;
-      pull = reconciled[0];
-    }
-    checkedPull(pull, repository, branch, body, title);
-    if (pull.head.sha !== commitSha) fail("documentation PR does not point to the verified commit");
+    const pull = await createPull({ body, branch, commitSha, repository, request, title });
     fail(`Documentation remains pending in ${pull.html_url}`);
   } finally {
     fs.rmSync(temporary, { force: true, recursive: true });
@@ -525,10 +576,17 @@ function client(token: string): Request {
       signal: AbortSignal.timeout(30_000),
     });
     if (method === "GET" && response.status === 404) return null;
-    const value = (await response.json()) as { message?: string };
-    if (!response.ok)
-      fail(`GitHub API request failed: ${value.message ?? `HTTP ${response.status}`}`);
-    return value;
+    const value = (await response.json()) as {
+      data?: unknown;
+      errors?: Array<{ message?: string }>;
+      message?: string;
+    };
+    const graphqlError = value.errors?.find((error) => typeof error.message === "string")?.message;
+    if (!response.ok || (apiPath === "/graphql" && value.errors?.length))
+      fail(
+        `GitHub API request failed: ${graphqlError ?? value.message ?? `HTTP ${response.status}`}`,
+      );
+    return apiPath === "/graphql" ? value.data : value;
   };
 }
 async function main(): Promise<void> {

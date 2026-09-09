@@ -3,7 +3,6 @@
 
 import { getCredential, normalizeCredentialValue } from "../credentials/store";
 import * as webSearch from "../inference/web-search";
-import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { getChannelTokenKeys, listChannels } from "../sandbox/channels";
 
 interface MessagingTokenDefShape {
@@ -11,6 +10,13 @@ interface MessagingTokenDefShape {
   envKey: string;
   token: string | null;
   providerType?: string;
+  additionalCredentials?: Array<{ envKey: string; token: string | null }>;
+}
+
+export interface ExtraPlaceholderCredentialSources {
+  readonly env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  readonly getCredential: (envKey: string) => string | null;
+  readonly normalizeCredentialValue: (value: string | undefined) => string;
 }
 
 export const EXTRA_PLACEHOLDER_KEYS_ENV = "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS";
@@ -65,13 +71,13 @@ export function parseExtraPlaceholderKeys(
     }
     if (canonicalKeys.has(candidate)) {
       warnings.push(
-        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${candidate}" — collides with a canonical channel envKey`,
+        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${candidate}" — collides with a canonical credential environment-variable name`,
       );
       continue;
     }
     if (!findExtendedCanonicalPrefix(candidate, canonicalKeys)) {
       warnings.push(
-        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${candidate}" — must extend a canonical channel envKey (e.g. TELEGRAM_BOT_TOKEN_AGENT_A); arbitrary host secrets such as GITHUB_TOKEN are refused so they cannot leak into the sandbox provider gateway`,
+        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${candidate}" — must extend a canonical credential environment-variable name; arbitrary host secrets such as GITHUB_TOKEN are refused so they cannot leak into the sandbox provider gateway`,
       );
       continue;
     }
@@ -88,35 +94,40 @@ export function parseExtraPlaceholderKeys(
   return { keys, warnings };
 }
 
-export function extraPlaceholderProviderSlug(envKey: string): string {
-  return envKey.toLowerCase().replace(/_/g, "-");
-}
-
 export function registerExtraPlaceholderProviders(
-  sandboxName: string,
   messagingTokenDefs: MessagingTokenDefShape[],
   log: (message: string) => void = (m) => console.warn(`  ${m}`),
+  sources: ExtraPlaceholderCredentialSources = {
+    env: process.env,
+    getCredential,
+    normalizeCredentialValue,
+  },
 ): string[] {
-  const parsed = parseExtraPlaceholderKeys(
-    process.env[EXTRA_PLACEHOLDER_KEYS_ENV],
-    canonicalPlaceholderKeys(),
-  );
+  const canonicalKeys = canonicalPlaceholderKeys();
+  const parsed = parseExtraPlaceholderKeys(sources.env[EXTRA_PLACEHOLDER_KEYS_ENV], canonicalKeys);
+  const acceptedKeys: string[] = [];
   for (const warning of parsed.warnings) log(warning);
   for (const envKey of parsed.keys) {
-    // Match web-search precedence: the credential
-    // store wins so a same-named host env var cannot override an out-of-process
-    // credential that the operator has staged through `nemoclaw credentials
-    // set`. Collapse the empty-string result from normalizeCredentialValue to
-    // null so callers see one unambiguous "missing" sentinel.
-    const token = getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
-    messagingTokenDefs.push({
-      name: `${sandboxName}-extra-${extraPlaceholderProviderSlug(envKey)}`,
-      envKey,
-      token,
-      providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-    });
+    // Match web-search precedence: the credential store wins over host env.
+    const token =
+      sources.getCredential(envKey) ||
+      sources.normalizeCredentialValue(sources.env[envKey]) ||
+      null;
+    const canonicalEnvKey = findExtendedCanonicalPrefix(envKey, canonicalKeys);
+    const canonicalProvider = messagingTokenDefs.find(
+      (definition) => definition.envKey === canonicalEnvKey,
+    );
+    if (!canonicalProvider) {
+      log(
+        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${envKey}" — its canonical credential is not part of the selected sandbox plan`,
+      );
+      continue;
+    }
+    canonicalProvider.additionalCredentials ??= [];
+    canonicalProvider.additionalCredentials.push({ envKey, token });
+    acceptedKeys.push(envKey);
   }
-  return [...parsed.keys];
+  return acceptedKeys;
 }
 
 export function appendExtraPlaceholderKeysEnvArg(

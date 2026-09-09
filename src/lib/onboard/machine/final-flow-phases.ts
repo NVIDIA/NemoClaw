@@ -31,8 +31,7 @@ export interface FinalOnboardFlowPhaseOptions<
   VerificationResult = unknown,
 > {
   branchState: "agent_setup" | "openclaw";
-  authoritativePolicyTier?: string | null;
-  revalidatePolicyRequirements?(context: Context, operation: string): void;
+  preserveRebuildLivePolicy?: boolean;
   agentSetupDeps: AgentSetupStateOptions<Context["agent"]>["deps"];
   policiesDeps: PoliciesStateOptions<Context["agent"], WebSearchConfig>["deps"];
   finalization: {
@@ -41,10 +40,11 @@ export interface FinalOnboardFlowPhaseOptions<
     webSearchEnabled(webSearchConfig: WebSearchConfig | null): boolean;
     webSearchProvider(webSearchConfig: WebSearchConfig): WebSearchProvider;
   };
-  finalizationDeps: Omit<
-    FinalizationStateOptions<Context["agent"], VerifyChain, VerificationResult>["deps"],
-    "persistDashboardPort"
-  >;
+  finalizationDeps: FinalizationStateOptions<
+    Context["agent"],
+    VerifyChain,
+    VerificationResult
+  >["deps"];
 }
 
 export function createFinalOnboardFlowPhases<
@@ -59,13 +59,7 @@ export function createFinalOnboardFlowPhases<
   OnboardSequencePhase<Context>,
   OnboardSequencePhase<Context>,
 ] {
-  const finalizationDeps = {
-    ...options.finalizationDeps,
-    persistDashboardPort: options.agentSetupDeps.persistDashboardPort,
-  };
-  const revalidationFor = (context: Context) =>
-    options.revalidatePolicyRequirements?.bind(null, context) ??
-    finalizationDeps.revalidatePolicyRequirements;
+  const finalizationDeps = options.finalizationDeps;
   const createBranchPhase =
     options.branchState === "agent_setup" ? createAgentSetupPhase : createOpenclawSetupPhase;
   const branchSetupPhase = createBranchPhase<Context>(async (context) => {
@@ -75,11 +69,11 @@ export function createFinalOnboardFlowPhases<
       sandboxName: context.sandboxName,
       model: context.model,
       provider: context.provider,
+      webSearchConfig: context.webSearchConfig,
       resume: context.resume,
       session: context.session,
       hermesAuthMethod: context.hermesAuthMethod,
       hermesToolGateways: context.hermesToolGateways,
-      revalidatePolicyRequirements: revalidationFor(context),
       deps: options.agentSetupDeps,
     });
     return {
@@ -92,7 +86,7 @@ export function createFinalOnboardFlowPhases<
     assertSandboxCreatedContext(context, "policies");
     const policiesResult = await handlePoliciesState({
       resume: context.resume,
-      authoritativePolicyTier: options.authoritativePolicyTier,
+      preserveRebuildLivePolicy: options.preserveRebuildLivePolicy,
       sandboxName: context.sandboxName,
       provider: context.provider,
       hostLocalInferenceRouteOnly: context.hostLocalInferenceRouteOnly === true,
@@ -107,7 +101,6 @@ export function createFinalOnboardFlowPhases<
       webSearchSupported: context.webSearchSupported,
       hermesToolGateways: context.hermesToolGateways,
       agent: context.agent,
-      revalidatePolicyRequirements: revalidationFor(context),
       deps: options.policiesDeps,
     });
     return {
@@ -122,7 +115,6 @@ export function createFinalOnboardFlowPhases<
   const finalizationPhase = createFinalizationPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "finalization");
     const webSearchEnabled = options.finalization.webSearchEnabled(context.webSearchConfig);
-    const revalidatePolicyRequirements = revalidationFor(context);
     const finalizationResult = await handleFinalizationState({
       sandboxName: context.sandboxName,
       model: context.model,
@@ -140,7 +132,7 @@ export function createFinalOnboardFlowPhases<
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       recreateJournalHandoff: context.recreateJournalHandoff,
-      deps: { ...finalizationDeps, revalidatePolicyRequirements },
+      deps: finalizationDeps,
     });
     return { result: finalizationResult.stateResult };
   });
@@ -165,10 +157,7 @@ export function createFinalOnboardFlowPhases<
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       recreateJournalHandoff: context.recreateJournalHandoff,
-      deps: {
-        ...finalizationDeps,
-        revalidatePolicyRequirements: revalidationFor(context),
-      },
+      deps: finalizationDeps,
     });
     return { result: postVerifyResult.stateResult };
   });

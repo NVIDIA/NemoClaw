@@ -11,6 +11,7 @@ import {
   type SourceArchitectureBudget,
 } from "../../scripts/checks/source-architecture.mts";
 import { describe, expect, test } from "../helpers/owned-test-resources";
+import { testTimeoutOptions } from "../helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 
@@ -31,16 +32,20 @@ function budget(overrides: Partial<SourceArchitectureBudget> = {}): SourceArchit
 }
 
 describe("source architecture budget (#7692)", () => {
-  test("accepts the reviewed repository baseline", () => {
-    const parsed = parseSourceArchitectureBudget(
-      fs.readFileSync(path.join(REPO_ROOT, "ci/source-architecture-budget.json"), "utf8"),
-    );
-    const report = analyzeSourceArchitecture(REPO_ROOT, {
-      rootFileDirectories: Object.keys(parsed.maxRootFiles),
-    });
+  test(
+    "accepts the reviewed repository baseline",
+    testTimeoutOptions(60_000),
+    () => {
+      const parsed = parseSourceArchitectureBudget(
+        fs.readFileSync(path.join(REPO_ROOT, "ci/source-architecture-budget.json"), "utf8"),
+      );
+      const report = analyzeSourceArchitecture(REPO_ROOT, {
+        rootFileDirectories: Object.keys(parsed.maxRootFiles),
+      });
 
-    expect(evaluateSourceArchitectureBudget(report, parsed)).toEqual([]);
-  });
+      expect(evaluateSourceArchitectureBudget(report, parsed)).toEqual([]);
+    },
+  );
 
   test("rejects a new runtime cycle and names its files", ({ resources }) => {
     const root = resources.temporaryDirectory("nemoclaw-architecture-cycle-");
@@ -124,17 +129,59 @@ describe("source architecture budget (#7692)", () => {
     ).toEqual([]);
   });
 
-  test("resolves checked JavaScript and TypeScript output specifiers", ({ resources }) => {
+  test("resolves checked JavaScript imports", ({ resources }) => {
     const root = resources.temporaryDirectory("nemoclaw-architecture-languages-");
     writeModule(root, "bin/a.js", 'require("./b");\n');
     writeModule(root, "bin/b.js", "module.exports = {};\n");
-    writeModule(root, "src/a.ts", 'import "./b.js";\n');
-    writeModule(root, "src/b.ts", "export {};\n");
 
-    const report = analyzeSourceArchitecture(root, { scanRoots: ["bin", "src"] });
+    const report = analyzeSourceArchitecture(root, { scanRoots: ["bin"] });
 
-    expect(report.fanOut).toMatchObject({ "bin/a.js": 1, "src/a.ts": 1 });
-    expect(report.fanIn).toMatchObject({ "bin/b.js": 1, "src/b.ts": 1 });
+    expect(report.fanOut).toMatchObject({ "bin/a.js": 1 });
+    expect(report.fanIn).toMatchObject({ "bin/b.js": 1 });
+  });
+
+  test.for([
+    { emittedExtension: ".js", sourceExtension: ".ts" },
+    { emittedExtension: ".mjs", sourceExtension: ".mts" },
+    { emittedExtension: ".cjs", sourceExtension: ".cts" },
+  ])(
+    "resolves checked $emittedExtension specifiers to $sourceExtension sources",
+    ({ emittedExtension, sourceExtension }, { resources }) => {
+      const root = resources.temporaryDirectory("nemoclaw-architecture-emitted-specifier-");
+      writeModule(root, "src/a.ts", `import "./b${emittedExtension}";\n`);
+      writeModule(root, `src/b${sourceExtension}`, "export {};\n");
+
+      const report = analyzeSourceArchitecture(root, { scanRoots: ["src"] });
+
+      expect(report.fanOut).toMatchObject({ "src/a.ts": 1 });
+      expect(report.fanIn).toMatchObject({ [`src/b${sourceExtension}`]: 1 });
+    },
+  );
+
+  test("resolves checked dynamic import specifiers", ({ resources }) => {
+    const root = resources.temporaryDirectory("nemoclaw-architecture-dynamic-import-");
+    writeModule(root, "src/a.ts", 'export const value = import("./b");\n');
+    writeModule(root, "src/b.ts", "export const value = true;\n");
+
+    const report = analyzeSourceArchitecture(root, { scanRoots: ["src"] });
+
+    expect(report.fanOut).toMatchObject({ "src/a.ts": 1 });
+    expect(report.fanIn).toMatchObject({ "src/b.ts": 1 });
+  });
+
+  test("resolves checked nested import-equals specifiers", ({ resources }) => {
+    const root = resources.temporaryDirectory("nemoclaw-architecture-import-equals-");
+    writeModule(
+      root,
+      "src/a.ts",
+      'namespace scope { export import dependency = require("./b"); }\n',
+    );
+    writeModule(root, "src/b.ts", "export const value = true;\n");
+
+    const report = analyzeSourceArchitecture(root, { scanRoots: ["src"] });
+
+    expect(report.fanOut).toMatchObject({ "src/a.ts": 1 });
+    expect(report.fanIn).toMatchObject({ "src/b.ts": 1 });
   });
 
   test("reports repository-relative paths through an aliased repository root (#7692)", ({

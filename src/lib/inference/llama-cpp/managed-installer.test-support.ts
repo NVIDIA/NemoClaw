@@ -6,6 +6,7 @@ import { vi } from "vitest";
 import type {
   ContainerEngine,
   ContainerEngineCommandCapture,
+  ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
 import { MANAGED_LLAMA_CPP_NETWORK_NAME } from "./managed-installer";
 
@@ -13,9 +14,13 @@ export function engineHarness(): {
   engine: ContainerEngine;
   capture: ReturnType<typeof vi.fn>;
   images: Set<string>;
+  pullResults: ContainerEngineCommandResult[];
+  pulledImages: string[];
 } {
   let networkPresent = false;
   const images = new Set<string>();
+  const pullResults: ContainerEngineCommandResult[] = [];
+  const pulledImages: string[] = [];
   const capture = vi.fn((args: readonly string[]) => {
     if (args[0] === "network" && args[1] === "create") {
       networkPresent = true;
@@ -53,11 +58,20 @@ export function engineHarness(): {
         ? { status: 0, stdout: "[]", stderr: "" }
         : { status: 1, stdout: "", stderr: "No such image" };
     }
+    if (args[0] === "pull") {
+      const image = args[1]!;
+      pulledImages.push(image);
+      const result = pullResults.shift() ?? { status: 0, stdout: "", stderr: "" };
+      if (!result.error && result.status === 0) images.add(image);
+      return result;
+    }
     throw new Error(`unexpected engine command: ${args.join(" ")}`);
   });
   return {
     capture,
     images,
+    pullResults,
+    pulledImages,
     engine: {
       operation: "host-local-inference",
       engineId: "docker",

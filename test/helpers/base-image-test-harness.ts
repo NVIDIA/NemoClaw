@@ -40,7 +40,6 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
       configFile: "config.yaml",
       envFile: ".env",
       format: "yaml",
-      shieldsFiles: [".env"],
     },
     inferenceProviderOptions: [],
     mcpCapability: {
@@ -54,15 +53,6 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
     backupStateDirPrefixes: [],
     nonBackupStateDirs: [],
     nonBackupStateDirPrefixes: [],
-    stateLockPlan: {
-      version: 1,
-      readOnlyRoots: [],
-      confidentialRoots: [],
-      readOnlyPrefixes: [],
-      confidentialPrefixes: [],
-      writableSubpaths: [],
-    },
-    stateLockPlanInImage: true,
     stateFiles: [],
     userManagedFiles: [],
     versionCommand: "hermes --version",
@@ -73,7 +63,6 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
     dockerfilePath: path.resolve(import.meta.dirname, "../../agents/hermes/Dockerfile"),
     startScriptPath: null,
     policyAdditionsPath: null,
-    policyPermissivePath: null,
     pluginDir: null,
     legacyPaths: null,
     agentDir: "/repo/root/agents/hermes",
@@ -103,7 +92,11 @@ export function withMockedDocker<T>(
 ): T {
   const dockerRunModule = requireSource("../adapters/docker/run.js") as DockerRunModule;
   const originalDockerCapture = dockerRunModule.dockerCapture;
-  const dockerCaptureMock = vi.fn().mockReturnValue("nemoclaw-hermes-mcp-runtime-ok");
+  const dockerCaptureMock = vi.fn((args: readonly string[]) =>
+    args.includes("/opt/hermes/.venv/bin/python")
+      ? "nemoclaw-hermes-mcp-runtime-ok"
+      : "nemoclaw-security-inventory-ok",
+  );
   dockerRunModule.dockerCapture = dockerCaptureMock as DockerRunModule["dockerCapture"];
 
   const dockerImageModule = requireSource("../adapters/docker/image.js") as DockerImageModule;

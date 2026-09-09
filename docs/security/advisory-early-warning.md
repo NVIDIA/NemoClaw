@@ -40,11 +40,11 @@ This polling is the planned extension, and the correlation module already accept
   Pass `--inventory <file>` to use an explicit `{name, version}` inventory for hermetic offline runs.
   A malformed entry fails the run instead of silently reducing the inventory.
 - Confidence is encoded instead of inferred.
-  Only an exact npm ecosystem, package name, and parseable semantic-version range match yields `confidence: "exact"` and `action: "investigate"`.
+  Only a match on the npm ecosystem, package name, and parseable semantic-version range yields `confidence: "exact"` and `action: "investigate"`.
   Name collisions from non-npm, CPE-derived records and unparseable ranges yield `confidence: "ambiguous"` and `action: "informational"`.
   Ambiguous matches never block or mutate a release.
 - The reviewed npm audit gate in `scripts/audit-reviewed-npm-graph.mts` remains enabled in CI.
-  It is authoritative for exact npm package and version-range decisions.
+  It is authoritative for npm package and version-range decisions.
   The early-warning path triggers only investigation and rescanning.
 
 `scripts/advisory-early-warning-scan.mts` is the CLI over the module.
@@ -95,11 +95,13 @@ The same #7338 sign-off gate applies to this work.
 
 Each reviewed npm audit report has a `*.provenance.json` sidecar.
 The sidecars include `coverage/reviewed-npm-audit/` artifacts and `npm-audit.provenance.json` for the WeChat locked runtime graph audit.
-Each sidecar records:
+A configured cache reuses a response only when the package and lock bytes, npm version, fixed Yarn audit registry origin, command arguments, and parser identity match. Until 2026-09-11, image builds may accept a still-current npmjs receipt only through the explicit legacy transition. Remove the legacy option and verifier path after Yarn-bound receipts replace the retained npmjs receipts.
+The sidecar records whether the response came from the cache or a live registry request, plus its creation time, age, input digest, and response digest.
+Each sidecar also records:
 
 - Scanner identity, including `npm audit`, npm version, and Node.js version.
-- The configured registry with URL credentials removed.
-  The sidecar also records the derived bulk advisory endpoint where npm posts the dependency graph.
+- The fixed Yarn audit registry.
+  The sidecar also records its derived bulk advisory endpoint where npm posts the dependency graph.
   npm 7 and newer have no quick-audit fallback.
   When the request fails, npm reports no advisory data, and the note records this condition.
 - Run start and finish timestamps in ISO 8601 format.
@@ -140,11 +142,11 @@ The #7338 acceptance criteria classify each finding as a reviewed-mapping delay,
 - `tar` (CVE-2026-59873, GHSA-23hp-3jrh-7fpw): **Unproven because evidence is missing.**
   The June 27 upstream disclosure-to-detection gap is real.
   A July 21 Trivy scan reported vulnerable `tar@7.5.11` and `7.5.15`, and the reviewed record dates to July 20.
-  No comparable pre-review scan was retained, so the exact trigger is unproven.
+  No comparable pre-review scan was retained, so the trigger is unproven.
 
 ### Q2 Ideal Trigger and Current Coverage
 
-The ideal trigger is the earliest public upstream disclosure, evaluated against the exact dependency inventory on a schedule that does not depend on how far any one build progressed.
+The ideal trigger is the earliest public upstream disclosure, evaluated against the dependency inventory on a schedule that does not depend on how far any one build progressed.
 Mapping each demonstrated gap to a mechanism:
 
 - Reviewed-mapping delay (`fast-uri` and plausibly the Jaeger propagator): The correlation path reads unreviewed NVD-sourced records alongside reviewed and malware records from the supplied advisory file.

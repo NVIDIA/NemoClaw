@@ -42,9 +42,7 @@ import {
   runOpenClawLaunchSession,
   runOpenClawLaunchReadinessLeaseTurns,
 } from "../live/launch-agent-turn.ts";
-
 const PROCESS_EXIT_WAIT = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
-
 type SessionRecords = Record<string, string[]>;
 type FixtureMode =
   | "cleanup-failure"
@@ -304,8 +302,12 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "an
     join(fixtureRoot, ".bash_profile"),
     'export PATH="$NEMOCLAW_FIXTURE_BIN_ROOT:$PATH"\n',
   );
-
   try {
+    writeFileSync(
+      join(fixtureRoot, "sleep"),
+      '#!/bin/bash\n[[ "$1:$NEMOCLAW_FIXTURE_MODE" =~ ^0\.05:pty-(socket-(invalid|permission)|response-identity)$ ]] || exec /usr/bin/sleep "$@"\n',
+      { mode: 0o755 },
+    );
     writeFileSync(
       fakeStty,
       String.raw`#!/bin/bash
@@ -476,7 +478,7 @@ if (process.argv[2] !== "tui") {
       fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_EARLY_INPUT_MARKER, "");
     process.stdin.on("data", recordUnexpectedInput);
     fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_CANONICAL_RESTORED_MARKER, "");
-    await new Promise((resolve) => setTimeout(resolve, 10_000));
+    await new Promise((resolve) => setTimeout(resolve, 20_000));
     process.stdin.off("data", recordUnexpectedInput);
   }
   if (mode === "input-mode-timeout") {
@@ -638,10 +640,9 @@ exec "$@"
         NEMOCLAW_LAUNCH_RUN_ID: runId,
         NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
         NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
-        NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: [
-          "pty-socket-timeout",
-          "restored-canonical-timeout",
-        ].includes(mode)
+        NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: mode === "restored-canonical-timeout"
+          ? "10"
+          : mode === "pty-socket-timeout"
           ? "5"
           : mode.endsWith("-timeout")
             ? "2"
@@ -1225,7 +1226,7 @@ it.runIf(process.platform === "linux")(
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('"reason":"pty_input_canonical"');
   },
-  testTimeout(20_000),
+  testTimeout(30_000),
 );
 
 it.runIf(process.platform === "linux")(

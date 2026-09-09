@@ -6,7 +6,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { findLayerImportBoundaryViolations } from "../../scripts/checks/layer-import-boundaries.mts";
+import {
+  findLayerImportBoundaryViolations,
+  findManagedRuntimeBoundaryViolations,
+} from "../../scripts/checks/layer-import-boundaries.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 let fixtureCounter = 0;
@@ -41,6 +44,10 @@ function scanFixture(fixture: string, source: string) {
 describe("CLI layer import boundaries (#6245)", () => {
   it("keeps domain, adapter, action, and command layers separated (#6245)", () => {
     expect(findLayerImportBoundaryViolations()).toEqual([]);
+  });
+
+  it("keeps managed runtime orchestration provider-neutral (#9145)", () => {
+    expect(findManagedRuntimeBoundaryViolations()).toEqual([]);
   });
 
   it("collects TypeScript import-equals references (#6245)", () => {
@@ -88,6 +95,55 @@ describe("CLI layer import boundaries (#6245)", () => {
     );
   });
 
+  it("blocks packaged bin shims outside protected layer directories (#6245)", () => {
+    const violations = scanFixture(
+      fixturePath("src/lib", "bin-lib-shim"),
+      'import "../../bin/lib/ports.js";\n',
+    );
+
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail:
+            "src must import implementation modules directly instead of packaged shim bin/lib/ports.js",
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    ["CommonJS require", 'export const ports = require("../../bin/lib/ports.js");\n'],
+    ["dynamic import", 'export const ports = import("../../bin/lib/ports.js");\n'],
+  ])("blocks packaged bin shims loaded through %s (#6245)", (_case, source) => {
+    const violations = scanFixture(fixturePath("src/lib", "bin-lib-call"), source);
+
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: "src-no-bin-lib-shims" }),
+      ]),
+    );
+  });
+
+  it("classifies a bin shim imported through a source-tree symlink (#6245)", () => {
+    const importer = fixturePath("src/lib", "bin-lib-alias-importer");
+    const alias = fixturePath("src/lib", "bin-lib-alias", ".js");
+    const relativeAlias = `./${path.basename(alias)}`;
+    try {
+      fs.symlinkSync(path.join(REPO_ROOT, "bin/lib/ports.js"), alias, "file");
+      fs.writeFileSync(importer, `import "${relativeAlias}";\n`);
+
+      expect(findLayerImportBoundaryViolations(importer)).toEqual([
+        expect.objectContaining({
+          detail:
+            "src must import implementation modules directly instead of packaged shim bin/lib/ports.js",
+        }),
+      ]);
+    } finally {
+      fs.rmSync(importer, { force: true });
+      fs.rmSync(alias, { force: true });
+    }
+  });
+
   it("counts only classes that extend Command as oclif command classes (#6245)", () => {
     const violations = scanFixture(
       fixturePath("src/commands", "implements"),
@@ -132,38 +188,37 @@ describe("CLI layer import boundaries (#6245)", () => {
     );
   });
 
-  it.each([
-    "Command",
-    "NemoClawCommand",
-  ])("rejects an unrelated local %s class as a command base (#6245)", (baseName) => {
-    const violations = scanFixture(
-      fixturePath("src/commands", "local-command-base"),
-      `class ${baseName} {}\nexport default class Example extends ${baseName} {}\n`,
-    );
+  it.each(["Command", "NemoClawCommand"])(
+    "rejects an unrelated local %s class as a command base (#6245)",
+    (baseName) => {
+      const violations = scanFixture(
+        fixturePath("src/commands", "local-command-base"),
+        `class ${baseName} {}\nexport default class Example extends ${baseName} {}\n`,
+      );
 
-    expect(violations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          detail: "command files must define exactly one registered oclif command class; found 0",
-        }),
-      ]),
-    );
-  });
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            detail: "command files must define exactly one registered oclif command class; found 0",
+          }),
+        ]),
+      );
+    },
+  );
 
-  it.each([
-    ".mts",
-    ".cts",
-    ".tsx",
-  ])("scans production %s modules for protected-layer violations (#6245)", (extension) => {
-    const violations = scanFixture(
-      fixturePath("src/lib/actions", "module-extension", extension),
-      'import { Command } from "@oclif/core";\n',
-    );
+  it.each([".mts", ".cts", ".tsx"])(
+    "scans production %s modules for protected-layer violations (#6245)",
+    (extension) => {
+      const violations = scanFixture(
+        fixturePath("src/lib/actions", "module-extension", extension),
+        'import { Command } from "@oclif/core";\n',
+      );
 
-    expect(violations).toEqual(
-      expect.arrayContaining([expect.objectContaining({ rule: "actions-no-oclif" })]),
-    );
-  });
+      expect(violations).toEqual(
+        expect.arrayContaining([expect.objectContaining({ rule: "actions-no-oclif" })]),
+      );
+    },
+  );
 
   it("recognizes alternate-extension action modules outside the actions directory (#6245)", () => {
     const violations = scanFixture(
@@ -199,6 +254,47 @@ describe("CLI layer import boundaries (#6245)", () => {
     }
   });
 
+  it.each([
+    { emittedExtension: ".js", sourceExtension: ".ts" },
+    { emittedExtension: ".mjs", sourceExtension: ".mts" },
+    { emittedExtension: ".cjs", sourceExtension: ".cts" },
+  ])(
+    "resolves $emittedExtension output specifiers to $sourceExtension source modules (#6245)",
+    ({ emittedExtension, sourceExtension }) => {
+      const target = fixturePath(
+        "src/lib/adapters",
+        `emitted-specifier-target-${sourceExtension.slice(1)}`,
+        sourceExtension,
+      );
+      const importer = fixturePath(
+        "src/lib/domain",
+        `emitted-specifier-importer-${sourceExtension.slice(1)}`,
+      );
+    const specifier = path
+      .relative(path.dirname(importer), target)
+      .split(path.sep)
+        .join("/");
+      const emittedSpecifier =
+        specifier.slice(0, -sourceExtension.length) + emittedExtension;
+      try {
+        fs.writeFileSync(target, "export const value = true;\n");
+        fs.writeFileSync(
+          importer,
+          `import { value } from "${emittedSpecifier}";\nexport { value };\n`,
+        );
+
+        expect(findLayerImportBoundaryViolations(importer)).toEqual([
+          expect.objectContaining({
+            detail: `domain must not import ${path.relative(REPO_ROOT, target)}`,
+          }),
+        ]);
+      } finally {
+        fs.rmSync(importer, { force: true });
+        fs.rmSync(target, { force: true });
+      }
+    },
+  );
+
   it("resolves an extensionless directory import to its index module (#6245)", () => {
     const targetDir = fs.mkdtempSync(
       path.join(REPO_ROOT, "src/lib/actions/__boundary-extensionless-directory-"),
@@ -221,18 +317,17 @@ describe("CLI layer import boundaries (#6245)", () => {
     }
   });
 
-  it.each([
-    ".test.mts",
-    ".spec.cts",
-    ".test.tsx",
-  ])("excludes %s test modules from the production scan (#6245)", (extension) => {
-    expect(
-      scanFixture(
-        fixturePath("src/lib/actions", "test-module-extension", extension),
-        'import { Command } from "@oclif/core";\n',
-      ),
-    ).toEqual([]);
-  });
+  it.each([".test.mts", ".spec.cts", ".test.tsx"])(
+    "excludes %s test modules from the production scan (#6245)",
+    (extension) => {
+      expect(
+        scanFixture(
+          fixturePath("src/lib/actions", "test-module-extension", extension),
+          'import { Command } from "@oclif/core";\n',
+        ),
+      ).toEqual([]);
+    },
+  );
 
   it("does not recurse through a symbolic-link loop (#6245)", () => {
     const fixtureRoot = fs.mkdtempSync(

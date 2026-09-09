@@ -22,6 +22,9 @@ interface DockerArchivePin {
   resolved: string;
 }
 
+// BuildKit failed at the 130th remote ADD during a cold managed-image build.
+const MAX_CHECKSUM_ADD_CHAIN = 120;
+
 function dockerfileSection(startMarker: string, endMarker: string): string {
   const start = dockerfile.indexOf(startMarker);
   const end = dockerfile.indexOf(endMarker, start);
@@ -43,7 +46,7 @@ function archiveIdentity(archive: LockedArchive | DockerArchivePin): string {
 }
 
 describe("OpenClaw managed messaging offline image build", () => {
-  it("pins the complete amd64 and arm64 lock graphs in architecture-selected stages", () => {
+  it("pins the complete lock graphs below the cold-build layer limit", () => {
     const amd64Lock = lockedArchives(lockSource, { cpu: "x64", libc: "glibc", os: "linux" });
     const arm64Lock = lockedArchives(lockSource, {
       cpu: "arm64",
@@ -56,11 +59,18 @@ describe("OpenClaw managed messaging offline image build", () => {
     const amd64OnlyLock = amd64Lock.filter(({ archive }) => !arm64Names.has(archive));
     const arm64OnlyLock = arm64Lock.filter(({ archive }) => !amd64Names.has(archive));
 
-    const commonPins = archivePins(
+    const commonArchiveStages = [1, 2, 3].map((part) =>
       dockerfileSection(
-        "FROM scratch AS openclaw-managed-messaging-npm-common-archives",
-        "FROM openclaw-managed-messaging-npm-common-archives AS openclaw-managed-messaging-npm-amd64-archives",
+        `FROM scratch AS openclaw-managed-messaging-npm-common-archives-${part}`,
+        part < 3
+          ? `FROM scratch AS openclaw-managed-messaging-npm-common-archives-${part + 1}`
+          : "FROM scratch AS openclaw-managed-messaging-npm-common-archives\n",
       ),
+    );
+    const commonPins = commonArchiveStages.flatMap(archivePins);
+    const commonArchiveMerge = dockerfileSection(
+      "FROM scratch AS openclaw-managed-messaging-npm-common-archives\n",
+      "FROM openclaw-managed-messaging-npm-common-archives AS openclaw-managed-messaging-npm-amd64-archives",
     );
     const amd64OnlyPins = archivePins(
       dockerfileSection(
@@ -76,6 +86,18 @@ describe("OpenClaw managed messaging offline image build", () => {
     );
 
     expect(commonPins.map(archiveIdentity)).toEqual(commonLock.map(archiveIdentity));
+    expect(
+      commonArchiveStages.every((stage) => archivePins(stage).length <= MAX_CHECKSUM_ADD_CHAIN),
+    ).toBe(true);
+    expect(commonArchiveMerge).toContain(
+      "COPY --from=openclaw-managed-messaging-npm-common-archives-1 / /",
+    );
+    expect(commonArchiveMerge).toContain(
+      "COPY --from=openclaw-managed-messaging-npm-common-archives-2 / /",
+    );
+    expect(commonArchiveMerge).toContain(
+      "COPY --from=openclaw-managed-messaging-npm-common-archives-3 / /",
+    );
     expect(amd64OnlyPins.map(archiveIdentity)).toEqual(amd64OnlyLock.map(archiveIdentity));
     expect(arm64OnlyPins.map(archiveIdentity)).toEqual(arm64OnlyLock.map(archiveIdentity));
     expect(new Set(commonPins.map(({ digest }) => digest)).size).toBe(commonPins.length);

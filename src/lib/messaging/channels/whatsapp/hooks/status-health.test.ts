@@ -11,7 +11,7 @@ const BASE_INPUTS = {
   agent: "openclaw",
   probedAt: "2026-07-14T00:00:00.000Z",
   channelEnabledInRegistry: true,
-  presetInRegistry: true,
+  presetApplied: true,
   presetOnGateway: true,
 };
 
@@ -477,26 +477,29 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
       label: "non-string value",
       sessionPath: 42,
     },
-  ])("keeps the durable session path for an unsupported compatibility value: $label (#8947)", ({
-    sessionPath,
-  }) => {
-    const exec = hermesExec({
-      configuredSessionPath: sessionPath,
-      credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
-    });
-    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
-      context({ ...BASE_INPUTS, agent: "hermes" }),
-    );
-    const report = reportOf(result);
-    const probeCommands = exec.mock.calls
-      .map((call) => String(call[1] ?? ""))
-      .filter((command) => !command.startsWith("python3 -c "));
-    expect(report?.verdict).toBe("unpaired");
-    expect(report?.signals.find((s) => s.label === "Session path override")?.severity).toBe("warn");
-    expect(probeCommands).toHaveLength(1);
-    expect(probeCommands[0]).toContain(`gateway='${HERMES_DEFAULT_SESSION_DIR}/creds.json'`);
-    expect(probeCommands[0]).not.toContain(String(sessionPath));
-  });
+  ])(
+    "keeps the durable session path for an unsupported compatibility value: $label (#8947)",
+    ({ sessionPath }) => {
+      const exec = hermesExec({
+        configuredSessionPath: sessionPath,
+        credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
+      });
+      const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+        context({ ...BASE_INPUTS, agent: "hermes" }),
+      );
+      const report = reportOf(result);
+      const probeCommands = exec.mock.calls
+        .map((call) => String(call[1] ?? ""))
+        .filter((command) => !command.startsWith("python3 -c "));
+      expect(report?.verdict).toBe("unpaired");
+      expect(report?.signals.find((s) => s.label === "Session path override")?.severity).toBe(
+        "warn",
+      );
+      expect(probeCommands).toHaveLength(1);
+      expect(probeCommands[0]).toContain(`gateway='${HERMES_DEFAULT_SESSION_DIR}/creds.json'`);
+      expect(probeCommands[0]).not.toContain(String(sessionPath));
+    },
+  );
 
   it("reads the Hermes config only when the default session path is empty (#8718)", () => {
     const exec = hermesExec({
@@ -730,7 +733,7 @@ describe("whatsapp.statusHealth wiring guards", () => {
     const hook = createWhatsappStatusHealthHook({ executeSandboxCommand: exec });
     const configGap = reportOf(hook(context({ ...BASE_INPUTS, channelEnabledInRegistry: false })));
     expect(configGap?.verdict).toBe("config_gap");
-    const policyGap = reportOf(hook(context({ ...BASE_INPUTS, presetInRegistry: false })));
+    const policyGap = reportOf(hook(context({ ...BASE_INPUTS, presetApplied: false })));
     expect(policyGap?.verdict).toBe("policy_gap");
   });
 });

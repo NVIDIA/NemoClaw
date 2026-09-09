@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   withProvenManagedGatewayProcess,
+  withSuccessfulPreUninstallBackup,
   writeManagedGatewayRuntimeProof,
 } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
@@ -19,7 +20,7 @@ import {
 import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
 import {
   type RunResult,
-  runUninstallPlan as runUninstallPlanBase,
+  runUninstallPlanProduction as runUninstallPlanBase,
   type UninstallRunDeps,
   type UninstallRunOptions,
 } from "./run-plan";
@@ -55,20 +56,22 @@ function writeScopedGatewayState(home: string): string {
 function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
   return runUninstallPlanBase(
     options,
-    withProvenManagedGatewayProcess({
-      isPortFree: () => true,
-      resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
-        gatewayName,
-        gatewayPort,
-        mode: "nemoclaw-managed",
-        source: "packaged-service",
-        endpoint: null,
-        stateDir: null,
-        supervisor: null,
-        requiredCapabilities: [],
+    withSuccessfulPreUninstallBackup(
+      withProvenManagedGatewayProcess({
+        isPortFree: () => true,
+        resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+          gatewayName,
+          gatewayPort,
+          mode: "nemoclaw-managed",
+          source: "packaged-service",
+          endpoint: null,
+          stateDir: null,
+          supervisor: null,
+          requiredCapabilities: [],
+        }),
+        ...deps,
       }),
-      ...deps,
-    }),
+    ),
   );
 }
 
@@ -80,7 +83,7 @@ describe("externally supervised gateway-port segregation (#3053)", () => {
     ["scoped", "systemd-user"],
   ] as const)(
     "preserves the gateway process, Docker resources, OpenShell binaries, and gateway state during %s uninstall for a %s-supervised gateway (#6576)",
-    (scope, kind) => {
+    async (scope, kind) => {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-external-"));
       try {
         const stateDir = path.join(tmpHome, ".nemoclaw");
@@ -108,7 +111,7 @@ describe("externally supervised gateway-port segregation (#3053)", () => {
         const externalPid = 4242;
         const externalStateDir = path.dirname(gatewayStatePath);
 
-        const result = runUninstallPlan(
+        const result = await runUninstallPlan(
           { assumeYes: true, deleteModels: false, keepOpenShell: false },
           {
             commandExists: () => true,

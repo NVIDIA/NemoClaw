@@ -31,10 +31,10 @@ describe("operator.admin manual approval documentation (#5324)", () => {
     expect(list).toBeGreaterThan(connect);
     expect(approve).toBeGreaterThan(list);
     expect(retry).toBeGreaterThan(approve);
-    expect(section).toContain("note the exact `requestId` in the failure");
-    expect(section).toContain("Find that exact `requestId`");
+    expect(section).toContain("note the `requestId` in the failure");
+    expect(section).toContain("Find that `requestId`");
     expect(section).toContain(
-      "Approve only the exact `requestId` emitted by your command and only the client, device, and scopes you expect.",
+      "Approve only the `requestId` emitted by your command and only the client, device, and scopes you expect.",
     );
   });
 });

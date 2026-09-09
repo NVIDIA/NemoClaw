@@ -12,7 +12,13 @@ import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { dockerRunCommandBetween } from "../../helpers/dockerfile-run-shell";
 
 const START_SCRIPT = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
-const HERMES_DOCKERFILE = path.join(import.meta.dirname, "../../..", "agents", "hermes", "Dockerfile");
+const HERMES_DOCKERFILE = path.join(
+  import.meta.dirname,
+  "../../..",
+  "agents",
+  "hermes",
+  "Dockerfile",
+);
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,
   "../../..",
@@ -63,6 +69,16 @@ function slackBotAlias() {
     value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
     message:
       "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+  };
+}
+
+function crossKeyCredentialAlias(channelId: string, envKey: string, targetEnvKey: string) {
+  return {
+    channelId,
+    envKey,
+    targetEnvKey,
+    match: `^openshell:resolve:env:v[0-9]+_${envKey}$`,
+    value: `openshell:resolve:env:${envKey}`,
   };
 }
 
@@ -436,11 +452,11 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.result.stderr).not.toContain(run.apiServerKey ?? "missing-key");
   });
 
-  it("refuses to mint an API key into a shields-up env", () => {
+  it("refuses to mint an API key into a read-only env file", () => {
     const run = runHermesRuntimeApiServerKeyMint({ fakeRoot: true, locked: true });
 
     expect(run.result.status).not.toBe(0);
-    expect(run.result.stderr).toContain("cannot update .env while shields are up");
+    expect(run.result.stderr).toContain("cannot update the read-only .env file");
     expect(run.apiServerKey).toBeNull();
     expect(run.envFileMode).toBe("444");
     expect(run.strictHashValid).toBe(true);
@@ -777,7 +793,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
-  it("refuses to replace a sealed canonical placeholder without a rebuild or sandbox recreation (#8893)", () => {
+  it("refuses to replace a read-only canonical placeholder without sandbox recreation (#8893)", () => {
     const originalEnv = "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n";
     const run = runHermesRuntimeProviderPlaceholderRefresh({
       envFile: originalEnv,
@@ -798,7 +814,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
 
     expect(run.result.status).toBe(1);
     expect(run.result.stderr).toContain(
-      "cannot update provider placeholders while shields are up; rebuild or recreate the sandbox",
+      "cannot update read-only provider placeholders; rebuild or recreate the sandbox",
     );
     expect(run.envFileContent).toBe(originalEnv);
     expect(run.strictHashValid).toBe(true);
@@ -849,7 +865,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
 
     expect(run.result.status, run.result.stderr).toBe(0);
     expect(run.envFileContent).toContain(
-      "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\n",
+      "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-v222_SLACK_BOT_TOKEN\n",
     );
     expect(run.envFileContent).toContain(
       "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN\n",
@@ -861,6 +877,34 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.result.stderr).toContain(
       "[config] Refreshed Hermes provider placeholder for SLACK_APP_TOKEN",
     );
+    expect(run.strictHashValid).toBe(true);
+  });
+
+  it("rejects a cross-key alias whose source is not bound to the same channel (#10079)", () => {
+    const originalEnv = "WEIXIN_ACCOUNT_ID=test-account\n";
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: {
+        WECHAT_BOT_TOKEN: "openshell:resolve:env:v222_WECHAT_BOT_TOKEN",
+      },
+      runtimePlan: {
+        schemaVersion: 1,
+        sandboxName: "test-sandbox",
+        agent: "hermes",
+        channels: [{ channelId: "wechat", active: true, disabled: false }],
+        disabledChannels: [],
+        credentialBindings: [{ channelId: "teams", providerEnvKey: "WECHAT_BOT_TOKEN" }],
+        runtimeSetup: {
+          nodePreloads: [],
+          envAliases: [crossKeyCredentialAlias("wechat", "WECHAT_BOT_TOKEN", "WEIXIN_TOKEN")],
+          secretScans: [],
+        },
+      },
+    });
+
+    expect(run.result.status).toBe(1);
+    expect(run.result.stderr).toContain("cross-key env alias source is not bound to its channel");
+    expect(run.envFileContent).toBe(originalEnv);
     expect(run.strictHashValid).toBe(true);
   });
 
@@ -1021,6 +1065,15 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         runtimeSetup: { envAliases: [{ ...slackBotAlias(), envKey: "BAD=KEY" }] },
       },
       expectedError: "runtimeSetup.envAliases.envKey is invalid",
+    },
+    {
+      name: "malformed cross-key alias target with whitespace",
+      runtimePlanPatch: {
+        runtimeSetup: {
+          envAliases: [{ ...slackBotAlias(), targetEnvKey: "BAD KEY" }],
+        },
+      },
+      expectedError: "runtimeSetup.envAliases.targetEnvKey is invalid",
     },
   ])("rejects runtime-plan $name before rewriting .env", ({ runtimePlanPatch, expectedError }) => {
     const originalEnv = "SLACK_BOT_TOKEN=openshell:resolve:env:v1_SLACK_BOT_TOKEN\n";

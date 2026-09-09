@@ -71,7 +71,7 @@ describe("sandboxName command hardening in onboard.js", () => {
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+    writeOkOpenshell(fakeBin);
     fs.writeFileSync(
       scriptPath,
       String.raw`
@@ -89,6 +89,17 @@ for (const key of Object.keys(process.env)) {
 process.env.NEMOCLAW_OPENSHELL_BIN = ${JSON.stringify(path.join(fakeBin, "openshell"))};
 const commands = [];
 const asText = (command) => Array.isArray(command) ? command.join(" ") : String(command);
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+childProcess.spawn = (...args) => {
+  if (!forwardService.recordSpawn(args)) throw new Error("unexpected spawned process");
+  const child = new EventEmitter();
+  child.unref = () => {};
+  return child;
+};
+createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const text = asText(command);
   commands.push({ type: "run", command: text, env: opts.env || null });
@@ -105,14 +116,7 @@ runner.run = (command, opts = {}) => {
       stderr: Buffer.alloc(0),
     };
   }
-  if (text.includes("sandbox get") && text.includes("my-assistant")) {
-    return {
-      status: 0,
-      stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"),
-      stderr: Buffer.alloc(0),
-    };
-  }
-  return { status: 0 };
+  return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ type: "runFile", file, args, command: asText([file, ...args]), env: opts.env || null });
@@ -120,11 +124,9 @@ runner.runFile = (file, args = [], opts = {}) => {
 };
 runner.runCapture = (command) => {
   const text = asText(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
+  const createdIdentity = createdSandbox.capture(command);
   if (createdIdentity !== null) return createdIdentity;
-  if (text.includes("sandbox get") && text.includes("my-assistant")) return "";
-  if (text.includes("sandbox list")) return "my-assistant Ready";
-  if (text.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (text.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   if (text.includes("sandbox exec") && text.includes("http://localhost:") && text.includes("/health")) return "200";
   if (text === "uname -r") return "6.8.0";
   const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
@@ -143,11 +145,14 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 });
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
-sandboxCreateStream.streamSandboxCreate = async () => ({
-  status: 0,
-  output: "Built image openshell/sandbox-from:123\nCreated sandbox: my-assistant",
-  sawProgress: true,
-});
+sandboxCreateStream.streamSandboxCreate = async (...args) => {
+  createdSandbox.create(args.flat());
+  return {
+    status: 0,
+    output: "Built image openshell/sandbox-from:123\nCreated sandbox: my-assistant",
+    sawProgress: true,
+  };
+};
 const { createSandbox } = require(${onboardPath});
 (async () => {
 try {
@@ -226,12 +231,12 @@ try {
       expect(dnsCommand.command).not.toContain("bash -c");
       expect(
         payload.commands.some((entry: { command: string }) =>
-          entry.command.includes("sandbox get my-assistant"),
+          entry.command.includes("sandbox get -g nemoclaw my-assistant"),
         ),
       ).toBe(true);
       expect(
         payload.commands.some((entry: { command: string }) =>
-          entry.command.includes("sandbox exec --name my-assistant -- true"),
+          entry.command.includes("sandbox exec -g nemoclaw --name my-assistant -- true"),
         ),
       ).toBe(true);
     } finally {

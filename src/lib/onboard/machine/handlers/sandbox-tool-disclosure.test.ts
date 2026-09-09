@@ -107,32 +107,30 @@ describe("handleSandboxState tool disclosure", () => {
     });
 
     expect(calls.removeSandbox).not.toHaveBeenCalled();
-    expect(calls.createSandbox).toHaveBeenCalledWith(
-      { type: "nvidia" },
-      "model",
-      "provider",
-      "openai-completions",
-      "saved",
-      null,
-      [],
-      null,
-      null,
-      null,
-      { sandboxGpuEnabled: false, mode: "0" },
-      null,
-      [],
-      null,
-      { sessionId: session.sessionId },
-      {
-        resolved: expect.any(Object),
-        recreate: true,
-        toolDisclosure: requestedMode,
-        observabilityEnabled: false,
-        endpointSource: "inference-set",
-        extraProviders: [],
-        reuseRegisteredCredentials: true,
+    const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+    expect(createSandboxCall[14]).toEqual({
+      sessionId: session.sessionId,
+      selection: {
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        endpointSource: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
+        nimContainer: null,
       },
-    );
+    });
+    expect(createSandboxCall[15]).toMatchObject({
+      resolved: expect.any(Object),
+      recreate: true,
+      toolDisclosure: requestedMode,
+      observabilityEnabled: false,
+      endpointSource: "inference-set",
+      extraProviders: [],
+      reuseRegisteredCredentials: true,
+    });
   });
 
   it("recreates a legacy custom image so its tool-disclosure contract is validated", async () => {

@@ -4,9 +4,91 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  openClawAgentResponseRecord,
   openClawAgentIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
+  parseOpenClawJsonDocuments,
+  openClawUnframedJsonText,
 } from "./agent-json-provenance";
+
+describe("parseOpenClawJsonDocuments", () => {
+  it("parses clean object and array documents", () => {
+    expect(parseOpenClawJsonDocuments('{"payloads":[{"text":"one"}]}')).toEqual([
+      { payloads: [{ text: "one" }] },
+    ]);
+    expect(parseOpenClawJsonDocuments('[{"text":"one"},{"text":"two"}]')).toEqual([
+      { text: "one" },
+      { text: "two" },
+    ]);
+  });
+
+  it("frames log-prefixed objects and arrays while respecting JSON strings", () => {
+    expect(
+      parseOpenClawJsonDocuments(
+        'progress {not-json}\n{"text":"object with {braces}"}\n[{"text":"array with [brackets]"}]',
+      ),
+    ).toEqual([{ text: "object with {braces}" }, { text: "array with [brackets]" }]);
+  });
+
+  it("ignores malformed and incomplete candidates", () => {
+    expect(parseOpenClawJsonDocuments('progress {not-json}\n{"text":"incomplete"')).toEqual([]);
+  });
+
+  it("recovers a complete response record after an unclosed log fragment", () => {
+    const response = {
+      status: "timeout",
+      result: { payloads: [{ text: "partial" }], meta: { timeoutPhase: "provider" } },
+    };
+    const raw = `tool {"name":"read"\n${JSON.stringify(response)}`;
+
+    expect(parseOpenClawJsonDocuments(raw)).toEqual([response]);
+    expect(openClawAgentIncompleteTurnSignal(raw)?.timeoutPhase).toBe("provider");
+  });
+
+  it("preserves only log and malformed text outside complete JSON documents", () => {
+    const response = JSON.stringify({ payloads: [{ text: "42" }], meta: {} });
+    expect(openClawUnframedJsonText(response).trim()).toBe("");
+    expect(openClawUnframedJsonText(`progress\r\n${response}\r\ntrailing`)).toBe(
+      "progress\r\n\n\r\ntrailing",
+    );
+    expect(openClawUnframedJsonText(`${response}\n{\"name\":\"read\"`)).toContain(
+      '{"name":"read"',
+    );
+  });
+
+  it("fails closed in linear time for a long incomplete brace-rich stream", () => {
+    expect(parseOpenClawJsonDocuments("{".repeat(10_000))).toEqual([]);
+  });
+});
+
+describe("openClawAgentResponseRecord", () => {
+  it("accepts documented local and gateway response envelopes", () => {
+    const local = { payloads: [{ text: "local" }], meta: {} };
+    const gatewayResult = { payloads: [{ text: "gateway" }], meta: {} };
+    expect(openClawAgentResponseRecord(local)).toBe(local);
+    expect(openClawAgentResponseRecord({ status: "ok", result: gatewayResult })).toBe(
+      gatewayResult,
+    );
+  });
+
+  it("rejects standalone payloads and event records", () => {
+    expect(openClawAgentResponseRecord({ payloads: [{ text: "unbound" }] })).toBeNull();
+    expect(
+      openClawAgentResponseRecord({
+        event: "progress",
+        payloads: [{ text: "untrusted" }],
+        meta: {},
+      }),
+    ).toBeNull();
+    expect(
+      openClawAgentResponseRecord({
+        event: "progress",
+        status: "ok",
+        result: { payloads: [{ text: "untrusted" }], meta: {} },
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("openClawAgentJsonProvenanceLines", () => {
   it("returns no provenance for plain successful assistant payloads", () => {
@@ -109,6 +191,63 @@ describe("openClawAgentJsonProvenanceLines", () => {
     expect(lines[0]).not.toContain(rawBearer);
     expect(lines[0]).not.toContain(rawPassword);
     expect(lines[0]).not.toContain(rawPrivateKey);
+  });
+
+  it("redacts URL credentials in failed tools and untrusted child excerpts", () => {
+    const credential = "service-user:service-password";
+    const credentialUrl = `https://${credential}@example.invalid/path`;
+    const childPayload = [
+      "<<<BEGIN_UNTRUSTED_CHILD_RESULT>>>",
+      credentialUrl,
+      "<<<END_UNTRUSTED_CHILD_RESULT>>>",
+    ].join("\n");
+    const lines = openClawAgentJsonProvenanceLines(
+      JSON.stringify({
+        messages: [
+          {
+            role: "toolResult",
+            toolCallId: "call_url_secret",
+            toolName: "fetch",
+            isError: true,
+            stderr: credentialUrl,
+          },
+          { role: "user", content: childPayload },
+        ],
+      }),
+    );
+    const failure = lines.find((line) => line.includes("failed tool result"));
+    const childExcerpt = lines.find((line) => line.includes("untrusted child excerpt"));
+
+    expect(failure).toBeDefined();
+    expect(childExcerpt).toBeDefined();
+    expect(failure).toContain("https://example.invalid/path");
+    expect(childExcerpt).toContain("https://example.invalid/path");
+    expect(failure).not.toContain(credential);
+    expect(childExcerpt).not.toContain(credential);
+  });
+
+  it("sanitizes and redacts untrusted failed tool labels", () => {
+    const rawApiKey = "nvapi-tool-label-secret-1234567890";
+    const lines = openClawAgentJsonProvenanceLines(
+      JSON.stringify({
+        messages: [
+          {
+            role: "toolResult",
+            toolCallId: "\x1B]8;;https://example.invalid/phish\x07call_hostile\x1B]8;;\x07",
+            toolName: `\x1B[2Jexec\nNVIDIA_API_KEY=${rawApiKey}`,
+            isError: true,
+            text: "failed",
+          },
+        ],
+      }),
+    );
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("NVIDIA_API_KEY=<REDACTED>");
+    expect(lines[0]).toContain("call_hostile");
+    expect(lines[0]).not.toContain(rawApiKey);
+    expect(lines[0]).not.toContain("https://example.invalid");
+    expect(lines[0]).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/u);
   });
 
   it("labels untrusted child-agent result framing from log-prefixed JSON", () => {

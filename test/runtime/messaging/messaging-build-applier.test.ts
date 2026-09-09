@@ -1105,7 +1105,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
-  it("installs Hermes Python packages supplied by the compiled Teams plan", async () => {
+  it("installs the Hermes Python package supplied by the compiled Teams plan", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-teams-packages-"));
     const tracePath = path.join(tmp, "uv.trace");
     const fakeUv = path.join(tmp, "uv");
@@ -1129,14 +1129,13 @@ describe("messaging-build-applier.mts: agent-install", () => {
       const plan = readMessagingBuildPlanFromEnv(planEnv, "hermes");
       expect(describeMessagingBuildPhase(plan, "agent-install", planEnv).hermesUvPackages).toEqual([
         "microsoft-teams-apps==2.0.13.4",
-        "aiohttp==3.14.3",
       ]);
 
       const result = runApplierProcess(planEnv, "hermes", "agent-install");
 
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(tracePath, "utf-8").trim()).toBe(
-        "pip install --python /opt/hermes/.venv/bin/python --no-cache -- microsoft-teams-apps==2.0.13.4 aiohttp==3.14.3",
+        "pip install --python /opt/hermes/.venv/bin/python --no-cache -- microsoft-teams-apps==2.0.13.4",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1272,7 +1271,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         'if (args[0] !== "doctor" || args[1] !== "--fix" || args[2] !== "--non-interactive") process.exit(46);',
         'const configPath = path.join(process.env.HOME, ".openclaw", "openclaw.json");',
         'const config = JSON.parse(fs.readFileSync(configPath, "utf8"));',
-        'if (config.channels?.telegram?.accounts?.default?.botToken !== "openshell:resolve:env:TELEGRAM_BOT_TOKEN") process.exit(40);',
+        'if (config.channels?.telegram?.accounts?.default?.botToken !== undefined) process.exit(40);',
         "if (config.channels?.discord?.enabled !== true) process.exit(41);",
         "if (config.plugins?.entries?.discord?.enabled !== true) process.exit(42);",
         "if (config.plugins?.entries?.slack?.enabled !== true) process.exit(43);",
@@ -1327,9 +1326,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
         fs.readFileSync(path.join(tmp, ".openclaw", "openclaw.json"), "utf-8"),
       );
       expect(managedConfig.channels?.telegram?.accounts?.default).toMatchObject({
-        botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
         enabled: true,
       });
+      expect(managedConfig.channels?.telegram?.accounts?.default?.botToken).toBeUndefined();
       expect(managedConfig.channels?.discord?.enabled).toBe(true);
       expect(managedConfig.plugins?.entries?.discord).toEqual({ enabled: true });
       expect(managedConfig.channels?.slack?.enabled).toBe(true);
@@ -1437,7 +1436,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(configYaml).toContain("enabled: true");
       const envFile = fs.readFileSync(path.join(hermesDir, ".env"), "utf-8");
       expect(envFile).toContain("API_SERVER_PORT=18642\n");
-      expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
+      expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

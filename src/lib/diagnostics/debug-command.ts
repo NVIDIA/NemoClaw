@@ -3,9 +3,14 @@
 
 import type { DebugOptions } from "./debug";
 
+export type DebugSandboxSelection = Readonly<{ name: string; gatewayName?: string }>;
+export type DebugSandboxAvailability =
+  | Readonly<{ state: "available"; gatewayName: string }>
+  | Readonly<{ state: "unregistered" | "missing" | "invalid_gateway" | "observation_denied" }>;
+
 export interface RunDebugCommandDeps {
-  getDefaultSandbox: () => string | undefined;
-  isSandboxKnown: (name: string) => boolean;
+  getDefaultSandbox: () => Promise<DebugSandboxSelection | null>;
+  getSandboxAvailability: (name: string) => Promise<DebugSandboxAvailability>;
   runDebug: (options: DebugOptions) => void;
   env?: NodeJS.ProcessEnv;
   errorLine?: (message: string) => void;
@@ -31,7 +36,10 @@ function resolveExplicitName(
   return null;
 }
 
-export function runDebugCommandWithOptions(options: DebugOptions, deps: RunDebugCommandDeps): void {
+export async function runDebugCommandWithOptions(
+  options: DebugOptions,
+  deps: RunDebugCommandDeps,
+): Promise<void> {
   const opts = { ...options };
   const env = deps.env ?? process.env;
   const errorLine = deps.errorLine ?? ((msg: string) => console.error(msg));
@@ -43,17 +51,40 @@ export function runDebugCommandWithOptions(options: DebugOptions, deps: RunDebug
 
   const explicit = resolveExplicitName(opts, env);
   if (explicit) {
-    if (!deps.isSandboxKnown(explicit.name)) {
+    const availability = await deps.getSandboxAvailability(explicit.name);
+    if (availability.state !== "available") {
       const sourceLabel =
         explicit.source === "env" && explicit.envVar ? ` (from ${explicit.envVar})` : "";
-      errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} is not registered.`);
-      errorLine("  Run `nemoclaw list` to see available sandboxes.");
+      if (availability.state === "unregistered") {
+        errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} is not registered.`);
+        errorLine("  Run `nemoclaw list` to see available sandboxes.");
+      } else if (availability.state === "observation_denied") {
+        errorLine(
+          `Error: OpenShell rejected observation of sandbox '${explicit.name}'${sourceLabel}.`,
+        );
+        errorLine("  Verify OpenShell authentication and gateway identity, then retry.");
+      } else if (availability.state === "invalid_gateway") {
+        errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} has an invalid registered gateway binding.`);
+        errorLine(
+          "  Restore gatewayName and gatewayPort from a trusted backup. Otherwise, back up and remove the sandbox before onboarding it again. Do not copy a gateway binding from another sandbox.",
+        );
+      } else {
+        errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} exists in the local registry but not in OpenShell.`);
+        errorLine("  Run `nemoclaw onboard` again to recreate or select a sandbox.");
+      }
       exit(1);
       return;
     }
     opts.sandboxName = explicit.name;
+    opts.gatewayName = availability.gatewayName;
   } else {
-    opts.sandboxName = deps.getDefaultSandbox();
+    const defaultSandbox = await deps.getDefaultSandbox();
+    if (defaultSandbox === null) {
+      exit(1);
+      return;
+    }
+    opts.sandboxName = defaultSandbox.name;
+    opts.gatewayName = defaultSandbox.gatewayName;
   }
 
   deps.runDebug(opts);

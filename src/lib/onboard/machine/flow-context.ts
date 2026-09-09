@@ -33,8 +33,12 @@ export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuCo
   webSearchConfigChanged?: boolean;
   webSearchSupported: boolean;
   selectedMessagingChannels: string[];
+  /** Process-local proof that the provider phase admitted a providerless APF plan. */
+  providerlessApf?: true;
   /** Process-local policy boundary for provider-owned host-local inference routes. */
   hostLocalInferenceRouteOnly?: boolean;
+  /** Explicit managed-vLLM preview choice accepted by N1x preflight. */
+  deferredN1xManagedVllmPreviewAccepted?: boolean;
   /** Exact provider-owned route and proof contract consumed after final policy sync. */
   hostLocalInferenceSandboxProofAuthority?: HostLocalInferenceSandboxProofAuthority | null;
   gpu: Gpu | null;
@@ -141,9 +145,9 @@ export function mergeProviderModelSelectedContext<Context extends OnboardFlowCon
 }
 
 export function mergeSandboxCreatedContext<Context extends OnboardFlowContext>(
-  context: ProviderModelSelectedOnboardFlowContext<Context>,
+  context: Context,
   patch: SandboxCreatedContextUpdate,
-): SandboxCreatedOnboardFlowContext<Context> {
+): Context & { sandboxName: string } {
   return { ...context, ...patch };
 }
 

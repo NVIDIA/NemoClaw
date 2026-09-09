@@ -16,6 +16,17 @@ export type InstalledTelegramRuntimeProof = {
   messageId: string;
 };
 
+export function resolveInstalledTelegramRuntimePath(
+  candidate: string,
+  realpath: (candidate: string) => string,
+): string {
+  try {
+    return realpath(candidate);
+  } catch {
+    return candidate;
+  }
+}
+
 export const TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -23,6 +34,8 @@ import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+
+const resolveInstalledTelegramRuntimePath = ${resolveInstalledTelegramRuntimePath.toString()};
 
 function addPathWalk(candidates, seen, start) {
   if (!start) return;
@@ -146,24 +159,31 @@ function requestFakeTelegram(endpoint, fields, token) {
   });
 }
 
-const runtimeApiPath = resolveTelegramRuntimeApiPath();
-if (!runtimeApiPath) {
+const runtimeApiCandidate = resolveTelegramRuntimeApiPath();
+if (!runtimeApiCandidate) {
   throw new Error(
     "could not find installed OpenClaw Telegram runtime-api.js at openclaw/dist/extensions/telegram/runtime-api.js",
   );
 }
+const runtimeApiPath = resolveInstalledTelegramRuntimePath(runtimeApiCandidate, fs.realpathSync);
 const { sendMessageTelegram } = await import(pathToFileURL(runtimeApiPath).href);
 if (typeof sendMessageTelegram !== "function") {
   throw new Error("installed Telegram runtime API does not export sendMessageTelegram");
 }
 const cfg = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
 const account = cfg.channels?.telegram?.accounts?.default;
-if (!account?.botToken) {
-  throw new Error("missing channels.telegram.accounts.default.botToken in openclaw.json");
+if (!account) {
+  throw new Error("missing channels.telegram.accounts.default in openclaw.json");
+}
+if (Object.prototype.hasOwnProperty.call(account, "botToken")) {
+  throw new Error("unexpected persisted Telegram botToken in openclaw.json");
 }
 const target = process.env.OPENCLAW_MESSAGE_TARGET || "42424242";
 const text = process.env.OPENCLAW_MESSAGE_TEXT || "NemoClaw OpenClaw Telegram plugin mock E2E";
-const token = account.botToken;
+const token = process.env.TELEGRAM_BOT_TOKEN;
+if (!/^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN$/.test(token || "")) {
+  throw new Error("missing revision-scoped TELEGRAM_BOT_TOKEN environment placeholder");
+}
 const api = {
   sendMessage: (chatId, body, params = {}) =>
     requestFakeTelegram(

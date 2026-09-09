@@ -56,6 +56,7 @@ export function registerIncompleteOnboardExitFailureHandler(
     // printOnboardResumeHint also self-dedupes against tailored hints.
     const interrupted = markLastStartedStepFailed(deps, message, true);
     if (!interrupted) return;
+    if (interrupted.status === "recovery_required") return;
     printOnboardResumeHint(portable, undefined, interrupted.sandboxName);
   };
 

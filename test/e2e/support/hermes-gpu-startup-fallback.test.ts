@@ -124,7 +124,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     ]);
   });
 
-  it("creates native state without GPU, rejects one exact proof, and delegates compatibility", () => {
+  it("rejects native create before progress and delegates one compatibility attempt (#10155)", () => {
     const { root, wrapper } = createWrapperFixture("hermes-gpu-fallback-test-", {
       openshell: [
         "#!/usr/bin/env bash",
@@ -166,7 +166,8 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
       ],
       env,
     );
-    expect(nativeCreate.status, nativeCreate.stderr).toBe(0);
+    expect(nativeCreate.status).toBe(2);
+    expect(nativeCreate.stderr).toContain("error: unexpected argument '--gpu' found");
 
     const nearMissProof = runWrapper(
       wrapper.wrapperPath,
@@ -174,16 +175,6 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
       env,
     );
     expect(nearMissProof.status, nearMissProof.stderr).toBe(0);
-
-    const rejectedProof = runWrapper(
-      wrapper.wrapperPath,
-      ["sandbox", "exec", "-n", "alpha", "--", "sh", "-lc", HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF],
-      env,
-    );
-    expect(rejectedProof.status).toBe(1);
-    expect(rejectedProof.stderr).toContain(
-      "Failed to initialize NVML: Driver/library version mismatch",
-    );
 
     const compatibility = runWrapper(
       wrapper.wrapperPath,
@@ -202,10 +193,9 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     const version = runWrapper(wrapper.wrapperPath, ["--version"], env);
     expect(version.status, version.stderr).toBe(0);
     expect(readHermesGpuFallbackEvents(wrapper.eventsPath)).toEqual([
-      HERMES_GPU_FALLBACK_EVENTS.delegateNativeCreateWithoutGpu,
-      HERMES_GPU_FALLBACK_EVENTS.rejectNativeNvidiaSmiProof,
+      HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
       HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
-      HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterRejection,
+      HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback,
     ]);
     const wrapperArtifacts = fs
       .readdirSync(path.dirname(wrapper.eventsPath), { withFileTypes: true })
@@ -218,7 +208,6 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     expect(wrapperArtifacts).not.toMatch(/(?:TOKEN|API_KEY|PASSWORD)=/u);
     // The fake delegate records a constant marker only; it never serializes argv.
     expect(fs.readFileSync(delegateMarkerLog, "utf8").split(/\r?\n/u).filter(Boolean)).toEqual([
-      "create-without-gpu",
       "delegated",
       "create-without-gpu",
       "delegated",
@@ -336,39 +325,26 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     expect(result.stdout).toContain(`final-selection=${path.join(realDir, "openshell")}\n`);
   });
 
-  it("rejects exactly one native nvidia-smi proof when wrapper calls race", async () => {
+  it("records one pre-progress rejection event when native create calls race (#10155)", async () => {
     const { wrapper } = createWrapperFixture("hermes-gpu-fallback-race-test-");
     const env = { ...process.env, ...wrapper.componentEnv };
-    const nativeCreate = runWrapper(
-      wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--gpu"],
-      env,
-    );
-    expect(nativeCreate.status, nativeCreate.stderr).toBe(0);
     const statuses = await Promise.all(
       Array.from({ length: 8 }, () =>
         runWrapperConcurrently(
           wrapper.wrapperPath,
-          ["sandbox", "exec", "-n", "alpha", "--", "sh", "-lc", HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF],
+          ["sandbox", "create", "--from", "image", "--gpu"],
           env,
         ),
       ),
     );
 
-    expect(statuses.filter((status) => status === 1)).toHaveLength(1);
-    expect(statuses.filter((status) => status === 0)).toHaveLength(7);
+    expect(statuses).toEqual(Array.from({ length: 8 }, () => 2));
     const events = readHermesGpuFallbackEvents(wrapper.eventsPath);
     expect(
-      events.filter((event) => event === HERMES_GPU_FALLBACK_EVENTS.delegateNativeCreateWithoutGpu),
-    ).toHaveLength(1);
-    expect(
-      events.filter((event) => event === HERMES_GPU_FALLBACK_EVENTS.rejectNativeNvidiaSmiProof),
-    ).toHaveLength(1);
-    expect(
       events.filter(
-        (event) => event === HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterRejection,
+        (event) => event === HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
       ),
-    ).toHaveLength(7);
+    ).toHaveLength(1);
   });
 
   it("preserves OpenShell version and capability detection without private wrapper env", () => {

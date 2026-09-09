@@ -1,49 +1,26 @@
 <!-- markdownlint-disable MD041 -->
-## Summary
-<!-- 1-3 plain sentences: what changes and why. Describe before-and-after behavior when it applies. Follow the NemoClaw Writing Guide: https://github.com/NVIDIA/NemoClaw/blob/main/WRITING.md. Do not add unrelated prose cleanup. -->
+## Outcome
+<!-- State the result first. Describe the before-and-after behavior in 1–3 sentences. -->
 
-## Related Issue
-<!-- Fixes #NNN or Closes #NNN. Remove this section if none. -->
+## Reason
+<!-- Explain why this change is needed. -->
+
+### Related issues
+<!-- Name each issue relationship with the keyword that applies, such as Fixes, Closes, Resolves, Refs, Relates to, or Part of. Remove this subsection if no issue applies. -->
 
 ## Changes
-<!-- List concrete changes. If this adds an abstraction, configuration, fallback, migration, or compatibility path, name its current requirement and consumer, explain why a direct change is insufficient, and identify the test that protects it. -->
-
-## Type of Change
-
-- [ ] Code change (feature, bug fix, or refactor)
-- [ ] Code change with doc updates
-- [ ] Doc only (prose changes, no code sample modifications)
-- [ ] Doc only (includes code sample changes)
-
-## Quality Gates
-<!-- Check one tests line. Check other lines when applicable. Add every requested justification or approval reference. -->
-- [ ] Tests added or updated for changed behavior
-- [ ] Existing tests cover changed behavior — justification:
-- [ ] Tests not applicable — justification:
-- [ ] Sensitive paths changed (security, policy, credentials, preflight, onboarding, inference, runner, sandbox, or messaging)
-- [ ] Sensitive-path review completed or maintainer-approved waiver recorded — reviewer/approval link/justification:
-- [ ] Non-success, skipped, or missing CI check accepted by maintainer — check name, approval link, and follow-up issue:
-
-## DGX Station Hardware Evidence
-<!-- Required only when scripts/prepare-dgx-station-host.sh changes. Maintainers must review the linked evidence before approving or merging. This is human-reviewed evidence, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must be documented on the PR. -->
-- [ ] Tested on DGX Station
-- Tested commit:
-- Station profile/scenario:
-- Result:
-- Supporting evidence:
+<!-- List the concrete changes that produce the stated outcome. If this adds a mechanism, name its current requirement and consumer. Explain why a direct change is insufficient. Identify the test that protects the mechanism. -->
 
 ## Verification
-<!-- Check each applicable item only when supported by the requested evidence. Run targeted tests once per relevant change set and rerun after later edits or hook autofixes that can affect the tested behavior. Do not rerun hook-covered checks. -->
-- [ ] PR description includes a `Signed-off-by:` line and every commit appears as `Verified` in GitHub
-- [ ] Normal `pre-commit`, `commit-msg`, and `pre-push` hooks passed, or `npm run validate:pr` passed after refreshing `origin/main` when hooks were skipped or unavailable
-- [ ] Targeted behavior tests pass for the current change set, or tests are marked not applicable above — command/result or justification:
-- [ ] Applicable broad gate passed — `npm test` for broad runtime/test-harness changes; `npm run check` for repo-wide validation/coverage changes — command/result:
-- [ ] Quality Gates section completed with required justifications or waivers
-- [ ] No secrets, API keys, or credentials committed
-- [ ] `npm run docs` builds without warnings (doc changes only)
-- [ ] Doc pages follow the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md) (doc changes only)
-- [ ] New doc pages include SPDX header and frontmatter (new pages only)
+<!-- List each completed command or manual check and its result. If no test applies, explain why. For a broad change, record the applicable broad gate and result. Do not claim a gate that you did not run. For documentation changes, record the docs build result and applicable style or new-page checks. Confirm that the diff contains no secrets, API keys, or credentials. -->
+- `command or check` — result
+
+## Review notes
+<!-- Remove this section if no note applies.
+For a sensitive-path change, record the review context or maintainer-approved waiver.
+For an accepted non-success, skipped, or missing CI check, name the check, approval link, and follow-up issue.
+If scripts/prepare-dgx-station-host.sh changes, identify the tested commit, Station profile or scenario, result, and supporting link. Maintainers must review that evidence before merge. If repository governance permits an exception, document the reason. -->
 
 ---
-<!-- DCO sign-off is required in this PR description, and every commit must appear as Verified in GitHub. Run: git config user.name && git config user.email -->
+<!-- DCO sign-off is required in this PR description. Every commit must appear as Verified in GitHub. -->
 Signed-off-by: Your Name <your-email@example.com>

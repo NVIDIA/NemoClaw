@@ -59,10 +59,12 @@ function fail(message: string): never {
   throw new Error(`Managed startup root application request is invalid: ${message}`);
 }
 
+export function isManagedStartupRootApplyAgent(value: unknown): value is ManagedStartupAgent {
+  return typeof value === "string" && (MANAGED_STARTUP_AGENTS as readonly string[]).includes(value);
+}
+
 function exactAgent(value: unknown): ManagedStartupAgent {
-  if (typeof value === "string" && (MANAGED_STARTUP_AGENTS as readonly string[]).includes(value)) {
-    return value as ManagedStartupAgent;
-  }
+  if (isManagedStartupRootApplyAgent(value)) return value;
   return fail("agent is unsupported");
 }
 

@@ -40,7 +40,6 @@ const { collectSandboxStatusSnapshot } =
             name: string;
             provider: string;
             model: string;
-            policies: string[];
             agent: string;
           };
           reconcile: () => Promise<{ state: string; output: string }>;
@@ -86,19 +85,12 @@ printf '200'
 
 function writeDcodeWrapperFixture(tmpDir: string, home: string): string {
   const wrapperPath = path.join(tmpDir, "dcode-wrapper.sh");
-  const managedMcpValidator = [
-    'managed_mcp_config="$(',
-    "  /opt/venv/bin/python3 -I -c \\",
-    "    'from deepagents_code._nemoclaw_managed import managed_mcp_config_path; print(managed_mcp_config_path() or \"\")'",
-    ')"',
-  ].join("\n");
   const wrapper = fs
     .readFileSync(
       path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "dcode-wrapper.sh"),
       "utf8",
     )
     .replace("export HOME=/sandbox", `export HOME=${JSON.stringify(home)}`)
-    .replace(managedMcpValidator, 'managed_mcp_config=""')
     .replace(
       "exec /opt/venv/bin/python3 -I -m deepagents_code",
       `exec env PYTHONPATH=${JSON.stringify(path.join(tmpDir, "python"))} python3 -m deepagents_code`,
@@ -282,7 +274,6 @@ const { setupNim } = require(${onboardPath});
             name: "dcode-test",
             provider: payload.result.provider,
             model: payload.result.model,
-            policies: [],
             agent: "langchain-deepagents-code",
           }),
           reconcile: async () => ({ state: "missing", output: "" }),

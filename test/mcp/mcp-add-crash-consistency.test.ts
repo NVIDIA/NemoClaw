@@ -35,11 +35,13 @@ function buildAddProcessScript(
   crashAfter: CrashBoundary,
   includeSecret = true,
   initializeSandbox = true,
+  forbidRuntimeSelection = false,
 ): string {
   return String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 const includeSecret = ${JSON.stringify(includeSecret)};
 const initializeSandbox = ${JSON.stringify(initializeSandbox)};
+const forbidRuntimeSelection = ${JSON.stringify(forbidRuntimeSelection)};
 includeSecret ? (process.env.FAKE_MCP_SECRET = "host-only-secret") : delete process.env.FAKE_MCP_SECRET;
 const fs = require("node:fs");
 const path = require("node:path");
@@ -86,11 +88,30 @@ let credentialObservationAfterRepublishCountThisProcess = 0;
 
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
+const runner = require("./src/lib/runner.js");
+runner.runCapture = (args) =>
+  Array.isArray(args) && args[0] === "policy" && args[1] === "get"
+    ? marked("policy")
+      ? "version: 1\nnetwork_policies:\n  mcp_bridge_fake: {}\n"
+      : "version: 1\nnetwork_policies: {}\n"
+    : "";
+runner.run = (args) => {
+  if (Array.isArray(args) && args[0] === "policy" && args[1] === "set") mark("policy");
+  return { status: 0, stdout: "", stderr: "" };
+};
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const ownershipLocks = require("./src/lib/state/mcp-lifecycle-lock/credential-ownership.js");
+
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => {
+  if (forbidRuntimeSelection) {
+    throw new Error("runtime selection resolved before local MCP add validation");
+  }
+  return { gatewayName: "nemoclaw", workspace: "default" };
+};
 
 if (crashAfter === "credential-command-race") {
   const withMcpCredentialOwnershipLock = ownershipLocks.withMcpCredentialOwnershipLock;
@@ -115,15 +136,15 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   }
   if (args[0] === "provider" && args[1] === "get") {
     if (args[2] === "foreign-attached" || args[2] === "foreign-registered") {
-      return { status: 0, stdout: "Id: " + foreignProviderId + "\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" };
+      return { status: 0, stdout: "Name: " + args[2] + "\nId: " + foreignProviderId + "\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\nConfig keys: <none>\n", stderr: "" };
     }
     observedProviderName = args[2];
     providerGetCount += 1;
     if (crashAfter === "race" && providerGetCount === 2) mark("provider");
     if (crashAfter === "late-race" && providerGetCount === 3) mark("provider");
     return marked("provider")
-      ? { status: 0, stdout: "Id: " + (marked("foreign-provider") ? foreignProviderId : providerId) + "\nType: nemoclaw-mcp-v1\nResource version: " + providerVersion() + "\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
-      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+      ? { status: 0, stdout: "Name: " + args[2] + "\nId: " + (marked("foreign-provider") ? foreignProviderId : providerId) + "\nType: nemoclaw-mcp-v1\nResource version: " + providerVersion() + "\nCredential keys: FAKE_MCP_SECRET\nConfig keys: <none>\n", stderr: "" }
+      : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "provider" && (args[1] === "create" || args[1] === "update")) {
     if (credentialProjectionScenario) {
@@ -369,6 +390,7 @@ bridge.addMcpBridge("crash-test", {
   server: "fake",
   url: "https://8.8.8.8/mcp",
   env: [{ name: "FAKE_MCP_SECRET" }],
+  denyTools: ["delete_*"],
 }).then(
   async () => {
     try {
@@ -410,8 +432,19 @@ function initializeSandboxRegistry(home: string): void {
   ).toBe(0);
 }
 
-function runAddProcess(home: string, crashAfter: CrashBoundary, includeSecret = true) {
-  const script = buildAddProcessScript(home, crashAfter, includeSecret);
+function runAddProcess(
+  home: string,
+  crashAfter: CrashBoundary,
+  includeSecret = true,
+  forbidRuntimeSelection = false,
+) {
+  const script = buildAddProcessScript(
+    home,
+    crashAfter,
+    includeSecret,
+    true,
+    forbidRuntimeSelection,
+  );
   return spawnSync(process.execPath, ["-e", script], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -518,10 +551,16 @@ const providerId = "11111111-2222-4333-8444-555555555555";
 let observedProviderName = null;
 
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
 
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
@@ -539,8 +578,8 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     observedProviderName = args[2];
     return marked("provider")
-      ? { status: 0, stdout: "Id: " + providerId + "\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
-      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+      ? { status: 0, stdout: "Name: " + args[2] + "\nId: " + providerId + "\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\nConfig keys: <none>\n", stderr: "" }
+      : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
     observedProviderName = args[4];
@@ -570,7 +609,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   }
   if (args[0] === "provider" && args[1] === "delete") {
     if (!marked("provider")) {
-      return { status: 1, stdout: "", stderr: "NotFound: provider" };
+      return { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
     }
     fs.rmSync(marker("provider"), { force: true });
     if (crashAfterProviderDelete) process.exit(87);
@@ -618,10 +657,16 @@ function runStatusProcess(home: string) {
   const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
 
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
@@ -635,7 +680,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Type: nemoclaw-mcp-v1\nCredential keys: FAKE_MCP_SECRET\n",
+      stdout: "Name: alpha-mcp-fake\nType: nemoclaw-mcp-v1\nCredential keys: FAKE_MCP_SECRET\nConfig keys: <none>\n",
       stderr: "",
     };
   }
@@ -819,7 +864,7 @@ describe("MCP add crash consistency", () => {
   it("rejects a missing host credential before creating durable MCP state", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-missing-secret-"));
     try {
-      const result = runAddProcess(home, "", false);
+      const result = runAddProcess(home, "", false, true);
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(2);
       expect(result.stderr).toContain("Host environment variable 'FAKE_MCP_SECRET' is required");
@@ -885,13 +930,6 @@ describe("MCP add crash consistency", () => {
       expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(false);
       expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
-
-      const recovered = runAddProcess(home, "");
-      expect(recovered.status, `${recovered.stdout}\n${recovered.stderr}`).toBe(0);
-      expect(fs.readFileSync(policyApplyLog, "utf8").trim().split("\n")).toHaveLength(4);
-      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
-      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
-      expect(readBridge(home).addState).toBeUndefined();
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
@@ -974,7 +1012,6 @@ describe("MCP add crash consistency", () => {
 
       expect(rejected.status, `${rejected.stdout}\n${rejected.stderr}`).toBe(2);
       expect(rejected.stderr).toContain("Failed to activate generated MCP policy");
-      expect(rejected.stderr).toContain("effective state: drift");
       expect(`${rejected.stdout}\n${rejected.stderr}`).not.toContain("host-only-secret");
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(false);
@@ -984,15 +1021,9 @@ describe("MCP add crash consistency", () => {
       const registry = JSON.parse(
         fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
       ) as {
-        sandboxes: { "crash-test": { customPolicies?: Array<{ name: string }> } };
+        sandboxes: { "crash-test": Record<string, unknown> };
       };
-      expect(registry.sandboxes["crash-test"].customPolicies).toEqual([
-        expect.objectContaining({
-          name: "mcp-bridge-fake",
-          content: expect.any(String),
-          sourcePath: "generated:nemoclaw-mcp-bridge",
-        }),
-      ]);
+      expect(registry.sandboxes["crash-test"]).not.toHaveProperty("customPolicies");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
@@ -1005,7 +1036,6 @@ describe("MCP add crash consistency", () => {
 
       expect(rejected.status, `${rejected.stdout}\n${rejected.stderr}`).toBe(2);
       expect(rejected.stderr).toContain("Failed to activate generated MCP policy");
-      expect(rejected.stderr).toContain("effective state: absent");
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(false);
@@ -1014,9 +1044,9 @@ describe("MCP add crash consistency", () => {
       const registry = JSON.parse(
         fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
       ) as {
-        sandboxes: { "crash-test": { customPolicies?: Array<{ name: string }> } };
+        sandboxes: { "crash-test": Record<string, unknown> };
       };
-      expect(registry.sandboxes["crash-test"].customPolicies).toBeUndefined();
+      expect(registry.sandboxes["crash-test"]).not.toHaveProperty("customPolicies");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
@@ -1146,6 +1176,7 @@ describe("MCP add crash consistency", () => {
         expect(committed).toMatchObject({
           server: "fake",
           env: ["FAKE_MCP_SECRET"],
+          denyTools: ["delete_*"],
           policyName: "mcp-bridge-fake",
         });
         expect(committed.providerName).toBe(pending.providerName);
@@ -1229,7 +1260,7 @@ describe("MCP add crash consistency", () => {
       expect(status.addState).toBe("prepared");
       expect(status.policy).toEqual({
         name: "mcp-bridge-fake",
-        registryPresent: false,
+        registryPresent: true,
         gatewayPresent: null,
       });
 

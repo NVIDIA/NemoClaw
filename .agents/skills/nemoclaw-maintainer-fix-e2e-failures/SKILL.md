@@ -35,7 +35,7 @@ Track each observed workflow run by run ID, attempt, status, conclusion, and job
 Repeat these steps continuously while the loop remains authorized:
 
 1. Refresh `origin/main`. List automatic E2E runs for that commit SHA and later `main` commit SHAs.
-2. Inspect only new or changed runs. Read failed job logs and artifacts far enough to identify the earliest actionable product, test, workflow, runner, or cleanup failure.
+2. Inspect only new or changed runs. Load `nemoclaw-maintainer-classify-ci-failure` to read one failed job's bounded logs and optional retained artifact before identifying the earliest actionable product, test, workflow, runner, or cleanup failure.
 3. Group failures that share the same causal signature. Do not equate a job name with a root cause.
 4. Reconcile each group with open PRs before editing. If another maintainer owns it, record that PR and take the next unowned group.
 5. Prefer a peer E2E maintenance PR that needs review or a final merge decision before starting another fix.
@@ -75,7 +75,7 @@ Read [Review and Merge](references/review-and-merge.md) before reviewing, approv
 - Never approve your own PR. After an independent approval of the latest PR commit, either the author or another maintainer may perform the final merge.
 - Independently review another maintainer's commit under review. Do not exchange approvals without reviewing correctness, security, tests, and scope.
 - Do not duplicate an active peer review. Respect an explicit review claim for the same commit SHA in agent coordination, a PR comment, or a submitted review.
-- Do not manually request reviewers unless the current user or repository-owned configuration authorizes the exact request. Follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md).
+- Do not manually request reviewers unless the current user or repository-owned configuration authorizes the request. Follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md).
 - Require at least one approval of the latest PR commit from an account that did not open, author, or co-author the PR.
 - Require the maintainer gate checker, all GitHub-required checks, and any applicable security review to pass.
 - Refresh a branch only at the final merge gate and only when the decision table requires it. Refresh before approval because the new commit invalidates earlier approval and CI evidence.

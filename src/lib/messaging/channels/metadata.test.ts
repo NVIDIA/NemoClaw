@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+
+import YAML from "yaml";
+
 import { describe, expect, it } from "vitest";
 
 import type { ChannelManifest, ChannelPolicyPresetReference } from "../manifest";
+import { resolveMessagingChannelPolicyPresetPath } from "./policy";
 import {
   getMessagingChannelForCredentialEnvKey,
   getMessagingConfigEnvAliases,
@@ -18,6 +23,7 @@ import {
   listMessagingConfigEnvKeys,
   listMessagingCredentialEnvAssignments,
   listMessagingPackageInstallSpecs,
+  listMessagingPolicyPresetMetadata,
   listMessagingProviderNamesForChannel,
   listOpenClawManagedChannelNames,
   listOpenClawPluginExtensionIds,
@@ -100,6 +106,23 @@ describe("built-in messaging channel metadata", () => {
     ).toEqual([]);
   });
 
+  it("ignores stale runtime aliases for unsupported agents (#10079)", () => {
+    const wechatManifest = listBuiltInMessagingChannelManifests().find(
+      (manifest) => manifest.id === "wechat",
+    );
+    expect(wechatManifest).toBeDefined();
+    const staleManifest: ChannelManifest = {
+      ...wechatManifest!,
+      supportedAgents: ["openclaw"],
+    };
+
+    expect(
+      listMessagingCredentialEnvAssignments({ manifests: [staleManifest] }).filter(
+        ({ agent }) => agent === "hermes",
+      ),
+    ).toEqual([]);
+  });
+
   it("resolves config env keys from manifests and compatibility aliases from metadata", () => {
     expect(listMessagingConfigEnvKeys()).toEqual([
       "TELEGRAM_ALLOWED_IDS",
@@ -155,10 +178,33 @@ describe("built-in messaging channel metadata", () => {
       whatsapp: ["whatsapp"],
       teams: ["teams"],
     });
-    expect(listRequiredCreateTimeMessagingPolicyPresetNames()).toEqual(["discord", "slack"]);
+    // A preset that carries a credential_binding must be create-time required:
+    // the sandbox reads the provider environment once, at boot, so a binding
+    // added afterwards never reaches the running agent.
+    expect(listRequiredCreateTimeMessagingPolicyPresetNames()).toEqual([
+      "telegram",
+      "discord",
+      "wechat",
+      "slack",
+      "teams",
+    ]);
     expect(getMessagingPolicyPresetValidationWarnings().discord).toContain(
-      "https://discord.com/api/v10/gateway or validate the configured",
+      "Any HTTP response confirms reachability. A transport error or OpenShell policy",
     );
+    const openClawDiscordWarning = getMessagingPolicyPresetValidationWarnings({
+      agent: "openclaw",
+    }).discord;
+    expect(openClawDiscordWarning).toContain("OpenClaw validation uses its Node runtime:");
+    expect(openClawDiscordWarning).not.toContain(
+      "Hermes validation uses its virtual-environment Python runtime:",
+    );
+    const hermesDiscordWarning = getMessagingPolicyPresetValidationWarnings({
+      agent: "hermes",
+    }).discord;
+    expect(hermesDiscordWarning).toContain(
+      "Hermes validation uses its virtual-environment Python runtime:",
+    );
+    expect(hermesDiscordWarning).not.toContain("OpenClaw validation uses its Node runtime:");
     expect(listOpenClawManagedChannelNames()).toEqual([
       "telegram",
       "discord",
@@ -209,13 +255,6 @@ describe("built-in messaging channel metadata", () => {
         agents: ["hermes"],
         manager: "hermes-uv-pip",
         spec: "microsoft-teams-apps==2.0.13.4",
-      },
-      {
-        channelId: "teams",
-        packageId: "hermesAiohttpPackage",
-        agents: ["hermes"],
-        manager: "hermes-uv-pip",
-        spec: "aiohttp==3.14.3",
       },
       {
         channelId: "googlechat",
@@ -299,11 +338,13 @@ describe("built-in messaging channel metadata", () => {
         policyKeys: ["alpha_key"],
         agentPolicyKeys: { hermes: ["alpha_hermes"] },
         validationWarningLines: ["alpha warning"],
+        validationWarningLinesByAgent: { hermes: ["alpha Hermes warning"] },
       }),
       manifestWithPreset("beta", {
         name: "shared",
         policyKeys: ["beta_key"],
         validationWarningLines: ["beta warning"],
+        validationWarningLinesByAgent: { openclaw: ["beta OpenClaw warning"] },
       }),
     ];
 
@@ -314,8 +355,13 @@ describe("built-in messaging channel metadata", () => {
     ]);
     expect(getMessagingPolicyPresetValidationWarnings({ manifests }).shared).toEqual([
       "alpha warning",
+      "alpha Hermes warning",
       "beta warning",
+      "beta OpenClaw warning",
     ]);
+    expect(
+      getMessagingPolicyPresetValidationWarnings({ agent: "hermes", manifests }).shared,
+    ).toEqual(["alpha warning", "alpha Hermes warning", "beta warning"]);
   });
 
   it("derives OpenClaw managed channel names from explicit runtime metadata", () => {
@@ -420,3 +466,77 @@ function manifestWithPreset(id: string, preset: ChannelPolicyPresetReference): C
     hooks: [],
   };
 }
+
+describe("messaging policy credential bindings", () => {
+  const AGENTS = ["openclaw", "hermes"] as const;
+
+  type PresetPolicyFile = {
+    readonly label: string;
+    readonly requiredAtCreate: boolean;
+    readonly path: string;
+  };
+
+  function policyFiles(): PresetPolicyFile[] {
+    return listMessagingPolicyPresetMetadata()
+      .flatMap((preset) =>
+        AGENTS.map((agent) => ({
+          label: `${preset.channelId}/${agent}`,
+          requiredAtCreate: preset.requiredAtCreate,
+          path: resolveMessagingChannelPolicyPresetPath(preset.presetName, agent) ?? "",
+        })),
+      )
+      .filter((entry: PresetPolicyFile) => entry.path.length > 0);
+  }
+
+  function presetsBindingACredentialWithoutCreateTimeApply(): string[] {
+    return policyFiles()
+      .filter((entry: PresetPolicyFile) => !entry.requiredAtCreate)
+      .filter((entry: PresetPolicyFile) =>
+        readFileSync(entry.path, "utf8").includes("credential_binding:"),
+      )
+      .map((entry: PresetPolicyFile) => entry.label);
+  }
+
+  type PolicyEndpoint = { readonly host?: string; readonly port?: number; readonly path?: string };
+
+  function endpointsSharingAHostPortWithoutDistinctPaths(): string[] {
+    return policyFiles()
+      .flatMap((entry: PresetPolicyFile) => {
+        const parsed = YAML.parse(readFileSync(entry.path, "utf8")) as {
+          network_policies?: Record<string, { endpoints?: PolicyEndpoint[] }>;
+        };
+        return Object.entries(parsed.network_policies ?? {}).flatMap(([policyKey, policy]) => {
+          const declared = (policy.endpoints ?? []).map((endpoint: PolicyEndpoint) => ({
+            hostPort: `${endpoint.host}:${endpoint.port}`,
+            selector: endpoint.path ?? "",
+          }));
+          const selectorsFor = (hostPort: string) =>
+            declared.filter((endpoint) => endpoint.hostPort === hostPort).map((e) => e.selector);
+          return [...new Set(declared.map((endpoint) => endpoint.hostPort))]
+            .filter(
+              (hostPort) => new Set(selectorsFor(hostPort)).size !== selectorsFor(hostPort).length,
+            )
+            .map((hostPort) => `${entry.label} ${policyKey} ${hostPort}`);
+        });
+      })
+      .sort();
+  }
+
+  it("gives every repeated host and port a distinct path selector", () => {
+    // A channel with two credentials on one host declares that host twice:
+    // - OpenShell picks the endpoint by path specificity.
+    // - Two entries scoring the same are rejected as ambiguous, which fails
+    //   sandbox creation outright rather than degrading.
+    expect(endpointsSharingAHostPortWithoutDistinctPaths()).toEqual([]);
+  });
+
+  it("keeps every preset that binds a credential create-time required", () => {
+    // The binding is what makes the credential injectable:
+    // - The sandbox reads the provider environment once, at boot; the agent
+    //   inherits that read for the life of the container.
+    // - A preset applied after boot leaves the agent with no credential at all.
+    // - Slack was already create-time required. Discord and Teams were not,
+    //   which is how their tokens went missing on OpenClaw.
+    expect(presetsBindingACredentialWithoutCreateTimeApply()).toEqual([]);
+  });
+});

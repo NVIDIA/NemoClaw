@@ -68,7 +68,7 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain("`DGX_PRETTY_NAME=NVIDIA DGX Server`");
     expect(stationPreparation).toContain("recognized GB300 hardware");
     expect(stationPreparation).not.toMatch(/\b(?:0x)?31c[23]\b/i);
-    expect(stationPreparation).toContain("does not match the date against an exact build");
+    expect(stationPreparation).toContain("does not require the date to match a build");
     expect(stationPreparation).toContain(
       "Full Station Express end-to-end qualification for the no-OTA DGX OS `7.6.x` profile is pending",
     );
@@ -76,7 +76,7 @@ describe("DGX Station documentation ownership", () => {
       "A resident `packagekitd` process alone does not block stock DGX OS",
     );
     expect(stationPreparation).toContain(
-      "Stock DGX OS and Colossus BaseOS require exact reviewed systemd, unit-file, configuration-file, and failure-cause fingerprints",
+      "Stock DGX OS and Colossus BaseOS require reviewed systemd, unit-file, configuration-file, and failure-cause fingerprints",
     );
     expect(quickstart).not.toContain("DGX Server for GALAXY-GB300");
     expect(stationPreparation).toContain("--force-station-install");

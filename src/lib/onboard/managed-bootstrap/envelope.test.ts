@@ -35,22 +35,23 @@ function requestFor(agent: ManagedStartupAgent) {
 }
 
 describe("managed bootstrap envelope", () => {
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("round-trips one canonical identity-bound %s root request", (agent) => {
-    const request = requestFor(agent);
-    const identity = "a".repeat(64);
-    const serialized = serializeManagedBootstrapEnvelope({
-      bootstrapIdentity: identity,
-      rootApplyRequest: request,
-    });
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "round-trips one canonical identity-bound %s root request",
+    (agent) => {
+      const request = requestFor(agent);
+      const identity = "a".repeat(64);
+      const serialized = serializeManagedBootstrapEnvelope({
+        bootstrapIdentity: identity,
+        rootApplyRequest: request,
+      });
 
-    expect(parseManagedBootstrapEnvelope(serialized)).toEqual({
-      schemaVersion: 1,
-      bootstrapIdentity: identity,
-      rootApplyRequest: request,
-    });
-  });
+      expect(parseManagedBootstrapEnvelope(serialized)).toEqual({
+        schemaVersion: 1,
+        bootstrapIdentity: identity,
+        rootApplyRequest: request,
+      });
+    },
+  );
 
   it("rejects malformed identities and non-canonical transport", () => {
     const request = requestFor("openclaw");
@@ -149,8 +150,8 @@ describe("managed bootstrap envelope", () => {
     expect(parseManagedBootstrapEnvelope(serialized).rootApplyRequest).toEqual(request);
   });
 
-  it("round-trips a canonical identity-bound image completion receipt", () => {
-    const request = requestFor("hermes");
+  it("round-trips a canonical identity-bound Pi image completion receipt", () => {
+    const request = requestFor("pi");
     const completion = {
       agent: request.agent,
       bootstrapIdentity: "b".repeat(64),

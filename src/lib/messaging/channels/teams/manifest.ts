@@ -97,7 +97,12 @@ export const teamsManifest = {
       primary: true,
     },
   ],
-  policyPresets: [{ name: "teams", policyKeys: ["teams"] }],
+  // requiredAtCreate - the preset carries this channel's credential_binding:
+  // - The provider profile is endpointless, so the binding is the only thing that
+  //   makes MSTEAMS_APP_PASSWORD injectable.
+  // - The sandbox reads the provider environment once, at boot, so a preset
+  //   applied afterwards never reaches the running agent.
+  policyPresets: [{ name: "teams", policyKeys: ["teams"], requiredAtCreate: true }],
   hostForward: {
     port: "{{teamsConfig.webhookPort}}",
     label: "Microsoft Teams webhook",
@@ -113,7 +118,12 @@ export const teamsManifest = {
         value: {
           enabled: true,
           appId: "{{teamsConfig.appId}}",
-          appPassword: "{{credential.teamsClientSecret.placeholder}}",
+          // No appPassword here: OpenShell 0.0.106 injects
+          // MSTEAMS_APP_PASSWORD as a revision-scoped placeholder and rejects
+          // the canonical form once the policy binds the credential. The
+          // OpenClaw Teams token resolver falls back to
+          // process.env.MSTEAMS_APP_PASSWORD. Hermes receives the same runtime
+          // placeholder under TEAMS_CLIENT_SECRET through its runtime alias.
           tenantId: "{{teamsConfig.tenantId}}",
           webhook: {
             port: "{{teamsConfig.webhookPort}}",
@@ -153,7 +163,6 @@ export const teamsManifest = {
       target: "~/.hermes/.env",
       lines: [
         "TEAMS_CLIENT_ID={{teamsConfig.appId}}",
-        "TEAMS_CLIENT_SECRET={{credential.teamsClientSecret.placeholder}}",
         "TEAMS_TENANT_ID={{teamsConfig.tenantId}}",
         "TEAMS_ALLOWED_USERS={{allowedIds.teams.csv}}",
         "TEAMS_PORT={{teamsConfig.webhookPort}}",
@@ -194,6 +203,16 @@ export const teamsManifest = {
         },
       ],
     },
+    hermes: {
+      envAliases: [
+        {
+          envKey: "MSTEAMS_APP_PASSWORD",
+          targetEnvKey: "TEAMS_CLIENT_SECRET",
+          match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+          value: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+        },
+      ],
+    },
   },
   agentPackages: [
     {
@@ -216,13 +235,6 @@ export const teamsManifest = {
       agent: "hermes",
       manager: "hermes-uv-pip",
       spec: "microsoft-teams-apps==2.0.13.4",
-      required: true,
-    },
-    {
-      id: "hermesAiohttpPackage",
-      agent: "hermes",
-      manager: "hermes-uv-pip",
-      spec: "aiohttp==3.14.3",
       required: true,
     },
   ],

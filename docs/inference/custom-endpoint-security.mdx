@@ -50,14 +50,14 @@ Managed provider defaults that do not provide an explicit custom endpoint throug
 Custom endpoint onboarding has one narrower operator-controlled exception for corporate inference gateways.
 Set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hostnames or IP literals to admit an endpoint on RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local address space.
 NemoClaw still resolves DNS and pins outbound validation to the complete canonical address set.
-An exact trusted host can return both public and supported private addresses.
+A trusted host can return both public and supported private addresses.
 NemoClaw pins every canonical answer.
 If any answer is a disallowed private, reserved, or special-purpose address, validation rejects the endpoint instead of discarding that answer.
 Wildcard or suffix matches and resolver failures also remain blocked.
 This allowlist does not relax direct blueprint, `config set`, or unrelated persisted-URL validation.
 
 `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` remains an inference-only compatibility alias.
-Inference onboarding combines exact entries from the generic variable and the compatibility alias.
+Inference onboarding combines entries from the generic variable and the compatibility alias.
 New configurations should use `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`.
 
 After onboarding records an admitted custom endpoint, `inference set` accepts that same canonical URL for a model change without resolving it again.
@@ -89,7 +89,7 @@ One 30-second total upstream deadline covers connection setup, TLS negotiation, 
 Each opaque route has its own sandbox-facing adapter credential, distinct from both the real upstream credential and the host-only control credential; a credential issued for one route cannot authorize another route.
 NemoClaw does not place upstream route credentials in the adapter child-process environment.
 After startup, the host CLI registers each route and its credential in adapter memory through an authenticated loopback-only control plane.
-Before starting or reusing the adapter, NemoClaw inspects the exact IPAM subnets assigned to the `openshell-docker` network.
+Before starting or reusing the adapter, NemoClaw inspects the IPAM subnets assigned to the `openshell-docker` network.
 The adapter accepts route-forwarding and non-control health requests only from loopback or those inspected subnets and returns a not-found response to peers on other private or LAN networks.
 Authenticated control health and route-registration requests remain loopback-only.
 NemoClaw refuses to expose the adapter when it cannot discover a valid bridge subnet.
@@ -151,7 +151,7 @@ For example, a containerized gateway can commonly reach a local server at `http:
 Because this name is a sandbox-internal alias, onboarding skips the host-side endpoint probe.
 Verify the runtime route after onboarding when you use it.
 
-The exception is intentionally exact: use HTTP, the literal `host.openshell.internal` name, and an explicit unprivileged port.
+The exception permits only HTTP, the literal `host.openshell.internal` name, and an explicit unprivileged port.
 NemoClaw still rejects HTTPS, privileged ports, subdomains, loopback names, private IP literals, userinfo, query strings, and fragments through this path.
 
 ## Related Topics

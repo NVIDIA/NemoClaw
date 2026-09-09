@@ -193,9 +193,14 @@ function captureDirectoryChain(
         throw new Error(`Podman socket path component '${directory}' is not a real directory.`);
       }
       const ownerUid = integerIdentity(stat.uid, "directory owner");
-      if (index === 0 && ownerUid !== String(uid)) {
+      if (
+        (index === 0 && ownerUid !== String(uid)) ||
+        (index > 0 && ownerUid !== "0" && ownerUid !== String(uid))
+      ) {
         throw new Error(
-          `Podman socket directory is owned by uid ${ownerUid}; expected current uid ${String(uid)}.`,
+          index === 0
+            ? `Podman socket directory is owned by uid ${ownerUid}; expected current uid ${String(uid)}.`
+            : `Podman socket directory is owned by uid ${ownerUid}; expected root or current uid ${String(uid)}.`,
         );
       }
       const mode = integerValue(stat.mode, "directory mode");

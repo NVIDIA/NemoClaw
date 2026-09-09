@@ -22,7 +22,7 @@ import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
-import { parseGatewayInference } from "../../inference/config";
+import { buildGatewayInferenceGetArgs, parseGatewayInference } from "../../inference/config";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
@@ -32,14 +32,12 @@ import {
   resolveCurrentRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
-import { getBaselineExclusionRuntimeStatus } from "../../policy";
-import {
-  BASELINE_EXCLUSION_SUPPORT_IMPACT,
-  type BaselineExclusionRuntimeStatus,
-} from "../../policy/baseline-exclusion";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
-import * as shields from "../../shields";
+import {
+  inspectMutableConfigPerms,
+  repairMutableConfigPerms,
+} from "../../sandbox/mutable-config-perms";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
@@ -57,14 +55,16 @@ import {
 import { collectMessagingDoctorChecks } from "./doctor-messaging";
 import {
   buildDoctorReport,
+  buildGlobalDoctorReport,
   type DoctorCheck,
   type DoctorReport,
-  type DoctorStatus,
+  type GlobalDoctorReport,
   renderDoctorReport,
 } from "./doctor-report";
 import {
   cloudflaredDoctorCheck,
   dockerInspectGateway,
+  gatewayDoctorStartHint,
   inspectSandboxDoctorPortableAuthority,
   ollamaDoctorCheck,
   oneLine,
@@ -74,6 +74,7 @@ import {
 import { buildToolScopeChecks } from "./doctor-tool-scope";
 
 export type { DoctorCheck, DoctorReport } from "./doctor-report";
+export { redactDoctorReport } from "./doctor-report";
 
 type RunSandboxDoctorOptions = {
   quietJson?: boolean;
@@ -84,9 +85,21 @@ type DoctorIntent = {
   wantsFix: boolean;
 };
 
-type GatewayProbe = {
+type DoctorHostProbe = {
+  checks: DoctorCheck[];
+  openshellBin: string | null;
+};
+
+type DoctorGatewayProbe = {
   checks: DoctorCheck[];
   connected: boolean;
+};
+
+type DoctorGatewayProbeOptions = {
+  gatewayPort: number;
+  ignoreProbeErrors?: boolean;
+  recoverGateway: boolean;
+  unavailableHint?: string;
 };
 
 type SandboxProbe = {
@@ -184,15 +197,11 @@ function runtimeHostCheck(sb: SandboxEntry | null | undefined): DoctorCheck {
   }
 }
 
-function collectHostChecks(sb: SandboxEntry | null | undefined): {
-  checks: DoctorCheck[];
-  openshellBin: ReturnType<typeof resolveOpenshell>;
-} {
-  const cli = cliBuildCheck();
+function collectDoctorHostChecks(sb: SandboxEntry | null | undefined): DoctorHostProbe {
   const openshellBin = resolveOpenshell();
   return {
     checks: [
-      cli,
+      cliBuildCheck(),
       runtimeHostCheck(sb),
       {
         group: "Host",
@@ -206,47 +215,24 @@ function collectHostChecks(sb: SandboxEntry | null | undefined): {
   };
 }
 
-async function collectGatewayChecks(
-  gatewayName: string,
-  sb: SandboxEntry | null | undefined,
-  openshellBin: ReturnType<typeof resolveOpenshell>,
-  recoverGateway: boolean,
-): Promise<GatewayProbe> {
-  const checks: DoctorCheck[] = [];
-  const gateway = openshellBin
-    ? await probeOpenShellGateway(gatewayName, recoverGateway)
-    : { check: null, connected: false };
-  if (gateway.check) checks.push(gateway.check);
-  if (shouldInspectLegacyGatewayContainer(sb)) {
-    checks.push(
-      ...dockerInspectGateway(
-        `openshell-cluster-${gatewayName}`,
-        {
-          namedGatewayConnected: gateway.connected,
-          gatewayName,
-        },
-        sb?.gatewayPort ?? GATEWAY_PORT,
-      ),
-    );
+async function gatewayLifecycle(gatewayName: string, options: DoctorGatewayProbeOptions) {
+  if (!options.recoverGateway) {
+    return options.ignoreProbeErrors === undefined
+      ? getNamedGatewayLifecycleState(gatewayName)
+      : getNamedGatewayLifecycleState(gatewayName, {
+          ignoreProbeErrors: options.ignoreProbeErrors,
+        });
   }
-  return { checks, connected: gateway.connected };
-}
-
-async function gatewayLifecycle(gatewayName: string, recoverGateway: boolean) {
-  if (!recoverGateway) return getNamedGatewayLifecycleState(gatewayName);
   const recovery = await recoverNamedGatewayRuntime({ gatewayName });
   return recovery.after || recovery.before;
 }
 
 async function probeOpenShellGateway(
   gatewayName: string,
-  recoverGateway: boolean,
-): Promise<{
-  check: DoctorCheck;
-  connected: boolean;
-}> {
-  const lifecycle = await gatewayLifecycle(gatewayName, recoverGateway);
-  const cleanStatus = stripOpenShellCliAnsi(lifecycle?.status || "");
+  options: DoctorGatewayProbeOptions,
+): Promise<{ check: DoctorCheck; connected: boolean }> {
+  const lifecycle = await gatewayLifecycle(gatewayName, options);
+  const cleanStatus = oneLine(stripOpenShellCliAnsi(lifecycle?.status || ""));
   const connected = lifecycle?.state === "healthy_named";
   return {
     connected,
@@ -257,9 +243,48 @@ async function probeOpenShellGateway(
       detail: connected
         ? `connected to ${gatewayName}`
         : oneLine(cleanStatus || lifecycle?.gatewayInfo || `not connected to ${gatewayName}`),
-      hint: connected ? undefined : `run \`openshell gateway select ${gatewayName}\` and retry`,
+      hint: connected
+        ? undefined
+        : lifecycle?.state === "connected_other" || !options.unavailableHint
+          ? `run \`openshell gateway select ${gatewayName}\` and retry`
+          : options.unavailableHint,
     },
   };
+}
+
+async function collectDoctorGatewayChecks(
+  gatewayName: string,
+  sb: SandboxEntry | null | undefined,
+  openshellBin: string | null,
+  options: DoctorGatewayProbeOptions,
+): Promise<DoctorGatewayProbe> {
+  const checks: DoctorCheck[] = sb
+    ? [
+        {
+          group: "Gateway",
+          label: "Registered gateway binding",
+          status: "ok",
+          detail: `resolved to '${gatewayName}'`,
+        },
+      ]
+    : [];
+  const gateway = openshellBin
+    ? await probeOpenShellGateway(gatewayName, options)
+    : { check: null, connected: false };
+  if (gateway.check) checks.push(gateway.check);
+  if (shouldInspectLegacyGatewayContainer(sb)) {
+    checks.push(
+      ...dockerInspectGateway(
+        `openshell-cluster-${gatewayName}`,
+        {
+          namedGatewayConnected: gateway.connected,
+          gatewayName,
+        },
+        sb?.gatewayPort ?? options.gatewayPort,
+      ),
+    );
+  }
+  return { checks, connected: gateway.connected };
 }
 
 function liveSandboxDetail(
@@ -349,7 +374,7 @@ async function liveSandboxCheck(sandboxName: string, gatewayName: string): Promi
 async function collectSandboxReadinessChecks(
   sandboxName: string,
   gatewayName: string | null,
-  openshellBin: ReturnType<typeof resolveOpenshell>,
+  openshellBin: string | null,
   openshellConnected: boolean,
 ): Promise<SandboxProbe> {
   if (gatewayName && openshellBin && openshellConnected) {
@@ -372,14 +397,14 @@ async function collectSandboxReadinessChecks(
 
 function resolveInferenceRoute(
   sb: SandboxEntry | null | undefined,
-  openshellBin: ReturnType<typeof resolveOpenshell>,
+  openshellBin: string | null,
   openshellConnected: boolean,
   gatewayName: string | null,
 ): DoctorInferenceRoute {
   const live =
     openshellBin && openshellConnected && gatewayName
       ? parseGatewayInference(
-          captureOpenshell(["inference", "get", "-g", gatewayName], {
+          captureOpenshell(buildGatewayInferenceGetArgs(gatewayName), {
             ignoreError: true,
             timeout: OPENSHELL_PROBE_TIMEOUT_MS,
           }).output,
@@ -429,109 +454,6 @@ function agentVersionDoctorCheck(sandboxName: string): DoctorCheck {
   }
 }
 
-function shieldsDoctorCheck(sandboxName: string): DoctorCheck {
-  const posture = shields.getShieldsPosture(sandboxName, false);
-  const status: DoctorStatus =
-    posture.mode === "locked"
-      ? "ok"
-      : posture.mode === "temporarily_unlocked" || posture.mode === "error"
-        ? "warn"
-        : "info";
-  const hint =
-    posture.mode === "mutable_default"
-      ? `run \`${CLI_NAME} ${sandboxName} shields up\` to opt into lockdown`
-      : posture.mode === "locked"
-        ? undefined
-        : `run \`${CLI_NAME} ${sandboxName} shields status\` for details`;
-  return {
-    group: "Sandbox",
-    label: "Shields",
-    status,
-    detail: posture.detail,
-    hint,
-  };
-}
-
-function baselineExclusionCheckFields(
-  sandboxName: string,
-  key: string,
-  runtimeStatus: BaselineExclusionRuntimeStatus,
-): Pick<DoctorCheck, "status" | "detail" | "hint"> {
-  const restoreCommand = `${CLI_NAME} ${sandboxName} policy restore ${key}`;
-  if (runtimeStatus === "excluded") {
-    return {
-      status: "info",
-      detail: `Baseline entry '${key}' excluded. ${BASELINE_EXCLUSION_SUPPORT_IMPACT}`,
-      hint: `restore with \`${restoreCommand}\``,
-    };
-  }
-  if (runtimeStatus === "no-longer-in-baseline") {
-    return {
-      status: "warn",
-      detail: `Baseline entry '${key}' no longer exists; rebuild fails closed until the stale exclusion is cleared.`,
-      hint: `key no longer exists in the baseline; run \`${restoreCommand}\` to clear the stale record`,
-    };
-  }
-  if (runtimeStatus === "agent-changed") {
-    return {
-      status: "warn",
-      detail: `Baseline exclusion '${key}' belongs to a different agent; rebuild fails closed until the stale approval is cleared.`,
-      hint: `run \`${restoreCommand}\`, then review and approve the current agent baseline if needed`,
-    };
-  }
-  if (runtimeStatus === "baseline-unreadable") {
-    return {
-      status: "warn",
-      detail: "Current agent baseline is unreadable; exclusion scope could not be verified.",
-      hint: `inspect \`${CLI_NAME} ${sandboxName} policy list\` before rebuilding`,
-    };
-  }
-  if (runtimeStatus === "live-policy-unreadable") {
-    return {
-      status: "warn",
-      detail: `Live policy for '${key}' is unreadable; exclusion enforcement could not be verified.`,
-      hint: `restore gateway access, then rerun \`${CLI_NAME} ${sandboxName} doctor\``,
-    };
-  }
-  if (runtimeStatus === "live-policy-mismatch") {
-    return {
-      status: "fail",
-      detail: `Live policy still contains excluded baseline entry '${key}'; the recorded exclusion is not enforced.`,
-      hint: `inspect \`${CLI_NAME} ${sandboxName} policy list\`, remove the colliding source, then re-run the exclusion`,
-    };
-  }
-  return {
-    status: "warn",
-    detail: `Baseline entry '${key}' changed since exclusion was approved; rebuild fails closed until re-approved.`,
-    hint: `run \`${restoreCommand}\`, review with \`${CLI_NAME} ${sandboxName} policy exclude ${key} --dry-run\`, then re-approve`,
-  };
-}
-
-function baselineExclusionDoctorChecks(sandboxName: string): DoctorCheck[] {
-  const transition = registry.getBaselineExclusionTransition(sandboxName);
-  const checks: DoctorCheck[] = [];
-  for (const exclusion of registry.getBaselineExclusions(sandboxName)) {
-    if (transition?.exclusion.key === exclusion.key) continue;
-    const runtimeStatus = getBaselineExclusionRuntimeStatus(sandboxName, exclusion);
-    checks.push({
-      group: "Sandbox",
-      label: `Baseline exclusion: ${exclusion.key}`,
-      ...baselineExclusionCheckFields(sandboxName, exclusion.key, runtimeStatus),
-    });
-  }
-  if (transition) {
-    const key = transition.exclusion.key;
-    checks.push({
-      group: "Sandbox",
-      label: `Baseline exclusion: ${key}`,
-      status: "warn",
-      detail: `Baseline policy ${transition.operation} for '${key}' was interrupted; rebuild is blocked until live and durable state are reconciled.`,
-      hint: `re-run \`${CLI_NAME} ${sandboxName} policy ${transition.operation} ${key}\``,
-    });
-  }
-  return checks;
-}
-
 function collectRegisteredSandboxChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
@@ -539,7 +461,7 @@ function collectRegisteredSandboxChecks(
   sandboxReachable: boolean,
 ): DoctorCheck[] {
   if (!sb) return [];
-  const checks = [agentVersionDoctorCheck(sandboxName), shieldsDoctorCheck(sandboxName)];
+  const checks = [agentVersionDoctorCheck(sandboxName)];
   let dashboardPortRequired = true;
   try {
     dashboardPortRequired = shouldManageDashboardForAgent(loadAgent(sb.agent || "openclaw"));
@@ -550,13 +472,12 @@ function collectRegisteredSandboxChecks(
     buildLifecycleRegistrationCheck(sandboxName, sb, CLI_NAME, { dashboardPortRequired }),
   );
   const permsCheck = buildConfigPermsCheck(sandboxName, wantsFix, {
-    inspect: shields.inspectMutableConfigPerms,
-    repair: shields.repairMutableConfigPerms,
+    inspect: inspectMutableConfigPerms,
+    repair: repairMutableConfigPerms,
     cliName: CLI_NAME,
   });
   if (permsCheck) checks.push(permsCheck);
   checks.push(...collectMessagingDoctorChecks(sandboxName, sb, sandboxReachable));
-  checks.push(...baselineExclusionDoctorChecks(sandboxName));
   return checks;
 }
 
@@ -593,9 +514,12 @@ async function collectDoctorChecks(
   gatewayName: string | null,
   intent: DoctorIntent,
 ): Promise<DoctorCheck[]> {
-  const host = collectHostChecks(sb);
-  const gateway: GatewayProbe = gatewayName
-    ? await collectGatewayChecks(gatewayName, sb, host.openshellBin, !intent.asJson)
+  const host = collectDoctorHostChecks(sb);
+  const gateway: DoctorGatewayProbe = gatewayName
+    ? await collectDoctorGatewayChecks(gatewayName, sb, host.openshellBin, {
+        gatewayPort: sb?.gatewayPort ?? GATEWAY_PORT,
+        recoverGateway: !intent.asJson,
+      })
     : {
         connected: false,
         checks: [
@@ -638,6 +562,91 @@ function resolveDoctorGatewayName(sb: SandboxEntry | null | undefined): string |
   } catch {
     return null;
   }
+}
+
+function registryReadabilityCheck(): DoctorCheck {
+  try {
+    const count = registry.listSandboxes().sandboxes.length;
+    return {
+      group: "Host",
+      label: "Sandbox registry",
+      status: "ok",
+      detail: `readable (${count} registered sandbox${count === 1 ? "" : "es"})`,
+    };
+  } catch {
+    return {
+      group: "Host",
+      label: "Sandbox registry",
+      status: "fail",
+      detail: "could not read the host sandbox registry",
+      hint: "check the registry file permissions and JSON, then retry",
+    };
+  }
+}
+
+function unavailableGatewayCheck(): DoctorCheck {
+  return {
+    group: "Gateway",
+    label: "OpenShell status",
+    status: "fail",
+    detail: "skipped because the OpenShell CLI is not installed",
+    hint: "install OpenShell, then retry",
+  };
+}
+
+function globalGatewayGuidance(gatewayName: string): {
+  checks: DoctorCheck[];
+  unavailableHint: string;
+} {
+  try {
+    return { checks: [], unavailableHint: gatewayDoctorStartHint(gatewayName) };
+  } catch {
+    const hint =
+      "check the gateway-management declaration file permissions and JSON, then retry";
+    return {
+      checks: [
+        {
+          group: "Gateway",
+          label: "Gateway management",
+          status: "fail",
+          detail: "could not resolve the gateway lifecycle owner",
+          hint,
+        },
+      ],
+      unavailableHint: hint,
+    };
+  }
+}
+
+export async function runGlobalDoctor(
+  options: { quiet?: boolean } = {},
+): Promise<GlobalDoctorReport> {
+  const host = collectDoctorHostChecks(null);
+  const gatewayName = resolveGatewayName(GATEWAY_PORT);
+  const guidance = globalGatewayGuidance(gatewayName);
+  let gatewayChecks: DoctorCheck[] = [...guidance.checks];
+  if (host.openshellBin) {
+    gatewayChecks = [
+      ...gatewayChecks,
+      ...(
+        await collectDoctorGatewayChecks(gatewayName, null, host.openshellBin, {
+          gatewayPort: GATEWAY_PORT,
+          ignoreProbeErrors: true,
+          recoverGateway: false,
+          unavailableHint: guidance.unavailableHint,
+        })
+      ).checks,
+    ];
+  } else {
+    gatewayChecks.push(unavailableGatewayCheck());
+  }
+  const report = buildGlobalDoctorReport([
+    ...host.checks,
+    registryReadabilityCheck(),
+    ...gatewayChecks,
+  ]);
+  if (!options.quiet) renderDoctorReport(report, false);
+  return report;
 }
 
 export async function runSandboxDoctor(

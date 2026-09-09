@@ -25,7 +25,7 @@ import {
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
 } from "../../onboard/docker-driver-gateway-service";
 import { HOST_GATEWAY_PGREP_PATTERN } from "../../onboard/host-gateway-process";
-import { type RunResult, runUninstallPlan, type UninstallRunDeps } from "./run-plan";
+import { type RunResult, runUninstallPlanProduction, type UninstallRunDeps } from "./run-plan";
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -125,9 +125,10 @@ function uninstall(
   gateways: { name: string }[] = [{ name: "nemoclaw" }],
 ) {
   const { commandExists = () => false, run = () => ok(), ...overrides } = deps;
-  return runUninstallPlan(
+  return runUninstallPlanProduction(
     { assumeYes: true, deleteModels: false, keepOpenShell },
     withProvenManagedGatewayProcess({
+      backupAllBeforeUninstall: async () => undefined,
       env: test.env,
       existsSync: (target) => String(target).startsWith(test.root) && fs.existsSync(target),
       hasPortableRuntimeCleanup: () => false,
@@ -146,6 +147,7 @@ function uninstall(
       }),
       rmSync: fs.rmSync,
       runDocker: () => ok(),
+      withSandboxMutationLock: async (_sandboxName, operation) => await operation(),
       ...overrides,
       commandExists: (command) => command === "openshell" || commandExists(command),
       run: (command, args, options) => {
@@ -167,14 +169,14 @@ function uninstall(
 }
 
 describe("uninstall OpenShell gateway user service", () => {
-  it("keeps the service, env, gateway process, and state with --keep-openshell (#7830)", () => {
+  it("keeps the service, env, gateway process, and state with --keep-openshell (#7830)", async () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     const envPath = writeGatewayEnv(test);
     const gatewayStatePath = writeGatewayState(test);
     const run = vi.fn((_command: string, _args: string[]) => ok());
 
-    expect(uninstall(test, true, { commandExists: () => true, run }).exitCode).toBe(0);
+    expect((await uninstall(test, true, { commandExists: () => true, run })).exitCode).toBe(0);
     expect(fs.existsSync(servicePath)).toBe(true);
     expect(fs.existsSync(envPath)).toBe(true);
     expect(fs.existsSync(gatewayStatePath)).toBe(true);
@@ -184,13 +186,13 @@ describe("uninstall OpenShell gateway user service", () => {
     ]);
   });
 
-  it("keeps selected gateway state when sibling gateways require scoped cleanup (#7830)", () => {
+  it("keeps selected gateway state when sibling gateways require scoped cleanup (#7830)", async () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     const envPath = writeGatewayEnv(test);
     const gatewayStatePath = writeGatewayState(test);
 
-    const result = uninstall(test, true, { commandExists: () => true }, [
+    const result = await uninstall(test, true, { commandExists: () => true }, [
       { name: "nemoclaw" },
       { name: "sibling" },
     ]);
@@ -201,7 +203,7 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(fs.existsSync(gatewayStatePath)).toBe(true);
   });
 
-  it("deletes a scoped sandbox through the package-managed service without standalone runtime files", () => {
+  it("deletes a scoped sandbox through the package-managed service without standalone runtime files", async () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     const stateDir = path.join(
@@ -216,7 +218,7 @@ describe("uninstall OpenShell gateway user service", () => {
     writeSelectedSandboxRegistry(test, "my-assistant");
     const calls: string[][] = [];
 
-    const result = uninstall(
+    const result = await uninstall(
       test,
       false,
       {
@@ -241,7 +243,7 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(fs.existsSync(servicePath)).toBe(false);
   });
 
-  it("does not delete a sandbox when the package-managed service identity changes", () => {
+  it("does not delete a sandbox when the package-managed service identity changes", async () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     const stateDir = path.join(
@@ -262,7 +264,7 @@ describe("uninstall OpenShell gateway user service", () => {
       .mockReturnValueOnce({ executablePath: "/usr/bin/openshell-gateway", pid: 4242 })
       .mockReturnValue({ executablePath: "/usr/bin/openshell-gateway", pid: 4243 });
 
-    const result = uninstall(
+    const result = await uninstall(
       test,
       false,
       {
@@ -294,7 +296,7 @@ describe("uninstall OpenShell gateway user service", () => {
     );
   });
 
-  it("does not delete a sandbox when the package-managed service changes namespace", () => {
+  it("does not delete a sandbox when the package-managed service changes namespace", async () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     const stateDir = path.join(
@@ -313,7 +315,7 @@ describe("uninstall OpenShell gateway user service", () => {
     let namespaceReads = 0;
     const realpathSync = vi.fn((target: string) => target);
 
-    const result = uninstall(
+    const result = await uninstall(
       test,
       false,
       {
@@ -355,13 +357,13 @@ describe("uninstall OpenShell gateway user service", () => {
     );
   });
 
-  it("keeps selected gateway state during scoped cleanup under external supervision (#6576)", () => {
+  it("keeps selected gateway state during scoped cleanup under external supervision (#6576)", async () => {
     const test = fixture(true);
     const gatewayStatePath = writeGatewayState(test);
     const stateDir = path.dirname(gatewayStatePath);
     const pid = 4242;
 
-    const result = uninstall(
+    const result = await uninstall(
       test,
       false,
       {
@@ -400,7 +402,7 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(fs.existsSync(gatewayStatePath)).toBe(true);
   });
 
-  it("does not mutate scoped resources when an external authority names another state root", () => {
+  it("does not mutate scoped resources when an external authority names another state root", async () => {
     const test = fixture(true);
     const localConfigPath = writeGatewayState(test);
     const registryPath = writeSelectedSandboxRegistry(test, "my-assistant");
@@ -408,7 +410,7 @@ describe("uninstall OpenShell gateway user service", () => {
     const calls: string[][] = [];
     const errors: string[] = [];
 
-    const result = uninstall(
+    const result = await uninstall(
       test,
       false,
       {
@@ -447,7 +449,7 @@ describe("uninstall OpenShell gateway user service", () => {
     );
   });
 
-  it("does not delete a sandbox when an external service changes namespace before deletion", () => {
+  it("does not delete a sandbox when an external service changes namespace before deletion", async () => {
     const test = fixture(true);
     const configPath = writeGatewayState(test);
     const stateDir = path.dirname(configPath);
@@ -457,7 +459,7 @@ describe("uninstall OpenShell gateway user service", () => {
     let namespaceReads = 0;
     const calls: string[][] = [];
 
-    const result = uninstall(
+    const result = await uninstall(
       test,
       false,
       {
@@ -516,14 +518,14 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(fs.readFileSync(registryPath, "utf-8")).toBe(registryBefore);
   });
 
-  it("does not delete a sandbox when a managed gateway namespace is unproven before deletion", () => {
+  it("does not delete a sandbox when a managed gateway namespace is unproven before deletion", async () => {
     const test = fixture(true);
     writeGatewayState(test);
     const registryPath = writeSelectedSandboxRegistry(test, "my-assistant");
     const registryBefore = fs.readFileSync(registryPath, "utf-8");
     const calls: string[][] = [];
 
-    const result = uninstall(
+    const result = await uninstall(
       test,
       false,
       {
@@ -552,7 +554,7 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(fs.readFileSync(registryPath, "utf-8")).toBe(registryBefore);
   });
 
-  it("deletes the selected sandbox before it disables the marked Linux unit on scoped uninstall (#8220)", () => {
+  it("deletes the selected sandbox before it disables the marked Linux unit on scoped uninstall (#8220)", async () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     writeSelectedSandboxRegistry(test, "my-assistant");
@@ -560,7 +562,7 @@ describe("uninstall OpenShell gateway user service", () => {
     const dockerCalls: string[][] = [];
     let gatewayStopped = false;
 
-    const result = uninstall(
+    const result = await uninstall(
       test,
       false,
       {
@@ -604,7 +606,7 @@ describe("uninstall OpenShell gateway user service", () => {
     { externallySupervised: true, keepOpenShell: false, mode: "external supervision" },
   ])(
     "does not mutate scoped resources with an unproven sandbox namespace under $mode (#8663)",
-    ({ externallySupervised, keepOpenShell }) => {
+    async ({ externallySupervised, keepOpenShell }) => {
       const test = fixture(true);
       const servicePath = writeManagedService(test);
       const configPath = writeGatewayState(test);
@@ -648,7 +650,7 @@ describe("uninstall OpenShell gateway user service", () => {
         ...externalAuthority,
       };
 
-      const result = uninstall(test, keepOpenShell, deps, [
+      const result = await uninstall(test, keepOpenShell, deps, [
         { name: "nemoclaw" },
         { name: "nemoclaw-8081" },
       ]);
@@ -679,13 +681,13 @@ describe("uninstall OpenShell gateway user service", () => {
     },
   );
 
-  it("preserves the marked Linux unit when scoped sandbox deletion fails (#8220)", () => {
+  it("preserves the marked Linux unit when scoped sandbox deletion fails (#8220)", async () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     writeSelectedSandboxRegistry(test, "my-assistant");
     const calls: string[][] = [];
 
-    const result = uninstall(
+    const result = await uninstall(
       test,
       false,
       {
@@ -707,13 +709,13 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
   });
 
-  it("preserves the marked Linux unit when scoped gateway registration removal fails (#8220)", () => {
+  it("preserves the marked Linux unit when scoped gateway registration removal fails (#8220)", async () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     writeSelectedSandboxRegistry(test, "my-assistant");
     const calls: string[][] = [];
 
-    const result = uninstall(
+    const result = await uninstall(
       test,
       false,
       {
@@ -743,7 +745,7 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
   });
 
-  it("retries scoped cleanup after marked Linux unit cleanup fails (#8220)", () => {
+  it("retries scoped cleanup after marked Linux unit cleanup fails (#8220)", async () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     const gatewayStatePath = writeGatewayState(test);
@@ -766,7 +768,10 @@ describe("uninstall OpenShell gateway user service", () => {
       },
     };
 
-    const result = uninstall(test, false, deps, [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }]);
+    const result = await uninstall(test, false, deps, [
+      { name: "nemoclaw" },
+      { name: "nemoclaw-8081" },
+    ]);
 
     expect(result.exitCode).toBe(1);
     expect(fs.existsSync(servicePath)).toBe(true);
@@ -777,7 +782,10 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(runDocker).not.toHaveBeenCalled();
     expect(JSON.parse(fs.readFileSync(registryPath, "utf-8")).sandboxes).toEqual({});
 
-    const retry = uninstall(test, false, deps, [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }]);
+    const retry = await uninstall(test, false, deps, [
+      { name: "nemoclaw" },
+      { name: "nemoclaw-8081" },
+    ]);
 
     expect(retry.exitCode).toBe(0);
     expect(disableService).toHaveBeenCalledTimes(2);
@@ -797,14 +805,14 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(runDocker).toHaveBeenCalled();
   });
 
-  it("removes only the marked Linux unit and managed env on full uninstall (#6903)", () => {
+  it("removes only the marked Linux unit and managed env on full uninstall (#6903)", async () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     const envPath = writeGatewayEnv(test);
     const gatewayStatePath = writeGatewayState(test);
     const calls: string[][] = [];
 
-    const result = uninstall(test, false, {
+    const result = await uninstall(test, false, {
       commandExists: (command) => command === "systemctl",
       run: (command, args) => {
         calls.push([command, ...args]);
@@ -826,7 +834,7 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(calls).toContainEqual(["systemctl", "--user", "daemon-reload"]);
   });
 
-  it("opts full uninstall gateway teardown into missing packaged-service recovery (#8215)", () => {
+  it("opts full uninstall gateway teardown into missing packaged-service recovery (#8215)", async () => {
     const test = fixture(true);
     const resolveGatewayTeardownAuthority = vi.fn(({ gatewayName, gatewayPort }) => ({
       gatewayName,
@@ -839,7 +847,7 @@ describe("uninstall OpenShell gateway user service", () => {
       requiredCapabilities: [],
     }));
 
-    const result = uninstall(test, false, {
+    const result = await uninstall(test, false, {
       commandExists: () => true,
       resolveGatewayTeardownAuthority,
     });
@@ -851,7 +859,7 @@ describe("uninstall OpenShell gateway user service", () => {
     );
   });
 
-  it("reports an incomplete uninstall when the marked service cannot be disabled (#6903)", () => {
+  it("reports an incomplete uninstall when the marked service cannot be disabled (#6903)", async () => {
     const test = fixture();
     const servicePath = writeManagedService(test);
     const errors: string[] = [];
@@ -861,7 +869,7 @@ describe("uninstall OpenShell gateway user service", () => {
         : ok(),
     );
 
-    const result = uninstall(test, false, {
+    const result = await uninstall(test, false, {
       commandExists: (command) => ["systemctl", "npm"].includes(command),
       error: (line) => errors.push(line),
       run,
@@ -885,17 +893,17 @@ describe("uninstall OpenShell gateway user service", () => {
     );
   });
 
-  it("preserves a foreign unit at the NemoClaw service path (#6903)", () => {
+  it("preserves a foreign unit at the NemoClaw service path (#6903)", async () => {
     const test = fixture();
     const servicePath = getNemoclawOpenShellGatewayUserServicePath(test.home, test.env);
     fs.mkdirSync(path.dirname(servicePath), { recursive: true });
     fs.writeFileSync(servicePath, "# foreign service\n");
 
-    expect(uninstall(test, false).exitCode).toBe(0);
+    expect((await uninstall(test, false)).exitCode).toBe(0);
     expect(fs.readFileSync(servicePath, "utf-8")).toBe("# foreign service\n");
   });
 
-  it("refuses to follow symlinked service and env files (#6903)", () => {
+  it("refuses to follow symlinked service and env files (#6903)", async () => {
     const test = fixture();
     const serviceTarget = path.join(test.root, "foreign.service");
     const servicePath = getNemoclawOpenShellGatewayUserServicePath(test.home, test.env);
@@ -912,14 +920,14 @@ describe("uninstall OpenShell gateway user service", () => {
     fs.symlinkSync(serviceTarget, servicePath);
     fs.symlinkSync(envTarget, envPath);
 
-    expect(uninstall(test, false).exitCode).toBe(1);
+    expect((await uninstall(test, false)).exitCode).toBe(1);
     expect(fs.readFileSync(serviceTarget, "utf-8")).toContain(
       NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
     );
     expect(fs.readFileSync(envTarget, "utf-8")).toBe("KEEP_ME=1\n");
   });
 
-  it("removes managed env keys while preserving unrelated content (#6903)", () => {
+  it("removes managed env keys while preserving unrelated content (#6903)", async () => {
     const test = fixture();
     const envPath = writeGatewayEnv(
       test,
@@ -932,15 +940,15 @@ describe("uninstall OpenShell gateway user service", () => {
       ].join("\n"),
     );
 
-    expect(uninstall(test, false).exitCode).toBe(0);
+    expect((await uninstall(test, false)).exitCode).toBe(0);
     expect(fs.readFileSync(envPath, "utf-8")).toBe("KEEP_ME=1\n");
   });
 
-  it("does not remove the Linux unit on macOS (#6903)", () => {
+  it("does not remove the Linux unit on macOS (#6903)", async () => {
     const test = fixture();
     const servicePath = writeManagedService(test);
 
-    expect(uninstall(test, false, { platform: "darwin" }).exitCode).toBe(0);
+    expect((await uninstall(test, false, { platform: "darwin" })).exitCode).toBe(0);
     expect(fs.existsSync(servicePath)).toBe(true);
   });
 });

@@ -125,7 +125,7 @@ export async function enforceDockerGpuPatchPreserveNetwork(
   provider: string | null | undefined,
   config: DockerGpuLocalInferenceConfig,
   options: DockerGpuLocalInferenceOptions & {
-    reverifyBridgeReachability?: () => void | Promise<void>;
+    reverifyBridgeReachability: () => void | Promise<void>;
   },
 ): Promise<boolean> {
   if (!isLocalInferenceProvider(provider)) return false;
@@ -137,21 +137,8 @@ export async function enforceDockerGpuPatchPreserveNetwork(
       "loopback is not reachable from the sandbox network namespace, so OpenClaw routes through " +
       "the OpenShell-managed inference path (host networking is not needed for GPU device access).",
   );
-  await (
-    options.reverifyBridgeReachability ??
-    (() => defaultReverifyBridgeReachability(options.gatewayPort))
-  )();
+  await options.reverifyBridgeReachability();
   return true;
-}
-
-/** Re-run the sandbox→gateway bridge reachability probe (with UFW auto-fix). */
-function defaultReverifyBridgeReachability(gatewayPort?: number): Promise<void> {
-  const { verifySandboxBridgeGatewayReachableOrExit } =
-    require("./gateway-sandbox-reachability") as typeof import("./gateway-sandbox-reachability");
-  return verifySandboxBridgeGatewayReachableOrExit(true, {
-    skip: false,
-    ...(gatewayPort === undefined ? {} : { port: gatewayPort }),
-  });
 }
 
 export type SandboxExecResult = {

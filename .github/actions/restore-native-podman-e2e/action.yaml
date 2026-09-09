@@ -1,0 +1,341 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: restore-native-podman-e2e
+description: Restore the Docker runtime state changed by native Podman E2E isolation.
+
+inputs:
+  enabled:
+    description: Restore Docker after a selected native Podman row.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Restore Docker CLI after native Podman execution
+      if: ${{ inputs.enabled == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore
+        disabled_path="$restore_root/docker"
+        metadata_path="$restore_root/metadata"
+        runtime_state_path="$restore_root/runtime.json"
+        toolchain_install_root=/usr/lib/nemoclaw-native-podman-e2e
+        helper_install_root=/usr/local/libexec/podman
+        cleanup_state_path="$toolchain_install_root/cleanup.json"
+        cleanup_authorized=false
+        cleanup_native_podman_runtime() {
+          if ! sudo -n test -e "$cleanup_state_path" && ! sudo -n test -L "$cleanup_state_path"; then
+            return 0
+          fi
+          [[ -n "${RUNNER_TEMP:-}" && -n "${HOME:-}" ]]
+          [[ "$RUNNER_TEMP" == /* && "$HOME" == /* ]]
+          sudo -n test -d "$toolchain_install_root"
+          sudo -n test ! -L "$toolchain_install_root"
+          [[ "$(sudo -n stat -c '%u:%g:%a' "$toolchain_install_root")" == "0:0:755" ]]
+          sudo -n test -f "$cleanup_state_path"
+          sudo -n test ! -L "$cleanup_state_path"
+          [[ "$(sudo -n stat -c '%u:%g:%a' "$cleanup_state_path")" == "0:0:600" ]]
+          sudo -n jq -e '
+            (.schemaVersion == 1) and
+            ((keys | sort) == ["dbusActive", "helperDirectoryPreexisting", "loopbackAddressAdded", "podmanDirectoryPreexisting", "schemaVersion", "serviceUnitDirectoryPreexisting", "subgidRange", "subuidRange", "uid", "userManagerActive", "userRuntimeActive"]) and
+            (.uid | type == "number" and . >= 0 and floor == .) and
+            ([.userRuntimeActive, .userManagerActive, .dbusActive] | all(. == "active" or . == "inactive")) and
+            (.podmanDirectoryPreexisting | type == "boolean") and
+            (.serviceUnitDirectoryPreexisting | type == "boolean") and
+            (.helperDirectoryPreexisting | type == "boolean") and
+            (.loopbackAddressAdded | type == "boolean") and
+            ([.subuidRange, .subgidRange] | all(. == null or (type == "string" and test("^[0-9]+-[0-9]+$"))))
+          ' "$cleanup_state_path" >/dev/null
+          uid="$(sudo -n jq -r '.uid' "$cleanup_state_path")"
+          [[ "$uid" == "$(id -u)" ]]
+          runtime_directory="/run/user/$uid"
+          service_name=nemoclaw-native-podman-e2e
+          service_unit_directory="$HOME/.config/systemd/user"
+          service_unit="$service_unit_directory/$service_name.service"
+          socket_unit="$service_unit_directory/$service_name.socket"
+          service_environment="$RUNNER_TEMP/native-podman-e2e-service.env"
+          storage_directory="$RUNNER_TEMP/native-podman-e2e-storage"
+          storage_config="$RUNNER_TEMP/native-podman-e2e-storage.conf"
+          containers_config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
+          socket_path="$runtime_directory/podman/podman.sock"
+          current_user_manager="$(systemctl is-active "user@${uid}.service" 2>/dev/null || true)"
+          if [[ "$current_user_manager" == "active" ]]; then
+            env \
+              DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus" \
+              XDG_RUNTIME_DIR="$runtime_directory" \
+              /usr/bin/systemctl --user stop "$service_name.socket" "$service_name.service" \
+              2>/dev/null || true
+            socket_active_state="$(
+              env \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus" \
+                XDG_RUNTIME_DIR="$runtime_directory" \
+                /usr/bin/systemctl --user is-active "$service_name.socket" 2>/dev/null || true
+            )"
+            service_active_state="$(
+              env \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus" \
+                XDG_RUNTIME_DIR="$runtime_directory" \
+                /usr/bin/systemctl --user is-active "$service_name.service" 2>/dev/null || true
+            )"
+            if [[ "$socket_active_state" != "inactive" || "$service_active_state" != "inactive" ]]; then
+              echo "::error::Native Podman cleanup could not prove $service_name.socket and $service_name.service inactive (socket=${socket_active_state:-unknown}, service=${service_active_state:-unknown}). Run: systemctl --user status $service_name.socket $service_name.service" >&2
+              return 1
+            fi
+          fi
+          remove_user_file() {
+            local target="$1"
+            if [[ -e "$target" || -L "$target" ]]; then
+              [[ -f "$target" && ! -L "$target" ]]
+              [[ "$(stat -c '%u' "$target")" == "$uid" ]]
+              rm -f -- "$target"
+            fi
+          }
+          remove_user_file "$service_unit"
+          remove_user_file "$socket_unit"
+          remove_user_file "$service_environment"
+          remove_user_file "$storage_config"
+          remove_user_file "$containers_config"
+          remove_user_file "$RUNNER_TEMP/native-podman-e2e-info.json"
+          service_unit_directory_preexisting="$(sudo -n jq -r '.serviceUnitDirectoryPreexisting' "$cleanup_state_path")"
+          if [[ "$service_unit_directory_preexisting" == "false" && -d "$service_unit_directory" ]]; then
+            rmdir -- "$service_unit_directory"
+          fi
+          if [[ "$current_user_manager" == "active" ]]; then
+            env \
+              DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus" \
+              XDG_RUNTIME_DIR="$runtime_directory" \
+              /usr/bin/systemctl --user daemon-reload
+          fi
+          if [[ -e "$storage_directory" || -L "$storage_directory" ]]; then
+            [[ -d "$storage_directory" && ! -L "$storage_directory" ]]
+            [[ "$(stat -c '%u' "$storage_directory")" == "$uid" ]]
+            sudo -n rm -rf --one-file-system -- "$storage_directory"
+          fi
+          toolchain_download="$RUNNER_TEMP/native-podman-e2e-toolchain"
+          if [[ -e "$toolchain_download" || -L "$toolchain_download" ]]; then
+            [[ -d "$toolchain_download" && ! -L "$toolchain_download" ]]
+            [[ "$(stat -c '%u' "$toolchain_download")" == "$uid" ]]
+            rm -rf -- "$toolchain_download"
+          fi
+          if [[ -e "$socket_path" || -L "$socket_path" ]]; then
+            [[ -S "$socket_path" && ! -L "$socket_path" ]]
+            [[ "$(stat -c '%u' "$socket_path")" == "$uid" ]]
+            rm -f -- "$socket_path"
+          fi
+          podman_directory_preexisting="$(sudo -n jq -r '.podmanDirectoryPreexisting' "$cleanup_state_path")"
+          if [[ "$podman_directory_preexisting" == "false" && -d "$runtime_directory/podman" ]]; then
+            rmdir -- "$runtime_directory/podman"
+          fi
+          for profile in \
+            "$toolchain_install_root/podman.apparmor" \
+            "$toolchain_install_root/pasta.apparmor"; do
+            if sudo -n test -e "$profile" || sudo -n test -L "$profile"; then
+              sudo -n test -f "$profile"
+              sudo -n test ! -L "$profile"
+              [[ "$(sudo -n stat -c '%u:%g' "$profile")" == "0:0" ]]
+              sudo -n apparmor_parser -R "$profile" 2>/dev/null || true
+              sudo -n rm -f -- "$profile"
+            fi
+          done
+          for helper in aardvark-dns netavark rootlessport; do
+            helper_path="$helper_install_root/$helper"
+            if sudo -n test -e "$helper_path" || sudo -n test -L "$helper_path"; then
+              sudo -n test -f "$helper_path"
+              sudo -n test ! -L "$helper_path"
+              [[ "$(sudo -n stat -c '%u:%g' "$helper_path")" == "0:0" ]]
+              sudo -n rm -f -- "$helper_path"
+            fi
+          done
+          helper_directory_preexisting="$(sudo -n jq -r '.helperDirectoryPreexisting' "$cleanup_state_path")"
+          if [[ "$helper_directory_preexisting" == "false" ]] && sudo -n test -d "$helper_install_root"; then
+            sudo -n rmdir -- "$helper_install_root"
+          fi
+          loopback_address_added="$(sudo -n jq -r '.loopbackAddressAdded' "$cleanup_state_path")"
+          if [[ "$loopback_address_added" == "true" ]] &&
+            ip -o -4 address show dev lo | awk '{print $4}' | grep -Fxq '169.254.2.2/32'; then
+            sudo -n ip address del 169.254.2.2/32 dev lo
+          fi
+          if [[ "$loopback_address_added" == "true" ]]; then
+            ! ip -o -4 address show dev lo | awk '{print $4}' | grep -Fxq '169.254.2.2/32'
+          fi
+          execution_user="$(id -un)"
+          remove_subordinate_range() {
+            local field="$1"
+            local file="$2"
+            local option="$3"
+            local range
+            local start
+            local end
+            local count
+            range="$(sudo -n jq -r ".${field} // empty" "$cleanup_state_path")"
+            [[ -n "$range" ]] || return 0
+            start="${range%-*}"
+            end="${range#*-}"
+            count="$(awk -F: -v account="$execution_user" -v start="$start" -v size="$((end - start + 1))" '$1 == account && $2 == start && $3 == size { count += 1 } END { print count + 0 }' "$file")"
+            [[ "$count" == "0" || "$count" == "1" ]]
+            if [[ "$count" == "1" ]]; then
+              sudo -n usermod "$option" "$range" "$execution_user"
+            fi
+            remaining="$(awk -F: -v account="$execution_user" -v start="$start" -v size="$((end - start + 1))" '$1 == account && $2 == start && $3 == size { count += 1 } END { print count + 0 }' "$file")"
+            [[ "$remaining" == "0" ]]
+          }
+          remove_subordinate_range subuidRange /etc/subuid --del-subuids
+          remove_subordinate_range subgidRange /etc/subgid --del-subgids
+          dbus_active="$(sudo -n jq -r '.dbusActive' "$cleanup_state_path")"
+          if [[ "$current_user_manager" == "active" && "$dbus_active" == "inactive" ]]; then
+            env \
+              DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus" \
+              XDG_RUNTIME_DIR="$runtime_directory" \
+              /usr/bin/systemctl --user stop dbus.socket 2>/dev/null || true
+          fi
+          user_manager_active="$(sudo -n jq -r '.userManagerActive' "$cleanup_state_path")"
+          if [[ "$user_manager_active" == "inactive" ]]; then
+            sudo -n systemctl stop "user@${uid}.service" 2>/dev/null || true
+          fi
+          user_runtime_active="$(sudo -n jq -r '.userRuntimeActive' "$cleanup_state_path")"
+          if [[ "$user_runtime_active" == "inactive" ]]; then
+            sudo -n systemctl stop "user-runtime-dir@${uid}.service" 2>/dev/null || true
+          fi
+        }
+        cleanup_status=0
+        if sudo -n test -e "$cleanup_state_path" || sudo -n test -L "$cleanup_state_path"; then
+          cleanup_authorized=true
+        fi
+        set +e
+        (set -e; cleanup_native_podman_runtime)
+        cleanup_status=$?
+        set -e
+        if [[ "$cleanup_status" -ne 0 ]]; then
+          echo "::error::Native Podman runtime cleanup did not complete; preserving Podman and Docker recovery authority" >&2
+          exit "$cleanup_status"
+        fi
+        restore_present=false
+        if sudo -n test -e "$restore_root" || sudo -n test -L "$restore_root"; then
+          restore_present=true
+        fi
+        if [[ "$restore_present" == true ]]; then
+        if ! sudo -n test -d "$restore_root" || sudo -n test -L "$restore_root"; then
+          echo "::error::Refusing unsafe Docker CLI restore authority" >&2
+          exit 1
+        fi
+        [[ "$(sudo -n stat -c '%u:%g:%a' "$restore_root")" == "0:0:700" ]]
+        mapfile -t restore_files < <(
+          sudo -n find -P "$restore_root" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort
+        )
+        case "${restore_files[*]}" in
+          "runtime.json") restore_cli=false ;;
+          "docker metadata runtime.json") restore_cli=true ;;
+          *)
+            echo "::error::Refusing incomplete Docker runtime restore authority" >&2
+            exit 1
+            ;;
+        esac
+        sudo -n test -f "$runtime_state_path"
+        sudo -n test ! -L "$runtime_state_path"
+        [[ "$(sudo -n stat -c '%u:%g:%a' "$runtime_state_path")" == "0:0:600" ]]
+        sudo -n jq -e '
+          (.schemaVersion == 1) and
+          ((keys | sort) == ["dockerService", "dockerSocket", "schemaVersion"]) and
+          ([.dockerService, .dockerSocket] | all(
+            ((keys | sort) == ["activeState", "loadState", "unitFileState"]) and
+            (.loadState | test("^(loaded|masked|not-found)$")) and
+            (.activeState | test("^(active|inactive)$")) and
+            (.unitFileState | test("^[a-z-]+$"))
+          ))
+        ' "$runtime_state_path" >/dev/null
+
+        restore_unit_mask() {
+          local unit="$1"
+          local field="$2"
+          local load_state
+          local unit_file_state
+          load_state="$(sudo -n jq -r ".${field}.loadState" "$runtime_state_path")"
+          unit_file_state="$(sudo -n jq -r ".${field}.unitFileState" "$runtime_state_path")"
+          if [[ "$unit_file_state" != "masked-runtime" ]]; then
+            sudo -n systemctl unmask --runtime "$unit" >/dev/null
+          fi
+          if [[ "$load_state" == "not-found" ]]; then
+            [[ "$(systemctl show "$unit" --property=LoadState --value 2>/dev/null || true)" == "not-found" ]]
+          fi
+        }
+        apply_unit_activity() {
+          local unit="$1"
+          local field="$2"
+          local active_state
+          active_state="$(sudo -n jq -r ".${field}.activeState" "$runtime_state_path")"
+          if [[ "$active_state" == "active" ]]; then
+            sudo -n systemctl start "$unit"
+          else
+            sudo -n systemctl stop "$unit" 2>/dev/null || true
+          fi
+        }
+        verify_unit_state() {
+          local unit="$1"
+          local field="$2"
+          local expected_active
+          local expected_unit_file
+          local observed_unit_file
+          expected_active="$(sudo -n jq -r ".${field}.activeState" "$runtime_state_path")"
+          expected_unit_file="$(sudo -n jq -r ".${field}.unitFileState" "$runtime_state_path")"
+          observed_unit_file="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+          if [[ "$expected_unit_file" == "not-found" && -z "$observed_unit_file" ]]; then
+            observed_unit_file=not-found
+          fi
+          [[ "$(systemctl is-active "$unit" 2>/dev/null || true)" == "$expected_active" ]]
+          [[ "$observed_unit_file" == "$expected_unit_file" ]]
+        }
+        restore_unit_mask docker.service dockerService
+        restore_unit_mask docker.socket dockerSocket
+        apply_unit_activity docker.service dockerService
+        apply_unit_activity docker.socket dockerSocket
+        verify_unit_state docker.service dockerService
+        verify_unit_state docker.socket dockerSocket
+
+        if [[ "$restore_cli" == true ]]; then
+          restore_path="$(sudo -n sed -n '1p' "$metadata_path")"
+          expected_sha256="$(sudo -n sed -n '2p' "$metadata_path")"
+          [[ "$expected_sha256" =~ ^[a-f0-9]{64}$ ]]
+          case "$restore_path" in
+            /usr/bin/docker | /usr/local/bin/docker | /snap/bin/docker) ;;
+            *)
+              echo "::error::Refusing unsafe Docker CLI restore destination" >&2
+              exit 1
+              ;;
+          esac
+          sudo -n test -f "$disabled_path"
+          sudo -n test ! -L "$disabled_path"
+          [[ "$(sudo -n stat -c '%u:%g' "$disabled_path")" == "0:0" ]]
+          [[ "$(sudo -n sha256sum -- "$disabled_path" | awk '{print $1}')" == "$expected_sha256" ]]
+          if [[ -e "$restore_path" || -L "$restore_path" ]]; then
+            echo "::error::Docker CLI restore destination is already occupied" >&2
+            exit 1
+          fi
+          sudo -n mv -- "$disabled_path" "$restore_path"
+          sudo -n test -f "$restore_path"
+          sudo -n test ! -L "$restore_path"
+          [[ "$(sudo -n stat -c '%u:%g' "$restore_path")" == "0:0" ]]
+          [[ "$(sudo -n sha256sum -- "$restore_path" | awk '{print $1}')" == "$expected_sha256" ]]
+          sudo -n rm -f -- "$metadata_path"
+          test "$(command -v docker)" = "$restore_path"
+        fi
+        sudo -n rm -f -- "$runtime_state_path"
+        sudo -n rmdir -- "$restore_root"
+        fi
+        if [[ "$cleanup_authorized" == true ]]; then
+          for target in "$toolchain_install_root/bin/podman" "$toolchain_install_root/bin/pasta"; do
+            if sudo -n test -e "$target" || sudo -n test -L "$target"; then
+              sudo -n test -f "$target"
+              sudo -n test ! -L "$target"
+              [[ "$(sudo -n stat -c '%u:%g' "$target")" == "0:0" ]]
+              sudo -n rm -f -- "$target"
+            fi
+          done
+          if sudo -n test -d "$toolchain_install_root/bin"; then
+            sudo -n rmdir -- "$toolchain_install_root/bin"
+          fi
+          sudo -n rm -f -- "$cleanup_state_path"
+          sudo -n rmdir -- "$toolchain_install_root"
+        fi

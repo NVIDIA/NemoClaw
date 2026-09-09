@@ -104,7 +104,15 @@ export default async function merge_nemoclaw_pull_request(input: {
   };
   const observedBaseRef = pr.baseRefName;
   const [baseResult, rulesResult, checksResult, threads] = await Promise.all([
-    github({ workdir: input.workdir, args: ["api", "repos/" + repo] }),
+    github({
+      workdir: input.workdir,
+      args: [
+        "api",
+        "repos/" + repo,
+        "--jq",
+        "{allow_merge_commit, allow_squash_merge, allow_rebase_merge}",
+      ],
+    }),
     github({
       workdir: input.workdir,
       args: [
@@ -242,7 +250,7 @@ export default async function merge_nemoclaw_pull_request(input: {
   if (after.state === "MERGED") {
     const merged = await github({
       workdir: input.workdir,
-      args: ["api", "repos/" + repo + "/pulls/" + input.number],
+      args: ["api", "repos/" + repo + "/pulls/" + input.number, "--jq", "{merge_commit_sha}"],
     });
     mergeCommit = JSON.parse(merged.stdout).merge_commit_sha ?? null;
   }

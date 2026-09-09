@@ -28,15 +28,12 @@ import {
   type HermesPortableLifecycleDeps,
 } from "./hermes-portable-lifecycle";
 import {
-  hermesPortableCreatePolicySemanticDigest,
-  resolveHermesPortableExpectedPolicyBytes,
-} from "./hermes-portable-policy-authority";
-import {
   captureHermesPortablePolicySource,
   publishHermesPortableDurablePolicySource,
   publishHermesPortableLifecycleReceipt,
   publishHermesPortableSuccessorReceipt,
   readHermesPortableLifecycleReceipt,
+  readHermesPortableLifecycleReceiptForRequalification,
   type HermesPortableConfiguredReceipt,
   type HermesPortablePendingReceipt,
 } from "./hermes-portable-receipt";
@@ -174,17 +171,15 @@ function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt 
   const uid = process.getuid!();
   const socketPath = `/run/user/${String(uid)}/podman/podman.sock`;
   const transactionId = randomUUID();
-  const policyBytes = fs.readFileSync(policyPath);
   const policy = publishHermesPortableDurablePolicySource({
     sandboxName: SANDBOX,
     transactionId,
     stateDir,
-    intendedSemanticSha256: hermesPortableCreatePolicySemanticDigest(policyBytes),
     source: captureHermesPortablePolicySource(policyPath),
     hooks: { assertLifecycleLock: () => undefined },
   });
   const pending: HermesPortablePendingReceipt = {
-    schemaVersion: 5,
+    schemaVersion: 7,
     agent: "hermes",
     phase: "pending",
     transactionId,
@@ -228,11 +223,11 @@ function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt 
   const first = publishHermesPortableLifecycleReceipt(pending, stateDir, {
     assertLifecycleLock: () => undefined,
   });
+  const { policy: _policy, ...transaction } = pending;
   const configuring: HermesPortableConfiguredReceipt = {
-    ...pending,
+    ...transaction,
     phase: "configuring",
     previousPhaseSha256: first.sha256,
-    verifiedLivePolicySemanticSha256: policy.intendedSemanticSha256,
     container: {
       containerId: CONTAINER_ID,
       sandboxId: SANDBOX_ID,
@@ -313,7 +308,11 @@ function lifecycleDeps(
   });
   const liveIdentityFingerprint = fingerprintOpenShellSandboxLiveIdentity(LIVE)!;
   const captureOpenShell = vi.fn((args: readonly string[]) => {
-    const sandboxExecOutput = args.includes("python3") ? "200\n" : "";
+    const sandboxExecOutput = args.includes(hermesPortableLifecycleInternals.healthWaitProgram)
+      ? "schema=1 result=ready attempts=1 notReady=0 timeouts=0 errors=0 lastFailure=none probeMs=0 sleepMs=0\n"
+      : args.includes("python3")
+        ? "200\n"
+        : "";
     const responses = {
       "policy:get": { status: 0, stdout: options.livePolicy ?? POLICY, stderr: "" },
       "sandbox:list": {
@@ -334,6 +333,12 @@ function lifecycleDeps(
     );
   });
   const launchOpenShell = vi.fn();
+  const captureSocketAuthority = vi.fn(() => ({ ...receipt.socketAuthority, inode: "102" }));
+  const captureOpenShellExecutableAuthority = vi.fn(() => receipt.openshellExecutableAuthority);
+  const capturePodmanExecutableAuthority = vi.fn(() => receipt.podmanExecutableAuthority);
+  const assertOpenShellExecutableAuthority = vi.fn(() => "/usr/bin/openshell");
+  const assertOpenShellExecutableFileAuthority = vi.fn(() => "/usr/bin/openshell");
+  const capturePodmanExecutableFileAuthority = vi.fn(() => receipt.podmanExecutableAuthority);
   return {
     deps: {
       stateDir,
@@ -356,7 +361,7 @@ function lifecycleDeps(
         }) as SandboxEntry,
       captureOpenShell,
       launchOpenShell,
-      assertOpenShellExecutableAuthority: vi.fn(() => "/usr/bin/openshell"),
+      assertOpenShellExecutableAuthority,
       operatingAuthority: {
         env: {
           HOME: receipt.runtimeAuthority.homeDir,
@@ -364,9 +369,11 @@ function lifecycleDeps(
           XDG_CONFIG_HOME: receipt.runtimeAuthority.configHome,
           XDG_RUNTIME_DIR: receipt.runtimeAuthority.runtimeDir,
         },
-        captureSocketAuthority: () => ({ ...receipt.socketAuthority, inode: "102" }),
-        captureOpenShellExecutableAuthority: () => receipt.openshellExecutableAuthority,
-        capturePodmanExecutableAuthority: () => receipt.podmanExecutableAuthority,
+        captureSocketAuthority,
+        captureOpenShellExecutableAuthority,
+        capturePodmanExecutableAuthority,
+        assertOpenShellExecutableFileAuthority,
+        capturePodmanExecutableFileAuthority,
       },
       container: { podman, assertSocketAuthority: vi.fn() },
       sleep: vi.fn(),
@@ -374,7 +381,21 @@ function lifecycleDeps(
     podman,
     captureOpenShell,
     launchOpenShell,
+    captureSocketAuthority,
+    captureOpenShellExecutableAuthority,
+    capturePodmanExecutableAuthority,
+    assertOpenShellExecutableAuthority,
+    assertOpenShellExecutableFileAuthority,
+    capturePodmanExecutableFileAuthority,
   };
+}
+
+function publishSuccessor(): void {
+  withMcpLifecycleLockSync(
+    SANDBOX,
+    () => publishHermesPortableSuccessorReceipt(SANDBOX, stateDir),
+    { stateDir: path.join(stateDir, "state") },
+  );
 }
 
 function lifecycleContext() {
@@ -399,12 +420,96 @@ afterEach(() => {
 });
 
 describe("Hermes portable lifecycle", () => {
-  it("migrates an identical same-path schema-5 copy only under both probe fences (#10423)", async () => {
-    const receipt = activeReceipt(stateDir);
-    const copiedPolicy = `${receipt.policy.sourcePath}.copy`;
-    fs.writeFileSync(copiedPolicy, fs.readFileSync(receipt.policy.sourcePath), { mode: 0o600 });
-    fs.renameSync(copiedPolicy, receipt.policy.sourcePath);
-    const fixture = lifecycleDeps(receipt);
+  it("uses one entry and final qualification when the timing callback fails (#10423)", () => {
+    const receipt = activeReceipt();
+    publishSuccessor();
+    const fixture = lifecycleDeps(receipt, false);
+    const evidence = vi.fn(() => {
+      throw new Error("timing sink unavailable");
+    });
+    let timingNow = 0;
+
+    const result = withMcpLifecycleLockSync(
+      SANDBOX,
+      () =>
+        recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
+          ...fixture.deps,
+          recoveryTiming: {
+            now: () => (timingNow += 1),
+            onComplete: evidence,
+          },
+        }),
+      { stateDir: path.join(stateDir, "state") },
+    );
+
+    expect(result).toEqual({ kind: "recovered" });
+    expect(evidence).toHaveBeenCalledOnce();
+    expect(evidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        qualificationCount: 2,
+        containerStartCount: 1,
+        execReadyAttempts: 1,
+        authenticatedHealthCount: 1,
+        startupLaunchCount: 1,
+        rollbackCount: 0,
+        containerAction: "started",
+        result: "recovered",
+      }),
+    );
+    const operations = fixture.captureOpenShell.mock.calls.map(([args]) =>
+      args.slice(0, 2).join(":"),
+    );
+    expect(operations.filter((operation) => operation === "sandbox:list")).toHaveLength(3);
+    expect(operations.filter((operation) => operation === "sandbox:get")).toHaveLength(3);
+    expect(operations.filter((operation) => operation === "policy:get")).toHaveLength(3);
+    expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
+    expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(0);
+    expect(fixture.assertOpenShellExecutableFileAuthority).toHaveBeenCalled();
+    expect(fixture.capturePodmanExecutableFileAuthority).toHaveBeenCalled();
+  });
+
+  it("emits failed timing when entry qualification rejects socket authority (#10423)", () => {
+    const receipt = activeReceipt();
+    publishSuccessor();
+    const fixture = lifecycleDeps(receipt, false);
+    const entryError = new Error("socket authority changed during entry qualification");
+    const evidence = vi.fn();
+    fixture.captureSocketAuthority.mockImplementation(() => {
+      throw entryError;
+    });
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () =>
+          recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
+            ...fixture.deps,
+            recoveryTiming: { onComplete: evidence },
+          }),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow(entryError);
+    expect(fixture.podman.mock.calls.some(([args]) => args[1] === "start")).toBe(false);
+    expect(evidence).toHaveBeenCalledOnce();
+    expect(evidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        qualificationCount: 1,
+        containerStartCount: 0,
+        result: "failed",
+      }),
+    );
+  });
+
+  it("fails before post-start work when retained socket authority drifts (#10423)", () => {
+    const receipt = activeReceipt();
+    publishSuccessor();
+    const fixture = lifecycleDeps(receipt, false);
+    const stableCapture = fixture.captureSocketAuthority.getMockImplementation()!;
+    fixture.captureSocketAuthority.mockImplementation(() => {
+      const socket = stableCapture();
+      const started = fixture.podman.mock.calls.some(([args]) => args[1] === "start");
+      return started ? { ...socket, inode: "changed-after-start" } : socket;
+    });
 
     expect(() =>
       withMcpLifecycleLockSync(
@@ -412,38 +517,124 @@ describe("Hermes portable lifecycle", () => {
         () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), fixture.deps),
         { stateDir: path.join(stateDir, "state") },
       ),
-    ).toThrow("durable policy source disagrees with its receipt authority");
+    ).toThrow(
+      "Hermes portable lifecycle recovery failed and exact container rollback was not proven",
+    );
+    expect(fixture.captureOpenShell).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["true"]),
+      expect.any(Number),
+    );
+    expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(0);
+  });
+
+  it("records polling failure and proves exact stopped rollback under retained authority (#10423)", () => {
+    const receipt = activeReceipt();
+    publishSuccessor();
+    const fixture = lifecycleDeps(receipt, false);
+    const defaultCapture = fixture.captureOpenShell.getMockImplementation()!;
+    fixture.captureOpenShell.mockImplementation((args: readonly string[]) =>
+      args.includes("python3")
+        ? { status: 0, stdout: "unavailable\n", stderr: "" }
+        : defaultCapture(args),
+    );
+    const evidence = vi.fn();
+    let now = 0;
 
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
-        () => requalifyHermesPortableSandboxAuthority(SANDBOX, lifecycleContext(), fixture.deps),
+        () =>
+          recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
+            ...fixture.deps,
+            now: () => now,
+            sleep: (milliseconds) => {
+              now += milliseconds;
+            },
+            recoveryTiming: { now: () => now, onComplete: evidence },
+          }),
         { stateDir: path.join(stateDir, "state") },
       ),
-    ).toThrow("Portable host authority mutation requires the current HOME fence");
-
-    const migrated = await withPortableHostFence(stateDir, () =>
-      withMcpLifecycleLockSync(
-        SANDBOX,
-        () => requalifyHermesPortableSandboxAuthority(SANDBOX, lifecycleContext(), fixture.deps),
-        { stateDir: path.join(stateDir, "state") },
-      ),
+    ).toThrow("managed startup did not pass authenticated health");
+    expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
+    expect(evidence).toHaveBeenCalledOnce();
+    expect(evidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        qualificationCount: 2,
+        containerStartCount: 1,
+        startupLaunchCount: 1,
+        rollbackCount: 1,
+        containerAction: "started",
+        result: "failed",
+      }),
     );
-
-    expect(migrated.kind).toBe("migrated");
-    expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor).toBeDefined();
-    expect(
-      fixture.podman.mock.calls.some(([args]) => args[1] === "start" || args[1] === "stop"),
-    ).toBe(false);
-    const removal = withMcpLifecycleLockSync(
-      SANDBOX,
-      () => prepareHermesPortableSandboxRemoval(SANDBOX, lifecycleContext(), fixture.deps),
-      { stateDir: path.join(stateDir, "state") },
+    expect(evidence.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ authenticatedHealthSleepMs: 90_000 }),
     );
-    expect(removal.receipt.socketAuthority.inode).toBe("102");
   });
 
-  it("reconciles an interrupted schema-6 publication through the public probe path (#10423)", async () => {
+  it("rejects live sandbox rebind before the name-addressed startup launch (#10423)", () => {
+    const receipt = activeReceipt();
+    publishSuccessor();
+    const fixture = lifecycleDeps(receipt, false);
+    const defaultCapture = fixture.captureOpenShell.getMockImplementation()!;
+    fixture.captureOpenShell
+      .mockImplementationOnce(defaultCapture)
+      .mockImplementationOnce(defaultCapture)
+      .mockImplementationOnce(defaultCapture)
+      .mockImplementationOnce(defaultCapture)
+      .mockImplementationOnce(defaultCapture)
+      .mockImplementationOnce(defaultCapture)
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: sandboxListJson("rebound-sandbox-id", "Ready"),
+        stderr: "",
+      })
+      .mockImplementation(defaultCapture);
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), fixture.deps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("OpenShell sandbox identity disagrees with the receipt container");
+
+    expect(fixture.launchOpenShell).not.toHaveBeenCalled();
+    expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
+    expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
+  });
+
+  it("rolls back when the final full qualification detects registry drift (#10423)", () => {
+    const receipt = activeReceipt();
+    publishSuccessor();
+    const fixture = lifecycleDeps(receipt, false);
+    const stableReadRegistry: NonNullable<HermesPortableLifecycleDeps["readRegistry"]> =
+      fixture.deps.readRegistry!;
+    let registryReads = 0;
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () =>
+          recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
+            ...fixture.deps,
+            readRegistry: (sandboxName) => {
+              registryReads += 1;
+              const entry = stableReadRegistry(sandboxName);
+              return registryReads === 2 && entry
+                ? { ...entry, lifecycleGeneration: "f".repeat(64) }
+                : entry;
+            },
+          }),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("registry authority disagrees with the active receipt");
+    expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
+    expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
+    expect(registryReads).toBe(3);
+  });
+
+  it("reconciles an interrupted schema-8 publication inside both probe fences (#10423)", async () => {
     const receipt = activeReceipt(stateDir);
     expect(() =>
       withMcpLifecycleLockSync(
@@ -451,12 +642,12 @@ describe("Hermes portable lifecycle", () => {
         () =>
           publishHermesPortableSuccessorReceipt(SANDBOX, stateDir, {
             afterCanonicalLink: () => {
-              throw new Error("simulated schema-6 process exit");
+              throw new Error("simulated schema-8 process exit");
             },
           }),
         { stateDir: path.join(stateDir, "state") },
       ),
-    ).toThrow("simulated schema-6 process exit");
+    ).toThrow("simulated schema-8 process exit");
     const fixture = lifecycleDeps(receipt);
 
     const recovered = await withPortableHostFence(stateDir, () =>
@@ -471,69 +662,40 @@ describe("Hermes portable lifecycle", () => {
     expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor).toBeDefined();
   });
 
-  it("passes only private state, terminal, locale, and TLS variables to child commands (#9203)", () => {
-    const runtimeAuthority = {
-      schemaVersion: 1 as const,
-      kind: "podman" as const,
-      ownership: "current-user" as const,
-      uid: process.getuid!(),
-      homeDir: "/home/test",
-      configHome: "/home/test/.config",
-      runtimeDir: "/run/user/1000",
-      socketPath: "/run/user/1000/podman/podman.sock",
-    };
-    const sourceEnv = {
-      HOME: "/home/test",
-      PATH: "/usr/bin",
-      TERM: "xterm-256color",
-      LANG: "C.UTF-8",
-      XDG_CONFIG_HOME: "/home/test/.config",
-      XDG_RUNTIME_DIR: "/run/user/1000",
-      XDG_CACHE_HOME: "/tmp/ambient-cache",
-      HTTPS_PROXY: "http://127.0.0.1:8118",
-      SSL_CERT_FILE: "/etc/ssl/cert.pem",
-      DOCKER_HOST: "unix:///run/docker.sock",
-      KUBECONFIG: "/home/test/.kube/config",
-      SSH_AUTH_SOCK: "/run/user/1000/ssh-agent.sock",
-      OPENSHELL_GATEWAY: "ambient",
-      OPENSHELL_GATEWAY_ENDPOINT: "https://ambient.example",
-      NVIDIA_INFERENCE_API_KEY: "do-not-forward",
-      GITHUB_TOKEN: "do-not-forward",
-      AWS_SECRET_ACCESS_KEY: "do-not-forward",
-    };
-    const env = hermesPortableLifecycleInternals.buildHermesPortableOpenShellEnv(
-      sourceEnv,
-      runtimeAuthority,
-    );
+  it("rejects successor-publication generation drift between lifecycle snapshots (#10423)", async () => {
+    const receipt = activeReceipt(stateDir);
+    const fixture = lifecycleDeps(receipt);
 
-    expect(env).toMatchObject({
-      HOME: "/home/test",
-      PATH: "/usr/bin",
-      TERM: "xterm-256color",
-      LANG: "C.UTF-8",
-      XDG_CONFIG_HOME: "/home/test/.config",
-      XDG_RUNTIME_DIR: "/run/user/1000",
-      SSL_CERT_FILE: "/etc/ssl/cert.pem",
-    });
-    expect(env).not.toHaveProperty("HTTPS_PROXY");
-    expect(env).not.toHaveProperty("XDG_CACHE_HOME");
-    expect(env).not.toHaveProperty("DOCKER_HOST");
-    expect(env).not.toHaveProperty("KUBECONFIG");
-    expect(env).not.toHaveProperty("SSH_AUTH_SOCK");
-    expect(env).not.toHaveProperty("OPENSHELL_GATEWAY");
-    expect(env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
-    expect(env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
-    expect(env).not.toHaveProperty("GITHUB_TOKEN");
-    expect(env).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
-    expect(() =>
-      hermesPortableLifecycleInternals.buildHermesPortableOpenShellEnv(
-        { ...sourceEnv, XDG_CONFIG_HOME: "/tmp/other-config" },
-        runtimeAuthority,
+    await withPortableHostFence(stateDir, () =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => {
+          const expected = readHermesPortableLifecycleReceiptForRequalification(SANDBOX, stateDir)!;
+          expect(() =>
+            publishHermesPortableSuccessorReceipt(SANDBOX, stateDir, {
+              afterCanonicalLink: () => {
+                throw new Error("simulated schema-8 process exit");
+              },
+            }),
+          ).toThrow("simulated schema-8 process exit");
+
+          expect(() =>
+            hermesPortableLifecycleInternals.qualify(
+              SANDBOX,
+              lifecycleContext(),
+              fixture.deps,
+              expected,
+              ["Ready", "Error", "Stopped"],
+              { permitSchema5Requalification: true },
+            ),
+          ).toThrow("receipt authority changed");
+        },
+        { stateDir: path.join(stateDir, "state") },
       ),
-    ).toThrow("XDG_CONFIG_HOME disagrees with runtime authority");
+    );
   });
 
-  it("constructs production Podman dependencies from the receipt authority (#9203)", () => {
+  it("constructs production Podman dependencies from the receipt identity (#9203)", () => {
     const receipt = activeReceipt();
     const capture = vi.fn<ContainerEngineCommandCapture>(
       (_executable, args, _timeoutMs, _input, environment) => {
@@ -646,11 +808,16 @@ describe("Hermes portable lifecycle", () => {
         "--no-tty",
         "--",
         "python3",
+        "-I",
         "-c",
-        hermesPortableContainerInternals.authenticatedHealthScript,
+        hermesPortableLifecycleInternals.healthWaitProgram,
+        "8642",
+        "18000",
+        "100",
       ],
-      40_000,
+      20_000,
     );
+    expect(captureOpenShell.mock.calls.flat(2)).toContain(hermesPortableContainerInternals.authenticatedHealthScript);
   });
 
   it("starts through the exact OpenShell Stopped phase before proving Ready health (#9203)", () => {
@@ -690,25 +857,33 @@ describe("Hermes portable lifecycle", () => {
     expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
   });
 
-  it("launches the receipt-owned startup once after restarting the stopped container (#9211)", () => {
+  it("uses only the receipt-owned startup after restarting a stopped container (#9211)", () => {
     const receipt = activeReceipt();
-    const { deps, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);
+    const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);
     const defaultCapture = captureOpenShell.getMockImplementation()!;
+    const inspectCount = () =>
+      podman.mock.calls.filter(([command]) => command[1] === "inspect").length;
+    const healthBoundaries: number[] = [];
+    const sleepBoundaries: Array<{ inspectsBefore: number; milliseconds: number }> = [];
     let healthAttempts = 0;
     let now = 0;
+    const observeHealth = () => {
+      healthBoundaries.push(inspectCount());
+      healthAttempts += 1;
+      return {
+        status: 0,
+        stdout:
+          launchOpenShell.mock.calls.length === 1
+            ? "schema=1 result=ready attempts=2 notReady=1 timeouts=0 errors=0 lastFailure=not-ready probeMs=10 sleepMs=100\n"
+            : "unavailable\n",
+        stderr: "",
+      };
+    };
     captureOpenShell.mockImplementation((args: readonly string[]) =>
-      args.includes("python3")
-        ? {
-            status: 0,
-            stdout:
-              (healthAttempts += 1) >= 3 && launchOpenShell.mock.calls.length === 1
-                ? "200\n"
-                : "unavailable\n",
-            stderr: "",
-          }
+      args.includes(hermesPortableLifecycleInternals.healthWaitProgram)
+        ? observeHealth()
         : defaultCapture(args),
     );
-
     const result = withMcpLifecycleLockSync(
       SANDBOX,
       () =>
@@ -716,38 +891,21 @@ describe("Hermes portable lifecycle", () => {
           ...deps,
           now: () => now,
           sleep: (milliseconds) => {
+            sleepBoundaries.push({ inspectsBefore: inspectCount(), milliseconds });
             now += milliseconds;
           },
         }),
       { stateDir: path.join(stateDir, "state") },
     );
-
+    const healthRunInspects = podman.mock.calls.filter(
+      ([args]) => args[0] === "container" && args[1] === "inspect",
+    );
     expect(result).toEqual({ kind: "recovered" });
-    expect(healthAttempts).toBe(3);
-    expect(launchOpenShell).toHaveBeenCalledTimes(1);
-    expect(launchOpenShell).toHaveBeenCalledWith([
-      "sandbox",
-      "exec",
-      "-g",
-      GATEWAY,
-      "--name",
-      SANDBOX,
-      "--no-tty",
-      "--",
-      ...receipt.startup.argv,
-    ]);
-    const execCommands = captureOpenShell.mock.calls
-      .map(([args]) => args)
-      .filter((args) => args.slice(0, 2).join(":") === "sandbox:exec")
-      .map((args) => args.slice(args.indexOf("--") + 1));
-    expect(execCommands).toEqual([
-      ["true"],
-      ...Array.from({ length: 3 }, () => [
-        "python3",
-        "-c",
-        hermesPortableContainerInternals.authenticatedHealthScript,
-      ]),
-    ]);
+    expect(healthAttempts).toBe(1);
+    expect(healthBoundaries).toHaveLength(1);
+    expect(healthRunInspects.length).toBeGreaterThan(healthBoundaries[0]!);
+    expect([sleepBoundaries, launchOpenShell.mock.calls]).toEqual([[], [expect.any(Array)]]);
+    expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
   });
 
   it("launches the receipt-owned startup once before rolling back unavailable health (#9211)", () => {
@@ -787,10 +945,13 @@ describe("Hermes portable lifecycle", () => {
         .slice(1)
         .every(
           (command) =>
-            command.length === 3 &&
+            command.length === 7 &&
             command[0] === "python3" &&
-            command[1] === "-c" &&
-            command[2] === hermesPortableContainerInternals.authenticatedHealthScript,
+            command[1] === "-I" &&
+            command[2] === "-c" &&
+            command[3] === hermesPortableLifecycleInternals.healthWaitProgram &&
+            command[4] === "8642" &&
+            command[6] === "100",
         ),
     ).toBe(true);
     expect(execCommands.flat()).not.toContain(receipt.startup.argv.at(-1));
@@ -822,21 +983,18 @@ describe("Hermes portable lifecycle", () => {
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
   });
 
-  it("rejects authority drift after health observation without launching startup (#9211)", () => {
+  it("rejects authority drift after exec readiness without launching startup (#9211)", () => {
     const receipt = activeReceipt();
     const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);
     const defaultCapture = captureOpenShell.getMockImplementation()!;
     const stableReadRegistry: NonNullable<HermesPortableLifecycleDeps["readRegistry"]> =
       deps.readRegistry!;
-    let healthObserved = false;
+    let execReady = false;
     let driftPending = true;
-    const observeUnavailableHealth = () => {
-      healthObserved = true;
-      return { status: 0, stdout: "unavailable\n", stderr: "" };
-    };
-    captureOpenShell.mockImplementation((args: readonly string[]) =>
-      args.includes("python3") ? observeUnavailableHealth() : defaultCapture(args),
-    );
+    captureOpenShell.mockImplementation((args: readonly string[]) => {
+      execReady ||= args.at(-1) === "true";
+      return defaultCapture(args);
+    });
     const driftLifecycleGeneration = (entry: SandboxEntry): SandboxEntry => {
       driftPending = false;
       return { ...entry, lifecycleGeneration: "f".repeat(64) };
@@ -845,7 +1003,7 @@ describe("Hermes portable lifecycle", () => {
       ...deps,
       readRegistry: (_sandboxName: string) => {
         const entry = stableReadRegistry(_sandboxName);
-        return entry && healthObserved && driftPending ? driftLifecycleGeneration(entry) : entry;
+        return entry && execReady && driftPending ? driftLifecycleGeneration(entry) : entry;
       },
     };
 
@@ -937,18 +1095,10 @@ describe("Hermes portable lifecycle", () => {
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
   });
 
-  it("recovers against the finalized Personal policy authority (#9211)", () => {
+  it("recovers against the current live OpenShell policy (#9211)", () => {
     const receipt = activeReceipt();
-    const registry = {
-      policyTier: "personal",
-      policies: ["personal-open-internet"],
-      policyPresetsFinalized: true,
-    } satisfies Partial<SandboxEntry>;
-    const livePolicy = resolveHermesPortableExpectedPolicyBytes(Buffer.from(POLICY), {
-      name: SANDBOX,
-      agent: "hermes",
-      ...registry,
-    } as SandboxEntry).bytes.toString("utf8");
+    const registry = {} satisfies Partial<SandboxEntry>;
+    const livePolicy = POLICY;
     const { deps, podman } = lifecycleDeps(receipt, false, { livePolicy, registry });
 
     const result = withMcpLifecycleLockSync(
@@ -988,32 +1138,26 @@ describe("Hermes portable lifecycle", () => {
     );
   });
 
-  it("rejects Personal policy without finalized registry authority (#9211)", () => {
+  it("accepts a valid host-edited policy without a finalized policy receipt (#9211)", () => {
     const receipt = activeReceipt();
     const finalized = {
       name: SANDBOX,
       agent: "hermes",
-      policyTier: "personal",
-      policies: ["personal-open-internet"],
-      policyPresetsFinalized: true,
     } as SandboxEntry;
-    const livePolicy = resolveHermesPortableExpectedPolicyBytes(
-      Buffer.from(POLICY),
-      finalized,
-    ).bytes.toString("utf8");
+    const livePolicy = POLICY;
     const { deps, podman } = lifecycleDeps(receipt, false, {
       livePolicy,
-      registry: { ...finalized, policyPresetsFinalized: undefined },
+      registry: { ...finalized },
     });
 
-    expect(() =>
+    expect(
       withMcpLifecycleLockSync(
         SANDBOX,
         () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
         { stateDir: path.join(stateDir, "state") },
       ),
-    ).toThrow("base policy disagrees with create input");
-    expect(podman).not.toHaveBeenCalled();
+    ).toEqual({ kind: "recovered" });
+    expect(podman).toHaveBeenCalled();
   });
 
   it("rejects an ambient OpenShell endpoint before Podman or OpenShell effects (#9203)", () => {

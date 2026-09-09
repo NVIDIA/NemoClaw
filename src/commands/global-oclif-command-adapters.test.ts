@@ -320,10 +320,11 @@ describe("global oclif command adapters", () => {
     });
   });
 
-  it("maps inference get JSON output into oclif JSON handling", async () => {
+  it("preserves a compatible endpoint in inference get JSON output", async () => {
     mocks.runInferenceGet.mockResolvedValueOnce({
-      provider: "nvidia-prod",
+      provider: "compatible-endpoint",
       model: "nvidia/model-a",
+      endpointUrl: "https://example.test/v1",
     });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
@@ -333,10 +334,11 @@ describe("global oclif command adapters", () => {
         expect.any(String),
         "inference:get",
       );
-      expect(mocks.runInferenceGet).toHaveBeenCalledWith({ quiet: true });
+      expect(mocks.runInferenceGet).toHaveBeenCalledWith({ cliName: "nemoclaw", quiet: true });
       expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "nvidia/model-a",
+        endpointUrl: "https://example.test/v1",
       });
     } finally {
       log.mockRestore();

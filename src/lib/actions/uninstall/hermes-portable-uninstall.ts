@@ -4,6 +4,7 @@
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { scopeGatewayOpenshellArgs } from "../../adapters/openshell/gateway-scope";
 import { runHermesPortableUninstallOpenShell } from "../../adapters/openshell/hermes-portable-uninstall";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import type { GatewayRegistryDocument } from "../../state/gateway-registry";
@@ -47,7 +48,6 @@ import {
   readHermesPortableLifecycleReceipt,
   type HermesPortableConfiguredReceipt,
 } from "../../onboard/experimental/hermes-portable-receipt";
-import { scopeGatewayOpenshellArgs } from "../../onboard/setup-inference";
 import {
   assertPreparedHostLocalInferenceRuntimePresent,
   inspectPreparedHostLocalInferenceSharingAuthority,

@@ -6,12 +6,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { withSuccessfulPreUninstallBackup } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
 import { createSession } from "../../state/onboard-session";
 import { hasPortableRuntimeCleanup } from "./portable-runtime-cleanup";
 import {
   type RunResult,
-  runUninstallPlan as runUninstallPlanBase,
+  runUninstallPlanProduction as runUninstallPlanBase,
   type UninstallRunDeps,
 } from "./run-plan";
 
@@ -31,9 +32,10 @@ function knownGatewayList(command: string, args: readonly string[]): RunResult {
 function scope(prefix: string) {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   temporaryDirectories.push(homeDir);
-  return {
+  const host = {
     homeDir,
     stateDir: path.join(homeDir, ".nemoclaw"),
+    portableFenceHeld: false,
     kill: vi.fn(() => true),
     rmSync: vi.fn(),
     run: vi.fn(knownGatewayList),
@@ -41,6 +43,13 @@ function scope(prefix: string) {
     runModelCleanup: vi.fn(() => ok()),
     runPortableCleanup: vi.fn(),
   };
+  host.rmSync.mockImplementation((target: fs.PathLike, options?: fs.RmDirOptions) => {
+    const resolvedTarget = path.resolve(String(target));
+    expect(resolvedTarget.startsWith(`${homeDir}${path.sep}`)).toBe(true);
+    expect(host.portableFenceHeld).toBe(true);
+    fs.rmSync(resolvedTarget, options);
+  });
+  return host;
 }
 
 function deps(host: ReturnType<typeof scope>): UninstallRunDeps {
@@ -69,14 +78,21 @@ function deps(host: ReturnType<typeof scope>): UninstallRunDeps {
     runLocalModelRuntimeCleanup: host.runModelCleanup,
     runManagedLlamaCppRuntimeCleanup: host.runModelCleanup,
     runPortableRuntimeCleanupTransaction: host.runPortableCleanup,
-    withPortableHostFence: async (_home, operation) => await operation(),
+    withPortableHostFence: async (_home, operation) => {
+      host.portableFenceHeld = true;
+      try {
+        return await operation();
+      } finally {
+        host.portableFenceHeld = false;
+      }
+    },
   };
 }
 
-function uninstall(host: ReturnType<typeof scope>) {
+function uninstall(host: ReturnType<typeof scope>, destroyUserData = false) {
   return runUninstallPlanBase(
-    { assumeYes: true, deleteModels: false, destroyUserData: false, keepOpenShell: false },
-    deps(host),
+    { assumeYes: true, deleteModels: false, destroyUserData, keepOpenShell: false },
+    withSuccessfulPreUninstallBackup(deps(host)),
   );
 }
 
@@ -225,8 +241,8 @@ afterEach(() => {
 });
 
 describe("uninstall on a host that owns no portable lifecycle resource", () => {
-  const expectOrdinaryUninstall = (host: ReturnType<typeof scope>) => {
-    const result = uninstall(host);
+  const expectOrdinaryUninstall = async (host: ReturnType<typeof scope>) => {
+    const result = await uninstall(host);
 
     expect(result.exitCode).toBe(0);
     expect(host.run).toHaveBeenCalled();
@@ -237,47 +253,127 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     ["a prior onboard failed before it established any authority", failedPreflightSession],
     ["onboarding never wrote a session", (host) => void stateRoot(host)],
     ["no state directory was ever created", () => undefined],
-  ])("removes host state when %s (#9573)", (_case, prepare) => {
+  ])("removes host state when %s (#9573)", async (_case, prepare) => {
     const host = scope("nemoclaw-uninstall-leftover-");
     prepare(host);
 
-    expectOrdinaryUninstall(host);
+    await expectOrdinaryUninstall(host);
   });
 
-  it.each([0o755, 0o600])(
-    "removes host state when an abandoned portable configuration directory has mode %i (#9581)",
-    (mode) => {
-      const host = scope("nemoclaw-uninstall-config-");
-      stateRoot(host);
-      const directory = abandonedPortableConfig(host, mode);
+  it("preserves a nontraversable Portable directory while ordinary uninstall completes (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-config-");
+    stateRoot(host);
+    const directory = abandonedPortableConfig(host, 0o600);
+    const before = fs.lstatSync(directory);
 
-      expectOrdinaryUninstall(host);
-      expect(host.rmSync.mock.calls.map(([target]) => String(target))).toContain(
-        path.dirname(directory),
-      );
-    },
-  );
+    await expectOrdinaryUninstall(host);
 
-  it("completes ordinary uninstall after completed default OpenClaw onboarding", () => {
+    const after = fs.lstatSync(directory);
+    expect(after.ino).toBe(before.ino);
+    expect(after.mode & 0o777).toBe(0o600);
+    expect(
+      host.rmSync.mock.calls.some(([target]) =>
+        path.resolve(String(target)).startsWith(`${directory}${path.sep}`),
+      ),
+    ).toBe(false);
+  });
+
+  it.each<[string, (host: ReturnType<typeof scope>) => void]>([
+    ["a prior onboard failed", failedPreflightSession],
+    ["onboarding never wrote a session", (host) => void stateRoot(host)],
+    ["the state directory is absent", () => undefined],
+  ])("preserves abandoned Portable configuration when %s (#10545)", async (_case, prepare) => {
+    const host = scope("nemoclaw-uninstall-preserved-config-");
+    prepare(host);
+    const directory = abandonedPortableConfig(host, 0o700);
+
+    await expectOrdinaryUninstall(host);
+
+    expect(fs.readFileSync(path.join(directory, "containers.conf"), "utf-8")).toBe(
+      "[containers]\n",
+    );
+  });
+
+  it("completes ordinary uninstall after completed default OpenClaw onboarding", async () => {
     const host = scope("nemoclaw-uninstall-completed-openclaw-");
     completedOpenClawAuthority(host, "default");
 
-    expectOrdinaryUninstall(host);
+    await expectOrdinaryUninstall(host);
   });
 
-  it("completes ordinary uninstall when managed OpenClaw registration records its explicit agent (#10073)", () => {
+  it("preserves abandoned Portable configuration after completed ordinary onboarding (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-completed-config-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
+
+    await expectOrdinaryUninstall(host);
+
+    expect(fs.readFileSync(path.join(directory, "containers.conf"), "utf-8")).toBe(
+      "[containers]\n",
+    );
+  });
+
+  it("preserves unexpected ambient Portable content without traversing it (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-unexpected-config-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
+    fs.mkdirSync(path.join(directory, "containers.conf.d"), { mode: 0o700 });
+    fs.writeFileSync(path.join(directory, "unexpected.conf"), "unexpected\n", { mode: 0o600 });
+    fs.linkSync(
+      path.join(directory, "containers.conf"),
+      path.join(directory, "containers.conf.hard-link"),
+    );
+
+    await expectOrdinaryUninstall(host);
+
+    expect(fs.readFileSync(path.join(directory, "unexpected.conf"), "utf-8")).toBe("unexpected\n");
+    expect(fs.lstatSync(path.join(directory, "containers.conf")).nlink).toBe(2);
+    expect(fs.lstatSync(path.join(directory, "containers.conf.d")).isDirectory()).toBe(true);
+  });
+
+  it("preserves a symbolic-link Portable path without following it (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-symlink-config-");
+    completedOpenClawAuthority(host, "default");
+    const target = path.join(host.homeDir, "portable-target");
+    const directory = path.join(host.homeDir, ".config/nemoclaw/portable");
+    fs.mkdirSync(target, { mode: 0o700 });
+    fs.writeFileSync(path.join(target, "unrelated.conf"), "unrelated\n", { mode: 0o600 });
+    fs.mkdirSync(path.dirname(directory), { recursive: true });
+    fs.symlinkSync(target, directory);
+
+    await expectOrdinaryUninstall(host);
+
+    expect(fs.lstatSync(directory).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(path.join(target, "unrelated.conf"), "utf-8")).toBe("unrelated\n");
+  });
+
+  it("preserves abandoned Portable configuration when user-data destruction is requested (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-destroy-config-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
+
+    const result = await uninstall(host, true);
+
+    expect(result.exitCode).toBe(0);
+    expect(fs.readFileSync(path.join(directory, "containers.conf"), "utf-8")).toBe(
+      "[containers]\n",
+    );
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
+
+  it("completes ordinary uninstall when managed OpenClaw registration records its explicit agent (#10073)", async () => {
     const host = scope("nemoclaw-uninstall-managed-openclaw-");
     completedOpenClawAuthority(host, "default", "openclaw");
 
-    expectOrdinaryUninstall(host);
+    await expectOrdinaryUninstall(host);
   });
 
-  it("reports the registry agent field and recovery when completed onboarding identity drifts (#10073)", () => {
+  it("reports the registry agent field and recovery when completed onboarding identity drifts (#10073)", async () => {
     const host = scope("nemoclaw-uninstall-agent-drift-");
     completedOpenClawAuthority(host, "default", "hermes");
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const result = uninstall(host);
+    const result = await uninstall(host);
 
     expect(result.exitCode).toBe(1);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('registry field "agent"'));
@@ -292,12 +388,12 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 
-  it("refuses completed portable authority after its lifecycle receipt disappears", () => {
+  it("refuses completed portable authority after its lifecycle receipt disappears", async () => {
     const host = scope("nemoclaw-uninstall-completed-portable-");
     completedOpenClawAuthority(host, "portable");
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const result = uninstall(host);
+    const result = await uninstall(host);
 
     expect(result.exitCode).toBe(1);
     expect(error).toHaveBeenCalledWith(
@@ -308,17 +404,17 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 
-  it("removes the state directory a failed onboarding left behind (#9573)", () => {
+  it("removes the state directory a failed onboarding left behind (#9573)", async () => {
     const host = scope("nemoclaw-uninstall-state-");
     failedPreflightSession(host);
 
-    const result = uninstall(host);
+    const result = await uninstall(host);
 
     expect(result.exitCode).toBe(0);
     expect(host.rmSync.mock.calls.map(([target]) => String(target))).toContain(host.stateDir);
   });
 
-  it("refuses an unknown portable uninstall artifact in the configuration directory (#9581)", () => {
+  it("preserves an ambient portable-uninstall-like configuration artifact without treating it as lifecycle evidence (#10545)", async () => {
     const host = scope("nemoclaw-uninstall-hidden-");
     stateRoot(host);
     const directory = abandonedPortableConfig(host, 0o755);
@@ -328,10 +424,14 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
       { mode: 0o600 },
     );
 
-    const result = uninstall(host);
+    await expectOrdinaryUninstall(host);
 
-    expect(result.exitCode).toBe(1);
-    expect(host.rmSync).not.toHaveBeenCalled();
+    expect(
+      fs.readFileSync(
+        path.join(directory, `.containers.conf.portable-uninstall-${"e".repeat(64)}.cleanup`),
+        "utf-8",
+      ),
+    ).toBe("unknown");
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 

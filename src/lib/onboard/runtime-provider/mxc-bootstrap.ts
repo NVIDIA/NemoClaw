@@ -4,6 +4,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { parseNativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
 import {
@@ -22,6 +23,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const PROVIDER_HANDLE_PATTERN = /^mxc-native-artifact-v1:[a-f0-9]{64}$/u;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAX_PATH_BYTES = 4096;
+const ISSUED_BOOTSTRAP_PLANS = new WeakSet<RuntimeProviderNativeArtifactBootstrapPlan>();
 
 export class MxcNativeArtifactBootstrapError extends Error {
   constructor(message: string) {
@@ -184,7 +186,46 @@ function preparePlan(
   } as const;
   const providerHandle = `mxc-native-artifact-v1:${sha256Json(operationIdentity)}`;
   const authority = { ...operationIdentity, providerHandle };
-  return frozen({ ...authority, authoritySha256: sha256Json(authority) });
+  const plan = frozen({ ...authority, authoritySha256: sha256Json(authority) });
+  ISSUED_BOOTSTRAP_PLANS.add(plan);
+  return plan;
+}
+
+/**
+ * Rebuild and validate one provider-owned bootstrap plan before it crosses a control-plane
+ * boundary. The returned value is a fresh frozen plan; caller aliases are never retained.
+ */
+export function validateMxcNativeArtifactBootstrapPlan(
+  value: unknown,
+): RuntimeProviderNativeArtifactBootstrapPlan {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
+  ) {
+    throw new MxcNativeArtifactBootstrapError("bootstrap plan must be a plain object");
+  }
+  if (!ISSUED_BOOTSTRAP_PLANS.has(value as RuntimeProviderNativeArtifactBootstrapPlan)) {
+    throw new MxcNativeArtifactBootstrapError(
+      "bootstrap plan was not issued by the provider-owned bootstrap surface",
+    );
+  }
+  const candidate = value as Record<string, unknown>;
+  const expected = preparePlan({
+    providerId: candidate.providerId as string,
+    sandboxName: candidate.sandboxName as string,
+    lifecycleGeneration: candidate.lifecycleGeneration as string,
+    driveRoot: candidate.driveRoot as string,
+    artifactRoot: candidate.artifactRoot as string,
+    workload: candidate.workload as RuntimeProviderNativeArtifactBootstrapInput["workload"],
+  });
+  if (!isDeepStrictEqual(candidate, expected)) {
+    throw new MxcNativeArtifactBootstrapError(
+      "bootstrap plan does not match its provider-owned authority",
+    );
+  }
+  return expected;
 }
 
 function result(

@@ -10,14 +10,22 @@ export function removeSandboxUnlessSessionReservation(
   entry: SandboxEntry | null,
   sandboxName: string,
 ): void {
-  const recreate = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+  const session = onboardSession.loadSession();
+  const recreate = session?.checkpoint?.sandboxRecreate;
+  if (registry.isPendingReservationForSession(entry, session?.sessionId)) return;
+  if (entry?.pendingRouteReservation === true) {
+    if (!session || !onboardSession.isOnboardLockHeldByCurrentProcess()) return;
+    if (!registry.removeSandboxRouteReservationIfCurrent(entry)) {
+      throw new Error(
+        `Cannot recreate sandbox '${sandboxName}' because its pending create recovery state is protected or changed. Run the same onboarding command with \`--resume\` to continue the saved onboarding session. NemoClaw removes the reservation only when that session retains authority.`,
+      );
+    }
+    return;
+  }
   if (recreate?.sandboxName === sandboxName && recreate.phase !== "completed") {
     return;
   }
-
-  if (!registry.isPendingReservationForSession(entry, onboardSession.loadSession()?.sessionId)) {
-    registry.removeSandbox(sandboxName);
-  }
+  registry.removeSandbox(sandboxName);
 }
 
 export interface SandboxLifecycleDeps {

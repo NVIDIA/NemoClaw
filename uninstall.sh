@@ -10,7 +10,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CLI_JS="${NEMOCLAW_CLI_JS:-$SCRIPT_DIR/dist/nemoclaw.js}"
+CLI_JS="${NEMOCLAW_CLI_JS:-$SCRIPT_DIR/bin/nemoclaw.js}"
 
 if [ -f "$CLI_JS" ]; then
   NODE_BIN="${NEMOCLAW_NODE:-${NODE:-}}"

@@ -116,7 +116,7 @@ function runWithDockerInventory(options: FixtureOptions = {}): {
     const errors: string[] = [];
     const rmSync = vi.fn();
     const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
       {
         commandExists: () => true,
         env: {

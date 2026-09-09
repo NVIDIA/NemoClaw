@@ -9,21 +9,33 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../state/registry";
+import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import * as sandboxState from "../state/sandbox";
 import {
+  completeOrdinaryOnboardSandboxCreation,
   createCreatedSandboxCompletionActions,
   createOnboardCreatedSandboxCompletion,
   createOnboardCreatedSandboxRegistration,
   finalizeCreatedSandbox,
+  restoreSelectedOnboardSnapshot,
 } from "./created-sandbox-finalization";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
-import { pendingSandboxPolicyVerificationForBoundary } from "./sandbox-create/policy-creation-receipt";
+import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
+import { OnboardRestoreSnapshotDriftError } from "./session-bootstrap";
 
 const fixtures: string[] = [];
+
+function preparedRestoreAuthority(sandboxName: string) {
+  const prepared = { name: sandboxName } as SandboxEntry;
+  return {
+    prepareRegistration: () => prepared,
+    revalidatePreparedRegistration: (target: SandboxEntry) => target,
+  };
+}
 
 afterEach(() => {
   delete process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -46,7 +58,9 @@ describe("created sandbox registration authority", () => {
     await expect(
       register(
         null,
-        { lifecycleGeneration: "generation-1" } as HermesPortableConfiguredReceipt,
+        {
+          lifecycleGeneration: "generation-1",
+        } as HermesPortableConfiguredReceipt,
         "a".repeat(64),
         vi.fn(),
       ),
@@ -54,6 +68,53 @@ describe("created sandbox registration authority", () => {
 
     expect(cleanupBuildContext).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
+  });
+});
+
+describe("new sandbox cancellation recovery", () => {
+  it("preserves recovery guidance when the durable identity is unavailable (#9833)", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const runFile = vi.fn();
+    const armCancelRollback = vi.fn();
+    const markCancellationRecovery = vi.fn();
+
+    expect(() =>
+      completeOrdinaryOnboardSandboxCreation(
+        {
+          sandboxName: "new-sandbox",
+          sandboxWasLiveDefault: false,
+          gatewayPort: 8080,
+          runtimeFields: { openshellDriver: "docker" } as never,
+          messagingProviders: [],
+          liveExists: false,
+        },
+        {
+          setDefault: vi.fn(),
+          runFile,
+          scriptsDir: "/repo/scripts",
+          gatewayName: "nemoclaw",
+          providerExistsInGateway: () => true,
+          armCancelRollback,
+          markCancellationRecovery,
+          dockerInfoFormat: () => "",
+          runCapture: () => "",
+          revalidateSandboxIdentity: vi.fn(),
+          applyVmDnsMonkeypatch: vi.fn(),
+        },
+      ),
+    ).toThrow("Sandbox 'new-sandbox' has no exact identity for cancel recovery.");
+
+    const guidance = error.mock.calls.flat().join("\n");
+    expect(guidance).toContain("Sandbox 'new-sandbox' was created on gateway 'nemoclaw'");
+    expect(guidance).toContain("registry entry and onboarding session were preserved");
+    expect(guidance).toContain("Do not delete the sandbox by mutable sandbox name");
+    expect(guidance).toContain("can clear retained recovery only after OpenShell confirms");
+    expect(guidance).toContain("use a different explicit sandbox name");
+    expect(guidance).not.toContain("administrator");
+    expect(runFile).not.toHaveBeenCalled();
+    expect(armCancelRollback).not.toHaveBeenCalled();
+    expect(markCancellationRecovery).toHaveBeenCalledOnce();
+    expect(markCancellationRecovery).toHaveBeenCalledWith("new-sandbox");
   });
 });
 
@@ -224,6 +285,60 @@ function identityFromConfig(config: string): string {
 }
 
 describe("created DCode sandbox finalization", () => {
+  it("refuses a changed pre-upgrade snapshot before sandbox creation (#10546)", () => {
+    vi.spyOn(sandboxState, "getLatestBackup").mockReturnValue({
+      backupPath: "/tmp/newer-backup",
+    } as ReturnType<typeof sandboxState.getLatestBackup>);
+    const completionArgs = [
+      "openclaw",
+      "/tmp/selected-backup",
+      "/tmp/selected-backup",
+      null,
+      null,
+      { customOpenClawImage: false, isManagedDcodeAgent: false },
+      {
+        provider: "compatible-endpoint",
+        model: "demo",
+        preferredInferenceApi: "openai-completions",
+        endpointUrl: null,
+      },
+      { createIntent: null, resolvedCreateIntent: {} },
+    ] as unknown as Parameters<typeof createOnboardCreatedSandboxCompletion>;
+
+    expect(() => createOnboardCreatedSandboxCompletion(...completionArgs)).toThrow(
+      OnboardRestoreSnapshotDriftError,
+    );
+  });
+
+  it("rechecks the latest snapshot before managed state restoration (#10546)", () => {
+    const restoreManaged = vi.fn();
+    const restore = vi.fn();
+
+    const result = restoreSelectedOnboardSnapshot(
+      "openclaw",
+      "/tmp/selected-backup",
+      { targetAgentType: "openclaw" },
+      () => ({ name: "openclaw" }) as SandboxEntry,
+      {
+        getLatestBackup: () =>
+          ({ backupPath: "/tmp/newer-backup" }) as ReturnType<typeof sandboxState.getLatestBackup>,
+        restoreManaged,
+        restore,
+      },
+    );
+
+    expect(result).toEqual({
+      success: false,
+      restoredDirs: [],
+      failedDirs: [],
+      restoredFiles: [],
+      failedFiles: [],
+      error: expect.stringContaining("changed before state restoration"),
+    });
+    expect(restoreManaged).not.toHaveBeenCalled();
+    expect(restore).not.toHaveBeenCalled();
+  });
+
   it("merges stale backup preferences before live validation and registry publication (#6311)", () => {
     const fixture = makeRestoreFixture();
     const order: string[] = [];
@@ -241,6 +356,7 @@ describe("created DCode sandbox finalization", () => {
           preferredInferenceApi: null,
         },
         {
+          ...preparedRestoreAuthority("dcode"),
           discoverFreshOpenClawImagePluginInstalls: () => ({
             ok: true,
             extensionDirs: [],
@@ -332,23 +448,7 @@ describe("created DCode sandbox finalization", () => {
   it("passes the fresh create endpoint through the production completion constructor (#9555)", async () => {
     const endpointUrl = "https://openrouter.ai/api/v1";
     const model = "nvidia/nemotron-3-ultra-550b-a55b";
-    const policyCreationReceipt = {
-      schemaVersion: 1 as const,
-      origin: "sandbox-create" as const,
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      sandboxName: "dcode",
-      lifecycleGeneration: "generation-1",
-      sandboxIdentityFingerprint: "a".repeat(64),
-      policyHash: "sha256:effective",
-      policyVersion: 1,
-    };
-    const verifiedPolicyBoundary = {
-      registration: {
-        policyAuthority: "nemoclaw-managed" as const,
-        policyCreationReceipt,
-        observedPolicyAuthority: "owner-unknown" as const,
-      },
+    const verifiedCreateBoundary = {
       sandboxName: "dcode",
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
@@ -358,7 +458,7 @@ describe("created DCode sandbox finalization", () => {
     };
     const verifiedCreate = {
       reservation: {} as never,
-      checkpoint: pendingSandboxPolicyVerificationForBoundary(verifiedPolicyBoundary),
+      checkpoint: pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
     } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
     const runCaptureOpenshell = vi.fn(() =>
       [
@@ -389,9 +489,13 @@ describe("created DCode sandbox finalization", () => {
         endpointUrl,
       },
       {
-        createIntent: { endpointUrl, endpointSource: null, observabilityEnabled: false },
+        createIntent: {
+          endpointUrl,
+          endpointSource: null,
+          observabilityEnabled: false,
+        },
         resolvedCreateIntent: {
-          policy: { options: { baselineExclusions: [] } },
+          policy: { options: {} },
           hostMounts: undefined,
         },
       },
@@ -421,12 +525,10 @@ describe("created DCode sandbox finalization", () => {
           policyPath: "/private/initial-policy.yaml",
         },
         compatibilityPolicyPath: null,
-        policyTier: null,
-        policyAuthority: "nemoclaw-managed",
         dashboardRemoteBindPrepared: false,
-        getVerifiedPolicyBoundary: () => verifiedPolicyBoundary,
+        getVerifiedCreateBoundary: () => verifiedCreateBoundary,
         getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
-        revalidatePolicyAuthority: vi.fn(),
+        revalidateSandboxIdentity: vi.fn(),
       },
       null,
       "build-1",
@@ -443,8 +545,6 @@ describe("created DCode sandbox finalization", () => {
       runCaptureOpenshell,
       "http://127.0.0.1:8643",
       { config: null, enabled: false },
-      vi.fn(),
-      vi.fn(),
       vi.fn(),
       vi.fn(),
       vi.fn(),
@@ -472,8 +572,6 @@ describe("created DCode sandbox finalization", () => {
         sandboxName: input.sandboxName,
         lifecycleGeneration: input.lifecycleGeneration,
         sandboxIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
-        policyHash: "sha256:effective",
-        policyVersion: 1,
       })),
     ] as unknown as Parameters<typeof createOnboardCreatedSandboxCompletion>;
     const completion = createOnboardCreatedSandboxCompletion(...completionArgs);
@@ -487,6 +585,10 @@ describe("created DCode sandbox finalization", () => {
     const lifecycleLiveIdentityFingerprint = "a".repeat(64);
     const lifecycle = {
       generation: "generation-1",
+      recordExactIdentity: () => ({
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint,
+      }),
       capture: () => ({
         lifecycleGeneration: "generation-1",
         lifecycleLiveIdentityFingerprint,
@@ -548,7 +650,7 @@ describe("created DCode sandbox finalization", () => {
     expect(register).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("sandbox still exists"));
     expect(error).toHaveBeenCalledWith(expect.stringContaining("rebuild is unsafe"));
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Verify its durable identity"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Recovery remains blocked while this sandbox exists"));
     expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith(expect.stringContaining("nemoclaw onboard"));
   });
@@ -573,6 +675,7 @@ describe("created DCode sandbox finalization", () => {
             preferredInferenceApi: null,
           },
           {
+            ...preparedRestoreAuthority("dcode"),
             discoverFreshOpenClawImagePluginInstalls: vi.fn(),
             restoreRecreatedSandboxState: (name, backup, options) => {
               const restored = sandboxState.restoreRecreatedSandboxState(name, backup, options);
@@ -608,7 +711,7 @@ describe("created DCode sandbox finalization", () => {
         "  NemoClaw left unregistered sandbox 'dcode' in place because OpenShell can delete it only by mutable name.",
       );
       expect(error).toHaveBeenCalledWith(
-        "  Verify its durable identity before manual cleanup; do not act by name alone.",
+        "  Recovery remains blocked while this sandbox exists. Do not delete it by mutable name; run 'nemoclaw dcode destroy' to check for authoritative absence.",
       );
       expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
       expect(error).toHaveBeenCalledWith(
@@ -638,6 +741,7 @@ describe("created DCode sandbox finalization", () => {
           preferredInferenceApi: null,
         },
         {
+          ...preparedRestoreAuthority("custom-dcode"),
           discoverFreshOpenClawImagePluginInstalls: vi.fn(),
           restoreRecreatedSandboxState: (name, backup, options) => {
             expect(options.allowCustomImageWholeStateFileRestore).toBe(true);
@@ -776,6 +880,7 @@ describe("created OpenClaw sandbox finalization", () => {
         preferredInferenceApi: "openai-completions",
       },
       {
+        ...preparedRestoreAuthority("openclaw"),
         discoverFreshOpenClawImagePluginInstalls: () => {
           order.push("discover");
           return { ok: true, extensionDirs: ["weather"], pluginInstalls };
@@ -792,16 +897,129 @@ describe("created OpenClaw sandbox finalization", () => {
     );
 
     expect(order).toEqual(["discover", "restore", "register"]);
-    expect(restoreRecreatedSandboxState).toHaveBeenCalledWith("openclaw", "/tmp/openclaw-backup", {
-      targetAgentType: "openclaw",
-      freshOpenClawImagePluginInstalls: pluginInstalls,
-    });
-    expect(register).toHaveBeenCalledWith(pluginInstalls);
+    expect(restoreRecreatedSandboxState).toHaveBeenCalledWith(
+      "openclaw",
+      "/tmp/openclaw-backup",
+      {
+        targetAgentType: "openclaw",
+        freshOpenClawImagePluginInstalls: pluginInstalls,
+      },
+      expect.any(Function),
+    );
+    expect(register).toHaveBeenCalledWith(pluginInstalls, expect.anything());
   });
 
-  it("defers managed restore before unregistered target authority can be bound", () => {
+  it("restores through a revalidated target row before publishing it (#10546)", () => {
+    const order: string[] = [];
+    const prepared = { name: "openclaw" } as SandboxEntry;
+    const restoredTarget = { ...prepared } as SandboxEntry;
+    const publishedTarget = { ...prepared } as SandboxEntry;
+    const expectedTargets = [prepared, restoredTarget];
+    const refreshedTargets = [restoredTarget, publishedTarget];
+    const register = vi.fn((_plugins, target) => {
+      order.push("register");
+      expect(target).toBe(publishedTarget);
+      return target;
+    });
+    let revalidation = 0;
+
+    const result = finalizeCreatedSandbox(
+      {
+        sandboxName: "openclaw",
+        restoreBackupPath: "/tmp/managed-openclaw-backup",
+        preUpgradeBackup: true,
+        targetAgentType: "openclaw",
+        validateManagedDcode: false,
+        provider: "compatible-endpoint",
+        model: "demo",
+        preferredInferenceApi: "openai-completions",
+      },
+      {
+        discoverFreshOpenClawImagePluginInstalls: vi.fn(),
+        prepareRegistration: () => {
+          order.push("prepare");
+          return prepared;
+        },
+        revalidatePreparedRegistration: (target) => {
+          order.push("revalidate");
+          expect(target).toBe(expectedTargets[revalidation]);
+          return refreshedTargets[revalidation++]!;
+        },
+        restoreRecreatedSandboxState: (_name, _backupPath, _options, resolveTarget) => {
+          order.push("restore");
+          expect(resolveTarget?.()).toBe(restoredTarget);
+          return {
+            success: true,
+            restoredDirs: ["workspace"],
+            failedDirs: [],
+            restoredFiles: [],
+            failedFiles: [],
+          };
+        },
+        getDcodeSelectionDrift: vi.fn(),
+        register,
+        note: vi.fn(),
+        error: vi.fn(),
+        exitProcess: (code): never => {
+          throw new Error(`exit ${code}`);
+        },
+      },
+    );
+
+    expect(result).toBe(publishedTarget);
+    expect(order).toEqual(["prepare", "restore", "revalidate", "revalidate", "register"]);
+    expect(register).toHaveBeenCalledWith(undefined, publishedTarget);
+  });
+
+  it("does not publish the prepared target when managed restore fails (#10546)", () => {
+    const prepared = { name: "openclaw" } as SandboxEntry;
+    const register = vi.fn();
+
+    expect(() =>
+      finalizeCreatedSandbox(
+        {
+          sandboxName: "openclaw",
+          restoreBackupPath: "/tmp/managed-openclaw-backup",
+          preUpgradeBackup: true,
+          targetAgentType: "openclaw",
+          validateManagedDcode: false,
+          provider: "compatible-endpoint",
+          model: "demo",
+          preferredInferenceApi: "openai-completions",
+        },
+        {
+          discoverFreshOpenClawImagePluginInstalls: vi.fn(),
+          prepareRegistration: () => prepared,
+          revalidatePreparedRegistration: () => prepared,
+          restoreRecreatedSandboxState: (_name, _backupPath, _options, resolveTarget) => {
+            expect(resolveTarget?.()).toBe(prepared);
+            return {
+              success: false,
+              restoredDirs: [],
+              failedDirs: ["workspace"],
+              restoredFiles: [],
+              failedFiles: [],
+              error: "copy failed",
+            };
+          },
+          getDcodeSelectionDrift: vi.fn(),
+          register,
+          note: vi.fn(),
+          error: vi.fn(),
+          exitProcess: (code): never => {
+            throw new Error(`exit ${code}`);
+          },
+        },
+      ),
+    ).toThrow("exit 1");
+
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before restore when prepared registration authority is unavailable", () => {
     const register = vi.fn();
     const error = vi.fn();
+    const restoreRecreatedSandboxState = vi.fn();
 
     expect(() =>
       finalizeCreatedSandbox(
@@ -817,14 +1035,7 @@ describe("created OpenClaw sandbox finalization", () => {
         },
         {
           discoverFreshOpenClawImagePluginInstalls: vi.fn(),
-          restoreRecreatedSandboxState: () => ({
-            success: false,
-            restoredDirs: [],
-            failedDirs: ["manifest"],
-            restoredFiles: [],
-            failedFiles: [],
-            error: sandboxState.MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
-          }),
+          restoreRecreatedSandboxState,
           getDcodeSelectionDrift: vi.fn(),
           register,
           note: vi.fn(),
@@ -836,12 +1047,15 @@ describe("created OpenClaw sandbox finalization", () => {
       ),
     ).toThrow("exit 1");
 
+    expect(restoreRecreatedSandboxState).not.toHaveBeenCalled();
     expect(register).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("restore is deferred"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("has no prepared registration authority"),
+    );
     expect(error).toHaveBeenCalledWith(
       "  State was not restored and registry metadata was not updated.",
     );
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Verify its durable identity"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Recovery remains blocked while this sandbox exists"));
     expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith("  Manual recovery: /tmp/managed-openclaw-backup");
   });
@@ -865,6 +1079,7 @@ describe("created OpenClaw sandbox finalization", () => {
           preferredInferenceApi: "openai-completions",
         },
         {
+          ...preparedRestoreAuthority("openclaw"),
           discoverFreshOpenClawImagePluginInstalls: () => ({
             ok: false,
             error: "registry unreadable",
@@ -887,7 +1102,7 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith(
       "  State was not restored and registry metadata was not updated.",
     );
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Verify its durable identity"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Recovery remains blocked while this sandbox exists"));
     expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith(
       "  Then rerun the original `nemoclaw onboard --from <Dockerfile>` command.",
@@ -913,6 +1128,7 @@ describe("created OpenClaw sandbox finalization", () => {
           preferredInferenceApi: "openai-completions",
         },
         {
+          ...preparedRestoreAuthority("openclaw"),
           discoverFreshOpenClawImagePluginInstalls: () => ({
             ok: true,
             extensionDirs: ["weather"],
@@ -942,7 +1158,7 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining(sandboxState.OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR),
     );
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Verify its durable identity"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Recovery remains blocked while this sandbox exists"));
     expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith(
       "  Then rerun the original `nemoclaw onboard --from <Dockerfile>` command.",
@@ -976,23 +1192,7 @@ describe("created sandbox completion actions", () => {
         order.push("registry");
         return input as unknown as SandboxEntry;
       });
-      const policyCreationReceipt = {
-        schemaVersion: 1 as const,
-        origin: "sandbox-create" as const,
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        sandboxName: "hermes",
-        lifecycleGeneration: "generation-1",
-        sandboxIdentityFingerprint: "a".repeat(64),
-        policyHash: "sha256:effective",
-        policyVersion: 1,
-      };
-      const verifiedPolicyBoundary = {
-        registration: {
-          policyAuthority: "nemoclaw-managed" as const,
-          policyCreationReceipt,
-          observedPolicyAuthority: "owner-unknown" as const,
-        },
+      const verifiedCreateBoundary = {
         sandboxName: "hermes",
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
@@ -1000,9 +1200,28 @@ describe("created sandbox completion actions", () => {
         lifecycleLiveIdentityFingerprint: "a".repeat(64),
         route: "native" as const,
       };
+      const inferenceRouteReservation = {
+        authority: {
+          sandboxName: "hermes",
+          gatewayName: "nemoclaw",
+          sessionId: "session-1",
+          selection: {
+            provider: "ollama",
+            model: "qwen3-vl:4b",
+            endpointUrl: "http://host.openshell.internal:11436/v1",
+            endpointSource: "onboard" as const,
+            credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+            preferredInferenceApi: "openai-completions",
+            compatibleEndpointReasoning: null,
+            compatibleEndpointReasoningEffort: null,
+            nimContainer: null,
+          },
+        },
+        entry: { name: "hermes" },
+      } satisfies QualifiedSandboxInferenceRouteReservation;
       const verifiedCreate = {
-        reservation: {} as never,
-        checkpoint: pendingSandboxPolicyVerificationForBoundary(verifiedPolicyBoundary),
+        reservation: inferenceRouteReservation,
+        checkpoint: pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
       } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
       const completion = createCreatedSandboxCompletionActions(
         {
@@ -1041,7 +1260,6 @@ describe("created sandbox completion actions", () => {
             },
             agent: null,
             agentVersionKnown: true,
-            appliedPolicies: ["personal-open-internet"],
             plannedMessagingState: undefined,
             hermesToolGateways: [],
             gatewayName: "nemoclaw",
@@ -1050,7 +1268,7 @@ describe("created sandbox completion actions", () => {
           policy: {
             initialPolicyPath: "/private/initial-policy.yaml",
             compatibilityPolicyPath: "/private/compatibility-policy.yaml",
-            getVerifiedPolicyBoundary: () => verifiedPolicyBoundary,
+            getVerifiedCreateBoundary: () => verifiedCreateBoundary,
             getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
           },
           gpu: {
@@ -1069,13 +1287,8 @@ describe("created sandbox completion actions", () => {
             releasePort: async () => {
               order.push("dashboard-release");
             },
-            ensureForward: () => {
-              order.push("dashboard-forward");
-              return 8644;
-            },
             getForwardPort: () => "8643",
             resolveHermesState: () => ({ config: null, enabled: false }),
-            ensureHermesForward: () => order.push("dashboard-hermes"),
           },
           workload: {
             runtime: {
@@ -1122,6 +1335,10 @@ describe("created sandbox completion actions", () => {
       } as SandboxGpuCreateFlowResult;
       const lifecycle = {
         generation: "generation-1",
+        recordExactIdentity: () => ({
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        }),
         capture: () => {
           order.push("lifecycle-capture");
           return {
@@ -1144,7 +1361,6 @@ describe("created sandbox completion actions", () => {
             container: { imageId: "hermes:test" },
           } as unknown as HermesPortableConfiguredReceipt)
         : null;
-
       await completion.complete(
         schema5 ? null : created,
         configuredReceipt,
@@ -1152,13 +1368,14 @@ describe("created sandbox completion actions", () => {
         manageDashboard,
         () => ({ lifecycleGeneration: "generation-1" }),
         lifecycle,
+        schema5 ? inferenceRouteReservation : undefined,
       );
 
       expect(order).toEqual([
         "lifecycle-capture",
         "lifecycle-revalidate",
         "gpu",
-        ...(manageDashboard ? ["dashboard-release", "dashboard-forward", "dashboard-hermes"] : []),
+        ...(manageDashboard ? ["dashboard-release"] : []),
         ...(schema5 ? [] : ["workload"]),
         "lifecycle-revalidate",
         "registry",
@@ -1168,14 +1385,11 @@ describe("created sandbox completion actions", () => {
         expect.objectContaining({
           imageTag: "hermes:test",
           hermesPortableLifecycle: schema5,
-          appliedPolicies: ["personal-open-internet"],
-          dashboardPort: manageDashboard ? 8644 : 0,
+          dashboardPort: manageDashboard ? 8643 : 0,
           lifecycleGeneration: "generation-1",
           lifecycleLiveIdentityFingerprint: "a".repeat(64),
-          policyAuthority: "nemoclaw-managed",
-          policyCreationReceipt: expect.objectContaining({
-            policyHash: "sha256:effective",
-          }),
+          inferenceSelection: inferenceRouteReservation.authority.selection,
+          inferenceRouteReservation,
           verifiedCreate,
           runtimeFields: expect.objectContaining({ sandboxGpuProof: gpuProof }),
         }),

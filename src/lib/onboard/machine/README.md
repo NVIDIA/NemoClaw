@@ -21,7 +21,7 @@ In that final shape, `src/lib/onboard.ts` should be a thin entrypoint. State han
 
 `flow-handoff.ts` validates required data and constructs context at the initial-to-core and core-to-final boundaries. The entrypoint supplies process-bound dependencies and reserved-name output.
 
-The strict runner owns exact `init`, `preflight`, `provider_selection`, `inference`, and `sandbox` entry. If the durable state is later than a slice entry, earlier phases run as evented prerequisite repairs. A repair must return a legal, update-free transition chain and must not change the durable entry state.
+The strict runner owns `init`, `preflight`, `provider_selection`, `inference`, and `sandbox` entry. If the durable state is later than a slice entry, earlier phases run as evented prerequisite repairs. A repair must return a legal, update-free transition chain and must not change the durable entry state.
 
 ## State ownership
 

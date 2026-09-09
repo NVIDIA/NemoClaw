@@ -179,8 +179,8 @@ function evidenceIdentity(platform: ProtectedManagedImagePlatform) {
 
 describe("protected managed-image build contract", () => {
   it.each([
-    ["managed-image-multiarch-startup", "Resolve exact platform base images"],
-    ["managed-image-protected-runtime", "Resolve exact amd64 runtime base images"],
+    ["managed-image-multiarch-startup", "Resolve digest-pinned platform base images"],
+    ["managed-image-protected-runtime", "Resolve digest-pinned amd64 runtime base images"],
   ])("%s keeps immutable DCode resolution separate from Hermes", (jobId, stepName) => {
     const { result, output } = runBaseResolution(jobId, stepName);
     expect(result.status, result.stderr).toBe(0);

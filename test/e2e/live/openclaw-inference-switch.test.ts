@@ -16,6 +16,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
@@ -45,7 +46,8 @@ import {
   writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { runBoundedRetry } from "../fixtures/retry-policy.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   agentReplyContainsToken,
@@ -67,8 +69,8 @@ const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_M
 const SWITCH_INFERENCE_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
 const SWITCH_MOCK_ANTHROPIC = process.env.NEMOCLAW_SWITCH_MOCK_ANTHROPIC ?? "0";
 const SWITCH_MOCK_PORT = parsePortEnv("NEMOCLAW_SWITCH_MOCK_PORT", 0);
-const TEST_TIMEOUT_MS = 75 * 60_000;
-const INSTALL_TIMEOUT_MS = 30 * 60_000;
+const TEST_TIMEOUT_MS = testTimeout(75 * 60_000);
+const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
 const COMMAND_TIMEOUT_MS = 120_000;
 const INFERENCE_TIMEOUT_MS = 150_000;
 const AGENT_TIMEOUT_MS = 150_000;
@@ -729,83 +731,6 @@ async function checkSandboxInference(
   throw new Error(`Sandbox inference.local did not work after switch: ${lastFailure}`);
 }
 
-function collectOpenClawAgentText(value: unknown, parts: string[], visited: Set<unknown>): void {
-  if (value === null || value === undefined || visited.has(value)) return;
-  if (typeof value === "string") {
-    if (value.trim()) parts.push(value.trim());
-    return;
-  }
-  if (typeof value !== "object") return;
-  visited.add(value);
-  if (Array.isArray(value)) {
-    for (const item of value) collectOpenClawAgentText(item, parts, visited);
-    return;
-  }
-
-  const record = value as Record<string, unknown>;
-  for (const key of ["text", "content", "reasoning_content"]) {
-    const text = record[key];
-    if (typeof text === "string" && text.trim()) parts.push(text.trim());
-  }
-  const choices = record.choices;
-  if (Array.isArray(choices)) {
-    for (const choice of choices) {
-      if (!choice || typeof choice !== "object") continue;
-      const choiceRecord = choice as Record<string, unknown>;
-      collectOpenClawAgentText(choiceRecord.message, parts, visited);
-      collectOpenClawAgentText(choiceRecord.delta, parts, visited);
-      const text = choiceRecord.text;
-      if (typeof text === "string" && text.trim()) parts.push(text.trim());
-    }
-  }
-  for (const key of [
-    "result",
-    "payloads",
-    "payload",
-    "messages",
-    "response",
-    "data",
-    "output",
-    "outputs",
-    "items",
-    "segments",
-    "delta",
-  ]) {
-    if (Object.hasOwn(record, key)) collectOpenClawAgentText(record[key], parts, visited);
-  }
-}
-
-function parseOpenClawAgentText(raw: string): string {
-  if (!raw.trim()) return "";
-  const parts: string[] = [];
-  try {
-    const doc = JSON.parse(raw) as unknown;
-    const root =
-      doc && typeof doc === "object" && "result" in doc
-        ? (doc as { result?: unknown }).result
-        : doc;
-    collectOpenClawAgentText(root, parts, new Set());
-  } catch {
-    const decoder = new RegExp("{", "g");
-    let match: RegExpExecArray | null;
-    while ((match = decoder.exec(raw)) !== null) {
-      try {
-        const doc = JSON.parse(raw.slice(match.index)) as unknown;
-        const before = parts.length;
-        const root =
-          doc && typeof doc === "object" && "result" in doc
-            ? (doc as { result?: unknown }).result
-            : doc;
-        collectOpenClawAgentText(root, parts, new Set());
-        if (parts.length > before) break;
-      } catch {
-        // Try the next JSON-looking offset; wrappers sometimes print chatter
-        // before the actual OpenClaw JSON envelope.
-      }
-    }
-  }
-  return parts.join("\n");
-}
 
 async function checkOpenClawAgentTurn(
   host: HostCliClient,
@@ -931,11 +856,9 @@ async function runOpenClawInferenceSetWithRetry(
   return runInferenceSetWithRetry({
     attempts,
     onEvidence: (evidence) => writeInferenceSwitchRetryEvidence(artifacts, evidence),
-    run: (attempt, verify) =>
-      runNemoclaw(host, home, verify ? args : [...args, "--no-verify"], {
-        artifactName: verify
-          ? `nemoclaw-inference-set-${attempt}`
-          : "nemoclaw-inference-set-no-verify-after-transient-failures",
+    run: (attempt) =>
+      runNemoclaw(host, home, args, {
+        artifactName: `nemoclaw-inference-set-${attempt}`,
         env: compatibleAnthropicSwitchEnv(switchBinding),
         redactionValues,
         timeoutMs: COMMAND_TIMEOUT_MS,
@@ -943,11 +866,13 @@ async function runOpenClawInferenceSetWithRetry(
   });
 }
 
-test("openclaw-inference-switch: switches route and preserves live OpenClaw behavior", {
+test(
+  "openclaw-inference-switch: switches route and preserves live OpenClaw behavior",
+  {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "confirm Docker and choose the baseline provider",
+      "confirm the selected runtime and choose the baseline provider",
       "clear existing inference-switch state",
       "install and onboard baseline OpenClaw",
       "prepare the switched provider and endpoint",
@@ -957,7 +882,8 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
       "apply sandbox retention and record the result",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   await artifacts.target.declare({
     id: "openclaw-inference-switch",
     boundary: "install-sh-openclaw-inference-set-and-live-agent-turn",
@@ -966,7 +892,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     switchModel: SWITCH_MODEL,
     switchInferenceApi: SWITCH_INFERENCE_API,
     contracts: [
-      "Docker is running and an authenticated compatible baseline endpoint is staged",
+      "the selected runtime is available and an authenticated compatible baseline endpoint is staged",
       "install.sh --non-interactive onboards an OpenClaw sandbox",
       "when selected, the mock baseline route completes one explicit authenticated fixture request",
       "nemoclaw inference set switches the running sandbox route",
@@ -984,19 +910,10 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     "run `npm run build:cli` before live repo CLI targets",
   ).toBe(true);
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info-openclaw-inference-switch",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "prereq-runtime-info-openclaw-inference-switch",
+      scenarioLabel: "OpenClaw inference switch",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(
-        `Docker is required for OpenClaw inference switch E2E: ${resultText(docker)}`,
-      );
-    }
-    skip("Docker is required for OpenClaw inference switch E2E");
-  }
 
   const useMockBaseline =
     SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1";
@@ -1026,9 +943,12 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
   let mockProvider: MockAnthropicProvider | undefined;
-  cleanup.trackDisposable(`remove OpenClaw inference switch test home for ${SANDBOX_NAME}`, () => {
+    cleanup.trackDisposable(
+      `remove OpenClaw inference switch test home for ${SANDBOX_NAME}`,
+      () => {
     fs.rmSync(home, { recursive: true, force: true });
-  });
+      },
+    );
   cleanup.trackDisposable("close switched Anthropic provider", async () => {
     await mockProvider?.close();
   });
@@ -1178,7 +1098,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     id: "openclaw-inference-switch",
     status: "passed",
     assertions: {
-      dockerRunning: docker.exitCode === 0,
+        runtimeProviderAvailable: true,
       installCompleted: install.exitCode === 0,
       inferenceSetCompleted: switchResult.exitCode === 0,
       gatewayRestartExpected,
@@ -1191,4 +1111,5 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
       openClawAgentPong: true,
     },
   });
-});
+  },
+);

@@ -3,12 +3,6 @@
 
 import { describe, expect, it } from "vitest";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
-import { createBuiltInRenderTemplateResolver } from "../messaging/channels/index.ts";
-import { slackManifest } from "../messaging/channels/slack/manifest.ts";
-import { teamsManifest } from "../messaging/channels/teams/manifest.ts";
-import { wechatManifest } from "../messaging/channels/wechat/manifest.ts";
-import { buildWechatSeedOpenClawAccountOutputs } from "../messaging/channels/wechat/hooks/seed-openclaw-account.ts";
-import { planAgentRender } from "../messaging/compiler/engines/agent-render-engine.ts";
 import {
   encodeManagedStartupProfile,
   type ManagedStartupJsonObject,
@@ -17,7 +11,21 @@ import {
   validateManagedStartupProfile,
 } from "./managed-startup/profile.ts";
 
-const [slackBotAlias] = slackManifest.runtime.hermes.envAliases;
+// Keep the retired Slack alias to cover the legacy same-key rewrite shape.
+const slackBotAlias = {
+  envKey: "SLACK_BOT_TOKEN",
+  match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+  value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+  message: "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+} as const;
+
+const wechatTokenAlias = {
+  channelId: "wechat",
+  envKey: "WECHAT_BOT_TOKEN",
+  targetEnvKey: "WEIXIN_TOKEN",
+  match: "^openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN$",
+  value: "openshell:resolve:env:WECHAT_BOT_TOKEN",
+} as const;
 
 function profileWithAliases(aliases: readonly ManagedStartupJsonObject[]): ManagedStartupProfile {
   const profile = managedStartupE2eProfile("hermes");
@@ -38,22 +46,21 @@ function profileWithAliases(aliases: readonly ManagedStartupJsonObject[]): Manag
 }
 
 function wechatAccountBuildStep(): ManagedStartupJsonObject {
-  const hook = wechatManifest.hooks.find((entry) => entry.id === "wechat-seed-openclaw-account")!;
-  const output = hook.outputs?.find((entry) => entry.id === "openclawWeixinAccountFile")!;
-  const result = buildWechatSeedOpenClawAccountOutputs(
-    {
-      "wechatConfig.accountId": "wechat-account",
-    },
-    { now: () => "2026-08-18T00:00:00.000Z" },
-  ).openclawWeixinAccountFile!;
   return {
-    channelId: wechatManifest.id,
-    kind: result.kind,
-    hookId: hook.id,
-    handler: hook.handler,
-    outputId: output.id,
-    required: output.required === true,
-    value: result.value!,
+    channelId: "wechat",
+    kind: "build-file",
+    hookId: "wechat-seed-openclaw-account",
+    handler: "wechat.seedOpenClawAccount",
+    outputId: "openclawWeixinAccountFile",
+    required: true,
+    value: {
+      path: "openclaw-weixin/accounts/wechat-account.json",
+      mode: "0600",
+      content: {
+        token: "openshell:resolve:env:WECHAT_BOT_TOKEN",
+        savedAt: "2026-08-18T00:00:00.000Z",
+      },
+    },
   };
 }
 
@@ -89,57 +96,20 @@ function profileWithAgentRender(
   };
 }
 
-async function teamsOpenClawChannelRender(): Promise<ManagedStartupJsonObject> {
-  const renders = await planAgentRender(
-    teamsManifest,
-    {
-      sandboxName: "managed-startup-test",
-      agent: "openclaw",
-      workflow: "rebuild",
-      isInteractive: false,
-      configuredChannels: ["teams"],
-      credentialAvailability: { MSTEAMS_APP_PASSWORD: true },
+function teamsOpenClawChannelRender(): ManagedStartupJsonObject {
+  return {
+    channelId: "teams",
+    renderId: "teams-openclaw-channel",
+    hookId: "teams-openclaw-channel",
+    handler: "common.staticOutputs",
+    kind: "json-fragment",
+    agent: "openclaw",
+    target: "openclaw.json",
+    path: "channels.msteams",
+    value: {
+      webhook: { port: 3978, path: "/api/messages" },
     },
-    [
-      {
-        channelId: "teams",
-        inputId: "appId",
-        kind: "config",
-        required: true,
-        statePath: "teamsConfig.appId",
-        value: "test-app-id",
-      },
-      {
-        channelId: "teams",
-        inputId: "tenantId",
-        kind: "config",
-        required: true,
-        statePath: "teamsConfig.tenantId",
-        value: "test-tenant-id",
-      },
-      {
-        channelId: "teams",
-        inputId: "webhookPort",
-        kind: "config",
-        required: false,
-        statePath: "teamsConfig.webhookPort",
-        value: "3978",
-      },
-      {
-        channelId: "teams",
-        inputId: "requireMention",
-        kind: "config",
-        required: false,
-        statePath: "teamsConfig.requireMention",
-        value: "1",
-      },
-    ],
-    undefined,
-    createBuiltInRenderTemplateResolver(),
-  );
-  const render = renders.find((entry) => entry.renderId === "teams-openclaw-channel");
-  expect(render).toBeDefined();
-  return render as unknown as ManagedStartupJsonObject;
+  };
 }
 
 function withTeamsWebhook(
@@ -170,9 +140,13 @@ function withWechatAccountToken(
 }
 
 describe("managed startup runtime aliases", () => {
-  it("accepts the stock Slack runtime aliases (#9397)", () => {
+  it("accepts a well-formed runtime alias (#9397)", () => {
+    expect(() => validateManagedStartupProfile(profileWithAliases([slackBotAlias]))).not.toThrow();
+  });
+
+  it("accepts an owned cross-key credential alias (#10079)", () => {
     expect(() =>
-      validateManagedStartupProfile(profileWithAliases(slackManifest.runtime.hermes.envAliases)),
+      validateManagedStartupProfile(profileWithAliases([wechatTokenAlias])),
     ).not.toThrow();
   });
 
@@ -195,6 +169,15 @@ describe("managed startup runtime aliases", () => {
     ],
     ["a raw credential", { ...slackBotAlias, value: `xoxb-${"a".repeat(32)}` }],
   ])("rejects %s (#9397)", (_label, alias) => {
+    expect(() => validateManagedStartupProfile(profileWithAliases([alias]))).toThrow(
+      /credential-shaped string data/,
+    );
+  });
+
+  it.each([
+    ["an unowned target", { ...wechatTokenAlias, targetEnvKey: "AWS_SECRET_KEY" }],
+    ["an alias owned by another channel", { ...wechatTokenAlias, channelId: "slack" }],
+  ])("rejects cross-key credential alias with %s (#10079)", (_label, alias) => {
     expect(() => validateManagedStartupProfile(profileWithAliases([alias]))).toThrow(
       /credential-shaped string data/,
     );
@@ -332,8 +315,8 @@ describe("managed startup messaging build files", () => {
 });
 
 describe("managed startup messaging agent renders", () => {
-  it("accepts the stock Microsoft Teams webhook object (#9610)", async () => {
-    expectProfileTransportAccepted(profileWithAgentRender([await teamsOpenClawChannelRender()]));
+  it("accepts the Microsoft Teams webhook contract (#9610)", () => {
+    expectProfileTransportAccepted(profileWithAgentRender([teamsOpenClawChannelRender()]));
   });
 
   it.each([
@@ -348,8 +331,8 @@ describe("managed startup messaging agent renders", () => {
       "an extra credential-shaped field",
       { port: 3978, path: "/api/messages", token: `teams-${"a".repeat(32)}` },
     ],
-  ])("rejects %s in the Microsoft Teams render (#9610)", async (_label, webhook) => {
-    const render = withTeamsWebhook(await teamsOpenClawChannelRender(), webhook);
+  ])("rejects %s in the Microsoft Teams render (#9610)", (_label, webhook) => {
+    const render = withTeamsWebhook(teamsOpenClawChannelRender(), webhook);
     expect(() => validateManagedStartupProfile(profileWithAgentRender([render]))).toThrow(
       /credential-shaped/,
     );
@@ -364,15 +347,15 @@ describe("managed startup messaging agent renders", () => {
     ["another agent", { agent: "hermes" }],
     ["another target", { target: "other.json" }],
     ["another config path", { path: "channels.other" }],
-  ])("rejects the Microsoft Teams webhook in %s (#9610)", async (_label, change) => {
-    const render = await teamsOpenClawChannelRender();
+  ])("rejects the Microsoft Teams webhook in %s (#9610)", (_label, change) => {
+    const render = teamsOpenClawChannelRender();
     expect(() =>
       validateManagedStartupProfile(profileWithAgentRender([{ ...render, ...change }])),
     ).toThrow(/credential-shaped field name/);
   });
 
-  it("rejects the Microsoft Teams webhook at an unowned path (#9610)", async () => {
-    const render = await teamsOpenClawChannelRender();
+  it("rejects the Microsoft Teams webhook at an unowned path (#9610)", () => {
+    const render = teamsOpenClawChannelRender();
     const value = render.value as ManagedStartupJsonObject;
     const webhook = value.webhook as ManagedStartupJsonObject;
     const { webhook: _webhook, ...valueWithoutWebhook } = value;

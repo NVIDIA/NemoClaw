@@ -1,14 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PodmanSocketAuthorityDeps } from "../../adapters/podman";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
+import { gatewayWaitResult } from "./__test-helpers__/portable-demo-gateway-wait";
 import {
   installPortableDemoSandboxLifecycle,
   type PortableDemoLifecycleDeps,
@@ -59,6 +62,45 @@ function temporaryStateDir(): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-timing-"));
   temporaryDirectories.push(directory);
   return directory;
+}
+
+function runCommand(
+  command: string,
+  args: readonly string[],
+): Promise<{ status: number | null; stderr: string; stdout: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, [...args], { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    let stdout = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.once("error", reject);
+    child.once("close", (status) => resolve({ status, stderr, stdout }));
+  });
+}
+
+async function withLoopbackHealthStatus<T>(
+  statusCode: number,
+  run: (port: number) => Promise<T>,
+): Promise<T> {
+  const server = createServer((_request, response) => {
+    response.writeHead(statusCode).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  try {
+    return await run(address.port);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 }
 
 function socketAuthorityDeps(): PodmanSocketAuthorityDeps {
@@ -215,17 +257,19 @@ describe("portable lifecycle recovery timing output", () => {
       recover(stateDir, {
         podman,
         captureOpenshell: (args, timeoutMs) => {
-          const command = args.find((arg) => ["true", "pgrep", "curl", "node"].includes(arg));
+          const command = args.find((arg) =>
+            ["true", "pgrep", "curl", "node", "python3"].includes(arg),
+          );
           switch (command) {
+            case "python3":
+              epochNow = EPOCH_BASE_MS + 2_110;
+              return gatewayWaitResult();
             case "true":
               return { status: 0 };
             case "pgrep":
               return { status: 1 };
-            case "curl": {
-              const launched = launchOpenshell.mock.calls.length > 0;
-              epochNow = launched ? EPOCH_BASE_MS + 2_110 : epochNow;
-              return { status: 0, stdout: launched ? "200" : "000" };
-            }
+            case "curl":
+              return { status: 0, stdout: "000" };
             case "node":
               timingReadAttempts += 1;
               readTimeouts.push(timeoutMs);
@@ -285,6 +329,57 @@ describe("portable lifecycle recovery timing output", () => {
     ]);
   });
 
+  it("uses one bounded waiter when the managed startup process already exists (#9200)", () => {
+    const stateDir = temporaryStateDir();
+    const podman = createPodman(true);
+    const launchOpenshell = vi.fn();
+    let now = 0;
+    installReceipt(stateDir, podman);
+    const captureOpenshell = vi.fn((args: readonly string[]) => {
+      const command = args.find((arg) => ["true", "pgrep", "curl", "python3"].includes(arg));
+      switch (command) {
+        case "true":
+        case "pgrep":
+          return { status: 0 };
+        case "curl":
+          return { status: 0, stdout: "000" };
+        case "python3":
+          now += 2_000;
+          return gatewayWaitResult("ready", { notReady: 1, sleepMs: 2_000 });
+        default:
+          throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+      }
+    });
+
+    expect(
+      recover(stateDir, {
+        podman,
+        captureOpenshell,
+        launchOpenshell,
+        now: () => now,
+        sleep: (milliseconds) => {
+          now += milliseconds;
+        },
+      }),
+    ).toEqual({ kind: "already-running" });
+    expect(now).toBe(2_000);
+    const curlCalls = captureOpenshell.mock.calls.filter(([args]) => args.includes("curl"));
+    const waiterCalls = captureOpenshell.mock.calls.filter(([args]) => args.includes("python3"));
+    expect(curlCalls).toHaveLength(1);
+    expect(waiterCalls).toHaveLength(1);
+    const waiterArgs = waiterCalls[0]?.[0] ?? [];
+    expect(waiterArgs.slice(waiterArgs.lastIndexOf("--") + 1)).toEqual([
+      "python3",
+      "-I",
+      "-c",
+      expect.any(String),
+      "18789",
+      "18000",
+      "100",
+    ]);
+    expect(launchOpenshell).not.toHaveBeenCalled();
+  });
+
   it("preserves recovered lifecycle semantics when the startup timing read throws (#9200)", () => {
     const stateDir = temporaryStateDir();
     const podman = createPodman(false);
@@ -297,17 +392,19 @@ describe("portable lifecycle recovery timing output", () => {
       recover(stateDir, {
         podman,
         captureOpenshell: (args) => {
-          const command = args.find((arg) => ["true", "pgrep", "curl", "node"].includes(arg));
+          const command = args.find((arg) =>
+            ["true", "pgrep", "curl", "node", "python3"].includes(arg),
+          );
           switch (command) {
+            case "python3":
+              epochNow += 1_000;
+              return gatewayWaitResult();
             case "true":
               return { status: 0 };
             case "pgrep":
               return { status: 1 };
-            case "curl": {
-              const launched = launchOpenshell.mock.calls.length > 0;
-              epochNow += launched ? 1_000 : 0;
-              return { status: 0, stdout: launched ? "200" : "000" };
-            }
+            case "curl":
+              return { status: 0, stdout: "000" };
             case "node":
               throw new Error("credential-bearing diagnostic failure");
             default:
@@ -344,17 +441,19 @@ describe("portable lifecycle recovery timing output", () => {
       recover(stateDir, {
         podman,
         captureOpenshell: (args, timeoutMs) => {
-          const command = args.find((arg) => ["true", "pgrep", "curl", "node"].includes(arg));
+          const command = args.find((arg) =>
+            ["true", "pgrep", "curl", "node", "python3"].includes(arg),
+          );
           switch (command) {
+            case "python3":
+              epochNow = EPOCH_BASE_MS + 2_110;
+              return gatewayWaitResult();
             case "true":
               return { status: 0 };
             case "pgrep":
               return { status: 1 };
-            case "curl": {
-              const launched = launchOpenshell.mock.calls.length > 0;
-              epochNow = launched ? EPOCH_BASE_MS + 2_110 : epochNow;
-              return { status: 0, stdout: launched ? "200" : "000" };
-            }
+            case "curl":
+              return { status: 0, stdout: "000" };
             case "node": {
               const separator = args.lastIndexOf("--");
               const readCommand = args.slice(separator + 1);
@@ -388,7 +487,7 @@ describe("portable lifecycle recovery timing output", () => {
     expect(gatewayTimingLines(log)[0]).toContain(`diagnosticReadOutcome=${outcome}`);
   });
 
-  it("measures launched gateway probes and sleeps without changing polling (#9200)", () => {
+  it("executes the launched gateway health waiter against loopback responses (#9200)", async () => {
     const stateDir = temporaryStateDir();
     const podman = createPodman(false);
     const launchOpenshell = vi.fn();
@@ -397,26 +496,36 @@ describe("portable lifecycle recovery timing output", () => {
     let deadlineNow = 0;
     let diagnosticNow = 0;
     let epochNow = EPOCH_BASE_MS;
-    let gatewayAttempts = 0;
+    let gatewayWaitTimeout = 0;
+    let gatewayWaitCommand: string[] | undefined;
     installReceipt(stateDir, podman);
 
     expect(
       recover(stateDir, {
         podman,
-        captureOpenshell: (args) => {
-          const command = args.find((arg) => ["true", "pgrep", "curl", "node"].includes(arg));
+        captureOpenshell: (args, timeoutMs) => {
+          const command = args.find((arg) =>
+            ["true", "pgrep", "curl", "node", "python3"].includes(arg),
+          );
           switch (command) {
+            case "python3": {
+              gatewayWaitTimeout = timeoutMs;
+              gatewayWaitCommand = args.slice(args.lastIndexOf("--") + 1);
+              deadlineNow += 250;
+              diagnosticNow += 250;
+              epochNow = EPOCH_BASE_MS + 2_110;
+              return gatewayWaitResult("ready", {
+                notReady: 2,
+                probeMs: 50,
+                sleepMs: 200,
+              });
+            }
             case "true":
               return { status: 0 };
             case "pgrep":
               return { status: 1 };
-            case "curl": {
-              diagnosticNow += 25;
-              gatewayAttempts += 1;
-              const ready = gatewayAttempts >= 3;
-              epochNow = ready ? EPOCH_BASE_MS + 2_110 : epochNow;
-              return { status: 0, stdout: ready ? "200" : "000" };
-            }
+            case "curl":
+              return { status: 0, stdout: "000" };
             case "node":
               diagnosticNow += 20;
               return { status: 0, stdout: startupTimingRecord() };
@@ -436,13 +545,153 @@ describe("portable lifecycle recovery timing output", () => {
         },
       }),
     ).toEqual({ kind: "recovered" });
-    expect(gatewayAttempts).toBe(3);
-    expect(sleeps).toEqual([1_000]);
-    expect(timingLines(log)[0]).toContain("gatewayReady=1050ms");
-    expect(gatewayTimingLines(log)[0]).toContain(
-      "probe=50ms sleep=1000ms firstReadyAttempt=2 lastFailure=not-ready diagnosticRead=20ms diagnosticReadOutcome=recorded",
+    expect(gatewayWaitTimeout).toBe(20_000);
+    expect(sleeps).toEqual([]);
+    expect(timingLines(log)[0]).toContain(
+      "gatewayAttempts=4 gatewayNotReady=3 gatewayTimeouts=0 gatewayErrors=0",
     );
+    expect(timingLines(log)[0]).toContain("gatewayReady=250ms");
+    expect(gatewayTimingLines(log)[0]).toContain(
+      "probe=50ms sleep=200ms firstReadyAttempt=3 lastFailure=not-ready diagnosticRead=20ms diagnosticReadOutcome=recorded",
+    );
+
+    expect(gatewayWaitCommand).toBeDefined();
+    const emittedGatewayWaitCommand = gatewayWaitCommand as string[];
+    const runEmittedWaiter = (statusCode: number) =>
+      withLoopbackHealthStatus(statusCode, (port) => {
+        const [command, ...args] = emittedGatewayWaitCommand;
+        args[3] = String(port);
+        args[4] = "100";
+        args[5] = "10";
+        return runCommand(command, args);
+      });
+
+    const readyReceipt = expect.stringMatching(
+      /^schema=1 result=ready attempts=1 notReady=0 timeouts=0 errors=0 lastFailure=none probeMs=\d+ sleepMs=0\n$/u,
+    );
+    await expect(runEmittedWaiter(200)).resolves.toEqual({
+      status: 0,
+      stderr: "",
+      stdout: readyReceipt,
+    });
+    await expect(runEmittedWaiter(401)).resolves.toEqual({
+      status: 0,
+      stderr: "",
+      stdout: readyReceipt,
+    });
+
+    const notReady = await runEmittedWaiter(503);
+    expect(notReady.status).toBe(75);
+    expect(notReady.stderr).toBe("");
+    const receipt =
+      /^schema=1 result=not-ready attempts=(\d+) notReady=(\d+) timeouts=0 errors=0 lastFailure=not-ready probeMs=(\d+) sleepMs=(\d+)\n$/u.exec(
+        notReady.stdout,
+      );
+    expect(receipt).not.toBeNull();
+    expect(Number(receipt?.[1])).toBeGreaterThan(0);
+    expect(receipt?.[2]).toBe(receipt?.[1]);
   });
+
+  it.each([
+    [
+      "a transport timeout",
+      {
+        status: null,
+        error: Object.assign(new Error("credential-bearing timeout"), { code: "ETIMEDOUT" }),
+      },
+      "gatewayTimeouts=1 gatewayErrors=0",
+      "lastFailure=timeout",
+      1_000,
+    ],
+    [
+      "an inconsistent receipt",
+      {
+        status: 0,
+        stdout:
+          "schema=1 result=ready attempts=2 notReady=0 timeouts=0 errors=0 lastFailure=none probeMs=0 sleepMs=0\n",
+      },
+      "gatewayTimeouts=0 gatewayErrors=1",
+      "lastFailure=error",
+      1_000,
+    ],
+    [
+      "a receipt with a mismatched exit status",
+      { ...gatewayWaitResult("ready", { notReady: 1 }), status: 75 },
+      "gatewayTimeouts=0 gatewayErrors=1",
+      "lastFailure=error",
+      1_000,
+    ],
+    [
+      "a receipt whose timing exceeds the waiter budget",
+      gatewayWaitResult("ready", { probeMs: 18_002 }),
+      "gatewayTimeouts=0 gatewayErrors=1",
+      "lastFailure=error",
+      1_000,
+    ],
+    [
+      "a valid not-ready receipt",
+      gatewayWaitResult("not-ready"),
+      "gatewayTimeouts=0 gatewayErrors=0",
+      "lastFailure=not-ready",
+      100,
+    ],
+  ] as const)(
+    "retries launched gateway observation after %s without accepting it as ready (#9200)",
+    (_label, firstResult, attemptCounts, lastFailure, retryDelay) => {
+      const stateDir = temporaryStateDir();
+      const podman = createPodman(false);
+      const launchOpenshell = vi.fn();
+      const log = vi.fn();
+      const sleeps: number[] = [];
+      let deadlineNow = 0;
+      let diagnosticNow = 0;
+      let epochNow = EPOCH_BASE_MS;
+      let waitAttempts = 0;
+      installReceipt(stateDir, podman);
+
+      expect(
+        recover(stateDir, {
+          podman,
+          captureOpenshell: (args) => {
+            const command = args.find((arg) =>
+              ["true", "pgrep", "curl", "node", "python3"].includes(arg),
+            );
+            switch (command) {
+              case "python3":
+                waitAttempts += 1;
+                epochNow = waitAttempts === 1 ? epochNow : EPOCH_BASE_MS + 2_110;
+                return waitAttempts === 1 ? firstResult : gatewayWaitResult();
+              case "true":
+                return { status: 0 };
+              case "pgrep":
+                return { status: 1 };
+              case "curl":
+                return { status: 0, stdout: "000" };
+              case "node":
+                return { status: 0, stdout: startupTimingRecord() };
+              default:
+                throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+            }
+          },
+          launchOpenshell,
+          log,
+          now: () => deadlineNow,
+          timingNow: () => diagnosticNow,
+          gatewayStartupEpochNow: () => epochNow,
+          sleep: (milliseconds) => {
+            sleeps.push(milliseconds);
+            deadlineNow += milliseconds;
+            diagnosticNow += milliseconds;
+          },
+        }),
+      ).toEqual({ kind: "recovered" });
+      expect(waitAttempts).toBe(2);
+      expect(sleeps).toEqual([retryDelay]);
+      expect(timingLines(log)[0]).toContain(attemptCounts);
+      expect(gatewayTimingLines(log)[0]).toContain(`firstReadyAttempt=2 ${lastFailure}`);
+      expect(gatewayTimingLines(log)[0]).not.toContain("credential-bearing");
+    },
+  );
 
   it("emits one redacted failed timing line before preserving the recovery error (#9200)", () => {
     const stateDir = temporaryStateDir();
@@ -455,8 +704,21 @@ describe("portable lifecycle recovery timing output", () => {
     expect(() =>
       recover(stateDir, {
         podman,
-        captureOpenshell: (args) =>
-          args.includes("curl") ? { status: 0, stdout: "000" } : { status: 0 },
+        captureOpenshell: (args) => {
+          const command = args.find((arg) => ["true", "pgrep", "curl", "python3"].includes(arg));
+          switch (command) {
+            case "true":
+            case "pgrep":
+              return { status: 0 };
+            case "curl":
+              return { status: 0, stdout: "000" };
+            case "python3":
+              deadlineNow = 90_000;
+              return gatewayWaitResult("not-ready");
+            default:
+              throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+          }
+        },
         launchOpenshell: vi.fn(),
         log,
         now: () => deadlineNow,
@@ -471,7 +733,7 @@ describe("portable lifecycle recovery timing output", () => {
     ).toThrow("has a startup process, but its agent gateway did not pass");
     expect(timingLines(log)).toHaveLength(1);
     expect(timingLines(log)[0]).toContain(
-      "gatewayAttempts=91 gatewayNotReady=91 gatewayTimeouts=0 gatewayErrors=0",
+      "gatewayAttempts=2 gatewayNotReady=2 gatewayTimeouts=0 gatewayErrors=0",
     );
     expect(timingLines(log)[0]).toContain("result=failed failedStage=gatewayReady");
     expect(timingLines(log)[0]).not.toContain("has a startup process");
@@ -503,7 +765,7 @@ describe("portable lifecycle recovery timing output", () => {
         status: 1,
         error: Object.assign(new Error("transport"), { code: "EPIPE" }),
       },
-      { status: 0, stdout: "200" },
+      gatewayWaitResult(),
     ];
     installReceipt(stateDir, podman);
 
@@ -511,12 +773,13 @@ describe("portable lifecycle recovery timing output", () => {
       recover(stateDir, {
         podman,
         captureOpenshell: (args) => {
-          const command = args.find((arg) => ["true", "pgrep", "curl"].includes(arg));
+          const command = args.find((arg) => ["true", "pgrep", "curl", "python3"].includes(arg));
           switch (command) {
             case "true":
               return execResults.shift() ?? { status: 0 };
             case "curl":
-              return gatewayResults.shift() ?? { status: 0, stdout: "200" };
+            case "python3":
+              return gatewayResults.shift() ?? gatewayWaitResult();
             case "pgrep":
               return { status: 0 };
             default:

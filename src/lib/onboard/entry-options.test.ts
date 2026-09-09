@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   type OnboardEntryOptionsDeps,
+  reconstructUnownedPendingCreateRecoveries,
+  resolveEntryOptions,
   resolveOnboardEntryOptions,
   resolveOnboardRunOptions,
   withNonInteractiveEnvironment,
@@ -30,6 +32,109 @@ function createDeps(overrides: Partial<OnboardEntryOptionsDeps> = {}): OnboardEn
     ...overrides,
   };
 }
+
+describe("pending create recovery admission", () => {
+  it("ignores an unrelated checkpoint for an explicit different sandbox (#11096)", () => {
+    const reconstruct = vi.fn(() => {
+      throw new Error("alpha recovery is unavailable");
+    });
+    const state = {
+      loadSession: () => ({ status: "failed" }),
+      listRetainedSandboxRecoveryRecords: () => [],
+      reconstructRetainedSandboxRecoveryFromPendingCreate: reconstruct,
+    };
+
+    const resolved = resolveEntryOptions(
+      { fresh: true, sandboxName: "bravo" },
+      (name) => name,
+      state,
+      {
+        listSandboxes: () => ({
+          sandboxes: [{ name: "alpha", pendingCreateIdentity: {} }],
+        }),
+      },
+    );
+
+    expect(resolved.requestedSandboxName).toBe("bravo");
+    expect(reconstruct).not.toHaveBeenCalled();
+  });
+
+  it("reconstructs the discarded session authority before fresh onboarding (#11096)", () => {
+    const reconstruct = vi.fn();
+    const entry = {
+      name: "alpha",
+      pendingCreateIdentity: {},
+      reservationSessionId: "failed-create-session",
+    };
+
+    reconstructUnownedPendingCreateRecoveries(
+      { fresh: true },
+      { sessionId: "failed-create-session", status: "failed" },
+      [entry],
+      reconstruct,
+    );
+
+    expect(reconstruct).toHaveBeenCalledExactlyOnceWith(entry);
+  });
+
+  it("reconstructs an ownerless checkpoint instead of matching absent session IDs (#11096)", () => {
+    const reconstruct = vi.fn();
+    const entry = { name: "alpha", pendingCreateIdentity: {} };
+
+    reconstructUnownedPendingCreateRecoveries({ resume: true }, null, [entry], reconstruct);
+
+    expect(reconstruct).toHaveBeenCalledExactlyOnceWith(entry);
+  });
+
+  it.each([
+    ["explicit resume", { resume: true }, "failed"],
+    ["automatic resume", {}, "in_progress"],
+  ])("preserves the matching checkpoint for %s", (_label, options, status) => {
+    const reconstruct = vi.fn();
+    const owned = {
+      name: "alpha",
+      pendingCreateIdentity: {},
+      reservationSessionId: "current-session",
+    };
+    const foreign = {
+      name: "bravo",
+      pendingCreateIdentity: {},
+      reservationSessionId: "other-session",
+    };
+
+    reconstructUnownedPendingCreateRecoveries(
+      options,
+      { sessionId: "current-session", status },
+      [owned, foreign],
+      reconstruct,
+    );
+
+    expect(reconstruct).toHaveBeenCalledExactlyOnceWith(foreign);
+  });
+
+  it("leaves an existing recovery-only session authoritative when its writer stays unavailable (#11096)", () => {
+    const reconstruct = vi.fn();
+
+    reconstructUnownedPendingCreateRecoveries(
+      { fresh: true },
+      {
+        sessionId: "failed-create-session",
+        status: "recovery_required",
+        cancellationRecovery: { sandboxName: "alpha" },
+      },
+      [
+        {
+          name: "alpha",
+          pendingCreateIdentity: {},
+          reservationSessionId: "failed-create-session",
+        },
+      ],
+      reconstruct,
+    );
+
+    expect(reconstruct).not.toHaveBeenCalled();
+  });
+});
 
 describe("resolveOnboardRunOptions", () => {
   it.each([
@@ -178,6 +283,23 @@ describe("resolveOnboardEntryOptions", () => {
     expect(deps.exitProcess).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts deploy as a sandbox name after the command is removed (#10572)", () => {
+    const deps = createDeps();
+
+    const result = resolveOnboardEntryOptions(
+      {
+        opts: { sandboxName: "Deploy" },
+        env: {},
+        stdinIsTty: true,
+        stdoutIsTty: true,
+      },
+      deps,
+    );
+
+    expect(result.requestedSandboxName).toBe("deploy");
+    expect(deps.error).not.toHaveBeenCalled();
+  });
+
   it("auto-detects resume from a persisted in_progress session without --resume (#5470)", () => {
     const deps = createDeps();
 
@@ -211,6 +333,171 @@ describe("resolveOnboardEntryOptions", () => {
     );
 
     expect(result.resume).toBe(false);
+  });
+
+  it.each([
+    ["automatic", {}],
+    ["explicit", { resume: true }],
+  ])("rejects %s recovery-only continuation before onboarding effects", (_label, opts) => {
+    const deps = createDeps();
+
+    expect(() =>
+      resolveOnboardEntryOptions(
+        {
+          opts,
+          env: {},
+          stdinIsTty: true,
+          stdoutIsTty: true,
+          persistedSessionStatus: "recovery_required",
+          persistedRecoverySandboxName: "retained-sb",
+          persistedSessionSandboxName: "retained-sb",
+          retainedRecoverySandboxNames: ["retained-sb"],
+        },
+        deps,
+      ),
+    ).toThrow(ExitError);
+    expect(deps.error).toHaveBeenCalledWith(
+      expect.stringContaining("cannot use retained sandbox 'retained-sb'"),
+    );
+    expect(deps.error).toHaveBeenCalledWith(
+      expect.stringContaining("resume, reuse, recreation, and same-name fresh onboarding"),
+    );
+  });
+
+  it.each([
+    ["a missing name", null],
+    ["the retained name", "retained-sb"],
+  ])("rejects recovery-only --fresh with %s", (_label, sandboxName) => {
+    const deps = createDeps();
+
+    expect(() =>
+      resolveOnboardEntryOptions(
+        {
+          opts: { fresh: true, sandboxName },
+          env: {},
+          stdinIsTty: true,
+          stdoutIsTty: true,
+          persistedSessionStatus: "recovery_required",
+          persistedRecoverySandboxName: "retained-sb",
+        },
+        deps,
+      ),
+    ).toThrow(ExitError);
+    expect(deps.error).toHaveBeenCalledWith(
+      expect.stringContaining("--fresh with an explicit sandbox name different"),
+    );
+  });
+
+  it("allows recovery-only --fresh with a different explicit name", () => {
+    const deps = createDeps();
+
+    const result = resolveOnboardEntryOptions(
+      {
+        opts: { fresh: true, sandboxName: "replacement-sb" },
+        env: {},
+        stdinIsTty: true,
+        stdoutIsTty: true,
+        persistedSessionStatus: "recovery_required",
+        persistedRecoverySandboxName: "retained-sb",
+        retainedRecoverySandboxNames: ["retained-sb"],
+      },
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      fresh: true,
+      resume: false,
+      requestedSandboxName: "replacement-sb",
+    });
+    expect(deps.error).not.toHaveBeenCalled();
+  });
+
+  it("treats an explicit different name as fresh while recovery remains isolated (#10547)", () => {
+    const deps = createDeps();
+
+    const result = resolveOnboardEntryOptions(
+      {
+        opts: { sandboxName: "replacement-sb" },
+        env: {},
+        stdinIsTty: true,
+        stdoutIsTty: true,
+        persistedSessionStatus: "recovery_required",
+        persistedRecoverySandboxName: "retained-sb",
+        retainedRecoverySandboxNames: ["retained-sb"],
+      },
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      fresh: true,
+      resume: false,
+      requestedSandboxName: "replacement-sb",
+    });
+    expect(deps.error).not.toHaveBeenCalled();
+  });
+
+  it("rejects a different fresh name when recovery has no independent durable record", () => {
+    const deps = createDeps();
+
+    expect(() =>
+      resolveOnboardEntryOptions(
+        {
+          opts: { fresh: true, sandboxName: "replacement-sb" },
+          env: {},
+          stdinIsTty: true,
+          stdoutIsTty: true,
+          persistedSessionStatus: "recovery_required",
+          persistedRecoverySandboxName: "retained-sb",
+          retainedRecoverySandboxNames: [],
+        },
+        deps,
+      ),
+    ).toThrow(ExitError);
+    expect(deps.error).toHaveBeenCalledWith(
+      expect.stringContaining("independent retained sandbox recovery record"),
+    );
+  });
+
+  it("blocks a retained name after a different fresh session replaced the active session", () => {
+    const deps = createDeps();
+
+    expect(() =>
+      resolveOnboardEntryOptions(
+        {
+          opts: { fresh: true, sandboxName: "retained-sb" },
+          env: {},
+          stdinIsTty: true,
+          stdoutIsTty: true,
+          persistedSessionStatus: "in_progress",
+          persistedRecoverySandboxName: null,
+          retainedRecoverySandboxNames: ["retained-sb"],
+        },
+        deps,
+      ),
+    ).toThrow(ExitError);
+    expect(deps.error).toHaveBeenCalledWith(
+      expect.stringContaining("retained sandbox 'retained-sb'"),
+    );
+  });
+
+  it("allows a different fresh name without clearing an independent recovery record", () => {
+    const deps = createDeps();
+
+    const result = resolveOnboardEntryOptions(
+      {
+        opts: { fresh: true, sandboxName: "replacement-sb" },
+        env: {},
+        stdinIsTty: true,
+        stdoutIsTty: true,
+        persistedSessionStatus: "recovery_required",
+        persistedRecoverySandboxName: "retained-sb",
+        retainedRecoverySandboxNames: ["retained-sb"],
+      },
+      deps,
+    );
+
+    expect(result.requestedSandboxName).toBe("replacement-sb");
+    expect(deps.error).not.toHaveBeenCalled();
   });
 
   it("does not auto-resume when --fresh is set even with an in_progress session (#5470)", () => {

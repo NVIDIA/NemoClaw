@@ -201,6 +201,37 @@ describe("createSetupNim", () => {
     });
   });
 
+  it("records a newly selected Bedrock Runtime endpoint as onboard provenance", async () => {
+    const endpointUrl = "https://bedrock-runtime.us-east-1.amazonaws.com";
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (_args, state) => {
+        state.model = "anthropic.claude-3-5-sonnet-20240620-v1:0";
+        state.provider = "compatible-anthropic-endpoint";
+        state.endpointUrl = endpointUrl;
+        state.credentialEnv = "ANTHROPIC_COMPATIBLE_API_KEY";
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "anthropicCompatible",
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const result = await setupNim(null);
+
+    expect(result).toMatchObject({
+      provider: "compatible-anthropic-endpoint",
+      endpointUrl,
+      endpointSource: "onboard",
+    });
+    expect(result.endpointPinnedAddresses).toBeUndefined();
+    expect(result.endpointTrustedPrivateCapability).toBeUndefined();
+  });
+
   it("re-enters provider selection when a handler requests a retry (#6245)", async () => {
     vi.stubEnv("NEMOCLAW_PROVIDER", "");
     const prompt = vi.fn(async () => "");
@@ -867,6 +898,50 @@ describe("createSetupNim", () => {
     expect(result).toMatchObject({ provider: "vllm" });
   });
 
+  it("normalizes a catalog model alias before reusing managed vLLM", async () => {
+    const servedModel = "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4";
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+      expect(state.model).toBe(servedModel);
+      state.provider = "vllm";
+      state.endpointUrl = "http://127.0.0.1:8000/v1";
+      state.credentialEnv = null;
+      state.preferredInferenceApi = "openai-completions";
+      return "selected";
+    });
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-vllm",
+        getNonInteractiveModel: () => "nemotron-3.5-lightning-30b",
+        selectVllmModelFromEnv: () => ({
+          id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+          servedModelId: servedModel,
+        }),
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmRunning: true,
+            vllmProfile: { name: "DGX Spark" } as VllmProfile,
+            vllmEntries: [{ key: "vllm", label: "Local vLLM (localhost:8000) — running" }],
+          }),
+        handleVllmSelection,
+      }),
+    );
+
+    await setupNim(
+      { platform: "spark" } as unknown as Parameters<typeof setupNim>[0],
+      null,
+      null,
+      true,
+      null,
+      "nemoclaw",
+    );
+
+    expect(handleVllmSelection).toHaveBeenCalledWith(
+      expect.objectContaining({ model: servedModel }),
+      expect.objectContaining({ managedInstall: false }),
+    );
+  });
+
   it("does not extend the Spark automatic default to DGX Station (#7293)", async () => {
     const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
       async ({ selected }, state) => {
@@ -1080,7 +1155,10 @@ describe("createSetupNim", () => {
 
     expect(error).toHaveBeenCalledWith(expect.stringContaining("requires managed vLLM"));
     expect(error).toHaveBeenCalledWith(expect.stringContaining("localhost:8000"));
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Stop the existing server"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("only if no other gateway or distributed deployment uses it"),
+    );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("NEMOCLAW_VLLM_PORT"));
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining("NEMOCLAW_PROVIDER=install-vllm"),
     );
@@ -1181,7 +1259,7 @@ describe("createSetupNim", () => {
     expect(installManagedLlamaCpp).toHaveBeenCalledWith(selection, {
       sandboxName: "spark-agent",
       gatewayPort: 8091,
-      revalidatePolicyRequirements: expect.any(Function),
+      revalidateSandboxIdentity: expect.any(Function),
       runtimeProvider,
     });
     expect(getRuntimeProvider).toHaveBeenCalledOnce();
@@ -1404,7 +1482,10 @@ describe("createSetupNim", () => {
 
     expect(prompt).toHaveBeenCalledTimes(2);
     expect(selectFromNumberedMenu).toHaveBeenCalledTimes(2);
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("stop the existing server"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("only if no other gateway or distributed deployment uses it"),
+    );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("NEMOCLAW_VLLM_PORT"));
     expect(installVllm).not.toHaveBeenCalled();
     expect(handleVllmSelection).not.toHaveBeenCalled();
     expect(handleRemoteProviderSelection).toHaveBeenCalledOnce();

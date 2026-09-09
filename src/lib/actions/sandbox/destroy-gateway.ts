@@ -9,11 +9,10 @@ import {
   OPENSHELL_HEAVY_TIMEOUT_MS,
   OPENSHELL_OPERATION_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
-import { DASHBOARD_PORT } from "../../core/ports";
 import { stopOpenShellGatewayUserService } from "../../onboard/docker-driver-gateway-service";
 import {
   resolveGatewayPortFromName,
-  resolveGatewayStateDirName,
+  resolveGatewayStateDirForPort,
 } from "../../onboard/gateway-binding";
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
@@ -25,9 +24,11 @@ import {
 import {
   clearHostGatewayRuntimeFiles,
   isHostPortFree,
+  resolveOwnedHostGatewayRuntimeProviderId,
   stopHostGatewayProcesses,
 } from "../../onboard/host-gateway-process";
-import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
+import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/registry";
+import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 
 export type DestroyRunOpenshell = (
   args: string[],
@@ -36,12 +37,13 @@ export type DestroyRunOpenshell = (
 
 export const SANDBOX_DESTROY_TIMEOUT_MS = OPENSHELL_HEAVY_TIMEOUT_MS;
 
-const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
-
 export interface CleanupGatewayDeps {
   clearGatewayRuntimeFiles?: typeof clearHostGatewayRuntimeFiles;
   isGatewayPortFree?: typeof isHostPortFree;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
+  resolveOwnedRuntimeProviderId?: typeof resolveOwnedHostGatewayRuntimeProviderId;
+  resolveRuntimeProvider?: typeof resolveRegisteredRuntimeProvider;
+  runtimeProviderId?: string | null;
   stopOpenShellGatewayUserService?: typeof stopOpenShellGatewayUserService;
 }
 
@@ -54,20 +56,40 @@ export interface CleanupGatewayDeps {
 function resolvePerGatewayState(gatewayName: string): { port: number; stateDir: string } | null {
   const port = resolveGatewayPortFromName(gatewayName);
   if (port === null) return null;
-  const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
-  if (configured && configured.trim()) {
-    return { port, stateDir: path.resolve(configured.trim()) };
-  }
   return {
     port,
-    stateDir: path.join(
-      os.homedir(),
-      ".local",
-      "state",
-      "nemoclaw",
-      resolveGatewayStateDirName(port),
-    ),
+    stateDir: resolveGatewayStateDirForPort({
+      configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+      home: os.homedir(),
+      port,
+    }),
   };
+}
+
+/** Keep final cleanup on the provider recorded before or during sandbox deletion. */
+export function resolveGatewayCleanupRuntimeProviderId(
+  gatewayName: string,
+  registeredProviderId?: string | null,
+  deps: Pick<CleanupGatewayDeps, "resolveOwnedRuntimeProviderId"> = {},
+): string | null {
+  const perGatewayState = resolvePerGatewayState(gatewayName);
+  if (!perGatewayState) return null;
+  const registered = registeredProviderId
+    ? normalizeRuntimeProviderIdentity(registeredProviderId)
+    : null;
+  const recorded = (deps.resolveOwnedRuntimeProviderId ?? resolveOwnedHostGatewayRuntimeProviderId)(
+    {
+      gatewayName,
+      gatewayPort: perGatewayState.port,
+      stateDir: perGatewayState.stateDir,
+    },
+  );
+  if (registered && recorded && registered !== recorded) {
+    throw new Error(
+      `Refusing cleanup because sandbox runtime provider '${registered}' does not match gateway runtime provider '${recorded}'.`,
+    );
+  }
+  return registered ?? recorded;
 }
 
 export function selectGatewayForSandboxDestroy(
@@ -101,6 +123,14 @@ export function cleanupGatewayAfterLastSandbox(
   if (!perGatewayState) {
     throw new Error(`Refusing cleanup for noncanonical NemoClaw gateway '${gatewayName}'.`);
   }
+  const runtimeProviderId = resolveGatewayCleanupRuntimeProviderId(
+    gatewayName,
+    deps.runtimeProviderId,
+    deps,
+  );
+  const runtimeProvider = runtimeProviderId
+    ? (deps.resolveRuntimeProvider ?? resolveRegisteredRuntimeProvider)(runtimeProviderId)
+    : null;
   // The sandbox and its registry entry are already gone when this runs; shared
   // gateway cleanup is the last, optional step. Rethrowing an authority refusal
   // here crashed `destroy` outright, and because rebuild and
@@ -127,15 +157,6 @@ export function cleanupGatewayAfterLastSandbox(
     (require("../../adapters/openshell/runtime") as { runOpenshell: DestroyRunOpenshell })
       .runOpenshell;
 
-  openshell(["forward", "stop", DASHBOARD_FORWARD_PORT], {
-    ignoreError: true,
-    stdio: ["ignore", "ignore", "ignore"],
-  });
-  // After the cooperative forward-stop, sweep the dashboard port range for
-  // stale host-side gateway-forward processes. The forward-stop above releases
-  // ports the live openshell tracks; this catches orphans whose openshell
-  // record was lost across upgrades or failed onboards.
-  stopStaleDashboardListeners();
   let packagedServiceFallbackReason: string | null = null;
   if (!externallySupervised && owner.source === "packaged-service") {
     const stopService = deps.stopOpenShellGatewayUserService ?? stopOpenShellGatewayUserService;
@@ -265,9 +286,11 @@ export function cleanupGatewayAfterLastSandbox(
   if (externallySupervised) {
     return;
   }
-  dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {
-    ignoreError: true,
-  });
+  if (runtimeProvider?.gateway.ownsHostReadiness !== true) {
+    dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {
+      ignoreError: true,
+    });
+  }
   if (packagedServiceFallbackReason !== null) {
     const clearRuntimeFiles = deps.clearGatewayRuntimeFiles ?? clearHostGatewayRuntimeFiles;
     clearRuntimeFiles(

@@ -47,6 +47,27 @@ describe("checkTerminalAgentVersion (#6193)", () => {
     });
   });
 
+  it("uses Bash for Pi's exact resource-limit login profile", () => {
+    const runner = vi.fn(() => "pi 0.84.1");
+
+    expect(
+      checkTerminalAgentVersion(
+        "pi-sb",
+        makeAgent({
+          name: "pi",
+          displayName: "Pi",
+          versionCommand: "pi --version",
+          expectedVersion: "0.84.1",
+        }),
+        runner,
+      ),
+    ).toMatchObject({ status: "current", installedVersion: "0.84.1" });
+    expect(runner).toHaveBeenCalledWith(
+      ["sandbox", "exec", "-n", "pi-sb", "--", "/bin/bash", "-lc", "pi --version"],
+      expect.objectContaining({ ignoreError: true, timeout: expect.any(Number) }),
+    );
+  });
+
   it("reports current when the installed version exceeds expected_version", () => {
     const runner = vi.fn(() => "dcode v0.2.0");
     expect(checkTerminalAgentVersion("dcode-sb", makeAgent(), runner)).toMatchObject({

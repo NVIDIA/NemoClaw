@@ -21,8 +21,6 @@ export interface McpLifecycleLockOwner {
   hostIdentity?: string | null;
   /** Linux PID namespace identity. Cross-namespace owners fail closed. */
   pidNamespaceIdentity?: string | null;
-  /** Exact Shields timer generation correlated with this mutable-window operation. */
-  shieldsTakeoverToken?: string;
   token: string;
   acquiredAt: string;
 }
@@ -63,9 +61,6 @@ export function isMcpLifecycleLockOwner(value: unknown): value is McpLifecycleLo
     (candidate.pidNamespaceIdentity === undefined ||
       candidate.pidNamespaceIdentity === null ||
       typeof candidate.pidNamespaceIdentity === "string") &&
-    (candidate.shieldsTakeoverToken === undefined ||
-      (typeof candidate.shieldsTakeoverToken === "string" &&
-        /^[0-9a-f]{32}$/.test(candidate.shieldsTakeoverToken))) &&
     typeof candidate.token === "string" &&
     candidate.token.length > 0 &&
     typeof candidate.acquiredAt === "string"
@@ -89,7 +84,7 @@ function readLinuxProcessState(pid: number): string | null {
   }
 }
 
-function processIsAlive(pid: number): boolean {
+export function processIsAlive(pid: number): boolean {
   // kill(pid, 0) succeeds for an unreaped zombie even though it can no longer
   // own or release a lifecycle lock.
   if (readLinuxProcessState(pid) === "Z") return false;
@@ -202,7 +197,6 @@ const LOCAL_IDENTITY_PROBES: McpLifecycleLockIdentityProbes = {
 export function createMcpLifecycleLockOwner(
   sandboxName: string,
   token: string,
-  shieldsTakeoverToken?: string,
 ): McpLifecycleLockOwner {
   return {
     version: LOCK_SCHEMA_VERSION,
@@ -211,7 +205,6 @@ export function createMcpLifecycleLockOwner(
     processIdentity: readMcpLockProcessIdentity(process.pid),
     hostIdentity: LOCAL_HOST_IDENTITY,
     pidNamespaceIdentity: LOCAL_PID_NAMESPACE_IDENTITY,
-    ...(shieldsTakeoverToken ? { shieldsTakeoverToken } : {}),
     token,
     acquiredAt: new Date().toISOString(),
   };

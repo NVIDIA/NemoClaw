@@ -4,6 +4,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
+import { isLoopbackDashboardUrl } from "../../dashboard/url.ts";
 import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
 import { authorizeMessagingManagedStartupFields } from "../../messaging/managed-startup-placeholders.ts";
 import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
@@ -58,6 +59,7 @@ const NON_SECRET_KEY_METADATA_NAMES = new Set([
   "installCacheEnvKey",
   "providerEnvKey",
   "stateKey",
+  "targetEnvKey",
 ]);
 const MESSAGING_CREDENTIAL_PLACEHOLDER_RE =
   /^(?:openshell:resolve:env:|[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-)(?:v[0-9]+_)?[A-Z][A-Z0-9_]*$/u;
@@ -65,6 +67,14 @@ const MESSAGING_CREDENTIAL_ENV_ALIASES = new Set(
   listMessagingCredentialEnvAssignments()
     .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
     .map(({ agent, sourceEnvKey, targetEnvKey }) => `${agent}\0${sourceEnvKey}\0${targetEnvKey}`),
+);
+const MESSAGING_CREDENTIAL_RUNTIME_ENV_ALIASES = new Set(
+  listMessagingCredentialEnvAssignments()
+    .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
+    .map(
+      ({ agent, channelId, sourceEnvKey, targetEnvKey }) =>
+        `${agent}\0${channelId}\0${sourceEnvKey}\0${targetEnvKey}`,
+    ),
 );
 const JSON_ARRAY_INDEX_SEGMENT_RE = /^\[(?:0|[1-9][0-9]*)\]$/u;
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
@@ -179,8 +189,10 @@ export interface ManagedStartupOpenClawDashboard {
 export interface ManagedStartupHermesDashboardDisabled {
   readonly agent: "hermes";
   readonly mode: "disabled";
-  /** CHAT_UI_URL remains a stock image input even when host forwarding is off. */
+  /** Loopback URL retained for the OpenShell forwarding contract. */
   readonly url: string;
+  /** Browser-facing URL supplied to Hermes. Absent only in profiles created before this field. */
+  readonly browserUrl?: string;
   readonly publicPort: null;
   readonly internalPort: null;
   readonly tuiEnabled: false;
@@ -189,7 +201,10 @@ export interface ManagedStartupHermesDashboardDisabled {
 export interface ManagedStartupHermesDashboardForwarded {
   readonly agent: "hermes";
   readonly mode: "loopback-forwarded";
+  /** Loopback URL retained for the OpenShell forwarding contract. */
   readonly url: string;
+  /** Browser-facing URL supplied to Hermes. Absent only in profiles created before this field. */
+  readonly browserUrl?: string;
   readonly publicPort: number;
   readonly internalPort: number;
   readonly tuiEnabled: boolean;
@@ -552,7 +567,7 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_WEB_SEARCH_ENABLED", "agentConfig.webSearch.enabled"),
     affordance("NEMOCLAW_WEB_SEARCH_PROVIDER", "agentConfig.webSearch.provider"),
     affordance("NEMOCLAW_MESSAGING_PLAN_B64", "messaging.plan"),
-    affordance("CHAT_UI_URL", "dashboard.url"),
+    affordance("CHAT_UI_URL", "dashboard.browserUrl"),
     affordance("NEMOCLAW_DASHBOARD_PORT", "dashboard.publicPort", "runtime-env"),
     affordance("NEMOCLAW_HERMES_DASHBOARD", "dashboard.mode", "runtime-env"),
     affordance("NEMOCLAW_HERMES_DASHBOARD_PORT", "dashboard.publicPort", "runtime-env"),
@@ -920,6 +935,7 @@ const HERMES_DASHBOARD_KEYS = new Set([
   "agent",
   "mode",
   "url",
+  "browserUrl",
   "publicPort",
   "internalPort",
   "tuiEnabled",
@@ -1091,9 +1107,7 @@ function isMessagingCredentialPlaceholderAssignment(
     placeholderEnvKey !== null &&
     (envKey === placeholderEnvKey ||
       (typeof selectedAgent === "string" &&
-        MESSAGING_CREDENTIAL_ENV_ALIASES.has(
-          `${selectedAgent}\0${placeholderEnvKey}\0${envKey}`,
-        )))
+        MESSAGING_CREDENTIAL_ENV_ALIASES.has(`${selectedAgent}\0${placeholderEnvKey}\0${envKey}`)))
   );
 }
 
@@ -1113,80 +1127,35 @@ function ownDataPropertyValue(value: Record<string, unknown>, key: string): unkn
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
-function isStockTeamsOpenClawWebhook(
-  root: unknown,
-  path: readonly string[],
-  value: unknown,
-): boolean {
-  if (
-    path.length !== 6 ||
-    path[0] !== "messaging" ||
-    path[1] !== "plan" ||
-    path[2] !== "agentRender" ||
-    !JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") ||
-    path[4] !== "value" ||
-    path[5] !== "webhook" ||
-    !isPlainObject(root) ||
-    ownDataPropertyValue(root, "agent") !== "openclaw"
-  ) {
-    return false;
-  }
-
-  const messaging = ownDataPropertyValue(root, "messaging");
-  if (!isPlainObject(messaging)) return false;
-  const plan = ownDataPropertyValue(messaging, "plan");
-  if (!isPlainObject(plan) || ownDataPropertyValue(plan, "agent") !== "openclaw") return false;
-  const agentRender = ownDataPropertyValue(plan, "agentRender");
-  if (!Array.isArray(agentRender)) return false;
-  const entryIndex = (path[3] as string).slice(1, -1);
-  const entryDescriptor = Object.getOwnPropertyDescriptor(agentRender, entryIndex);
-  const entry = entryDescriptor && "value" in entryDescriptor ? entryDescriptor.value : undefined;
-  if (!isPlainObject(entry)) return false;
-
-  const renderValue = ownDataPropertyValue(entry, "value");
-  if (!isPlainObject(renderValue) || ownDataPropertyValue(renderValue, "webhook") !== value) {
-    return false;
-  }
-  if (
-    ownDataPropertyValue(entry, "channelId") !== "teams" ||
-    ownDataPropertyValue(entry, "renderId") !== "teams-openclaw-channel" ||
-    ownDataPropertyValue(entry, "hookId") !== "teams-openclaw-channel" ||
-    ownDataPropertyValue(entry, "handler") !== "common.staticOutputs" ||
-    ownDataPropertyValue(entry, "kind") !== "json-fragment" ||
-    ownDataPropertyValue(entry, "agent") !== "openclaw" ||
-    ownDataPropertyValue(entry, "target") !== "openclaw.json" ||
-    ownDataPropertyValue(entry, "path") !== "channels.msteams" ||
-    !isPlainObject(value)
-  ) {
-    return false;
-  }
-
-  const keys = Object.getOwnPropertyNames(value);
-  if (keys.length !== 2 || !keys.includes("port") || !keys.includes("path")) return false;
-  const port = ownDataPropertyValue(value, "port");
-  return (
-    typeof port === "number" &&
-    Number.isInteger(port) &&
-    port >= 1 &&
-    port <= 65_535 &&
-    ownDataPropertyValue(value, "path") === "/api/messages"
-  );
-}
-
 function isCanonicalMessagingRuntimeEnvAlias(
+  selectedAgent: unknown,
   path: readonly string[],
   value: Record<string, unknown>,
 ): boolean {
   if (!isMessagingRuntimeEnvAliasPath(path)) return false;
+  const channelId = ownDataPropertyValue(value, "channelId");
   const envKey = ownDataPropertyValue(value, "envKey");
+  const targetEnvKey = ownDataPropertyValue(value, "targetEnvKey");
   const match = ownDataPropertyValue(value, "match");
   const placeholder = ownDataPropertyValue(value, "value");
+  const expectedMatch =
+    targetEnvKey === undefined
+      ? `^openshell:resolve:env:(v[0-9]+_)?${envKey}$`
+      : `^openshell:resolve:env:v[0-9]+_${envKey}$`;
   return (
     typeof envKey === "string" &&
     CREDENTIAL_ENV_NAME_PATTERN.test(envKey) &&
-    match === `^openshell:resolve:env:(v[0-9]+_)?${envKey}$` &&
+    match === expectedMatch &&
     typeof placeholder === "string" &&
-    messagingCredentialPlaceholderEnvKey(placeholder) === envKey
+    messagingCredentialPlaceholderEnvKey(placeholder) === envKey &&
+    (targetEnvKey === undefined ||
+      (typeof selectedAgent === "string" &&
+        typeof channelId === "string" &&
+        typeof targetEnvKey === "string" &&
+        CREDENTIAL_ENV_NAME_PATTERN.test(targetEnvKey) &&
+        MESSAGING_CREDENTIAL_RUNTIME_ENV_ALIASES.has(
+          `${selectedAgent}\0${channelId}\0${envKey}\0${targetEnvKey}`,
+        )))
   );
 }
 
@@ -1201,7 +1170,7 @@ function isAllowedMessagingRuntimeAliasStringPath(
     path[2] === "runtimeSetup" &&
     path[3] === "envAliases" &&
     allowedAliasIndexes.has(path[4] ?? "") &&
-    (path[5] === "match" || path[5] === "value")
+    (path[5] === "match" || path[5] === "value" || path[5] === "targetEnvKey")
   );
 }
 
@@ -1527,16 +1496,6 @@ function requireManagedProxyHost(value: unknown, where: string): string {
   return host;
 }
 
-function isLoopbackUrl(value: string): boolean {
-  const hostname = new URL(value).hostname.toLowerCase();
-  return (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname === "[::1]"
-  );
-}
-
 function configuredDashboardPort(value: string): number {
   const explicit = new URL(value).port;
   return explicit === "" ? 18_789 : Number(explicit);
@@ -1593,11 +1552,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
           allowedBuildStepPlaceholders,
           allowedMessagingCredentialFields,
         ) &&
-        !isMessagingCredentialPlaceholderAssignment(
-          selectedAgent,
-          current.path,
-          current.value,
-        ) &&
+        !isMessagingCredentialPlaceholderAssignment(selectedAgent, current.path, current.value) &&
         (valueLooksLikeSecret(current.value) ||
           containsMessagingCredentialPlaceholder(current.value))
       ) {
@@ -1655,7 +1610,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       if ("toJSON" in current.value) {
         invalid("payload must not define a custom JSON serializer");
       }
-      if (isCanonicalMessagingRuntimeEnvAlias(current.path, current.value)) {
+      if (isCanonicalMessagingRuntimeEnvAlias(selectedAgent, current.path, current.value)) {
         allowedRuntimeAliasIndexes.add(current.path[4] as string);
       }
       const messagingPlanSection = current.path[2];
@@ -1717,8 +1672,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
             allowedBuildStepPlaceholders,
             allowedMessagingCredentialFields,
           ) &&
-          !isMessagingPackagePin([...current.path, key], child) &&
-          !isStockTeamsOpenClawWebhook(root, [...current.path, key], child)
+          !isMessagingPackagePin([...current.path, key], child)
         ) {
           invalid(
             `payload field ${payloadPath([...current.path, key])} has a credential-shaped field name`,
@@ -1904,7 +1858,8 @@ function validateDashboard(
       "dashboard.bindAddress",
     );
     const wslExposure = requireBoolean(dashboard.wslExposure, "dashboard.wslExposure");
-    const hasRemoteExposure = !isLoopbackUrl(url) || bindAddress === "0.0.0.0" || wslExposure;
+    const hasRemoteExposure =
+      !isLoopbackDashboardUrl(url) || bindAddress === "0.0.0.0" || wslExposure;
     if ((mode === "remote") !== hasRemoteExposure) {
       invalid("OpenClaw dashboard.mode must reflect its URL, bind address, and WSL exposure");
     }
@@ -1933,8 +1888,19 @@ function validateDashboard(
       "dashboard.mode",
     );
     const url = requireHttpUrl(dashboard.url, "dashboard.url");
-    if (!isLoopbackUrl(url)) {
+    if (!isLoopbackDashboardUrl(url)) {
       invalid("Hermes dashboard.url must remain loopback; OpenShell owns the host forward");
+    }
+    const browserUrl =
+      dashboard.browserUrl === undefined
+        ? undefined
+        : requireHttpUrl(dashboard.browserUrl, "dashboard.browserUrl");
+    if (
+      browserUrl !== undefined &&
+      !isLoopbackDashboardUrl(browserUrl) &&
+      new URL(browserUrl).protocol !== "https:"
+    ) {
+      invalid("Hermes dashboard.browserUrl must use HTTPS unless it is loopback");
     }
     if (mode === "disabled") {
       if (
@@ -1948,6 +1914,7 @@ function validateDashboard(
         agent,
         mode,
         url,
+        ...(browserUrl === undefined ? {} : { browserUrl }),
         publicPort: null,
         internalPort: null,
         tuiEnabled: false,
@@ -1966,10 +1933,18 @@ function validateDashboard(
     if (configuredDashboardPort(url) !== publicPort) {
       invalid("Hermes dashboard.publicPort must match dashboard.url");
     }
+    if (
+      browserUrl !== undefined &&
+      isLoopbackDashboardUrl(browserUrl) &&
+      configuredDashboardPort(browserUrl) !== publicPort
+    ) {
+      invalid("Hermes dashboard.publicPort must match dashboard.browserUrl");
+    }
     return {
       agent,
       mode,
       url,
+      ...(browserUrl === undefined ? {} : { browserUrl }),
       publicPort,
       internalPort,
       tuiEnabled: requireBoolean(dashboard.tuiEnabled, "dashboard.tuiEnabled"),
@@ -2044,10 +2019,7 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
     if (primaryModelRef !== null || compatibility !== null || inputModalities !== null) {
       invalid(`${agent} does not support primaryModelRef, compatibility, or inputModalities`);
     }
-    if (
-      agent === "langchain-deepagents-code" &&
-      !isValidDcodeUpstreamProvider(upstreamProvider)
-    ) {
+    if (agent === "langchain-deepagents-code" && !isValidDcodeUpstreamProvider(upstreamProvider)) {
       invalid(
         "inference.upstreamProvider must start with an ASCII letter or digit and contain 1-64 ASCII letters, digits, dots, underscores, or hyphens for DCode",
       );

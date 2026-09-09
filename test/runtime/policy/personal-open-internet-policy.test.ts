@@ -206,7 +206,10 @@ describe("Personal open internet policy preset", () => {
     ).toThrow(/does not match the reviewed built-in preset/);
   });
 
-  it("reserves the Personal network-policy key for the reviewed built-in preset", () => {
+  it("rejects direct custom Personal key ownership before reading live state", () => {
+    const registryLookup = vi.spyOn(registry, "getSandbox").mockImplementation(() => {
+      throw new Error("registry must not be read");
+    });
     const errors: string[] = [];
     const errorSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
       errors.push(args.map(String).join(" "));
@@ -230,9 +233,11 @@ describe("Personal open internet policy preset", () => {
           { custom: { sourcePath: "/tmp/spoofed-personal.yaml" } },
         ),
       ).toBe(false);
+      expect(registryLookup).not.toHaveBeenCalled();
       expect(errors.join("\n")).toContain("reserved network policy key 'personal_open_internet'");
     } finally {
       errorSpy.mockRestore();
+      registryLookup.mockRestore();
     }
   });
 

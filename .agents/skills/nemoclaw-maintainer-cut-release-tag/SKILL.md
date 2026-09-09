@@ -25,13 +25,13 @@ Treat these as separate states:
 
 ## Hard Rules
 
-- Use the exact requested version. Generate the plan with `--version vX.Y.Z`; never infer a bump.
+- Use the requested version. Generate the plan with `--version vX.Y.Z`; never infer a bump.
 - Tag only the candidate captured in the plan.
 - By default, plan `origin/main` without an exception. For urgent QA qualification, a maintainer may
-  select an exact historical ancestor with `--candidate <full-sha> --exception <reason>`.
+  select a historical ancestor with `--candidate <full-sha> --exception <reason>`.
 - Require the release entry for a current-main plan. A historical plan records its explicit
   release-entry exception in the signed release brief.
-- Treat documentation coverage as maintainer context, not a tag gate. Show the exact coverage point,
+- Treat documentation coverage as maintainer context, not a tag gate. Show the coverage point,
   later commits and PRs, review and check state, changed paths, and open managed docs PRs.
 - Record the maintainer's documentation decision in the signed release brief.
 - Require applicable GHCR base and managed-image publication evidence.
@@ -40,7 +40,7 @@ Treat these as separate states:
 - Record every displayed or requested E2E result and the decision in the release brief, the signed
   Markdown release record. Record a plain-language exception reason when the status is exceptional
   or a requested run remains unresolved.
-- Pass the exact final release brief to `release:cut` with `--message-file`. The file becomes the
+- Pass the final release brief to `release:cut` with `--message-file`. The file becomes the
   signed tag annotation; do not maintain another exception record.
 - Ask the maintainer to paste the plan's full confirmation phrase before cutting.
 - Push only the planned semver tag. Never push or move `latest` or `lkg` here.
@@ -59,7 +59,7 @@ Copy this checklist and update it as you work:
 
 ```text
 Release tag:
-- [ ] 1. Generate the exact-version plan and release-brief template
+- [ ] 1. Generate the version plan and release-brief template
 - [ ] 2. Verify required candidate evidence
 - [ ] 3. Show E2E context and record the maintainer's decision
 - [ ] 4. Finish and review the Markdown release brief
@@ -91,7 +91,7 @@ The script writes `../nemoclaw-release-vX.Y.Z/plan.json`. Show the maintainer:
 - previous tag and peeled commit;
 - requested version;
 - candidate commit and headline;
-- exact range from the previous commit through the candidate; and
+- range from the previous commit through the candidate; and
 - the full confirmation phrase derived from the version and candidate.
 
 After later reads of remote state, keep this candidate when all of these remain true:
@@ -138,7 +138,7 @@ for the release entry, documentation coverage, and applicable base-image verifie
 
 Show the complete documentation coverage evidence. Offer the maintainer the three choices defined
 there. If the maintainer requests documentation work or stops, do not continue to E2E or tag
-confirmation. If the maintainer proceeds, record the exact decision line in the release brief.
+confirmation. If the maintainer proceeds, record the decision line in the release brief.
 
 Do not offer the general E2E proceed option until the release entry and image checks pass and the
 maintainer chooses to proceed with the displayed documentation coverage. Record the returned paths,
@@ -155,7 +155,7 @@ instead of reducing the run to one passing/failing label:
 - workflow URL and `Release qualification` job URL; and
 - any failed, cancelled, skipped, queued, or still-running results.
 
-Offer exactly these choices:
+Offer exactly these three choices:
 
 1. Run focused tests selected by the maintainer.
 2. Run the full suite.
@@ -181,7 +181,7 @@ Replace every `TODO_RELEASE_BRIEF` prompt in that Markdown file with:
   plan-bound historical release-entry exception;
 - the latest included cumulative docs PR, coverage commit, later commits and PRs, changed-path
   result, review and check state, open managed docs PRs, and maintainer decision;
-- exact-candidate E2E workflow, attempt, and successful `base-image-publication` job URL;
+- candidate E2E workflow, attempt, and successful `base-image-publication` job URL;
 - the newest full E2E result and every focused or full rerun result, including SHA, time, age, status,
   conclusion, and URLs;
 - the maintainer's E2E choice; and
@@ -191,7 +191,7 @@ Keep the helper's compact range counts and QA focus. Do not duplicate every comm
 the canonical release entry and compare range already preserve that detail.
 
 Do not put secrets in the brief. Show the complete rendered file to the maintainer. Because this
-exact public Markdown becomes the signed tag annotation, make any correction in the file before
+public Markdown becomes the signed tag annotation, make any correction in the file before
 asking for confirmation.
 
 ### 5. Confirm, Cut, and Report the Tag
@@ -272,7 +272,7 @@ Keep the semver tag immutable.
   proceed. Record the decision and reason in the brief.
 - Candidate is no longer on `origin/main`, the previous release changed, or the version is no longer
   available: stop and generate a new plan.
-- Signing or access fails: report the exact error and follow the shared hard-stop guidance. Do not
+- Signing or access fails: report the error and follow the shared hard-stop guidance. Do not
   improvise tag commands.
 - A post-tag workflow fails: report that state and its rerun path separately. Do not move the
   already-published semver tag.

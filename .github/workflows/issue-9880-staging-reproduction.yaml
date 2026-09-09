@@ -101,6 +101,7 @@ jobs:
           NEMOCLAW_IMAGE_DISPATCH_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
           NEMOCLAW_RUN_LIVE_E2E: "1"
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          PATH: /usr/local/bin:/usr/bin:/bin
         run: ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/issue-9880-staging-launchable.test.ts --silent=false --reporter=default
 
       - name: Verify workflow-owned workspace cleanup
@@ -110,7 +111,9 @@ jobs:
           BREV_WORKSPACE_OWNERSHIP_FILE: ${{ steps.prepare.outputs.work_dir }}/workspace-owner.json
           E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}
           HOME: ${{ runner.temp }}/issue-9880-home
-        run: ./node_modules/.bin/tsx tools/e2e/cleanup-brev-workspace.mts
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+          PATH: /usr/local/bin:/usr/bin:/bin
+        run: ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/brev-workspace-cleanup.test.ts --silent=false --reporter=default
 
       - name: Remove Brev credentials
         if: always()

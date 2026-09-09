@@ -86,7 +86,7 @@ A successful run has this version 1 envelope:
 }
 ```
 
-`response` contains the exact final assistant text on success and is `null` on failure.
+`response` contains the final assistant text on success and is `null` on failure.
 `response_bytes` is its UTF-8 byte length on success and is `0` on failure.
 The process exit code matches `data.exit_code`.
 The terminal statuses are `success`, `agent_failure`, `process_failure`, `timeout`, `turn_limit`, `cancelled`, and `output_limit`.
@@ -111,7 +111,7 @@ Callers must reject empty, malformed, additional, or unsupported-version stdout.
 ## Call a Read-Only MCP Tool
 
 Use `dcode tools call-read-only` when automation must invoke one managed MCP tool without model participation.
-The command accepts one exact tool name, requires `--json`, and reads one JSON object from standard input.
+The command accepts one tool name, requires `--json`, and reads one JSON object from standard input.
 
 ```bash
 printf '%s\n' '{"worker":"worker-17","nonce":"request-42"}' | \
@@ -122,7 +122,7 @@ The command reads standard input to end-of-file and requires one UTF-8 JSON obje
 It rejects terminal input, empty input, duplicate object keys, non-object JSON, non-finite constants, malformed UTF-8, and additional JSON values.
 
 The command loads only MCP servers registered through NemoClaw.
-The exact tool name must contain 1 to 128 ASCII letters, digits, underscores, or hyphens, and its first character must be alphanumeric.
+The tool name must contain 1 to 128 ASCII letters, digits, underscores, or hyphens, and its first character must be alphanumeric.
 It must resolve once, identify an MCP tool, and pass the managed coherent read-only annotation check.
 A prompt, agent, or model does not select the tool, modify its arguments, or participate in the call.
 Unavailable, ambiguous, non-MCP, and mutating tools fail before invocation.
@@ -146,7 +146,7 @@ A successful call has this shape:
 ```
 
 `content` preserves the successful MCP `ToolMessage` content.
-`structured_content` appears only when the server returns one mapping under that exact artifact field.
+`structured_content` appears only when the server returns an artifact that contains only a `structured_content` mapping.
 A tool-reported failure, unsupported result type, malformed artifact, non-finite value, cyclic value, non-string object key, or another container at depth 64 fails closed.
 A primitive value at depth 64 is accepted.
 There is no separate string-length or item-count limit.
@@ -195,8 +195,8 @@ Project and user-defined subagents remain available, but they inherit the manage
 MCP servers registered through `nemo-deepagents <sandbox-name> mcp add` remain available through NemoClaw's dedicated `/sandbox/.deepagents/.nemoclaw-mcp.json` projection and OpenShell egress policy.
 Project and user MCP files are never auto-loaded.
 Sandboxes with the older managed MCP v1 runtime must rebuild before `mcp add` or `mcp restart`.
-Remove, rebuild, and destroy can still scrub exact registry-owned legacy entries without claiming unrelated user content.
-Before launch, NemoClaw validates and canonicalizes the complete managed file as HTTPS-only definitions with exact OpenShell credential placeholders.
+Remove, rebuild, and destroy can still scrub registry-owned legacy entries without claiming unrelated user content.
+Before launch, NemoClaw validates and canonicalizes the complete managed file as HTTPS-only definitions with OpenShell credential placeholders.
 It then gives Deep Agents Code a process-local, integrity-bound snapshot for server starts and restarts.
 It prefers a sealed in-memory file when available.
 The OpenShell-compatible anonymous read-only descriptor fallback verifies the inode, size, and SHA-256 digest and fails closed on drift.

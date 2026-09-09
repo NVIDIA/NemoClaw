@@ -13,7 +13,7 @@ scope as behavior authority.
 
 ## Establish the range
 
-For `Docs / Post-Merge Catch-Up`, inspect changes from the latest reachable semver tag through the
+For `Docs / Author Post-Merge Catch-Up`, inspect changes from the latest reachable semver tag through the
 exact pushed `main` commit. Do not advance either boundary while authoring. For a direct
 documentation task, use the commit range supplied by the user or current checkout context.
 
@@ -59,7 +59,7 @@ documentation or a commit message.
 
 ## Validate and hand off
 
-In `Docs / Post-Merge Catch-Up`, change only `docs/**`, `fern/docs.yml`, and `fern/assets/**`; the workflow independently reviews the patch.
+In `Docs / Author Post-Merge Catch-Up`, change only `docs/**`, `fern/docs.yml`, and `fern/assets/**`; the workflow independently reviews the patch.
 Required PR checks run `npm run docs`; do not perform GitHub writes from the authoring step.
 
 For a direct documentation task, run the current documentation checks discovered from repository

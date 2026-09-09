@@ -43,7 +43,6 @@ function writeSandboxRegistry(sandboxName: string, agent: string | null = null):
           model: "m",
           provider: "p",
           gpuEnabled: false,
-          policies: [],
           agent,
         },
       },
