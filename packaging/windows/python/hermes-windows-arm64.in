@@ -3,7 +3,7 @@
 #
 # Native Windows ARM64 subset of the Hermes Agent 0.19.0 runtime graph.
 # Pillow, python-multipart, and aiohttp include reviewed security updates.
-# Native ConPTY uses the available pywinpty 3.0.3 ARM64 wheel; cryptography
+# Native ConPTY uses the available pywinpty 3.0.5 ARM64 wheel; cryptography
 # 46.0.7 paths remain excluded. Every included dependency remains version-pinned.
 
 certifi==2026.5.20
@@ -41,4 +41,4 @@ slack-bolt==1.29.0
 slack-sdk==3.43.0
 
 # Native Windows ARM64 ConPTY for the authentic Hermes dashboard.
-pywinpty==3.0.3
+pywinpty==3.0.5

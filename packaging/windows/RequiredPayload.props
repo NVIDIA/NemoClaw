@@ -17,6 +17,10 @@
     <NemoClawRequiredPayload Include="python\python.exe" Phase="Prepared" />
     <NemoClawRequiredPayload Include="hermes\site-packages\hermes_cli\main.py" Phase="Prepared" />
     <NemoClawRequiredPayload Include="hermes\site-packages\concurrent_log_handler\__init__.py" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="hermes\site-packages\winpty\_winpty.cp313-win_arm64.pyd" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="hermes\site-packages\winpty\conpty.dll" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="hermes\site-packages\winpty\OpenConsole.exe" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="hermes\CONPTY-LICENSE.txt" Phase="Prepared" />
     <NemoClawRequiredPayload Include="deepagents\site-packages\deepagents_code\main.py" Phase="Prepared" />
     <NemoClawRequiredPayload Include="deepagents\site-packages\colorama\__init__.py" Phase="Prepared" />
     <NemoClawRequiredPayload Include="deepagents\site-packages\jsonschema_rs\jsonschema_rs.pyd" Phase="Prepared" />

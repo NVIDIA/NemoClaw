@@ -86,6 +86,14 @@ settings later. Agent launch is an explicit completion action. Pi and NemoCUA
 remain experimental. `agent-support.json` records the authentic packaged
 implementations and their preview limitations.
 
+Hermes uses the corrected pywinpty ARM64 wheel, including its matched `conpty.dll`
+and `OpenConsole.exe` beside the native Python extension. The Microsoft ConPTY
+notice is installed as `hermes/CONPTY-LICENSE.txt`. An early Windows check loads
+that exact library and proves input, output, child-observed resize, and cleanup
+before the long runtime build; full packaged qualification repeats the check.
+This addresses the omitted binaries documented in the
+[pywinpty 3.0.5 release](https://github.com/andfoy/pywinpty/releases/tag/v3.0.5).
+
 Provider endpoint, model, Personal profile, and optional-service selections are
 nonsecret host configuration under Local App Data. WPF sends key bytes through
 stdin to the native launcher, which stores them in Windows Credential Manager.

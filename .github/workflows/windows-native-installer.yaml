@@ -108,6 +108,27 @@ jobs:
           cache-dependency-path: |
             candidate/packaging/windows/python/*.lock
 
+      - name: Qualify authentic Hermes ConPTY before the native build
+        shell: powershell
+        timeout-minutes: 10
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
+          & "$candidate\scripts\checks\prepare-windows-native-package-payload.ps1" `
+            -HermesPtyControlOnly `
+            -CandidateCheckout $candidate `
+            -OutputDirectory "$env:RUNNER_TEMP\windows-native-hermes-pty-control"
+
+      - name: Upload early Hermes ConPTY control evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-native-hermes-pty-control-${{ github.sha }}
+          path: ${{ runner.temp }}/windows-native-hermes-pty-control/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Build the pinned NVIDIA/OpenShell#2721 candidate
         working-directory: openshell
         shell: powershell

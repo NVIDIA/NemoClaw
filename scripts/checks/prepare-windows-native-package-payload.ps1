@@ -10,13 +10,16 @@
     dependencies, installs the locked OpenClaw runtime, and stages pinned Node,
     OpenShell, and Microsoft MXC binaries. The resulting directory is a build
     input for WiX; this script is never invoked by the installed product.
+    HermesPtyControlOnly instead restores the pinned Hermes/pywinpty pair and
+    exercises its native console bridge before the long native builds.
 #>
 
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'Payload')]
 param(
     [Parameter(Mandatory)][string]$CandidateCheckout,
-    [Parameter(Mandatory)][string]$OpenShellPayloadRoot,
-    [Parameter(Mandatory)][string]$OutputDirectory
+    [Parameter(Mandatory, ParameterSetName = 'Payload')][string]$OpenShellPayloadRoot,
+    [Parameter(Mandatory)][string]$OutputDirectory,
+    [Parameter(Mandatory, ParameterSetName = 'HermesPtyControl')][switch]$HermesPtyControlOnly
 )
 
 Set-StrictMode -Version Latest
@@ -31,6 +34,7 @@ $script:PythonEmbedArchive = "python-$($script:PythonVersion)-embed-arm64.zip"
 $script:PythonEmbedArchiveSha256 = '1230310118a6330cd6385cfc04de48bc77c7d18c240fd5fa23d054e50b1ebb85'
 $script:HermesVersion = '0.19.0'
 $script:HermesWheelSha256 = 'bd0bac012aee38a60894781f4597dc29ee7bedb3448540249921f10d3bef327f'
+$script:HermesWheelUri = "https://files.pythonhosted.org/packages/e5/30/c85be8290e9565dc3c7a9720e93f3e59e09b1b163487be4946c3aa848f80/hermes_agent-$($script:HermesVersion)-py3-none-any.whl"
 $script:RuamelYamlWheelSha256 = '9c8ba9eb3e793efdf924b60d521820869d5bf0cb9c6f1b82d82de8295e290b9d'
 $script:ForbiddenFruitArchiveSha256 = 'e3f7e66561a29ae129aac139a85d610dbf3dd896128187ed5454b6421f624253'
 $script:TiktokenVersion = '0.13.0'
@@ -170,9 +174,103 @@ function Assert-Arm64PortableExecutable {
     }
 }
 
+function Get-PinnedNativePythonBuilder {
+    $builder = (Get-Command python.exe -ErrorAction Stop).Source
+    $reportedVersion = (& $builder --version).Trim()
+    if ($LASTEXITCODE -ne 0 -or $reportedVersion -cne "Python $($script:PythonVersion)") {
+        Fail-PayloadPreparation "Python $($script:PythonVersion) is required to build the native agent payloads."
+    }
+    Assert-Arm64PortableExecutable -Path $builder -Label 'Python agent payload builder'
+    return $builder
+}
+
+function Read-HermesPtyRequirement {
+    param([Parameter(Mandatory)][string]$LockPath)
+
+    $lock = [IO.File]::ReadAllText($LockPath)
+    $entries = [regex]::Matches($lock, '(?m)^pywinpty==[^\r\n]+(?:\r?\n[ \t]+--hash=[^\r\n]+)*')
+    if ($entries.Count -ne 1 -or $entries[0].Value -cnotmatch
+        '\Apywinpty==[0-9]+(?:\.[0-9]+){2}[ \t]+\\\r?\n(?:[ \t]+--hash=sha256:[0-9a-f]{64}[ \t]+\\\r?\n)*[ \t]+--hash=sha256:[0-9a-f]{64}[ \t]*\z') {
+        Fail-PayloadPreparation 'The Hermes lock must contain one complete hash-pinned pywinpty requirement.'
+    }
+    return $entries[0].Value + [Environment]::NewLine
+}
+
+function Invoke-HermesPtyControl {
+    param(
+        [Parameter(Mandatory)][string]$Candidate,
+        [Parameter(Mandatory)][string]$Output
+    )
+
+    $work = Join-Path $env:RUNNER_TEMP ('nemoclaw-hermes-pty-' + [guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($Output) | Out-Null
+    $transcribing = $false
+    try {
+        Start-Transcript -Path (Join-Path $Output 'control.log') | Out-Null
+        $transcribing = $true
+        $builder = Get-PinnedNativePythonBuilder
+        $site = Join-Path $work 'site-packages'
+        [IO.Directory]::CreateDirectory($site) | Out-Null
+        $lockPath = Join-Path $Candidate 'packaging\windows\python\hermes-windows-arm64.lock'
+        $requirement = Read-HermesPtyRequirement -LockPath $lockPath
+        $requirementPath = Join-Path $Output 'pywinpty-requirement.txt'
+        [IO.File]::WriteAllText($requirementPath, $requirement, [Text.ASCIIEncoding]::new())
+        [IO.File]::WriteAllText(
+            (Join-Path $Output 'control-inputs.json'),
+            (([pscustomobject]@{
+                schemaVersion = 1
+                classification = 'early-native-hermes-pty-control'
+                pythonVersion = $script:PythonVersion
+                hermesVersion = $script:HermesVersion
+                hermesWheelSha256 = $script:HermesWheelSha256
+                hermesLockSha256 = (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            } | ConvertTo-Json) + [Environment]::NewLine),
+            [Text.UTF8Encoding]::new($false)
+        )
+        Invoke-Checked -FilePath $builder -Arguments @(
+            '-I', '-m', 'pip', 'install', '--disable-pip-version-check',
+            '--no-deps', '--require-hashes', '--only-binary=:all:', '--no-compile',
+            '--timeout', '30', '--retries', '0', '--target', $site,
+            '--requirement', $requirementPath,
+            '--report', (Join-Path $Output 'pywinpty-restore.json')
+        ) -Label 'Early Hermes native ARM64 PTY dependency restore'
+        $wheel = Join-Path $work "hermes_agent-$($script:HermesVersion)-py3-none-any.whl"
+        Invoke-WebRequest -UseBasicParsing -Uri $script:HermesWheelUri -OutFile $wheel -TimeoutSec 120
+        Assert-Sha256 -Path $wheel -Expected $script:HermesWheelSha256 -Label 'Hermes Agent wheel'
+        Invoke-Checked -FilePath $builder -Arguments @(
+            '-I', '-m', 'pip', 'install', '--disable-pip-version-check',
+            '--no-deps', '--no-index', '--no-compile', '--target', $site, $wheel
+        ) -Label 'Early Hermes pinned runtime restore'
+        Invoke-Checked -FilePath $builder -Arguments @(
+            '-I', (Join-Path $Candidate 'packaging\windows\python\native-hermes-preflight.py'),
+            $site, '--pty-only', '--receipt', (Join-Path $Output 'console-bridge.json')
+        ) -Label 'Early authentic Hermes Windows ConPTY input/output/resize control'
+        if (-not (Test-Path -LiteralPath (Join-Path $Output 'console-bridge.json') -PathType Leaf)) {
+            Fail-PayloadPreparation 'The early Hermes ConPTY control did not produce its receipt.'
+        }
+    } catch {
+        $_ | Out-String | Out-File -LiteralPath (Join-Path $Output 'control-failure.txt') -Encoding utf8
+        throw
+    } finally {
+        try {
+            if ($transcribing) { Stop-Transcript | Out-Null }
+        } finally {
+            if (Test-Path -LiteralPath $work) { [IO.Directory]::Delete($work, $true) }
+        }
+    }
+}
+
 $candidate = [IO.Path]::GetFullPath($CandidateCheckout).TrimEnd('\')
-$openShellPayload = [IO.Path]::GetFullPath($OpenShellPayloadRoot).TrimEnd('\')
 $output = [IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\')
+if ($HermesPtyControlOnly) {
+    if (-not (Test-Path -LiteralPath $candidate -PathType Container)) {
+        Fail-PayloadPreparation "Required input directory is missing: $candidate"
+    }
+    if (Test-Path -LiteralPath $output) { Fail-PayloadPreparation 'OutputDirectory must not already exist.' }
+    Invoke-HermesPtyControl -Candidate $candidate -Output $output
+    return
+}
+$openShellPayload = [IO.Path]::GetFullPath($OpenShellPayloadRoot).TrimEnd('\')
 foreach ($directory in @($candidate, $openShellPayload)) {
     if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
         Fail-PayloadPreparation "Required input directory is missing: $directory"
@@ -188,7 +286,7 @@ $npx = (Get-Command npx.cmd -ErrorAction Stop).Source
 $tar = (Get-Command tar.exe -ErrorAction Stop).Source
 $git = (Get-Command git.exe -ErrorAction Stop).Source
 $rustup = (Get-Command rustup.exe -ErrorAction Stop).Source
-$pythonBuilder = (Get-Command python.exe -ErrorAction Stop).Source
+$pythonBuilder = Get-PinnedNativePythonBuilder
 $reportedNodeVersion = (& $node --version).Trim()
 if ($LASTEXITCODE -ne 0 -or $reportedNodeVersion -cne "v$($script:NodeVersion)") {
     Fail-PayloadPreparation "Node.js $($script:NodeVersion) is required to build the payload."
@@ -197,12 +295,6 @@ $reportedRustVersion = (& $rustup run $script:RustVersion rustc --version).Trim(
 if ($LASTEXITCODE -ne 0 -or -not $reportedRustVersion.StartsWith("rustc $($script:RustVersion) ", [StringComparison]::Ordinal)) {
     Fail-PayloadPreparation "Rust $($script:RustVersion) is required to build the native launcher."
 }
-$reportedPythonVersion = (& $pythonBuilder --version).Trim()
-if ($LASTEXITCODE -ne 0 -or $reportedPythonVersion -cne "Python $($script:PythonVersion)") {
-    Fail-PayloadPreparation "Python $($script:PythonVersion) is required to build the native agent payloads."
-}
-Assert-Arm64PortableExecutable -Path $pythonBuilder -Label 'Python agent payload builder'
-
 $workRoot = Join-Path $env:RUNNER_TEMP ('nemoclaw-native-payload-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($workRoot) | Out-Null
 [IO.Directory]::CreateDirectory($output) | Out-Null
@@ -307,6 +399,7 @@ try {
     $hermesRoot = Join-Path $output 'hermes'
     $hermesSitePackages = Join-Path $hermesRoot 'site-packages'
     [IO.Directory]::CreateDirectory($hermesSitePackages) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\CONPTY-LICENSE.txt') -Destination (Join-Path $hermesRoot 'CONPTY-LICENSE.txt')
     $hermesLock = Join-Path $candidate 'packaging\windows\python\hermes-windows-arm64.lock'
     Invoke-Checked `
         -FilePath $pythonBuilder `
@@ -321,7 +414,7 @@ try {
         ) `
         -Label 'Hermes native ARM64 dependency restore'
     $hermesWheel = Join-Path $workRoot "hermes_agent-$($script:HermesVersion)-py3-none-any.whl"
-    Invoke-WebRequest -UseBasicParsing -Uri "https://files.pythonhosted.org/packages/e5/30/c85be8290e9565dc3c7a9720e93f3e59e09b1b163487be4946c3aa848f80/hermes_agent-$($script:HermesVersion)-py3-none-any.whl" -OutFile $hermesWheel
+    Invoke-WebRequest -UseBasicParsing -Uri $script:HermesWheelUri -OutFile $hermesWheel
     Assert-Sha256 -Path $hermesWheel -Expected $script:HermesWheelSha256 -Label 'Hermes Agent wheel'
     $ruamelWheel = Join-Path $workRoot 'ruamel_yaml-0.18.17-py3-none-any.whl'
     Invoke-WebRequest -UseBasicParsing -Uri 'https://files.pythonhosted.org/packages/af/fe/b6045c782f1fd1ae317d2a6ca1884857ce5c20f59befe6ab25a8603c43a7/ruamel_yaml-0.18.17-py3-none-any.whl' -OutFile $ruamelWheel
