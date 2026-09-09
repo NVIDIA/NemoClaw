@@ -192,7 +192,6 @@ describe("managed startup shared-state transaction", () => {
         hermes: () => fs.writeFileSync(path.join(root, ".config-hash"), "new\n"),
         "langchain-deepagents-code": () => {
           fs.mkdirSync(path.join(root, ".state"));
-          fs.mkdirSync(path.join(root, "skills"));
         },
         pi: () => {
           fs.mkdirSync(path.join(root, "agent"));
@@ -213,7 +212,7 @@ describe("managed startup shared-state transaction", () => {
       const absentManagedPaths: Record<ManagedStartupAgent, readonly string[]> = {
         openclaw: [".config-hash"],
         hermes: [".config-hash"],
-        "langchain-deepagents-code": [".state", "skills"],
+        "langchain-deepagents-code": [".state"],
         pi: ["agent", path.join("agent", "models.json")],
       };
       expect(

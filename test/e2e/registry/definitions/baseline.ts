@@ -9,6 +9,7 @@ import {
   ubuntuRepoDocker,
   ubuntuRepoDockerLifecycle,
   ubuntuRepoManagedRuntime,
+  ubuntuRepoManagedRuntimeLifecycle,
   ubuntuRepoNoDocker,
   wslRepoDocker,
 } from "../matrix.ts";
@@ -107,19 +108,19 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-langchain-deepagents-code",
-    gatewayRuntimes: ["docker"],
+    gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
     manifestName: "langchain-deepagents-code-nvidia",
-    environment: ubuntuRepoDockerLifecycle(
+    environment: ubuntuRepoManagedRuntimeLifecycle(
       "cloud-langchain-deepagents-code",
       "dcode-rebuild-invalid-credential",
     ),
     expectedStateId: "cloud-deepagents-code-ready",
     suiteIds: ["smoke", "inference", "terminal-agent", "deepagents-code-policy"],
-    description: "Ubuntu repo checkout with Docker and LangChain Deep Agents Code onboarding.",
+    description: "Ubuntu repo checkout with managed-runtime Deep Agents Code onboarding.",
     executionCoverage: {
       agentRuntime: "langchain-deepagents-code",
       observableOutcome: "Repository install onboarding and hosted inference succeed",
-      environmentOrInferenceEndpoint: "Ubuntu Docker host; NVIDIA hosted inference",
+      environmentOrInferenceEndpoint: "Ubuntu managed-runtime host; NVIDIA hosted inference",
       unresolvedReason: "",
     },
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],

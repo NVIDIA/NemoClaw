@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
+import type { ContainerGpuProofStatus } from "../container-gpu-proof.js";
 import {
   classifyNvidiaFirmwareProducts,
   hasDgxStationGb300PciGpu,
@@ -10,6 +12,7 @@ import {
 } from "../inference/dgx-station-identity.js";
 import type { NvidiaPlatform } from "../inference/nim.js";
 import { collectN1xIdentity, type N1xIdentityOptions } from "../inference/platform-identity/n1x.js";
+import { collectN1xWslProduct } from "../inference/platform-identity/n1x-wsl.js";
 import {
   isQualifiedStationProfile,
   isQualifiedStationRuntime,
@@ -29,6 +32,7 @@ import type {
 } from "./types.js";
 
 export type { StationProfile } from "./station-qualification.js";
+export { isN1xWslProductName } from "../inference/platform-identity/n1x-wsl.js";
 
 export interface PlatformIdentity {
   nvidiaPlatform?: NvidiaPlatform | null;
@@ -56,7 +60,6 @@ export interface PlatformIdentity {
   stationSoftwareBuildVersion?: string | null;
   stationSoftwareBuildDate?: string | null;
   stationOtaVersion?: string | null;
-  wslDockerDesktopGpuProofPassed?: boolean;
 }
 
 export interface PlatformQualificationInput extends PlatformIdentity {
@@ -69,6 +72,9 @@ export interface PlatformQualificationInput extends PlatformIdentity {
   hasNvidiaGpu: boolean;
   nvidiaGpuCount?: number;
   nvidiaGpuMemoryPerDeviceBytes?: number;
+  runtimeProviderId?: string | null;
+  runtimeProviderOwnsHostReadiness?: boolean;
+  containerGpuProof?: ContainerGpuProofStatus;
 }
 
 export interface PlatformQualificationProjection {
@@ -89,47 +95,16 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
   stationReleasePath?: string;
   osReleasePath?: string;
   isWsl?: boolean;
-  runCaptureImpl?: (command: readonly string[], options?: { ignoreError?: boolean }) => string;
+  /** Pre-collected boundary observation; null means the probe was inconclusive. */
+  n1xWslProductObservation?: boolean | null;
+  runCaptureImpl?: (
+    command: readonly string[],
+    options?: { ignoreError?: boolean; timeout?: number },
+  ) => string;
 }
 
-const N1X_WSL_PRODUCT_NAME_MAX_BYTES = 256;
-const N1X_WSL_PRODUCT_PATTERN = /(?:^|\s)RTX Spark N1X(?:$|\s)/i;
 const STATION_HOST_INFO_MAX_BYTES = 64 * 1024;
 const MAX_REPORTED_CPU_COUNT = 4096;
-
-export function isN1xWslProductName(value: string): boolean {
-  return N1X_WSL_PRODUCT_PATTERN.test(value.trim());
-}
-
-function collectN1xWslProduct(options: CollectPlatformIdentityOptions): boolean | undefined {
-  if (!options.isWsl || !options.runCaptureImpl) return undefined;
-  try {
-    const raw = options.runCaptureImpl(
-      [
-        "powershell.exe",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "(Get-CimInstance Win32_ComputerSystem).Model",
-      ],
-      { ignoreError: true },
-    );
-    const normalized = String(raw ?? "")
-      .replace(/\r/g, "")
-      .trim();
-    if (
-      !normalized ||
-      normalized.includes("\0") ||
-      normalized.includes("\n") ||
-      Buffer.byteLength(normalized, "utf8") > N1X_WSL_PRODUCT_NAME_MAX_BYTES
-    ) {
-      return undefined;
-    }
-    return isN1xWslProductName(normalized);
-  } catch {
-    return undefined;
-  }
-}
 
 function readOptional(
   readFile: (filePath: string) => string,
@@ -338,7 +313,9 @@ export function collectPlatformIdentity(
   const firmwareProducts = [productName, productFamily, boardName, deviceTreeModel];
   const firmwareIdentity = classifyNvidiaFirmwareProducts(firmwareProducts);
   const stationFirmwareProduct = firmwareIdentity.stationFirmwareProduct;
-  const n1xWslProduct = collectN1xWslProduct(options);
+  const n1xWslProduct = Object.prototype.hasOwnProperty.call(options, "n1xWslProductObservation")
+    ? options.n1xWslProductObservation
+    : collectN1xWslProduct(options);
   const wslIdentity = options.isWsl ? { n1xWslProduct } : {};
   if (firmwareIdentity.platformIdentityConflict) {
     return {
@@ -479,14 +456,16 @@ function deriveN1xQualification(input: Readonly<PlatformQualificationInput>): {
 
 function deriveN1xWslQualification(
   input: Readonly<PlatformQualificationInput>,
+  activeRuntimeProviderId: string | null,
 ): QualificationStatus {
   if (!input.isWsl) return "unqualified";
   if (input.n1xWslProduct === undefined || input.n1xWslProduct === null) return "unknown";
+  if (!activeRuntimeProviderId || input.containerGpuProof === undefined) return "unknown";
   return input.n1xWslProduct === true &&
     input.platform === "linux" &&
     input.architecture === "arm64" &&
-    input.runtime === "docker-desktop" &&
-    input.dockerReachable &&
+    input.containerGpuProof.providerId === activeRuntimeProviderId &&
+    input.containerGpuProof.passed &&
     input.hasNvidiaGpu
     ? "qualified"
     : "unqualified";
@@ -555,13 +534,27 @@ export function projectPlatformQualification(
   const macosSupported = macosAppleSilicon && input.dockerReachable && macosRuntime;
   const dockerDesktop = input.isWsl && input.dockerReachable && input.runtime === "docker-desktop";
   const nativeDocker = input.isWsl && input.dockerReachable && input.runtime === "docker";
-  const wslRuntimeAvailable = dockerDesktop || nativeDocker;
+  const providerOwnedRuntime =
+    input.isWsl &&
+    input.runtimeProviderOwnsHostReadiness === true &&
+    typeof input.runtimeProviderId === "string" &&
+    input.runtimeProviderId.length > 0;
+  const activeRuntimeProviderId = dockerDesktop
+    ? "docker"
+    : providerOwnedRuntime
+      ? input.runtimeProviderId!
+      : null;
+  const wslRuntimeAvailable = dockerDesktop || nativeDocker || providerOwnedRuntime;
+  const matchingGpuProof =
+    activeRuntimeProviderId && input.containerGpuProof?.providerId === activeRuntimeProviderId
+      ? input.containerGpuProof
+      : undefined;
   const wslGpuPassthrough: ReadinessState =
-    input.isWsl && dockerDesktop
+    input.isWsl && activeRuntimeProviderId
       ? input.hasNvidiaGpu
-        ? input.wslDockerDesktopGpuProofPassed === true
+        ? matchingGpuProof?.passed === true
           ? "present"
-          : input.wslDockerDesktopGpuProofPassed === false
+          : matchingGpuProof?.passed === false || input.containerGpuProof !== undefined
             ? "absent"
             : "unknown"
         : "absent"
@@ -578,14 +571,14 @@ export function projectPlatformQualification(
   const sparkIdentity = input.nvidiaPlatform === "spark";
   const sparkQualified = sparkIdentity && input.architecture === "arm64" && input.hasNvidiaGpu;
   const n1x = deriveN1xQualification(input);
-  const n1xWslStatus = deriveN1xWslQualification(input);
+  const n1xWslStatus = deriveN1xWslQualification(input, activeRuntimeProviderId);
   const platformSupported =
     (linuxSupported || macosSupported) &&
     input.platformIdentityConflict !== true &&
     (!stationIdentity || stationQualified) &&
     (!sparkIdentity || sparkQualified) &&
     !n1x.identity &&
-    (!input.isWsl || dockerDesktop);
+    (!input.isWsl || dockerDesktop || providerOwnedRuntime);
   const evidence: ReadinessEvidence[] = [];
   if (
     input.productName ||
@@ -650,13 +643,15 @@ export function projectPlatformQualification(
     capability(
       "host.platform.wsl_runtime_available",
       input.isWsl
-        ? input.dockerInstalled
-          ? input.dockerReachable
-            ? wslRuntimeAvailable
-              ? "present"
-              : "unknown"
+        ? providerOwnedRuntime
+          ? "present"
+          : input.dockerInstalled
+            ? input.dockerReachable
+              ? wslRuntimeAvailable
+                ? "present"
+                : "unknown"
+              : "absent"
             : "absent"
-          : "absent"
         : "absent",
     ),
     capability("host.platform.wsl_gpu_passthrough", wslGpuPassthrough),
@@ -721,7 +716,7 @@ export function projectPlatformQualification(
     qualifications.push(
       qualification(
         "host.platform.wsl",
-        dockerDesktop
+        dockerDesktop || providerOwnedRuntime
           ? "qualified"
           : nativeDocker
             ? "unqualified"
@@ -780,28 +775,33 @@ export function projectPlatformQualification(
       ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
     });
   }
-  if (input.isWsl && !input.dockerInstalled) {
+  if (input.isWsl && !providerOwnedRuntime && !input.dockerInstalled) {
     findings.push({
       id: "host.platform.wsl_runtime_unavailable",
       severity: "blocking",
       summary: "WSL has no available Docker runtime.",
       capabilityIds: ["host.platform.wsl_runtime_available"],
     });
-  } else if (input.isWsl && input.dockerInstalled && !input.dockerReachable) {
+  } else if (
+    input.isWsl &&
+    !providerOwnedRuntime &&
+    input.dockerInstalled &&
+    !input.dockerReachable
+  ) {
     findings.push({
       id: "host.platform.wsl_runtime_unreachable",
       severity: "blocking",
       summary: "WSL cannot reach the configured Docker runtime.",
       capabilityIds: ["host.platform.wsl_runtime_available"],
     });
-  } else if (nativeDocker) {
+  } else if (nativeDocker && !providerOwnedRuntime) {
     findings.push({
       id: "host.platform.wsl_native_docker_unqualified",
       severity: "blocking",
       summary: "Native Docker Engine inside WSL is not the qualified Docker Desktop integration.",
       capabilityIds: ["host.platform.wsl_native_docker", "host.platform.supported"],
     });
-  } else if (input.isWsl && input.dockerReachable && !dockerDesktop) {
+  } else if (input.isWsl && !providerOwnedRuntime && input.dockerReachable && !dockerDesktop) {
     findings.push({
       id: "host.platform.wsl_runtime_inconclusive",
       severity: "blocking",
@@ -809,18 +809,23 @@ export function projectPlatformQualification(
       capabilityIds: ["host.platform.wsl_runtime_available"],
     });
   }
-  if (input.isWsl && dockerDesktop && wslGpuPassthrough === "unknown") {
+  if (input.isWsl && activeRuntimeProviderId && wslGpuPassthrough === "unknown") {
     findings.push({
       id: "host.platform.wsl_gpu_passthrough_inconclusive",
       severity: "warning",
-      summary: "Docker Desktop WSL GPU passthrough could not be proven.",
+      summary: "Configured container-provider WSL GPU passthrough could not be proven.",
       capabilityIds: ["host.platform.wsl_gpu_passthrough"],
     });
-  } else if (input.isWsl && dockerDesktop && wslGpuPassthrough === "absent" && input.hasNvidiaGpu) {
+  } else if (
+    input.isWsl &&
+    activeRuntimeProviderId &&
+    wslGpuPassthrough === "absent" &&
+    input.hasNvidiaGpu
+  ) {
     findings.push({
       id: "host.platform.wsl_gpu_passthrough_unavailable",
       severity: "warning",
-      summary: "Docker Desktop WSL GPU passthrough proof failed.",
+      summary: "Configured container-provider WSL GPU passthrough proof failed.",
       capabilityIds: ["host.platform.wsl_gpu_passthrough"],
     });
   }

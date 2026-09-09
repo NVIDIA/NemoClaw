@@ -121,6 +121,11 @@ describe("DGX Station release classifier parity", () => {
       "supported-ai-developer-tools",
       noOta("7.5.0", "2026-06-16-11-48-10"),
     ],
+    [
+      "May AI Developer Tools factory release",
+      "supported-ai-developer-tools",
+      noOta("7.5.0", "2026-05-13-18-42-38"),
+    ],
     ["future no-OTA release", "unsupported-dgx-os", noOta("7.7.0", "2026-07-30")],
     [
       "factory build-date drift",

@@ -24,11 +24,10 @@ import {
   clearDualStationResumeState,
   inspectPretrustedSshTarget,
   readDualStationResumeState,
-  stationPrepSshArgs,
+  STATION_DISCOVERY_PROBE,
   writeDualStationResumeState,
 } from "../../scripts/prepare-dual-dgx-station.mts";
 import { DUAL_STATION_VLLM_LAUNCH_SCHEMA } from "../../src/lib/inference/vllm-station-cluster-lifecycle.ts";
-import { strictVllmSshTransportArgs } from "../../src/lib/inference/serving/vllm-ssh-transport-policy.ts";
 import {
   HELPER_SHA256,
   HOST_KEY_DATA,
@@ -805,22 +804,6 @@ describe.sequential("dual-DGX Station trust and resume-state boundaries", () => 
     }
   });
 
-  it("pins the Station preparation endpoint after the strict SSH policy (#9519)", () => {
-    const args = stationPrepSshArgs(sshBinding(), "/tmp/nemoclaw-known-hosts", "python3 -");
-    expect(args).toEqual([
-      ...strictVllmSshTransportArgs(),
-      "-o",
-      "UserKnownHostsFile=/tmp/nemoclaw-known-hosts",
-      "-o",
-      "GlobalKnownHostsFile=/dev/null",
-      "-o",
-      "HostKeyAlias=10.10.0.2",
-      "--",
-      "10.10.0.2",
-      "python3 -",
-    ]);
-  });
-
   it("builds the exact-byte noninteractive helper command", () => {
     const command = buildRemoteHelperCommand(HELPER_SHA256, "--apply");
     expect(command).toContain(HELPER_SHA256);
@@ -1047,12 +1030,13 @@ fi
         path.join(bin, "python3"),
         `#!/usr/bin/env bash
 set -Eeuo pipefail
-cat >/dev/null
 if (($# == 1)); then
+  cat >"$HOME/local-probe.py"
   cat <<'JSON'
 ${JSON.stringify(stationHost("local"))}
 JSON
 else
+  cat >/dev/null
   cat <<'JSON'
 ${stationConnectivity("local")}
 JSON
@@ -1119,7 +1103,7 @@ JSON
   exit 0
 fi
 if [[ " $* " == *'python3 -'* ]]; then
-  cat >/dev/null
+  cat >"$HOME/peer-probe.py"
   cat <<'JSON'
 ${JSON.stringify(stationHost("peer"))}
 JSON
@@ -1169,6 +1153,8 @@ exit 96
 
         expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
         expect(JSON.parse(result.stdout)).toMatchObject({ kind: "ready", peerTarget: "10.10.0.2" });
+        expect(fs.readFileSync(path.join(root, "local-probe.py"), "utf8")).toBe(STATION_DISCOVERY_PROBE);
+        expect(fs.readFileSync(path.join(root, "peer-probe.py"), "utf8")).toBe(STATION_DISCOVERY_PROBE);
         expect(fs.existsSync(forbiddenLog)).toBe(false);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../../state/onboard-session";
+import { isN1xManagedVllmProviderModel } from "../../../domain/sandbox/n1x-managed-vllm-rebuild";
 import { hasExplicitDeferredN1xOnboardingIntent } from "../../../readiness/onboard-admission";
 import { isN1xOnboardingProviderKey } from "../../inference-providers/provider-selection-keys";
 import { withPreflightTrace } from "../../tracing";
@@ -61,7 +62,7 @@ export interface PreflightStateOptions<
         explicitlyOptedOutGpuPassthrough: boolean;
         observedAt?: string;
         now?: () => Date;
-        wslDockerDesktopGpuProofPassed?: boolean;
+        containerGpuProof?: Readonly<{ providerId: string; passed: boolean }>;
         allowDeferredN1xOnboarding?: boolean;
         resuming: true;
         presentAdvisories?: boolean;
@@ -99,6 +100,7 @@ export interface PreflightStateOptions<
 export interface PreflightStateResult<Gpu, Config extends PreflightSandboxGpuConfig> {
   gpu: Gpu;
   sandboxGpuConfig: Config;
+  deferredN1xManagedVllmPreviewAccepted: boolean;
   resumePreflight: boolean;
   resumeHasResolvedGpuIntent: boolean;
   requestedGpuPassthrough: boolean;
@@ -113,12 +115,16 @@ function envHasSandboxGpuOverride(env: NodeJS.ProcessEnv): boolean {
   return env.NEMOCLAW_SANDBOX_GPU !== undefined || env.NEMOCLAW_SANDBOX_GPU_DEVICE !== undefined;
 }
 
-function resolvedWslDockerDesktopGpuProof(gpu: unknown): boolean | undefined {
-  if (gpu === null) return false;
+function resolvedContainerGpuProof(
+  gpu: unknown,
+): Readonly<{ providerId: string; passed: boolean }> | undefined {
   if (!gpu || typeof gpu !== "object") return undefined;
-  return (gpu as { wslDockerDesktopGpuProofPassed?: boolean }).wslDockerDesktopGpuProofPassed ===
-    true
-    ? true
+  const proof = (gpu as { containerGpuProof?: unknown }).containerGpuProof;
+  if (!proof || typeof proof !== "object") return undefined;
+  const providerId = (proof as { providerId?: unknown }).providerId;
+  const passed = (proof as { passed?: unknown }).passed;
+  return typeof providerId === "string" && typeof passed === "boolean"
+    ? { providerId, passed }
     : undefined;
 }
 
@@ -167,6 +173,11 @@ export async function handlePreflightState<
   const allowDeferredN1xOnboarding =
     allowDeferredN1xManagedVllm ??
     (recordedProviderAllowsDeferredN1x || hasExplicitDeferredN1xOnboardingIntent(env));
+  const deferredN1xManagedVllmPreviewIntent =
+    allowDeferredN1xManagedVllm !== false &&
+    (String(env.NEMOCLAW_PROVIDER ?? "").trim() === "install-vllm" ||
+      (allowDeferredN1xManagedVllm === true &&
+        isN1xManagedVllmProviderModel(session?.provider, session?.model)));
 
   let gpu: Gpu;
   if (resumePreflight) {
@@ -210,12 +221,12 @@ export async function handlePreflightState<
         env,
       });
       await deps.assertGatewayReadiness();
-      const wslDockerDesktopGpuProofPassed = resolvedWslDockerDesktopGpuProof(gpu);
+      const containerGpuProof = resolvedContainerGpuProof(gpu);
       deps.assertOnboardHostReadiness(resumeHost, gpu, {
         explicitlyOptedOutGpuPassthrough: false,
         observedAt: hostObservedAt,
         now,
-        ...(wslDockerDesktopGpuProofPassed === undefined ? {} : { wslDockerDesktopGpuProofPassed }),
+        ...(containerGpuProof === undefined ? {} : { containerGpuProof }),
         allowDeferredN1xOnboarding,
         resuming: true,
         presentAdvisories: false,
@@ -251,6 +262,9 @@ export async function handlePreflightState<
   return {
     gpu,
     sandboxGpuConfig,
+    deferredN1xManagedVllmPreviewAccepted:
+      (gpu as { platform?: unknown } | null)?.platform === "n1x" &&
+      deferredN1xManagedVllmPreviewIntent,
     resumePreflight,
     resumeHasResolvedGpuIntent,
     requestedGpuPassthrough: gpuRequested,

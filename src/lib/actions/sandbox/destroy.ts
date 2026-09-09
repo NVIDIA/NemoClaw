@@ -58,7 +58,10 @@ import {
   redactDestroyError,
   retirePortableLifecycleAuthority,
 } from "./destroy-execution";
-import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
+import {
+  cleanupGatewayAfterLastSandbox,
+  resolveGatewayCleanupRuntimeProviderId,
+} from "./destroy-gateway";
 import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import {
   assertUnambiguousDestroyContainerIdentity,
@@ -69,6 +72,7 @@ import {
 } from "./destroy-presence";
 import {
   prepareSandboxDestroy,
+  resolveSandboxDestroyGatewayName,
   resolveSandboxDestroyRuntimeSelection,
   stopModelRouterForDestroyedSandbox,
   stopSandboxInferenceResources,
@@ -100,9 +104,7 @@ function selectRetainedSandboxRecoveryAuthority(
   sandbox: registry.SandboxEntry | null,
   records: readonly onboardSession.RetainedSandboxRecoveryRecord[],
 ): onboardSession.RetainedSandboxRecoveryRecord | null {
-  const candidates = records.filter(
-    (record) => record.sandboxName === sandboxName && record.sandboxIdentityFingerprint !== null,
-  );
+  const candidates = records.filter((record) => record.sandboxName === sandboxName);
   if (!sandbox) {
     // Once resource cleanup has removed the registry row, a retry must still
     // select the lone durable record so the later Docker proof can confirm
@@ -112,10 +114,11 @@ function selectRetainedSandboxRecoveryAuthority(
     if (candidates.length === 0) return null;
     const observation = observeDestroyContainerIdentity(sandboxName);
     const observedMatches = candidates.filter((record) => {
+      if (record.sandboxIdentityFingerprint === null) return false;
       const verdict = classifyDestroyContainerIdentity(
         sandboxName,
         observation,
-        record.sandboxIdentityFingerprint!,
+        record.sandboxIdentityFingerprint,
       );
       return (
         verdict.status === "recovery" || (verdict.status === "clear" && verdict.identity !== null)
@@ -133,7 +136,8 @@ function selectRetainedSandboxRecoveryAuthority(
         record.gatewayName === pending.gatewayName &&
         record.gatewayPort === pending.gatewayPort &&
         record.lifecycleGeneration === pending.lifecycleGeneration &&
-        record.sandboxIdentityFingerprint === pending.sandboxIdentityFingerprint &&
+        (record.sandboxIdentityFingerprint === null ||
+          record.sandboxIdentityFingerprint === pending.sandboxIdentityFingerprint) &&
         (pending.createAttemptNonce === undefined ||
           record.createAttemptNonce === pending.createAttemptNonce)
       );
@@ -142,7 +146,8 @@ function selectRetainedSandboxRecoveryAuthority(
       record.gatewayName === sandbox.gatewayName &&
       record.gatewayPort === sandbox.gatewayPort &&
       record.lifecycleGeneration === sandbox.lifecycleGeneration &&
-      record.sandboxIdentityFingerprint === sandbox.lifecycleLiveIdentityFingerprint
+      (record.sandboxIdentityFingerprint === null ||
+        record.sandboxIdentityFingerprint === sandbox.lifecycleLiveIdentityFingerprint)
     );
   };
   const matching = candidates.filter(matchesRegistryAuthority);
@@ -620,6 +625,9 @@ async function destroySandboxUnlocked(
   const registeredSandbox = registry.getSandbox(sandboxName);
   const operationRuntimeSelection = resolveSandboxDestroyRuntimeSelection(registeredSandbox);
   if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) return;
+  if (registeredSandbox) {
+    onboardSession.reconstructRetainedSandboxRecoveryFromPendingCreate(registeredSandbox);
+  }
   const destroySession = onboardSession.loadSession();
   const retainedRecoveryRecords = onboardSession.listRetainedSandboxRecoveryRecords();
   const retainedRecoveryAuthority = selectRetainedSandboxRecoveryAuthority(
@@ -638,6 +646,15 @@ async function destroySandboxUnlocked(
   }
   const retainedSandboxIdentityFingerprint =
     retainedRecoveryAuthority?.sandboxIdentityFingerprint ?? undefined;
+  const destroyGatewayName = resolveSandboxDestroyGatewayName(
+    sandboxName,
+    registeredSandbox,
+    retainedRecoveryAuthority?.gatewayName,
+  );
+  const destroyRuntimeProviderId = resolveGatewayCleanupRuntimeProviderId(
+    destroyGatewayName,
+    registeredSandbox?.openshellDriver,
+  );
   let portableContainerAuthority: ReturnType<typeof preparePortableDemoSandboxDestroyAuthority>;
   try {
     portableContainerAuthority = preparePortableDemoSandboxDestroyAuthority(sandboxName, () => {
@@ -660,18 +677,24 @@ async function destroySandboxUnlocked(
     const registeredSandbox = registry.getSandbox(sandboxName);
     return assertUnambiguousDestroyContainerIdentity(sandboxName, {
       cliName: CLI_NAME,
-      providerId: registeredSandbox
-        ? normalizeRuntimeProviderIdentity(registeredSandbox.openshellDriver)
-        : normalizeRuntimeProviderIdentity(null),
+      providerId: destroyRuntimeProviderId ?? normalizeRuntimeProviderIdentity(null),
       redact: redactDestroyError,
       sandbox: registeredSandbox,
-      ...(retainedSandboxIdentityFingerprint
-        ? { retainedSandboxIdentityFingerprint }
-        : {}),
+      ...(retainedSandboxIdentityFingerprint ? { retainedSandboxIdentityFingerprint } : {}),
     });
   };
   const initialIdentity = portableContainerAuthority ? null : inspectContainerIdentity();
   if (initialIdentity === false) {
+    requestSandboxDestroyExit(1);
+  }
+  if (
+    retainedRecoveryAuthority?.sandboxIdentityFingerprint === null &&
+    initialIdentity?.identities !== undefined &&
+    initialIdentity.identities.length > 0
+  ) {
+    console.error(
+      `  Refusing to destroy retained sandbox '${sandboxName}': the recovery record has no durable sandbox identity, so NemoClaw cannot qualify a residual container for deletion. No sandbox resources were removed. Preserve the recovery record and resolve the container identity conflict before retrying.`,
+    );
     requestSandboxDestroyExit(1);
   }
   const initialContainerIdentities = initialIdentity?.identities;
@@ -742,10 +765,30 @@ async function destroySandboxUnlocked(
     selectedRunOpenshell: cleanupRunOpenshell,
     sandbox,
     sandboxConfirmedAbsent,
+    sandboxPresence = sandboxConfirmedAbsent ? "absent" : "unknown",
   } = destroyPreflight;
-  if (retainedRecoveryAuthority && !sandboxConfirmedAbsent) {
+  if (cleanupGatewayName !== destroyGatewayName) {
+    throw new Error(
+      `Refusing to destroy sandbox '${sandboxName}': gateway authority changed during preflight.`,
+    );
+  }
+  if (retainedRecoveryAuthority && sandboxPresence !== "absent") {
+    // OpenShell has no atomic delete-by-identity primitive: it exposes no
+    // way to bind a mutable-name delete to the retained record's immutable
+    // sandbox id/resource version. Even a fresh identity read immediately
+    // before the delete command cannot close the window where another
+    // OpenShell client removes the retained sandbox and creates a
+    // replacement under the same name between that read and OpenShell
+    // processing the delete (#10863). Automatic deletion of a live retained
+    // sandbox is therefore always fail-closed. Inspection cannot authorize a
+    // later mutable-name delete, so the recovery record remains unresolved
+    // until OpenShell can prove absence through the owning gateway.
+    const presenceDetail =
+      sandboxPresence === "present"
+        ? "OpenShell reports a sandbox present under this name."
+        : "OpenShell could not determine whether a sandbox is present under this name.";
     console.error(
-      `  Refusing to automatically delete retained sandbox '${sandboxName}': OpenShell still reports it present, but its delete command accepts only the mutable sandbox name. NemoClaw cannot bind that deletion to the retained immutable identity. No sandbox resources were removed. Ask an OpenShell administrator to resolve create-attempt label '${retainedRecoveryAuthority.createAttemptNonce}' to the exact sandbox and use an identity-bound removal procedure. After OpenShell confirms the retained sandbox is absent, rerun '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile its verified Docker containers and recovery record.`,
+      `  Refusing to delete retained sandbox '${sandboxName}': ${presenceDetail} NemoClaw cannot bind a mutable-name delete to the retained record (create-attempt label '${retainedRecoveryAuthority.createAttemptNonce}') without an atomic OpenShell delete-by-identity primitive. No sandbox resources were removed. Preserve the recovery record. Inspect 'openshell sandbox list -g ${retainedRecoveryAuthority.gatewayName} -o json' for diagnosis only; do not run mutable-name deletion. Recovery remains blocked until the owning gateway reports the sandbox absent. Then rerun '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile verified residual resources and the recovery record.`,
     );
     preparedManagedLlamaCppCleanup?.abort();
     requestSandboxDestroyExit(1);
@@ -877,14 +920,13 @@ async function destroySandboxUnlocked(
     runtimeSelection: destroyRuntimeSelection,
   } = destructiveResult;
 
-  if (
-    destroyRuntimeSelection &&
-    cleanupGatewayName !== destroyRuntimeSelection.gatewayName
-  ) {
+  if (destroyRuntimeSelection && cleanupGatewayName !== destroyRuntimeSelection.gatewayName) {
     console.error(
       `  Sandbox '${sandboxName}' was deleted, but its cleanup target changed from '${destroyRuntimeSelection.gatewayName}' to '${cleanupGatewayName}'.`,
     );
-    console.error("  Local ownership state was preserved. Restore the recorded gateway binding and retry destroy.");
+    console.error(
+      "  Local ownership state was preserved. Restore the recorded gateway binding and retry destroy.",
+    );
     preparedManagedLlamaCppCleanup?.abort();
     requestSandboxDestroyExit(1);
   }
@@ -966,11 +1008,15 @@ async function destroySandboxUnlocked(
       registeredSandboxCount: registry.listSandboxes().sandboxes.length,
       sandboxStillRegistered: !!registry.getSandbox(sandboxName),
     });
-    cleanupSandboxServices(sandboxName, {
-      stopHostServices: shouldStopHostServices,
-    }, {
-      runOpenshell: cleanupRunOpenshell,
-    });
+    cleanupSandboxServices(
+      sandboxName,
+      {
+        stopHostServices: shouldStopHostServices,
+      },
+      {
+        runOpenshell: cleanupRunOpenshell,
+      },
+    );
   });
   if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired === true) {
     preparedManagedLlamaCppCleanup?.abort();
@@ -1014,6 +1060,10 @@ async function destroySandboxUnlocked(
   }
   const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName);
   const removed = removalOutcome.removed;
+  // A retry after successful registry removal still owns final gateway cleanup.
+  // The gateway runtime marker captured its provider before the first delete.
+  const registryEntryAbsent =
+    removalOutcome.status === "complete" || removalOutcome.status === "not-found";
   if (removalOutcome.status === "blocked") {
     const providerId = normalizeRuntimeProviderIdentity(
       (registry.getSandbox(sandboxName) ?? sandbox)?.openshellDriver,
@@ -1143,14 +1193,24 @@ async function destroySandboxUnlocked(
     }
   }
   if (
-    shouldCleanupGatewayAfterConfirmedFinalDestroy({
-      deleteSucceededOrAlreadyGone,
-      removedRegistryEntry: removed,
-    }, cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {})
+    shouldCleanupGatewayAfterConfirmedFinalDestroy(
+      {
+        deleteSucceededOrAlreadyGone,
+        removedRegistryEntry: registryEntryAbsent,
+        ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
+      },
+      cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {},
+    )
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
     if (shouldCleanupGateway) {
-      cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell);
+      if (destroyRuntimeProviderId) {
+        cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell, {
+          runtimeProviderId: destroyRuntimeProviderId,
+        });
+      } else {
+        cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell);
+      }
     } else {
       // `gateway remove <name>` is the modern OpenShell subcommand on every
       // platform; the old `gateway destroy -g` was pre-0.0.44 only and current

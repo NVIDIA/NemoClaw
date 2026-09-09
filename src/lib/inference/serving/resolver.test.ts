@@ -796,33 +796,41 @@ describe("managed inference resolver", () => {
     });
   });
 
-  it("reports the highest-priority applicable runtime failure", () => {
+  it.each([false, true] as const)("reports the highest-priority runtime failure (explicit: %s)", (
+    explicit,
+  ) => {
     const { catalog: baseCatalog, secondRecipeId } = catalogWithSecondProfile({
       firstPriority: 100,
       secondPriority: 200,
     });
-    const firstRecipeId = shippedCompiledRecipe(baseCatalog).metadata.id;
-    const minimums = new Map([
-      [firstRecipeId, 600_000_000_000],
-      [secondRecipeId, 700_000_000_000],
-    ]);
+    const model = shippedCompiledRecipe(baseCatalog).spec.model;
     const catalog: CompiledManagedInferenceCatalog = {
       ...baseCatalog,
-      recipes: baseCatalog.recipes.map((recipe) => {
-        const minimumGpuMemoryBytes = minimums.get(recipe.metadata.id)!;
-        return {
-          ...recipe,
-          spec: {
-            ...recipe.spec,
-            runtime: { ...recipe.spec.runtime, minimumGpuMemoryBytes },
-          },
-        } as CompiledManagedInferenceCatalog["recipes"][number];
-      }),
+      recipes: baseCatalog.recipes.map(
+        (recipe) =>
+          ({
+            ...recipe,
+            spec: {
+              ...recipe.spec,
+              model,
+              readiness: { ...recipe.spec.readiness, expectedModel: model.servedName },
+              runtime: {
+                ...recipe.spec.runtime,
+                minimumGpuMemoryBytes:
+                  recipe.metadata.id === secondRecipeId ? 700_000_000_000 : 600_000_000_000,
+              },
+            },
+          }) as CompiledManagedInferenceCatalog["recipes"][number],
+      ),
     };
 
-    expect(resolveManagedInferenceServing(resolverInput(), catalog)).toMatchObject({
-      outcome: "no-match",
-      code: "requirements-not-met",
+    expect(
+      resolveManagedInferenceServing(
+        resolverInput(explicit ? { intent: { vllmModel: model.servedName } } : {}),
+        catalog,
+      ),
+    ).toMatchObject({
+      outcome: explicit ? "rejected" : "no-match",
       message:
         "spark-head: GPU memory capacity 500000000000 is below the recipe minimum 700000000000 bytes.",
     });
