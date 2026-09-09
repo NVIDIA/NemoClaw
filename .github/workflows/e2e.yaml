@@ -5175,6 +5175,10 @@ jobs:
           docker logs "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >&2
           exit 1
 
+      - name: Remove Docker auth before candidate build
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
       - name: Build exact all-agent protected runtime images
         env:
           BASE_DCODE: ${{ steps.runtime-bases.outputs.dcode }}
@@ -5184,7 +5188,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$GITHUB_WORKSPACE/.candidate-runtime/scripts/checks/build-protected-managed-images.sh" \
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
+            "$GITHUB_WORKSPACE/.candidate-runtime/scripts/checks/build-protected-managed-images.sh" \
             --output "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT" \
             --revision "$CHECKOUT_SHA" \
             --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \

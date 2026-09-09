@@ -422,6 +422,23 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
+  it("removes Docker Hub credentials before candidate code runs", () => {
+    const value = workflow();
+    const steps = runtimeJob(value).steps as Array<Record<string, unknown>>;
+    const cleanupIndex = steps.findIndex(
+      (step) => step.name === "Remove Docker auth before candidate build",
+    );
+    const [cleanup] = steps.splice(cleanupIndex, 1);
+    const buildIndex = steps.findIndex(
+      (step) => step.name === "Build exact all-agent protected runtime images",
+    );
+    steps.splice(buildIndex + 1, 0, cleanup);
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime protected qualification and cleanup steps drifted",
+    );
+  });
+
   it("rejects a hosted producer that is not selected with protected runtime", () => {
     const value = workflow();
     multiarchJob(value).if =
