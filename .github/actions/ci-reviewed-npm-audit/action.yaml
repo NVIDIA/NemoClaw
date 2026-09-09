@@ -18,10 +18,6 @@ inputs:
     description: Whether this trusted caller may publish reusable audit records.
     required: false
     default: "false"
-  locked-graph:
-    description: Optional configured locked graph to audit instead of every reviewed graph.
-    required: false
-    default: ""
 
 runs:
   using: composite
@@ -105,7 +101,6 @@ runs:
     - name: Materialize and audit reviewed npm graphs
       shell: bash
       env:
-        NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH: ${{ inputs.locked-graph }}
         NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: ${{ inputs.target-root }}
         NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: ${{ inputs.report-dir }}
         NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIR: ${{ inputs.cache-directory }}

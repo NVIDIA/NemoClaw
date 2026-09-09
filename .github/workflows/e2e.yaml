@@ -4224,49 +4224,6 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   # Manual PR qualification also requires the exact candidate activation contract.
-  managed-image-protected-audit:
-    name: Produce trusted protected mcporter audit evidence
-    needs: generate-matrix
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout trusted reviewed npm audit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
-          persist-credentials: false
-          sparse-checkout: |
-            .github/actions/ci-reviewed-npm-audit
-            ci/npm-audit-exceptions.json
-            ci/reviewed-npm-audit.json
-            scripts/audit-reviewed-npm-graph.mts
-            scripts/lib/npm-audit-receipt.mts
-            scripts/lib/repository-input-path.mts
-            scripts/lib/openclaw-npm-remediation.mts
-            scripts/lib/reviewed-npm-archive.mts
-            scripts/lib/reviewed-npm-audit.mts
-          sparse-checkout-cone-mode: false
-
-      - name: Checkout exact protected audit target
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          path: .candidate-audit
-          persist-credentials: false
-
-      - name: Audit exact candidate mcporter graph from trusted code
-        uses: ./.github/actions/ci-reviewed-npm-audit
-        with:
-          target-root: ${{ github.workspace }}/.candidate-audit
-          report-dir: artifacts/reviewed-npm-audit
-          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
-          locked-graph: mcporter-runtime
-
   managed-image-multiarch-startup:
     name: Protected managed-image startup (${{ matrix.platform }})
     needs: [base-image-publication, generate-matrix]
@@ -4999,14 +4956,8 @@ jobs:
   # assertions without the hosted cache.
   managed-image-protected-runtime:
     name: Protected managed-image GPU and local inference
-    needs:
-      [
-        base-image-publication,
-        generate-matrix,
-        managed-image-multiarch-startup,
-        managed-image-protected-audit,
-      ]
-    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && needs['managed-image-protected-audit'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
+    needs: [base-image-publication, generate-matrix, managed-image-multiarch-startup]
+    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 300
     permissions:
@@ -5083,17 +5034,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Reuse or refresh reviewed audit evidence before the offline build
+        uses: ./.github/actions/ci-reviewed-npm-audit
+        with:
+          target-root: ${{ github.workspace }}/.candidate-runtime
+          report-dir: artifacts/reviewed-npm-audit
+          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
+
       - name: Download exact protected runtime build cache
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}
           path: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}
-
-      - name: Download trusted protected mcporter audit evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: reviewed-npm-audit
-          path: ${{ runner.temp }}/protected-reviewed-npm-audit
 
       - *dockerhub-auth
 
@@ -5246,7 +5198,7 @@ jobs:
             --platform linux/amd64 \
             --source-root "$GITHUB_WORKSPACE/.candidate-runtime" \
             --cache-from "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE" \
-            --audit-evidence-from "$RUNNER_TEMP/protected-reviewed-npm-audit" \
+            --audit-evidence-from "$GITHUB_WORKSPACE/.candidate-runtime/artifacts/reviewed-npm-audit" \
             --openclaw-base "$BASE_OPENCLAW" \
             --hermes-base "$BASE_HERMES" \
             --dcode-base "$BASE_DCODE"

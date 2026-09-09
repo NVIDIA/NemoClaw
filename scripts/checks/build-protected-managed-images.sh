@@ -334,8 +334,7 @@ confirm_build_retry_state() {
 run_build_with_retry() {
   local agent="$1"
   local image_repository="$2"
-  local retry_cleanup="$3"
-  shift 3
+  shift 2
   local -a build_command=("$@")
   local attempt_log="$work_dir/${agent}-build-attempt.log"
   local max_attempts=2
@@ -383,9 +382,7 @@ run_build_with_retry() {
       return "$build_status"
     fi
 
-    if [[ -n "$retry_cleanup" ]]; then
-      rm -rf -- "$retry_cleanup"
-    elif ! confirm_build_retry_state "$agent" "$image_repository"; then
+    if ! confirm_build_retry_state "$agent" "$image_repository"; then
       echo "::error::Protected managed-image build outcome=failed-no-retry agent=${agent} attempt=${attempt}/${max_attempts} failure=state-check" >&2
       return "$build_status"
     fi
@@ -471,7 +468,7 @@ build_agent() {
     --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
     --build-arg "TARGETARCH=${target_arch}"
     "$source_root")
-  run_build_with_retry "$agent" "$image_repository" "" "${build_command[@]}"
+  run_build_with_retry "$agent" "$image_repository" "${build_command[@]}"
 
   local digest
   digest="$(jq -er '."containerimage.digest"' "$metadata")"
