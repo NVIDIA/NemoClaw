@@ -157,6 +157,50 @@ describe("sandbox command transport", () => {
     ]);
   });
 
+  it("reports a timeout when the gateway-pinned exec subprocess is SIGTERM-killed (#11162)", () => {
+    const deps = createDependencies({
+      extractSandboxExecCommandStdout: vi.fn(() => null),
+    });
+    mocks.spawnSync.mockReturnValue(
+      spawnResult("", {
+        status: null,
+        signal: "SIGTERM",
+        error: Object.assign(new Error("ETIMEDOUT"), { code: "ETIMEDOUT" }),
+      }),
+    );
+    const failures: unknown[] = [];
+
+    expect(
+      executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+        allowLocalDockerFallback: false,
+        onTransportFailure: (failure) => failures.push(failure),
+      }),
+    ).toBeNull();
+    expect(failures).toEqual([{ kind: "timeout", timeoutMs: 9000 }]);
+  });
+
+  it("reports a subprocess error code when the gateway-pinned exec cannot spawn (#11162)", () => {
+    const deps = createDependencies({
+      extractSandboxExecCommandStdout: vi.fn(() => null),
+    });
+    mocks.spawnSync.mockReturnValue(
+      spawnResult("", {
+        status: null,
+        signal: null,
+        error: Object.assign(new Error("spawn openshell ENOENT"), { code: "ENOENT" }),
+      }),
+    );
+    const failures: unknown[] = [];
+
+    expect(
+      executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+        allowLocalDockerFallback: false,
+        onTransportFailure: (failure) => failures.push(failure),
+      }),
+    ).toBeNull();
+    expect(failures).toEqual([{ kind: "error", detail: "ENOENT" }]);
+  });
+
   it("does not use local Docker fallback for gateway-pinned exec (#9834)", () => {
     const deps = createDependencies({
       extractSandboxExecCommandStdout: vi.fn(() => null),

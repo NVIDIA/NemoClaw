@@ -11,9 +11,22 @@ export type SandboxCommandResult = {
   stderr: string;
 };
 
+/**
+ * Why a sandbox exec transport produced no usable result. A subprocess that is
+ * killed by the outer timeout is a distinct condition from a subprocess that
+ * failed to spawn or exited abnormally; callers such as the inference
+ * invocation probe surface the real reason instead of a generic "unavailable"
+ * message (#11162). The `detail` is limited to a subprocess error code so no
+ * untrusted command output can leak through this boundary.
+ */
+export type SandboxCommandTransportFailure =
+  | { kind: "timeout"; timeoutMs: number }
+  | { kind: "error"; detail?: string };
+
 export type SandboxExecCommandOptions = {
   allowLocalDockerFallback?: boolean;
   gatewayName?: string;
+  onTransportFailure?: (failure: SandboxCommandTransportFailure) => void;
   runtimeEnv?: NodeJS.ProcessEnv;
 };
 
@@ -57,6 +70,30 @@ export const DEFAULT_SANDBOX_EXEC_TIMEOUT_MS = 15000;
 function resolveSandboxExecTimeout(timeout: number): number {
   const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
   return Number.isFinite(timeoutOverride) && timeoutOverride > 0 ? timeoutOverride : timeout;
+}
+
+/**
+ * Classify a subprocess outcome that yielded no usable command result. A
+ * subprocess timeout sets `error.code = "ETIMEDOUT"` and kills the child with
+ * SIGTERM; report that as a timeout so callers can distinguish a slow endpoint
+ * from a genuine subprocess error (#11162). A missing error and signal returns
+ * `null`: the cause is unknown, so the caller keeps its generic message. Only
+ * the error code (never the error message or any captured output) crosses this
+ * boundary. Shared by the OpenShell exec transport and the DCode
+ * `runOpenshell` probe path so both classify identically.
+ */
+export function classifySandboxCommandTransportFailure(
+  outcome: { error?: unknown; signal?: NodeJS.Signals | null },
+  timeoutMs: number,
+): SandboxCommandTransportFailure | null {
+  const error = outcome.error as NodeJS.ErrnoException | undefined;
+  if (error?.code === "ETIMEDOUT" || outcome.signal === "SIGTERM") {
+    return { kind: "timeout", timeoutMs };
+  }
+  if (error) {
+    return error.code ? { kind: "error", detail: error.code } : { kind: "error" };
+  }
+  return null;
 }
 
 export function executeSandboxCommandTransport(
@@ -167,6 +204,7 @@ export function executeSandboxExecCommandTransport(
 ): SandboxCommandResult | null {
   const markedCommand = deps.buildSandboxExecMarkedCommand(command);
   const effectiveTimeout = resolveSandboxExecTimeout(timeout);
+  let pendingFailure: SandboxCommandTransportFailure | null = null;
   try {
     const gatewayArgs = options.gatewayName ? ["-g", options.gatewayName] : [];
     const result = spawnSync(
@@ -192,11 +230,18 @@ export function executeSandboxExecCommandTransport(
     );
     const parsed = parseSandboxCommandResult(deps, result);
     if (parsed !== null) return parsed;
-  } catch {
+    pendingFailure = classifySandboxCommandTransportFailure(result, effectiveTimeout);
+  } catch (error) {
     // OpenShell transport failed; try the trusted direct-container fallback.
+    pendingFailure = classifySandboxCommandTransportFailure({ error }, effectiveTimeout);
   }
-  if (options.allowLocalDockerFallback === false) return null;
+  if (options.allowLocalDockerFallback === false) {
+    if (pendingFailure) options.onTransportFailure?.(pendingFailure);
+    return null;
+  }
   // Keep the fallback outside the OpenShell try/catch so a fail-closed identity
   // refusal cannot be caught and retried against changing container state.
-  return executeLocalSandboxCommand(deps, sandboxName, markedCommand, effectiveTimeout);
+  const fallback = executeLocalSandboxCommand(deps, sandboxName, markedCommand, effectiveTimeout);
+  if (fallback === null && pendingFailure) options.onTransportFailure?.(pendingFailure);
+  return fallback;
 }
