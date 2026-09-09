@@ -64,6 +64,52 @@ IFS=$'\t' read -r VERSION CANDIDATE_SHA PREVIOUS_TAG_SHA \
 DOCS_PREFIX='automation/post-merge-docs-'
 ```
 
+## Start Independent Checks at Kickoff
+
+Inspect documentation, images, audit freshness, general E2E context, and local tooling before waiting
+on any one prerequisite. Before planning, inspect the intended range and label those results
+preliminary. Run the plan-bound commands below only after a plan exists.
+
+- Inspect the cumulative docs PR, remaining patch, review state, coverage, and release entry.
+  Start authorized docs preparation or review while images run. Preserve the branch ownership in
+  [docs automation](../../../../docs/AUTOMATION.md#post-merge-documentation-catch-up).
+- Read image evidence below. If it is pending or failed, inspect retry prerequisites before proposing recovery.
+- For audit receipts a pending image build or retry will consume, check expiry and input identity with
+  `scripts/lib/npm-audit-receipt.mts`. Use the producer's receipt, raw report, and matching inputs.
+  Do not infer freshness from a green producer job or artifact retention. Recheck before reuse.
+- Read the newest full E2E context through `nemoclaw-maintainer-e2e`; do not dispatch a run automatically.
+- Run `npm run dev:doctor` when local docs preparation or review is needed.
+  Report Docker readiness separately from review readiness. The doctor does not verify the review
+  launcher; report review readiness as unverified until its required environment is checked.
+
+Collect independent reads concurrently when possible. Keep prerequisite-dependent commands ordered.
+Give each shell check its own initialized variables and temporary directory. Preserve `run_or_stop`
+within each check; never consume its partial output after failure. Follow the access hard stop for
+access errors. Otherwise, collect the remaining independent results before reporting readiness.
+
+Show one compact summary: item, ready/pending/blocked/unverified, evidence, and next action.
+Use pending for active work, blocked for a confirmed failed prerequisite, and unverified for missing
+or inconclusive evidence. Early results guide preparation; they do not replace candidate-bound
+evidence or maintainer decisions. Recheck affected evidence when the intended candidate changes.
+
+## Check Prerequisites Before a Retry
+
+Inspect the failed job and its upstream producer before asking for a rerun. Name the run, attempt,
+commit, workflow event, upstream result, and receipt validity. Classify the failure before choosing
+the smallest permitted recovery.
+
+- **Canceled publisher:** establish eligible successful publication evidence before retrying dependent
+  E2E. A dependent rerun does not repair its publisher.
+- **Successful manual publisher:** check eligibility, not just success.
+  `tools/e2e/base-image-publication.mts` selects applicable `main` push publications; a manual image
+  publication does not satisfy that selection. This restriction does not prohibit manual E2E runs.
+- **Expired audit receipt:** refresh the audit producer before retrying its consumers.
+  A failed-job-only rerun can reuse the expired receipt from a successful producer.
+  Identify a supported producer-inclusive rerun before requesting approval; stop if none is available.
+
+Keep existing rerun authorization requirements. Do not add retries or waive evidence checks.
+After authorized recovery, read the new attempt and verify the prerequisite before retrying a dependent job.
+
 ## Release Entry and Documentation Coverage
 
 For a current-main plan, find exactly one target heading at the candidate. Save only that H2 section,
@@ -500,5 +546,6 @@ Record these values:
 If Launchable cleanup fails, report the workspace and follow the cleanup and credential-remediation
 boundary in `nemoclaw-maintainer-e2e`. This remains operational follow-up, not a tag gate.
 
-If the base-image aggregate is missing or failed, repair or rerun the affected publisher workflow
-and verifier. The general E2E decision cannot replace required image evidence.
+If the base-image aggregate is missing or failed, follow [retry prerequisites](#check-prerequisites-before-a-retry)
+before repairing or rerunning the affected publisher and verifier. The general E2E decision cannot
+replace required image evidence.

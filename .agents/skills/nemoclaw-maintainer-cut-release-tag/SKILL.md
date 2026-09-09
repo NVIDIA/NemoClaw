@@ -60,7 +60,7 @@ Copy this checklist and update it as you work:
 ```text
 Release tag:
 - [ ] 1. Generate the version plan and release-brief template
-- [ ] 2. Verify required candidate evidence
+- [ ] 2. Inspect independent prerequisites together and verify required candidate evidence
 - [ ] 3. Show E2E context and record the maintainer's decision
 - [ ] 4. Finish and review the Markdown release brief
 - [ ] 5. Confirm, cut, and read back the signed tag
@@ -135,6 +135,8 @@ the helper after evidence has been added.
 
 Read and follow [Candidate Evidence](references/candidate-evidence.md). It owns the executable reads
 for the release entry, documentation coverage, and applicable base-image verifier.
+Start with its [kickoff checks](references/candidate-evidence.md#start-independent-checks-at-kickoff).
+Inspect general E2E context early and continue authorized docs preparation during image waits.
 
 Show the complete documentation coverage evidence. Offer the maintainer the three choices defined
 there. If the maintainer requests documentation work or stops, do not continue to E2E or tag
@@ -241,8 +243,9 @@ Classify the effects that each workflow owns:
   succeed. Report Pi candidate failures separately; they do not determine production promotion.
 
 A failed post-tag workflow does not change tag success. Report the failing job and recovery path.
-Ask before a rerun. Bind and monitor the new attempt. The managed-image workflow supports failed-job
-reruns that reuse successful producer artifacts from the same run.
+Check [retry prerequisites](references/candidate-evidence.md#check-prerequisites-before-a-retry),
+then ask before a rerun. Bind and monitor the new attempt. The managed-image workflow supports failed-job
+reruns that reuse successful producer artifacts from the same run. Verify receipt validity before reuse.
 
 After image classification, read the peeled `lkg` commit. This skill never moves `lkg`. If
 production promotion succeeded and `lkg` differs, show the current and proposed releases and ask for
@@ -266,8 +269,8 @@ Keep the semver tag immutable.
 - Documentation coverage shows a gap, failed checks, unapproved changes, unsupported paths, or an
   open managed docs PR: show that state. Let the maintainer proceed, create or update a docs PR, or
   stop. If documentation work changes the candidate, generate a new plan.
-- Required GHCR evidence fails: repair and rerun only the affected image work. Do not replace it
-  with the general E2E proceed decision.
+- Required GHCR evidence fails: check retry prerequisites, then repair and rerun only the affected
+  image work with authorization. Do not replace it with the general E2E proceed decision.
 - General E2E is old, incomplete, failed, or from another SHA: show it and offer focused, full, or
   proceed. Record the decision and reason in the brief.
 - Candidate is no longer on `origin/main`, the previous release changed, or the version is no longer
