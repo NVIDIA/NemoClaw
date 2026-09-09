@@ -1139,7 +1139,7 @@ describe("messaging provider installed-runtime proofs", () => {
       fs.mkdirSync(path.join(openclawPackageRoot, "dist", "plugin-sdk"), { recursive: true });
       fs.writeFileSync(
         path.join(openclawPackageRoot, "package.json"),
-        JSON.stringify({ name: "openclaw", version: "2026.7.1" }),
+        JSON.stringify({ name: "openclaw", version: "2026.9.1" }),
       );
       fs.writeFileSync(path.join(openclawPackageRoot, "dist", "plugin-sdk", "temp-path.js"), "");
       fs.mkdirSync(path.join(openclawPackageRoot, "node_modules", "ajv"), { recursive: true });
@@ -1161,7 +1161,7 @@ describe("messaging provider installed-runtime proofs", () => {
       fs.mkdirSync(path.join(slackPackageRoot, "dist"), { recursive: true });
       fs.writeFileSync(
         path.join(slackProjectRoot, "package.json"),
-        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.7.1" } }),
+        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.9.1" } }),
       );
       fs.writeFileSync(
         path.join(slackPackageRoot, "package.json"),

@@ -36,7 +36,7 @@ function writeFixture(axiosVersion = "1.16.0"): string {
     `${JSON.stringify(
       {
         name: "@openclaw/slack",
-        version: "2026.7.1",
+        version: "2026.9.1",
         dependencies: { "@slack/bolt": "4.7.3" },
         bundledDependencies: ["@slack/bolt"],
       },
@@ -49,13 +49,13 @@ function writeFixture(axiosVersion = "1.16.0"): string {
     `${JSON.stringify(
       {
         name: "@openclaw/slack",
-        version: "2026.7.1",
+        version: "2026.9.1",
         lockfileVersion: 3,
         requires: true,
         packages: {
           "": {
             name: "@openclaw/slack",
-            version: "2026.7.1",
+            version: "2026.9.1",
             dependencies: { "@slack/bolt": "4.7.3" },
           },
           "node_modules/axios": {
@@ -84,7 +84,7 @@ function writeDiagnosticsFixture(jaegerVersion = "2.8.0"): string {
   mkdirSync(sdkDirectory, { recursive: true });
   writeFileSync(
     path.join(directory, "package.json"),
-    `${JSON.stringify({ name: "@openclaw/diagnostics-otel", version: "2026.7.1" }, null, 2)}\n`,
+    `${JSON.stringify({ name: "@openclaw/diagnostics-otel", version: "2026.9.1" }, null, 2)}\n`,
   );
   writeFileSync(
     path.join(sdkDirectory, "package.json"),
@@ -103,10 +103,10 @@ function writeDiagnosticsFixture(jaegerVersion = "2.8.0"): string {
     `${JSON.stringify(
       {
         name: "@openclaw/diagnostics-otel",
-        version: "2026.7.1",
+        version: "2026.9.1",
         lockfileVersion: 3,
         packages: {
-          "": { name: "@openclaw/diagnostics-otel", version: "2026.7.1" },
+          "": { name: "@openclaw/diagnostics-otel", version: "2026.9.1" },
           "node_modules/@opentelemetry/sdk-node": {
             version: "0.219.0",
             dependencies: { "@opentelemetry/propagator-jaeger": jaegerVersion },
@@ -155,7 +155,7 @@ function writeCurrentCoreFixture(
     `${JSON.stringify(
       {
         name: "openclaw",
-        version: "2026.7.1",
+        version: "2026.9.1",
         dependencies: {
           "@modelcontextprotocol/sdk": "1.29.0",
           "@openclaw/fs-safe": "0.4.1",
@@ -173,12 +173,12 @@ function writeCurrentCoreFixture(
     `${JSON.stringify(
       {
         name: "openclaw",
-        version: "2026.7.1",
+        version: "2026.9.1",
         lockfileVersion: 3,
         packages: {
           "": {
             name: "openclaw",
-            version: "2026.7.1",
+            version: "2026.9.1",
             dependencies: {
               "@modelcontextprotocol/sdk": "1.29.0",
               "@openclaw/fs-safe": "0.4.1",
@@ -270,7 +270,7 @@ function writeDiscordFixture(undiciVersion = "8.5.0"): string {
     `${JSON.stringify(
       {
         name: "@openclaw/discord",
-        version: "2026.7.1",
+        version: "2026.9.1",
         dependencies,
         bundledDependencies: ["undici"],
       },
@@ -291,10 +291,10 @@ function writeDiscordFixture(undiciVersion = "8.5.0"): string {
     `${JSON.stringify(
       {
         name: "@openclaw/discord",
-        version: "2026.7.1",
+        version: "2026.9.1",
         lockfileVersion: 3,
         packages: {
-          "": { name: "@openclaw/discord", version: "2026.7.1", dependencies },
+          "": { name: "@openclaw/discord", version: "2026.9.1", dependencies },
           "node_modules/undici": {
             version: undiciVersion,
             resolved: `https://registry.npmjs.org/undici/-/undici-${undiciVersion}.tgz`,
@@ -436,7 +436,7 @@ describe("OpenClaw npm remediation", () => {
   it("replaces the reviewed bundled Axios graph with the patched graph", () => {
     const directory = writeFixture();
 
-    patchOpenClawPluginPackageGraph(directory, "@openclaw/slack@2026.7.1");
+    patchOpenClawPluginPackageGraph(directory, "@openclaw/slack@2026.9.1");
 
     expect(readPackageField<string>(directory, "dependencies.axios")).toBe("1.18.0");
     expect(readPackageField<string[]>(directory, "bundledDependencies")).toEqual([
@@ -477,7 +477,7 @@ describe("OpenClaw npm remediation", () => {
   it("rejects an upstream Axios graph that changed after review", () => {
     const directory = writeFixture("1.17.0");
 
-    expect(() => patchOpenClawPluginPackageGraph(directory, "@openclaw/slack@2026.7.1")).toThrow(
+    expect(() => patchOpenClawPluginPackageGraph(directory, "@openclaw/slack@2026.9.1")).toThrow(
       "must resolve node_modules/axios to 1.16.0 before remediation",
     );
   });
@@ -526,7 +526,7 @@ describe("OpenClaw npm remediation", () => {
     );
   });
 
-  it("replaces the reviewed OpenClaw 2026.7.1 dependency resolutions", () => {
+  it("replaces the reviewed OpenClaw 2026.9.1 dependency resolutions", () => {
     const directory = writeCurrentCoreFixture();
 
     patchCurrentOpenClawCorePackageGraph(directory);
