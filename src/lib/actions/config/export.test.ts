@@ -19,7 +19,8 @@ vi.mock("../../config/schema", () => ({
   validateNemoClawConfig: mocks.validateNemoClawConfig,
 }));
 
-import { runConfigExport, type ConfigExportDependencies } from "./export";
+import { Check } from "typebox/value";
+import { runConfigExport, ConfigExportResultSchema, type ConfigExportDependencies } from "./export";
 
 import {
   parseNemoClawConfigDocumentName,
@@ -37,8 +38,8 @@ function dependencies(): ConfigExportDependencies {
   mocks.validateNemoClawConfig.mockReset().mockReturnValue(config);
   mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
     yaml: "kind: NemoClawConfig\n",
-    documentDigest: "doc",
-    specDigest: "spec",
+    documentDigest: "sha256:" + "a".repeat(64),
+    specDigest: "sha256:" + "b".repeat(64),
   });
   return {
     observe: vi.fn(async () => ({ ok: true, source: observation, attempts: 1 }) as const),
@@ -81,8 +82,8 @@ describe("runConfigExport", () => {
           status: "succeeded",
           sourceSandbox: "alpha",
           outputPath: "/tmp/alpha.yaml",
-          documentDigest: "doc",
-          specDigest: "spec",
+          documentDigest: "sha256:" + "a".repeat(64),
+          specDigest: "sha256:" + "b".repeat(64),
         },
       },
     });
@@ -92,6 +93,29 @@ describe("runConfigExport", () => {
     });
     expect(mocks.validateNemoClawConfig).toHaveBeenCalledWith({ kind: "NemoClawConfig" });
     expect(deps.publish).toHaveBeenCalledWith("/tmp/alpha.yaml", "kind: NemoClawConfig\n", true);
+  });
+
+  it.each([
+    { version: 2 },
+    { status: "failed" },
+    { sourceSandbox: "invalid sandbox" },
+    { outputPath: "" },
+    { outputPath: "relative.yaml" },
+    { documentDigest: "sha256:document" },
+    { specDigest: "sha256:" + "a".repeat(64) + "\n" },
+    { unexpected: "extra" },
+  ])("rejects a malformed JSON result: %j", (invalid) => {
+    expect(
+      Check(ConfigExportResultSchema, {
+        version: 1,
+        status: "succeeded",
+        sourceSandbox: "alpha",
+        outputPath: "/tmp/alpha.yaml",
+        documentDigest: "sha256:" + "a".repeat(64),
+        specDigest: "sha256:" + "b".repeat(64),
+        ...invalid,
+      }),
+    ).toBe(false);
   });
 
   it("returns a stdout failure without exposing the rejected write error", async () => {

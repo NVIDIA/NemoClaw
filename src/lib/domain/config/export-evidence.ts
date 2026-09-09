@@ -1,8 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ImmutableImageReference, InferenceApi } from "../../config/model";
+import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
+import {
+  BoundedTextSchema,
+  CredentialEnvironmentReferenceNameSchema,
+  ImmutableImageReferenceSchema,
+  InferenceEndpointSchema,
+  LocalResourceNameSchema,
+  NemoClawInferenceApiSchema,
+  RuntimeProviderSchema,
+  SandboxNameSchema,
+  TcpPortSchema,
+  isCredentialEnvironmentReferenceName,
+  isValidNemoClawBoundedText,
+  isValidNemoClawInferenceEndpoint,
+  isValidNemoClawSandboxName,
+} from "../../config/model";
+import type { SandboxConfiguration } from "../sandbox/configuration";
 import type { SandboxEntry } from "../../state/registry/types";
+
+const { Type } = require("typebox") as typeof TypeBoxModule;
 
 type Primitive = bigint | boolean | null | number | string | symbol | undefined;
 type DeepReadonly<Value> = Value extends Primitive
@@ -91,17 +109,6 @@ export interface ObservedExportPolicy {
   readonly document: string;
 }
 
-export type ObservedExportConfiguration = Readonly<{
-  sandboxId: string;
-  workspace: string;
-  revision: number;
-  policyHash: string;
-  configRevision: string;
-  providerEnvRevision: string;
-  policySource: "sandbox" | "global";
-  globalPolicyVersion: number;
-}>;
-
 export interface ObservedExportSandboxIdentity {
   readonly sandboxId: string;
   readonly fingerprint: string;
@@ -136,7 +143,7 @@ export type RawExportSnapshot =
       gateway: ObservedExportGateway;
       inference: ObservedExportInference;
       policy: ObservedExportPolicy;
-      configuration: ObservedExportConfiguration;
+      configuration: SandboxConfiguration;
     }>;
 
 export type ObservedExportSnapshot = Extract<RawExportSnapshot, { kind: "observed" }>;
@@ -169,33 +176,39 @@ export interface ExportFinding {
 
 export type NonEmptyExportFindings = readonly [ExportFinding, ...ExportFinding[]];
 
-export interface VerifiedExportGateway {
-  readonly name: string;
-  readonly port: number;
-}
+// Runtime refinements preserve semantic checks that are not part of JSON Schema.
+const ExportInferenceSchema = Type.Object({
+  provider: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
+  model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
+  api: NemoClawInferenceApiSchema,
+  endpoint: Type.Refine(InferenceEndpointSchema, isValidNemoClawInferenceEndpoint),
+  credentialEnv: Type.Optional(
+    Type.Refine(CredentialEnvironmentReferenceNameSchema, isCredentialEnvironmentReferenceName),
+  ),
+});
 
-export interface VerifiedExportInference {
-  readonly provider: string;
-  readonly model: string;
-  readonly api: InferenceApi;
-  readonly endpoint: string;
-  readonly credentialEnv?: string;
-}
+/** Representable values only; provenance and policy qualification remain separate. */
+export const ExportSourceValuesSchema = Type.Object({
+  sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
+  runtime: Type.Object({
+    provider: RuntimeProviderSchema,
+    imageRef: ImmutableImageReferenceSchema,
+  }),
+  gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
+  inference: ExportInferenceSchema,
+});
+
+type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;
+export type VerifiedExportGateway = ExportSourceValues["gateway"];
+export type VerifiedExportInference = ExportSourceValues["inference"];
 
 declare const VERIFIED_EXPORT_SOURCE: unique symbol;
 
 /** Source values that passed all v1 export eligibility and provenance checks. */
-export interface VerifiedExportSource {
+export type VerifiedExportSource = ExportSourceValues & {
   readonly [VERIFIED_EXPORT_SOURCE]: true;
-  readonly sandboxName: string;
-  readonly runtime: Readonly<{
-    provider: string;
-    imageRef: ImmutableImageReference;
-  }>;
-  readonly gateway: VerifiedExportGateway;
-  readonly inference: VerifiedExportInference;
   readonly policy: CanonicalExportPolicy;
-}
+};
 
 export type ExportSourceVerificationResult =
   | Readonly<{ kind: "verified"; source: VerifiedExportSource }>

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SandboxConfiguration } from "../../domain/sandbox/configuration";
+import { SandboxConfigResponseSchema } from "./sdk-read-schema";
 import {
   connectOpenShellReader,
   OpenShellReadError,
@@ -12,23 +14,10 @@ import {
   type ReadRequest,
 } from "./sdk-read";
 
-import { SandboxConfigResponseSchema } from "./sdk-read-schema";
-
-export type SandboxConfig = Readonly<{
-  sandboxId: string;
-  workspace: string;
-  revision: number;
-  policyHash: string;
-  configRevision: string;
-  providerEnvRevision: string;
-  policySource: "sandbox" | "global";
-  globalPolicyVersion: number;
-}>;
-
 /** Configuration identity complements the existing effective-policy reader (#9805, #9826). */
 export function createSandboxConfig(connect: ConnectOpenShellReader = connectOpenShellReader) {
   return {
-    get: (request: ReadRequest & Readonly<{ sandboxId: string }>): Promise<SandboxConfig> =>
+    get: (request: ReadRequest & Readonly<{ sandboxId: string }>): Promise<SandboxConfiguration> =>
       readOpenShell(request, async () => {
         const sandboxId = text(request.sandboxId);
         const client = await connect(request.target);

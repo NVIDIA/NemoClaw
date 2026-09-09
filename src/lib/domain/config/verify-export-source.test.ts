@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Check } from "typebox/value";
+import { ExportSourceValuesSchema } from "./export-evidence";
 import { describe, expect, it } from "vitest";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
@@ -217,9 +219,30 @@ describe("config export source verification (#10938)", () => {
       },
     });
     const source = verifiedSource(result);
+    expect(Check(ExportSourceValuesSchema, source)).toBe(true);
     expect(source).not.toHaveProperty("registry");
     expect(Object.isFrozen(source)).toBe(true);
     expect(Object.isFrozen(source.policy)).toBe(true);
+  });
+
+  it.each([
+    { sandboxName: "alpha--beta" },
+    { runtime: { provider: "docker", imageRef: "registry/image:latest" } },
+    { gateway: { name: "nemoclaw", port: 0 } },
+    { inference: { provider: "e\u0301".repeat(257) } },
+    { inference: { api: "openai-unknown" } },
+    { inference: { endpoint: "https://user:secret@api.example.com/v1" } },
+    { inference: { endpoint: "https://api.example.com/%0A%" } },
+    { inference: { credentialEnv: "NEMOCLAW_INTERNAL_KEY" } },
+  ])("rejects unrepresentable source values: %j", (invalid) => {
+    const source = verifiedSource(verify(snapshot()));
+    expect(
+      Check(ExportSourceValuesSchema, {
+        ...source,
+        ...invalid,
+        inference: { ...source.inference, ...invalid.inference },
+      }),
+    ).toBe(false);
   });
 
   it("reports every excluded registry capability", () => {

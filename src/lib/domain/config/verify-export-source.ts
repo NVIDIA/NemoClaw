@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
 import { isDeepStrictEqual } from "node:util";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
@@ -21,6 +22,7 @@ import {
   isSupportedInferenceApi,
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
+import { ExportSourceValuesSchema } from "./export-evidence";
 import type {
   CanonicalExportPolicy,
   ExportFinding,
@@ -32,6 +34,8 @@ import type {
   QualifiedExportSnapshot,
   VerifiedExportSource,
 } from "./export-evidence";
+
+const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
@@ -650,26 +654,6 @@ function inspectWorkload(entry: ObservedExportRegistry) {
   return { authority, findings };
 }
 
-function verifiedInference(
-  entry: ObservedExportRegistry,
-): VerifiedExportSource["inference"] | null {
-  const selected = normalizeInferenceSelection(entry);
-  if (
-    !isValidNemoClawBoundedText(selected.provider) ||
-    !isValidNemoClawBoundedText(selected.model) ||
-    !isValidNemoClawInferenceEndpoint(selected.endpointUrl) ||
-    !isSupportedInferenceApi(selected.preferredInferenceApi)
-  )
-    return null;
-  return {
-    provider: selected.provider,
-    model: selected.model,
-    api: selected.preferredInferenceApi,
-    endpoint: selected.endpointUrl,
-    ...(selected.credentialEnv === null ? {} : { credentialEnv: selected.credentialEnv }),
-  };
-}
-
 function completeVerifiedSource(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
@@ -677,16 +661,20 @@ function completeVerifiedSource(
   policy: CanonicalExportPolicy,
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
-  const inference = verifiedInference(entry);
-  if (
-    !isValidNemoClawRuntimeProvider(entry.openshellDriver) ||
-    !authority ||
-    !isImmutableImageReference(authority.receipt.reference) ||
-    !isValidNemoClawSandboxName(requestedSandboxName) ||
-    !isValidNemoClawLocalResourceName(snapshot.gateway.name) ||
-    !isValidNemoClawPort(snapshot.gateway.port) ||
-    !inference
-  ) {
+  const selected = normalizeInferenceSelection(entry);
+  const values = {
+    sandboxName: requestedSandboxName,
+    runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
+    gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
+    inference: {
+      provider: selected.provider,
+      model: selected.model,
+      api: selected.preferredInferenceApi,
+      endpoint: selected.endpointUrl,
+      ...(selected.credentialEnv === null ? {} : { credentialEnv: selected.credentialEnv }),
+    },
+  };
+  if (!Check(ExportSourceValuesSchema, values)) {
     return {
       kind: "rejected",
       findings: [
@@ -694,16 +682,7 @@ function completeVerifiedSource(
       ],
     };
   }
-  const source = verifiedExportSource({
-    sandboxName: requestedSandboxName,
-    runtime: {
-      provider: entry.openshellDriver,
-      imageRef: authority.receipt.reference,
-    },
-    gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
-    inference,
-    policy,
-  } satisfies VerifiedExportSourceData);
+  const source = verifiedExportSource({ ...values, policy });
   return {
     kind: "verified",
     source,

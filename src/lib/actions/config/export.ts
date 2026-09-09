@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
+import {
+  SandboxNameSchema,
+  type NemoClawConfigDocumentName,
+  type NemoClawConfigDocumentUid,
+} from "../../config/model";
 import { renderCanonicalNemoClawConfig } from "../../config/canonical";
-import type { NemoClawConfigDocumentName, NemoClawConfigDocumentUid } from "../../config/model";
 import { validateNemoClawConfig } from "../../config/schema";
 import type { NonEmptyExportFindings } from "../../domain/config/export-evidence";
 import { buildExportConfig } from "../../domain/config/export-document";
@@ -11,6 +16,8 @@ import type {
   YamlExportPublication,
 } from "../../adapters/fs/config-export-file";
 import type { ExportObservationResult } from "./observe-export-source";
+
+const { Type } = require("typebox") as typeof TypeBoxModule;
 
 export const CONFIG_EXPORT_RESULT_VERSION = 1 as const;
 
@@ -24,14 +31,21 @@ export interface ConfigExportRequest {
   readonly target: ConfigExportTarget;
 }
 
-export interface ConfigExportResult {
-  readonly version: typeof CONFIG_EXPORT_RESULT_VERSION;
-  readonly status: "succeeded";
-  readonly sourceSandbox: string;
-  readonly outputPath: string;
-  readonly documentDigest: string;
-  readonly specDigest: string;
-}
+const DigestSchema = Type.String({ pattern: "^sha256:[0-9a-f]{64}$(?![\\s\\S])" });
+export const ConfigExportResultSchema = Type.Object(
+  {
+    version: Type.Literal(CONFIG_EXPORT_RESULT_VERSION),
+    status: Type.Literal("succeeded"),
+    sourceSandbox: SandboxNameSchema,
+    outputPath: Type.String({ pattern: "^/" }),
+    documentDigest: DigestSchema,
+    specDigest: DigestSchema,
+  },
+  { additionalProperties: false },
+);
+export type ConfigExportResult = Readonly<
+  TypeBoxModule.Type.Static<typeof ConfigExportResultSchema>
+>;
 
 export interface ConfigExportDependencies {
   readonly observe: (sandboxName: string) => Promise<ExportObservationResult>;

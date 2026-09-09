@@ -64,7 +64,7 @@ const DocumentNameSchema = Type.Unsafe<NemoClawConfigDocumentName>({
 
 // Local configuration resource names have an independent domain even though
 // v1 starts with the same grammar as document names.
-const LocalResourceNameSchema = Type.String({
+export const LocalResourceNameSchema = Type.String({
   minLength: 1,
   maxLength: LOCAL_RESOURCE_NAME_MAX_LENGTH,
   pattern: LOCAL_RESOURCE_NAME_PATTERN,
@@ -72,19 +72,19 @@ const LocalResourceNameSchema = Type.String({
 
 // OpenShell v0.0.99 limits sandbox names to 19 characters and reserves "--"
 // as a routed-name delimiter.
-const SandboxNameSchema = Type.String({
+export const SandboxNameSchema = Type.String({
   minLength: 1,
   maxLength: NAME_MAX_LENGTH,
   pattern: NAME_VALID_PATTERN.source,
 });
 
-const BoundedTextSchema = Type.String({
+export const BoundedTextSchema = Type.String({
   minLength: 1,
   maxLength: BOUNDED_TEXT_MAX_LENGTH,
   pattern: BOUNDED_TEXT_PATTERN,
 });
-const RuntimeProviderSchema = Type.String({ pattern: RUNTIME_PROVIDER_PATTERN });
-const ImmutableImageReferenceSchema = Type.Unsafe<ImmutableImageReference>({
+export const RuntimeProviderSchema = Type.String({ pattern: RUNTIME_PROVIDER_PATTERN });
+export const ImmutableImageReferenceSchema = Type.Unsafe<ImmutableImageReference>({
   type: "string",
   maxLength: IMMUTABLE_IMAGE_REFERENCE_MAX_LENGTH,
   pattern: NEMOCLAW_IMMUTABLE_IMAGE_REFERENCE_PATTERN,
@@ -93,11 +93,11 @@ const UuidSchema = Type.Unsafe<NemoClawConfigDocumentUid>({
   type: "string",
   pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
 });
-const TcpPortSchema = Type.Integer({ minimum: 1, maximum: 65_535 });
-const CredentialEnvironmentReferenceNameSchema = Type.String({
+export const TcpPortSchema = Type.Integer({ minimum: 1, maximum: 65_535 });
+export const CredentialEnvironmentReferenceNameSchema = Type.String({
   pattern: CREDENTIAL_ENVIRONMENT_REFERENCE_PATTERN,
 });
-const InferenceEndpointSchema = Type.String({
+export const InferenceEndpointSchema = Type.String({
   maxLength: NEMOCLAW_INFERENCE_ENDPOINT_MAX_LENGTH,
   pattern: NEMOCLAW_INFERENCE_ENDPOINT_PATTERN,
 });

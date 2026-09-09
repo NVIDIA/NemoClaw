@@ -35,7 +35,12 @@ vi.mock("../../lib/actions/config/observe-export-source", async (importOriginal)
   observeStableExportSource: mocks.observeStableExportSource,
 }));
 
+import { Check } from "typebox/value";
+import { ConfigExportResultSchema } from "../../lib/actions/config/export";
 import ConfigExportCommand from "./export";
+
+const documentDigest = "sha256:" + "a".repeat(64);
+const specDigest = "sha256:" + "b".repeat(64);
 
 describe("config export command", () => {
   beforeEach(() => {
@@ -49,8 +54,8 @@ describe("config export command", () => {
     mocks.validateNemoClawConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
     mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
       yaml: "kind: NemoClawConfig\n",
-      documentDigest: "sha256:document",
-      specDigest: "sha256:spec",
+      documentDigest,
+      specDigest,
     });
     mocks.publishExportFile
       .mockReset()
@@ -137,15 +142,23 @@ describe("config export command", () => {
 
   it("composes live observation through file publication and JSON result (#10938)", async () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-    await expect(
-      ConfigExportCommand.run(["alpha", "--output", "/tmp/alpha.yaml", "--json"], process.cwd()),
-    ).resolves.toMatchObject({
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const result = await ConfigExportCommand.run(
+      ["alpha", "--output", "/tmp/alpha.yaml", "--json"],
+      process.cwd(),
+    );
+    expect(result).toEqual({
+      version: 1,
       status: "succeeded",
       sourceSandbox: "alpha",
       outputPath: "/tmp/alpha.yaml",
-      documentDigest: "sha256:document",
-      specDigest: "sha256:spec",
+      documentDigest,
+      specDigest,
     });
+    expect(log).toHaveBeenCalledTimes(1);
+    const emitted: unknown = JSON.parse(log.mock.calls[0]![0]);
+    expect(Check(ConfigExportResultSchema, emitted)).toBe(true);
+    expect(emitted).toEqual(result);
     expect(mocks.publishExportFile).toHaveBeenCalledWith(
       "/tmp/alpha.yaml",
       "kind: NemoClawConfig\n",
