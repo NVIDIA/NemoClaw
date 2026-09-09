@@ -321,8 +321,13 @@ describe("uninstall gateway-port segregation (#3053)", () => {
 
   it.each([
     {
+      name: "a connection refusal",
+      diagnostic: "connection refused; OPENAI_API_KEY=must-not-be-logged",
+      expectedCause: "connection refused; exit 1).",
+    },
+    {
       name: "a permission error",
-      diagnostic: "permission denied; ACCESS_TOKEN=must-not-be-logged",
+      diagnostic: "permission denied",
       expectedCause: "permission denied; exit 1).",
     },
     { name: "an unverified generic absence", diagnostic: "gateway not found" },
@@ -404,6 +409,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(warnings.join("\n")).toContain(expectedCause);
       expect(warnings.join("\n")).not.toContain("must-not-be-logged");
       expect(warnings).not.toContain("Gateway 'nemoclaw' already removed or unreachable");
+      expect(warnings).toContain(
+        "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
+      );
       expect(rmSync).not.toHaveBeenCalled();
       expect(logs).not.toContain("[3/6] NemoClaw CLI");
       expect(logs).not.toContain("Claws retracted. Until next time.");
