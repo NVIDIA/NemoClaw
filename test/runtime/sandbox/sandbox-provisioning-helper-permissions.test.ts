@@ -61,6 +61,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const localScripts = path.join(tmp, "scripts");
     const generatorPath = path.join(localScripts, "generate-openclaw-config.mts");
     const toolSearchValidatorPath = path.join(localScripts, "validate-openclaw-tool-search.mts");
+    const extraAgentsValidationPath = path.join(localSrc, "lib", "extra-agents-validation.ts");
     const toolDisclosurePath = path.join(localSrc, "lib", "tool-disclosure.ts");
     const applierPath = path.join(
       localSrc,
@@ -104,6 +105,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localLib, "normalize_mutable_config_perms.py"),
       generatorPath,
       toolSearchValidatorPath,
+      extraAgentsValidationPath,
       toolDisclosurePath,
       applierPath,
       messagingHookPath,
@@ -122,7 +124,6 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
         fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
         fs.chmodSync(file, 0o600);
       });
-
       const messagingPermissionCommand = dockerRunCommandBetween(
         dockerfile,
         "# Add messaging source after the non-messaging install",
@@ -133,17 +134,30 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
         "# Copy startup script and shared sandbox initialisation library",
         "# Lock down npm for the next RUN",
       );
-      const command = `${messagingPermissionCommand}\n${runtimePermissionCommand}`
-        .replaceAll("/usr/local/bin", localBin)
-        .replaceAll("/usr/local/lib/nemoclaw", localLib)
-        .replaceAll("/usr/local/share/nemoclaw", localShare)
-        .replaceAll("/src", localSrc)
-        .replaceAll("/scripts", localScripts);
-      const { result } = runLoggedDockerShell(command, tmp, ["chown() { :; }"]);
+      const rewritePaths = (command: string): string =>
+        command
+          .replaceAll("/usr/local/bin", localBin)
+          .replaceAll("/usr/local/lib/nemoclaw", localLib)
+          .replaceAll("/usr/local/share/nemoclaw", localShare)
+          .replaceAll("/src", localSrc)
+          .replaceAll("/scripts", localScripts);
+      const { result: messagingResult } = runLoggedDockerShell(
+        rewritePaths(messagingPermissionCommand),
+        tmp,
+      );
+      expect(messagingResult.status, messagingResult.stderr).toBe(0);
+
+      fs.chmodSync(path.join(localSrc, "lib"), 0o444);
+      const { result } = runLoggedDockerShell(rewritePaths(runtimePermissionCommand), tmp, [
+        "chown() { :; }",
+      ]);
 
       expect(result.status, result.stderr).toBe(0);
       expect((fs.statSync(generatorPath).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(toolSearchValidatorPath).mode & 0o777).toString(8)).toBe("755");
+      expect((fs.statSync(localSrc).mode & 0o777).toString(8)).toBe("755");
+      expect((fs.statSync(path.join(localSrc, "lib")).mode & 0o777).toString(8)).toBe("755");
+      expect((fs.statSync(extraAgentsValidationPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(toolDisclosurePath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(applierPath).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(messagingHookPath).mode & 0o777).toString(8)).toBe("644");
