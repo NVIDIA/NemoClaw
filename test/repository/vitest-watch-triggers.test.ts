@@ -365,6 +365,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/automation/e2e/platform-vitest-main-workflow.test.ts",
     ]);
     expect(triggeredBy("tools/e2e/full-e2e-timeout-contract.mts")).toEqual([
+      "test/automation/e2e/e2e-recommendations.test.ts",
       "test/automation/e2e/platform-vitest-main-workflow.test.ts",
       "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
       "test/e2e/support/security-posture-workflow-boundary.test.ts",
