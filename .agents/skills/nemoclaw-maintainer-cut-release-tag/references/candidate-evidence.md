@@ -3,9 +3,105 @@
 
 # Candidate Evidence
 
-Candidate evidence is the release-specific evidence required for the planned candidate. Use the
-version and candidate from `plan.json`. These are read-only checks. Run every section before
-the general E2E decision. Keep the shell only until its evidence is copied into the release brief.
+Start with the plan-independent kickoff checks. After planning, initialize candidate evidence and
+run the applicable candidate-bound sections before the general E2E decision. These checks are
+read-only; preparation and recovery retain their existing authorization requirements.
+
+## Start Independent Checks at Kickoff
+
+Inspect documentation, images, audit freshness, general E2E context, and local tooling before waiting
+on any one prerequisite. Before planning, inspect the intended range and label those results
+preliminary. Do not initialize candidate evidence until `plan.json` exists.
+
+- Inspect the cumulative docs PR, remaining patch, review state, coverage, and release entry.
+  Start authorized docs preparation or review while images run. Preserve the branch ownership in
+  [docs automation](../../../../docs/AUTOMATION.md#post-merge-documentation-catch-up).
+- Before planning, inspect recent image runs with the command below. Their status is preliminary,
+  not proof of candidate eligibility. After planning, use [Image Evidence](#image-evidence).
+  Inspect retry prerequisites before proposing recovery from a pending or failed publication.
+- Check [audit receipts](#check-audit-receipt-reuse) that a pending image build or retry will consume.
+  Do not infer freshness from a green producer job or artifact retention. Recheck before reuse.
+- Read the newest full E2E context through `nemoclaw-maintainer-e2e`; do not dispatch a run automatically.
+- Run `npm run dev:doctor` when local docs preparation or review is needed.
+  Follow the [documentation review requirements](../../../../docs/CONTRIBUTING.md#obtain-independent-review).
+  If using `npm run review:local`, check its [documented prerequisites](../../../../tools/pr-review-advisor/README.md#local-run).
+  Docker readiness alone does not verify those prerequisites. Report unchecked review readiness as unverified.
+
+```bash
+gh run list --repo NVIDIA/NemoClaw --workflow base-image.yaml --branch main --event push \
+  --limit 10 --json databaseId,headSha,status,conclusion,url
+```
+
+Collect independent reads concurrently when possible. Keep prerequisite-dependent commands ordered.
+Give each shell check its own initialized variables and temporary directory. Stop a failed check;
+never consume its partial output. Preserve `run_or_stop` in candidate-bound checks. Follow the access hard stop for
+access errors. Otherwise, collect the remaining independent results before reporting readiness.
+
+Show one compact summary: item, ready/pending/blocked/unverified, evidence, and next action.
+Use pending for active work, blocked for a confirmed failed prerequisite, and unverified for missing
+or inconclusive evidence. Early results guide preparation; they do not replace candidate-bound
+evidence or maintainer decisions. Recheck affected evidence when the intended candidate changes.
+
+## Check Prerequisites Before a Retry
+
+Inspect the failed job and its upstream producer before asking for a rerun. Name the run, attempt,
+commit, workflow event, upstream result, and receipt validity. Classify the failure before choosing
+the smallest permitted recovery.
+
+- **Canceled publisher:** establish eligible successful publication evidence before retrying dependent
+  E2E. A dependent rerun does not repair its publisher.
+- **Successful manual publisher:** check eligibility, not just success.
+  `tools/e2e/base-image-publication.mts` selects applicable `main` push publications; a manual image
+  publication does not satisfy that selection. This restriction does not prohibit manual E2E runs.
+- **Expired audit receipt:** refresh the audit producer before retrying its consumers.
+  A failed-job-only rerun can reuse the expired receipt from a successful producer.
+  Identify a supported producer-inclusive rerun before requesting approval; stop if none is available.
+
+Keep existing rerun authorization requirements. Do not add retries or waive evidence checks.
+After authorized recovery, read the new attempt and verify the prerequisite before retrying a dependent job.
+
+### Check Audit Receipt Reuse
+
+The [OpenClaw platform build](../../../../.github/workflows/base-image-platform.yaml) consumes the
+audit producer's `mcporter-runtime` receipt. Read the selected run's `run_attempt` with
+`gh api repos/NVIDIA/NemoClaw/actions/runs/<run-id>`, then inspect the run and attempt with
+`gh api repos/NVIDIA/NemoClaw/actions/runs/<run-id>/attempts/<attempt>`. Confirm its workflow, commit,
+and successful `reviewed-npm-audit` producer job. A retained producer may belong to an earlier attempt.
+
+Download its `reviewed-npm-audit` artifact with
+`gh run download <run-id> --repo NVIDIA/NemoClaw --name reviewed-npm-audit --dir <new-private-directory>`.
+Bind the artifact ID to the producer's upload log; do not use an artifact from an unidentified producer.
+Set `AUDIT_EVIDENCE_DIR` to that directory. Set `IMAGE_SOURCE_DIR` to an isolated checkout of the
+publisher's recorded commit, not the release candidate or current `main`. Verify its commit and
+clean tracked files before using its package and policy inputs. Do not execute artifact contents.
+High or critical findings also require the matching installed dependency metadata under that
+checkout's `agents/openclaw/mcporter-runtime/node_modules`. If it is unavailable, report policy
+verification as unverified; a clean source checkout alone does not supply it.
+
+From the trusted release-tool checkout, run the existing verifier with the build's input mapping:
+
+```bash
+node --experimental-strip-types scripts/lib/npm-audit-receipt.mts \
+  --receipt "$AUDIT_EVIDENCE_DIR/mcporter-runtime.receipt.json" \
+  --raw-report "$AUDIT_EVIDENCE_DIR/mcporter-runtime.raw.json" \
+  --package-json "$IMAGE_SOURCE_DIR/agents/openclaw/mcporter-runtime/package.json" \
+  --package-lock "$IMAGE_SOURCE_DIR/agents/openclaw/mcporter-runtime/package-lock.json" \
+  --exceptions "$IMAGE_SOURCE_DIR/ci/npm-audit-exceptions.json" \
+  --audit-config "$IMAGE_SOURCE_DIR/ci/reviewed-npm-audit.json" \
+  --graph mcporter-runtime --registry https://registry.yarnpkg.com --threshold high \
+  --legacy-npmjs true
+```
+
+The verifier enforces the existing legacy-receipt deadline; this option does not extend it.
+Record the producer, attempt, artifact ID, input commit, and result, then remove only the owned evidence directory.
+Missing or unbound evidence is unverified; expired or mismatched evidence is blocked. Neither permits receipt reuse.
+For an expired receipt, propose rerunning the audit producer and its dependent image jobs, not only failed jobs.
+After authorization, verify the replacement receipt before proposing any remaining dependent E2E retry.
+
+## Initialize Candidate Evidence After Planning
+
+Require `plan.json` before running this section or the candidate-bound sections below. Use its
+version and candidate. Keep the shell only until its evidence is copied into the release brief.
 
 ```bash
 set -euo pipefail
@@ -63,52 +159,6 @@ IFS=$'\t' read -r VERSION CANDIDATE_SHA PREVIOUS_TAG_SHA \
   CANDIDATE_SELECTION HISTORICAL_CANDIDATE_EXCEPTION <"$PLAN_FIELDS"
 DOCS_PREFIX='automation/post-merge-docs-'
 ```
-
-## Start Independent Checks at Kickoff
-
-Inspect documentation, images, audit freshness, general E2E context, and local tooling before waiting
-on any one prerequisite. Before planning, inspect the intended range and label those results
-preliminary. Run the plan-bound commands below only after a plan exists.
-
-- Inspect the cumulative docs PR, remaining patch, review state, coverage, and release entry.
-  Start authorized docs preparation or review while images run. Preserve the branch ownership in
-  [docs automation](../../../../docs/AUTOMATION.md#post-merge-documentation-catch-up).
-- Read image evidence below. If it is pending or failed, inspect retry prerequisites before proposing recovery.
-- For audit receipts a pending image build or retry will consume, check expiry and input identity with
-  `scripts/lib/npm-audit-receipt.mts`. Use the producer's receipt, raw report, and matching inputs.
-  Do not infer freshness from a green producer job or artifact retention. Recheck before reuse.
-- Read the newest full E2E context through `nemoclaw-maintainer-e2e`; do not dispatch a run automatically.
-- Run `npm run dev:doctor` when local docs preparation or review is needed.
-  Report Docker readiness separately from review readiness. The doctor does not verify the review
-  launcher; report review readiness as unverified until its required environment is checked.
-
-Collect independent reads concurrently when possible. Keep prerequisite-dependent commands ordered.
-Give each shell check its own initialized variables and temporary directory. Preserve `run_or_stop`
-within each check; never consume its partial output after failure. Follow the access hard stop for
-access errors. Otherwise, collect the remaining independent results before reporting readiness.
-
-Show one compact summary: item, ready/pending/blocked/unverified, evidence, and next action.
-Use pending for active work, blocked for a confirmed failed prerequisite, and unverified for missing
-or inconclusive evidence. Early results guide preparation; they do not replace candidate-bound
-evidence or maintainer decisions. Recheck affected evidence when the intended candidate changes.
-
-## Check Prerequisites Before a Retry
-
-Inspect the failed job and its upstream producer before asking for a rerun. Name the run, attempt,
-commit, workflow event, upstream result, and receipt validity. Classify the failure before choosing
-the smallest permitted recovery.
-
-- **Canceled publisher:** establish eligible successful publication evidence before retrying dependent
-  E2E. A dependent rerun does not repair its publisher.
-- **Successful manual publisher:** check eligibility, not just success.
-  `tools/e2e/base-image-publication.mts` selects applicable `main` push publications; a manual image
-  publication does not satisfy that selection. This restriction does not prohibit manual E2E runs.
-- **Expired audit receipt:** refresh the audit producer before retrying its consumers.
-  A failed-job-only rerun can reuse the expired receipt from a successful producer.
-  Identify a supported producer-inclusive rerun before requesting approval; stop if none is available.
-
-Keep existing rerun authorization requirements. Do not add retries or waive evidence checks.
-After authorized recovery, read the new attempt and verify the prerequisite before retrying a dependent job.
 
 ## Release Entry and Documentation Coverage
 
