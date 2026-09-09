@@ -973,8 +973,8 @@ function hasStructuredContent(message) {
 
 const providerUnavailableCodes = new Set(["500", "502", "503", "504", "529"]);
 const providerUnavailableError = /^(?:litellm\.)?(?:InternalServerError|ServiceUnavailableError)(?::|$)/;
-const providerAuthenticationError =
-  /(?:authenticat|authori[sz]|unauthori[sz]ed|forbidden|invalid (?:api )?key|credential)/i;
+const providerNonRetryableError =
+  /(?:authenticat|authori[sz]|unauthori[sz]ed|forbidden|invalid (?:api )?key|credential|\b(?:policy|permission)\b|\b(?:denied|blocked|prohibited)\b)/i;
 
 function isStructuredProviderUnavailable(message) {
   const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
@@ -991,7 +991,7 @@ function isStructuredProviderUnavailable(message) {
     typeof message.errorCode === "string" &&
     providerUnavailableCodes.has(message.errorCode.trim()) &&
     providerUnavailableError.test(errorMessage) &&
-    !providerAuthenticationError.test(errorMessage)
+    !providerNonRetryableError.test(errorMessage)
   );
 }
 
@@ -1189,6 +1189,11 @@ fail_launch_session() {
   exit 1
 }
 
+fail_provider_unavailable() {
+  provider_unavailable_candidate=1
+  fail_launch_session "launch did not record the required structured session turns"
+}
+
 session_evidence() {
   local mode="$1"
   local expected_turns=""
@@ -1220,7 +1225,11 @@ session_evidence() {
 wait_for_turn_count() {
   local expected_turns="$1"
   local evidence_status
+  local session_active
   while (( SECONDS < session_deadline )); do
+    # Sample liveness first so an exited child receives one final evidence qualification.
+    session_active=1
+    kill -0 "$session_pid" 2>/dev/null || session_active=0
     if session_evidence qualify "$expected_turns" >/dev/null 2>"$evidence_error"; then
       return 0
     else
@@ -1228,15 +1237,12 @@ wait_for_turn_count() {
     fi
     if [[ "$evidence_status" != 1 ]]; then
       case "$evidence_status" in
-        3)
-          provider_unavailable_candidate=1
-          fail_launch_session "launch did not record the required structured session turns"
-          ;;
+        3) fail_provider_unavailable ;;
       esac
       fail_launch_session \
         "structured session evidence was invalid or unavailable (status $evidence_status)"
     fi
-    if ! kill -0 "$session_pid" 2>/dev/null; then
+    if [[ "$session_active" != 1 ]]; then
       break
     fi
     sleep 1
@@ -1383,6 +1389,9 @@ if session_evidence qualify 2 >/dev/null 2>"$evidence_error"; then
   :
 else
   evidence_status=$?
+  case "$evidence_status" in
+    3) fail_provider_unavailable ;;
+  esac
   fail_launch_session "launch final structured session evidence did not qualify (status $evidence_status)"
 fi
 if ! remove_session_baseline >/dev/null 2>"$evidence_error"; then

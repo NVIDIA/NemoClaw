@@ -56,14 +56,9 @@ type FixtureMode =
   | "pty-socket-timeout"
   | "pty-path-unreadable"
   | "pty-termios-unavailable"
-  | "provider-cleanup-failure"
-  | "provider-empty-message"
-  | "provider-terminal-spoof"
-  | "provider-wrong-api"
-  | "provider-wrong-route"
-  | "recording-timeout"
-  | "restored-canonical-timeout"
-  | "valid";
+  | "provider-cleanup-failure" | "provider-empty-message" | "provider-exit-after-recording"
+  | "provider-terminal-spoof" | "provider-wrong-api" | "provider-wrong-route"
+  | "recording-timeout" | "restored-canonical-timeout" | "valid";
 
 interface LaunchFixtureInvocation {
   args: string[];
@@ -166,6 +161,7 @@ const net = require("node:net");
 const readline = require("node:readline");
 
 const mode = process.env.NEMOCLAW_FIXTURE_MODE;
+const exitWithStatus = process.exit.bind(process);
 if (process.argv[2] !== "tui") {
   const allowedNames = new Set(${JSON.stringify(SUBPROCESS_ENV_ALLOWED_NAMES)});
   const allowedPrefixes = ${JSON.stringify(SUBPROCESS_ENV_ALLOWED_PREFIXES)};
@@ -360,7 +356,7 @@ if (process.argv[2] !== "tui") {
   }
   if (terminalCopy === "reordered") process.stdout.write("idle | gateway connected\n");
 
-  if (mode === "delayed-recording") {
+  if (mode === "delayed-recording" || mode === "provider-exit-after-recording") {
     const publicationDeadline = Date.now() + 2_000;
     while (!fs.existsSync(process.env.NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER)) {
       if (Date.now() >= publicationDeadline) process.exit(68);
@@ -371,9 +367,10 @@ if (process.argv[2] !== "tui") {
   if (mode === "invalid-order") {
     append("assistant", "response before input");
     append("user", firstInput);
-  } else if (mode === "provider-empty-message" || mode === "provider-cleanup-failure") {
+  } else if (mode === "provider-empty-message" || mode === "provider-cleanup-failure" || mode === "provider-exit-after-recording") {
     append("user", firstInput);
     appendProviderError();
+    new Map([["provider-exit-after-recording", () => exitWithStatus(23)]]).get(mode)?.();
   } else if (mode === "provider-terminal-spoof") {
     append("user", firstInput);
     appendProviderError({ errorCode: "400" });
@@ -456,12 +453,13 @@ fi
 if [[ "$NEMOCLAW_FIXTURE_MODE" == "pty-socket-timeout" && "$4" == "$NEMOCLAW_FIXTURE_RUN_ID" ]]; then
   exec node -e 'setTimeout(() => process.exit(0), 10_000)'
 fi
-if [[ "$NEMOCLAW_FIXTURE_MODE" == "delayed-recording" && "$4" == "qualify" && "$7" == "1" ]]; then
+if [[ ( "$NEMOCLAW_FIXTURE_MODE" == "delayed-recording" || "$NEMOCLAW_FIXTURE_MODE" == "provider-exit-after-recording" ) && "$4" == "qualify" && "$7" == "1" ]]; then
   set +e
   "$@"
   status=$?
   set -e
   [[ "$status" != "1" ]] || : > "$NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER"
+  [[ "$NEMOCLAW_FIXTURE_MODE" != "provider-exit-after-recording" ]] || sleep 0.2
   exit "$status"
 fi
 exec "$@"
@@ -1077,7 +1075,7 @@ it.runIf(process.platform === "linux").each([
         options?: { artifactName?: string; env?: NodeJS.ProcessEnv },
       ) => {
         const fixture = runLaunchSessionFixture(
-          calls.length === 0 ? "provider-empty-message" : secondMode,
+          calls.length === 0 ? "provider-exit-after-recording" : secondMode,
           calls.length === 0 ? "provider" : secondTerminal,
           {
             args,

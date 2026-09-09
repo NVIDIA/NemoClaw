@@ -324,6 +324,17 @@ it.each<{ after: SessionRecords; status: number }>([
   },
   {
     after: {
+      "session-a": [
+        message("user"),
+        providerUnavailableMessage({
+          errorMessage: "litellm.ServiceUnavailableError: network policy denied",
+        }),
+      ],
+    },
+    status: 2,
+  },
+  {
+    after: {
       "session-a": [message("user"), providerUnavailableMessage({ errorCode: "400" })],
     },
     status: 2,
