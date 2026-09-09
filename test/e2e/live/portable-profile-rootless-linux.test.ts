@@ -838,7 +838,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
           startResult.exitCode === 0 &&
           gatewayEvidence.verificationCount === 2 &&
           gatewayEvidence.health === "200",
-        "Public start did not complete recovery and gateway verification",
+        `Public start did not complete recovery and gateway verification: upgrade=${JSON.stringify(upgradeResult)} start=${JSON.stringify(startResult)} checks=${String(gatewayEvidence.verificationCount)} health=${gatewayEvidence.health || "none"}`,
       );
       requireCurrentStartupAuthority();
 
