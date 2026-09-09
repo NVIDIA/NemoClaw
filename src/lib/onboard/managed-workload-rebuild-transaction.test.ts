@@ -214,6 +214,8 @@ function bundle(providerId: string): RuntimeProviderBundle {
       supported: true,
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
+      ownsHostReadiness: false,
+      observeHostRuntime: (input) => candidate.gateway.prepareHostRuntime(input),
       prepareHostRuntime: () => ({
         providerId,
         openShellDriver: "memory",
@@ -264,7 +266,6 @@ function bundle(providerId: string): RuntimeProviderBundle {
       supported: true,
       operations: ["rebuild"],
     },
-    stateMutation: unsupported(providerId),
     bootstrap: unsupported(providerId),
     snapshot: unsupported(providerId),
     recovery: unsupported(providerId),

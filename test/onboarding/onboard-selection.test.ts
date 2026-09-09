@@ -65,7 +65,6 @@ import {
   requirePresent,
   requireSelectedProviderResolution,
   restoreProcessEnvValue,
-  runNativeDockerWindowsProviderBoundary,
   runOllamaPullScenario,
 } from "../support/onboard-selection-test-helpers.js";
 
@@ -76,6 +75,7 @@ const CREDENTIAL_RETRY_PROMPT_RE =
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
 const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
+const WINDOWS_SETUP_SUCCESS = { ok: true as const, commit: () => {}, rollback: () => {} };
 const repoRoot = path.join(import.meta.dirname, "../..");
 const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 const credentialsPath = JSON.stringify(
@@ -483,11 +483,11 @@ function makeSetupNimOllamaDeps(overrides: Partial<SetupNimOllamaDeps> = {}): Se
       model: "qwen3:8b",
       allowToolsIncompatible: false,
     }),
-    printOllamaExposureWarning: () => {},
-    switchToWindowsOllamaHost: () => {},
-    installOllamaOnWindowsHost: async () => ({ ok: true }),
-    awaitWindowsOllamaReady: () => true,
-    setupWindowsOllamaWith0000Binding: () => true,
+    installOllamaOnWindowsHost: async () => ({
+      ...WINDOWS_SETUP_SUCCESS,
+      path: "C:/Ollama/ollama.exe",
+    }),
+    setupWindowsOllamaLoopbackBinding: () => WINDOWS_SETUP_SUCCESS,
     printWindowsOllamaTimeoutDiagnostics: () => {},
     resetOllamaHostCache: () => {},
     installOllamaOnMacOS: () => ({ ok: true }),
@@ -1186,7 +1186,11 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
   });
 
   it("offers Gemini 3.6 Flash instead of 2.5 Flash and supports Other (#9298)", async () => {
-    const acceptedDefault = await promptRemoteModel("Google Gemini", "gemini", "gemini-3.6-flash", null,
+    const acceptedDefault = await promptRemoteModel(
+      "Google Gemini",
+      "gemini",
+      "gemini-3.6-flash",
+      null,
       { promptFn: async () => "", writeLine: () => {} },
     );
     assert.equal(acceptedDefault, "gemini-3.6-flash");
@@ -1485,9 +1489,12 @@ reportChildScenario(async () => {
     );
   });
 
-  it("treats an implicit latest Ollama model as installed during systemd repair", {
-    timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
-  }, () => {
+  it(
+    "treats an implicit latest Ollama model as installed during systemd repair",
+    {
+      timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
+    },
+    () => {
       const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-systemd-");
       const { root: tmpDir } = workspace;
       const fakeBin = workspace.binDir;
@@ -1579,11 +1586,15 @@ reportChildScenario(async () => {
         ),
         "should install and wait for the Ollama systemd drop-in restart",
       );
-  });
+    },
+  );
 
-  it("preserves existing Ollama systemd override settings while repairing loopback", {
-    timeout: 10_000,
-  }, () => {
+  it(
+    "preserves existing Ollama systemd override settings while repairing loopback",
+    {
+      timeout: 10_000,
+    },
+    () => {
       const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-systemd-merge-");
       const { root: tmpDir } = workspace;
       const fakeBin = workspace.binDir;
@@ -1715,11 +1726,15 @@ reportChildScenario(async () => {
         payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'),
         "other Environment= settings should be preserved",
       );
-  });
+    },
+  );
 
-  it("adds Spark CUDA v13 and enables the Ollama systemd service on managed install", {
-    timeout: 10_000,
-  }, () => {
+  it(
+    "adds Spark CUDA v13 and enables the Ollama systemd service on managed install",
+    {
+      timeout: 10_000,
+    },
+    () => {
       const workspace = onboardProcessWorkspace("nemoclaw-ollama-systemd-spark-");
       const { root: tmpDir } = workspace;
 
@@ -1792,11 +1807,15 @@ reportChildScenario(() => {
         ),
         "managed Ollama installs should enable the service for reboot survival",
       );
-  });
+    },
+  );
 
-  it("allows prompt-capable sudo in non-interactive Ollama systemd setup", {
-    timeout: 10_000,
-  }, () => {
+  it(
+    "allows prompt-capable sudo in non-interactive Ollama systemd setup",
+    {
+      timeout: 10_000,
+    },
+    () => {
       const workspace = onboardProcessWorkspace("nemoclaw-ollama-systemd-sudo-mode-");
       const { root: tmpDir } = workspace;
 
@@ -1852,7 +1871,8 @@ reportChildScenario(() => {
         ),
         "prompt sudo mode should not use sudo -n",
       );
-  });
+    },
+  );
 
   it("rejects unsupported non-interactive sudo mode values", () => {
     const previousMode = process.env.NEMOCLAW_NON_INTERACTIVE_SUDO_MODE;
@@ -1885,9 +1905,12 @@ reportChildScenario(() => {
     }
   });
 
-  it("repairs already-loopback systemd Ollama without starting a duplicate daemon", {
-    timeout: 10_000,
-  }, () => {
+  it(
+    "repairs already-loopback systemd Ollama without starting a duplicate daemon",
+    {
+      timeout: 10_000,
+    },
+    () => {
       const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-systemd-loopback-");
       const { root: tmpDir } = workspace;
       const fakeBin = workspace.binDir;
@@ -1985,11 +2008,15 @@ reportChildScenario(async () => {
         payload.events.slice(restartIndex + 1).includes("tags"),
         "should re-probe after the systemd restart instead of trusting a stale loopback cache",
       );
-  });
+    },
+  );
 
-  it("fails closed instead of starting unmanaged Ollama when systemd restart stays unreachable", {
-    timeout: 15_000,
-  }, () => {
+  it(
+    "fails closed instead of starting unmanaged Ollama when systemd restart stays unreachable",
+    {
+      timeout: 15_000,
+    },
+    () => {
       const workspace = onboardProcessWorkspace("nemoclaw-onboard-existing-systemd-restart-fail-");
       const { root: tmpDir } = workspace;
 
@@ -2050,7 +2077,8 @@ const { setupNim } = require(${onboardPath});
       assert.equal(result.status, 1);
       assert.match(result.stderr, /Ollama systemd restart did not recover/);
       assert.doesNotMatch(result.stderr, /manual-start/);
-  });
+    },
+  );
 
   it("fails closed when an existing Ollama systemd override cannot be applied", () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-existing-systemd-fail-");
@@ -3071,7 +3099,7 @@ reportChildScenario(async () => {
     }
   });
 
-  it("lets users re-enter an NVIDIA API key after authorization failure without restarting selection", () => {
+  it("lets users re-enter an NVIDIA API key and preserves the build revalidation payload (#10880)", () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-build-auth-retry-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
@@ -3083,10 +3111,10 @@ body='{"error":{"message":"forbidden"}}'
 status="403"
 outfile=""
 auth=""
-url=""
+data="" url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -o) outfile="$2"; shift 2 ;;
+    -o) outfile="$2"; shift 2 ;; -d) data="$2"; shift 2 ;;
     -H)
       if echo "$2" | grep -q '^Authorization: Bearer '; then
         auth="$2"
@@ -3099,7 +3127,7 @@ done
 if echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/responses$'; then
   body='{"id":"resp_123"}'
   status="200"
-elif echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/chat/completions$'; then
+elif echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/chat/completions$' && echo "$data" | grep -q '"temperature":1' && echo "$data" | grep -q '"top_p":0.95' && echo "$data" | grep -q '"enable_thinking":false'; then
   body='{"id":"chatcmpl-123"}'
   status="200"
 fi
@@ -3542,9 +3570,7 @@ reportChildScenario(async () => {
       assert.ok(zstdWarningIndex >= 0 && zstdWarningIndex < zstdCommandIndex);
       assert.ok(installerWarningIndex >= 0 && installerWarningIndex < installerCommandIndex);
       assert.equal(events[installerCommandIndex]?.stdio, "inherit");
-      assert.ok(
-        commands.some((command) => command.includes("/install.sh'")),
-      );
+      assert.ok(commands.some((command) => command.includes("/install.sh'")));
       assert.ok(!commands.some((command) => command.includes("brew install")));
       assert.ok(
         commands.some((command) => command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve")),
@@ -3852,60 +3878,9 @@ const { setupNim } = require(${onboardPath});
       assert.equal(prompt.mock.calls.length, 0);
       assert.equal(result.provider, "ollama-local");
       assert.ok(notes.some((line) => line.includes("[non-interactive] Provider: ollama")));
-      assert.ok(
-        commands.some((command) => command.includes("/install.sh'")),
-      );
+      assert.ok(commands.some((command) => command.includes("/install.sh'")));
     } finally {
       resetOllamaHostCache();
-    }
-  });
-
-  it("restarts Windows-host Ollama after install when installer auto-start is not reachable", async () => {
-    const installedPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";
-    const install = vi.fn(async () => ({ ok: true, path: installedPath }));
-    const awaitReady = vi.fn(() => false);
-    const setup = vi.fn<SetupNimOllamaDeps["setupWindowsOllamaWith0000Binding"]>(() => true);
-    const lines: string[] = [];
-    const log = vi.spyOn(console, "log").mockImplementation((...args) => {
-      lines.push(args.join(" "));
-    });
-    const state = makeOllamaSelectionState();
-    const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
-      makeSetupNimOllamaDeps({
-        installOllamaOnWindowsHost: install,
-        awaitWindowsOllamaReady: awaitReady,
-        setupWindowsOllamaWith0000Binding: setup,
-      }),
-    );
-
-    try {
-      const result = await handleWindowsHostOllamaSelection(
-        null,
-        "install-windows-ollama",
-        "qwen3:8b",
-        false,
-        false,
-        null,
-        state,
-      );
-
-      assert.equal(result, "selected");
-      assert.equal(state.provider, "ollama-local");
-      assert.equal(state.model, "qwen3:8b");
-      assert.equal(install.mock.calls.length, 1);
-      assert.equal(awaitReady.mock.calls.length, 1);
-      assert.deepEqual(
-        setup.mock.calls.map(([options]) => options),
-        [{ installedPath }],
-      );
-      assert.ok(
-        lines.some((line) =>
-          line.includes("Installer did not leave a reachable Ollama daemon; restarting it"),
-        ),
-      );
-      assert.ok(lines.some((line) => line.includes("Using Ollama on host.docker.internal:11434")));
-    } finally {
-      log.mockRestore();
     }
   });
 
@@ -3918,45 +3893,18 @@ const { setupNim } = require(${onboardPath});
 
     assert.match(
       menuOutput,
-      /Start Ollama on Windows host \(requires Docker Desktop WSL integration\)/,
+      /Restart Ollama on Windows host with loopback-only binding \(requires Docker Desktop WSL integration\)/,
     );
     assert.doesNotMatch(menuOutput, /Start Ollama on Windows host \(suggested\)/);
   });
 
-  it.each([
-    { provider: "start-windows-ollama", installed: true },
-    { provider: "install-windows-ollama", installed: false },
-  ] as const)("rejects $provider on native Docker WSL before launching Ollama", (scenario) => {
-      const boundary = runNativeDockerWindowsProviderBoundary({
-        ...scenario,
-        reachable: false,
-        timeoutMs: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
-      });
-      assert.equal(boundary.status, 1, `${scenario.provider} unexpectedly passed`);
-      assert.match(boundary.stderr, /\[non-interactive\] Aborting:/);
-      assert.match(boundary.stderr, new RegExp(scenario.provider + " requires Docker Desktop"));
-      assert.match(boundary.stderr, /Choose WSL-local Ollama/);
-      assert.doesNotMatch(
-        boundary.stderr,
-        /MODEL_SELECTION_REACHED|WINDOWS_INSTALL_CALLED|WINDOWS_SETUP_CALLED|WINDOWS_SWITCH_CALLED/,
-      );
-  });
+  it("reports native Docker as unsupported for Windows-host Ollama", () => {
+    const requirement = getWindowsHostOllamaDockerRequirement("docker");
 
-  it.each(["ollama", "start-windows-ollama", "install-windows-ollama"] as const)("rejects reachable Windows-host Ollama on native Docker WSL through generic and fallback paths [%s]", (provider) => {
-      const boundary = runNativeDockerWindowsProviderBoundary({
-        provider,
-        installed: true,
-        reachable: true,
-        timeoutMs: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
-      });
-      assert.equal(boundary.status, 1, `${provider} unexpectedly passed`);
-      assert.match(boundary.stderr, /\[non-interactive\] Aborting:/);
-      assert.match(boundary.stderr, new RegExp(provider + " requires Docker Desktop"));
-      assert.match(boundary.stderr, /Choose WSL-local Ollama/);
-      assert.doesNotMatch(
-        boundary.stderr,
-        /MODEL_SELECTION_REACHED|WINDOWS_INSTALL_CALLED|WINDOWS_SETUP_CALLED|WINDOWS_SWITCH_CALLED/,
-      );
+    assert.equal(requirement.supported, false);
+    assert.match(requirement.detectedRuntime, /Docker/);
+    assert.match(requirement.installLabel, /requires Docker Desktop WSL integration/);
+    assert.match(requirement.reason, /requires Docker Desktop WSL integration/);
   });
 
   it("uses the Windows-host start path when install-windows-ollama is requested but Ollama is already installed", async () => {
@@ -3970,8 +3918,12 @@ const { setupNim } = require(${onboardPath});
     const selectedResolution = requireSelectedProviderResolution(resolution);
     assert.equal(selectedResolution.selected.key, "start-windows-ollama");
 
-    const install = vi.fn(async () => ({ ok: false, path: "" }));
-    const setup = vi.fn<SetupNimOllamaDeps["setupWindowsOllamaWith0000Binding"]>(() => true);
+    const install = vi.fn(async () => ({
+      ok: false as const,
+      path: "",
+      reason: "install" as const,
+    }));
+    const setup = vi.fn((_args?: unknown) => WINDOWS_SETUP_SUCCESS);
     const lines: string[] = [];
     const log = vi.spyOn(console, "log").mockImplementation((...args) => {
       lines.push(args.join(" "));
@@ -3980,7 +3932,7 @@ const { setupNim } = require(${onboardPath});
     const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
       makeSetupNimOllamaDeps({
         installOllamaOnWindowsHost: install,
-        setupWindowsOllamaWith0000Binding: setup,
+        setupWindowsOllamaLoopbackBinding: setup,
       }),
     );
 
@@ -3989,7 +3941,6 @@ const { setupNim } = require(${onboardPath});
         null,
         selectedResolution.selected.key,
         "qwen3:8b",
-        false,
         false,
         installedPath,
         state,
@@ -4001,7 +3952,7 @@ const { setupNim } = require(${onboardPath});
       assert.equal(install.mock.calls.length, 0);
       assert.deepEqual(
         setup.mock.calls.map(([options]) => options),
-        [{ announceStop: false, installedPath }],
+        [{ announceStop: true, installedPath }],
       );
       assert.ok(lines.some((line) => line.includes("Using Ollama on host.docker.internal:11434")));
     } finally {
@@ -4023,14 +3974,18 @@ const { setupNim } = require(${onboardPath});
       loopbackOnly: true,
     });
 
-    const install = vi.fn(async () => ({ ok: false, path: "" }));
-    const setup = vi.fn<SetupNimOllamaDeps["setupWindowsOllamaWith0000Binding"]>(() => true);
+    const install = vi.fn(async () => ({
+      ok: false as const,
+      path: "",
+      reason: "install" as const,
+    }));
+    const setup = vi.fn((_args?: unknown) => WINDOWS_SETUP_SUCCESS);
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const state = makeOllamaSelectionState();
     const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
       makeSetupNimOllamaDeps({
         installOllamaOnWindowsHost: install,
-        setupWindowsOllamaWith0000Binding: setup,
+        setupWindowsOllamaLoopbackBinding: setup,
       }),
     );
 
@@ -4039,7 +3994,6 @@ const { setupNim } = require(${onboardPath});
         null,
         "start-windows-ollama",
         "qwen3:8b",
-        false,
         detected.loopbackOnly,
         detected.installedPath,
         state,
@@ -4070,14 +4024,18 @@ const { setupNim } = require(${onboardPath});
       loopbackOnly: true,
     });
 
-    const install = vi.fn(async () => ({ ok: false, path: "" }));
-    const setup = vi.fn<SetupNimOllamaDeps["setupWindowsOllamaWith0000Binding"]>(() => true);
+    const install = vi.fn(async () => ({
+      ok: false as const,
+      path: "",
+      reason: "install" as const,
+    }));
+    const setup = vi.fn((_args?: unknown) => WINDOWS_SETUP_SUCCESS);
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const state = makeOllamaSelectionState();
     const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
       makeSetupNimOllamaDeps({
         installOllamaOnWindowsHost: install,
-        setupWindowsOllamaWith0000Binding: setup,
+        setupWindowsOllamaLoopbackBinding: setup,
       }),
     );
 
@@ -4086,7 +4044,6 @@ const { setupNim } = require(${onboardPath});
         null,
         "start-windows-ollama",
         "qwen3:8b",
-        false,
         detected.loopbackOnly,
         detected.installedPath,
         state,

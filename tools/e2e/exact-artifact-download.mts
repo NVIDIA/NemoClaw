@@ -6,10 +6,7 @@ import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  listValidatedArtifactZipEntries,
-  readValidatedArtifactZipEntryBytes,
-} from "../../scripts/scorecard/read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../../scripts/lib/read-artifact-zip.mts";
 import { githubRequest } from "./base-image-publication.mts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
@@ -158,6 +155,11 @@ function isTransientStatus(status: number): boolean {
   return status === 408 || status === 429 || (status >= 500 && status <= 599);
 }
 
+/** Cancel an unused response body without masking the owning failure or retry. */
+async function cancelResponseBody(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
+}
+
 /** Read one response stream without retaining bytes beyond the bound identity size. */
 async function readBoundedResponseBody(response: Response, expectedSize: number): Promise<Buffer> {
   if (!response.body) throw new TerminalArtifactContentError("artifact response body is missing");
@@ -236,6 +238,7 @@ export async function downloadBoundArtifact(
       log(
         `artifact-content-read attempt=${attempt} status=${response.status} outcome=${terminal ? (transient ? "exhausted" : "failed-no-retry") : "retry"}`,
       );
+      await cancelResponseBody(response);
       if (terminal) {
         throw new Error(`artifact content read failed with HTTP ${response.status}`);
       }
@@ -248,6 +251,7 @@ export async function downloadBoundArtifact(
       contentLength &&
       (!/^(0|[1-9][0-9]*)$/u.test(contentLength) || Number(contentLength) !== identity.size)
     ) {
+      await cancelResponseBody(response);
       throw new Error("artifact content length does not match the bound identity");
     }
     let archive: Buffer;
@@ -285,15 +289,14 @@ export function materializeExactJsonArchive(
   outputDirectory: string,
   fileName: typeof CONTRACT_FILE | typeof COHORT_FILE,
 ): string {
-  const entries = listValidatedArtifactZipEntries(archive, { maxEntries: 2 });
-  if (JSON.stringify(entries) !== JSON.stringify([fileName])) {
+  const entries = readValidatedArtifactZipEntries(archive, {
+    maxEntries: 2,
+    maxTotalUncompressedBytes: MAX_CONTRACT_BYTES,
+  });
+  if (entries?.length !== 1 || entries[0]?.name !== fileName) {
     throw new Error(`artifact archive must contain exactly one ${fileName} regular file`);
   }
-  const contract = readValidatedArtifactZipEntryBytes(archive, fileName, {
-    maxBytes: MAX_CONTRACT_BYTES,
-    maxEntries: 2,
-  });
-  if (!contract) throw new Error("artifact contract archive is malformed");
+  const contract = entries[0].bytes;
   const resolvedDirectory = path.resolve(outputDirectory);
   mkdirSync(resolvedDirectory, { mode: 0o700, recursive: true });
   const contractPath = path.join(resolvedDirectory, fileName);

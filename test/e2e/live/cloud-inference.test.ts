@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -21,7 +22,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { runBoundedRetry } from "../fixtures/retry-policy.ts";
+import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   buildPreContractExternalProviderSkipEvidence,
@@ -59,10 +60,10 @@ const CLOUD_MODEL =
   process.env.NEMOCLAW_COMPAT_MODEL ??
   process.env.NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL ??
   "nvidia/nemotron-3-super-120b-a12b";
-const INSTALL_TIMEOUT_MS = 25 * 60_000;
+const INSTALL_TIMEOUT_MS = execTimeout(25 * 60_000);
 const CHAT_TIMEOUT_MS = 120_000;
 const SANDBOX_PROBE_TIMEOUT_MS = 120_000;
-const TEST_TIMEOUT_MS = 40 * 60_000;
+const TEST_TIMEOUT_MS = testTimeout(40 * 60_000);
 const MAX_ATTEMPTS = boundedPositiveInteger(
   "E2E_PHASE_5B_MAX_ATTEMPTS",
   process.env.E2E_PHASE_5B_MAX_ATTEMPTS,

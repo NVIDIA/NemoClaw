@@ -32,7 +32,7 @@ before those targets run; local runners must provide it themselves.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
-- `.github/workflows/sandbox-images-and-e2e.yaml` provides reusable sandbox-image build and test evidence.
+- `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
 ## CI execution shape
@@ -51,7 +51,9 @@ It builds the CLI from the trusted workflow checkout and never executes or resto
 
 #### Artifact Identity
 
-For a pull request (PR) run, `checkout_sha` identifies the candidate source commit.
+For a pull request (PR) run, `checkout_sha` identifies the selected head or exact base source
+commit. A base replay sets `checkout_sha` equal to `base_sha` and keeps the same trusted workflow
+SHA and selectors as the failed head run.
 The trusted workflow runs from `github.workflow_sha`.
 A push or manual run uses `github.sha` when `checkout_sha` is empty.
 
@@ -122,6 +124,10 @@ assembles one exact candidate catalog from the workflow's published contracts, u
 and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
+The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
+reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
+Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
+reject mixed cohorts, another run, a future attempt, and another candidate revision.
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
@@ -132,6 +138,11 @@ local image, removes registry credentials, validates the anonymously pullable di
 `managed-pr-contract-*` all-agent catalog pattern and every release alias. The checked-in Pi
 qualification receipts may consume these candidate contracts only when the recorded image-source
 paths are unchanged through the receipt commit.
+
+Pi full lifecycle qualification runs on Linux AMD64. Linux ARM64 remains release-gated by its native
+managed-image build, startup, publication, and checked-in receipt. The receipt refresh check requires
+the Linux AMD64 and Linux ARM64 receipts to identify one source revision, release, and publication
+cohort.
 
 #### Timing Baseline
 
@@ -166,13 +177,23 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Retain the historical installer commit and SHA-256 digest, sandbox image digest, and reviewed OpenClaw npm URL and SHA-512 integrity. Install the historical package before testing the candidate upgrade path. |
+| `openshell-gateway-upgrade` | Retain one v0.0.89 fixture with a pinned installer commit and digest, sandbox image digest, and reviewed OpenClaw archive. Prove that the current gateway upgrade leaves its sandbox Ready, preserves a workspace marker, keeps the raw gateway credential out of the sandbox environment, `/sandbox/.openclaw/openclaw.json`, and recursive `auth-profiles.json` files below `/sandbox/.openclaw/agents`, and supports authenticated agent turns before and after the upgrade. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
 These targets may restore the shared artifact for the candidate CLI.
 They must not replace a historical installer, package, image, or version boundary with that artifact.
 The gateway fixture already binds its remote historical inputs to immutable commits and cryptographic digests.
 The workflow does not republish those inputs as artifacts.
+Deterministic tests own installer identity, OpenShell release asset selection,
+NemoClaw restore behavior, and Dockerfile patch behavior. The live target does not
+assert OpenClaw database tables, migration checkpoints, or other third-party
+storage details.
+
+The retained live target owns the released-gateway upgrade and usable-survivor
+boundary. Deterministic rebuild-flow tests own post-backup recreate failure,
+preserved backup and registry state, recovery-journal retention, and successful
+retry; stale-recovery tests own fail-closed behavior when no authoritative live
+policy remains.
 
 ### Hermes Sandbox Image Artifact
 
@@ -185,14 +206,34 @@ registry writes disabled. After the build, it scans the completed image for
 node-tar and verifies the sandbox-readable installed files. It then uploads the
 compressed image as the one-day `hermes-isolation-image` artifact.
 
-The 90-minute `test-hermes-sandbox-image` job and the
-`state-dir-guard-metadata` job download and load that artifact instead of
-rebuilding the image. Within the Hermes test job, the secret-boundary and
-root-entrypoint steps have 45- and 30-minute budgets respectively.
+The 90-minute `test-hermes-sandbox-image` job downloads and loads that artifact instead of
+rebuilding the image.
+Within that job, the secret-boundary and root-entrypoint steps have 45- and 30-minute budgets respectively.
 
-The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
-shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
-E2E tests when those boundaries are the behavior under test.
+To reproduce root-entrypoint failures locally, load the run's `hermes-isolation-image` artifact into Docker and run:
+
+```bash
+NEMOCLAW_HERMES_TEST_IMAGE=nemoclaw-hermes-production NEMOCLAW_RUN_LIVE_E2E=1 \
+  npx vitest run --project e2e-live test/e2e/live/hermes-root-entrypoint-smoke.test.ts
+```
+
+For Rancher Desktop, also set `DOCKER_HOST=unix://$HOME/.rd/docker.sock`.
+Use a native image for process-identity checks; QEMU can cause the startup guard to reject a valid PID 1.
+To build a native image from the checkout with its pinned published base, run `docker build -f agents/hermes/Dockerfile -t nemoclaw-hermes-local .`.
+Then set `NEMOCLAW_HERMES_TEST_IMAGE=nemoclaw-hermes-local` in the test command.
+Refusal scenarios execute startup as PID 1.
+They require exit code 1 for root preparation or 78 for non-root layout repair.
+They then start the retained container with a verification script to check the refusal reason and filesystem state.
+This second pass does not launch Hermes again.
+The sandbox user owns the config directory and can remove its history file.
+Sticky-bit protection prevents the gateway user from removing sandbox-owned config files.
+
+The former root-level `test/e2e-test.sh` and `test/e2e-gateway-isolation.sh` suites have been
+removed. Their production-image security coverage now belongs to
+`test/e2e-runtime/managed-image-openclaw-security.test.ts` and the
+`managed-image-openclaw-security` job in `.github/workflows/sandbox-images.yaml`. Keep real shell,
+installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in E2E tests when those
+boundaries are the behavior under test.
 
 ## Platform Evidence
 
@@ -714,7 +755,7 @@ If visibility remains stale, cleanup treats the file as active.
 Cleanup removes it only after `swapoff` succeeds.
 Successful state is discarded with the ephemeral runner.
 
-The fallback covers agent-turn latency, Hermes inference switch and shields,
+The fallback covers agent-turn latency and Hermes inference switch,
 the Hermes stable MCP shard, the Hermes common-egress and channel
 stop/start shards, the dashboard-bearing `hermes-e2e` lane, `hermes-discord`,
 and Hermes security-posture tests. Rebuild lanes with workflow-managed swap,
@@ -736,7 +777,6 @@ lanes:
 - `common-egress-agent`;
 - `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
 - the Anthropic-compatible `hermes-inference-switch` mode;
-- `hermes-shields-config`;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
 - `rebuild-hermes`;
 - `rebuild-hermes-stale-base`;
@@ -1041,7 +1081,7 @@ request resets that observation window.
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for 12 routed workflow lane identities / 14
+telemetry for 11 routed workflow lane identities / 13
 concrete job executions.
 
 - `agent-turn-latency`, spanning its sequential OpenClaw and Hermes setup
@@ -1055,7 +1095,6 @@ concrete job executions.
 - `hermes-discord`
 - `hermes-e2e`, including dashboard coverage
 - `hermes-inference-switch` with the `anthropic` mode
-- `hermes-shields-config`
 - `security-posture` with the `hermes` shard
 
 The two extra instrumented executions come from the 3 `common-egress-agent`
@@ -1455,13 +1494,20 @@ Dispatch a new run after recovery.
 If a case fails, use the GitHub Actions job log.
 Inspect a case artifact only when its upload step completed.
 
-For a manual PR run, provide these inputs:
+For the initial manual PR run, provide these inputs:
 
 - The current PR number.
 - The lowercase 40-character SHA of the latest PR commit.
 - The PR source repository.
 - The lowercase 40-character PR base SHA.
 - The SHA of the trusted workflow commit on `main`.
+
+If the head run fails, use the read-only CI failure classifier when it is available. Stop without a
+base replay when it identifies known infrastructure failure. Only an unresolved candidate failure
+may be replayed with the same selectors against the exact PR base: set `checkout_sha` to the
+recorded base SHA and `checkout_repository` to `NVIDIA/NemoClaw`, while leaving `base_sha` and
+`workflow_sha` unchanged. The workflow run is the evidence; do not publish a separate commit status
+or automatically replay the base.
 
 For the default NVIDIA-owned PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
@@ -1477,12 +1523,15 @@ For this producer run, the executing workflow SHA, `workflow_sha` input, and PR 
 Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
 A trusted `main` workflow pre-checkout step validates the open PR and records whether its source repository has API-confirmed `NVIDIA` organization ownership.
 That ownership authorizes the full ordinary plan and credential profiles; external sources retain the bounded controller plan.
-A second validation after checkout rejects a changed candidate commit, base commit, PR source repository, or NVIDIA ownership before preparation.
+A second validation after checkout rejects a changed selected commit, base commit, repository, or
+NVIDIA ownership before preparation.
 Candidate runs cannot publish release qualification.
 
 The Actions run is advisory for the pull request and is not a required merge context.
-Treat it as passing evidence only when the `E2E` workflow concludes with `success` for the recorded PR number, PR source repository, candidate commit SHA, base commit SHA, and executing workflow SHA.
-A changed PR source repository, candidate commit SHA, or base commit SHA invalidates the evidence and requires a new manual run.
+Treat a head or base run as passing evidence only when the `E2E` workflow concludes with `success`
+for the recorded PR number, selected repository, selected commit SHA, base commit SHA, and executing
+workflow SHA. A changed PR source repository, head commit SHA, or base commit SHA invalidates a
+head-to-base comparison.
 
 The platform-evidence workflow runs on configured pushes to `main` and supports manual dispatch for branch diagnosis.
 The experimental portable-profile workflow can run for pull requests, matching `main` pushes, and manual dispatch.
@@ -1589,6 +1638,10 @@ image layers and can otherwise exhaust the runner's default memory and swap
 during Docker layer export. Apart from those rebuild and export paths, E2E jobs
 add swap only through the trusted Hermes main-workflow fallback described in
 [Larger-runner routing](#larger-runner-routing).
+
+The exporters leave swap active through their final image operation. Their
+GitHub-hosted runners own terminal disposal of the swap and its backing file;
+the workflows do not add a failure-prone teardown step for that ephemeral state.
 
 These assertions run inside the existing `full-e2e` lifecycle instead of a
 second standalone onboarding run. This keeps the measurement on the job's first

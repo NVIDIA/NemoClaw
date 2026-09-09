@@ -10,9 +10,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireSource = createRequire(import.meta.url);
+const { DirectSandboxContainerNotFoundError, DirectSandboxFallbackUnavailableError } =
+  requireSource(
+    "../../src/lib/onboard/runtime-provider/privileged-sandbox-control-errors.ts",
+  ) as typeof import("../../src/lib/onboard/runtime-provider/privileged-sandbox-control-errors.js");
 const {
-  classifyForwardHealthWithReachability,
-  classifySandboxForwardHealth,
   executeGatewaySupervisorAction,
   executeSandboxCommand,
   executeSandboxExecCommand,
@@ -189,6 +191,7 @@ describe("waitForManagedGatewaySupervisor", () => {
         status: 1,
         stdout: "",
         stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+        managedContainerDiscoveryUnavailable: true,
       })
       .mockReturnValueOnce({
         status: 0,
@@ -285,6 +288,61 @@ describe("waitForManagedGatewaySupervisor", () => {
     ).toBe(false);
     expect(sleepImpl).not.toHaveBeenCalled();
   });
+
+  it("does not treat an untyped helper refusal as pending container discovery (#11107)", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+    }));
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
+  it("shares one deadline across managed probe attempts (#11107)", () => {
+    let now = 0;
+    const requestGatewaySupervisorActionImpl = vi.fn(
+      (_sandboxName: string, _action: "restart" | "recover" | "probe", timeout = 210_000) => {
+        now += timeout;
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "SUPERVISOR_DISCOVERY_PENDING",
+        };
+      },
+    );
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        nowImpl: () => now,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl: vi.fn(),
+        totalTimeoutMs: 20_000,
+      }),
+    ).toBe(false);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenNthCalledWith(
+      1,
+      "new-clone",
+      "probe",
+      15_000,
+    );
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenNthCalledWith(
+      2,
+      "new-clone",
+      "probe",
+      5_000,
+    );
+  });
 });
 
 describe("executeGatewaySupervisorAction", () => {
@@ -293,15 +351,33 @@ describe("executeGatewaySupervisorAction", () => {
   it("sanitizes a temporarily unavailable direct container into the retry marker", () => {
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
     vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget").mockImplementation(() => {
-      throw new Error("temporary direct-container discovery detail");
+      throw new DirectSandboxContainerNotFoundError("temporary direct-container discovery detail");
     });
-    vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(true);
 
     expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
       status: 1,
       stdout: "",
       stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+      managedContainerDiscoveryUnavailable: true,
     });
+  });
+
+  it.each([
+    "Direct sandbox container discovery failed for 'new-clone': transport unavailable",
+    "No running Podman runtime resource found for sandbox 'new-clone'.",
+  ])("keeps a direct-container authority failure terminal: %s (#11107)", (detail) => {
+    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+    const request = vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget");
+    request.mockImplementation(() => {
+      throw new DirectSandboxFallbackUnavailableError(detail);
+    });
+
+    expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: `PRIVILEGED_CONTROL_UNAVAILABLE: ${detail}`,
+    });
+    expect(request).toHaveBeenCalledOnce();
   });
 
   it("keeps other privileged-control refusals terminal and classified", () => {
@@ -460,232 +536,6 @@ describe("resolveSandboxDashboardPort", () => {
         getSandbox: () => ({ name: "beta", dashboardPort: 18790 }),
       }),
     ).toBe(18790);
-  });
-});
-
-describe("classifySandboxForwardHealth", () => {
-  it.each(["running", "active"])(
-    "returns true for a %s forward owned by the target sandbox",
-    (status) => {
-      expect(
-        classifySandboxForwardHealth(
-          [{ sandboxName: "beta", port: "18790", status }],
-          "beta",
-          "18790",
-        ),
-      ).toBe(true);
-    },
-  );
-
-  it("returns occupied when another sandbox owns the expected port", () => {
-    expect(
-      classifySandboxForwardHealth(
-        [{ sandboxName: "alpha", port: "18790", status: "running" }],
-        "beta",
-        "18790",
-      ),
-    ).toBe("occupied");
-  });
-
-  it("returns occupied when another sandbox owns an active forward on the expected port", () => {
-    expect(
-      classifySandboxForwardHealth(
-        [{ sandboxName: "alpha", port: "18790", status: "active" }],
-        "beta",
-        "18790",
-      ),
-    ).toBe("occupied");
-  });
-
-  it("returns false for a missing forward", () => {
-    expect(classifySandboxForwardHealth([], "beta", "18790")).toBe(false);
-  });
-
-  it("returns false for a non-running forward owned by the target sandbox", () => {
-    expect(
-      classifySandboxForwardHealth(
-        [{ sandboxName: "beta", port: "18790", status: "dead" }],
-        "beta",
-        "18790",
-      ),
-    ).toBe(false);
-  });
-
-  it("finds a live target entry after a stale duplicate for the same port", () => {
-    expect(
-      classifySandboxForwardHealth(
-        [
-          { sandboxName: "beta", port: "18790", status: "dead" },
-          { sandboxName: "beta", port: "18790", status: "running" },
-        ],
-        "beta",
-        "18790",
-      ),
-    ).toBe(true);
-  });
-
-  it("returns occupied when a foreign live entry conflicts with the live target", () => {
-    expect(
-      classifySandboxForwardHealth(
-        [
-          { sandboxName: "beta", port: "18790", status: "running" },
-          { sandboxName: "alpha", port: "18790", status: "running" },
-        ],
-        "beta",
-        "18790",
-      ),
-    ).toBe("occupied");
-  });
-
-  it("ignores a stale foreign entry when the target owns the live forward", () => {
-    expect(
-      classifySandboxForwardHealth(
-        [
-          { sandboxName: "alpha", port: "18790", status: "dead" },
-          { sandboxName: "beta", port: "18790", status: "running" },
-        ],
-        "beta",
-        "18790",
-      ),
-    ).toBe(true);
-  });
-
-  it("requires the requested bind when classifying a remote forward", () => {
-    expect(
-      classifySandboxForwardHealth(
-        [
-          {
-            sandboxName: "beta",
-            bind: "127.0.0.1",
-            port: "18790",
-            status: "running",
-          },
-        ],
-        "beta",
-        "18790",
-        "0.0.0.0",
-      ),
-    ).toBe(false);
-    expect(
-      ["::", "[::]", "*"].map((bind) =>
-        classifySandboxForwardHealth(
-          [{ sandboxName: "beta", bind, port: "18790", status: "running" }],
-          "beta",
-          "18790",
-          "0.0.0.0",
-        ),
-      ),
-    ).toEqual([true, true, true]);
-  });
-});
-
-describe("classifyForwardHealthWithReachability", () => {
-  it("requires an exact active owner to answer before reporting healthy", () => {
-    let probed = false;
-    const result = classifyForwardHealthWithReachability(
-      [{ sandboxName: "beta", port: "18790", status: "active" }],
-      "beta",
-      "18790",
-      () => {
-        probed = true;
-        return true;
-      },
-    );
-
-    expect(result).toBe(true);
-    expect(probed).toBe(true);
-  });
-
-  it("does not trust an arbitrary local listener for a non-running owned entry", () => {
-    let probed = false;
-    const result = classifyForwardHealthWithReachability(
-      [{ sandboxName: "beta", port: "18790", status: "dead" }],
-      "beta",
-      "18790",
-      () => {
-        probed = true;
-        return true;
-      },
-    );
-
-    expect(result).toBe(false);
-    expect(probed).toBe(false);
-  });
-
-  it("does not accept reachability when the forward list entry is missing", () => {
-    expect(classifyForwardHealthWithReachability([], "beta", "18790", () => true)).toBe(false);
-  });
-
-  it("returns false when forward list says dead and the port does not answer", () => {
-    expect(
-      classifyForwardHealthWithReachability(
-        [{ sandboxName: "beta", port: "18790", status: "dead" }],
-        "beta",
-        "18790",
-        () => false,
-      ),
-    ).toBe(false);
-  });
-
-  it("returns false when an owned running row no longer answers", () => {
-    let probed = false;
-    const result = classifyForwardHealthWithReachability(
-      [{ sandboxName: "beta", port: "18790", status: "running" }],
-      "beta",
-      "18790",
-      () => {
-        probed = true;
-        return false;
-      },
-    );
-    expect(result).toBe(false);
-    expect(probed).toBe(true);
-  });
-
-  it("returns occupied even when the port answers if another sandbox owns it", () => {
-    // Reachability says yes, but the entry belongs to a different sandbox —
-    // we must not silently take over someone else's forward.
-    expect(
-      classifyForwardHealthWithReachability(
-        [{ sandboxName: "alpha", port: "18790", status: "running" }],
-        "beta",
-        "18790",
-        () => true,
-      ),
-    ).toBe("occupied");
-  });
-
-  it("requires a live duplicate after a stale target entry to answer", () => {
-    let probed = false;
-    const result = classifyForwardHealthWithReachability(
-      [
-        { sandboxName: "beta", port: "18790", status: "dead" },
-        { sandboxName: "beta", port: "18790", status: "running" },
-      ],
-      "beta",
-      "18790",
-      () => {
-        probed = true;
-        return true;
-      },
-    );
-
-    expect(result).toBe(true);
-    expect(probed).toBe(true);
-  });
-
-  it("returns occupied for a foreign live duplicate even when the target also has a live row", () => {
-    expect(
-      classifyForwardHealthWithReachability(
-        [
-          { sandboxName: "beta", port: "18790", status: "running" },
-          { sandboxName: "alpha", port: "18790", status: "running" },
-        ],
-        "beta",
-        "18790",
-        () => true,
-      ),
-    ).toBe("occupied");
   });
 });
 

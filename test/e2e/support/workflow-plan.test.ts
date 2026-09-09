@@ -30,7 +30,6 @@ import {
   runE2eWorkflowPlanCli,
   selectedWorkflowJobs,
   validateE2eWorkflowPlan,
-  withoutCredentialedCatalogueProfiles,
   withoutUnavailableOptionalCredentialTargets,
   writeE2eWorkflowPlanCiOutput,
 } from "../../../tools/e2e/workflow-plan.mts";
@@ -53,12 +52,6 @@ function retiredControllerSelectorIds(): string[] {
   const retiredIds = RETIRED_CONTROLLER_SELECTOR_IDS.filter((id) => !allowedJobs.has(id));
   expect(retiredIds).toEqual([...RETIRED_CONTROLLER_SELECTOR_IDS]);
   return retiredIds;
-}
-
-function prCandidatePlan(
-  plan: ReturnType<typeof buildE2eWorkflowPlan>,
-): ReturnType<typeof buildE2eWorkflowPlan> {
-  return withoutCredentialedCatalogueProfiles(plan);
 }
 
 function expectExplicitCatalogueCoverage(): void {
@@ -96,7 +89,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(92);
+    expect(plan.coverageMatrix).toHaveLength(86);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -136,10 +129,11 @@ describe("E2E workflow plan", () => {
       .map((row) => row.id);
     expect(plan.matrix.map((row) => row.id)).toEqual([
       "ubuntu-policy-custom-missing-presets-negative",
+      "ubuntu-repo-cloud-langchain-deepagents-code",
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(52);
+    expect(catalogueIds).toHaveLength(50);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -259,20 +253,17 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-inference"]);
   });
 
-  it("routes both Pi qualification targets through the NVIDIA API key profile", () => {
-    const targetIds = ["pi-agent-qualification-amd64", "pi-agent-qualification-arm64"];
-    const plan = buildE2eWorkflowPlan({ targets: targetIds.join(",") });
+  it("routes Pi lifecycle qualification through the AMD64 NVIDIA API key profile (#7926)", () => {
+    const targetId = "pi-agent-qualification-amd64";
+    const plan = buildE2eWorkflowPlan({ targets: targetId });
 
-    expect(targetIds.map((id) => catalogueTarget(id).profile)).toEqual([
-      "nvidia-api",
-      "nvidia-api",
-    ]);
-    expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toEqual(targetIds);
+    expect(catalogueTarget(targetId).profile).toBe("nvidia-api");
+    expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toEqual([targetId]);
     expect(plan.catalogueMatrices["nvidia-inference"]).toEqual([]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
   });
 
-  it("emits the required workflow fields for migrated targets", () => {
+  it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
       jobs: "gateway-guard-recovery,hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
     });
@@ -292,8 +283,10 @@ describe("E2E workflow plan", () => {
         }),
         expect.objectContaining({
           id: "network-policy",
-          host_packages: "expect",
+          host_packages: "",
           install_non_interactive: true,
+          shard: "live-probes",
+          timeout_minutes: 90,
         }),
         expect.objectContaining({
           id: "openclaw-tui-chat-correlation",
@@ -312,11 +305,17 @@ describe("E2E workflow plan", () => {
         display_name: "Inference: OpenClaw switches providers and remains responsive",
       }),
     );
-    const retainedJobs = readFreeStandingJobsInventory().allowedJobs;
-
-    expect(retainedJobs).not.toEqual(
-      expect.arrayContaining(["hermes-slack", "openclaw-inference-switch", "sandbox-operations"]),
+    expect(selectedWorkflowJobs(plan)).toEqual([
+      "catalogue-nvidia-inference",
+      "catalogue-standard",
+    ]);
+    expect(catalogueTarget("network-policy").selector).toBe("^network-policy:");
+    const migratedTargetIds = ["hermes-slack", "openclaw-inference-switch", "sandbox-operations"];
+    const retainedMigratedJobs = readFreeStandingJobsInventory().allowedJobs.filter((id) =>
+      migratedTargetIds.includes(id),
     );
+
+    expect(retainedMigratedJobs).toEqual([]);
   });
 
   it.each([
@@ -407,15 +406,6 @@ describe("E2E workflow plan", () => {
         hostPreparation: "hermes-swap",
         runnerComparison: true,
         shard: "anthropic",
-      },
-    ],
-    [
-      "hermes-shields-config",
-      {
-        profile: "standard",
-        runnerKey: "hermes-shields-config",
-        hostPreparation: "hermes-swap",
-        runnerComparison: true,
       },
     ],
     [
@@ -673,6 +663,48 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it.each([
+    "test/e2e/e2e-cloud-experimental/features/skill/add-sandbox-skill.sh",
+    "test/e2e/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh",
+  ])("selects the skill-agent target when its shared helper %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "skill-agent",
+    );
+  });
+
+  it.each([
+    "src/commands/sandbox/skill/list.ts",
+    "src/lib/skill-install.ts",
+    "src/lib/actions/sandbox/skill-install.ts",
+    "src/lib/adapters/openshell/sandbox-command-sdk.ts",
+    "src/lib/agent/skill-integration.ts",
+  ])("selects every agent skill lifecycle when %s changes", (changedFile) => {
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual(
+      expect.arrayContaining(["openclaw-skill-cli", "security-posture-hermes"]),
+    );
+    expect(plan.matrix.map((target) => target.id)).toContain(
+      "ubuntu-repo-cloud-langchain-deepagents-code",
+    );
+  });
+
+  it("selects the Hermes live lifecycle owner when its skill helper changes", () => {
+    expect(
+      catalogueTargetsForChangedFiles(["test/e2e/live/hermes-skill-lifecycle.ts"]).map(
+        (target) => target.id,
+      ),
+    ).toContain("security-posture-hermes");
+  });
+
+  it.each([
+    "nemoclaw-blueprint/router/pool-config.yaml",
+    "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
+  ])("selects the Model Router target when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "model-router-provider-routed-inference",
+    );
+  });
+
   it("selects only the catalogue Personal public-fetch owner for an assertion change", () => {
     const plan = buildE2eWorkflowPlan(
       {},
@@ -773,18 +805,6 @@ describe("E2E workflow plan", () => {
     );
     expect(plan.selectedJobs).toContain("messaging-providers");
     expect(plan.selectedJobs).not.toContain("channels-stop-start");
-  });
-
-  it("selects both Shields proof lanes for shared Shields runtime changes", () => {
-    const plan = buildE2eWorkflowPlan(
-      {},
-      { changedFiles: ["src/lib/shields/relock-reconfirm.ts"] },
-    );
-
-    expect(plan.catalogueMatrices.standard.map((row) => row.id)).toContain("hermes-shields-config");
-    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
-      "shields-config",
-    );
   });
 
   it.each(["jobs", "targets"] as const)(
@@ -1294,7 +1314,7 @@ describe("E2E workflow plan", () => {
     );
     expect(complete.stdout).toContain("### Repeated outcomes with distinct evidence");
     expect(complete.stdout).toContain(
-      "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code / docker`, `ubuntu-repo-cloud-openclaw / docker` | agent runtime and environment or inference endpoint |",
+      "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code / docker`, `ubuntu-repo-cloud-openclaw / docker` | agent runtime |",
     );
     expect(complete.stdout).toContain("### Intentional exclusions");
     expect(complete.stdout).toContain(

@@ -26,7 +26,7 @@ import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
-import { retryUntil } from "../../core/retry";
+import { retryUntil, retryUntilAsync } from "../../core/retry";
 
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
@@ -40,14 +40,17 @@ import {
 } from "../../inference/config";
 import { GatewayRouteConflictError } from "../../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
-import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
+import {
+  findReachableOllamaHost,
+  probeLocalProviderHealth,
+  shouldFrontOllamaWithProxy,
+} from "../../inference/local";
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   assertNoOpenShellGatewayEndpointOverride,
   OpenShellGatewayEndpointOverrideError,
 } from "../../openshell-gateway-endpoint-guard";
-import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact, redactFull } from "../../security/redact";
@@ -58,12 +61,11 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
-import { runConnectChildWithShieldsRelockNotice } from "./agent/connect-shields-relock-notice";
+import { runSandboxExecChild } from "./exec";
 import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
-  exitOnMcpReconciliationRefusal,
   exitOnSecretBoundaryRefusal,
-  printGatewayIntegrityRepairGuidance,
+  printGatewayTerminalRepairGuidance,
 } from "./connect-boundary-refusal";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
@@ -109,12 +111,18 @@ import {
   settlePortableOpenClawPairing,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
-import type { HermesPortableLifecycleRecoveryTimingEvidence } from "../../onboard/experimental/hermes-portable-lifecycle";
+import type {
+  HermesPortableCurrentnessTimingEvidence,
+  HermesPortableLifecycleRecoveryTimingEvidence,
+} from "../../onboard/experimental/hermes-portable-lifecycle";
+import type { HermesPortableContainerInspectionTimingEvidence } from "../../onboard/experimental/hermes-portable-container";
 import {
   checkAndRecoverSandboxProcesses,
+  createHermesPortableForwardRecoveryInput,
   executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
   HermesPortableForwardRecoveryError,
+  type HermesPortableForwardRecoveryContext,
   type HermesPortableForwardRecoveryFailure,
   type HermesPortableForwardRecoveryTimingEvidence,
   type ManagedGatewayControlCompletion,
@@ -135,6 +143,19 @@ import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
 export { runConnectAutoPairApprovalPass, waitForManagedGatewaySupervisor };
+
+const HERMES_READINESS_PUBLICATION_SETTLE_DELAYS_MS = [100, 250] as const;
+
+async function publishHermesLaunchReadinessWithSettlement(
+  publication: Parameters<typeof publishLaunchReadiness>[0],
+  deps: Parameters<typeof publishLaunchReadiness>[1],
+) {
+  return retryUntilAsync(() => publishLaunchReadiness(publication, deps), {
+    accept: (result) => result.kind !== "validation-failed" || result.category !== "health",
+    retryDelaysMs: HERMES_READINESS_PUBLICATION_SETTLE_DELAYS_MS,
+    sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  });
+}
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
@@ -254,9 +275,7 @@ export function parseSandboxConnectArgs(
     }
     switch (arg) {
       case "--dangerously-skip-permissions":
-        console.error(
-          "  --dangerously-skip-permissions was removed; use shields commands instead.",
-        );
+        console.error("  --dangerously-skip-permissions is not supported.");
         printSandboxConnectHelp(sandboxName);
         process.exit(1);
         break;
@@ -284,7 +303,7 @@ function exitOnForwardRecoveryFailure(
     `  Probe failed: ${agentName} gateway is running in '${sandboxName}', but ${detail ?? "the dashboard/API host forward could not be restored"}.`,
   );
   console.error(
-    `  Run \`openshell forward start --background ${port} ${sandboxName}\` manually and re-run \`nemoclaw ${sandboxName} recover\`.`,
+    `  Run \`nemoclaw ${sandboxName} recover\` after resolving the reported ForwardTcp error.`,
   );
   process.exit(1);
 }
@@ -413,10 +432,6 @@ async function runSandboxConnectProbe(
     probeTiming?.markFailureStage("processes");
     exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Probe");
   }
-  if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
-    probeTiming?.markFailureStage("processes");
-    exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Probe");
-  }
   if ("forwardRecoveryFailed" in processCheck && processCheck.forwardRecoveryFailed) {
     probeTiming?.markFailureStage("forward");
     const detail =
@@ -479,7 +494,7 @@ async function runSandboxConnectProbe(
     `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
   );
   probeTiming?.markFailureStage("processes");
-  if (printGatewayIntegrityRepairGuidance(sandboxName, recoveryFailureLayer)) {
+  if (printGatewayTerminalRepairGuidance(sandboxName, recoveryFailureLayer)) {
     process.exit(1);
   }
   // Surface the #4710 wedge signature: recovery ran with quiet=true, so this
@@ -529,18 +544,49 @@ function failHermesPortableInferenceRecovery(
   process.exit(1);
 }
 
+/** Keep captured OpenShell output out of operator-facing recovery diagnostics. */
+function describeHermesPortableForwardRecoveryFailure(
+  failure: HermesPortableForwardRecoveryFailure,
+  context?: HermesPortableForwardRecoveryContext,
+): string {
+  switch (context?.cause) {
+    case "port-occupied":
+      return `Recorded host port ${String(context.port)} is occupied by another sandbox or listener. NemoClaw did not stop that owner or change the recorded forwards. Inspect the port owner before retrying.`;
+    case "forward-list-failed":
+      return "The OpenShell `forward list` command failed, so NemoClaw could not prove the recorded forward state. Restore OpenShell access and retry.";
+    case "forward-list-invalid":
+      return "OpenShell `forward list` returned malformed or ambiguous state, so NemoClaw could not prove the recorded forwards. Inspect the complete forward list before retrying.";
+    case "forward-port-resolution-failed":
+      return "NemoClaw could not resolve the required recorded host ports. It made no forward changes. Inspect the sandbox registry and launch-forward configuration before retrying.";
+    case "forward-reachability-failed":
+      return `NemoClaw could not verify whether recorded host port ${String(context.port)} is reachable. Inspect that listener and the recorded forward state before retrying.`;
+    case "forward-settlement-timed-out":
+      return "The required recorded host forwards did not become healthy before the recovery deadline. Inspect the recorded forward state before retrying.";
+    case "forward-mutation-failed":
+      return `NemoClaw could not confirm that OpenShell forward ${context.operation} completed for recorded host port ${String(context.port)}. Inspect the recorded forward state before retrying.`;
+  }
+  switch (failure) {
+    case "forward-occupied":
+      return "A required recorded host port is occupied by another sandbox or listener. NemoClaw did not stop that owner or change the recorded forwards. Inspect the port owner before retrying.";
+    case "forward-state-unavailable":
+      return "NemoClaw could not read and prove one unambiguous OpenShell host-forward state. It made no forward changes. Inspect `openshell forward list` before retrying.";
+    case "recovery-failed":
+      return "NemoClaw could not establish the required recorded host forwards within the recovery bound. Inspect the recorded forward state before retrying.";
+    case "restoration-unproved":
+      return "NemoClaw could not prove that the recovered host forwards returned to a stopped state. Do not run another probe or launch until the recorded forward state is inspected.";
+    case "authority-drift":
+      return "Hermes Portable authority changed during host-forward recovery. Do not run another probe or launch until the current Portable state is inspected.";
+  }
+}
+
 function failHermesPortableForwardRecovery(
   sandboxName: string,
   failure: HermesPortableForwardRecoveryFailure,
+  context?: HermesPortableForwardRecoveryContext,
 ): never {
-  const detail =
-    failure === "restoration-unproved"
-      ? "NemoClaw could not prove that the recovered host forwards returned to a stopped state. Do not run another probe or launch until the recorded forward state is inspected."
-      : failure === "authority-drift"
-        ? "Hermes Portable authority changed during host-forward recovery. Do not run another probe or launch until the current Portable state is inspected."
-        : "The required recorded host forwards could not be restored. No launch-readiness evidence was published.";
+  const detail = describeHermesPortableForwardRecoveryFailure(failure, context);
   console.error(
-    `  Error: Hermes Portable host-forward recovery for '${sandboxName}' failed. ${detail}`,
+    `  Error: Hermes Portable host-forward recovery for '${sandboxName}' failed. ${detail} No launch-readiness evidence was published.`,
   );
   process.exit(1);
 }
@@ -665,7 +711,9 @@ function hermesPortableForwardInputForConnectProbe(
   try {
     ports = resolveSandboxLaunchForwardPorts(input.sandboxName);
   } catch {
-    throw new HermesPortableForwardRecoveryError("forward-state-unavailable");
+    throw new HermesPortableForwardRecoveryError("forward-state-unavailable", {
+      cause: "forward-port-resolution-failed",
+    });
   }
   try {
     assertProductCurrent();
@@ -673,46 +721,21 @@ function hermesPortableForwardInputForConnectProbe(
     throw new HermesPortableForwardRecoveryError("authority-drift");
   }
   if (!ports || ports.length === 0) {
-    throw new HermesPortableForwardRecoveryError("forward-state-unavailable");
+    throw new HermesPortableForwardRecoveryError("forward-state-unavailable", {
+      cause: "forward-port-resolution-failed",
+    });
   }
 
-  const capture = (args: readonly string[], timeout: number) => {
-    return captureResolvedOpenshell([...args], {
-      env: commandAuthority.env,
-      openshellBinary: commandAuthority.executablePath,
-      replaceEnv: true,
-      ignoreError: true,
-      timeout,
-    });
-  };
-  const runMutation = (args: readonly string[], timeout: number) => {
-    return runOpenshell([...args], {
-      env: commandAuthority.env,
-      openshellBinary: commandAuthority.executablePath,
-      replaceEnv: true,
-      ignoreError: true,
-      stdio: "ignore",
-      timeout,
-    });
-  };
-
-  return {
-    intent: input.intent,
-    sandboxName: input.sandboxName,
+  return createHermesPortableForwardRecoveryInput({
+    assertCurrent: assertProductCurrent,
+    assertRollbackCurrent: assertCommandCurrent,
+    commandAuthority,
     gatewayName: input.authority.gatewayName,
-    operationTimeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+    intent: input.intent,
+    onTiming: writeHermesPortableForwardRecoveryTiming,
     ports,
-    probeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-    timing: { onComplete: writeHermesPortableForwardRecoveryTiming },
-    deps: {
-      assertCurrent: assertProductCurrent,
-      assertRollbackCurrent: assertCommandCurrent,
-      captureCurrentList: capture,
-      captureRollbackList: capture,
-      runCurrentMutation: runMutation,
-      runRollbackMutation: runMutation,
-    },
-  } as const;
+    sandboxName: input.sandboxName,
+  });
 }
 
 /** Restore the launch-readiness forwards through current Hermes command authority. */
@@ -727,6 +750,22 @@ function writeHermesPortableForwardRecoveryTiming(
 ): void {
   console.log(
     `  Hermes Portable forward recovery timing: list=${String(evidence.listMs)}ms listCount=${String(evidence.listCount)} stop=${String(evidence.stopMs)}ms stopCount=${String(evidence.stopCount)} start=${String(evidence.startMs)}ms startCount=${String(evidence.startCount)} settle=${String(evidence.settleMs)}ms settleCount=${String(evidence.settleCount)} total=${String(evidence.totalMs)}ms result=${evidence.result}`,
+  );
+}
+
+function writeHermesPortableCurrentnessTiming(
+  evidence: HermesPortableCurrentnessTimingEvidence,
+): void {
+  console.log(
+    `  Hermes Portable currentness timing: receiptRead=${String(evidence.receiptReadMs)}ms receiptReadCount=${String(evidence.receiptReadCount)} socketAuthority=${String(evidence.socketAuthorityMs)}ms socketAuthorityCount=${String(evidence.socketAuthorityCount)} openshellExecutable=${String(evidence.openshellExecutableMs)}ms openshellExecutableCount=${String(evidence.openshellExecutableCount)} podmanExecutable=${String(evidence.podmanExecutableMs)}ms podmanExecutableCount=${String(evidence.podmanExecutableCount)} podmanPathResolution=${String(evidence.podmanPathResolutionMs)}ms podmanPathResolutionCount=${String(evidence.podmanPathResolutionCount)} podmanCanonicalRealpath=${String(evidence.podmanCanonicalRealpathMs)}ms podmanCanonicalRealpathCount=${String(evidence.podmanCanonicalRealpathCount)} podmanDirectoryChain=${String(evidence.podmanDirectoryChainMs)}ms podmanDirectoryChainCount=${String(evidence.podmanDirectoryChainCount)} podmanExecutableMetadata=${String(evidence.podmanExecutableMetadataMs)}ms podmanExecutableMetadataCount=${String(evidence.podmanExecutableMetadataCount)} podmanContentRead=${String(evidence.podmanContentReadMs)}ms podmanContentReadCount=${String(evidence.podmanContentReadCount)} podmanContentHash=${String(evidence.podmanContentHashMs)}ms podmanContentHashCount=${String(evidence.podmanContentHashCount)} podmanAuthorityCompare=${String(evidence.podmanAuthorityCompareMs)}ms podmanAuthorityCompareCount=${String(evidence.podmanAuthorityCompareCount)} containerInspect=${String(evidence.containerInspectMs)}ms containerInspectCount=${String(evidence.containerInspectCount)} transactionCompare=${String(evidence.transactionCompareMs)}ms transactionCompareCount=${String(evidence.transactionCompareCount)}`,
+  );
+}
+
+function writeHermesPortableInspectionTiming(
+  evidence: HermesPortableContainerInspectionTimingEvidence,
+): void {
+  console.log(
+    `  Hermes Portable inspection timing: preGuard=${String(evidence.preGuardMs)}ms preGuardCount=${String(evidence.preGuardCount)} podmanCapture=${String(evidence.podmanCaptureMs)}ms podmanCaptureCount=${String(evidence.podmanCaptureCount)} postGuard=${String(evidence.postGuardMs)}ms postGuardCount=${String(evidence.postGuardCount)} jsonParse=${String(evidence.jsonParseMs)}ms jsonParseCount=${String(evidence.jsonParseCount)} identityCompare=${String(evidence.identityCompareMs)}ms identityCompareCount=${String(evidence.identityCompareCount)}`,
   );
 }
 
@@ -764,6 +803,7 @@ function recoverHermesPortableForwardsForConnectProbeOrExit(
     failHermesPortableForwardRecovery(
       sandboxName,
       error instanceof HermesPortableForwardRecoveryError ? error.failure : "recovery-failed",
+      error instanceof HermesPortableForwardRecoveryError ? error.context : undefined,
     );
   }
 }
@@ -1001,7 +1041,7 @@ function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
     });
   } catch (error) {
     if (error instanceof HermesPortableForwardRecoveryError) {
-      failHermesPortableForwardRecovery(sandboxName, error.failure);
+      failHermesPortableForwardRecovery(sandboxName, error.failure, error.context);
     }
     if (error instanceof HermesPortableInferenceRouteVerificationError) {
       failHermesPortableInferenceRoute(sandboxName, error.reason);
@@ -1328,10 +1368,11 @@ function verifyLocalInferenceRouteDependencies(
 ): boolean {
   const isOllamaLocal = provider === "ollama-local";
   if (isOllamaLocal) {
-    findReachableOllamaHost();
-    if (!isWsl()) {
-      ensureOllamaAuthProxy();
-    }
+    findReachableOllamaHost(undefined, {}, undefined, { revalidate: true });
+  }
+  const frontOllamaWithProxy = isOllamaLocal && shouldFrontOllamaWithProxy();
+  if (frontOllamaWithProxy) {
+    ensureOllamaAuthProxy();
   }
   const localHealth = probeLocalProviderHealth(provider, {
     skipOllamaAuthProxySubprobe: isOllamaLocal,
@@ -1344,7 +1385,7 @@ function verifyLocalInferenceRouteDependencies(
     return false;
   }
 
-  if (isOllamaLocal && !isWsl()) {
+  if (frontOllamaWithProxy) {
     const proxyHealth = probeOllamaAuthProxyHealth();
     if (!proxyHealth.ok) {
       if (!quiet) {
@@ -1929,6 +1970,12 @@ async function runConnectEntryPreflight(
                   hermesPortable && probeTiming
                     ? { onComplete: writeHermesPortableLifecycleRecoveryTiming }
                     : undefined,
+                  hermesPortable && probeTiming
+                    ? { onComplete: writeHermesPortableCurrentnessTiming }
+                    : undefined,
+                  hermesPortable && probeTiming
+                    ? { onComplete: writeHermesPortableInspectionTiming }
+                    : undefined,
                 )
               : hermesPortable && probeTiming
                 ? recoverPortableDemoSandboxLifecycleForConnect(
@@ -1937,6 +1984,8 @@ async function runConnectEntryPreflight(
                     gatewayName,
                     undefined,
                     { onComplete: writeHermesPortableLifecycleRecoveryTiming },
+                    { onComplete: writeHermesPortableCurrentnessTiming },
+                    { onComplete: writeHermesPortableInspectionTiming },
                   )
                 : recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
@@ -2005,6 +2054,8 @@ async function runConnectEntryPreflight(
                   probeTiming
                     ? { onComplete: writeHermesPortableLifecycleRecoveryTiming }
                     : undefined,
+                  probeTiming ? { onComplete: writeHermesPortableCurrentnessTiming } : undefined,
+                  probeTiming ? { onComplete: writeHermesPortableInspectionTiming } : undefined,
                 )
               : hermesPortable && probeTiming
                 ? recoverPortableDemoSandboxLifecycleForConnect(
@@ -2013,6 +2064,8 @@ async function runConnectEntryPreflight(
                     currentGateway,
                     undefined,
                     { onComplete: writeHermesPortableLifecycleRecoveryTiming },
+                    { onComplete: writeHermesPortableCurrentnessTiming },
+                    { onComplete: writeHermesPortableInspectionTiming },
                   )
                 : recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
@@ -2159,12 +2212,6 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
           );
           exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Connect");
         }
-        if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
-          const agentName = agentRuntime.getAgentDisplayName(
-            agentRuntime.getSessionAgent(sandboxName),
-          );
-          exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Connect");
-        }
         const recoveryFailureDetail =
           "recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail
             ? String(processCheck.recoveryFailureDetail)
@@ -2231,16 +2278,11 @@ export async function connectSandbox(
       );
       if (!prepared) return null;
       return {
-        completion: runConnectChildWithShieldsRelockNotice(
-          prepared.binary,
-          prepared.args,
-          {
-            hostCwd: ROOT,
-            stdin: true,
-            ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
-          },
-          sandboxName,
-        ),
+        completion: runSandboxExecChild(prepared.binary, prepared.args, {
+          hostCwd: ROOT,
+          stdin: true,
+          ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
+        }),
       };
     });
     if (!started) {
@@ -2345,6 +2387,8 @@ async function prepareConnectSandboxWithinLifecycleFence(
               resolveSandboxGatewayName(registered),
               undefined,
               { onComplete: writeHermesPortableLifecycleRecoveryTiming },
+              { onComplete: writeHermesPortableCurrentnessTiming },
+              { onComplete: writeHermesPortableInspectionTiming },
             ),
           );
           if (recovery.kind === "not-installed") {
@@ -2592,6 +2636,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
                 error instanceof HermesPortableForwardRecoveryError
                   ? error.failure
                   : "authority-drift",
+                error instanceof HermesPortableForwardRecoveryError ? error.context : undefined,
               );
             }
             if (forward.kind === "healthy") {
@@ -2696,7 +2741,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
           probeTiming!.measure("authority", retainedCommand.assertCurrent);
         }
         const published = await probeTiming!.measureAsync("publication", () =>
-          publishLaunchReadiness(
+          (retainedCommand
+            ? publishHermesLaunchReadinessWithSettlement
+            : publishLaunchReadiness)(
             publicationRequest,
             retainedCommand
               ? hermesPortableLaunchReadinessDeps(retainedCommand, probeTiming)

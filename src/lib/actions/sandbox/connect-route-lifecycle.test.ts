@@ -105,6 +105,30 @@ describe("connectSandbox route lifecycle", () => {
     expect(harness.runSetupDnsProxySpy).toHaveBeenCalled();
   });
 
+  it("starts the auth proxy for a WSL Ollama route when Docker is not local", async () => {
+    const harness = createConnectHarness({
+      inferenceGetOutput: "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3:0.6b\n",
+      inferenceProbeResponses: ["BROKEN 503", "BROKEN 503", "OK 200", "OK 200"],
+      isWsl: true,
+      frontOllamaWithProxy: true,
+      registryEntry: {
+        model: "qwen3:0.6b",
+        provider: "ollama-local",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.findReachableOllamaHostSpy).toHaveBeenCalledWith(undefined, {}, undefined, {
+      revalidate: true,
+    });
+    expect(harness.findReachableOllamaHostSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.shouldFrontOllamaWithProxySpy.mock.invocationCallOrder[0],
+    );
+    expect(harness.ensureOllamaAuthProxySpy).toHaveBeenCalled();
+    expect(harness.probeOllamaAuthProxyHealthSpy).toHaveBeenCalled();
+  });
+
   it("shell-quotes hostile route values in drift recovery commands (#3726)", async () => {
     const sandboxName = "alpha's-box";
     const harness = createConnectHarness({

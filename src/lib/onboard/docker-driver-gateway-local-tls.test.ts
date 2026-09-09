@@ -181,13 +181,24 @@ describe("docker-driver-gateway-local-tls", () => {
     vi.useRealTimers();
   });
 
-  it("runs OpenShell certgen into the NemoClaw-owned gateway TLS directory", () => {
+  it("runs certificate generation with the selected OpenShell env (#10514)", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-tls-"));
     const calls: Array<{ command: string; args: string[]; env?: NodeJS.ProcessEnv }> = [];
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    vi.stubEnv("OPENSHELL_DISABLE_TLS", "1");
+    vi.stubEnv("OPENSHELL_DISABLE_GATEWAY_AUTH", "1");
     useTestCertificateClock();
     try {
       const bundle = ensureDockerDriverGatewayLocalTlsBundle({
-        env: { PATH: "/usr/bin" },
+        env: {
+          PATH: "/usr/bin",
+          OPENSHELL_GATEWAY: "nemoclaw-8090",
+          OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+          OPENSHELL_WORKSPACE: "default",
+        },
         gatewayBin: "/opt/openshell/openshell-gateway",
         stateDir,
         spawnSyncImpl: ((
@@ -220,7 +231,14 @@ describe("docker-driver-gateway-local-tls", () => {
         ],
       });
       expect(calls[0]?.env?.OPENSHELL_LOCAL_TLS_DIR).toBe(path.join(stateDir, "tls"));
+      expect(calls[0]?.env?.OPENSHELL_GATEWAY).toBe("nemoclaw-8090");
+      expect(calls[0]?.env?.OPENSHELL_WORKSPACE).toBe("default");
+      expect(calls[0]?.env?.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
+      expect(calls[0]?.env?.OPENSHELL_TOKEN).toBeUndefined();
+      expect(calls[0]?.env?.OPENSHELL_DISABLE_TLS).toBeUndefined();
+      expect(calls[0]?.env?.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
     } finally {
+      vi.unstubAllEnvs();
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });

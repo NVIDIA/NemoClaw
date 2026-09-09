@@ -18,6 +18,7 @@ import {
 } from "../hosted-inference.ts";
 import { redactString } from "../redaction.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
+import { execTimeout } from "../../../helpers/timeouts.ts";
 import type { EnvironmentReady } from "./environment.ts";
 
 const ONBOARD_ARGS = [
@@ -26,7 +27,7 @@ const ONBOARD_ARGS = [
   "--yes",
   "--yes-i-accept-third-party-software",
 ];
-const DEFAULT_TIMEOUT_MS = 15 * 60_000;
+const DEFAULT_TIMEOUT_MS = execTimeout(15 * 60_000);
 const OPENCLAW_GATEWAY_URL = "http://127.0.0.1:18789";
 const NEGATIVE_PREFLIGHT_LOG = "negative-preflight.log";
 const DOCKER_MISSING_PATTERNS = [
@@ -256,16 +257,21 @@ export class OnboardingPhaseFixture {
       );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
+    const candidateManagedImage =
+      options.dcodeBaseImageReference === undefined &&
+      process.env.E2E_WORKLOAD_SOURCE === "managed-image" &&
+      Boolean(process.env.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON?.trim());
     const localDockerfile =
       options.dcodeBaseImageReference === undefined &&
       process.env.E2E_WORKLOAD_SOURCE === "local-dockerfile";
-    const baseImageReference = localDockerfile
-      ? undefined
-      : requireDcodeBaseImageReference(
-          options.dcodeBaseImageReference === undefined
-            ? process.env
-            : { [DCODE_BASE_IMAGE_ENV]: options.dcodeBaseImageReference },
-        );
+    const baseImageReference =
+      localDockerfile || candidateManagedImage
+        ? undefined
+        : requireDcodeBaseImageReference(
+            options.dcodeBaseImageReference === undefined
+              ? process.env
+              : { [DCODE_BASE_IMAGE_ENV]: options.dcodeBaseImageReference },
+          );
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
     const result = await this.host.nemoclaw([...ONBOARD_ARGS, "--observability"], {

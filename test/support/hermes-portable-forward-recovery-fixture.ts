@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { vi } from "vitest";
+
 import type { HermesPortableForwardRecoveryInput } from "../../src/lib/actions/sandbox/probe/hermes-portable-forward-recovery";
-import type { ConnectHarness } from "./connect-flow-test-harness";
+import { type ConnectHarness, requireDist } from "./connect-flow-test-harness";
 
 type ForwardRecord = {
   owner: string;
+  pid?: number;
   reachable: boolean;
   status: "active" | "dead" | "running" | "stopped";
 };
@@ -14,7 +17,8 @@ function forwardList(records: ReadonlyMap<number, ForwardRecord>): string {
   return [
     "SANDBOX BIND PORT PID STATUS",
     ...[...records].map(
-      ([port, record]) => `${record.owner} 127.0.0.1 ${String(port)} 12345 ${record.status}`,
+      ([port, record]) =>
+        `${record.owner} 127.0.0.1 ${String(port)} ${String(record.pid ?? 12_345)} ${record.status}`,
     ),
   ].join("\n");
 }
@@ -29,6 +33,7 @@ export function createHermesPortableForwardRecoveryFixture({
   malformedList = false,
   listStatus = 0,
   startStatus = 0,
+  stopStatus = 0,
   startUpdatesState = true,
   driftCurrentAfterStart = false,
   dropStartedPort,
@@ -43,6 +48,7 @@ export function createHermesPortableForwardRecoveryFixture({
   malformedList?: boolean;
   listStatus?: number;
   startStatus?: number;
+  stopStatus?: number;
   startUpdatesState?: boolean;
   driftCurrentAfterStart?: boolean;
   dropStartedPort?: number;
@@ -69,7 +75,6 @@ export function createHermesPortableForwardRecoveryFixture({
   const currentCaptureCalls: string[][] = [];
   const currentMutationCalls: string[][] = [];
   const rollbackCaptureCalls: string[][] = [];
-  const rollbackMutationCalls: string[][] = [];
   let currentAllowed = true;
   let rollbackAllowed = true;
   let now = 0;
@@ -84,14 +89,13 @@ export function createHermesPortableForwardRecoveryFixture({
       output: listOutput ?? (malformedList ? "not a forward list" : forwardList(records)),
     };
   };
-  const mutate = (args: readonly string[], rollback: boolean) => {
-    const calls = rollback ? rollbackCalls : currentCalls;
-    calls.push([...args]);
-    (rollback ? rollbackMutationCalls : currentMutationCalls).push([...args]);
+  const mutate = (args: readonly string[]) => {
+    currentCalls.push([...args]);
+    currentMutationCalls.push([...args]);
     const port = Number(args[1] === "stop" ? args[2] : args[3]);
     if (args[1] === "stop") {
       records.delete(port);
-      return { status: 0, output: "" };
+      return { status: stopStatus, output: "" };
     }
     if (args[1] === "start") {
       if (startUpdatesState) {
@@ -119,8 +123,7 @@ export function createHermesPortableForwardRecoveryFixture({
       },
       captureCurrentList: (args) => capture(args, false),
       captureRollbackList: (args) => capture(args, true),
-      runCurrentMutation: (args) => mutate(args, false),
-      runRollbackMutation: (args) => mutate(args, true),
+      runCurrentMutation: mutate,
       isPortReachable: (port) => records.get(port)?.reachable === true,
       now: () => now,
       sleep: (milliseconds) => {
@@ -137,7 +140,6 @@ export function createHermesPortableForwardRecoveryFixture({
     records,
     rollbackCalls,
     rollbackCaptureCalls,
-    rollbackMutationCalls,
     setCurrentAllowed(value: boolean) {
       currentAllowed = value;
     },
@@ -153,14 +155,14 @@ export function configureMissingHermesForwardCapture(
     readonly afterStart?: () => void;
     readonly initialStatus?: "dead" | "missing";
   } = {},
-): { readonly isRunning: () => boolean } {
+): { readonly isRunning: () => boolean; readonly reachabilitySpy: ReturnType<typeof vi.spyOn> } {
   let forwardStatus: "dead" | "missing" | "running" = options.initialStatus ?? "missing";
+  const forwardHealth = requireDist("../../src/lib/actions/sandbox/forward-health.js");
+  const reachabilitySpy = vi
+    .spyOn(forwardHealth, "isLocalForwardReachable")
+    .mockImplementation(() => forwardStatus === "running");
   const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
   const runOpenshell = harness.runOpenshellSpy.getMockImplementation()!;
-  harness.spawnSyncSpy.mockImplementation(((command: unknown) => ({
-    status: String(command) === process.execPath && forwardStatus !== "running" ? 1 : 0,
-    signal: null,
-  })) as never);
   harness.captureResolvedOpenshellSpy.mockImplementation(((
     args: unknown,
     captureOptions: unknown,
@@ -190,5 +192,8 @@ export function configureMissingHermesForwardCapture(
     }
     return runOpenshell(args, runOptions);
   }) as never);
-  return { isRunning: () => forwardStatus === "running" };
+  return {
+    isRunning: () => forwardStatus === "running",
+    reachabilitySpy,
+  };
 }

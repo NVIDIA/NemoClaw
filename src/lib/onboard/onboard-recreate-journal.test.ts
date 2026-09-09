@@ -110,6 +110,9 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
       session = mutator(session) ?? session;
       return session;
     });
+    vi.spyOn(onboardSession, "compareAndSwapSession").mockImplementation((matches, mutator) => {
+      return matches(session) ? ((session = mutator(session) ?? session), "updated") : "mismatch";
+    });
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",
       agent: "openclaw",
@@ -133,9 +136,9 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     vi.restoreAllMocks();
   });
 
-  function open(intent: OnboardRecreateTargetIntent = BASE_INTENT) {
+  function open(intent: OnboardRecreateTargetIntent = BASE_INTENT, target = NON_DEFAULT_TARGET) {
     return openOnboardRecreateJournal({
-      target: NON_DEFAULT_TARGET,
+      target,
       agentName: "openclaw",
       intent,
       note: vi.fn(),
@@ -159,6 +162,7 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     open();
 
     expect(mocks.resolveGatewayTeardownAuthority).toHaveBeenCalledWith({
+      sandboxName: "alpha",
       gatewayName: "nemoclaw-9090",
       gatewayPort: 9090,
     });
@@ -349,5 +353,62 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
 
     expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleted");
     expect(session.checkpoint?.sandboxRecreate?.sourceLiveIdentityFingerprint).toBeNull();
+  });
+
+  it("starts a fresh journal when the stranded one no longer owns a replacement (#10473)", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw-9090",
+      gatewayPort: 9090,
+      lifecycleGeneration: "44444444-4444-4444-8444-444444444444",
+      lifecycleLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
+    } as registry.SandboxEntry);
+    const stranded = open();
+    stranded.advance("deleted");
+    expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleted");
+
+    const restarted = open();
+
+    expect(restarted.targetGeneration).not.toBe(stranded.targetGeneration);
+    expect(restarted.acceptedTarget).toBe(false);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      phase: "planned",
+      revision: 0,
+      sourceLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
+    });
+  });
+
+  it("keeps a stranded journal when the matching source is on another gateway (#10473)", () => {
+    mocks.captureOpenshell.mockReturnValue(absentProbe());
+    open();
+    const stranded = session.checkpoint?.sandboxRecreate;
+    expect(stranded).toMatchObject({ gatewayName: "nemoclaw-9090", phase: "deleted" });
+
+    // Same sandbox name and same live identity, but the row and the probe now
+    // describe a sandbox on a different gateway. The journal may still own an
+    // unregistered replacement on nemoclaw-9090, so it must survive.
+    mocks.captureOpenshell.mockReturnValue(livePresentProbe());
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw-7070",
+      gatewayPort: 7070,
+      lifecycleGeneration: "44444444-4444-4444-8444-444444444444",
+      lifecycleLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
+    } as registry.SandboxEntry);
+
+    expect(() =>
+      open(BASE_INTENT, {
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw-7070",
+        gatewayPort: 7070,
+      }),
+    ).toThrow(/different recreate transaction in progress/);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: stranded?.id,
+      gatewayName: "nemoclaw-9090",
+      phase: "deleted",
+    });
   });
 });

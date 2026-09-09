@@ -38,6 +38,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertNoPerAgentMaxSpawnDepth } from "../src/lib/extra-agents-validation.ts";
 import { readToolDisclosureEnv } from "../src/lib/tool-disclosure.ts";
 
 type Env = Record<string, string | undefined>;
@@ -848,11 +849,6 @@ function validateSubagentsBlock(raw: unknown, label: string, primaryProvider: st
       `${label} must be an object with any of: ${[...ALLOWED_SUBAGENTS_KEYS].sort().join(", ")}`,
     );
   }
-  if ("maxSpawnDepth" in raw) {
-    throw new Error(
-      `${label}.maxSpawnDepth is not accepted per-agent; OpenClaw honours it only on agents.defaults.subagents. Set it under the manifest 'defaults.subagents.maxSpawnDepth' instead.`,
-    );
-  }
   rejectUnknownKeys(raw, ALLOWED_SUBAGENTS_KEYS, label);
   const out: JsonObject = {};
   if (raw.delegationMode !== undefined) {
@@ -972,6 +968,7 @@ function validateExtraAgents(value: unknown, primaryProvider: string): ExtraAgen
   if (value === null || value === undefined) {
     return { agents: [], defaults: { subagents: {} }, main: {} };
   }
+  assertNoPerAgentMaxSpawnDepth(value);
   let agentsRaw: unknown;
   let defaultsRaw: unknown;
   let mainRaw: unknown;

@@ -42,11 +42,9 @@ export function writeFailedOnboardSession(home: string): void {
 export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
   const onboardDir = path.join(path.dirname(readinessDir), "onboard");
   const experimentalDir = path.join(onboardDir, "experimental");
-  const runtimeProviderDir = path.join(onboardDir, "runtime-provider");
   fs.mkdirSync(readinessDir, { recursive: true });
   fs.mkdirSync(onboardDir, { recursive: true });
   fs.mkdirSync(experimentalDir, { recursive: true });
-  fs.mkdirSync(runtimeProviderDir, { recursive: true });
   fs.writeFileSync(
     `${readinessDir}/host.js`,
     `exports.createHostReadinessReport = (_options, collection) => ({ host: collection.assess() });\n`,
@@ -86,6 +84,8 @@ export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
     waivedFindingIds: [],
   };
 };
+exports.hasExplicitDeferredN1xOnboardingIntent = (env) =>
+  env.NEMOCLAW_PROVIDER === "install-vllm" || env.NEMOCLAW_NO_EXPRESS === "1";
 `,
   );
   fs.writeFileSync(
@@ -102,13 +102,8 @@ export function writeInstallerReadinessModuleStubs(readinessDir: string): void {
     `exports.isPortableExperimentalProfile = (env = process.env) => env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";\n`,
   );
   fs.writeFileSync(
-    `${runtimeProviderDir}/selection.js`,
-    `exports.resolveConfiguredRuntimeProvider = () => ({
-  gateway: {
-    supported: true,
-    prepareHostRuntime: () => ({ sandboxHostAddress: null }),
-  },
-});\n`,
+    `${onboardDir}/docker-driver-gateway-env.js`,
+    `exports.configuredRuntimeProviderOwnsHostReadiness = () => false;\n`,
   );
 }
 

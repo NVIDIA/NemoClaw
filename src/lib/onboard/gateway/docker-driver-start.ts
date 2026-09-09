@@ -4,6 +4,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+import {
+  buildSelectedOpenShellSubprocessEnv,
+  type OpenShellRuntimeSelection,
+} from "../../adapters/openshell/command-argv";
 import { trackChildExit } from "../child-exit-tracker";
 import * as dockerDriverGatewayCutover from "../docker-driver-gateway-cutover";
 import { reportDockerDriverGatewayStartFailure } from "../docker-driver-gateway-failure";
@@ -49,11 +54,18 @@ export interface DockerDriverGatewayStartDeps {
   isGatewayTcpReady: DynamicGatewayHelpers["isGatewayTcpReady"];
   isPidAlive: GatewayRuntimeHelpers["isPidAlive"];
   logDockerDriverGatewayRestart(reason: string): void;
-  registerDockerDriverGatewayEndpoint(): boolean;
+  registerDockerDriverGatewayEndpoint(runtimeSelection?: OpenShellRuntimeSelection): boolean;
   rememberDockerDriverGatewayPid: GatewayRuntimeHelpers["rememberDockerDriverGatewayPid"];
   resolveOpenShellGatewayBinary: GatewayRuntimeHelpers["resolveOpenShellGatewayBinary"];
   resolveOpenShellSandboxBinary: GatewayRuntimeHelpers["resolveOpenShellSandboxBinary"];
-  runCaptureOpenshell(args: string[], options?: { ignoreError?: boolean }): string;
+  runCaptureOpenshell(
+    args: string[],
+    options?: {
+      env?: Record<string, string>;
+      ignoreError?: boolean;
+      replaceEnv?: boolean;
+    },
+  ): string;
   sleepSeconds: typeof import("../../core/wait").sleepSeconds;
   verifySandboxBridgeGatewayReachableOrExit?: typeof verifySandboxBridgeGatewayReachableOrExit;
 }
@@ -61,8 +73,16 @@ export interface DockerDriverGatewayStartDeps {
 export interface DockerDriverGatewayStart {
   startDockerDriverGateway(options?: {
     exitOnFailure?: boolean;
+    runtimeSelection?: OpenShellRuntimeSelection;
     skipSandboxBridgeReachability?: boolean;
   }): Promise<void>;
+}
+
+export function resolveDockerDriverGatewayRuntimeMarkerEndpoint(
+  desiredEnv: Readonly<Record<string, string>>,
+  fallback: () => string,
+): string {
+  return desiredEnv.OPENSHELL_GRPC_ENDPOINT?.trim() || fallback();
 }
 
 export function createDockerDriverGatewayStart(
@@ -70,11 +90,33 @@ export function createDockerDriverGatewayStart(
 ): DockerDriverGatewayStart {
   async function startDockerDriverGateway({
     exitOnFailure = true,
+    runtimeSelection,
     skipSandboxBridgeReachability = false,
   }: {
     exitOnFailure?: boolean;
+    runtimeSelection?: OpenShellRuntimeSelection;
     skipSandboxBridgeReachability?: boolean;
   } = {}): Promise<void> {
+    if (runtimeSelection && runtimeSelection.gatewayName !== deps.gatewayName()) {
+      throw new Error(
+        `Docker-driver gateway target '${deps.gatewayName()}' does not match runtime selection '${runtimeSelection.gatewayName}'`,
+      );
+    }
+    const selectedRuntimeEnv = runtimeSelection
+      ? buildSelectedOpenShellSubprocessEnv(runtimeSelection)
+      : undefined;
+    const runtimeOptions = selectedRuntimeEnv
+      ? {
+          env: selectedRuntimeEnv,
+          replaceEnv: true,
+        }
+      : {};
+    const runCaptureOpenshell: DockerDriverGatewayStartDeps["runCaptureOpenshell"] = (
+      args,
+      options = {},
+    ) => deps.runCaptureOpenshell(args, { ...options, ...runtimeOptions });
+    const registerDockerDriverGatewayEndpoint = () =>
+      deps.registerDockerDriverGatewayEndpoint(runtimeSelection);
     const verifyReachability =
       deps.verifySandboxBridgeGatewayReachableOrExit ?? verifySandboxBridgeGatewayReachableOrExit;
     const stateDir = deps.gatewayBinding.resolveGatewayStateDirForPort({
@@ -101,7 +143,7 @@ export function createDockerDriverGatewayStart(
         );
       }
       const gatewayBin = deps.resolveOpenShellGatewayBinary();
-      const openshellVersionOutput = deps.runCaptureOpenshell(["--version"], { ignoreError: true });
+      const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
       const gatewayEnv = deps.getDockerDriverGatewayEnv(openshellVersionOutput);
       const runtimeIdentity = gatewayBin
         ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
@@ -113,6 +155,7 @@ export function createDockerDriverGatewayStart(
             compatContainerName: deps.gatewayBinding.resolveGatewayCompatContainerName(
               deps.gatewayPort(),
             ),
+            ...(selectedRuntimeEnv ? { env: selectedRuntimeEnv } : {}),
             ensureLocalTlsBundle: true,
           })
         : null;
@@ -139,14 +182,15 @@ export function createDockerDriverGatewayStart(
         () =>
           deps.dockerDriverGatewayEnv.startPackageManagedDockerDriverGatewayWithEnvOverride({
             clearDockerDriverGatewayRuntimeFiles: deps.clearDockerDriverGatewayRuntimeFiles,
+            ...(selectedRuntimeEnv ? { env: selectedRuntimeEnv } : {}),
             exitOnFailure,
             gatewayEnv: driftGatewayEnv,
             gatewayName: deps.gatewayName(),
             isDockerDriverGatewayReady: () =>
               deps.isDockerDriverGatewayHttpReady(undefined, undefined, driftGatewayEnv),
-            registerDockerDriverGatewayEndpoint: deps.registerDockerDriverGatewayEndpoint,
+            registerDockerDriverGatewayEndpoint,
             preparePortForOpenShellGatewayUserServiceStart: servicePortOwnership.preparePort,
-            runCaptureOpenshell: deps.runCaptureOpenshell,
+            runCaptureOpenshell,
             skipSandboxBridgeReachability,
             validatePortOwnerForOpenShellGatewayUserServiceStart:
               servicePortOwnership.validatePortOwner,
@@ -172,7 +216,7 @@ export function createDockerDriverGatewayStart(
               ),
               pidFileGatewayPid: deps.getDockerDriverGatewayPid(),
               initialHealth: dockerDriverGatewayCutover.readDockerDriverGatewayHealth(
-                deps.runCaptureOpenshell,
+                runCaptureOpenshell,
                 deps.gatewayName(),
               ),
             },
@@ -181,7 +225,7 @@ export function createDockerDriverGatewayStart(
               isGatewayHealthy: deps.isGatewayHealthy,
               getDockerDriverGatewayRuntimeDrift: deps.getDockerDriverGatewayRuntimeDrift,
               logDockerDriverGatewayRestart: deps.logDockerDriverGatewayRestart,
-              registerDockerDriverGatewayEndpoint: deps.registerDockerDriverGatewayEndpoint,
+              registerDockerDriverGatewayEndpoint,
               isDockerDriverGatewayHttpReady: () =>
                 deps.isDockerDriverGatewayHttpReady(undefined, undefined, driftGatewayEnv),
               verifySandboxBridgeGatewayReachableOrExit: (fail, options) =>
@@ -190,11 +234,11 @@ export function createDockerDriverGatewayStart(
                   port: deps.gatewayPort(),
                 }),
               readGatewayHealth: () => ({
-                status: deps.runCaptureOpenshell(["status"], { ignoreError: true }),
-                namedInfo: deps.runCaptureOpenshell(["gateway", "info", "-g", deps.gatewayName()], {
+                status: runCaptureOpenshell(["status"], { ignoreError: true }),
+                namedInfo: runCaptureOpenshell(["gateway", "info", "-g", deps.gatewayName()], {
                   ignoreError: true,
                 }),
-                activeInfo: deps.runCaptureOpenshell(["gateway", "info"], { ignoreError: true }),
+                activeInfo: runCaptureOpenshell(["gateway", "info"], { ignoreError: true }),
               }),
               rememberDockerDriverGatewayPid: deps.rememberDockerDriverGatewayPid,
               reapDuplicateHostGatewaysExceptOrFail,
@@ -236,7 +280,10 @@ export function createDockerDriverGatewayStart(
       dockerDriverGatewayRuntimeMarker.writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
         pid: childPid,
         desiredEnv: driftGatewayEnv,
-        endpoint: deps.getDockerDriverGatewayEndpoint(),
+        endpoint: resolveDockerDriverGatewayRuntimeMarkerEndpoint(
+          driftGatewayEnv,
+          deps.getDockerDriverGatewayEndpoint,
+        ),
         gatewayBin: driftGatewayBin,
         openshellVersion: deps.getInstalledOpenshellVersion(openshellVersionOutput),
         dockerHost: process.env.DOCKER_HOST || null,
@@ -258,8 +305,8 @@ export function createDockerDriverGatewayStart(
             port: deps.gatewayPort(),
           });
         },
-        registerGatewayEndpoint: deps.registerDockerDriverGatewayEndpoint,
-        runCaptureOpenshell: deps.runCaptureOpenshell,
+        registerGatewayEndpoint: registerDockerDriverGatewayEndpoint,
+        runCaptureOpenshell,
         sleepSeconds: deps.sleepSeconds,
       });
       if (startup === "healthy") {

@@ -11,7 +11,7 @@
  * For that topology, keep generic credential and identity stores owner-only
  * while applying group-shared modes only to the databases. Leave private-store
  * enforcement unchanged, and ignore only the obsolete pinned-version update
- * cache when its migration cannot archive through a shields-protected parent.
+ * cache when its migration cannot archive through a root-owned parent.
  *
  * Remove this patch once upstream supports a group-shared state database for
  * split-user containers without requiring a non-owner to chmod an already

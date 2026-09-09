@@ -65,70 +65,44 @@ function createDependencies(
     isDirectSandboxFallbackUnavailableError: vi.fn(() => false),
     openshellProbeTimeoutMs: 5000,
     root: "/repo",
-    withPrivilegedSandboxExecutionLease: <T>(
-      _sandboxName: string,
-      _operation: string,
-      fn: () => T,
-    ): T => fn(),
     ...overrides,
   };
 }
 
-describe("sandbox command transport privileged execution lease", () => {
+describe("sandbox command transport", () => {
   beforeEach(() => {
     vi.resetAllMocks();
   });
 
-  it("holds the SSH lease from config resolution through process cleanup", () => {
+  it("resolves SSH state and cleans the temporary config after the command", () => {
     const events: string[] = [];
-    let leaseHeld = false;
-    const assertLeaseHeld = (event: string): void => {
-      expect(leaseHeld).toBe(true);
-      events.push(event);
-    };
-    const withLease: CommandTransportDependencies["withPrivilegedSandboxExecutionLease"] = <T>(
-      sandboxName: string,
-      operation: string,
-      fn: () => T,
-    ): T => {
-      expect(leaseHeld).toBe(false);
-      events.push(`lease:${sandboxName}:${operation}`);
-      leaseHeld = true;
-      try {
-        return fn();
-      } finally {
-        leaseHeld = false;
-        events.push("lease:released");
-      }
-    };
     const deps = createDependencies({
       buildSubprocessEnv: vi.fn(() => {
-        assertLeaseHeld("environment");
+        events.push("environment");
         return { PATH: "/usr/bin" };
       }),
       captureSandboxSshConfig: vi.fn(() => {
-        assertLeaseHeld("config");
+        events.push("config");
         return {
           output: "Host openshell-alpha.default\n  HostName 127.0.0.1\n",
           status: 0,
         };
       }),
-      withPrivilegedSandboxExecutionLease: withLease,
     });
     mocks.resolveOpenshellSandboxSshHost.mockImplementation(() => {
-      assertLeaseHeld("host");
+      events.push("host");
       return "openshell-alpha.default";
     });
     mocks.createTempSshConfig.mockImplementation(() => {
-      assertLeaseHeld("temp");
+      events.push("temp");
       return {
-        cleanup: () => assertLeaseHeld("cleanup"),
+        cleanup: () => events.push("cleanup"),
         dir: "/tmp/nemoclaw-ssh-test",
         file: "/tmp/nemoclaw-ssh-test/ssh_config",
       };
     });
     mocks.spawnSync.mockImplementation(() => {
-      assertLeaseHeld("spawn");
+      events.push("spawn");
       return spawnResult("ok\n");
     });
 
@@ -137,16 +111,7 @@ describe("sandbox command transport privileged execution lease", () => {
       stderr: "",
       stdout: "ok",
     });
-    expect(events).toEqual([
-      "lease:alpha:sandbox SSH command transport",
-      "config",
-      "host",
-      "temp",
-      "environment",
-      "spawn",
-      "cleanup",
-      "lease:released",
-    ]);
+    expect(events).toEqual(["config", "host", "temp", "environment", "spawn", "cleanup"]);
   });
 
   it("uses the caller's bounded SSH command timeout", () => {
@@ -167,27 +132,6 @@ describe("sandbox command transport privileged execution lease", () => {
       },
     );
     expect(mocks.spawnSync.mock.calls[0]?.[2]).toMatchObject({ timeout: 300_000 });
-  });
-
-  it("does not resolve SSH state or spawn when lease acquisition is rejected", () => {
-    const rejection = new Error("provider fence active");
-    const deps = createDependencies({
-      withPrivilegedSandboxExecutionLease: <T>(
-        sandboxName: string,
-        operation: string,
-        _fn: () => T,
-      ): T => {
-        expect(sandboxName).toBe("alpha");
-        expect(operation).toBe("sandbox SSH command transport");
-        throw rejection;
-      },
-    });
-
-    expect(() => executeSandboxCommandTransport(deps, "alpha", "id")).toThrow(rejection);
-    expect(deps.captureSandboxSshConfig).not.toHaveBeenCalled();
-    expect(mocks.resolveOpenshellSandboxSshHost).not.toHaveBeenCalled();
-    expect(mocks.createTempSshConfig).not.toHaveBeenCalled();
-    expect(mocks.spawnSync).not.toHaveBeenCalled();
   });
 
   it("pins OpenShell exec to the requested gateway (#9834)", () => {
@@ -228,55 +172,32 @@ describe("sandbox command transport privileged execution lease", () => {
     expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
   });
 
-  it("holds one lease across OpenShell failure and the complete local fallback", () => {
+  it("uses the local fallback after an inconclusive OpenShell result", () => {
     const events: string[] = [];
-    let leaseHeld = false;
-    let leaseCalls = 0;
-    const assertLeaseHeld = (event: string): void => {
-      expect(leaseHeld).toBe(true);
-      events.push(event);
-    };
-    const withLease: CommandTransportDependencies["withPrivilegedSandboxExecutionLease"] = <T>(
-      sandboxName: string,
-      operation: string,
-      fn: () => T,
-    ): T => {
-      leaseCalls += 1;
-      expect(leaseHeld).toBe(false);
-      events.push(`lease:${sandboxName}:${operation}`);
-      leaseHeld = true;
-      try {
-        return fn();
-      } finally {
-        leaseHeld = false;
-        events.push("lease:released");
-      }
-    };
     const deps = createDependencies({
       buildSandboxExecMarkedCommand: vi.fn((command: string) => {
-        assertLeaseHeld("mark");
+        events.push("mark");
         return `marked:${command}`;
       }),
       buildSubprocessEnv: vi.fn(() => {
-        assertLeaseHeld("environment");
+        events.push("environment");
         return { PATH: "/usr/bin" };
       }),
       executePrivilegedSandboxCommand: vi.fn(() => {
-        assertLeaseHeld("fallback-execution");
+        events.push("fallback-execution");
         return { status: 0, stdout: "fallback-output", stderr: "" };
       }),
       extractSandboxExecCommandStdout: vi.fn((output: string) => {
-        assertLeaseHeld(`parse:${output}`);
+        events.push(`parse:${output}`);
         return output === "fallback-output" ? "fallback-ok" : null;
       }),
       getOpenshellBinary: vi.fn(() => {
-        assertLeaseHeld("openshell-resolution");
+        events.push("openshell-resolution");
         return "/usr/bin/openshell";
       }),
-      withPrivilegedSandboxExecutionLease: withLease,
     });
     mocks.spawnSync.mockImplementation(() => {
-      assertLeaseHeld("openshell-spawn");
+      events.push("openshell-spawn");
       return spawnResult("unmarked-output", { status: 1 });
     });
 
@@ -285,9 +206,7 @@ describe("sandbox command transport privileged execution lease", () => {
       stderr: "",
       stdout: "fallback-ok",
     });
-    expect(leaseCalls).toBe(1);
     expect(events).toEqual([
-      "lease:alpha:sandbox OpenShell command transport",
       "mark",
       "openshell-resolution",
       "environment",
@@ -295,30 +214,7 @@ describe("sandbox command transport privileged execution lease", () => {
       "parse:unmarked-output",
       "fallback-execution",
       "parse:fallback-output",
-      "lease:released",
     ]);
   });
 
-  it("does not resolve either exec transport or spawn when lease acquisition is rejected", () => {
-    const rejection = new Error("provider fence active");
-    const deps = createDependencies({
-      withPrivilegedSandboxExecutionLease: <T>(
-        sandboxName: string,
-        operation: string,
-        _fn: () => T,
-      ): T => {
-        expect(sandboxName).toBe("alpha");
-        expect(operation).toBe("sandbox OpenShell command transport");
-        throw rejection;
-      },
-    });
-
-    expect(() => executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {})).toThrow(
-      rejection,
-    );
-    expect(deps.buildSandboxExecMarkedCommand).not.toHaveBeenCalled();
-    expect(deps.getOpenshellBinary).not.toHaveBeenCalled();
-    expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
-    expect(mocks.spawnSync).not.toHaveBeenCalled();
-  });
 });
