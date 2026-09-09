@@ -21,6 +21,7 @@ import {
   e2eEvidenceJobNames,
   e2eEvidenceJobNamesForSelectors,
 } from "../../../tools/e2e/workflow-plan.mts";
+import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 
 type LocatorStep = {
   env?: Record<string, string>;
@@ -622,21 +623,6 @@ describe("PR Review Advisor generated-head evidence", () => {
   });
 
   it("keeps repair-generated E2E non-cancelable and credential-free (#10791)", () => {
-    const workflow = YAML.parse(readFileSync(".github/workflows/e2e.yaml", "utf8"));
-    const inputs = workflow.on.workflow_dispatch.inputs;
-    const serialized = JSON.stringify(workflow);
-    const credentialAuthorization = workflow.jobs["generate-matrix"].steps.find(
-      (step: { name?: string }) => step.name === "Authorize E2E credentials",
-    );
-
-    expect(inputs.repair_validation).toMatchObject({ type: "boolean", default: false });
-    expect(inputs.repair_attempt_key).toMatchObject({ type: "string", default: "" });
-    expect(String(workflow.concurrency.group)).toContain("inputs.repair_attempt_key");
-    expect(String(workflow.concurrency["cancel-in-progress"])).toContain(
-      "!inputs.repair_validation",
-    );
-    expect(serialized).toContain("repair validation must run from trusted main");
-    expect(String(credentialAuthorization.run)).toContain('"$REPAIR_VALIDATION" != "true"');
-    expect(serialized).toContain("!inputs.repair_validation");
+    expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 });

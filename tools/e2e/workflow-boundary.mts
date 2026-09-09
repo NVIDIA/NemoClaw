@@ -2134,6 +2134,20 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
   }
 }
 
+function validateRepairDispatchInputs(
+  errors: string[],
+  dispatchInputs: Record<string, unknown>,
+): void {
+  const repairValidationInput = requireInput(errors, dispatchInputs, "repair_validation");
+  if (repairValidationInput.type !== "boolean" || repairValidationInput.default !== false) {
+    errors.push("workflow_dispatch repair_validation input must be boolean and default to false");
+  }
+  const repairAttemptInput = requireInput(errors, dispatchInputs, "repair_attempt_key");
+  if (repairAttemptInput.type !== "string" || repairAttemptInput.default !== "") {
+    errors.push("workflow_dispatch repair_attempt_key input must be string and default to empty");
+  }
+}
+
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
   if (job.name !== "Exact staging Brev Launchable") {
@@ -2913,14 +2927,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "targets");
-  const repairValidationInput = requireInput(errors, dispatchInputs, "repair_validation");
-  if (repairValidationInput.type !== "boolean" || repairValidationInput.default !== false) {
-    errors.push("workflow_dispatch repair_validation input must be boolean and default to false");
-  }
-  const repairAttemptInput = requireInput(errors, dispatchInputs, "repair_attempt_key");
-  if (repairAttemptInput.type !== "string" || repairAttemptInput.default !== "") {
-    errors.push("workflow_dispatch repair_attempt_key input must be string and default to empty");
-  }
+  validateRepairDispatchInputs(errors, dispatchInputs);
   validateFullE2eConcurrency(errors, workflow);
   validateStagingBrevLaunchableInput(errors, dispatchInputs);
   validateInferenceModeInput(errors, workflow, dispatchInputs);
