@@ -20,7 +20,7 @@ MODEL_SELECTOR="${REPO}/test/e2e/lib/select-authorized-chat-model.mts"
 CREDENTIAL_CANARY="nemoclaw-dcode-config-get-canary"
 PERSONAL_LOGIN_PROFILE="/sandbox/.bash_profile"
 HOSTILE_LOGIN_FALLBACK="/sandbox/.bash_login"
-HOSTILE_PROFILE_MARKER="/sandbox/.nemoclaw-dcode-hostile-profile-loaded"
+HOSTILE_PROFILE_MARKER="/tmp/nemoclaw-dcode-hostile-profile-loaded"
 HOSTILE_SHELL_ENV="/sandbox/.nemoclaw-dcode-hostile-bash-env"
 
 fail() {
@@ -239,15 +239,15 @@ pass "initial live identity reports model A"
 
 # Exercise the installed /etc/profile.d hook in real sandbox login shells.
 # Managed probes must skip personal startup code; ordinary logins must read it.
-trap cleanup_personal_profile_probe EXIT
 resource_handle="$(runtime_resource_handle)" || fail "could not resolve the DCode sandbox runtime resource"
 [ -n "$resource_handle" ] || fail "DCode sandbox runtime resource is empty"
 managed_hook_state="$(
   privileged_exec "$resource_handle" /bin/sh -c \
-    "stat -c '%U:%G:%a' /sandbox; stat -c '%U:%G:%a' /etc/profile.d/nemoclaw-dcode.sh"
-)" || fail "could not inspect the managed DCode system hook"
+    "set -eu; for f in '$PERSONAL_LOGIN_PROFILE' '$HOSTILE_LOGIN_FALLBACK' '$HOSTILE_PROFILE_MARKER' '$HOSTILE_SHELL_ENV'; do test ! -e \"\$f\"; test ! -L \"\$f\"; done; stat -c '%U:%G:%a' /sandbox; stat -c '%U:%G:%a' /etc/profile.d/nemoclaw-dcode.sh"
+)" || fail "personal probe files already exist or the managed DCode system hook could not be inspected"
 expected_hook_state="$(printf '%s\n' root:sandbox:1775 root:root:444)"
 [ "$managed_hook_state" = "$expected_hook_state" ] || fail "managed DCode system hook posture is unsafe: $managed_hook_state"
+trap cleanup_personal_profile_probe EXIT
 
 for login_profile in "$PERSONAL_LOGIN_PROFILE" "$HOSTILE_LOGIN_FALLBACK"; do
   profile_before="$(sandbox_exec "set -eu; test -w /sandbox/.bashrc; test -w /sandbox/.profile; printf '%s\n' 'touch $HOSTILE_PROFILE_MARKER' 'export NEMOCLAW_E2E_PERSONAL_PROFILE=loaded' > '$login_profile'; printf '%s\n' 'touch $HOSTILE_PROFILE_MARKER' > '$HOSTILE_SHELL_ENV'; sha256sum '$login_profile'")" \
@@ -258,11 +258,12 @@ for login_profile in "$PERSONAL_LOGIN_PROFILE" "$HOSTILE_LOGIN_FALLBACK"; do
       /bin/bash -lc '/usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/printf %s MANAGED_EXEC_OK' 2>&1
   )" || fail "managed exec failed with personal startup files present: $managed_output"
   [ "$managed_output" = MANAGED_EXEC_OK ] || fail "managed exec output contains personal startup output: $managed_output"
-  privileged_exec "$resource_handle" /bin/sh -c "test ! -e '$HOSTILE_PROFILE_MARKER'" \
-    || fail "personal login or BASH_ENV code ran before the managed exec"
+  privileged_exec "$resource_handle" /bin/sh -c \
+    "/usr/bin/env HOME=/sandbox BASH_ENV='$HOSTILE_SHELL_ENV' ENV='$HOSTILE_SHELL_ENV' /usr/local/bin/nemoclaw-start /usr/bin/true && test ! -e '$HOSTILE_PROFILE_MARKER'" \
+    || fail "managed exec or root entrypoint failed or read personal startup code"
 
   # shellcheck disable=SC2016 # Read the variable set by the sandbox's personal profile.
-  ordinary_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- /bin/bash -lc 'printf %s "$NEMOCLAW_E2E_PERSONAL_PROFILE"' 2>&1)" \
+  ordinary_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- /usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE /bin/bash -lc 'printf %s "$NEMOCLAW_E2E_PERSONAL_PROFILE"' 2>&1)" \
     || fail "ordinary login failed with a personal profile: $ordinary_output"
   [ "$ordinary_output" = loaded ] || fail "ordinary login did not read its personal profile"
   profile_after="$(sandbox_exec "set -eu; test -w '$login_profile'; sha256sum '$login_profile'")" \

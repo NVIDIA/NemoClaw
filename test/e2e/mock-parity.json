@@ -158,6 +158,7 @@
         "test/e2e/live/full-e2e-workload-evidence.ts"
       ],
       "fast": [
+        "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",

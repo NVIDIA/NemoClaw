@@ -876,7 +876,6 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         expect(content.toLowerCase()).not.toContain("proxy");
         expect(content).not.toContain("/tmp/nemoclaw-proxy-env.sh");
         expect((fs.statSync(rcPath).mode & 0o777).toString(8)).toBe("644");
-        fs.appendFileSync(rcPath, "\n# user setting\n");
       });
       expect(rc.calls).toContain(
         `chown sandbox:sandbox ${path.join(sandboxRoot, ".bashrc")} ${path.join(sandboxRoot, ".profile")}`,

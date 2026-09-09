@@ -468,7 +468,7 @@ test(
     const profilesBeforeRecovery = await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
-        "set -eu; for f in /sandbox/.bashrc /sandbox/.profile; do printf '\\n# nemoclaw-e2e-profile-preserved\\n' >> \"$f\"; done; sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256",
+        "set -eu; for f in /sandbox/.bashrc /sandbox/.profile; do printf '%s\\n' 'export NEMOCLAW_E2E_PERSONAL_PROFILE=loaded' '[ \"$(id -u)\" -ne 0 ] || touch /tmp/nemoclaw-e2e-root-profile-loaded' >> \"$f\"; done; sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256",
       ),
       {
         artifactName: "phase-3-personal-profiles-before-recovery",
@@ -754,7 +754,14 @@ test(
 
     const personalProfiles = await sandbox.exec(
       SANDBOX_NAME,
-      ["/usr/bin/sha256sum", "-c", "/tmp/nemoclaw-e2e-profiles.sha256"],
+      [
+        "/usr/bin/env",
+        "-u",
+        "NEMOCLAW_E2E_PERSONAL_PROFILE",
+        "bash",
+        "-lc",
+        'test "$NEMOCLAW_E2E_PERSONAL_PROFILE" = loaded && /usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE bash -ic \'test "$NEMOCLAW_E2E_PERSONAL_PROFILE" = loaded\' && /usr/bin/sha256sum -c /tmp/nemoclaw-e2e-profiles.sha256 && test ! -e /tmp/nemoclaw-e2e-root-profile-loaded',
+      ],
       {
         artifactName: "phase-4-personal-profiles-after-recovery",
         env: commandEnv(),

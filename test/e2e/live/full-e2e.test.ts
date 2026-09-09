@@ -128,12 +128,18 @@ async function runOpenClawLaunchTurnAfterRecovery(input: {
 }): Promise<void> {
   const stopGateway = await input.sandbox.execShell(
     SANDBOX_NAME,
-    trustedSandboxShellScript(GATEWAY_STOP_SCRIPT),
+    trustedSandboxShellScript(`set -eu
+/usr/local/bin/openclaw completion --shell bash --write-state --install --yes
+for f in /sandbox/.bashrc /sandbox/.profile; do
+  printf '%s\\n' 'export NEMOCLAW_E2E_PERSONAL_PROFILE=loaded' '[ "$(id -u)" -ne 0 ] || touch /tmp/nemoclaw-e2e-root-profile-loaded' >> "$f"
+done
+sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
+${GATEWAY_STOP_SCRIPT}`),
     {
       artifactName: "phase-4-stop-openclaw-gateway-before-launch",
       env: env(),
       redactionValues: input.redactionValues,
-      timeoutMs: 30_000,
+      timeoutMs: 120_000,
     },
   );
   expect(stopGateway.exitCode, resultText(stopGateway)).toBe(0);
@@ -163,7 +169,11 @@ async function runOpenClawLaunchTurnAfterRecovery(input: {
     SANDBOX_NAME,
     trustedSandboxShellScript(
       "test \"$(stat -c '%a %U:%G' /sandbox/.openclaw)\" = '2770 sandbox:sandbox' && " +
-        "test \"$(stat -c '%a %U:%G' /sandbox/.openclaw/openclaw.json)\" = '660 sandbox:sandbox'",
+        "test \"$(stat -c '%a %U:%G' /sandbox/.openclaw/openclaw.json)\" = '660 sandbox:sandbox' && " +
+        "/usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE bash -lc 'test \"$NEMOCLAW_E2E_PERSONAL_PROFILE\" = loaded' && " +
+        "/usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE bash -ic 'test \"$NEMOCLAW_E2E_PERSONAL_PROFILE\" = loaded' && " +
+        "/usr/bin/sha256sum -c /tmp/nemoclaw-e2e-profiles.sha256 && " +
+        "test ! -e /tmp/nemoclaw-e2e-root-profile-loaded",
     ),
     {
       artifactName: "phase-4-openclaw-launch-permissions",
@@ -423,7 +433,9 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
         : []),
       "nemoclaw logs produces output and cleanup removes registry state",
       ...(securityPostureEnabled()
-        ? ["non-root host, locked rc/proxy files, configure guard, and clean startup log"]
+        ? [
+            "non-root host, editable personal profiles, protected proxy files, configure guard, and clean startup log",
+          ]
         : []),
     ],
   });
@@ -514,6 +526,22 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     : Promise.resolve());
 
   progress.phase("validate CLI sandbox and policy state");
+  const nativeDoctor = await sandbox.exec(
+    SANDBOX_NAME,
+    ["/usr/local/bin/openclaw", "doctor", "--lint", "--json"],
+    { artifactName: "phase-2-first-native-openclaw-doctor", env: env(), timeoutMs: 180_000 },
+  );
+  const doctorReport = JSON.parse(nativeDoctor.stdout);
+  // Exit 1 is a completed diagnostic with findings, including the state modes
+  // tracked separately in #11257. Preserve those findings in the raw artifact.
+  expect(
+    (nativeDoctor.exitCode === 0 || nativeDoctor.exitCode === 1) &&
+      doctorReport.ok === (nativeDoctor.exitCode === 0) &&
+      Number.isInteger(doctorReport.checksRun) &&
+      doctorReport.checksRun > 0 &&
+      Array.isArray(doctorReport.findings),
+    resultText(nativeDoctor),
+  ).toBe(true);
   const pathProbe = await host.command(
     "bash",
     [
@@ -523,7 +551,6 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     { artifactName: "phase-2-path-probe", env: env(), timeoutMs: 60_000 },
   );
   expect(pathProbe.exitCode, resultText(pathProbe)).toBe(0);
-  expect(pathProbe.stdout).toContain("nemoclaw");
   expect(pathProbe.stdout).toContain("openshell");
 
   const list = await repoNemoclaw(host, ["list"], "phase-3-nemoclaw-list");

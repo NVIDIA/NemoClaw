@@ -420,7 +420,7 @@ test(
     const profilesAfterRecovery = await execPiShell(
       sandbox,
       trustedSandboxShellScript(
-        "set -eu; bash -lc 'test \"$NEMOCLAW_E2E_PI_PROFILE\" = preserved'; sha256sum /sandbox/.bashrc /sandbox/.profile",
+        "set -eu; /usr/bin/env -u NEMOCLAW_E2E_PI_PROFILE bash -lc 'test \"$NEMOCLAW_E2E_PI_PROFILE\" = preserved'; sha256sum /sandbox/.bashrc /sandbox/.profile",
       ),
       { artifactName: "pi-personal-profiles-after-recovery", env, timeoutMs: 30_000 },
     );
