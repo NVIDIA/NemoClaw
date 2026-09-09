@@ -356,12 +356,10 @@ describe("compatible endpoint sandbox smoke helpers", () => {
   });
 
   it("fails closed on a typed sandbox transport failure", async () => {
-    const runOpenshell = vi
-      .fn()
-      .mockImplementationOnce((args: string[]) => ({
-        status: 0,
-        stdout: providerMetadata(args.at(-1) ?? ""),
-      }));
+    const runOpenshell = vi.fn().mockImplementation((args: string[]) => ({
+      status: 0,
+      stdout: providerMetadata(args.at(-1) ?? ""),
+    }));
     const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
       throw new Error(`process.exit(${code})`);
     });
@@ -391,7 +389,6 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       exit.mockRestore();
     }
   });
-
 
   it("withholds sandbox-route success output when sandbox identity changes during proof (#9833)", async () => {
     const runOpenshell = vi

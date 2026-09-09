@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { StdioOptions } from "node:child_process";
-import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
-import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { shellQuote } from "../core/shell-quote";
 import { compactText } from "../core/url-utils";
 import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
@@ -132,6 +131,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
       : "  Verifying compatible endpoint through the sandbox runtime...",
   );
 
+  const target = { kind: "selected" } as const;
   const adapter = createCliOpenShellProviderAdapter({
     run: (command, runOptions) => {
       const result = options.runOpenshell(command, runOptions);
@@ -149,7 +149,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
     },
   });
   const providerResult = await adapter.getProvider({
-    target: { kind: "selected" },
+    target,
     providerName: options.provider,
   });
 
@@ -181,7 +181,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
     : buildCompatibleEndpointSandboxSmokeCommand(options.model);
   const smokeResult = await options.sandboxCommandExecutor.runBuffered({
     sandboxName: options.sandboxName,
-    target: selectedOpenShellGateway(),
+    target,
     command: forceCanonicalRoute ? ["python3", "-c", script] : ["sh", "-lc", script],
     timeoutMilliseconds: forceCanonicalRoute
       ? PROVIDER_NEUTRAL_SMOKE_COMMAND_TIMEOUT_MS

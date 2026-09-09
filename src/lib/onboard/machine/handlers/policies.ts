@@ -68,7 +68,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       forceCanonicalRoute?: boolean;
       hostLocalInferenceProofAuthority?: HostLocalInferenceSandboxProofAuthority;
       beforeSuccess?: () => void;
-    }): Promise<void>;
+    }): void | Promise<void>;
     preparePolicyPresetResumeSelection(
       sandboxName: string,
       options: {
