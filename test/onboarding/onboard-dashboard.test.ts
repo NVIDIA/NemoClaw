@@ -110,7 +110,8 @@ describe("onboard dashboard helpers", () => {
     );
   });
 
-  it("launches a direct ForwardTcp service for the allocated dashboard port", () => {
+  it("keeps an external dashboard URL's ForwardTcp service on loopback", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", undefined);
     const launch = vi.fn();
     const helpers = createOnboardDashboardHelpers({
       runOpenshell: vi.fn(() => ({ status: 0 })),
@@ -134,14 +135,23 @@ describe("onboard dashboard helpers", () => {
       },
     });
 
-    expect(helpers.ensureDashboardForward("my-sandbox")).toBe(18_789);
-    expect(launch).toHaveBeenCalledWith(
-      expect.objectContaining({
+    try {
+      expect(
+        helpers.ensureDashboardForward("my-sandbox", "https://hermes.example.test:18794"),
+      ).toBe(18_794);
+      expect(launch).toHaveBeenCalledWith({
+        executable: "/usr/local/bin/openshell",
+        gatewayName: "nemoclaw",
+        workspace: "default",
         sandboxName: "my-sandbox",
-        localPort: 18_789,
-        targetPort: 18_789,
-      }),
-    );
+        localHost: "127.0.0.1",
+        localPort: 18_794,
+        targetHost: "127.0.0.1",
+        targetPort: 18_794,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("does not reallocate or adopt an occupied persisted dashboard port", () => {
