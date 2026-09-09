@@ -2129,7 +2129,7 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
     "${{ !inputs.repair_validation && inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
   ) {
     errors.push(
-      "workflow concurrency must not cancel an active repair, Jetson, or Launchable dispatch",
+      "workflow concurrency must not cancel an active Jetson or Launchable dispatch",
     );
   }
 }
@@ -2764,6 +2764,16 @@ function validateTrustedE2ePlannerBoundary(
   generate: WorkflowRecord | undefined,
   candidateCheckout: WorkflowRecord | undefined,
 ): void {
+  const credentialAuthorization = requireStep(
+    errors,
+    generateSteps,
+    "Authorize E2E credentials",
+  );
+  requireRunContains(
+    errors,
+    credentialAuthorization,
+    'REPAIR_VALIDATION="${REPAIR_VALIDATION:-false}"',
+  );
   const trustedPlannerCheckout = requireStep(
     errors,
     generateSteps,
@@ -3108,6 +3118,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("manual PR authentication must receive the exact repair validation identity");
   }
   for (const fragment of [
+    'REPAIR_ATTEMPT_KEY="${REPAIR_ATTEMPT_KEY:-}"',
+    'REPAIR_VALIDATION="${REPAIR_VALIDATION:-false}"',
     '[[ "$WORKFLOW_REF" == "refs/heads/main" ]]',
     '[[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[a-f0-9]{64}$ ]]',
     '[[ -n "$JOBS" && -z "$TARGETS" ]]',

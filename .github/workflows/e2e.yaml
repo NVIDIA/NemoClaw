@@ -429,6 +429,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          REPAIR_ATTEMPT_KEY="${REPAIR_ATTEMPT_KEY:-}"
+          REPAIR_VALIDATION="${REPAIR_VALIDATION:-false}"
 
           [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == refs/heads/* ]] || {
             echo "::error::Manual PR E2E must be dispatched from this repository branch" >&2
@@ -840,6 +842,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          REPAIR_VALIDATION="${REPAIR_VALIDATION:-false}"
           credentials_allowed=false
           if [[ "$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw" &&
                 "$NVIDIA_OWNED" == "true" &&
