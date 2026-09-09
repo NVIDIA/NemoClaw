@@ -15,7 +15,7 @@ download_dir="$(mktemp -d "$RUNNER_TEMP/reviewed-npm.XXXXXX")"
 trap 'rm -rf "$download_dir"' EXIT
 identity_file="$download_dir/identity"
 
-node --experimental-strip-types --input-type=module - \
+node --input-type=module - \
   "$config_file" \
   "$script_dir/../../../scripts/lib/reviewed-npm-audit.mts" >"$identity_file" <<'NODE'
 import { readFileSync } from "node:fs";

@@ -319,7 +319,6 @@ describe("reviewed npm root-cause correlation", () => {
     const result = spawnSync(
       process.execPath,
       [
-        "--experimental-strip-types",
         "--no-warnings",
         "--input-type=module",
         "--eval",
