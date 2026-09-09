@@ -104,9 +104,12 @@ describe("MCP registry independence fixture", () => {
 });
 
 describe("legacy MCP migration fixture", () => {
-  it.each(["openclaw", "langchain-deepagents-code"] as const)(
-    "stages and verifies %s without changing unrelated configuration",
-    (agent) => {
+  it.each([
+    { agent: "openclaw", mode: 0o660 },
+    { agent: "langchain-deepagents-code", mode: 0o600 },
+  ] as const)(
+    "stages and verifies $agent without changing unrelated configuration",
+    ({ agent, mode }) => {
       const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-migration-fixture-"));
       tempDirs.push(configDir);
       const openclaw = agent === "openclaw";
@@ -125,6 +128,8 @@ describe("legacy MCP migration fixture", () => {
         ? { retained: true, mcp: { servers } }
         : { retained: true, mcpServers: servers };
       fs.writeFileSync(nativePath, JSON.stringify(native));
+      fs.chmodSync(nativePath, mode);
+      const nativeBefore = fs.statSync(nativePath);
       fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
       fs.writeFileSync(
         legacyPath,
@@ -144,6 +149,13 @@ describe("legacy MCP migration fixture", () => {
         "legacy-migration-staged",
         "",
       ]);
+      const nativeAfter = fs.statSync(nativePath);
+      expect([nativeAfter.mode, nativeAfter.uid, nativeAfter.gid]).toEqual([
+        nativeBefore.mode,
+        nativeBefore.uid,
+        nativeBefore.gid,
+      ]);
+      expect(fs.statSync(legacyPath).mode & 0o777).toBe(0o600);
       const after = JSON.parse(fs.readFileSync(nativePath, "utf8"));
       expect(openclaw ? after.mcp.servers : after.mcpServers).toEqual({ sibling: servers.sibling });
       expect(after.retained).toBe(true);

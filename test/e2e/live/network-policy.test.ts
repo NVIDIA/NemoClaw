@@ -353,7 +353,7 @@ test(
     const outputPath = path.join(exportDirectory, "config.yaml");
     const exported = await runNemoclaw(
       host,
-      ["config", "export", SANDBOX_NAME, "--output", outputPath, "--json"],
+      ["config", "export", SANDBOX_NAME, "--output", outputPath],
       { artifactName: "config-export-live-success", redactionValues: [apiKey] },
     );
     expect(exported.exitCode, text(exported)).toBe(0);
