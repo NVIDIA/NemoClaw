@@ -19,9 +19,9 @@ function hasSdkArtifact(): boolean {
 }
 
 describe("released OpenShell SDK export reads", () => {
-  it.skipIf(!hasSdkArtifact())(
-    "accepts generated responses without losing identity or uint64 revisions",
-    async () => {
+  it.skipIf(!hasSdkArtifact()).each(["openai", "nvidia"] as const)(
+    "accepts generated %s responses without losing identity or uint64 revisions",
+    async (providerType) => {
       const sdkPackage = "@nvidia/openshell-sdk/raw";
       const protobufPackage = "@bufbuild/protobuf";
       const [raw, { create, toBinary, fromBinary }] = await Promise.all([
@@ -39,13 +39,23 @@ describe("released OpenShell SDK export reads", () => {
         fromBinary(schema, toBinary(schema, create(schema, input)));
       const client: OpenShellReadClient = {
         raw: {
+          getProviderProfile: async () =>
+            roundTrip(raw.OpenShell.method.getProviderProfile.output, {
+              profile: {
+                id: "nvidia",
+                source: "builtin",
+                inferenceCapable: true,
+                endpoints: [{ host: "integrate.api.nvidia.com", port: 443 }],
+              },
+            }),
           getProvider: async () =>
             roundTrip(raw.OpenShell.method.getProvider.output, {
               provider: {
                 metadata,
-                type: "openai",
+                type: providerType,
                 credentials: { API_KEY: "REDACTED" },
-                config: { OPENAI_BASE_URL: "https://api.example/v1" },
+                config:
+                  providerType === "nvidia" ? {} : { OPENAI_BASE_URL: "https://api.example/v1" },
               },
             }),
           getSandbox: async () =>
@@ -79,7 +89,9 @@ describe("released OpenShell SDK export reads", () => {
       ).toMatchObject({
         workspace: "default",
         resourceVersion: "18446744073709551615",
-        config: { OPENAI_BASE_URL: "https://api.example/v1" },
+        ...(providerType === "nvidia"
+          ? { config: {}, builtinInferenceEndpoint: "https://integrate.api.nvidia.com/v1" }
+          : { config: { OPENAI_BASE_URL: "https://api.example/v1" } }),
       });
       expect(await createSandboxes(connect).get(request)).toMatchObject({
         id: "resource-id",

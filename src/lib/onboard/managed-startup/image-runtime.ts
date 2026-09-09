@@ -522,25 +522,21 @@ function generatorCommand(agent: ManagedStartupAgent): readonly string[] {
     case "openclaw":
       return [
         "/usr/local/bin/node",
-        "--experimental-strip-types",
         "/scripts/generate-openclaw-config.mts",
       ];
     case "hermes":
       return [
         "/usr/local/bin/node",
-        "--experimental-strip-types",
         "/opt/nemoclaw-hermes-config/generate-config.ts",
       ];
     case "langchain-deepagents-code":
       return [
         "/usr/local/bin/node",
-        "--experimental-strip-types",
         "/opt/nemoclaw-deepagents-code/generate-config.ts",
       ];
     case "pi":
       return [
         "/usr/local/bin/node",
-        "--experimental-strip-types",
         "/opt/nemoclaw-pi/generate-config.ts",
       ];
   }
@@ -553,7 +549,6 @@ function messagingCommand(
 ): readonly string[] {
   return [
     "/usr/local/bin/node",
-    "--experimental-strip-types",
     "/src/lib/messaging/applier/build/messaging-build-applier.mts",
     "--agent",
     agent,

@@ -73,12 +73,28 @@ export function buildDashboardChain(
   chatUiUrl = defaultChatUiUrl(),
   options: DashboardAccessOptions = {},
 ) {
-  return buildChain({
-    chatUiUrl,
+  return buildChain({ chatUiUrl, ...resolveDashboardPlatformHints(options) });
+}
+
+/**
+ * Resolve the host-derived half of `buildChain`'s input on its own.
+ *
+ * `buildDashboardChain` derives the port from the URL, which is right for
+ * every caller that only has a URL. A caller that has already resolved the
+ * port needs to pass it explicitly while still getting `isWsl` and
+ * `bindOverride` from the same place, and re-reading those two at the call
+ * site is how a caller silently loses them (#10861).
+ */
+export function resolveDashboardPlatformHints(options: DashboardAccessOptions = {}): {
+  isWsl: boolean;
+  wslHostAddress: string | null;
+  bindOverride: string | undefined;
+} {
+  return {
     isWsl: isWsl(options),
     wslHostAddress: getWslHostAddress(options),
     bindOverride: readBindOverride(options),
-  });
+  };
 }
 
 export function getDashboardForwardPort(
