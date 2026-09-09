@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "classification": "unsigned-native-windows-arm64-preview-qualification-pending",
-  "candidateSha": "1cb0dfbc0f4ca58ccb08b9433a8e8ab2a79cfecb",
+  "classification": "unsigned-native-windows-arm64-preview-qualification-failed",
+  "candidateSha": "36cdec5a1e8cd5fb0618afd5b20d8055ed051d53",
   "sourceRepository": "https://github.com/NVIDIA/NemoClaw",
   "sourcePullRequest": 10799,
-  "sourceWorkflowRun": 34358022355,
+  "sourceWorkflowRun": 34369256122,
   "sourceWorkflowAttempts": [
     1
   ],
-  "sourceArtifactId": 10108686147,
-  "packageManifestSha256": "bd4ec266479a766811db57d12730658edd996b2ec62c1b110b55a0cbebc67f0e",
+  "sourceArtifactId": 10113338300,
+  "packageManifestSha256": "17f3ce9cffa5ed8b7b74981b5b63cab0821715e2294f1b5ac583fab7b6f01a0f",
   "openshell": {
     "repository": "https://github.com/NVIDIA/OpenShell",
     "pullRequest": 2721,
@@ -20,12 +20,12 @@
     {
       "name": "NemoClaw-0.1.0-windows-arm64.msi",
       "size": 260346849,
-      "sha256": "55653d06481a1b49a801b0f31528a91936de1b3799975214dac8ac1c4d40cba0"
+      "sha256": "b7b497e9f6591b281b6760e67306b7affa803a321387df77b4b9ba7e5b6e9d3f"
     },
     {
       "name": "NemoClawSetup-0.1.0-windows-arm64.exe",
-      "size": 304401231,
-      "sha256": "a15ea5c4a2ecdf3247c6db9b46a02dffa32e17d6ee7b0c1e82da3f9e6303c44c"
+      "size": 304428677,
+      "sha256": "96dd27334b75db9954cc91c0b8f7d7cbc58a5b4b34d9d78b2a515b80480bcdef"
     }
   ],
   "qualification": {
@@ -33,17 +33,16 @@
     "retainedReferenceInstallerChecks": "passed",
     "earlyAndRepeatedProcessAudit": "passed",
     "installedAcceptance": "failed",
+    "failure": {
+      "step": "Qualify MSI and setup executable",
+      "reportedError": "Native setup did not prepare a bounded credential binding.",
+      "basicNativeOnboardingSelectionsPassed": 5,
+      "fullPackageQualificationPassed": false
+    },
     "requiredCompleteNativePasses": 2,
     "completeNativePasses": 0,
     "physicalN1x": "not-qualified",
-    "productionSupport": false,
-    "failure": {
-      "step": "Qualify MSI and setup executable",
-      "reportedError": "Credential binding control could not remove its keys and restore its owned settings.",
-      "rootCause": "under investigation; cleanup may mask an earlier failure",
-      "basicNativeOnboardingSelectionsPassed": 5,
-      "fullPackageQualificationPassed": false
-    }
+    "productionSupport": false
   },
   "criticalSourcePayloadHashesMatched": 12,
   "payloadFiles": 81806
