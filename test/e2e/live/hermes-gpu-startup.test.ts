@@ -440,7 +440,9 @@ test(
         timeoutMs: 30_000,
       });
       expect(realOpenshell.exitCode, resultText(realOpenshell)).toBe(0);
-      const wrapper = createHermesGpuFallbackWrapper(realOpenshell.stdout.trim());
+      const wrapper = createHermesGpuFallbackWrapper(realOpenshell.stdout.trim(), {
+        sandboxName: SANDBOX_NAME,
+      });
       // Security-scoped #6110 fault injection: always remove the private wrapper root through the
       // E2E cleanup stack. Do not generalize PATH interception to other tests without review.
       cleanup.trackDisposable("remove Hermes GPU fallback wrapper", () =>
@@ -448,7 +450,7 @@ test(
       );
       await artifacts.writeJson("gpu-fallback-wrapper.json", {
         behavior:
-          "reject the exact native --gpu create before progress, keep the rejecting wrapper installed during compatibility create, commit the real-CLI link after normal success or an independently verified Ready termination, and retain the wrapper after failure or pre-Ready interruption unless an overlapping success already committed",
+          "reject the intended sandbox's native --gpu create before progress, replace the wrapper with the real CLI link when that sandbox enters compatibility create, and do not let another sandbox retire the wrapper",
         eventVocabulary: HERMES_GPU_FALLBACK_EVENTS,
       });
       return wrapper;
@@ -506,7 +508,9 @@ test(
           ),
         ),
       );
-      expect([...fallbackEvents, `forward-ownership:${forwardOwnership.join(",")}`].join("\n")).toBe(
+      expect(
+        [...fallbackEvents, `forward-ownership:${forwardOwnership.join(",")}`].join("\n"),
+      ).toBe(
         `${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}\n${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}\n${HERMES_GPU_FALLBACK_EVENTS.commitCompatibilityHandoff}\nforward-ownership:true,true`,
       );
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { buildDirectSandboxGpuProofCommands } from "../../../src/lib/onboard/initial-policy";
 import {
@@ -50,7 +50,10 @@ function createWrapperFixture(
     realDir,
     realOpenshell,
     root,
-    wrapper: createHermesGpuFallbackWrapper(realOpenshell, { rootDir: path.join(root, "wrapper") }),
+    wrapper: createHermesGpuFallbackWrapper(realOpenshell, {
+      rootDir: path.join(root, "wrapper"),
+      sandboxName: "alpha",
+    }),
   };
 }
 
@@ -67,10 +70,6 @@ function waitForChild(child: ReturnType<typeof spawn>): Promise<number | null> {
     child.once("error", reject);
     child.once("close", resolve);
   });
-}
-
-async function waitForFile(filePath: string): Promise<void> {
-  await vi.waitUntil(() => fs.existsSync(filePath), { interval: 20, timeout: 5_000 });
 }
 
 describe("Hermes GPU startup scenario selection", () => {
@@ -166,6 +165,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
         "image",
         "--gpu",
         "--",
+        "NEMOCLAW_SANDBOX_NAME=alpha",
         `TOKEN=${secretMarkers[0]}`,
         `OPENAI_API_KEY=${secretMarkers[1]}`,
         `PASSWORD=${secretMarkers[2]}`,
@@ -184,7 +184,16 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
 
     const compatibility = runWrapper(
       wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
+      [
+        "sandbox",
+        "create",
+        "--from",
+        "image",
+        "--gpu-device",
+        "all",
+        "--",
+        "NEMOCLAW_SANDBOX_NAME=alpha",
+      ],
       env,
     );
     expect(compatibility.status, compatibility.stderr).toBe(0);
@@ -193,7 +202,16 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
 
     const repeatedCompatibility = runWrapper(
       wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
+      [
+        "sandbox",
+        "create",
+        "--from",
+        "image",
+        "--gpu-device",
+        "all",
+        "--",
+        "NEMOCLAW_SANDBOX_NAME=alpha",
+      ],
       env,
     );
     expect(repeatedCompatibility.status, repeatedCompatibility.stderr).toBe(0);
@@ -233,7 +251,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     ]);
     expect(fs.readFileSync(delegateExecutableLog, "utf8").split(/\r?\n/u).filter(Boolean)).toEqual([
       realOpenshell,
-      realOpenshell,
+      wrapper.wrapperPath,
       wrapper.wrapperPath,
       wrapper.wrapperPath,
       wrapper.wrapperPath,
@@ -246,7 +264,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
 
     const firstNativeCreate = runWrapper(
       wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--gpu"],
+      ["sandbox", "create", "--from", "image", "--gpu", "--", "NEMOCLAW_SANDBOX_NAME=alpha"],
       env,
     );
     expect(firstNativeCreate.status).toBe(2);
@@ -261,7 +279,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
 
     const secondNativeCreate = runWrapper(
       wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--gpu"],
+      ["sandbox", "create", "--from", "image", "--gpu", "--", "NEMOCLAW_SANDBOX_NAME=alpha"],
       env,
     );
     expect(secondNativeCreate.status).toBe(2);
@@ -270,283 +288,37 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     ]);
   });
 
-  it("keeps native fault injection when compatibility create fails (#11239)", () => {
-    const { wrapper } = createWrapperFixture("hermes-gpu-fallback-failed-create-test-", {
-      openshell: [
-        "#!/usr/bin/env bash",
-        'if [[ "${1:-}" == "sandbox" && "${2:-}" == "create" ]]; then exit 23; fi',
-        "exit 0",
-        "",
-      ].join("\n"),
-    });
+  it("does not let another sandbox retire the target sandbox fault injection (#11239)", () => {
+    const { wrapper } = createWrapperFixture("hermes-gpu-fallback-other-sandbox-test-");
     const env = { ...process.env, ...wrapper.componentEnv };
 
     expect(
-      runWrapper(wrapper.wrapperPath, ["sandbox", "create", "--from", "image", "--gpu"], env)
-        .status,
-    ).toBe(2);
+      runWrapper(
+        wrapper.wrapperPath,
+        [
+          "sandbox",
+          "create",
+          "--from",
+          "image",
+          "--gpu-device",
+          "all",
+          "--",
+          "NEMOCLAW_SANDBOX_NAME=beta",
+        ],
+        env,
+      ).status,
+    ).toBe(0);
+    expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
     expect(
       runWrapper(
         wrapper.wrapperPath,
-        ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
+        ["sandbox", "create", "--from", "image", "--gpu", "--", "NEMOCLAW_SANDBOX_NAME=alpha"],
         env,
       ).status,
-    ).toBe(23);
-    expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
-    expect(
-      runWrapper(wrapper.wrapperPath, ["sandbox", "create", "--from", "image", "--gpu"], env)
-        .status,
     ).toBe(2);
-  });
-
-  it("rejects a native create while compatibility handoff is still pending (#11239)", async () => {
-    const { root, wrapper } = createWrapperFixture("hermes-gpu-fallback-pending-test-", {
-      openshell: [
-        "#!/usr/bin/env bash",
-        'for arg in "$@"; do',
-        '  if [[ "$arg" == "--gpu" ]]; then',
-        `    printf '%s\\n' native-bypass >>"$E2E_FAKE_DELEGATE_LOG"`,
-        "    exit 97",
-        "  fi",
-        "done",
-        `printf '%s\\n' compatibility >>"$E2E_FAKE_DELEGATE_LOG"`,
-        ': >"$E2E_FAKE_READY"',
-        'while [[ ! -f "$E2E_FAKE_RELEASE" ]]; do sleep 0.02; done',
-        "exit 0",
-        "",
-      ].join("\n"),
-    });
-    const ready = path.join(root, "compatibility-ready");
-    const release = path.join(root, "compatibility-release");
-    const delegateLog = path.join(root, "delegate.log");
-    const env = {
-      ...process.env,
-      ...wrapper.componentEnv,
-      E2E_FAKE_DELEGATE_LOG: delegateLog,
-      E2E_FAKE_READY: ready,
-      E2E_FAKE_RELEASE: release,
-    };
-    const compatibility = spawnWrapper(
-      wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
-      env,
-    );
-    const compatibilityStatus = waitForChild(compatibility);
-    await waitForFile(ready);
-
-    expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
-    expect(
-      runWrapper(wrapper.wrapperPath, ["sandbox", "create", "--from", "image", "--gpu"], env)
-        .status,
-    ).toBe(2);
-    expect(fs.readFileSync(delegateLog, "utf8").trim()).toBe("compatibility");
-
-    fs.writeFileSync(release, "");
-    expect(await compatibilityStatus).toBe(0);
-    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
-  });
-
-  it("retains the successful handoff when an overlapping compatibility create fails (#11239)", async () => {
-    const { root, wrapper } = createWrapperFixture("hermes-gpu-fallback-overlap-test-", {
-      openshell: [
-        "#!/usr/bin/env bash",
-        "mode=failure",
-        'for arg in "$@"; do [[ "$arg" == "--fixture-success" ]] && mode=success; done',
-        'if [[ "$mode" == "success" ]]; then',
-        '  ready="$E2E_SUCCESS_READY"',
-        '  release="$E2E_SUCCESS_RELEASE"',
-        "else",
-        '  ready="$E2E_FAILURE_READY"',
-        '  release="$E2E_FAILURE_RELEASE"',
-        "fi",
-        ': >"$ready"',
-        'while [[ ! -f "$release" ]]; do sleep 0.02; done',
-        '[[ "$mode" == "success" ]] && exit 0',
-        "exit 23",
-        "",
-      ].join("\n"),
-    });
-    const successReady = path.join(root, "success-ready");
-    const successRelease = path.join(root, "success-release");
-    const failureReady = path.join(root, "failure-ready");
-    const failureRelease = path.join(root, "failure-release");
-    const env = {
-      ...process.env,
-      ...wrapper.componentEnv,
-      E2E_FAILURE_READY: failureReady,
-      E2E_FAILURE_RELEASE: failureRelease,
-      E2E_SUCCESS_READY: successReady,
-      E2E_SUCCESS_RELEASE: successRelease,
-    };
-    const successful = spawnWrapper(
-      wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--gpu-device", "all", "--fixture-success"],
-      env,
-    );
-    const successfulStatus = waitForChild(successful);
-    const failing = spawnWrapper(
-      wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
-      env,
-    );
-    const failingStatus = waitForChild(failing);
-    await Promise.all([waitForFile(successReady), waitForFile(failureReady)]);
-
-    fs.writeFileSync(successRelease, "");
-    expect(await successfulStatus).toBe(0);
-    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
-    fs.writeFileSync(failureRelease, "");
-    expect(await failingStatus).toBe(23);
-    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
-  });
-
-  it("leaves native fault injection installed when compatibility create is interrupted (#11239)", async () => {
-    const { root, wrapper } = createWrapperFixture("hermes-gpu-fallback-interrupt-test-", {
-      openshell: [
-        "#!/usr/bin/env bash",
-        'if [[ "${1:-}" == "sandbox" && "${2:-}" == "get" ]]; then exit 1; fi',
-        "trap 'exit 143' HUP INT TERM",
-        ': >"$E2E_FAKE_READY"',
-        "while :; do sleep 1; done",
-        "",
-      ].join("\n"),
-    });
-    const ready = path.join(root, "compatibility-ready");
-    const env = {
-      ...process.env,
-      ...wrapper.componentEnv,
-      E2E_FAKE_READY: ready,
-    };
-    const compatibility = spawnWrapper(
-      wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
-      env,
-    );
-    const compatibilityStatus = waitForChild(compatibility);
-    await waitForFile(ready);
-
-    expect(compatibility.kill("SIGTERM")).toBe(true);
-    expect(await compatibilityStatus).toBe(143);
-    expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
-    expect(
-      runWrapper(wrapper.wrapperPath, ["sandbox", "create", "--from", "image", "--gpu"], env)
-        .status,
-    ).toBe(2);
-  });
-
-  it("commits the handoff when the create client is terminated after Ready (#11239)", async () => {
-    const { realOpenshell, root, wrapper } = createWrapperFixture(
-      "hermes-gpu-fallback-ready-termination-test-",
-      {
-        openshell: [
-          "#!/usr/bin/env bash",
-          'if [[ "${1:-}" == "sandbox" && "${2:-}" == "get" ]]; then',
-          "  printf '%s\\n' 'Phase: Ready'",
-          "  exit 0",
-          "fi",
-          "trap 'exit 143' HUP INT TERM",
-          ': >"$E2E_FAKE_READY"',
-          "while :; do sleep 1; done",
-          "",
-        ].join("\n"),
-      },
-    );
-    const ready = path.join(root, "compatibility-ready");
-    const env = {
-      ...process.env,
-      ...wrapper.componentEnv,
-      E2E_FAKE_READY: ready,
-    };
-    const compatibility = spawnWrapper(
-      wrapper.wrapperPath,
-      [
-        "sandbox",
-        "create",
-        "--from",
-        "image",
-        "--gpu-device",
-        "all",
-        "--",
-        "NEMOCLAW_SANDBOX_NAME=alpha",
-      ],
-      env,
-    );
-    const compatibilityStatus = waitForChild(compatibility);
-    await waitForFile(ready);
-
-    expect(compatibility.kill("SIGTERM")).toBe(true);
-    expect(await compatibilityStatus).toBe(143);
-    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
-    expect(fs.realpathSync(wrapper.wrapperPath)).toBe(fs.realpathSync(realOpenshell));
     expect(readHermesGpuFallbackEvents(wrapper.eventsPath)).toEqual([
-      HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
-      HERMES_GPU_FALLBACK_EVENTS.commitCompatibilityHandoff,
+      HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
     ]);
-  });
-
-  it("bounds a stuck Ready query and retains native fault injection (#11239)", async () => {
-    const { root, wrapper } = createWrapperFixture("hermes-gpu-fallback-ready-timeout-test-", {
-      openshell: [
-        "#!/usr/bin/env bash",
-        'if [[ "${1:-}" == "sandbox" && "${2:-}" == "get" ]]; then exec sleep 30; fi',
-        "trap 'exit 143' HUP INT TERM",
-        ': >"$E2E_FAKE_READY"',
-        "while :; do sleep 1; done",
-        "",
-      ].join("\n"),
-    });
-    const ready = path.join(root, "compatibility-ready");
-    const env = { ...process.env, ...wrapper.componentEnv, E2E_FAKE_READY: ready };
-    const compatibility = spawnWrapper(
-      wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--", "NEMOCLAW_SANDBOX_NAME=alpha"],
-      env,
-    );
-    const compatibilityStatus = waitForChild(compatibility);
-    await waitForFile(ready);
-    const terminatedAt = Date.now();
-
-    expect(compatibility.kill("SIGTERM")).toBe(true);
-    expect(await compatibilityStatus).toBe(143);
-    expect(Date.now() - terminatedAt).toBeLessThan(4_000);
-    expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
-  });
-
-  it("kills and reaps a compatibility child that ignores cancellation (#11239)", async () => {
-    const { root, wrapper } = createWrapperFixture("hermes-gpu-fallback-child-timeout-test-", {
-      openshell: [
-        "#!/usr/bin/env bash",
-        'if [[ "${1:-}" == "sandbox" && "${2:-}" == "get" ]]; then exit 1; fi',
-        "trap '' HUP INT TERM",
-        'printf \'%s\\n\' "$$" >"$E2E_FAKE_CHILD_PID"',
-        ': >"$E2E_FAKE_READY"',
-        "exec sleep 30",
-        "",
-      ].join("\n"),
-    });
-    const ready = path.join(root, "compatibility-ready");
-    const childPidPath = path.join(root, "compatibility-child.pid");
-    const env = {
-      ...process.env,
-      ...wrapper.componentEnv,
-      E2E_FAKE_CHILD_PID: childPidPath,
-      E2E_FAKE_READY: ready,
-    };
-    const compatibility = spawnWrapper(
-      wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--", "NEMOCLAW_SANDBOX_NAME=alpha"],
-      env,
-    );
-    const compatibilityStatus = waitForChild(compatibility);
-    await waitForFile(ready);
-    const delegatedPid = Number(fs.readFileSync(childPidPath, "utf8").trim());
-    const terminatedAt = Date.now();
-
-    expect(compatibility.kill("SIGTERM")).toBe(true);
-    expect(await compatibilityStatus).toBe(143);
-    expect(Date.now() - terminatedAt).toBeLessThan(4_000);
-    expect(() => process.kill(delegatedPid, 0)).toThrow();
-    expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
   });
 
   it("preserves the fallback wrapper while staging the existing OpenShell service (#7140)", () => {
@@ -667,7 +439,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
         waitForChild(
           spawnWrapper(
             wrapper.wrapperPath,
-            ["sandbox", "create", "--from", "image", "--gpu"],
+            ["sandbox", "create", "--from", "image", "--gpu", "--", "NEMOCLAW_SANDBOX_NAME=alpha"],
             env,
           ),
         ),

@@ -81,14 +81,11 @@ function quoteShellLiteral(value: string): string {
 
 /**
  * Create an E2E-only OpenShell CLI wrapper that rejects the exact native
- * `--gpu` create before build or sandbox progress. The compatibility create
- * runs the real CLI while the rejecting wrapper stays installed. A normal
- * success, or NemoClaw's expected termination after the sandbox is independently
- * proven Ready, atomically replaces the wrapper with a real-CLI link. A failed
- * or pre-Ready interrupted invocation never changes the wrapper path; an
- * overlapping successful invocation may independently commit the link and
- * remains authoritative. Every other invocation transparently delegates its
- * original argv. This
+ * `--gpu` create for one sandbox before build or sandbox progress. When that
+ * sandbox enters compatibility create, the wrapper atomically replaces itself
+ * with a real-CLI link before executing the create through the configured path.
+ * Creates for other sandboxes cannot retire the fault injection. Every other
+ * invocation transparently delegates its original argv. This
  * test-only wrapper never logs argv: its sole artifact is an event log made of
  * fixed labels, so sandbox-create environment arguments never enter artifacts.
  * This interception pattern is specific to the #6110 fallback proof and must
@@ -97,7 +94,7 @@ function quoteShellLiteral(value: string): string {
  */
 export function createHermesGpuFallbackWrapper(
   realOpenshellPath: string,
-  options: { rootDir?: string } = {},
+  options: { rootDir?: string; sandboxName: string },
 ): HermesGpuFallbackWrapper {
   requireAbsoluteExecutable(realOpenshellPath, "real OpenShell CLI");
   const componentDir = path.dirname(realOpenshellPath);
@@ -121,10 +118,8 @@ export function createHermesGpuFallbackWrapper(
     ...REQUIRED_OPENSHELL_MCP_FEATURES.map((marker) => `# capability: ${marker}`),
     `REAL_OPENSHELL=${quoteShellLiteral(realOpenshellPath)}`,
     `FALLBACK_STATE_DIR=${quoteShellLiteral(stateDir)}`,
-    "COMPATIBILITY_SIGNAL_TIMEOUT_SECONDS=2",
-    "READY_QUERY_TIMEOUT_SECONDS=2",
+    `TARGET_SANDBOX_NAME=${quoteShellLiteral(options.sandboxName)}`,
     'NATIVE_CREATE_REJECTED="$FALLBACK_STATE_DIR/native-create-rejected"',
-    `SANDBOX_NAME="$(printf '%s\\n' "$@" | awk 'previous == "--name" { print; exit } /^--name=/ { sub(/^--name=/, ""); print; exit } /^NEMOCLAW_SANDBOX_NAME=/ { sub(/^NEMOCLAW_SANDBOX_NAME=/, ""); print; exit } { previous = $0 }')"`,
     "",
     "commit_compatibility_handoff() {",
     '  REAL_OPENSHELL_LINK="$FALLBACK_STATE_DIR/openshell-real.$$"',
@@ -133,41 +128,24 @@ export function createHermesGpuFallbackWrapper(
     `  printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.commitCompatibilityHandoff}' >>"$FALLBACK_STATE_DIR/events.log"`,
     "}",
     "",
-    "sandbox_is_ready() {",
-    '  READY_QUERY_OUTPUT="$FALLBACK_STATE_DIR/sandbox-ready.$$"',
-    '  (exec "$REAL_OPENSHELL" sandbox get "$SANDBOX_NAME") >"$READY_QUERY_OUTPUT" 2>/dev/null &',
-    '  ready_query_pid="$!"',
-    "  (",
-    '    sleep "$READY_QUERY_TIMEOUT_SECONDS"',
-    '    kill -TERM "$ready_query_pid" 2>/dev/null || true',
-    "    sleep 0.2",
-    '    kill -KILL "$ready_query_pid" 2>/dev/null || true',
-    "  ) &",
-    '  ready_watchdog_pid="$!"',
-    "  ready_query_status=0",
-    '  wait "$ready_query_pid" || ready_query_status="$?"',
-    '  kill "$ready_watchdog_pid" 2>/dev/null || true',
-    '  wait "$ready_watchdog_pid" 2>/dev/null || true',
-    '  test "$ready_query_status" -eq 0 &&',
-    "    grep -Eq '(^|[[:space:]])Ready([[:space:]]|$)' \"$READY_QUERY_OUTPUT\"",
-    '  ready_query_status="$?"',
-    '  rm -f "$READY_QUERY_OUTPUT"',
-    '  return "$ready_query_status"',
-    "}",
-    "",
     "is_sandbox_create=0",
+    "is_target_sandbox=0",
     "has_gpu_flag=0",
     'if [[ "${1:-}" == "sandbox" && "${2:-}" == "create" ]]; then',
     "  is_sandbox_create=1",
+    '  previous_arg=""',
     '  for arg in "$@"; do',
-    '    if [[ "$arg" == "--gpu" ]]; then',
-    "      has_gpu_flag=1",
-    "      break",
-    "    fi",
+    '    case "$previous_arg:$arg" in',
+    '      "--name:$TARGET_SANDBOX_NAME"|*":--name=$TARGET_SANDBOX_NAME"|*":NEMOCLAW_SANDBOX_NAME=$TARGET_SANDBOX_NAME") is_target_sandbox=1 ;;',
+    "    esac",
+    '    case "$arg" in',
+    "      --gpu) has_gpu_flag=1 ;;",
+    "    esac",
+    '    previous_arg="$arg"',
     "  done",
     "fi",
     "",
-    'if [[ "$is_sandbox_create" == "1" ]]; then',
+    'if [[ "$is_sandbox_create" == "1" && "$is_target_sandbox" == "1" ]]; then',
     '  if [[ "$has_gpu_flag" == "1" ]]; then',
     '    if mkdir "$NATIVE_CREATE_REJECTED" 2>/dev/null; then',
     `      printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}' >>"$FALLBACK_STATE_DIR/events.log"`,
@@ -176,38 +154,8 @@ export function createHermesGpuFallbackWrapper(
     "    exit 2",
     "  else",
     `    printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}' >>"$FALLBACK_STATE_DIR/events.log"`,
-    '    COMPATIBILITY_PID=""',
-    "    forward_compatibility_signal() {",
-    '      local signal="$1"',
-    '      local status="$2"',
-    "      trap - HUP INT TERM",
-    '      if [[ -n "$COMPATIBILITY_PID" ]] && kill -0 "$COMPATIBILITY_PID" 2>/dev/null; then',
-    '        kill "-$signal" "$COMPATIBILITY_PID" 2>/dev/null || true',
-    "      fi",
-    "      (",
-    '        sleep "$COMPATIBILITY_SIGNAL_TIMEOUT_SECONDS"',
-    '        kill -KILL "$COMPATIBILITY_PID" 2>/dev/null || true',
-    "      ) &",
-    '      compatibility_watchdog_pid="$!"',
-    '      wait "$COMPATIBILITY_PID" 2>/dev/null || true',
-    '      kill "$compatibility_watchdog_pid" 2>/dev/null || true',
-    '      wait "$compatibility_watchdog_pid" 2>/dev/null || true',
-    "      sandbox_is_ready && commit_compatibility_handoff || true",
-    '      exit "$status"',
-    "    }",
-    "    trap 'forward_compatibility_signal HUP 129' HUP",
-    "    trap 'forward_compatibility_signal INT 130' INT",
-    "    trap 'forward_compatibility_signal TERM 143' TERM",
-    '    (exec "$REAL_OPENSHELL" "$@") &',
-    '    COMPATIBILITY_PID="$!"',
-    '    wait "$COMPATIBILITY_PID" || {',
-    '      compatibility_status="$?"',
-    "      trap - HUP INT TERM",
-    '      exit "$compatibility_status"',
-    "    }",
-    "    trap - HUP INT TERM",
     "    commit_compatibility_handoff",
-    "    exit 0",
+    '    exec "$0" "$@"',
     "  fi",
     "fi",
     "",
