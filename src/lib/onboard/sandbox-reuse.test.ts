@@ -10,7 +10,6 @@ import {
   applyReusedSandboxDashboardState,
   createSandboxReuseHelpers,
   restoreReusedSandboxDashboardState,
-  type ReusedSandboxDashboardStateInput,
   type SandboxReuseDeps,
 } from "./sandbox-reuse";
 
@@ -69,258 +68,55 @@ describe("applyReusedSandboxDashboardState", () => {
       hermesDashboardPort: undefined,
       hermesDashboardInternalPort: undefined,
       hermesDashboardTui: undefined,
-      dashboardBindAddress: "127.0.0.1",
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
     });
     expect(result.hermesDashboardState).toBe(hermesDashboardState);
     expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
       reuseExistingOpenClawForward: true,
-      onForwardFailure: expect.any(Function),
     });
   });
 
-  it.each([
-    ["a loopback dashboard URL", "http://127.0.0.1:18789", "127.0.0.1"],
-    ["a remote-origin dashboard URL", "https://dashboard.example.test:18789", "0.0.0.0"],
-  ])(
-    "records the bind the reused dashboard forward was started with for %s (#10861)",
-    (_label, chatUiUrl, dashboardBindAddress) => {
-      const updateSandbox = vi.fn();
-      const ensureDashboardForward = vi.fn(() => 18789);
+  it("leaves the dashboard bind record to the launcher (#10861)", () => {
+    const updateSandbox = vi.fn();
+    const ensureDashboardForward = vi.fn(() => 18789);
 
-      applyReusedSandboxDashboardState({
-        sandboxName: "reuse-me",
-        chatUiUrl,
-        env: {},
-        agent: null,
-        model: "test-model",
-        provider: "openai-compatible",
-        selectionVerified: true,
-        sandboxGpuConfig: {
-          hostGpuDetected: false,
-          hostGpuPlatform: null,
-          sandboxGpuEnabled: false,
-          mode: "auto",
-          sandboxGpuDevice: null,
-          errors: [],
-        },
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        ensureDashboardForward,
-        hermesDashboardForwarding: {
-          resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
-          ensureForState: vi.fn(),
-        },
-        updateSandbox,
-        updateReusedSandboxMetadata: vi.fn(),
-      });
-
-      expect(ensureDashboardForward).toHaveBeenCalledWith(
-        "reuse-me",
-        chatUiUrl,
-        expect.objectContaining({ onForwardFailure: expect.any(Function) }),
-      );
-      expect(updateSandbox).toHaveBeenCalledWith(
-        "reuse-me",
-        expect.objectContaining({ dashboardBindAddress }),
-      );
-    },
-  );
-
-  function reusedWideDashboard(
-    updateSandbox: NonNullable<ReusedSandboxDashboardStateInput["updateSandbox"]>,
-    options: {
-      previousBind?: string | null;
-      chatUiUrl?: string;
-      ensureDashboardForward?: ReusedSandboxDashboardStateInput["ensureDashboardForward"];
-    } = {},
-  ) {
-    const ensureDashboardForward = vi.fn(options.ensureDashboardForward ?? (() => 18789));
-    const restore = () =>
-      applyReusedSandboxDashboardState({
-        sandboxName: "reuse-me",
-        chatUiUrl: options.chatUiUrl ?? "https://dashboard.example.test:18789",
-        env: {},
-        getSandbox: () => ({
-          name: "reuse-me",
-          dashboardBindAddress: options.previousBind ?? null,
-        }),
-        agent: null,
-        model: "test-model",
-        provider: "openai-compatible",
-        selectionVerified: true,
-        sandboxGpuConfig: {
-          hostGpuDetected: false,
-          hostGpuPlatform: null,
-          sandboxGpuEnabled: false,
-          mode: "auto",
-          sandboxGpuDevice: null,
-          errors: [],
-        },
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        ensureDashboardForward,
-        hermesDashboardForwarding: {
-          resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
-          ensureForState: vi.fn(),
-        },
-        updateSandbox,
-        updateReusedSandboxMetadata: vi.fn(),
-      });
-    return { ensureDashboardForward, restore };
-  }
-
-  it("records a wide bind before restoring the forward (#10861)", () => {
-    const updateSandbox = vi.fn(() => true);
-    const { ensureDashboardForward, restore } = reusedWideDashboard(updateSandbox);
-
-    restore();
-
-    expect(updateSandbox).toHaveBeenNthCalledWith(1, "reuse-me", {
-      dashboardBindAddress: "0.0.0.0",
+    applyReusedSandboxDashboardState({
+      sandboxName: "reuse-me",
+      chatUiUrl: "https://dashboard.example.test:18789",
+      env: {},
+      agent: null,
+      model: "test-model",
+      provider: "openai-compatible",
+      selectionVerified: true,
+      sandboxGpuConfig: {
+        hostGpuDetected: false,
+        hostGpuPlatform: null,
+        sandboxGpuEnabled: false,
+        mode: "auto",
+        sandboxGpuDevice: null,
+        errors: [],
+      },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      ensureDashboardForward,
+      hermesDashboardForwarding: {
+        resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
+        ensureForState: vi.fn(),
+      },
+      updateSandbox,
+      updateReusedSandboxMetadata: vi.fn(),
     });
-    expect(updateSandbox.mock.invocationCallOrder[0]).toBeLessThan(
-      ensureDashboardForward.mock.invocationCallOrder[0],
+
+    expect(ensureDashboardForward).toHaveBeenCalledWith(
+      "reuse-me",
+      "https://dashboard.example.test:18789",
+      { reuseExistingOpenClawForward: true },
     );
+    expect(
+      updateSandbox.mock.calls.map(([, updates]) => "dashboardBindAddress" in updates),
+    ).toEqual([false]);
   });
-
-  it.each([
-    ["the write is rejected", () => false],
-    [
-      "the write throws",
-      () => {
-        throw new Error("disk full");
-      },
-    ],
-  ])(
-    "refuses to restore a wide forward whose exposure cannot be recorded when %s",
-    (_case, write) => {
-      const { ensureDashboardForward, restore } = reusedWideDashboard(vi.fn(write));
-
-      expect(restore).toThrow(
-        /Refusing to restore the dashboard forward for 'reuse-me' on all interfaces/u,
-      );
-      expect(ensureDashboardForward).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    ["a loopback record", "127.0.0.1"],
-    ["no record", null],
-  ])(
-    "puts back %s when the wide forward does not start after its bind was recorded (#10861)",
-    (_label, previousBind) => {
-      const updateSandbox = vi.fn(
-        (_sandboxName: string, _updates: { dashboardBindAddress?: string | null }) => true,
-      );
-      const { restore } = reusedWideDashboard(updateSandbox, {
-        previousBind,
-        ensureDashboardForward: (_sandboxName, _chatUiUrl, options) => {
-          options?.onForwardFailure?.("forward service exited");
-          return 18789;
-        },
-      });
-
-      restore();
-
-      expect(updateSandbox).toHaveBeenNthCalledWith(1, "reuse-me", {
-        dashboardBindAddress: "0.0.0.0",
-      });
-      expect(updateSandbox).toHaveBeenNthCalledWith(2, "reuse-me", {
-        dashboardBindAddress: previousBind,
-      });
-      expect(updateSandbox).toHaveBeenLastCalledWith(
-        "reuse-me",
-        expect.objectContaining({ dashboardBindAddress: previousBind }),
-      );
-      const bindsAfterRestore = updateSandbox.mock.calls
-        .slice(1)
-        .map(([, updates]) => updates.dashboardBindAddress);
-      expect(bindsAfterRestore).not.toContain("0.0.0.0");
-    },
-  );
-
-  it("records a loopback bind before restoring the forward when it replaces a recorded wide bind (#10861)", () => {
-    const updateSandbox = vi.fn(() => true);
-    const { ensureDashboardForward, restore } = reusedWideDashboard(updateSandbox, {
-      previousBind: "0.0.0.0",
-      chatUiUrl: "http://127.0.0.1:18789",
-    });
-
-    restore();
-
-    expect(updateSandbox).toHaveBeenNthCalledWith(1, "reuse-me", {
-      dashboardBindAddress: "127.0.0.1",
-    });
-    expect(updateSandbox.mock.invocationCallOrder[0]).toBeLessThan(
-      ensureDashboardForward.mock.invocationCallOrder[0],
-    );
-  });
-
-  it.each([
-    ["the write is rejected", () => false],
-    [
-      "the write throws",
-      () => {
-        throw new Error("disk full");
-      },
-    ],
-  ])("refuses to restore a loopback forward over a stale wide record when %s", (_case, write) => {
-    const { ensureDashboardForward, restore } = reusedWideDashboard(vi.fn(write), {
-      previousBind: "0.0.0.0",
-      chatUiUrl: "http://127.0.0.1:18789",
-    });
-
-    expect(restore).toThrow(/on loopback: the registry still records a bind on 0\.0\.0\.0/u);
-    expect(ensureDashboardForward).not.toHaveBeenCalled();
-  });
-
-  it("warns when the previous record cannot be put back after the wide forward does not start (#10861)", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const updateSandbox = vi
-      .fn(() => true)
-      .mockReturnValueOnce(true)
-      .mockReturnValue(false);
-    const { restore } = reusedWideDashboard(updateSandbox, {
-      previousBind: "127.0.0.1",
-      ensureDashboardForward: (_sandboxName, _chatUiUrl, options) => {
-        options?.onForwardFailure?.("forward service exited");
-        return 18789;
-      },
-    });
-
-    restore();
-
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be restored"));
-  });
-
-  it.each([
-    ["a loopback record", "127.0.0.1"],
-    ["no record", null],
-  ])(
-    "puts back %s when the launcher throws after the wide bind was recorded (#10861)",
-    (_label, previousBind) => {
-      const updateSandbox = vi.fn(
-        (_sandboxName: string, _updates: { dashboardBindAddress?: string | null }) => true,
-      );
-      const { restore } = reusedWideDashboard(updateSandbox, {
-        previousBind,
-        ensureDashboardForward: () => {
-          throw new Error(
-            "Registered dashboard port 18789 is already occupied; it cannot be reallocated or adopted.",
-          );
-        },
-      });
-
-      expect(restore).toThrow(/already occupied/u);
-
-      expect(updateSandbox.mock.calls.map(([, updates]) => updates.dashboardBindAddress)).toEqual([
-        "0.0.0.0",
-        previousBind,
-      ]);
-    },
-  );
 
   it("skips dashboard forwarding while preserving reuse metadata for terminal agents", () => {
     const updateSandbox = vi.fn();
@@ -486,7 +282,6 @@ describe("applyReusedSandboxDashboardState", () => {
     expect(releaseDashboardPort).toHaveBeenCalledOnce();
     expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
       reuseExistingOpenClawForward: true,
-      onForwardFailure: expect.any(Function),
     });
     expect(result.dashboardPort).toBe(18_789);
   });
@@ -538,7 +333,6 @@ describe("applyReusedSandboxDashboardState", () => {
     expect(ensureForState).toHaveBeenCalledOnce();
     expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
       revalidateSandboxIdentity,
-      onForwardFailure: expect.any(Function),
     });
     expect(updateReusedSandboxMetadata).not.toHaveBeenCalled();
     expect(updateSandbox).not.toHaveBeenCalled();

@@ -11,10 +11,16 @@ import { createOnboardDashboardHelpers } from "./dashboard";
 
 const createdHomes: string[] = [];
 
+type LauncherDeps = Parameters<typeof createOnboardDashboardHelpers>[0];
+
+const WIDE_URL = "https://dashboard.example.test:18789";
+const LOOPBACK_URL = "http://127.0.0.1:18789";
+
 /** A launcher whose forward service behaves as `launch` says, with the sandbox kept (no rollback). */
 function launcherWith(
   launch: () => void,
   recordDashboardBind: (sandboxName: string, bindAddress: string | null) => boolean = () => true,
+  overrides: Partial<LauncherDeps> = {},
 ) {
   return createOnboardDashboardHelpers({
     recordDashboardBind,
@@ -38,41 +44,149 @@ function launcherWith(
       resolveGatewayName: () => "nemoclaw",
       retireLegacy: () => 0,
     },
+    ...overrides,
   });
 }
 
-describe("the dashboard launcher reports a start failure it otherwise swallows (#10861)", () => {
+describe("the dashboard launcher records the bind of the forward it starts (#10861)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("tells the caller the forward did not start and still returns the port", () => {
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const onForwardFailure = vi.fn();
-    const helpers = launcherWith(() => {
-      throw new Error("forward service exited");
-    });
+  it("records the bind before the forward starts and keeps it when the forward comes up", () => {
+    const record = vi.fn(() => true);
+    const launch = vi.fn();
+    const helpers = launcherWith(launch, record);
 
-    const port = helpers.ensureDashboardForward("reuse-me", "http://127.0.0.1:18789", {
-      onForwardFailure,
-    });
+    expect(helpers.ensureDashboardForward("hm", WIDE_URL)).toBe(18789);
 
-    expect(port).toBe(18789);
-    expect(onForwardFailure).toHaveBeenCalledWith(
-      expect.stringContaining("forward service exited"),
+    expect(record.mock.calls).toEqual([["hm", "0.0.0.0"]]);
+    expect(record.mock.invocationCallOrder[0]).toBeLessThan(
+      launch.mock.invocationCallOrder[0] ?? 0,
     );
   });
 
-  it("says nothing to the caller when the forward starts", () => {
-    const onForwardFailure = vi.fn();
-    const helpers = launcherWith(() => undefined);
+  it("puts the previous record back when the forward does not start", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const record = vi.fn(() => true);
+    const helpers = launcherWith(
+      () => {
+        throw new Error("forward service exited");
+      },
+      record,
+      {
+        getSandbox: () => ({
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          dashboardBindAddress: "127.0.0.1",
+        }),
+      },
+    );
 
-    const port = helpers.ensureDashboardForward("reuse-me", "http://127.0.0.1:18789", {
-      onForwardFailure,
+    expect(helpers.ensureDashboardForward("hm", WIDE_URL)).toBe(18789);
+
+    expect(record.mock.calls).toEqual([
+      ["hm", "0.0.0.0"],
+      ["hm", "127.0.0.1"],
+    ]);
+  });
+
+  it("warns when the previous record cannot be put back", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const record = vi
+      .fn(() => true)
+      .mockReturnValueOnce(true)
+      .mockReturnValue(false);
+    const helpers = launcherWith(() => {
+      throw new Error("forward service exited");
+    }, record);
+
+    expect(helpers.ensureDashboardForward("hm", WIDE_URL)).toBe(18789);
+
+    expect(record.mock.calls).toEqual([
+      ["hm", "0.0.0.0"],
+      ["hm", null],
+    ]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be restored"));
+  });
+
+  it.each([
+    ["the write is rejected", () => false],
+    [
+      "the write throws",
+      () => {
+        throw new Error("disk full");
+      },
+    ],
+  ])(
+    "refuses to start a wide forward whose exposure cannot be recorded when %s",
+    (_case, write) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const launch = vi.fn();
+      const helpers = launcherWith(launch, vi.fn(write));
+
+      expect(helpers.ensureDashboardForward("hm", WIDE_URL)).toBe(18789);
+
+      expect(launch).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Refusing to start the dashboard forward for 'hm' on all interfaces",
+        ),
+      );
+    },
+  );
+
+  it("refuses to start a loopback forward over a stale wide record it cannot update", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const launch = vi.fn();
+    const helpers = launcherWith(launch, () => false, {
+      getSandbox: () => ({
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        dashboardBindAddress: "0.0.0.0",
+      }),
     });
 
-    expect(port).toBe(18789);
-    expect(onForwardFailure).not.toHaveBeenCalled();
+    expect(helpers.ensureDashboardForward("hm", LOOPBACK_URL)).toBe(18789);
+
+    expect(launch).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("on loopback: the registry still records a bind on 0.0.0.0"),
+    );
+  });
+
+  it("starts a loopback forward over a loopback record when the write fails, and says so", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const launch = vi.fn();
+    const helpers = launcherWith(launch, () => false);
+
+    expect(helpers.ensureDashboardForward("hm", LOOPBACK_URL)).toBe(18789);
+
+    expect(launch).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be recorded"));
+  });
+
+  it("leaves the record alone when it keeps an owned forward", () => {
+    const record = vi.fn(() => true);
+    const launch = vi.fn();
+    const helpers = launcherWith(launch, record, {
+      listSandboxes: () => ({ sandboxes: [{ name: "hm", dashboardPort: 18789 }] }),
+      isPortBoundOnHost: () => true,
+      forwardService: {
+        executable: () => "/usr/local/bin/openshell",
+        launch,
+        owns: () => true,
+        resolveGatewayName: () => "nemoclaw",
+        retireLegacy: () => 0,
+      },
+    });
+
+    expect(
+      helpers.ensureDashboardForward("hm", WIDE_URL, { reuseExistingOpenClawForward: true }),
+    ).toBe(18789);
+
+    expect(launch).not.toHaveBeenCalled();
+    expect(record).not.toHaveBeenCalled();
   });
 });
 
@@ -119,6 +233,8 @@ describe("a reused forward that does not start leaves the registry saying what i
       listSandboxes: () => ({ sandboxes: [] }),
       isPortBoundOnHost: () => false,
       getSandbox: registry.getSandbox,
+      recordDashboardBind: (name, bind) =>
+        registry.updateSandbox(name, { dashboardBindAddress: bind }),
       forwardService: {
         executable: () => "/usr/local/bin/openshell",
         launch: () => {
@@ -131,7 +247,7 @@ describe("a reused forward that does not start leaves the registry saying what i
 
     applyReusedSandboxDashboardState({
       sandboxName: "reuse-me",
-      chatUiUrl: "https://dashboard.example.test:18789",
+      chatUiUrl: WIDE_URL,
       env: {},
       agent: null,
       model: "test-model",
@@ -176,7 +292,7 @@ describe("a reused forward that does not start leaves the registry saying what i
   });
 });
 
-describe("a fresh agent forward that does not start clears the bind finalization recorded (#10861)", () => {
+describe("a fresh agent forward that does not start leaves no record behind (#10861)", () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -190,22 +306,23 @@ describe("a fresh agent forward that does not start clears the bind finalization
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-fresh-forward-"));
     createdHomes.push(home);
     vi.stubEnv("HOME", home);
-    vi.stubEnv("CHAT_UI_URL", "https://dashboard.example.test:18789");
+    vi.stubEnv("CHAT_UI_URL", WIDE_URL);
     vi.resetModules();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const registry = await import("../state/registry");
     const { createOnboardDashboardHelpers: createHelpers } = await import("./dashboard");
     const { runDashboardUrlCommand } = await import("../dashboard-url-command");
-    // Finalization published this row, bind included, before the agent forward starts.
+    // Finalization published this row with no bind; the launcher records the
+    // bind only when it starts the agent forward.
     registry.registerSandbox({
       name: "hm",
       agent: "hermes",
       dashboardPort: 18789,
-      dashboardBindAddress: "0.0.0.0",
       dashboardRemoteBindPrepared: true,
       gatewayName: "nemoclaw-8080",
       gatewayPort: 8080,
     });
+    const recorded: Array<string | null> = [];
     const helpers = createHelpers({
       runOpenshell: () => ({ status: 0 }),
       runCaptureOpenshell: () => "SANDBOX BIND PORT PID STATUS",
@@ -221,8 +338,10 @@ describe("a fresh agent forward that does not start clears the bind finalization
       listSandboxes: () => ({ sandboxes: [] }),
       isPortBoundOnHost: () => false,
       getSandbox: registry.getSandbox,
-      recordDashboardBind: (name, bind) =>
-        registry.updateSandbox(name, { dashboardBindAddress: bind }),
+      recordDashboardBind: (name, bind) => {
+        recorded.push(bind);
+        return registry.updateSandbox(name, { dashboardBindAddress: bind });
+      },
       forwardService: {
         executable: () => "/usr/local/bin/openshell",
         launch: () => {
@@ -237,6 +356,7 @@ describe("a fresh agent forward that does not start clears the bind finalization
       helpers.ensureFinalizationAgentDashboardForward("hm", { name: "hermes" }),
     ).resolves.toBe(18789);
 
+    expect(recorded).toEqual(["0.0.0.0", null]);
     expect(registry.getSandbox("hm")?.dashboardBindAddress ?? null).toBeNull();
     const out: string[] = [];
     runDashboardUrlCommand(
@@ -255,31 +375,37 @@ describe("a fresh agent forward that does not start clears the bind finalization
     expect(out.join("\n")).toContain("no recorded bind for this dashboard forward");
   });
 
-  it("warns when the record cannot be cleared", async () => {
+  it("warns when the record cannot be put back", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    vi.stubEnv("CHAT_UI_URL", "https://dashboard.example.test:18789");
-    const recordDashboardBind = vi.fn(() => false);
+    vi.stubEnv("CHAT_UI_URL", WIDE_URL);
+    const record = vi
+      .fn(() => true)
+      .mockReturnValueOnce(true)
+      .mockReturnValue(false);
     const helpers = launcherWith(() => {
       throw new Error("forward service exited");
-    }, recordDashboardBind);
+    }, record);
 
     await expect(
       helpers.ensureFinalizationAgentDashboardForward("hm", { name: "hermes" }),
     ).resolves.toBe(18789);
 
-    expect(recordDashboardBind).toHaveBeenCalledWith("hm", null);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be cleared"));
+    expect(record.mock.calls).toEqual([
+      ["hm", "0.0.0.0"],
+      ["hm", null],
+    ]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be restored"));
   });
 
-  it("keeps the record when the forward starts", async () => {
-    vi.stubEnv("CHAT_UI_URL", "https://dashboard.example.test:18789");
-    const recordDashboardBind = vi.fn(() => true);
-    const helpers = launcherWith(() => undefined, recordDashboardBind);
+  it("records the bind once when the forward starts", async () => {
+    vi.stubEnv("CHAT_UI_URL", WIDE_URL);
+    const record = vi.fn(() => true);
+    const helpers = launcherWith(() => undefined, record);
 
     await expect(
       helpers.ensureFinalizationAgentDashboardForward("hm", { name: "hermes" }),
     ).resolves.toBe(18789);
 
-    expect(recordDashboardBind).not.toHaveBeenCalled();
+    expect(record.mock.calls).toEqual([["hm", "0.0.0.0"]]);
   });
 });

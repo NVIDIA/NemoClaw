@@ -7,12 +7,6 @@ export interface DashboardForwardOptions {
   allowPortReallocation?: boolean;
   reuseExistingOpenClawForward?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;
-  /**
-   * Called when the forward did not start and the sandbox is not rolled
-   * back. The launcher still returns the allocated port in that case, so a
-   * caller that recorded state for the forward needs this to undo it.
-   */
-  onForwardFailure?: (diagnostic: string) => void;
 }
 
 export function normalizeDashboardForwardOptions(options: DashboardForwardOptions = {}): {

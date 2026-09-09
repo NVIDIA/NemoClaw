@@ -26,7 +26,6 @@ import { cliName } from "./branding";
 import { createDcodeSelectionDriftReader } from "./dcode-selection-drift";
 import { restoreDefaultAfterRecreate } from "./default-preservation";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
-import { buildDashboardChain } from "./dashboard-access";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { warnIfLandlockUnsupported } from "./landlock-warning";
@@ -111,7 +110,6 @@ type RegistrationSeed = Omit<
   | "openclawImagePluginInstalls"
   | "hermesDashboardState"
   | "dashboardPort"
-  | "dashboardBindAddress"
   | "lifecycleGeneration"
   | "lifecycleLiveIdentityFingerprint"
   | "inferenceRouteReservation"
@@ -359,10 +357,6 @@ export function createCreatedSandboxCompletionActions(
 ): CreatedSandboxCompletionActions {
   let chatUiUrl = options.dashboard.chatUiUrl;
   let dashboardPort = 0;
-  // Captured from the URL the forward is actually started with. Below, a
-  // reallocated port rewrites chatUiUrl to loopback, so reading it at
-  // registration time would record 127.0.0.1 for a forward bound wide.
-  let dashboardBindAddress: string | null = null;
   let hermesDashboardState = options.dashboard.initialHermesState;
   async function verifyCreatedProviderGpu(created: SandboxGpuCreateFlowResult): Promise<void> {
     await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
@@ -393,7 +387,6 @@ export function createCreatedSandboxCompletionActions(
     deps.revalidateSandboxIdentity?.(
       `recording dashboard capability for sandbox '${options.finalization.sandboxName}'`,
     );
-    dashboardBindAddress = buildDashboardChain(chatUiUrl).bindAddress;
     dashboardPort = Number(options.dashboard.getForwardPort(chatUiUrl));
     if (!Number.isInteger(dashboardPort) || dashboardPort < 1 || dashboardPort > 65_535) {
       throw new Error(
@@ -507,7 +500,6 @@ export function createCreatedSandboxCompletionActions(
           openclawImagePluginInstalls,
           hermesDashboardState,
           dashboardPort,
-          dashboardBindAddress,
           ...currentLifecycle,
           inferenceRouteReservation: verifiedInferenceRouteReservation,
           verifiedCreate,

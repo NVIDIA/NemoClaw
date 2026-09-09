@@ -4,7 +4,6 @@
 import type { AgentDefinition } from "../agent/defs";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
-import { buildDashboardChain } from "./dashboard-access";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -108,7 +107,6 @@ export interface ReusedSandboxDashboardStateInput {
     options?: {
       reuseExistingOpenClawForward?: boolean;
       revalidateSandboxIdentity?: (operation: string) => void;
-      onForwardFailure?: (diagnostic: string) => void;
     },
   ): number;
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
@@ -132,33 +130,6 @@ export interface ReusedSandboxDashboardStateResult {
   hermesDashboardState: HermesDashboardOnboardState;
 }
 
-/** A registry write fails when it returns false or throws. */
-function recordReusedDashboardBind(
-  input: ReusedSandboxDashboardStateInput,
-  dashboardBindAddress: string | null,
-): boolean {
-  try {
-    return (
-      (input.updateSandbox ?? registry.updateSandbox)(input.sandboxName, {
-        dashboardBindAddress,
-      }) !== false
-    );
-  } catch {
-    return false;
-  }
-}
-
-/** Explain a refused reused-dashboard restore whose record would misdescribe it. */
-function reusedDashboardBindRefusal(
-  sandboxName: string,
-  bindAddress: string,
-  previousBind: string | null,
-): string {
-  return bindAddress === "0.0.0.0"
-    ? `Refusing to restore the dashboard forward for '${sandboxName}' on all interfaces: its exposure could not be recorded, so \`dashboard-url\` and \`status\` would not disclose it. Repair the sandbox registry and re-run onboarding.`
-    : `Refusing to restore the dashboard forward for '${sandboxName}' on loopback: the registry still records a bind on ${String(previousBind)} and could not be updated, so \`dashboard-url\` and \`status\` would report exposure that no longer exists. Repair the sandbox registry and re-run onboarding.`;
-}
-
 export function applyReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput,
 ): ReusedSandboxDashboardStateResult {
@@ -175,67 +146,18 @@ export function applyReusedSandboxDashboardState(
   }
   input.revalidateSandboxIdentity?.(`restore dashboard state for sandbox '${input.sandboxName}'`);
   const reuseExistingOpenClawForward = input.agent == null || input.agent.name === "openclaw";
-  // The bind the restored forward will have, from the same URL and
-  // environment `ensureDashboardForward` decides it from (#10861). It is
-  // recorded before the forward exists whenever the record would otherwise
-  // misdescribe exposure: a wide bind must never be started undisclosed, and
-  // a loopback bind replacing a recorded wide one must not leave that record
-  // standing if a later step fails. Either is refused when the write fails.
-  // A loopback bind over a loopback or absent record is recorded with the
-  // rest of the dashboard state below.
-  const dashboardBindAddress = manageDashboard
-    ? buildDashboardChain(input.chatUiUrl, { env: input.env }).bindAddress
-    : null;
-  const previousBind = manageDashboard
-    ? ((input.getSandbox ?? registry.getSandbox)(input.sandboxName)?.dashboardBindAddress ?? null)
-    : null;
-  const recordBeforeLaunch =
-    dashboardBindAddress !== null &&
-    (dashboardBindAddress === "0.0.0.0" || previousBind === "0.0.0.0");
-  if (recordBeforeLaunch) {
-    input.revalidateSandboxIdentity?.(
-      `record the dashboard bind for sandbox '${input.sandboxName}'`,
-    );
-    if (!recordReusedDashboardBind(input, dashboardBindAddress)) {
-      throw new Error(
-        reusedDashboardBindRefusal(input.sandboxName, dashboardBindAddress, previousBind),
-      );
-    }
-  }
-  // The launcher warns and still returns the port when the forward does not
-  // start, so it reports that here. A record written for a forward that
-  // never came up goes back to what it was: no command may claim a listener
-  // that does not exist.
-  let forwardFailure: string | null = null;
-  const onForwardFailure = (diagnostic: string): void => {
-    forwardFailure = diagnostic;
-  };
-  const restorePreLaunchRecord = (): void => {
-    if (!recordBeforeLaunch || recordReusedDashboardBind(input, previousBind)) return;
-    console.warn(
-      `  Warning: the recorded dashboard bind for '${input.sandboxName}' could not be restored after the forward failed to start; \`dashboard-url\` may report a listener that does not exist until the next forward launch.`,
-    );
-  };
+  // The launcher records the bind of the forward it starts and leaves the
+  // record alone when it keeps an existing owned forward (#10861), so this
+  // path writes no bind of its own.
   let dashboardPort = 0;
   if (manageDashboard) {
-    try {
-      dashboardPort = input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
-        ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
-        ...(input.revalidateSandboxIdentity
-          ? { revalidateSandboxIdentity: input.revalidateSandboxIdentity }
-          : {}),
-        onForwardFailure,
-      });
-    } catch (error) {
-      // The launcher throws before it starts anything when the persisted
-      // port is occupied or no port can be allocated. A record written for
-      // that launch goes back too; the failure then propagates as before.
-      restorePreLaunchRecord();
-      throw error;
-    }
+    dashboardPort = input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
+      ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
+      ...(input.revalidateSandboxIdentity
+        ? { revalidateSandboxIdentity: input.revalidateSandboxIdentity }
+        : {}),
+    });
   }
-  const recordedBind = forwardFailure === null ? dashboardBindAddress : previousBind;
-  if (forwardFailure !== null) restorePreLaunchRecord();
   const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : input.chatUiUrl;
   if (manageDashboard) {
     input.revalidateSandboxIdentity?.(`record dashboard URL for sandbox '${input.sandboxName}'`);
@@ -271,8 +193,6 @@ export function applyReusedSandboxDashboardState(
   );
   (input.updateSandbox ?? registry.updateSandbox)(input.sandboxName, {
     ...getHermesDashboardRegistryFields(hermesDashboardState),
-    // With no managed forward nothing was started, so the existing record stands.
-    ...(manageDashboard ? { dashboardBindAddress: recordedBind } : {}),
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
   });

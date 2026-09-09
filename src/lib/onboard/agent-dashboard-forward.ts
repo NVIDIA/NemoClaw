@@ -23,7 +23,6 @@ export type EnsureDashboardForward = (
     allowPortReallocation?: boolean;
     reuseExistingOpenClawForward?: boolean;
     revalidateSandboxIdentity?: (operation: string) => void;
-    onForwardFailure?: (diagnostic: string) => void;
   },
 ) => number;
 
@@ -49,7 +48,6 @@ export async function ensureAgentDashboardForward(options: {
    * forward undoes it here (#10861). Optional agent port forwards are not
    * recorded and do not report.
    */
-  onForwardFailure?: (diagnostic: string) => void;
   warn?: (message: string) => void;
 }): Promise<number> {
   const {
@@ -62,7 +60,6 @@ export async function ensureAgentDashboardForward(options: {
     beforeForwardPort,
     reuseExistingOpenClawForward = false,
     revalidateSandboxIdentity,
-    onForwardFailure,
     warn = (message: string) => console.warn(message),
   } = options;
   if (!shouldManageDashboardForAgent(agent)) {
@@ -118,7 +115,6 @@ export async function ensureAgentDashboardForward(options: {
       allowPortReallocation: false,
       ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
       ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
-      ...(onForwardFailure ? { onForwardFailure } : {}),
     });
     if (!usesFixedApiPort) {
       revalidateIdentity?.(`publish the dashboard URL for sandbox '${sandboxName}'`);

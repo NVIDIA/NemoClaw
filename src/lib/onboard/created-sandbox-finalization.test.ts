@@ -38,9 +38,7 @@ function preparedRestoreAuthority(sandboxName: string) {
 }
 
 afterEach(() => {
-  vi.unstubAllEnvs();
   delete process.env.NEMOCLAW_OPENSHELL_BIN;
-  delete process.env.CHAT_UI_URL;
   for (const fixture of fixtures.splice(0)) fs.rmSync(fixture, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -1171,15 +1169,11 @@ describe("created OpenClaw sandbox finalization", () => {
 
 describe("created sandbox completion actions", () => {
   it.each([
-    ["ordinary", true, false, "http://127.0.0.1:8643", "", "127.0.0.1"],
-    ["schema-5", false, true, "http://127.0.0.1:8643", "", null],
-    ["remote-origin", true, false, "https://dashboard.example.test:8643", "", "0.0.0.0"],
-    ["opted-in", true, false, "http://127.0.0.1:8643", "0.0.0.0", "0.0.0.0"],
+    ["ordinary", true, false],
+    ["schema-5", false, true],
   ] as const)(
-    "keeps %s dashboard completion ordered and bounded, recording the bind it started with (#9203, #10861)",
-    async (_route, manageDashboard, schema5, chatUiUrl, remoteBindOptIn, dashboardBindAddress) => {
-      vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", remoteBindOptIn);
-      const getForwardPort = vi.fn(() => "8643");
+    "keeps %s dashboard completion ordered and bounded (#9203)",
+    async (_route, manageDashboard, schema5) => {
       const order: string[] = [];
       const gpuProof = {
         status: "verified" as const,
@@ -1288,12 +1282,12 @@ describe("created sandbox completion actions", () => {
             runCaptureOpenshell: vi.fn(),
           },
           dashboard: {
-            chatUiUrl,
+            chatUiUrl: "http://127.0.0.1:8643",
             initialHermesState: { config: null, enabled: false },
             releasePort: async () => {
               order.push("dashboard-release");
             },
-            getForwardPort,
+            getForwardPort: () => "8643",
             resolveHermesState: () => ({ config: null, enabled: false }),
           },
           workload: {
@@ -1387,14 +1381,11 @@ describe("created sandbox completion actions", () => {
         "registry",
       ]);
       expect(gpuConfig.sandboxGpuProof).toEqual(gpuProof);
-      // The bind is recorded from the same URL the forward was asked for.
-      expect(getForwardPort.mock.calls).toEqual(manageDashboard ? [[chatUiUrl]] : []);
       expect(registerCreatedSandbox).toHaveBeenCalledWith(
         expect.objectContaining({
           imageTag: "hermes:test",
           hermesPortableLifecycle: schema5,
           dashboardPort: manageDashboard ? 8643 : 0,
-          dashboardBindAddress,
           lifecycleGeneration: "generation-1",
           lifecycleLiveIdentityFingerprint: "a".repeat(64),
           inferenceSelection: inferenceRouteReservation.authority.selection,
