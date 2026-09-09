@@ -96,10 +96,15 @@ describe("portable profile rootless runtime workflow", () => {
         "agents/hermes/Dockerfile",
         "agents/hermes/dashboard-external-host.patch",
         "agents/hermes/start.sh",
+        "src/lib/actions/sandbox/forward-recovery.ts",
+        "src/lib/actions/sandbox/probe/hermes-portable-forward-recovery.ts",
+        "src/lib/actions/sandbox/start.ts",
+        "src/lib/adapters/openshell/forward-service.ts",
         "src/lib/onboard/experimental/hermes-portable-build-context-files.ts",
         "src/lib/onboard/experimental/hermes-portable-build-context.ts",
         "src/lib/onboard/experimental/hermes-portable-contract.ts",
         "src/lib/onboard/experimental/hermes-portable-lifecycle.ts",
+        "src/lib/onboard/runtime-provider/docker.ts",
       ]),
     );
     expect(Array.isArray(actionlintLabels)).toBe(true);

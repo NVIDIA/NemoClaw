@@ -14,6 +14,10 @@ on:
       - "agents/hermes/Dockerfile"
       - "agents/hermes/dashboard-external-host.patch"
       - "agents/hermes/start.sh"
+      - "src/lib/actions/sandbox/forward-recovery.ts"
+      - "src/lib/actions/sandbox/probe/hermes-portable-forward-recovery.ts"
+      - "src/lib/actions/sandbox/start.ts"
+      - "src/lib/adapters/openshell/forward-service.ts"
       - "src/lib/onboard/experimental/hermes-portable-build-context-files.ts"
       - "src/lib/onboard/experimental/hermes-portable-build-context.ts"
       - "src/lib/onboard/experimental/hermes-portable-contract.ts"
@@ -21,6 +25,7 @@ on:
       - "src/lib/onboard/experimental/portable-host-preparation.ts"
       - "src/lib/onboard/experimental/portable-profile.ts"
       - "src/lib/onboard/experimental/portable-retired-subnet-recovery.test.ts"
+      - "src/lib/onboard/runtime-provider/docker.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
   push:

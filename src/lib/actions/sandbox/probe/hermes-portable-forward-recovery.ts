@@ -4,6 +4,7 @@
 import { isLocalForwardReachable } from "../forward-health";
 import {
   createForwardServiceTarget,
+  ForwardServiceStartupCleanupError,
   isForwardServiceListenerOwner,
   launchForwardService,
   type ForwardServiceLaunchOptions,
@@ -514,6 +515,7 @@ function invokeForwardServiceLaunch(
       }),
     );
   } catch (error) {
+    if (error instanceof ForwardServiceStartupCleanupError) failure("restoration-unproved");
     if (error instanceof HermesPortableForwardRecoveryError) throw error;
     failure("recovery-failed", { cause: "forward-mutation-failed", operation: "start", port });
   }

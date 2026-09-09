@@ -18,7 +18,10 @@ import {
   recoverHermesPortableLaunchForwards,
   verifyHermesPortableLaunchForwards,
 } from "./hermes-portable-forward-recovery";
-import { buildForwardServiceArgs } from "../../../adapters/openshell/forward-service";
+import {
+  buildForwardServiceArgs,
+  ForwardServiceStartupCleanupError,
+} from "../../../adapters/openshell/forward-service";
 
 type LaunchForwardService = NonNullable<
   ReturnType<typeof createRecoveryFixture>["input"]["deps"]["launchForwardService"]
@@ -445,6 +448,23 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.records.has(18_789)).toBe(false);
     expect(fixture.elapsedMs()).toBe(0);
     expect(fixture.forwardServiceLaunches).toHaveLength(1);
+    expect(fixture.rollbackCalls.some((args) => args[1] === "stop")).toBe(false);
+  });
+
+  it("reports restoration uncertainty when detached startup cleanup is unproved", () => {
+    const fixture = createRecoveryFixture();
+    Object.assign(fixture.input.deps, {
+      launchForwardService: () => {
+        throw new ForwardServiceStartupCleanupError(
+          new Error("forward did not bind"),
+          new Error("process group termination failed"),
+        );
+      },
+    });
+
+    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+      expect.objectContaining({ failure: "restoration-unproved" }),
+    );
     expect(fixture.rollbackCalls.some((args) => args[1] === "stop")).toBe(false);
   });
 
