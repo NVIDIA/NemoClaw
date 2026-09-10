@@ -513,7 +513,9 @@ test(
     // still prints phase headings before the resume-skip decisions, so assert
     // the skip evidence and absence of the redo-only launch marker instead of
     // rejecting headings that now frame the skipped phases.
-    expect(resumeText).not.toContain("  Starting OpenShell gateway...");
+    expect(resumeText).not.toMatch(
+      /^ {2}Starting OpenShell gateway(?: via managed service)?\.\.\.$/mu,
+    );
     const reconciledExtraProviders = readExtraProviders();
     expect(reconciledExtraProviders).toContain(LIVE_EXTRA_PROVIDER);
     expect(reconciledExtraProviders).not.toContain(STALE_EXTRA_PROVIDER);
