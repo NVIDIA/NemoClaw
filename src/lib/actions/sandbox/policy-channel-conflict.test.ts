@@ -353,6 +353,14 @@ beforeEach(() => {
 
   // Lazy legacy-provider seam: no onboarding graph is loaded for this suite.
   upsertMock = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders").mockReturnValue([]);
+  vi.spyOn(
+    policyChannelDependencies,
+    "createMessagingHostForwardPreEnableHookRegistry",
+  ).mockReturnValue(
+    createBuiltInMessagingHookRegistry({
+      teams: { hostForwardPortConflict: { checkPortAvailable: async () => ({ ok: true }) } },
+    }),
+  );
   vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
     () => undefined,
   );
@@ -1299,14 +1307,12 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       },
     });
 
-    await expect(
-      addSandboxChannel(
-        "alpha",
-        { channel: "teams" },
-        { preEnableHookRegistry },
-      ),
-    ).rejects.toThrow("process.exit(1)");
+    vi.mocked(policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry)
+      .mockReturnValue(preEnableHookRegistry);
+    await expect(addSandboxChannel("alpha", { channel: "teams" }))
+      .rejects.toThrow("process.exit(1)");
 
+    expect(policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry).toHaveBeenCalledOnce();
     expect(loggedText()).toContain(
       "Microsoft Teams webhook port 3978 is already in use by nc (PID 4321)",
     );
