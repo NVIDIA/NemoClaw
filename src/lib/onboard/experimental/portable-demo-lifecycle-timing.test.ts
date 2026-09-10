@@ -61,9 +61,7 @@ describe("portable lifecycle timing recorder", () => {
       throw new Error("diagnostic writer failed");
     });
 
-    expect(() =>
-      emitPortableOpenClawAlreadyRunningTiming(write),
-    ).not.toThrow();
+    expect(() => emitPortableOpenClawAlreadyRunningTiming(write)).not.toThrow();
     expect(write).toHaveBeenCalledTimes(2);
   });
 
