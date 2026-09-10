@@ -42,6 +42,18 @@ it.each([
     rules: [],
   },
   { name: "legacy limits", file: "src/lib/legacy.ts", source: nesting, rules: [] },
+  {
+    name: "maintained source inside build directories",
+    file: "src/lib/messaging/applier/build/example.mts",
+    source: "export const value = undeclaredValue;",
+    rules: ["eslint(no-undef)"],
+  },
+  {
+    name: "compiled output exclusions",
+    file: "nemoclaw/runner-dist/example.js",
+    source: "export const value = undeclaredValue;",
+    rules: [],
+  },
 ])("enforces $name", ({ file, source, rules }) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-export-lint-"));
   try {
@@ -50,10 +62,14 @@ it.each([
     fs.copyFileSync("oxc.ignore-patterns.ts", path.join(root, "oxc.ignore-patterns.ts"));
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     fs.writeFileSync(path.join(root, file), source);
-    const result = spawnSync(path.resolve("node_modules/.bin/oxlint"), ["--format=json", file], {
-      cwd: root,
-      encoding: "utf8",
-    });
+    const result = spawnSync(
+      path.resolve("node_modules/.bin/oxlint"),
+      ["--format=json", "--no-error-on-unmatched-pattern", file],
+      {
+        cwd: root,
+        encoding: "utf8",
+      },
+    );
     expect(result.status, result.stderr).toBe(rules.length > 0 ? 1 : 0);
     const report = JSON.parse(result.stdout) as {
       diagnostics: Array<{ filename: string; code: string }>;

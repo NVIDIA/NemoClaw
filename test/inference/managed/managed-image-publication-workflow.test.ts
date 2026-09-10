@@ -98,8 +98,8 @@ describe("complete managed-image publication workflow", () => {
     });
     expect(restores).toHaveLength(2);
     expect(restores.map(({ uses }) => uses)).toEqual([
-      "actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809",
-      "actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809",
+      "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+      "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
     ]);
     expect(restores.map(({ with: inputs }) => inputs)).toEqual([
       {
@@ -118,7 +118,7 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(save).toMatchObject({
       if: "inputs.trusted-cache-write == 'true' && steps.cache-current.outputs.cache-hit != 'true'",
-      uses: "actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809",
+      uses: "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
       with: restores[0]?.with,
     });
     expect(

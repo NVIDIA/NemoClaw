@@ -7,7 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { ArtifactSink } from "./artifacts.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
-import { superviseChild } from "./shell/supervisor.ts";
+import { superviseChild } from "../../helpers/process-supervisor.ts";
 
 const ACP_SCENARIO_TIMEOUT_MS = 3 * 60_000;
 const ACP_SCENARIO_START_MINIMUM_MS = 10_000;

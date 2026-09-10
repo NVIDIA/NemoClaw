@@ -30,6 +30,7 @@ let stubBin = "";
 let dockerLog = "";
 let dockerBuildCount = "";
 let dockerBuildFailureMode = "";
+let receiptVerifyStatus = "";
 let seedLog = "";
 let registryCurlExit = "";
 let registryLog = "";
@@ -101,6 +102,16 @@ esac
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$NEMOCLAW_TEST_SEED_LOG"
+if [[ "$*" == *"/scripts/lib/npm-audit-receipt.mts"* ]]; then
+  while (($# > 0)); do
+    if [[ "$1" == "--result" && "$NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS" == 0 ]]; then
+      printf '{"status":"clean"}\\n' >"$2"
+      break
+    fi
+    shift
+  done
+  exit "$NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS"
+fi
 mode="$3"
 shift 3
 output=""
@@ -156,6 +167,12 @@ function completeImportedCache(cacheRoot: string): void {
   );
   mkdirSync(path.join(cacheRoot, "messaging-npm-cache-seed"));
   writeFileSync(path.join(cacheRoot, "messaging-npm-cache-seed", "manifest.json"), "{}\n", "utf8");
+}
+
+function completeAuditEvidence(auditDirectory: string): void {
+  mkdirSync(auditDirectory, { recursive: true });
+  writeFileSync(path.join(auditDirectory, "mcporter-runtime.receipt.json"), '{"result":"pass"}\n');
+  writeFileSync(path.join(auditDirectory, "mcporter-runtime.raw.json"), '{"metadata":{}}\n');
 }
 
 function completeSourceBoundary(sourceRoot: string): void {
@@ -256,6 +273,7 @@ function runBuild(
         NEMOCLAW_TEST_REGISTRY_LOG: registryLog,
         NEMOCLAW_TEST_REGISTRY_STATUS: registryStatus,
         NEMOCLAW_TEST_REAL_PATH: process.env.PATH ?? "",
+        NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS: receiptVerifyStatus,
         NEMOCLAW_TEST_SEED_LOG: seedLog,
         NEMOCLAW_TEST_TEE_FAILURE_MODE: teeFailureMode,
         PATH: `${stubBin}:${process.env.PATH ?? ""}`,
@@ -271,6 +289,7 @@ beforeEach(() => {
   dockerLog = path.join(testRoot, "docker.log");
   dockerBuildCount = path.join(testRoot, "docker-build-count");
   dockerBuildFailureMode = "";
+  receiptVerifyStatus = "0";
   seedLog = path.join(testRoot, "seed.log");
   registryCurlExit = "0";
   registryLog = path.join(testRoot, "registry.log");
@@ -496,6 +515,51 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
+  it("rejects incomplete reviewed audit evidence before invoking Docker (#11088)", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    const auditRoot = path.join(testRoot, "audit-evidence");
+    completeImportedCache(cacheRoot);
+    mkdirSync(auditRoot);
+    writeFileSync(path.join(auditRoot, "mcporter-runtime.receipt.json"), "", "utf8");
+    stubBuildInvocation();
+
+    const result = runBuild(REPO_ROOT, [
+      "--cache-from",
+      cacheRoot,
+      "--audit-evidence-from",
+      auditRoot,
+    ]);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("reviewed audit evidence is incomplete");
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it("binds external evidence to the trusted verifier and candidate graph (#11088)", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    const auditRoot = path.join(testRoot, "audit-evidence");
+    completeImportedCache(cacheRoot);
+    completeAuditEvidence(auditRoot);
+    stubBuildInvocation();
+    receiptVerifyStatus = "42";
+
+    const result = runBuild(REPO_ROOT, [
+      "--cache-from",
+      cacheRoot,
+      "--audit-evidence-from",
+      auditRoot,
+    ]);
+    const verification = readFileSync(seedLog, "utf8");
+
+    expect(result.status, result.stderr).toBe(42);
+    expect(verification).toContain(`${REPO_ROOT}/scripts/lib/npm-audit-receipt.mts`);
+    expect(verification).toContain(
+      `--package-json ${REPO_ROOT}/agents/openclaw/mcporter-runtime/package.json`,
+    );
+    expect(verification).toContain(`--audit-config ${REPO_ROOT}/ci/reviewed-npm-audit.json`);
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
   it("imports locked seeds, reuses safe agent caches, and disables RUN network access", () => {
     const cacheRoot = path.join(testRoot, "imported-cache");
     const sourceSeed = path.join(REPO_ROOT, "tools/mcp-tool-discovery-runtime/npm-cache-seed");
@@ -510,10 +574,17 @@ describe("protected managed-image build-cache boundary", () => {
     const originalSeedNames = readdirSync(sourceSeed).sort();
     const originalMcpSeedNames = readdirSync(sourceMcpSeed).sort();
     const originalMessagingSeedNames = readdirSync(sourceMessagingSeed).sort();
+    const auditRoot = path.join(testRoot, "audit-evidence");
     completeImportedCache(cacheRoot);
+    completeAuditEvidence(auditRoot);
     stubBuildInvocation();
 
-    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
+    const result = runBuild(REPO_ROOT, [
+      "--cache-from",
+      cacheRoot,
+      "--audit-evidence-from",
+      auditRoot,
+    ]);
 
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
@@ -539,6 +610,21 @@ describe("protected managed-image build-cache boundary", () => {
       ),
     });
     expect(recordedBuildInvocation("openclaw").split(" ")).toContain("--no-cache");
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      `--secret id=nemoclaw-mcporter-audit-receipt,src=${realpathSync(auditRoot)}/mcporter-runtime.receipt.json`,
+    );
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      `--secret id=nemoclaw-mcporter-audit-raw-report,src=${realpathSync(auditRoot)}/mcporter-runtime.raw.json`,
+    );
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      `--build-arg NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=${DIGEST}`,
+    );
+    expect(recordedBuildInvocation("openclaw")).toMatch(
+      /--secret id=nemoclaw-mcporter-audit-policy-result,src=\S+\/mcporter-runtime[.]policy[.]json/,
+    );
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      `--build-arg NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=${DIGEST}`,
+    );
     expect(recordedBuildInvocation("hermes").split(" ")).not.toContain("--no-cache");
     expect(recordedBuildInvocation("langchain-deepagents-code").split(" ")).not.toContain(
       "--no-cache",

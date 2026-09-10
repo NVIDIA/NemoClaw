@@ -117,7 +117,8 @@ function readString(value: unknown): string | null {
 
 function readTrimmedString(value: unknown): string | null {
   const trimmed = readString(value)?.trim();
-  return trimmed ? trimmed : null;
+  if (!trimmed) return null;
+  return trimmed;
 }
 
 function readRecord(value: unknown): UnknownRecord | null {
@@ -144,7 +145,7 @@ function parseConfigDocument(value: unknown, context: string): OpenClawConfigDoc
 }
 
 function resolveHostHome(env: NodeJS.ProcessEnv = process.env): string {
-  const fallbackHome = env.HOME?.trim() || env.USERPROFILE?.trim() || os.homedir();
+  const fallbackHome = readTrimmedString(env.HOME) ?? readTrimmedString(env.USERPROFILE) ?? os.homedir();
   const explicitHome = env.OPENCLAW_HOME?.trim();
   if (explicitHome) {
     if (explicitHome === "~") {
@@ -670,7 +671,7 @@ function loadCopiedConfigDocument(configPath: string): OpenClawConfigDocument {
     path.basename(configPath),
   );
   const scanned = scan?.files[0];
-  if (scan === null || scan.files.length !== 1 || scanned?.path !== path.basename(configPath)) {
+  if (scan?.files.length !== 1 || scanned?.path !== path.basename(configPath)) {
     throw new Error(`Failed descriptor-bound scan of copied OpenClaw config: ${configPath}`);
   }
   const raw = decodeDescriptorSnapshotContent(scanned.content);
@@ -725,9 +726,7 @@ export function setConfigValue(document: UnknownRecord, configPath: string, valu
     if (isArrayIndex) {
       const array = requireArray(current, configPath);
       const arrayIndex = Number.parseInt(token, 10);
-      if (array[arrayIndex] == null) {
-        array[arrayIndex] = isArrayIndexToken(nextToken) ? [] : {};
-      }
+      array[arrayIndex] ??= isArrayIndexToken(nextToken) ? [] : {};
       current = array[arrayIndex];
       continue;
     }
