@@ -51,18 +51,16 @@ describe("sleep primitives", () => {
     expect(waitSpy.mock.calls[0]?.slice(1)).toEqual([0, 0, 25]);
   });
 
-  it.each([
-    0,
-    -1,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-  ])("does not block for an invalid millisecond duration (%s)", (duration) => {
-    const waitSpy = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "does not block for an invalid millisecond duration (%s)",
+    (duration) => {
+      const waitSpy = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
 
-    sleepMs(duration);
+      sleepMs(duration);
 
-    expect(waitSpy).not.toHaveBeenCalled();
-  });
+      expect(waitSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("converts seconds to milliseconds before blocking", () => {
     const waitSpy = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");

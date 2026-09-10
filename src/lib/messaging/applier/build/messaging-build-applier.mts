@@ -1741,7 +1741,7 @@ function formatGeneratedYamlScalar(value: MessagingSerializableValue): string {
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (typeof value !== "string") return JSON.stringify(value);
   if (value === "") return JSON.stringify(value);
-  if (/[:{}\[\],&*?|>!%@`#'\"]/.test(value) || value.includes("\n") || value.trim() !== value) {
+  if (/[:{}[\],&*?|>!%@`#'"]/.test(value) || value.includes("\n") || value.trim() !== value) {
     return JSON.stringify(value);
   }
   return value;

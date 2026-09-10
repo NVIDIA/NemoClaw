@@ -59,10 +59,7 @@ function createFixture(opts: {
   const gatewayReadyMarker = path.join(tmpDir, "gateway-ready");
   const gatewayProcess = spawn(
     process.execPath,
-    [
-      path.join(REPO_ROOT, "test", "helpers", "ephemeral-gateway-listener.ts"),
-      gatewayReadyMarker,
-    ],
+    [path.join(REPO_ROOT, "test", "helpers", "ephemeral-gateway-listener.ts"), gatewayReadyMarker],
     { stdio: "ignore" },
   );
   gatewayProcesses.push(gatewayProcess);

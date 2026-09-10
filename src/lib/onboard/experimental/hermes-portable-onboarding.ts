@@ -796,7 +796,7 @@ export function observeHermesPortableSandbox(
   const output =
     `${strictOpenShellText(current.stderr)}\n${strictOpenShellText(current.stdout)}`.trim();
   const named = new RegExp(
-    `^(?:Error:\\s*)?sandbox ['\"]?${escapedRegExp(sandboxName)}['\"]? not found\\.?$`,
+    `^(?:Error:\\s*)?sandbox ['"]?${escapedRegExp(sandboxName)}['"]? not found\\.?$`,
     "u",
   );
   const coded =

@@ -31,7 +31,7 @@ afterEach(() => {
 function getSandboxExecShellCommand(rawArgs: unknown): string {
   const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
   const payload = String(args.at(-1) ?? "");
-  const match = payload.match(/printf '%s' '([A-Za-z0-9+\/=]+)' \| base64 -d \| sh/);
+  const match = payload.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d \| sh/);
   return match ? Buffer.from(match[1], "base64").toString("utf8") : payload;
 }
 
@@ -377,11 +377,7 @@ describe("managed gateway recovery controller", () => {
       let recoveryActionCalls = 0;
       let managedProbeCalls = 0;
       const requestGatewaySupervisorAction = vi.fn(
-        (
-          _sandboxName: string,
-          action: "restart" | "recover" | "probe",
-          _timeoutMs?: number,
-        ) => {
+        (_sandboxName: string, action: "restart" | "recover" | "probe", _timeoutMs?: number) => {
           const isProbe = action === "probe";
           const probeResults = managedProbeResults ?? [managedProbeResult ?? successfulProbe];
           const result = isProbe
@@ -451,8 +447,8 @@ describe("managed gateway recovery controller", () => {
         expect(
           requestGatewaySupervisorAction.mock.calls
             .filter(([, action]) => action === "recover")
-            .every(([, , timeout]) =>
-              typeof timeout === "number" && timeout > 0 && timeout <= 210_000,
+            .every(
+              ([, , timeout]) => typeof timeout === "number" && timeout > 0 && timeout <= 210_000,
             ),
         ).toBe(true);
         expect(healthProbeCalls).toBe(1);
