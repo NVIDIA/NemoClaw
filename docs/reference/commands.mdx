@@ -1429,11 +1429,11 @@ NemoClaw does not stop an unproved owner and does not publish launch-readiness e
 For a published receipt-owned Portable Ollama runner, `recover` uses the same inference recovery path as [`connect --probe-only`](#$$nemoclaw-name-connect).
 Follow [Recover Portable Published Ollama](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for authority checks, route proof, rollback, and failure handling.
 
-For an active Portable Hermes receipt, `recover` starts only the exact receipt-owned Podman container when it is stopped.
+For an active Portable Hermes receipt, `recover` uses OpenShell to start only the receipt-owned sandbox when its Podman container is stopped.
 If authenticated health is not ready after that start, recovery launches the receipt-owned `nemoclaw-start` command once and waits for authenticated Hermes health.
-For an already-running container, recovery does not launch the startup command, does not stop the container, and only waits for authenticated health.
-If a container or OpenShell identity check, reconnect check, or health check later fails after recovery started the container, NemoClaw stops that exact container.
-It then requires Podman to report the container as `exited` and OpenShell to report `Error` or `Stopped`.
+For an already-running container, recovery does not launch the startup command, does not stop the sandbox, and only waits for authenticated health.
+If a container or OpenShell identity check, reconnect check, or health check later fails after recovery started the sandbox, NemoClaw uses OpenShell to stop it.
+It then requires Podman to report the receipt-owned container as `exited` and OpenShell to report `Error` or `Stopped`.
 If NemoClaw cannot prove that rollback, the command reports both the recovery failure and the rollback failure.
 
 `recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` and the supervisor runtime environment on every run, including when the gateway is already healthy.
