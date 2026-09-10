@@ -12,10 +12,7 @@ import {
   assertCurrentPortableHostFenceHeld,
   withCurrentPortableHostFence,
 } from "../../../state/portable-uninstall-retirement";
-import {
-  portableLifecycleLockOptions,
-  resolveHermesPortableLifecycleLockOptions,
-} from "../../../onboard/experimental/portable-lifecycle-lock";
+import { resolveHermesPortableLifecycleLockOptions } from "../../../onboard/experimental/portable-lifecycle-lock";
 
 function resolveLifecycleLockOptions(
   sandboxName: string,
@@ -26,36 +23,28 @@ function resolveLifecycleLockOptions(
   return portable ? { ...options, ...portable } : options;
 }
 
-function usesPortableLifecycleLock(options: McpLifecycleLockOptions): boolean {
-  return options.stateDir === portableLifecycleLockOptions().stateDir;
-}
-
-/** Serialize one sandbox on its receipt-owned lock and host fence when Portable. */
+/** Select the sandbox lock domain while holding the host fence, then serialize the operation. */
 export async function withSandboxLifecycleLock<T>(
   sandboxName: string,
   operation: () => Promise<T> | T,
   options: McpLifecycleLockOptions = {},
 ): Promise<T> {
-  const resolved = resolveLifecycleLockOptions(sandboxName, options);
-  const acquire = () =>
-    Object.keys(resolved).length === 0
-      ? withMcpLifecycleLock(sandboxName, operation)
-      : withMcpLifecycleLock(sandboxName, operation, resolved);
-  return usesPortableLifecycleLock(resolved)
-    ? await withCurrentPortableHostFence(acquire)
-    : await acquire();
+  return await withCurrentPortableHostFence(async () => {
+    const resolved = resolveLifecycleLockOptions(sandboxName, options);
+    return Object.keys(resolved).length === 0
+      ? await withMcpLifecycleLock(sandboxName, operation)
+      : await withMcpLifecycleLock(sandboxName, operation, resolved);
+  });
 }
 
-/** Synchronous nested provider operations reuse the receipt-owned sandbox lock. */
+/** Synchronous lifecycle operations are valid only beneath the asynchronous host fence. */
 export function withSandboxLifecycleLockSync<T>(
   sandboxName: string,
   operation: () => T,
   options: McpLifecycleLockOptions = {},
 ): T {
+  assertCurrentPortableHostFenceHeld(process.env.HOME || os.homedir());
   const resolved = resolveLifecycleLockOptions(sandboxName, options);
-  if (usesPortableLifecycleLock(resolved)) {
-    assertCurrentPortableHostFenceHeld(process.env.HOME || os.homedir());
-  }
   return Object.keys(resolved).length === 0
     ? withMcpLifecycleLockSync(sandboxName, operation)
     : withMcpLifecycleLockSync(sandboxName, operation, resolved);

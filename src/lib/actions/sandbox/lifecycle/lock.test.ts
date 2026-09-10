@@ -13,7 +13,10 @@ import {
   resolveHermesPortableLifecycleLockOptions,
 } from "../../../onboard/experimental/portable-lifecycle-lock";
 import { isMcpLifecycleLockHeld } from "../../../state/mcp-lifecycle-lock-acquisition";
-import { portableHostFencePath } from "../../../state/portable-uninstall-retirement";
+import {
+  portableHostFencePath,
+  withCurrentPortableHostFence,
+} from "../../../state/portable-uninstall-retirement";
 import { withSandboxLifecycleLock, withSandboxLifecycleLockSync } from "./lock";
 
 describe("Portable-aware sandbox lifecycle lock", () => {
@@ -64,10 +67,120 @@ describe("Portable-aware sandbox lifecycle lock", () => {
     expect(resolveHermesPortableLifecycleLockOptions("alpha", env, () => false)).toBeUndefined();
   });
 
-  it("rejects a direct synchronous Portable operation without the host fence", () => {
+  it("rejects every direct synchronous operation without the host fence", () => {
     expect(() => withSandboxLifecycleLockSync("alpha", () => undefined)).toThrow(
       "Portable host authority mutation requires the current HOME fence",
     );
+  });
+
+  it("classifies absent-to-Portable transitions after acquiring the host fence", async () => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+    const [freshReceiptAuthority, freshPortableLock, freshAcquisition, freshHostFence, freshLock] =
+      await Promise.all([
+        import("../../../onboard/experimental/hermes-portable-receipt"),
+        import("../../../onboard/experimental/portable-lifecycle-lock"),
+        import("../../../state/mcp-lifecycle-lock-acquisition"),
+        import("../../../state/portable-uninstall-retirement"),
+        import("./lock"),
+      ]);
+    let candidate = false;
+    vi.spyOn(freshReceiptAuthority, "hasHermesPortableReceiptCandidate").mockImplementation(
+      () => candidate,
+    );
+    let releaseTransition!: () => void;
+    const transitionBlocked = new Promise<void>((resolve) => {
+      releaseTransition = resolve;
+    });
+    let transitionStarted!: () => void;
+    const transitionEntered = new Promise<void>((resolve) => {
+      transitionStarted = resolve;
+    });
+    const transition = freshHostFence.withCurrentPortableHostFence(async () => {
+      transitionStarted();
+      await transitionBlocked;
+      candidate = true;
+    });
+    let startOperation!: () => void;
+    const operationStart = new Promise<void>((resolve) => {
+      startOperation = resolve;
+    });
+    const observed: string[] = [];
+    const operation = operationStart.then(() =>
+      freshLock.withSandboxLifecycleLock("alpha", () => {
+        observed.push(
+          freshAcquisition.isMcpLifecycleLockHeld(
+            "alpha",
+            freshPortableLock.portableLifecycleLockOptions(process.env).stateDir,
+          )
+            ? "portable"
+            : "gateway",
+        );
+      }),
+    );
+    await transitionEntered;
+    startOperation();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(observed).toEqual([]);
+
+    releaseTransition();
+    await Promise.all([transition, operation]);
+    expect(observed).toEqual(["portable"]);
+  });
+
+  it("classifies Portable-to-absent transitions after acquiring the host fence", async () => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+    const [freshReceiptAuthority, freshPortableLock, freshAcquisition, freshHostFence, freshLock] =
+      await Promise.all([
+        import("../../../onboard/experimental/hermes-portable-receipt"),
+        import("../../../onboard/experimental/portable-lifecycle-lock"),
+        import("../../../state/mcp-lifecycle-lock-acquisition"),
+        import("../../../state/portable-uninstall-retirement"),
+        import("./lock"),
+      ]);
+    let candidate = true;
+    vi.spyOn(freshReceiptAuthority, "hasHermesPortableReceiptCandidate").mockImplementation(
+      () => candidate,
+    );
+    let releaseTransition!: () => void;
+    const transitionBlocked = new Promise<void>((resolve) => {
+      releaseTransition = resolve;
+    });
+    let transitionStarted!: () => void;
+    const transitionEntered = new Promise<void>((resolve) => {
+      transitionStarted = resolve;
+    });
+    const transition = freshHostFence.withCurrentPortableHostFence(async () => {
+      transitionStarted();
+      await transitionBlocked;
+      candidate = false;
+    });
+    const portableStateDir = freshPortableLock.portableLifecycleLockOptions(process.env).stateDir;
+    const gatewayStateDir = path.join(homeDir, ".nemoclaw", "gateways", "18080", "state");
+    let startOperation!: () => void;
+    const operationStart = new Promise<void>((resolve) => {
+      startOperation = resolve;
+    });
+    const observed: string[] = [];
+    const operation = operationStart.then(() =>
+      freshLock.withSandboxLifecycleLock("alpha", () => {
+        observed.push(
+          freshAcquisition.isMcpLifecycleLockHeld("alpha", gatewayStateDir) &&
+            !freshAcquisition.isMcpLifecycleLockHeld("alpha", portableStateDir)
+            ? "gateway"
+            : "portable",
+        );
+      }),
+    );
+    await transitionEntered;
+    startOperation();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(observed).toEqual([]);
+
+    releaseTransition();
+    await Promise.all([transition, operation]);
+    expect(observed).toEqual(["gateway"]);
   });
 
   it("serializes competing Portable lifecycle operations on the same authority", async () => {
