@@ -16,6 +16,7 @@ import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
   type AgentDispatchRunner,
   agentDispatchDeadlineSeconds,
+  hasExplicitAgentMessage,
   isSilentAgentDispatch,
   runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
@@ -79,6 +80,7 @@ export async function runAgentJsonPassthrough(
     ),
     {
       stdinIsTty: (deps.stdinIsTty ?? isStdinTty)(),
+      ...(hasExplicitAgentMessage(command) ? { stdin: false } : {}),
     },
   );
   const { stderr, stdout } = result;

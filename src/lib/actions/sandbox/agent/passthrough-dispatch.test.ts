@@ -10,6 +10,7 @@ import {
   AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS,
   agentDispatchDeadlineSeconds,
   agentDispatchStdio,
+  hasExplicitAgentMessage,
   isSilentAgentDispatch,
   isTimedOutAgentDispatch,
   replaceRequestedAgentTimeoutSeconds,
@@ -206,11 +207,42 @@ describe("agentDispatchStdio", () => {
     expect(agentDispatchStdio(false)).toEqual(["inherit", "pipe", "pipe"]);
   });
 
+  it("closes an idle input pipe when stdin is disabled (#11371)", () => {
+    expect(agentDispatchStdio(false, false)).toEqual(["ignore", "pipe", "pipe"]);
+  });
+
   it("captures both output streams in either stdin posture", () => {
     expect([agentDispatchStdio(true).slice(1), agentDispatchStdio(false).slice(1)]).toEqual([
       ["pipe", "pipe"],
       ["pipe", "pipe"],
     ]);
+  });
+});
+
+describe("hasExplicitAgentMessage", () => {
+  it.each([
+    ["--agent", "main", "-m", "ping"],
+    ["--json", "--agent=main", "--message", "ping"],
+    ["--deliver", "--session-key", "main", "--message=ping"],
+    ["--timeout", "30", "-mping"],
+    ["-m", "--json"],
+    ["--message="],
+  ])("recognizes a message supplied in argv %j", (...args) => {
+    expect(hasExplicitAgentMessage(["openclaw", "agent", ...args])).toBe(true);
+  });
+
+  it.each([
+    ["--agent", "main"],
+    ["--agent", "--message", "ping"],
+    ["--", "-m", "ping"],
+    ["--unknown", "-m", "ping"],
+    ["--message"],
+  ])("preserves stdin when argv does not establish a message %j", (...args) => {
+    expect(hasExplicitAgentMessage(["openclaw", "agent", ...args])).toBe(false);
+  });
+
+  it("leaves another agent's stdin unchanged", () => {
+    expect(hasExplicitAgentMessage(["dcode", "-m", "ping"])).toBe(false);
   });
 });
 

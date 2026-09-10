@@ -36,8 +36,10 @@
 //      result is a live terminal on fd 0 handed to a dispatch whose stdout
 //      and stderr are pipes and whose argv says `--no-tty`.
 //    - Source boundary: NemoClaw owns which fds it hands to OpenShell.
-//      Forwarding a real pipe stays supported so `printf ... | nemoclaw
-//      <name> agent` keeps working; only an interactive terminal is withheld.
+//      When the message is in argv, fd 0 is closed: OpenShell reads piped
+//      stdin to EOF before dispatch, so an idle pipe from automation can
+//      otherwise delay a ready sandbox indefinitely (#11371). Calls without
+//      an explicit message retain the existing piped-input behavior.
 //    - Removal condition: drop the TTY carve-out if `openclaw agent` gains a
 //      documented interactive stdin mode reachable through this wrapper.
 //
@@ -127,6 +129,7 @@ export type AgentDispatchRunner = (
   options?: {
     maxBufferBytes?: number;
     stdinIsTty?: boolean;
+    stdin?: boolean;
   },
 ) => Promise<AgentDispatchResult>;
 
@@ -175,6 +178,7 @@ export async function runAgentDispatch(
   options: {
     maxBufferBytes?: number;
     stdinIsTty?: boolean;
+    stdin?: boolean;
   } = {},
   deps: AgentDispatchRunDeps = {},
 ): Promise<AgentDispatchResult> {
@@ -192,7 +196,7 @@ export async function runAgentDispatch(
       const child = spawnChild(
         runBinary,
         runArgs,
-        agentDispatchStdio(options.stdinIsTty ?? isStdinTty()),
+        agentDispatchStdio(options.stdinIsTty ?? isStdinTty(), options.stdin),
       );
       const setOverflowError = (error: Error) => {
         overflowError ??= error;
@@ -232,11 +236,38 @@ export async function runAgentDispatch(
 
 /**
  * Stdio for a non-interactive agent dispatch. An interactive terminal is
- * withheld from fd 0; a genuine pipe or redirect is still forwarded so
- * scripted stdin keeps working.
+ * withheld from fd 0. Message-bearing invocations also withhold idle pipes;
+ * other calls preserve redirected input.
  */
-export function agentDispatchStdio(stdinIsTty: boolean = isStdinTty()): StdioOptions {
-  return [stdinIsTty ? "ignore" : "inherit", "pipe", "pipe"];
+export function agentDispatchStdio(stdinIsTty: boolean = isStdinTty(), stdin = true): StdioOptions {
+  return [stdinIsTty || !stdin ? "ignore" : "inherit", "pipe", "pipe"];
+}
+
+/** Inspect only recognized argv; values and arguments after `--` are not flags. */
+export function hasExplicitAgentMessage(argv: readonly string[]): boolean {
+  if (argv[0] !== "openclaw" || argv[1] !== "agent") return false;
+  for (let index = 2; index < argv.length; index += 1) {
+    const arg = argv[index] as string;
+    if (arg === "--") return false;
+    if (arg === "-m" || arg === "--message") return index + 1 < argv.length;
+    if (arg.startsWith("--message=") || (arg.startsWith("-m") && arg.length > 2)) return true;
+    if (OPENCLAW_AGENT_VALUE_FLAGS.has(arg)) {
+      index += 1;
+      continue;
+    }
+    const equalsIndex = arg.indexOf("=");
+    if (
+      equalsIndex > 0 &&
+      arg.startsWith("--") &&
+      OPENCLAW_AGENT_VALUE_FLAGS.has(arg.slice(0, equalsIndex))
+    )
+      continue;
+    if (arg === "--json" || arg.startsWith("--json=") || OPENCLAW_AGENT_BOOLEAN_FLAGS.has(arg)) {
+      continue;
+    }
+    return false;
+  }
+  return false;
 }
 
 /**
