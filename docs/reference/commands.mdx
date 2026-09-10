@@ -229,8 +229,7 @@ If either identity cannot be verified, do not remove files by name alone.
 Do not remove the requested output file to clean up a temporary link.
 
 Version 1 exports managed OpenClaw sandboxes in the default workspace.
-Supported sandboxes use hosted external inference, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
-This includes NVIDIA Endpoints when the gateway uses its built-in NVIDIA profile and default endpoint.
+Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
 Other profiles fail with a diagnostic instead of producing an incomplete document.
 
 ### `$$nemoclaw resources`
