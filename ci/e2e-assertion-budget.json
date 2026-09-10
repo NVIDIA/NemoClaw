@@ -15,8 +15,8 @@
     "testFileCount": 86,
     "liveFileCount": 222,
     "direct": {
-      "expectCalls": 1797,
-      "matcherAssertions": 1766,
+      "expectCalls": 1796,
+      "matcherAssertions": 1765,
       "nodeAssertions": 105,
       "namedAssertionHelpers": 602,
       "failCalls": 8,
@@ -27,8 +27,8 @@
       "generatedProbeConditions": 322
     },
     "unique": {
-      "expectCalls": 2289,
-      "matcherAssertions": 2253,
+      "expectCalls": 2288,
+      "matcherAssertions": 2252,
       "nodeAssertions": 126,
       "namedAssertionHelpers": 906,
       "failCalls": 38,
