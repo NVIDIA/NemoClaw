@@ -4,7 +4,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { identity, measuredCommand } from "./measurement.mts";
+import {
+  identity,
+  measuredCommand,
+  installedOpenClawReplayDeadline,
+  createCommandOutputRecorder,
+} from "./measurement.mts";
 import { makeDiagnosticReplay } from "./profile-replay.mts";
 
 export function assertDashboardReceipt(receipt: unknown) {
@@ -95,7 +100,9 @@ async function main() {
   fs.mkdirSync(applicationEvidence);
   let result: Awaited<ReturnType<typeof measuredCommand>> | undefined;
   let primary: unknown;
+  let failed = false;
   let dashboard: unknown;
+  const durableOutput = createCommandOutputRecorder(directory);
   try {
     result = await measuredCommand({
       executable: node,
@@ -112,7 +119,9 @@ async function main() {
       ],
       environment: { ...process.env, NEMOCLAW_NATIVE_INSTALL_ROOT: installRoot },
       cwd: installRoot,
-      timeoutMs: 260_000,
+      timeoutMs: installedOpenClawReplayDeadline.applicationMs,
+      deadlineContract: installedOpenClawReplayDeadline.contract,
+      onOutput: durableOutput.write,
       marker: null,
       onSpawn: (pid) =>
         fs.writeFileSync(
@@ -175,7 +184,16 @@ async function main() {
     }
   } catch (error) {
     primary = error;
+    failed = true;
   } finally {
+    try {
+      durableOutput.close();
+    } catch (error) {
+      if (!failed) {
+        primary = error;
+        failed = true;
+      }
+    }
     const receipt = {
       schemaVersion: 1,
       classification: "installed-baseline-openclaw-profile-replay",
@@ -194,10 +212,12 @@ async function main() {
       applicationClosed: result?.closed ?? false,
       rootTerminationConfirmed: result?.rootTerminationConfirmed ?? false,
       timedOut: result?.timedOut ?? false,
+      observerDeadline: installedOpenClawReplayDeadline,
+      censoredByOuterDeadline: result?.timedOut ?? false,
       aborted: result?.aborted ?? false,
       applicationExitCode: result?.exitCode ?? null,
       dashboard,
-      complete: primary === undefined,
+      complete: !failed,
       error: primary instanceof Error ? primary.message : null,
       stageMeasurementsAvailable: false,
       relayCountersAvailable: false,
@@ -209,10 +229,13 @@ async function main() {
         { flag: "wx" },
       );
     } catch (error) {
-      primary ??= error;
+      if (!failed) {
+        primary = error;
+        failed = true;
+      }
     }
   }
-  if (primary !== undefined) throw primary;
+  if (failed) throw primary;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
   main().catch((error) => {

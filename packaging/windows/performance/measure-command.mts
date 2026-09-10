@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import fs from "node:fs";
 import path from "node:path";
-import { identity, measuredCommand, startupSpans } from "./measurement.mts";
+import {
+  identity,
+  measuredCommand,
+  startupSpans,
+  assertMeasurementDeadline,
+  installedOpenClawReplayDeadline,
+  createCommandOutputRecorder,
+} from "./measurement.mts";
 
 async function main() {
   if (
@@ -25,10 +32,20 @@ async function main() {
     plan.args.length > 64 ||
     plan.args.some((arg: unknown) => typeof arg !== "string" || arg.length > 4096) ||
     !Number.isSafeInteger(plan.timeoutMs) ||
-    plan.timeoutMs < 1 ||
-    plan.timeoutMs > 900_000
+    plan.timeoutMs < 1
   )
     throw new Error("The reviewed Windows measurement command is invalid.");
+  if (
+    plan.deadlineContract !== undefined &&
+    (plan.deadlineContract !== installedOpenClawReplayDeadline.contract ||
+      plan.source !== installedOpenClawReplayDeadline.source ||
+      plan.action !== "launch" ||
+      path.basename(plan.executable).toLowerCase() !== "node.exe" ||
+      path.basename(plan.args[2] ?? "") !== "profile-installed-openclaw.mts" ||
+      !plan.driverFiles?.some((driver: { path: string }) => driver.path === plan.args[2]))
+  )
+    throw new Error("The extended deadline is restricted to the pinned installed OpenClaw replay.");
+  assertMeasurementDeadline(plan.timeoutMs, plan.deadlineContract);
   if (plan.driverFiles !== undefined) {
     if (!Array.isArray(plan.driverFiles) || plan.driverFiles.length > 16)
       throw new Error("Driver identity list is invalid.");
@@ -84,20 +101,39 @@ async function main() {
     }, 500);
   }
   let result;
+  let durableOutput: ReturnType<typeof createCommandOutputRecorder> | undefined;
+  let primary: unknown;
+  let failed = false;
   try {
+    durableOutput = createCommandOutputRecorder(path.dirname(outputPath));
     result = await measuredCommand({
       executable: plan.executable,
       args: plan.args,
       environment,
       cwd: plan.cwd ?? path.dirname(plan.executable),
       timeoutMs: plan.timeoutMs,
+      deadlineContract: plan.deadlineContract,
+      onOutput: durableOutput.write,
       marker: plan.configurationLogMarker ?? null,
       signal: capture.signal,
       onSpawn: (pid) => fs.writeFileSync(outputPath + ".pid", String(pid) + "\n", { flag: "wx" }),
     });
+  } catch (error) {
+    primary = error;
+    failed = true;
   } finally {
     clearInterval(traceBudget);
+    try {
+      durableOutput?.close();
+    } catch (error) {
+      if (!failed) {
+        primary = error;
+        failed = true;
+      }
+    }
   }
+  if (failed) throw primary;
+  if (!result) throw new Error("The measured command did not return a result.");
   const receipt = {
     classification: "windows-performance-command",
     source: plan.source,

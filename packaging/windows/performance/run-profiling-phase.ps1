@@ -28,6 +28,7 @@ if($expectedNode.Count -ne 1 -or $nodeHash -cne $expectedNode[0].sha256) {throw 
 $summary=[ordered]@{schemaVersion=1;classification='f8-installed-baseline-profiling';controllerSource=$ControllerSha;baselineSource=$lock.source;beforeAfterComparison=$false;artifactAcceptanceClaimed=$false;liveTavilyTested=$false;pythonBytecode=$lock.pythonBytecode;status='failed';baselineInstallAttempted=$false;baselineUninstalled=$false;phase='wpr-smoke'}
 $primary=$null
 $cleanupErrors=[Collections.Generic.List[string]]::new()
+$recordingFailures=[Collections.Generic.List[string]]::new()
 function Write-ProfileJson {
     param([object]$Value,[string]$Path)
     [IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 16)+"`n",[Text.UTF8Encoding]::new($false))
@@ -63,15 +64,20 @@ function Receive-ProfileBaseline {
             if($null -ne $resource){try {$resource.Dispose()} catch {if($null -eq $downloadFailure){$downloadFailure=$_}else{Write-Warning 'The bounded download also failed resource cleanup.'}}}
         }
     }
-    if($null -ne $downloadFailure){$PSCmdlet.ThrowTerminatingError($downloadFailure)}
+    if($null -ne $downloadFailure){throw $downloadFailure}
 }
 function Invoke-ProfileCases {
     param([string]$Name,[object[]]$Cases,[bool]$UninstalledStart=$false)
     $plan=Join-Path $root ($Name+'-plan.json')
-    Write-ProfileJson -Value ([ordered]@{schemaVersion=1;fixtureOnly=$true;requireUninstalledStart=$UninstalledStart;cases=$Cases}) -Path $plan
+    Write-ProfileJson -Value ([ordered]@{schemaVersion=1;fixtureOnly=$true;requireUninstalledStart=$UninstalledStart;continueAfterTraceFailure=$true;cases=$Cases}) -Path $plan
     & (Join-Path $PSScriptRoot 'run-windows-measurement.ps1') -PlanPath $plan -HarnessNodePath $HarnessNodePath -HarnessNodeSha256 $nodeHash -ArtifactDirectory (Join-Path $root $Name)
+    $result=Get-Content -LiteralPath (Join-Path (Join-Path $root $Name) 'measurement-summary.json') -Raw|ConvertFrom-Json
+    if($result.status -ceq 'trace-failed'){$recordingFailures.Add($Name)}
 }
 try {
+    $summary.phase='recorder-controls'
+    & (Join-Path $PSScriptRoot 'test-recording-lifecycle.ps1') -ArtifactDirectory (Join-Path $root 'recorder-controls') -NodePath $HarnessNodePath
+    $summary.phase='wpr-smoke'
     # Reject unsupported WPR profiles before downloading/installing the large baseline.
     $smoke=$null;$smokeFailure=$null
     try {$smoke=Start-WindowsPerformanceTrace -Directory (Join-Path $root 'wpr-smoke');Start-Sleep -Milliseconds 750;Update-WindowsPerformanceTraceBudget -Trace $smoke}
@@ -79,13 +85,13 @@ try {
     finally {
         if($null -ne $smoke) {try {Stop-WindowsPerformanceTrace -Trace $smoke} catch {if($null -eq $smokeFailure){$smokeFailure=$_}else{Write-Warning 'The WPR smoke also failed cleanup.'}}}
     }
-    if($null -ne $smokeFailure){$PSCmdlet.ThrowTerminatingError($smokeFailure)}
+    if($null -ne $smokeFailure){throw $smokeFailure}
     $summary.phase='baseline-download'
     Receive-ProfileBaseline -Uri $lock.setup.url -Destination $setup -ExpectedBytes $lock.setup.bytes
     if((Get-Item -LiteralPath $setup).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) -or (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant() -cne $lock.setup.sha256) {throw 'The exact f8 installer failed its immutable digest check.'}
     $summary.phase='baseline-install';$summary.baselineInstallAttempted=$true
     Invoke-ProfileCases -Name 'installation' -UninstalledStart $true -Cases @(
-        [ordered]@{id='f8-install';variant='baseline';action='install';executable=$setup;sha256=$lock.setup.sha256;source=$lock.source;args=@('/install','/quiet','/norestart','/log',(Join-Path $baseline 'profile-install.log'));timeoutMs=900000;wpr=$true;observeProcess=$false;diagnostics=$false;sampleKind='instrumented-install';fixtureStateLabel='fresh disposable runner; installer warms filesystem caches';expectInstalled=$true}
+        [ordered]@{id='f8-install';variant='baseline';action='install';executable=$setup;sha256=$lock.setup.sha256;source=$lock.source;args=@('/install','/quiet','/norestart','/log',(Join-Path $baseline 'profile-install.log'));timeoutMs=900000;wpr=$true;wprInstallerLog=(Join-Path $baseline 'profile-install.log');observeProcess=$false;diagnostics=$false;sampleKind='instrumented-install';fixtureStateLabel='fresh disposable runner; installer warms filesystem caches';expectInstalled=$true}
     )
     foreach($payloadEntry in $lock.files) {
         $file=Join-Path $installed $payloadEntry.path
@@ -114,11 +120,12 @@ try {
     foreach($mode in @('diagnostic','ordinary')) {
         $id='openclaw-'+$mode
         $directory=Join-Path (Join-Path (Join-Path $root 'openclaw') $id) 'driver'
-        $cases += [ordered]@{id=$id;variant='baseline';action='launch';executable=$node;sha256=$nodePin.sha256;source=$lock.source;args=@('--experimental-strip-types','--no-warnings',$driver,$directory,$mode);driverFiles=@($driverFiles);timeoutMs=300000;wpr=($mode -ceq 'diagnostic');observeProcess=($mode -ceq 'diagnostic');diagnostics=($mode -ceq 'diagnostic');sampleKind=$(if($mode -ceq 'diagnostic'){'explicitly-instrumented-replay'}else{'unaltered-installed-runner-after-successful-diagnostic'});fixtureStateLabel='deterministic contained provider, actual dashboard three-turn control, no external key';expectInstalled=$true}
+        $cases += [ordered]@{id=$id;variant='baseline';action='launch';executable=$node;sha256=$nodePin.sha256;source=$lock.source;args=@('--experimental-strip-types','--no-warnings',$driver,$directory,$mode);driverFiles=@($driverFiles);timeoutMs=1350000;deadlineContract='f8-installed-openclaw-qualification';wpr=($mode -ceq 'diagnostic');observeProcess=($mode -ceq 'diagnostic');diagnostics=($mode -ceq 'diagnostic');sampleKind=$(if($mode -ceq 'diagnostic'){'explicitly-instrumented-replay'}else{'unaltered-installed-runner-after-successful-diagnostic'});fixtureStateLabel='deterministic contained provider, actual dashboard three-turn control, no external key';expectInstalled=$true}
     }
     $cases += [ordered]@{id='f8-post-timing-inventory';variant='baseline';action='inventory';root=$installed}
     Invoke-ProfileCases -Name 'openclaw' -Cases $cases
     $summary.status='collected'
+    if($recordingFailures.Count -gt 0){throw 'One or more diagnostic recordings failed; successful target outcomes and later measurements are retained separately.'}
 } catch {$primary=$_;$summary['error']=$_.Exception.Message}
 finally {
     if($summary.baselineInstallAttempted) {
@@ -128,9 +135,10 @@ finally {
             if(-not $summary.baselineUninstalled){throw 'The profiling baseline remains installed.'}
         } catch {$cleanupErrors.Add('baseline uninstall');if($null -eq $primary){$primary=$_}else{Write-Warning 'The profiling baseline also failed uninstall.'}}
     }
+    $summary['recordingFailures']=@($recordingFailures.ToArray())
     $summary['cleanupFailures']=@($cleanupErrors.ToArray())
     if($null -ne $primary){$summary.status='failed'}
     try {Write-ProfileJson -Value $summary -Path (Join-Path $root 'profiling-phase.json')}
     catch {if($null -eq $primary){$primary=$_}else{Write-Warning 'The profiling phase summary also could not be saved.'}}
 }
-if($null -ne $primary){$PSCmdlet.ThrowTerminatingError($primary)}
+if($null -ne $primary){throw $primary}

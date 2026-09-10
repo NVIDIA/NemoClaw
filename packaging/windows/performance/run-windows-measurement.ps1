@@ -22,6 +22,7 @@ if($plan.PSObject.Properties.Name -contains 'requireUninstalledStart' -and $plan
 # Compile instrumentation before starting any timed target.
 . (Join-Path $PSScriptRoot 'windows-observer.ps1')
 . (Join-Path $PSScriptRoot 'wpr-trace.ps1')
+. (Join-Path $PSScriptRoot 'measurement-tracing.ps1')
 function Stop-MeasurementCollector {
     param([Parameter(Mandatory)][Diagnostics.Process]$Process)
     if($Process.HasExited){return}
@@ -39,14 +40,14 @@ function Stop-MeasurementCollector {
     } finally {$stopper.Dispose()}
 }
 $summary=[ordered]@{
-    schemaVersion=1;classification='windows-same-runner-performance';status='in-progress'
+    schemaVersion=1;classification='windows-same-runner-performance';status='failed'
     planSha256=(Get-FileHash -LiteralPath $PlanPath -Algorithm SHA256).Hash.ToLowerInvariant()
     toolNodeSha256=$HarnessNodeSha256;runner=$env:RUNNER_NAME;runId=$env:GITHUB_RUN_ID
     osVersion=[Environment]::OSVersion.VersionString;logicalProcessors=[Environment]::ProcessorCount
     processColdIsNotOsCacheCold=$true;original142SecondTraceAvailable=$false;cases=@()
 }
 $names=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-$primary=$null
+$primary=$null;$traceFailures=[Collections.Generic.List[object]]::new()
 try {
     foreach($case in $plan.cases){
         if($case.id -cnotmatch '^[a-z][a-z0-9-]{1,47}$' -or -not $names.Add($case.id) -or $case.variant -cnotin @('baseline','candidate') -or $case.action -cnotin @('install','uninstall','upgrade','launch','idle','extraction','prepare','inventory')){throw 'A measurement case has invalid identity.'}
@@ -73,16 +74,20 @@ try {
             continue
         }
         $cap=switch($case.action){'launch'{300000};'extraction'{180000};'idle'{120000};default{900000}}
+        if($case.PSObject.Properties.Name -contains 'deadlineContract'){
+            if($case.deadlineContract -cne 'f8-installed-openclaw-qualification' -or $case.source -cne 'f8a1d8c702c879d2984d76d2e0419641bb1ccd97' -or $case.action -cne 'launch' -or [IO.Path]::GetFileName([string]$case.args[2]) -cne 'profile-installed-openclaw.mts'){throw 'An extended deadline requires the exact pinned OpenClaw replay contract.'}
+            $cap=1350000
+        }
         if($case.timeoutMs -lt 1 -or $case.timeoutMs -gt $cap){throw 'The case exceeds its existing bounded operation deadline.'}
         $casePlan=Join-Path $directory 'command-plan.json'
         $case | Add-Member -NotePropertyName schemaVersion -NotePropertyValue 1 -Force
         $case | Add-Member -NotePropertyName fixtureOnly -NotePropertyValue $true -Force
         [IO.File]::WriteAllText($casePlan,($case|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
         $receipt=Join-Path $directory 'command.json'
-        $trace=$null;$collector=$null;$target=$null;$observer=$null;$observerFailure=$null
-        $captureOut=$null;$captureErr=$null;$caseFailure=$null
+        $trace=$null;$traceRecord=$null;$collector=$null;$target=$null;$observer=$null;$observerFailure=$null
+        $capture=$null;$caseFailure=$null;$measurement=$null;$outputInfo=$null
         try {
-            if($case.PSObject.Properties.Name -contains 'wpr' -and $case.wpr -eq $true){$trace=Start-WindowsPerformanceTrace -Directory (Join-Path $directory 'wpr')}
+            if($case.PSObject.Properties.Name -contains 'wpr' -and $case.wpr -eq $true){$trace=New-MeasurementTraceState -Case $case -Directory $directory}
             $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=$HarnessNodePath
             $argv=@('--experimental-strip-types','--no-warnings',(Join-Path $PSScriptRoot 'measure-command.mts'),$casePlan,$receipt)
             if(@($argv|Where-Object {$_ -match '["\r\n]' -or $_.EndsWith('\')}).Count){throw 'An ambiguous harness argument is unsupported.'}
@@ -90,7 +95,7 @@ try {
             $start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
             $start.EnvironmentVariables.Remove('NODE_OPTIONS')
             $collector=[Diagnostics.Process]::Start($start);$null=$collector.Handle
-            $captureOut=$collector.StandardOutput.ReadToEndAsync();$captureErr=$collector.StandardError.ReadToEndAsync()
+            $capture=[NemoClaw.Performance.BoundedOutput]::new($collector)
             $clock=[Diagnostics.Stopwatch]::StartNew();$lastSample=-1000
             while(-not $collector.WaitForExit(100)){
                 if($clock.ElapsedMilliseconds -gt ([long]$case.timeoutMs+30000)){throw 'The measurement collector exceeded its cleanup grace; this sample is failed.'}
@@ -108,14 +113,11 @@ try {
                     catch{$observerFailure=$_.Exception.Message;$observer.Dispose();$observer=$null}
                     $lastSample=$clock.ElapsedMilliseconds
                 }
-                if($null -ne $trace){Update-WindowsPerformanceTraceBudget -Trace $trace}
+                if($null -ne $trace){Update-MeasurementTraceState -State $trace}
             }
-            if(-not $captureOut.Wait(5000) -or -not $captureErr.Wait(5000)){throw 'The collector output did not close.'}
-            [IO.File]::WriteAllText((Join-Path $directory 'collector.log'),($captureOut.Result+"`n"+$captureErr.Result),[Text.UTF8Encoding]::new($false))
+            if(-not $capture.Finish(5000)){throw 'The collector output did not close.'}
             if(-not(Test-Path -LiteralPath $receipt -PathType Leaf)){throw 'No measured command receipt was produced.'}
             $measurement=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
-            $sampleKind=if($case.PSObject.Properties.Name -contains 'sampleKind'){[string]$case.sampleKind}else{'unspecified'}
-            $summary.cases += [ordered]@{id=$case.id;variant=$case.variant;action=$case.action;sampleKind=$sampleKind;receipt=$receipt;wprRequested=($null -ne $trace);observerAttached=($null -ne $observer);elapsedMs=$measurement.elapsedMs;firstByteMs=$measurement.firstByteMs;firstConfigurationLog=$measurement.firstConfigurationLog;exitCode=$measurement.exitCode;timedOut=$measurement.timedOut;instrumentation=$measurement.instrumentation;observerFailure=$observerFailure;runtimeBytesCopied=$null}
             if($measurement.exitCode -eq 3010){throw 'The installer requires reboot; later same-boot samples would not be comparable.'}
             if($collector.ExitCode -ne 0){throw 'The measured command failed or was censored; the plan does not retry it.'}
             if($case.PSObject.Properties.Name -contains 'expectInstalled' -and [bool](Test-Path -LiteralPath $installedRoot) -ne [bool]$case.expectInstalled){throw 'The installed-state boundary does not match the reviewed case.'}
@@ -125,20 +127,40 @@ try {
                 @{label='observer';action={if($null -ne $observer){$observer.Dispose()}}},
                 @{label='target handle';action={if($null -ne $target){$target.Dispose()}}},
                 @{label='collector stop';action={if($null -ne $collector){Stop-MeasurementCollector -Process $collector}}},
-                @{label='collector handle';action={if($null -ne $collector){$collector.Dispose()}}},
-                @{label='trace';action={if($null -ne $trace){Stop-WindowsPerformanceTrace -Trace $trace}}}
+                @{label='collector output';action={if($null -ne $capture){$null=$capture.Finish(1000);$capture.Save((Join-Path $directory 'collector.log'))|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $directory 'collector-output.json') -Encoding UTF8}}},
+                @{label='capture handle';action={if($null -ne $capture){$capture.Dispose()}}},
+                @{label='collector handle';action={if($null -ne $collector){$collector.Dispose()}}}
             )
             foreach($cleanup in $cleanupActions){
                 try {& $cleanup.action}
                 catch {if($null -eq $caseFailure){$caseFailure=$_}else{Write-Warning ("Measurement cleanup also failed: "+$cleanup.label)}}
             }
         }
-        if($null -ne $caseFailure){$PSCmdlet.ThrowTerminatingError($caseFailure)}
+        if($null -ne $trace){
+            try {
+                $traceRecord=Complete-MeasurementTraceState -State $trace
+                if($traceRecord.failed){$traceFailures.Add([ordered]@{case=$case.id;receipt=(Join-Path $directory 'trace-windows.json')})}
+                if(-not $traceRecord.safeToContinue){throw 'The recorder did not confirm cleanup; no later case may start.'}
+            }catch{if($null -eq $caseFailure){$caseFailure=$_}else{Write-Warning 'Recorder finalization also failed; the original command failure is retained.'}}
+        }
+        $sampleKind=if($case.PSObject.Properties.Name -contains 'sampleKind'){[string]$case.sampleKind}else{'unspecified'}
+        $row=[ordered]@{id=$case.id;variant=$case.variant;action=$case.action;sampleKind=$sampleKind;receipt=$receipt;receiptPresent=($null -ne $measurement);wprRequested=($null -ne $trace);trace=$traceRecord;observerFailure=$observerFailure;runtimeBytesCopied=$null;error=$(if($null -ne $caseFailure){$caseFailure.Exception.Message}else{$null})}
+        if($null -ne $measurement){
+            foreach($field in @('elapsedMs','firstByteMs','firstConfigurationLog','exitCode','timedOut','instrumentation')){$row[$field]=$measurement.$field}
+        }
+        $summary.cases += $row
+        try {[IO.File]::WriteAllText((Join-Path $directory 'case-result.json'),($row|ConvertTo-Json -Depth 12)+"`n",[Text.UTF8Encoding]::new($false))}
+        catch {if($null -eq $caseFailure){$caseFailure=$_}else{Write-Warning 'The case result also could not be retained.'}}
+        if($null -ne $caseFailure){throw $caseFailure}
+        if($null -ne $traceRecord -and $traceRecord.failed -and -not($plan.PSObject.Properties.Name -contains 'continueAfterTraceFailure' -and $plan.continueAfterTraceFailure -eq $true)){
+            throw 'Recording failed after the measured command completed; the plan does not continue.'
+        }
     }
-    $summary.status='collected'
+    $summary.status=if($traceFailures.Count -gt 0){'trace-failed'}else{'collected'}
 } catch {$primary=$_;$summary.status='failed';$summary['error']=$_.Exception.Message}
 finally {
+    $summary['traceFailures']=@($traceFailures.ToArray())
     try {[IO.File]::WriteAllText((Join-Path $ArtifactDirectory 'measurement-summary.json'),($summary|ConvertTo-Json -Depth 12)+"`n",[Text.UTF8Encoding]::new($false))}
     catch {if($null -eq $primary){$primary=$_}else{Write-Warning 'The measurement summary could not be written.'}}
 }
-if($null -ne $primary){$PSCmdlet.ThrowTerminatingError($primary)}
+if($null -ne $primary){throw $primary}

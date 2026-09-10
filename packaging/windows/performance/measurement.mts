@@ -106,6 +106,68 @@ export async function stopOwned(child: ChildProcess, environment: NodeJS.Process
   }
 }
 
+// Only the exact f8 replay may exceed the generic 15-minute measurement cap.
+// Its existing package qualifier allows 20 minutes; the extra 120 seconds are
+// diagnostic idle (30s) and cleanup/harvest (90s), not a runtime timeout change.
+export const installedOpenClawReplayDeadline = {
+  contract: "f8-installed-openclaw-qualification",
+  source: "f8a1d8c702c879d2984d76d2e0419641bb1ccd97",
+  existingControllerMs: 1_200_000,
+  diagnosticIdleMs: 30_000,
+  cleanupAndHarvestMs: 90_000,
+  applicationMs: 1_320_000,
+  collectorMs: 1_350_000,
+} as const;
+
+export function assertMeasurementDeadline(timeoutMs: number, contract?: string) {
+  const maximum =
+    contract === installedOpenClawReplayDeadline.contract
+      ? installedOpenClawReplayDeadline.collectorMs
+      : 900_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > maximum)
+    throw new Error("The measurement deadline is outside its bound.");
+}
+
+export function createCommandOutputRecorder(directory: string) {
+  const descriptors: Partial<Record<"stdout" | "stderr", number>> = {};
+  let retained = 0;
+  const close = () => {
+    let failure: unknown;
+    for (const stream of ["stdout", "stderr"] as const) {
+      const fd = descriptors[stream];
+      delete descriptors[stream];
+      try {
+        if (fd !== undefined) fs.closeSync(fd);
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+    if (failure !== undefined) throw failure;
+  };
+  try {
+    for (const stream of ["stdout", "stderr"] as const)
+      descriptors[stream] = fs.openSync(path.join(directory, "command-" + stream + ".log"), "wx");
+  } catch (error) {
+    try {
+      close();
+    } catch {
+      console.error("Output setup also failed handle cleanup.");
+    }
+    throw error;
+  }
+  return {
+    write(stream: "stdout" | "stderr", chunk: Buffer) {
+      const fd = descriptors[stream];
+      if (fd === undefined) throw new Error("The output recorder is closed.");
+      const keep = chunk.subarray(0, Math.max(0, 1024 * 1024 - retained));
+      retained += keep.length;
+      let offset = 0;
+      while (offset < keep.length) offset += fs.writeSync(fd, keep, offset, keep.length - offset);
+    },
+    close,
+  };
+}
+
 export async function measuredCommand(options: {
   executable: string;
   args: string[];
@@ -115,13 +177,10 @@ export async function measuredCommand(options: {
   marker?: string | null;
   onSpawn?: (pid: number) => void;
   signal?: AbortSignal;
+  deadlineContract?: string;
+  onOutput?: (stream: "stdout" | "stderr", chunk: Buffer) => void;
 }) {
-  if (
-    !Number.isSafeInteger(options.timeoutMs) ||
-    options.timeoutMs < 1 ||
-    options.timeoutMs > 900_000
-  )
-    throw new Error("The measurement deadline is outside its bound.");
+  assertMeasurementDeadline(options.timeoutMs, options.deadlineContract);
   new OutputTimeline().exactMarker(options.marker ?? null);
   const started = process.hrtime.bigint();
   const elapsed = () => Number(process.hrtime.bigint() - started) / 1e6;
@@ -145,8 +204,16 @@ export async function measuredCommand(options: {
   child.once("error", (error) => {
     observed.spawnError = error.message;
   });
-  child.stdout.on("data", (data: Buffer) => output.write("stdout", data, elapsed()));
-  child.stderr.on("data", (data: Buffer) => output.write("stderr", data, elapsed()));
+  const captureOutput = (stream: "stdout" | "stderr", data: Buffer) => {
+    output.write(stream, data, elapsed());
+    try {
+      options.onOutput?.(stream, data);
+    } catch (error) {
+      observed.observerError ??= error instanceof Error ? error.message : String(error);
+    }
+  };
+  child.stdout.on("data", (data: Buffer) => captureOutput("stdout", data));
+  child.stderr.on("data", (data: Buffer) => captureOutput("stderr", data));
   child.once("exit", (code, signal) => {
     observed.exitCode = code;
     observed.signal = signal;

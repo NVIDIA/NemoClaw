@@ -52,3 +52,50 @@ After timing samples, run the shipped interpreter with `-B audit-python-bytecode
 Ordinary launch/install timing cases do not attach the process/window/file-growth observer. Idle counter cases and diagnostic cases are separately labeled. Hash verification occurs before the command clock, and necessarily reads the measured executable; these are fresh-process samples, not OS-cold claims. WPR and Node traces must be requested in separate replay cases. For PortableGit extraction diagnostics, keep the corrected dedicated SFX argument renderer and attach the observer there; the generic command runner is not a replacement for that SFX-specific raw command-line contract.
 
 The source revision in a command receipt comes from the reviewed plan. The CI controller must first verify the installer artifact digest/source and later installed runtime identities; the harness does not derive Git provenance from an executable hash alone. Plan arguments and literal output are diagnostic artifacts and must use disposable fixture data without credentials. Do not supply user prompts or secret-bearing command arguments.
+
+## Partial recorder windows and target deadlines
+
+The explicit f8 profiling phase records the first system-drive preparation and MSI
+in separate windows of the **same original bundle command**. Exact complete Burn
+`i301`/`i319` package records select the phases. The receipt retains their log
+clock, observer clock, recording-start lag and any missing phase. The observer
+can miss a very short phase; it never synthesizes its trace or calls these complete
+operation recordings. Warm host preparation and dashboard ETW use command-prefix
+windows. The full command result and separate Node CPU/module/startup traces keep
+their own identities; a short ETW window does not establish complete attribution.
+
+Each recorder window stops at 256 MiB of observed logical files or 45 seconds,
+checked every 100 ms. Enumeration includes hidden/system files and records their
+actual attributes. Windows sizes come from a metadata-only `FILE_READ_ATTRIBUTES`
+handle and `GetFileSizeEx`; the potentially stale directory-enumeration size is
+retained separately. A failed size query fails the recorder rather than counting
+zero. This is a **stop threshold, not a filesystem quota**: buffered
+writes, polling lag and finalization can add bytes. Final file sizes and stop time
+are recorded separately. The earlier failed run's ZIP normalized file attributes,
+so it cannot prove that the missed live files were hidden. It did retain multi-GB
+raw ETLs and a failed 60-second stop; neither is a product performance result.
+
+The owned recorder uses documented `-skipPdbGen`, retaining native event data but
+omitting dynamic .NET NGen/embedded PDB generation. Stop remains bounded to 60
+seconds; status to five seconds and owned cancellation to ten. Partial stdout and
+stderr are saved even on timeout, both as readable text and exact bounded raw
+prefixes. Collector and measured-command output are retained separately. A recorder
+failure never terminates the installer or agent. Confirmed recorder cleanup permits
+later diagnostic cases, while the overall phase remains failed. Unconfirmed cleanup
+prevents any later case. A target failure remains primary over recording failures.
+
+Only the exact reviewed f8 OpenClaw replay may exceed the generic 15-minute harness
+cap. Its installed qualification controller already allows 1,200 seconds. The
+profiling child allows that interval plus the explicit 30-second diagnostic idle
+and 90 seconds for cleanup/harvest; its outer collector allows another 30 seconds.
+The product's own startup/turn/shutdown deadlines are unchanged. An outer deadline
+or the existing 256 MiB Node trace limit still censors a replay and must stay failed.
+The 150-minute profiling job covers the bounded install, two warm preparations,
+two replay allowances and uninstall, with download/recorder headroom. It is not a
+performance improvement or a new application timeout.
+
+Before WPR smoke, the job runs portable recorder lifecycle controls against real
+owned Node children and files. Controlled WPR outcomes in those tests are explicitly
+not WPR API or installed-application proof. The smoke and actual replay provide the
+Windows recorder evidence. See [Microsoft's recorder options](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/wpr-command-line-options)
+and [PowerShell file enumeration](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/get-childitem).

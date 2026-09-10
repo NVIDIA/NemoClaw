@@ -1038,7 +1038,9 @@ jobs:
     name: Installed Windows baseline profiling (diagnostic only)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.profile_native_windows && !inputs.test_native_windows_runtime }}
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 90
+    # Existing target allowances: 15m install + 30m warm prep + 45m replays
+    # + 15m uninstall; download/recording finalization retain bounded headroom.
+    timeout-minutes: 150
     steps:
       - name: Check out the profiling controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
