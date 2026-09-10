@@ -11,6 +11,8 @@ import {
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
   NemoClawAgentToolsConfigSchema,
+  NemoClawInferenceTuningSchema,
+  NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
   NemoClawAgentTypeSchema,
   NemoClawManagedProxyConfigSchema,
@@ -236,6 +238,7 @@ export type NonEmptyExportFindings = readonly [ExportFinding, ...ExportFinding[]
 
 // Runtime refinements preserve semantic checks that are not part of JSON Schema.
 const HostedExportInferenceSchema = Type.Object({
+  overrides: Type.Optional(NemoClawInferenceTuningSchema),
   provider: Type.Refine(
     BoundedTextSchema,
     (value) => isValidNemoClawBoundedText(value) && value !== "vllm-local",
@@ -265,6 +268,7 @@ const ExportInferenceSchema = Type.Union([
 export const ExportSourceValuesSchema = Type.Refine(
   Type.Object({
     sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
+    execution: Type.Optional(NemoClawAgentExecutionSchema),
     agent: NemoClawAgentTypeSchema,
     runtime: Type.Object({
       provider: RuntimeProviderSchema,

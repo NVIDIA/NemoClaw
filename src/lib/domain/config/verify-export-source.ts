@@ -27,6 +27,8 @@ import {
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
   NemoClawAgentToolsConfigSchema,
+  NemoClawInferenceTuningSchema,
+  NemoClawAgentExecutionSchema,
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
@@ -90,6 +92,7 @@ const EXPORT_AGENT_PROFILE_PROJECTIONS: Record<
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
   | "agent"
+  | "execution"
   | "gateway"
   | "inference"
   | "policy"
@@ -205,11 +208,6 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
       "spec.sandboxes[].agents[0].dashboard",
       entry.dashboardRemoteBindPrepared,
       "remote dashboard exposure",
-    ],
-    [
-      "spec.inferenceProviders[].reasoning",
-      entry.compatibleEndpointReasoning || entry.compatibleEndpointReasoningEffort,
-      "compatible-endpoint reasoning overrides",
     ],
   ];
   const findings = excluded
@@ -427,14 +425,111 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
   }).profile;
 }
 
-function classifyManagedStartupProfile(
+function projectAgentSettings(profile: ManagedStartupProfile, defaults: ManagedStartupProfile) {
+  if (profile.agentConfig.agent !== "openclaw" || defaults.agentConfig.agent !== "openclaw") {
+    return {};
+  }
+  const overrides = Object.fromEntries(
+    Object.entries(profile.tuning).filter(
+      ([key, value]) => value !== defaults.tuning[key as keyof typeof defaults.tuning],
+    ),
+  );
+  const execution = {
+    ...(profile.agentConfig.agentTimeoutSeconds === defaults.agentConfig.agentTimeoutSeconds
+      ? {}
+      : { timeoutSeconds: profile.agentConfig.agentTimeoutSeconds }),
+    ...(profile.agentConfig.heartbeatEvery === defaults.agentConfig.heartbeatEvery
+      ? {}
+      : { heartbeatEvery: profile.agentConfig.heartbeatEvery }),
+  };
+  return {
+    ...(Object.keys(overrides).length === 0 ? {} : { overrides }),
+    ...(Object.keys(execution).length === 0 ? {} : { execution }),
+  };
+}
+
+function classifyReasoningAgreement(
   entry: ObservedExportRegistry,
   profile: ManagedStartupProfile,
 ): ExportFinding[] {
-  let expected: ManagedStartupProfile;
+  if (entry.agent !== "openclaw" || profile.agentConfig.agent !== "openclaw") return [];
+  const reasoning = entry.compatibleEndpointReasoning;
+  const effort = entry.compatibleEndpointReasoningEffort;
+  const hasOverrides = [reasoning, effort].some((value) => value !== undefined && value !== null);
+  if (entry.provider !== "compatible-endpoint" && !hasOverrides) return [];
+  if (
+    entry.provider === "compatible-endpoint" &&
+    isDeepStrictEqual(
+      [reasoning ?? "false", effort ?? "default"],
+      [String(profile.tuning.reasoning), profile.tuning.reasoningEffort],
+    )
+  )
+    return [];
+  return [
+    finding(
+      "spec.sandboxes[].agents[0].inference.routes[].overrides",
+      "drifted",
+      "Registered reasoning overrides and the managed startup profile differ.",
+    ),
+  ];
+}
+
+function classifyToolDisclosureAgreement(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile,
+  expected: ManagedStartupProfile,
+): ExportFinding[] {
+  if (entry.agent !== "openclaw" || profile.tools.disclosure === expected.tools.disclosure) {
+    return [];
+  }
+  return [
+    finding(
+      "spec.sandboxes[].agents[0].tools.disclosure",
+      entry.toolDisclosure === undefined ? "missing-provenance" : "drifted",
+      "The retained tool disclosure and the registry selection do not agree.",
+    ),
+  ];
+}
+
+function supportedAgentSettingsProfile(
+  profile: ManagedStartupProfile,
+  expected: ManagedStartupProfile,
+): ManagedStartupProfile | null {
+  if (profile.agentConfig.agent === "hermes" && expected.agentConfig.agent === "hermes") {
+    return expected;
+  }
+  const settings = projectAgentSettings(profile, expected);
+  if (
+    !Check(NemoClawInferenceTuningSchema, profile.tuning) ||
+    (settings.execution !== undefined &&
+      !Check(NemoClawAgentExecutionSchema, settings.execution)) ||
+    profile.agentConfig.agent !== "openclaw" ||
+    expected.agentConfig.agent !== "openclaw"
+  )
+    return null;
+  return {
+    ...expected,
+    tuning: {
+      contextWindow: profile.tuning.contextWindow,
+      maxTokens: profile.tuning.maxTokens,
+      reasoning: profile.tuning.reasoning,
+      reasoningEffort: profile.tuning.reasoningEffort,
+    },
+    agentConfig: {
+      ...expected.agentConfig,
+      agentTimeoutSeconds: profile.agentConfig.agentTimeoutSeconds,
+      heartbeatEvery: profile.agentConfig.heartbeatEvery,
+    },
+  };
+}
+
+function expectedProfileWithObservedProxy(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile,
+): ManagedStartupProfile | null {
   try {
-    expected = expectedManagedStartupProfile(entry);
-    expected = {
+    const expected = expectedManagedStartupProfile(entry);
+    return {
       ...expected,
       proxy: {
         ...expected.proxy,
@@ -443,6 +538,16 @@ function classifyManagedStartupProfile(
       },
     };
   } catch {
+    return null;
+  }
+}
+
+function classifyManagedStartupProfile(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile,
+): ExportFinding[] {
+  let expected = expectedProfileWithObservedProxy(entry, profile);
+  if (!expected) {
     return [
       finding(
         "source.workload.startupProfile",
@@ -451,15 +556,23 @@ function classifyManagedStartupProfile(
       ),
     ];
   }
-  const findings: ExportFinding[] = [];
-  if (entry.agent === "openclaw" && profile.tools.disclosure !== expected.tools.disclosure) {
-    findings.push(
-      finding(
-        "spec.sandboxes[].agents[0].tools.disclosure",
-        entry.toolDisclosure === undefined ? "missing-provenance" : "drifted",
-        "The retained tool disclosure and the registry selection do not agree.",
-      ),
-    );
+  const findings = [
+    ...classifyReasoningAgreement(entry, profile),
+    ...classifyToolDisclosureAgreement(entry, profile, expected),
+  ];
+  if (entry.servingProfileProvenance?.preset.id !== EXPORTED_VLLM_PROFILE_ID) {
+    const supported = supportedAgentSettingsProfile(profile, expected);
+    if (!supported) {
+      return [
+        ...findings,
+        finding(
+          "source.workload.startupProfile",
+          "unsupported",
+          "The managed agent settings cannot be represented by v1 export.",
+        ),
+      ];
+    }
+    expected = supported;
   }
   if (!hasEqualJsonStructure(profile.inference, expected.inference)) {
     findings.push(
@@ -917,20 +1030,55 @@ function inspectWorkload(entry: ObservedExportRegistry) {
   return { authority, findings };
 }
 
-function exportInferenceValues(snapshot: QualifiedExportSnapshot) {
-  const selected = normalizeInferenceSelection(snapshot.registry);
-  const inference = {
+function projectVerifiedInference(
+  snapshot: QualifiedExportSnapshot,
+  selected: ReturnType<typeof normalizeInferenceSelection>,
+  settings: ReturnType<typeof projectAgentSettings>,
+) {
+  const common = {
+    ...(settings.overrides ? { overrides: settings.overrides } : {}),
     provider: selected.provider,
     model: selected.model,
     api: selected.preferredInferenceApi,
   };
   return snapshot.inference.topology === "managed"
-    ? { ...inference, serving: snapshot.inference.managedServing?.serving }
+    ? { ...common, serving: snapshot.inference.managedServing?.serving }
     : {
-        ...inference,
+        ...common,
         endpoint: selected.endpointUrl,
         ...(selected.credentialEnv === null ? {} : { credentialEnv: selected.credentialEnv }),
       };
+}
+
+function projectVerifiedExecution(settings: ReturnType<typeof projectAgentSettings>) {
+  return settings.execution ? { execution: settings.execution } : {};
+}
+
+function projectVerifiedWebSearch(entry: ObservedExportRegistry) {
+  if (!hasBraveSearch(entry)) return {};
+  return {
+    webSearch: {
+      provider: "brave" as const,
+      agentRefs: ["primary"],
+      credential: { env: "BRAVE_API_KEY" },
+    },
+  };
+}
+
+function projectVerifiedTools(
+  entry: ObservedExportRegistry,
+  authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
+) {
+  if (entry.agent !== "openclaw" || authority?.profile.tools.disclosure !== "direct") return {};
+  return { tools: { disclosure: authority.profile.tools.disclosure } };
+}
+
+function projectVerifiedProxy(
+  entry: ObservedExportRegistry,
+  proxy: ManagedStartupProfile["proxy"] | undefined,
+) {
+  if (!proxy || hasEqualJsonStructure(proxy, expectedManagedStartupProfile(entry).proxy)) return {};
+  return { proxy: { host: proxy.managedHost, port: proxy.managedPort } };
 }
 
 function completeVerifiedSource(
@@ -940,28 +1088,21 @@ function completeVerifiedSource(
   policy: CanonicalExportPolicy,
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
-  const proxy = authority?.profile.proxy;
+  const selected = normalizeInferenceSelection(entry);
+  const settings =
+    authority && snapshot.inference.topology !== "managed"
+      ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
+      : {};
   const values = {
     sandboxName: requestedSandboxName,
     agent: entry.agent,
-    ...(hasBraveSearch(entry)
-      ? {
-          webSearch: {
-            provider: "brave",
-            agentRefs: ["primary"],
-            credential: { env: "BRAVE_API_KEY" },
-          },
-        }
-      : {}),
+    ...projectVerifiedExecution(settings),
+    ...projectVerifiedWebSearch(entry),
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
-    ...(entry.agent === "openclaw" && authority?.profile.tools.disclosure === "direct"
-      ? { tools: { disclosure: authority.profile.tools.disclosure } }
-      : {}),
-    ...(proxy && !hasEqualJsonStructure(proxy, expectedManagedStartupProfile(entry).proxy)
-      ? { proxy: { host: proxy.managedHost, port: proxy.managedPort } }
-      : {}),
-    inference: exportInferenceValues(snapshot),
+    ...projectVerifiedTools(entry, authority),
+    ...projectVerifiedProxy(entry, authority?.profile.proxy),
+    inference: projectVerifiedInference(snapshot, selected, settings),
   };
   if (!Check(ExportSourceValuesSchema, values)) {
     return {

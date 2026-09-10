@@ -79,12 +79,11 @@ export function buildExportConfig(
           agents: [
             {
               name: "primary",
-              ...(source.agent === "openclaw"
-                ? {
-                    type: source.agent,
-                    ...(source.tools === undefined ? {} : { tools: source.tools }),
-                  }
-                : { type: source.agent }),
+              type: source.agent,
+              ...(source.execution ? { execution: source.execution } : {}),
+              ...(source.agent === "openclaw" && source.tools !== undefined
+                ? { tools: source.tools }
+                : {}),
               inference: {
                 routes: [
                   {
@@ -95,6 +94,7 @@ export function buildExportConfig(
                       ...("serving" in source.inference
                         ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
                         : {}),
+                      ...("overrides" in source.inference ? source.inference.overrides : {}),
                     },
                   },
                 ],
