@@ -990,10 +990,15 @@ export function revalidateMessagingProviderAttachmentTarget(
   let expected = registry.getSandbox(sandboxName);
   if (
     expected &&
-    (expected.lifecycleGeneration === undefined || expected.lifecycleLiveIdentityFingerprint === undefined)
+    (expected.lifecycleGeneration === undefined ||
+      expected.lifecycleLiveIdentityFingerprint === undefined)
   ) {
     expected =
-      policyChannelDependencies.recoverMessagingProviderAttachmentIdentity(expected, gatewayName, onboardSession) ?? expected;
+      policyChannelDependencies.recoverMessagingProviderAttachmentIdentity(
+        expected,
+        gatewayName,
+        onboardSession,
+      ) ?? expected;
   }
   const lifecycleGeneration = expected?.lifecycleGeneration;
   const expectedFingerprint = expected?.lifecycleLiveIdentityFingerprint;

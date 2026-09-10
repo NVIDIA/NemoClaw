@@ -1307,12 +1307,16 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       },
     });
 
-    vi.mocked(policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry)
-      .mockReturnValue(preEnableHookRegistry);
-    await expect(addSandboxChannel("alpha", { channel: "teams" }))
-      .rejects.toThrow("process.exit(1)");
+    vi.mocked(
+      policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry,
+    ).mockReturnValue(preEnableHookRegistry);
+    await expect(addSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
 
-    expect(policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry).toHaveBeenCalledOnce();
+    expect(
+      policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry,
+    ).toHaveBeenCalledOnce();
     expect(loggedText()).toContain(
       "Microsoft Teams webhook port 3978 is already in use by nc (PID 4321)",
     );
@@ -1335,11 +1339,7 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       },
     });
 
-    await addSandboxChannel(
-      "alpha",
-      { channel: "teams" },
-      { preEnableHookRegistry },
-    );
+    await addSandboxChannel("alpha", { channel: "teams" }, { preEnableHookRegistry });
 
     expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
     expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledWith(
