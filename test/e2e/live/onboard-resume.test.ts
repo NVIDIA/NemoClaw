@@ -12,6 +12,7 @@ import {
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { parseSandboxPhase } from "../../../src/lib/state/gateway.ts";
+import { OPENSHELL_GATEWAY_START_LINE } from "../../helpers/openshell-gateway-start-output.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
@@ -513,7 +514,7 @@ test(
     // still prints phase headings before the resume-skip decisions, so assert
     // the skip evidence and absence of redo-only success strings instead of
     // rejecting headings that now frame the skipped phases.
-    expect(resumeText).not.toMatch(/Starting OpenShell [^\r\n]*gateway/);
+    expect(resumeText).not.toMatch(OPENSHELL_GATEWAY_START_LINE);
     const reconciledExtraProviders = readExtraProviders();
     expect(reconciledExtraProviders).toContain(LIVE_EXTRA_PROVIDER);
     expect(reconciledExtraProviders).not.toContain(STALE_EXTRA_PROVIDER);

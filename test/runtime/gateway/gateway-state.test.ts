@@ -19,6 +19,7 @@ import {
   parseSandboxPhase,
   shouldSelectNamedGatewayForReuse,
 } from "../../../src/lib/state/gateway.js";
+import { OPENSHELL_GATEWAY_START_LINE } from "../../helpers/openshell-gateway-start-output.ts";
 
 const OPENSHELL_STATUS_ERROR_CONTRACT = JSON.parse(
   readFileSync(
@@ -108,6 +109,25 @@ Gateway: other-gw
 Server: https://127.0.0.1:9090/
 Connected
 `;
+
+describe("OpenShell gateway startup output", () => {
+  it.each([
+    "  Starting OpenShell gateway...",
+    "  Starting OpenShell gateway via managed service...",
+  ])("recognizes a gateway start line: %s", (startupLine) => {
+    expect(`before\n${startupLine}\nafter`).toMatch(OPENSHELL_GATEWAY_START_LINE);
+  });
+
+  it("does not treat an onboarding phase heading as a gateway start", () => {
+    const resumeOutput = [
+      "  [2/8] Starting OpenShell gateway",
+      "  ──────────────────────────────────────────────────",
+      "  [resume] Skipping gateway (running)",
+    ].join("\n");
+
+    expect(resumeOutput).not.toMatch(OPENSHELL_GATEWAY_START_LINE);
+  });
+});
 
 describe("hasStaleGateway", () => {
   it("returns true when output contains the named gateway", () => {

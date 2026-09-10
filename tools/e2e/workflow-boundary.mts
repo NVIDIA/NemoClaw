@@ -799,6 +799,8 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
 ]);
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ["test/e2e/lib/fake-wechat-api.mts", ["messaging-providers"]],
+  ["test/e2e/live/hermes-gpu-startup-proof.ts", ["hermes-gpu-startup"]],
+  ["test/helpers/openshell-gateway-start-output.ts", ["hermes-gpu-startup"]],
   ["test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts", ["openclaw-plugin-runtime-exdev"]],
   [
     "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
