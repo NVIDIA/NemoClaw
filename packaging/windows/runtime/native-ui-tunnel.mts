@@ -5,8 +5,9 @@ import fs from "node:fs";
 import net, { type Socket } from "node:net";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import type { RelayMeasurements } from "./native-broker-relay-protocol.mts";
 
-function readRelayFile(file: string, maxBytes: number): Buffer | null {
+function readRelayFileUnmeasured(file: string, maxBytes: number): Buffer | null {
   let descriptor: number;
   try {
     descriptor = fs.openSync(file, "r");
@@ -32,8 +33,24 @@ function readRelayFile(file: string, maxBytes: number): Buffer | null {
   }
 }
 
-export function readNativeUiTunnelMarker(file: string): string | null {
-  return readRelayFile(file, 4096)?.toString("utf8") ?? null;
+function readRelayFile(file: string, maxBytes: number, measurements?: RelayMeasurements) {
+  if (!measurements) return readRelayFileUnmeasured(file, maxBytes);
+  const started = measurements.start();
+  try {
+    const bytes = readRelayFileUnmeasured(file, maxBytes);
+    measurements.finish("read", started, bytes === null ? "miss" : "success", bytes?.length ?? 0);
+    return bytes;
+  } catch (error) {
+    measurements.finish("read", started, "failure");
+    throw error;
+  }
+}
+
+export function readNativeUiTunnelMarker(
+  file: string,
+  measurements?: RelayMeasurements,
+): string | null {
+  return readRelayFile(file, 4096, measurements)?.toString("utf8") ?? null;
 }
 
 export async function startNativeUiTunnel({
@@ -41,11 +58,13 @@ export async function startNativeUiTunnel({
   relayToken,
   uiPort,
   signal,
+  measurements,
 }: {
   relayRoot: string;
   relayToken: string;
   uiPort: number;
   signal?: AbortSignal;
+  measurements?: RelayMeasurements;
 }): Promise<void> {
   if (
     typeof relayRoot !== "string" ||
@@ -85,7 +104,32 @@ export async function startNativeUiTunnel({
     // The host's pinned-directory boundary prevents rename-through-parent.
     // Exclusive creation keeps every frame unique. Its native reader refuses
     // write-sharing, so an open writer is unavailable until this complete flush/close.
-    fs.writeFileSync(file, content, { flag: "wx", flush: true });
+    const started = measurements?.start();
+    let succeeded = false;
+    try {
+      fs.writeFileSync(file, content, { flag: "wx", flush: true });
+      succeeded = true;
+    } finally {
+      if (started !== undefined)
+        measurements!.finish(
+          "flushedWrite",
+          started,
+          succeeded ? "success" : "failure",
+          succeeded ? Buffer.byteLength(content) : 0,
+        );
+    }
+  };
+  const readDirectory = (directory: string) => {
+    if (!measurements) return fs.readdirSync(directory);
+    const started = measurements.start();
+    try {
+      const names = fs.readdirSync(directory);
+      measurements.finish("list", started, "success", 0, names.length);
+      return names;
+    } catch (error) {
+      measurements.finish("list", started, "failure");
+      throw error;
+    }
   };
   const startFileTunnel = async () => {
     await waitForUi();
@@ -122,20 +166,21 @@ export async function startNativeUiTunnel({
         finish(signal?.reason ?? new Error("The native UI tunnel was stopped."));
       const pollRelay = () => {
         const shutdown = join(relayRoot, "shutdown");
-        const shutdownToken = readNativeUiTunnelMarker(shutdown);
+        const shutdownToken = readNativeUiTunnelMarker(shutdown, measurements);
         if (shutdownToken !== null) {
           if (shutdownToken !== relayToken) return;
           finish();
           return;
         }
-        for (const entry of fs
-          .readdirSync(relayRoot)
-          .filter((name) => /^stream-[a-f0-9]{16}$/u.test(name))) {
+        for (const entry of readDirectory(relayRoot).filter((name) =>
+          /^stream-[a-f0-9]{16}$/u.test(name),
+        )) {
+          measurements?.scan(streams.has(entry));
           if (streams.has(entry)) continue;
           const streamRoot = join(relayRoot, entry);
           const open = join(streamRoot, "open");
           if (fs.existsSync(join(streamRoot, "sandbox-close"))) continue;
-          if (readNativeUiTunnelMarker(open) !== relayToken) continue;
+          if (readNativeUiTunnelMarker(open, measurements) !== relayToken) continue;
           const socket = net.createConnection({ host: "127.0.0.1", port: uiPort });
           const state = {
             root: streamRoot,
@@ -171,7 +216,7 @@ export async function startNativeUiTunnel({
           });
         }
         for (const stream of streams.values()) {
-          const entries = fs.readdirSync(stream.root);
+          const entries = readDirectory(stream.root);
           stream.pendingFrames = entries.filter((name) =>
             /^sandbox-[0-9]{10}[.]bin$/u.test(name),
           ).length;
@@ -181,7 +226,7 @@ export async function startNativeUiTunnel({
           for (const entry of incoming) {
             if (stream.blocked || stream.hostEnded) break;
             const chunk = join(stream.root, entry);
-            const bytes = readRelayFile(chunk, 1024 * 1024);
+            const bytes = readRelayFile(chunk, 1024 * 1024, measurements);
             if (bytes === null) throw new Error("A native UI relay frame disappeared.");
             stream.blocked = !stream.socket.write(bytes);
             fs.unlinkSync(chunk);
@@ -199,10 +244,16 @@ export async function startNativeUiTunnel({
       };
       poll = setInterval(() => {
         if (finished) return;
+        const started = measurements?.start();
+        let succeeded = false;
         try {
           pollRelay();
+          succeeded = true;
         } catch (error: unknown) {
           finish(error);
+        } finally {
+          if (started !== undefined)
+            measurements!.finish("poll", started, succeeded ? "success" : "failure");
         }
       }, 10);
       signal?.addEventListener("abort", onAbort, { once: true });

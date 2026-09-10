@@ -3,7 +3,7 @@
 
 use super::*;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
@@ -14,7 +14,7 @@ const FIXTURE: &str = "runtime_host::tests::owned_process_fixture";
 
 struct Fixture {
     root: PathBuf,
-    lease: File,
+    lease: Option<File>,
 }
 impl Fixture {
     fn new() -> Self {
@@ -35,7 +35,13 @@ impl Fixture {
             .share_mode(1)
             .open(marker)
             .unwrap();
-        Self { root, lease }
+        Self {
+            root,
+            lease: Some(lease),
+        }
+    }
+    fn lease_handle(&self) -> RawHandle {
+        self.lease.as_ref().unwrap().as_raw_handle()
     }
     fn command(&self, mode: &str) -> Command {
         let mut command = Command::new(std::env::current_exe().unwrap());
@@ -56,6 +62,8 @@ impl Drop for Fixture {
             "grandchild-pid",
             "release",
             "arguments",
+            "service-pid",
+            "service-owner-pid",
         ] {
             let _ = fs::remove_file(self.root.join(name));
         }
@@ -123,6 +131,65 @@ fn owned_process_fixture() {
             wait_for(&root.join("release"));
             event(&root, "grandchild-finished");
         }
+        "pipe-invalid" => {
+            let pipe = std::env::var_os("NEMOCLAW_RUNTIME_SERVICE_PIPE").unwrap();
+            let mut channel = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(pipe)
+                .unwrap();
+            channel.write_all(b"unknown\n").unwrap();
+            let mut response = Vec::new();
+            assert!(channel.read_to_end(&mut response).is_err() || response.is_empty());
+        }
+        "pipe-foreign-parent" => {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", FIXTURE, "--nocapture"])
+                .env("NEMOCLAW_GUARDIAN_TEST_MODE", "pipe-invalid")
+                .current_dir(&root);
+            assert!(command.status().unwrap().success());
+        }
+        "service-loop" => {
+            let mut line = String::new();
+            std::io::stdin().lock().read_line(&mut line).unwrap();
+            assert_eq!(line, "start\n");
+            fs::write(root.join("service-pid"), std::process::id().to_string()).unwrap();
+            wait_for(&root.join("release"));
+        }
+        "service-owner" => {
+            fs::write(
+                root.join("service-owner-pid"),
+                std::process::id().to_string(),
+            )
+            .unwrap();
+            let lease = OpenOptions::new()
+                .read(true)
+                .share_mode(1)
+                .open(root.join("lease"))
+                .unwrap();
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", FIXTURE, "--nocapture"])
+                .env("NEMOCLAW_GUARDIAN_TEST_MODE", "service-loop")
+                .current_dir(&root);
+            let result = run_managed(command, 0x08000000, lease.as_raw_handle(), true, None, true);
+            std::process::exit(result.unwrap_or(1));
+        }
+        "service-starter" => {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", FIXTURE, "--nocapture"])
+                .env("NEMOCLAW_GUARDIAN_TEST_MODE", "service-owner")
+                .current_dir(&root)
+                .stdin(std::process::Stdio::piped());
+            let mut service = command.spawn().unwrap();
+            let _provisional_writer = service.stdin.take().unwrap();
+            wait_for(&root.join("service-pid"));
+            loop {
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        }
         "arguments" => {
             let value = std::env::var("NEMOCLAW_GUARDIAN_TEST_VALUE").unwrap();
             fs::write(root.join("arguments"), value).unwrap();
@@ -138,7 +205,7 @@ fn preserves_real_child_exit_code_and_no_lingering_job_members() {
         run(
             fixture.command("exit23"),
             0x08000000,
-            fixture.lease.as_raw_handle(),
+            fixture.lease_handle(),
             false
         ),
         Ok(23)
@@ -153,7 +220,7 @@ fn owned_stdin_handshake_is_delivered_without_waiting_for_eof() {
         run(
             fixture.command("stdin"),
             0x08000000,
-            fixture.lease.as_raw_handle(),
+            fixture.lease_handle(),
             true
         ),
         Ok(0)
@@ -180,7 +247,7 @@ fn normal_child_and_grandchild_finish_before_guardian_returns() {
         run(
             fixture.command("parent"),
             0x08000000,
-            fixture.lease.as_raw_handle(),
+            fixture.lease_handle(),
             false
         ),
         Ok(0)
@@ -199,7 +266,7 @@ fn living_descendant_forces_cleanup_and_cannot_be_reported_as_success() {
         run(
             fixture.command("orphan-parent"),
             0x08000000,
-            fixture.lease.as_raw_handle(),
+            fixture.lease_handle(),
             false
         ),
         Err("runtime-host-left-descendants")
@@ -222,7 +289,7 @@ fn actual_child_environment_keeps_unicode_spaces_and_literal_metacharacters() {
     let mut command = fixture.command("arguments");
     command.env("NEMOCLAW_GUARDIAN_TEST_VALUE", value);
     assert_eq!(
-        run(command, 0x08000000, fixture.lease.as_raw_handle(), false),
+        run(command, 0x08000000, fixture.lease_handle(), false),
         Ok(0)
     );
     assert_eq!(
@@ -238,7 +305,7 @@ fn missing_child_preserves_start_failure_without_releasing_caller_lease() {
     let mut command = Command::new(fixture.root.join("not-present.exe"));
     command.current_dir(&fixture.root);
     assert_eq!(
-        run(command, 0x08000000, fixture.lease.as_raw_handle(), false),
+        run(command, 0x08000000, fixture.lease_handle(), false),
         Err("runtime-host-start")
     );
     assert!(fs::remove_file(fixture.root.join("lease")).is_err());
@@ -262,4 +329,152 @@ fn crt_arguments_preserve_spaces_quotes_and_trailing_slashes() {
 #[test]
 fn rejects_embedded_nul() {
     assert!(quoted(OsStr::new("a\0b")).is_err());
+}
+
+struct OwnedChild(std::process::Child);
+impl OwnedChild {
+    fn code(&mut self) -> i32 {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if let Some(status) = self.0.try_wait().unwrap() {
+                return status.code().unwrap_or(1);
+            }
+            assert!(Instant::now() < deadline, "owned service did not stop");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        if self.0.try_wait().ok().flatten().is_none() {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn OpenProcess(access: u32, inherit: i32, pid: u32) -> RawHandle;
+    fn TerminateProcess(process: RawHandle, code: u32) -> i32;
+}
+struct OwnedDescendant(Handle);
+impl OwnedDescendant {
+    fn from_fixture(path: &Path) -> Self {
+        wait_for(path);
+        let pid = fs::read_to_string(path).unwrap().parse::<u32>().unwrap();
+        let handle = unsafe { OpenProcess(0x100000 | 0x1000 | 1, 0, pid) };
+        assert!(!handle.is_null());
+        Self(Handle(handle))
+    }
+    fn wait(&self) {
+        assert_eq!(unsafe { WaitForSingleObject(self.0.0, 15000) }, 0);
+    }
+}
+impl Drop for OwnedDescendant {
+    fn drop(&mut self) {
+        if unsafe { WaitForSingleObject(self.0.0, 0) } == 258 {
+            unsafe {
+                TerminateProcess(self.0.0, 1);
+                WaitForSingleObject(self.0.0, 5000);
+            }
+        }
+    }
+}
+#[test]
+fn provisional_service_parent_eof_stops_its_actual_owned_job() {
+    let mut fixture = Fixture::new();
+    let mut command = fixture.command("service-owner");
+    command.stdin(std::process::Stdio::piped());
+    let mut service = OwnedChild(command.spawn().unwrap());
+    let process = OwnedDescendant::from_fixture(&fixture.root.join("service-pid"));
+    drop(fixture.lease.take());
+    assert!(fs::remove_file(fixture.root.join("lease")).is_err());
+    drop(service.0.stdin.take());
+    assert_ne!(service.code(), 0);
+    process.wait();
+    finish(fixture);
+}
+#[test]
+fn committed_service_outlives_request_pipe_and_keeps_its_own_lease_until_stop() {
+    let mut fixture = Fixture::new();
+    let mut command = fixture.command("service-owner");
+    command.stdin(std::process::Stdio::piped());
+    let mut service = OwnedChild(command.spawn().unwrap());
+    let process = OwnedDescendant::from_fixture(&fixture.root.join("service-pid"));
+    let mut provisional = service.0.stdin.take().unwrap();
+    provisional.write_all(b"commit\n").unwrap();
+    drop(provisional);
+    drop(fixture.lease.take());
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(service.0.try_wait().unwrap().is_none());
+    assert!(fs::remove_file(fixture.root.join("lease")).is_err());
+    fs::write(fixture.root.join("release"), b"normal owned service stop").unwrap();
+    assert_eq!(service.code(), 0);
+    process.wait();
+    fs::remove_file(fixture.root.join("lease")).unwrap();
+    finish(fixture);
+}
+#[test]
+fn abruptly_killed_requester_cannot_strand_its_uncommitted_service() {
+    let mut fixture = Fixture::new();
+    let mut starter = OwnedChild(fixture.command("service-starter").spawn().unwrap());
+    let process = OwnedDescendant::from_fixture(&fixture.root.join("service-pid"));
+    let service = OwnedDescendant::from_fixture(&fixture.root.join("service-owner-pid"));
+    drop(fixture.lease.take());
+    assert!(fs::remove_file(fixture.root.join("lease")).is_err());
+    starter.0.kill().unwrap();
+    assert_ne!(starter.code(), 0);
+    service.wait();
+    process.wait();
+    fs::remove_file(fixture.root.join("lease")).unwrap();
+    finish(fixture);
+}
+
+#[test]
+fn unused_service_pipe_closes_on_actual_agent_exit_without_an_idle_polling_loop() {
+    let fixture = Fixture::new();
+    assert_eq!(
+        run_managed(
+            fixture.command("exit23"),
+            0x08000000,
+            fixture.lease_handle(),
+            false,
+            Some(&fixture.root),
+            false
+        ),
+        Ok(23)
+    );
+    finish(fixture);
+}
+#[test]
+fn service_pipe_accepts_only_the_exact_held_agent_process_identity() {
+    let fixture = Fixture::new();
+    assert_eq!(
+        run_managed(
+            fixture.command("pipe-foreign-parent"),
+            0x08000000,
+            fixture.lease_handle(),
+            false,
+            Some(&fixture.root),
+            false
+        ),
+        Err("runtime-service-client")
+    );
+    finish(fixture);
+}
+#[test]
+fn service_pipe_rejects_unknown_actions_from_even_the_correct_agent_process() {
+    let fixture = Fixture::new();
+    assert_eq!(
+        run_managed(
+            fixture.command("pipe-invalid"),
+            0x08000000,
+            fixture.lease_handle(),
+            false,
+            Some(&fixture.root),
+            false
+        ),
+        Err("runtime-service-request")
+    );
+    finish(fixture);
 }

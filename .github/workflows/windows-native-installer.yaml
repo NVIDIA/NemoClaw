@@ -22,7 +22,7 @@ on:
         default: false
         type: boolean
       test_native_windows_runtime:
-        description: Test native runtime ownership and transaction primitives without installing a package
+        description: Run native ownership and guardian controls with isolated MSI fixtures
         required: false
         default: false
         type: boolean
@@ -851,7 +851,7 @@ jobs:
     name: Official Hermes ${{ inputs.official_hermes_phase || 'components' }} probe (Windows ARM64)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Check out the component probe
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -895,7 +895,8 @@ jobs:
         if: ${{ inputs.official_hermes_phase == 'python' }}
         id: hermes-python
         shell: powershell
-        timeout-minutes: 25
+        # Pinned OpenSSL SDK build precedes the unchanged 20-minute Python stage.
+        timeout-minutes: 55
         env:
           HERMES_COMPONENT_ROOT: ${{ steps.hermes-components.outputs.runtime_root }}
         run: |
@@ -940,7 +941,8 @@ jobs:
             "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-components.test.mts" `
             "$env:GITHUB_WORKSPACE\packaging\windows\hermes\portable-git-arguments.test.mts" `
             "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-python-temp.test.mts" `
-            "$env:GITHUB_WORKSPACE\packaging\windows\performance\measurement.test.mts"
+            "$env:GITHUB_WORKSPACE\packaging\windows\performance\measurement.test.mts" `
+            "$env:GITHUB_WORKSPACE\packaging\windows\performance\compile-cache-experiment.test.mts"
           if ($LASTEXITCODE -ne 0) { throw 'The component process diagnostic controls failed.' }
 
       - name: Execute the official components inside MXC
@@ -975,7 +977,7 @@ jobs:
             --artifact-directory "$env:RUNNER_TEMP\official-hermes-python-temp"
           if ($LASTEXITCODE -ne 0) { throw 'The official Python before/after temp adapter control failed.' }
 
-      - name: Probe installed runtime access without tree copies
+      - name: Probe installed runtime access and contained compile-cache A/B
         if: ${{ !cancelled() && steps.component-baseline.outcome == 'success' && steps.component-controls.outcome == 'success' }}
         shell: powershell
         run: |
@@ -986,7 +988,9 @@ jobs:
             "$env:GITHUB_WORKSPACE\packaging\windows\performance\probe-installed-readonly.mts" `
             --install-root $installRoot `
             --source-revision f8a1d8c702c879d2984d76d2e0419641bb1ccd97 `
-            --artifact-directory "$env:RUNNER_TEMP\installed-runtime-readonly"
+            --artifact-directory "$env:RUNNER_TEMP\installed-runtime-readonly" `
+            --compile-cache-experiment `
+            --runtime-manifest-sha256 d36e977401cf8188350e657137bf649c654f4554a6c4da299f9b2b9353e7066e
           if ($LASTEXITCODE -ne 0) { throw 'The installed read-only runtime probe failed.' }
 
       - name: Upload failed component evidence before baseline cleanup
@@ -1001,6 +1005,11 @@ jobs:
             ${{ runner.temp }}/official-hermes-mxc/
             ${{ runner.temp }}/installed-runtime-readonly/
             !${{ runner.temp }}/official-hermes-components/downloads/
+            !${{ runner.temp }}/official-hermes-python/openssl/downloads/
+            !${{ runner.temp }}/official-hermes-python/openssl/strawberryperl/
+            !${{ runner.temp }}/official-hermes-python/openssl/nasm-windows-bin/
+            !${{ runner.temp }}/official-hermes-python/openssl/jom-windows-bin/
+            !${{ runner.temp }}/official-hermes-python/openssl/openssl/
             !${{ runner.temp }}/official-hermes-python/downloads/
             !${{ runner.temp }}/official-hermes-python/cargo-home/
             !${{ runner.temp }}/official-hermes-python/dependency-stage/uv-cache/
@@ -1028,6 +1037,11 @@ jobs:
             ${{ runner.temp }}/installed-runtime-readonly/
             !${{ runner.temp }}/official-hermes-baseline/baseline-setup.exe
             !${{ runner.temp }}/official-hermes-components/downloads/
+            !${{ runner.temp }}/official-hermes-python/openssl/downloads/
+            !${{ runner.temp }}/official-hermes-python/openssl/strawberryperl/
+            !${{ runner.temp }}/official-hermes-python/openssl/nasm-windows-bin/
+            !${{ runner.temp }}/official-hermes-python/openssl/jom-windows-bin/
+            !${{ runner.temp }}/official-hermes-python/openssl/openssl/
             !${{ runner.temp }}/official-hermes-python/downloads/
             !${{ runner.temp }}/official-hermes-python/cargo-home/
             !${{ runner.temp }}/official-hermes-python/dependency-stage/uv-cache/
@@ -1085,7 +1099,7 @@ jobs:
           retention-days: 14
 
   windows-runtime-controls:
-    name: Native Windows runtime ownership controls
+    name: Native Windows ownership and isolated MSI controls
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_native_windows_runtime }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 20
@@ -1155,15 +1169,132 @@ jobs:
             $result = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }
           if ($result -ne 0) { throw 'The native runtime guardian controls failed.' }
-          if ((Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 9 passed; 0 failed; 0 ignored;') {
-            throw 'The eight guardian controls and their child-fixture entry did not all execute.'
+          if ((Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 15 passed; 0 failed; 0 ignored;') {
+            throw 'The fourteen guardian controls and their child-fixture entry did not all execute.'
           }
+
+      - name: Set up pinned tools for isolated MSI fixtures
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.419
+
+      - name: Set up actual ARM64 Node for the shared-file fixture
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.2
+          architecture: arm64
+
+      - name: Set up build-only Python for MSI fixture authoring
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.1.0
+        with:
+          python-version: 3.13.13
+          architecture: arm64
+
+      - name: Exercise native file ownership and relay counters
+        shell: powershell
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $output = Join-Path $env:RUNNER_TEMP 'windows-runtime-controls'
+          $log = Join-Path $output 'native-ui-file-owner-tests.log'
+          try {
+            $ErrorActionPreference = 'Continue'
+            & rustup run 1.95.0-aarch64-pc-windows-msvc cargo test --locked `
+              --manifest-path "$env:GITHUB_WORKSPACE\packaging\windows\launcher\Cargo.toml" `
+              --target aarch64-pc-windows-msvc native_ui_file_owner:: -- --nocapture --test-threads=1 2>&1 | Tee-Object -FilePath $log
+            $result = $LASTEXITCODE
+          } finally { $ErrorActionPreference = 'Stop' }
+          if ($result -ne 0 -or (Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 15 passed; 0 failed; 0 ignored;') {
+            throw 'The two portable and thirteen Windows file-owner controls did not all pass.'
+          }
+          $target = Join-Path $env:RUNNER_TEMP 'windows-runtime-test-launcher'
+          try {
+            $ErrorActionPreference = 'Continue'
+            & rustup run 1.95.0-aarch64-pc-windows-msvc cargo rustc --locked --release --no-default-features `
+              --manifest-path "$env:GITHUB_WORKSPACE\packaging\windows\launcher\Cargo.toml" `
+              --target aarch64-pc-windows-msvc --target-dir $target -- -C target-feature=+crt-static `
+              2>&1 | Tee-Object -FilePath (Join-Path $output 'relay-launcher-build.log')
+            $buildResult = $LASTEXITCODE
+          } finally { $ErrorActionPreference = 'Stop' }
+          if ($buildResult -ne 0) { throw 'The native relay fixture launcher did not build.' }
+          $env:NEMOCLAW_NATIVE_TEST_LAUNCHER = Join-Path $target 'aarch64-pc-windows-msvc\release\NemoClaw.exe'
+          $relayLog = Join-Path $output 'relay-measurement-tests.log'
+          try {
+            $ErrorActionPreference = 'Continue'
+            & node --experimental-strip-types --no-warnings --test --test-reporter=tap `
+              "$env:GITHUB_WORKSPACE\packaging\windows\performance\relay-measurements.test.mts" `
+              2>&1 | Tee-Object -FilePath $relayLog
+            $relayResult = $LASTEXITCODE
+          } finally { $ErrorActionPreference = 'Stop' }
+          $relayText = Get-Content -LiteralPath $relayLog -Raw
+          if ($relayResult -ne 0 -or $relayText -notmatch '(?m)^# pass 5\r?$' -or $relayText -notmatch '(?m)^# skipped 0\r?$') {
+            throw 'All five actual Windows relay measurement controls must run without skips.'
+          }
+
+      - name: Check MSI manifest and transaction controls
+        shell: powershell
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $output = Join-Path $env:RUNNER_TEMP 'windows-runtime-controls'
+          $pythonLog = Join-Path $output 'msi-build-tests.log'
+          try {
+            $ErrorActionPreference = 'Continue'
+            & python -m unittest discover -s "$env:GITHUB_WORKSPACE\packaging\windows\installer" -p 'test_*.py' -v 2>&1 | Tee-Object -FilePath $pythonLog
+            $pythonResult = $LASTEXITCODE
+          } finally { $ErrorActionPreference = 'Stop' }
+          if ($pythonResult -ne 0 -or (Get-Content -LiteralPath $pythonLog -Raw) -notmatch 'Ran 18 tests') {
+            throw 'The eighteen MSI build and metadata controls did not all pass.'
+          }
+          $log = Join-Path $output 'msi-helper-tests.log'
+          try {
+            $ErrorActionPreference = 'Continue'
+            & rustup run 1.95.0-aarch64-pc-windows-msvc cargo test --locked `
+              --manifest-path "$env:GITHUB_WORKSPACE\packaging\windows\installer\Cargo.toml" `
+              --target aarch64-pc-windows-msvc --features msi-boundary-fixture -- `
+              --nocapture --test-threads=1 --skip runtime_lease:: 2>&1 | Tee-Object -FilePath $log
+            $result = $LASTEXITCODE
+          } finally { $ErrorActionPreference = 'Stop' }
+          if ($result -ne 0 -or (Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 17 passed; 0 failed; 0 ignored;') {
+            throw 'The sixteen transaction/manifest and native SHA256 controls did not all pass.'
+          }
+
+      - name: Build and exercise actual isolated MSI transactions
+        shell: powershell
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $tools = Join-Path $env:RUNNER_TEMP 'windows-msi-tools'
+          [IO.Directory]::CreateDirectory($tools) | Out-Null
+          $config = Join-Path $tools 'NuGet.Config'
+          [IO.File]::WriteAllText($config, '<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>', [Text.UTF8Encoding]::new($false))
+          & dotnet tool install wix --version 5.0.2 --tool-path $tools --configfile $config
+          if ($LASTEXITCODE -ne 0) { throw 'The pinned WiX fixture tool could not be installed.' }
+          $node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
+          $python = (Get-Command python.exe -CommandType Application | Select-Object -First 1).Source
+          $license = Join-Path (Split-Path -Parent $node) 'LICENSE'
+          & "$env:GITHUB_WORKSPACE\packaging\windows\installer\test-runtime-msi.ps1" `
+            -SourceRoot $env:GITHUB_WORKSPACE `
+            -ArtifactDirectory (Join-Path $env:RUNNER_TEMP 'windows-msi-boundary-fixtures') `
+            -NodePath $node -NodeLicensePath $license -PythonPath $python `
+            -WixPath (Join-Path $tools 'wix.exe') -SourceRevision $env:GITHUB_SHA
 
       - name: Upload runtime ownership control evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-runtime-controls-${{ github.sha }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/windows-runtime-controls/
+          path: |
+            ${{ runner.temp }}/windows-runtime-controls/
+            ${{ runner.temp }}/windows-msi-boundary-fixtures/*.json
+            ${{ runner.temp }}/windows-msi-boundary-fixtures/*.log
+            ${{ runner.temp }}/windows-msi-boundary-fixtures/fixtures/fixtures.json
+            ${{ runner.temp }}/windows-msi-boundary-fixtures/fixtures/*/namespace.json
           if-no-files-found: warn
           retention-days: 14

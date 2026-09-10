@@ -102,7 +102,11 @@ assert sys.prefix != sys.base_prefix
 modules = ['hermes_cli.main', 'tools.terminal_tool', 'tools.file_tools', 'tools.web_tools', 'fastapi', 'uvicorn', 'winpty']
 for name in modules:
     importlib.import_module(name)
-print(json.dumps({'executable':sys.executable,'baseExecutable':sys._base_executable,'basePrefix':sys.base_prefix,'version':sys.version,'imports':modules,'packages':sorted([{'name':d.metadata['Name'],'version':d.version} for d in importlib.metadata.distributions()],key=lambda x:x['name'].lower())}))
+import cryptography
+from cryptography.hazmat.backends.openssl.backend import backend
+assert cryptography.__version__ == '50.0.0', cryptography.__version__
+assert backend.openssl_version_text().startswith('OpenSSL 3.5.8 '), backend.openssl_version_text()
+print(json.dumps({'cryptographyVersion':cryptography.__version__,'opensslVersion':backend.openssl_version_text(),'executable':sys.executable,'baseExecutable':sys._base_executable,'basePrefix':sys.base_prefix,'version':sys.version,'imports':modules,'packages':sorted([{'name':d.metadata['Name'],'version':d.version} for d in importlib.metadata.distributions()],key=lambda x:x['name'].lower())}))
 '@
     $runtimeBuildImportText = Invoke-NativeWithRelaxedErrorAction { & $runtimeBuildPython -I -c $runtimeBuildCheck $runtimeBuildBase }
     if ($LASTEXITCODE -ne 0) { throw 'The official full Python environment failed its exact interpreter/import checks.' }
@@ -153,7 +157,7 @@ try {
     $runtimeBuildStart.RedirectStandardOutput = $true
     $runtimeBuildStart.RedirectStandardError = $true
     $runtimeBuildStart.EnvironmentVariables.Clear()
-    foreach ($name in @('SystemRoot','SystemDrive','WINDIR','COMSPEC','OS','TEMP','TMP','LOCALAPPDATA','APPDATA','USERPROFILE','PROCESSOR_ARCHITECTURE','PROCESSOR_ARCHITEW6432','NUMBER_OF_PROCESSORS','INCLUDE','LIB','LIBPATH','VCINSTALLDIR','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion','WindowsSdkVerBinPath','UniversalCRTSdkDir','UCRTVersion','VSCMD_ARG_TGT_ARCH','VSCMD_ARG_HOST_ARCH','CARGO_HOME','RUSTUP_HOME','RUNNER_TRACKING_ID')) {
+    foreach ($name in @('SystemRoot','SystemDrive','WINDIR','COMSPEC','OS','TEMP','TMP','LOCALAPPDATA','APPDATA','USERPROFILE','PROCESSOR_ARCHITECTURE','PROCESSOR_ARCHITEW6432','NUMBER_OF_PROCESSORS','INCLUDE','LIB','LIBPATH','VCINSTALLDIR','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion','WindowsSdkVerBinPath','UniversalCRTSdkDir','UCRTVersion','VSCMD_ARG_TGT_ARCH','VSCMD_ARG_HOST_ARCH','CARGO_HOME','RUSTUP_HOME','RUNNER_TRACKING_ID','OPENSSL_DIR','OPENSSL_STATIC')) {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($null -ne $value) { $runtimeBuildStart.EnvironmentVariables[$name] = $value }
     }

@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "classification": "official-hermes-openssl-build-prerequisite",
+  "upstreamHermes": "2237be355906fbe6065ce1815711eee52b2d646e",
+  "cryptographyVersion": "50.0.0",
+  "cryptographySdistSha256": "eeac2acb5a20ed25e0ad6d1df9891a520b78b404266b6d11778f25d5d691a6c9",
+  "opensslVersion": "3.5.8",
+  "target": "VC-WIN64-ARM",
+  "configuration": [
+    "no-zlib",
+    "no-shared",
+    "no-module",
+    "no-comp",
+    "no-apps",
+    "no-docs",
+    "no-sm2-precomp",
+    "no-atexit"
+  ],
+  "crt": "OpenSSL native VC static-library defaults: /MT /Zl, no forced CRT override",
+  "sourceAuthority": {
+    "pythonBuildStandalone": "4bb01f09aaf362c71e891be4a41cb6d6ddf830b3",
+    "cryptographyRelease": "dcb7050b807b00392fa9fe2eac7cb362fcf355cc",
+    "pycaBuildRecipe": "a9d9d965321893fbd44aea8bcb9fc3a5e7a53cfb",
+    "pycaBuildRecipeSha256": "f7cbb880c526f8f5e3efd693f4f72ba138311bd77cbd9d250c25413ddd4b7b77"
+  },
+  "artifacts": [
+    {
+      "id": "openssl",
+      "file": "openssl-3.5.8.tar.gz",
+      "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz",
+      "size": 53213818,
+      "sha256": "a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2",
+      "version": "3.5.8"
+    },
+    {
+      "id": "strawberryperl",
+      "file": "strawberry-perl-5.38.2.2-64bit-portable.zip",
+      "url": "https://github.com/StrawberryPerl/Perl-Dist-Strawberry/releases/download/SP_53822_64bit/strawberry-perl-5.38.2.2-64bit-portable.zip",
+      "size": 264199638,
+      "sha256": "ea451686065d6338d7e4d4a04c9af49f17951d15aa4c2e19ab8cb56fa2373440",
+      "version": "5.38.2.2",
+      "executable": {
+        "path": "perl/bin/perl.exe",
+        "bytes": 44032,
+        "sha256": "13f689c7c8d93a546ae207e28000a0b163851dd0a148d5d329618ffc7daff554",
+        "machine": "0x8664"
+      }
+    },
+    {
+      "id": "nasm-windows-bin",
+      "file": "nasm-2.16.03-win64.zip",
+      "url": "https://astral-sh.github.io/mirror/files/nasm-2.16.03-win64.zip",
+      "size": 513543,
+      "sha256": "3ee4782247bcb874378d02f7eab4e294a84d3d15f3f6ee2de2f47a46aa7226e6",
+      "version": "2.16.03",
+      "executable": {
+        "path": "nasm-2.16.03/nasm.exe",
+        "bytes": 1650688,
+        "sha256": "a93276636266516421cc9b422f47476c21f7a2949f1ae251556b2f1d33a3be04",
+        "machine": "0x8664"
+      }
+    },
+    {
+      "id": "jom-windows-bin",
+      "file": "jom_1_1_4.zip",
+      "url": "https://download.qt.io/official_releases/jom/jom_1_1_4.zip",
+      "size": 1696930,
+      "sha256": "d533c1ef49214229681e90196ed2094691e8c4a0a0bef0b2c901debcb562682b",
+      "version": "1.1.4",
+      "executable": {
+        "path": "jom.exe",
+        "bytes": 3861504,
+        "sha256": "93eb6b9df1a61b75f8d279578b200706a98096d85773ae3a09bbefea365cc2e8",
+        "machine": "0x8664"
+      }
+    }
+  ]
+}

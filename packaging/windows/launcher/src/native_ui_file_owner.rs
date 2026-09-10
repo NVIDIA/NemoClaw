@@ -95,10 +95,12 @@ fn decode(text: &str) -> Result<Vec<u8>, &'static str> {
 #[cfg(windows)]
 mod native {
     use super::*;
+    use std::cell::RefCell;
     use std::collections::HashMap;
     use std::ffi::{OsStr, c_void};
     use std::io::{BufRead, Write};
     use std::ptr::{null, null_mut};
+    use std::time::Instant;
 
     type RawHandle = *mut c_void;
     const DIRECTORY: u32 = 0x10;
@@ -586,6 +588,44 @@ mod native {
         Ok(())
     }
 
+    #[derive(Default)]
+    struct Performance {
+        read_success: u64,
+        read_miss: u64,
+        read_bytes: u64,
+        write_success: u64,
+        write_bytes: u64,
+        list_success: u64,
+        list_entries: u64,
+        flush_calls: u64,
+        flush_failed: u64,
+        flush_ns: u64,
+        flush_max_ns: u64,
+        binary_flush_calls: u64,
+        binary_flush_ns: u64,
+    }
+
+    impl Performance {
+        fn json(&self) -> String {
+            format!(
+                "{{\"schemaVersion\":1,\"read_success\":{},\"read_miss\":{},\"read_bytes\":{},\"write_success\":{},\"write_bytes\":{},\"list_success\":{},\"list_entries\":{},\"flush_calls\":{},\"flush_failed\":{},\"flush_ns\":{},\"flush_max_ns\":{},\"binary_flush_calls\":{},\"binary_flush_ns\":{}}}",
+                self.read_success,
+                self.read_miss,
+                self.read_bytes,
+                self.write_success,
+                self.write_bytes,
+                self.list_success,
+                self.list_entries,
+                self.flush_calls,
+                self.flush_failed,
+                self.flush_ns,
+                self.flush_max_ns,
+                self.binary_flush_calls,
+                self.binary_flush_ns
+            )
+        }
+    }
+
     struct Owner {
         streams: HashMap<String, Handle>,
         _lock: Handle,
@@ -594,6 +634,7 @@ mod native {
         sid: String,
         inherited_owner: LocalMemory,
         serial: u64,
+        performance: RefCell<Option<Performance>>,
     }
 
     impl Owner {
@@ -678,6 +719,7 @@ mod native {
                 sid,
                 inherited_owner,
                 serial: 0,
+                performance: RefCell::new(None),
             })
         }
 
@@ -795,7 +837,26 @@ mod native {
                     }
                     total += written as usize;
                 }
-                if unsafe { FlushFileBuffers(handle.0) } == 0 {
+                let measured = self.performance.borrow().is_some().then(Instant::now);
+                let flushed = unsafe { FlushFileBuffers(handle.0) };
+                if let Some(started) = measured {
+                    let elapsed = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+                    if let Some(counters) = self.performance.borrow_mut().as_mut() {
+                        counters.flush_calls = counters.flush_calls.saturating_add(1);
+                        counters.flush_failed = counters
+                            .flush_failed
+                            .saturating_add(u64::from(flushed == 0));
+                        counters.flush_ns = counters.flush_ns.saturating_add(elapsed);
+                        counters.flush_max_ns = counters.flush_max_ns.max(elapsed);
+                        if relative.ends_with(".bin") {
+                            counters.binary_flush_calls =
+                                counters.binary_flush_calls.saturating_add(1);
+                            counters.binary_flush_ns =
+                                counters.binary_flush_ns.saturating_add(elapsed);
+                        }
+                    }
+                }
+                if flushed == 0 {
                     return Err("flush");
                 }
                 let name = file.encode_utf16().collect::<Vec<_>>();
@@ -933,15 +994,56 @@ mod native {
                     self.mkdir(name)?;
                     Ok("OK".into())
                 }
-                ["read", name] => Ok(match self.read(name)? {
-                    Some(bytes) => format!("OK\t{}", encode(&bytes)),
-                    None => "MISS".into(),
-                }),
+                ["read", name] => {
+                    let result = self.read(name)?;
+                    if let Some(counters) = self.performance.borrow_mut().as_mut() {
+                        if let Some(bytes) = &result {
+                            counters.read_success = counters.read_success.saturating_add(1);
+                            counters.read_bytes =
+                                counters.read_bytes.saturating_add(bytes.len() as u64);
+                        } else {
+                            counters.read_miss = counters.read_miss.saturating_add(1);
+                        }
+                    }
+                    Ok(match result {
+                        Some(bytes) => format!("OK\t{}", encode(&bytes)),
+                        None => "MISS".into(),
+                    })
+                }
                 ["write", name, value] => {
-                    self.write(name, &decode(value)?)?;
+                    let bytes = decode(value)?;
+                    self.write(name, &bytes)?;
+                    if let Some(counters) = self.performance.borrow_mut().as_mut() {
+                        counters.write_success = counters.write_success.saturating_add(1);
+                        counters.write_bytes =
+                            counters.write_bytes.saturating_add(bytes.len() as u64);
+                    }
                     Ok("OK".into())
                 }
-                ["list", name] => Ok(format!("OK\t{}", self.list(name)?.join(","))),
+                ["list", name] => {
+                    let names = self.list(name)?;
+                    if let Some(counters) = self.performance.borrow_mut().as_mut() {
+                        counters.list_success = counters.list_success.saturating_add(1);
+                        counters.list_entries =
+                            counters.list_entries.saturating_add(names.len() as u64);
+                    }
+                    Ok(format!("OK\t{}", names.join(",")))
+                }
+                ["performance", "enable"] => {
+                    let mut counters = self.performance.borrow_mut();
+                    if counters.is_some() {
+                        return Err("performance-enabled");
+                    }
+                    *counters = Some(Performance::default());
+                    Ok("OK".into())
+                }
+                ["performance"] => {
+                    let counters = self.performance.borrow();
+                    Ok(format!(
+                        "OK\t{}",
+                        counters.as_ref().ok_or("performance-disabled")?.json()
+                    ))
+                }
                 ["unlink", name] => {
                     self.unlink(name)?;
                     Ok("OK".into())

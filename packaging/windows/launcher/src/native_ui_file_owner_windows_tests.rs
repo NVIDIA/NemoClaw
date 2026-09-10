@@ -394,3 +394,65 @@ fn external_node_style_readers_see_complete_publication_before_writer_handle_dro
         .unwrap();
     fixture.assert_secret();
 }
+
+#[test]
+fn optional_performance_counts_real_io_and_flush_without_file_identities() {
+    let mut fixture = Fixture::new();
+    let owner = fixture.owner();
+    assert_eq!(owner.command("performance"), Err("performance-disabled"));
+    owner.mkdir(STREAM).unwrap();
+    owner
+        .write(&format!("{STREAM}/host-0000000001.bin"), b"before")
+        .unwrap();
+    assert!(owner.performance.borrow().is_none());
+    assert_eq!(owner.command("performance\tenable").unwrap(), "OK");
+    assert_eq!(
+        owner.command("performance\tenable"),
+        Err("performance-enabled")
+    );
+    assert_eq!(
+        owner
+            .command(&format!("read\t{STREAM}/host-0000000001.bin"))
+            .unwrap(),
+        "OK\tYmVmb3Jl"
+    );
+    assert_eq!(
+        owner
+            .command(&format!("read\t{STREAM}/host-0000000002.bin"))
+            .unwrap(),
+        "MISS"
+    );
+    owner
+        .command(&format!(
+            "write\t{STREAM}/host-0000000002.bin\t{}",
+            encode(b"measured")
+        ))
+        .unwrap();
+    owner
+        .command(&format!("write\tready\t{}", encode(b"control")))
+        .unwrap();
+    owner.command(&format!("list\t{STREAM}")).unwrap();
+    {
+        let measured = owner.performance.borrow();
+        let counters = measured.as_ref().unwrap();
+        assert_eq!(counters.read_success, 1);
+        assert_eq!(counters.read_miss, 1);
+        assert_eq!(counters.read_bytes, 6);
+        assert_eq!(counters.write_success, 2);
+        assert_eq!(counters.write_bytes, 15);
+        assert_eq!(counters.list_success, 1);
+        assert_eq!(counters.list_entries, 2);
+        assert_eq!(counters.flush_calls, 2);
+        assert_eq!(counters.binary_flush_calls, 1);
+        assert_eq!(counters.flush_failed, 0);
+        assert!(counters.flush_ns >= counters.flush_max_ns);
+        assert!(counters.flush_ns >= counters.binary_flush_ns);
+        assert!(counters.flush_ns > 0);
+    }
+    let response = owner.command("performance").unwrap();
+    assert!(response.starts_with("OK\t{\"schemaVersion\":1,"));
+    assert!(!response.contains(STREAM));
+    assert!(!response.contains("measured"));
+    assert!(!response.contains("control"));
+    assert_eq!(owner.command("close").unwrap(), "OK");
+}

@@ -20,6 +20,130 @@ export interface BrokerRelayFiles {
   list(name: string): Promise<string[]>;
 }
 
+// Opt-in diagnostic samples only. Counters contain no names, identities or bytes.
+// Ordinary callers allocate no counter object and do not read the extra clock.
+export function createRelayMeasurements() {
+  const operations = Object.fromEntries(
+    ["poll", "read", "write", "list", "unlink", "flush", "flushedWrite", "ipc"].map((name) => [
+      name,
+      {
+        calls: 0,
+        successes: 0,
+        misses: 0,
+        failures: 0,
+        bytes: 0,
+        entries: 0,
+        totalMs: 0,
+        maxMs: 0,
+      },
+    ]),
+  );
+  const scans = { active: 0, idle: 0 };
+  let saturated = false;
+  const add = (left: number, right: number) => {
+    const value = left + right;
+    if (value > Number.MAX_SAFE_INTEGER) {
+      saturated = true;
+      return Number.MAX_SAFE_INTEGER;
+    }
+    return value;
+  };
+  return {
+    start: () => process.hrtime.bigint(),
+    finish(
+      operation: "poll" | "read" | "write" | "list" | "unlink" | "flush" | "flushedWrite" | "ipc",
+      started: bigint,
+      outcome: "success" | "miss" | "failure",
+      bytes = 0,
+      entries = 0,
+    ) {
+      const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+      const record = operations[operation]!;
+      record.calls = add(record.calls, 1);
+      const key = outcome === "success" ? "successes" : outcome === "miss" ? "misses" : "failures";
+      record[key] = add(record[key], 1);
+      record.bytes = add(record.bytes, bytes);
+      record.entries = add(record.entries, entries);
+      record.totalMs = add(record.totalMs, elapsedMs);
+      record.maxMs = Math.max(record.maxMs, elapsedMs);
+    },
+    scan(active: boolean) {
+      const key = active ? "active" : "idle";
+      scans[key] = add(scans[key], 1);
+    },
+    snapshot() {
+      return {
+        schemaVersion: 1,
+        instrumentationEnabled: true,
+        clock: "process.hrtime.bigint",
+        durationUnit: "milliseconds",
+        saturated,
+        scans: { ...scans },
+        operations: Object.fromEntries(
+          Object.entries(operations).map(([name, values]) => [name, { ...values }]),
+        ),
+      };
+    },
+  };
+}
+export type RelayMeasurements = ReturnType<typeof createRelayMeasurements>;
+
+export function measureRelayFiles(
+  files: BrokerRelayFiles,
+  measurements?: RelayMeasurements,
+): BrokerRelayFiles {
+  if (!measurements) return files;
+  return {
+    async read(name) {
+      const started = measurements.start();
+      try {
+        const bytes = await files.read(name);
+        measurements.finish(
+          "read",
+          started,
+          bytes === null ? "miss" : "success",
+          bytes?.length ?? 0,
+        );
+        return bytes;
+      } catch (error) {
+        measurements.finish("read", started, "failure");
+        throw error;
+      }
+    },
+    async write(name, bytes) {
+      const started = measurements.start();
+      try {
+        await files.write(name, bytes);
+        measurements.finish("write", started, "success", Buffer.byteLength(bytes));
+      } catch (error) {
+        measurements.finish("write", started, "failure");
+        throw error;
+      }
+    },
+    async list(name) {
+      const started = measurements.start();
+      try {
+        const names = await files.list(name);
+        measurements.finish("list", started, "success", 0, names.length);
+        return names;
+      } catch (error) {
+        measurements.finish("list", started, "failure");
+        throw error;
+      }
+    },
+    async unlink(name) {
+      const started = measurements.start();
+      try {
+        await files.unlink(name);
+        measurements.finish("unlink", started, "success");
+      } catch (error) {
+        measurements.finish("unlink", started, "failure");
+        throw error;
+      }
+    },
+  };
+}
+
 type Side = "host" | "sandbox";
 type Marker = {
   generation: string;
@@ -98,10 +222,12 @@ export async function createBrokerRelayPeer(options: {
   side: Side;
   brokerPort?: number;
   signal?: AbortSignal;
+  measurements?: RelayMeasurements;
 }) {
   if (options.signal?.aborted)
     throw new Error("The native broker transport was stopped before startup.");
-  const { files, token, slots, side } = options;
+  const { token, slots, side, measurements } = options;
+  const files = measureRelayFiles(options.files, measurements);
   if (!/^[A-Za-z0-9_-]{32,128}$/u.test(token)) invalid();
   if (
     slots.length !== BROKER_CONNECTION_LIMIT ||
@@ -403,6 +529,7 @@ export async function createBrokerRelayPeer(options: {
     const results = await Promise.allSettled(
       slots.map(async (slot) => {
         const state = states.get(slot);
+        measurements?.scan(state !== undefined);
         if (state) {
           await pumpStream(state);
           return;
@@ -496,7 +623,15 @@ export async function createBrokerRelayPeer(options: {
     if (options.signal?.aborted) stop();
     pump = (async () => {
       while (!stopped) {
-        await tick();
+        const started = measurements?.start();
+        let succeeded = false;
+        try {
+          await tick();
+          succeeded = true;
+        } finally {
+          if (started !== undefined)
+            measurements!.finish("poll", started, succeeded ? "success" : "failure");
+        }
         if (!stopped) await delay(controller.signal);
       }
     })().catch(fail);
@@ -514,6 +649,7 @@ export async function createBrokerRelayPeer(options: {
     diagnostics() {
       return {
         transport: "guarded-file-tcp" as const,
+        ...(measurements ? { performance: measurements.snapshot() } : {}),
         activeConnections: states.size,
         openedConnections: opened,
         completedConnections: completed,

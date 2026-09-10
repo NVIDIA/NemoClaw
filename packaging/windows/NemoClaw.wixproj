@@ -9,7 +9,8 @@
     <IntermediateOutputPath>$(PackageIntermediateRoot)\msi\</IntermediateOutputPath>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
-    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);PayloadRoot=$(PayloadRoot);SourceRoot=$(SourceRoot)</DefineConstants>
+    <NativeRuntimeMsiPrototype Condition="'$(NativeRuntimeMsiPrototype)' == ''">false</NativeRuntimeMsiPrototype>
+    <DefineConstants>$(DefineConstants);NativeRuntimeMsiPrototype=$(NativeRuntimeMsiPrototype);NativeRuntimeMsiAuthoring=$(NativeRuntimeMsiAuthoring);ProductVersion=$(ProductVersion);PayloadRoot=$(PayloadRoot);SourceRoot=$(SourceRoot)</DefineConstants>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- Locked npm graphs contain three versionless native payloads. They remain
          MSI-hashed, exact-manifest-qualified, repairable files; suppress only
@@ -23,6 +24,8 @@
     <Compile Include="$(GeneratedPayloadAuthoring)" />
   </ItemGroup>
   <Target Name="ValidateNemoClawPackageInputs" BeforeTargets="Build">
+    <Error Condition="'$(NativeRuntimeMsiPrototype)' != 'false' and '$(NativeRuntimeMsiPrototype)' != 'true'" Text="NativeRuntimeMsiPrototype must be an explicit Boolean build choice." />
+    <Error Condition="'$(NativeRuntimeMsiPrototype)' == 'true' and !Exists('$(NativeRuntimeMsiAuthoring)')" Text="The immutable MSI prototype requires verified generated transaction authoring; it is not activated by default." />
     <Error Condition="'$(ProductVersion)' == ''" Text="ProductVersion is required." />
     <Error Condition="'$(PayloadRoot)' == ''" Text="PayloadRoot is required." />
     <Error Condition="'$(SourceRoot)' == ''" Text="SourceRoot is required." />

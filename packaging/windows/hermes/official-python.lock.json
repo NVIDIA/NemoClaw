@@ -91,5 +91,7 @@
   "msvcToolset": "14.51.36231",
   "windowsSdk": "10.0.26100.0",
   "msvcPinEvidence": "Versions observed in Windows ARM64 run34460279691, candidate209ce87ba37adb81d0ce4c56213651e889bbba93. Each attempt records actual tool hashes and signatures; version selection does not assert every SDK file is byte-pinned.",
-  "priorObservedVisualStudioProductVersion": "18.9.2"
+  "priorObservedVisualStudioProductVersion": "18.9.2",
+  "opensslBuildLock": "official-openssl.lock.json",
+  "opensslBuildLockSha256": "037359dad5d1cad3a4a03eaf97aaff38ac8d9baebe3e2f1f91ba3ac0a5c9689b"
 }

@@ -48,6 +48,14 @@ async function main(): Promise<void> {
   const sourceRevision = sourceIndex >= 0 ? process.argv[sourceIndex + 1] : "";
   if (!/^[a-f0-9]{40}$/u.test(sourceRevision ?? ""))
     throw new Error("The verified installed source revision is required.");
+  const cacheExperiment = process.argv.includes("--compile-cache-experiment");
+  const cacheManifestIndex = process.argv.indexOf("--runtime-manifest-sha256");
+  const cacheManifest = cacheManifestIndex < 0 ? "" : process.argv[cacheManifestIndex + 1];
+  if (
+    (cacheExperiment && !/^[a-f0-9]{64}$/u.test(cacheManifest ?? "")) ||
+    (!cacheExperiment && cacheManifestIndex >= 0)
+  )
+    throw new Error("The cache experiment requires its caller-verified payload manifest SHA-256.");
   const runtimeRoot = installRoot;
   const evidenceRoot = argument("--artifact-directory");
   const programFiles = process.env.ProgramFiles;
@@ -104,9 +112,12 @@ async function main(): Promise<void> {
     runtimeTreeCopies: 0,
     runtimeBytesCopied: 0,
     runtimeReadOnlyRoots: [node, path.join(installRoot, "openclaw")],
-    instrumentation:
-      "feasibility only; Node compile cache disabled, isolated fixture HOME, no runtime copies",
-    performanceComparison: false,
+    instrumentation: cacheExperiment
+      ? "explicit cache A/B command experiment; isolated guest-only fixture cache; no runtime seal claimed"
+      : "feasibility only; Node compile cache disabled, isolated fixture HOME, no runtime copies",
+    performanceComparison: cacheExperiment ? "contained installed config-read command only" : false,
+    compileCacheExperiment: cacheExperiment,
+    runtimeManifestSha256: cacheManifest || null,
     completeRuntime: false,
     installedAcceptance: false,
     fullAgentTurnTested: false,
@@ -189,14 +200,17 @@ async function main(): Promise<void> {
       fs.mkdirSync(root);
       createdRoots.push(root);
     }
-    for (const name of ["readonly-workload.mts", "measurement.mts"])
+    const probeFiles = [
+      "readonly-workload.mts",
+      "measurement.mts",
+      ...(cacheExperiment ? ["compile-cache-experiment.mts"] : []),
+    ];
+    for (const name of probeFiles)
       fs.copyFileSync(
         fileURLToPath(new URL("./" + name, import.meta.url)),
         path.join(runRoot, name),
       );
-    const copiedProbeCode = ["readonly-workload.mts", "measurement.mts"].map((name) =>
-      fileIdentity(path.join(runRoot, name)),
-    );
+    const copiedProbeCode = probeFiles.map((name) => fileIdentity(path.join(runRoot, name)));
     receipt.probeCodeFiles = copiedProbeCode;
     receipt.probeCodeBytesCopied = copiedProbeCode.reduce((total, file) => total + file.bytes, 0);
     receipt.baselineFiles = [
@@ -311,6 +325,7 @@ async function main(): Promise<void> {
             installRoot,
             shareRoot,
             nonce,
+            ...(cacheExperiment ? [cacheManifest!] : []),
           ],
           cwd: shareRoot,
           windows_ui: true,
@@ -383,7 +398,13 @@ async function main(): Promise<void> {
     await captureAcl("during");
     assertAclEqual("before", "during");
     fs.writeFileSync(path.join(shareRoot, "continue"), nonce + "\n", { flag: "wx" });
-    await helpers.waitForNativeTurnResult(resultPath, create, gateway, createFailure, 120_000);
+    await helpers.waitForNativeTurnResult(
+      resultPath,
+      create,
+      gateway,
+      createFailure,
+      cacheExperiment ? 510_000 : 120_000,
+    );
     const result = readFixtureRecord(resultPath) as {
       nonce: string;
       schemaVersion: number;
@@ -392,6 +413,22 @@ async function main(): Promise<void> {
       runtimeBytesCopied: number;
     };
     receipt.workload = result;
+    if (cacheExperiment) {
+      const cacheResult = readFixtureRecord(path.join(shareRoot, "compile-cache-result.json")) as {
+        passed?: boolean;
+        samples?: unknown[];
+        runtimeManifestSha256?: string;
+      };
+      receipt.compileCache = cacheResult;
+      if (
+        cacheResult.passed !== true ||
+        cacheResult.samples?.length !== 6 ||
+        cacheResult.runtimeManifestSha256 !== cacheManifest
+      )
+        throw new Error(
+          "The contained cache experiment did not complete all six actual command samples.",
+        );
+    }
     if (
       result.nonce !== nonce ||
       result.schemaVersion !== 1 ||
@@ -416,6 +453,17 @@ async function main(): Promise<void> {
     receipt.inspectedRuntimeAclsUnchanged = true;
   } catch (error) {
     primaryError = error;
+    if (cacheExperiment) {
+      try {
+        const record = path.join(shareRoot, "compile-cache-result.json");
+        if (fs.existsSync(record)) receipt.compileCache = readFixtureRecord(record);
+      } catch {
+        cleanupErrors.push({
+          action: "cache diagnostic retention",
+          message: "The partial cache experiment record could not be read.",
+        });
+      }
+    }
   } finally {
     if (created) {
       try {

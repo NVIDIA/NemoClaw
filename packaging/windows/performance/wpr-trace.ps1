@@ -3,10 +3,14 @@
 
 . (Join-Path $PSScriptRoot 'native-output-capture.ps1')
 
+function Get-WindowsPerformanceRecorderPath {
+    return (Join-Path $env:SystemRoot 'System32\wpr.exe')
+}
+
 function Invoke-OwnedWprCommand {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string[]]$Arguments, [Parameter(Mandatory)][string]$LogPath, [ValidateRange(1,60000)][int]$TimeoutMilliseconds=60000)
-    $executable=Join-Path $env:SystemRoot 'System32\wpr.exe'
+    $executable=Get-WindowsPerformanceRecorderPath
     if(-not(Test-Path -LiteralPath $executable -PathType Leaf)){throw 'The built-in Windows Performance Recorder is unavailable.'}
     $process=[Diagnostics.Process]::new();$capture=$null;$primary=$null
     $record=[ordered]@{arguments=$Arguments;timeoutMs=$TimeoutMilliseconds;timedOut=$false;started=$false;processId=$null;exitCode=$null;processStopped=$false;output=$null}
@@ -70,7 +74,7 @@ function Get-WindowsPerformanceTraceFiles {
 }
 
 function Get-WindowsPerformanceRecorderIdentity {
-    $path=Join-Path $env:SystemRoot 'System32\wpr.exe'
+    $path=Get-WindowsPerformanceRecorderPath
     $file=Get-Item -LiteralPath $path
     if($file.PSIsContainer -or $file.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)){throw 'The built-in WPR tool is not an ordinary file.'}
     return [pscustomobject]@{path=$file.FullName;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant();fileVersion=$file.VersionInfo.FileVersion}

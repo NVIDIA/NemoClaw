@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { identity, measuredCommand, publishFixtureRecord } from "./measurement.mts";
 
 async function main() {
-  const [installRoot, shareRoot, nonce] = process.argv.slice(2);
+  const [installRoot, shareRoot, nonce, cacheManifest] = process.argv.slice(2);
   if (
     process.platform !== "win32" ||
     process.arch !== "arm64" ||
@@ -73,12 +73,35 @@ async function main() {
     !value.timedOut &&
     !value.outputExceeded &&
     value.spawnError === null;
-  const passed =
+  let passed =
     okay(version) &&
     version.stdout.includes(pkg.version) &&
     okay(config) &&
     config.stdout.trim() === "local";
+  let cacheExperiment = null;
+  let cacheError: string | null = null;
+  if (cacheManifest && passed) {
+    try {
+      if (!/^[a-f0-9]{64}$/u.test(cacheManifest))
+        throw new Error("The cache experiment manifest identity is invalid.");
+      const { runCompileCacheExperiment } = await import("./compile-cache-experiment.mts");
+      cacheExperiment = await runCompileCacheExperiment({
+        node: process.execPath,
+        entry,
+        home,
+        environment,
+        evidenceRoot: shareRoot,
+        runtimeManifestSha256: cacheManifest,
+      });
+    } catch (error) {
+      passed = false;
+      cacheError = error instanceof Error ? error.message : String(error);
+      console.error(error instanceof Error ? error.stack : String(error));
+    }
+  }
   publishFixtureRecord(path.join(shareRoot, "result.json"), {
+    cacheExperiment,
+    cacheError,
     schemaVersion: 1,
     nonce,
     passed,

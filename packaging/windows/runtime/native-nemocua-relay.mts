@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import net, { type Socket } from "node:net";
 import path from "node:path";
 import { openNativeUiFileOwner } from "./native-ui-file-owner.mts";
+import { measureRelayFiles, type RelayMeasurements } from "./native-broker-relay-protocol.mts";
 
 const STREAM_LIMIT = 32;
 const STREAM_BYTES = 8 * 1024 * 1024;
@@ -23,8 +24,11 @@ export async function startFileTcpTargetRelay(
   token: string,
   targetPort: number,
   launcher: string,
+  measurements?: RelayMeasurements,
 ) {
-  const files = await openNativeUiFileOwner(launcher, relayRoot);
+  const owner = await openNativeUiFileOwner(launcher, relayRoot, measurements);
+  const files = owner;
+  const io = measureRelayFiles(owner, measurements);
   const streams: Stream[] = [];
   const resultDirectory = `stream-${randomBytes(8).toString("hex")}`;
   const resultName = `${resultDirectory}/sandbox-0000000000.bin`;
@@ -52,7 +56,7 @@ export async function startFileTcpTargetRelay(
       streams.push({ directory, phase: "unused", sequence: 0, received: 0, sent: 0, ended: false });
     }
     await files.mkdir(resultDirectory);
-    await files.write(
+    await io.write(
       "ready",
       JSON.stringify({
         schemaVersion: 1,
@@ -70,11 +74,14 @@ export async function startFileTcpTargetRelay(
   const poll = setInterval(() => {
     if (closed || polling || failure) return;
     polling = true;
+    const started = measurements?.start();
+    let succeeded = false;
     pollTask = (async () => {
       for (const stream of streams) {
         if (closed || failure) break;
+        measurements?.scan(stream.phase === "open");
         if (stream.phase === "unused") {
-          const marker = await files.read(`${stream.directory}/open`);
+          const marker = await io.read(`${stream.directory}/open`);
           if (marker === null) continue;
           if (marker.toString("utf8") !== token)
             throw new Error("The NemoCUA relay stream identity is invalid.");
@@ -90,7 +97,7 @@ export async function startFileTcpTargetRelay(
               return;
             }
             queueWrite(
-              files
+              io
                 .write(
                   `${stream.directory}/host-${String(stream.sequence++).padStart(10, "0")}.bin`,
                   chunk,
@@ -103,40 +110,44 @@ export async function startFileTcpTargetRelay(
           socket.once("close", () => {
             stream.phase = "closed";
             if (!closed && !failure)
-              queueWrite(files.write(`${stream.directory}/host-close`, Buffer.alloc(0)));
+              queueWrite(io.write(`${stream.directory}/host-close`, Buffer.alloc(0)));
           });
         }
         if (stream.phase !== "open" || !stream.socket) continue;
-        for (const name of (await files.list(stream.directory))
+        for (const name of (await io.list(stream.directory))
           .filter((name) => /^sandbox-[0-9]{10}\.bin$/u.test(name))
           .sort()) {
           if (closed || failure) break;
-          const data = await files.read(`${stream.directory}/${name}`);
+          const data = await io.read(`${stream.directory}/${name}`);
           if (data === null) continue;
           stream.received += data.length;
           if (stream.received > STREAM_BYTES)
             throw new Error("The NemoCUA relay request exceeded its bound.");
           if (!stream.socket.write(data)) await waitForDrain(stream.socket);
-          await files.unlink(`${stream.directory}/${name}`);
+          await io.unlink(`${stream.directory}/${name}`);
         }
-        if (!stream.ended && (await files.read(`${stream.directory}/sandbox-close`)) !== null) {
+        if (!stream.ended && (await io.read(`${stream.directory}/sandbox-close`)) !== null) {
           stream.ended = true;
           stream.socket.end();
         }
       }
+      succeeded = true;
     })()
       .catch(recordFailure)
       .finally(() => {
+        if (started !== undefined)
+          measurements!.finish("poll", started, succeeded ? "success" : "failure");
         polling = false;
       });
   }, 10);
   let disposal: Promise<void> | undefined;
   return {
     failure: failed,
+    nativePerformance: owner.nativePerformance,
     resultPath: path.join(relayRoot, resultDirectory, "sandbox-0000000000.bin"),
     streamLimit: STREAM_LIMIT,
     async readResult() {
-      return await files.read(resultName);
+      return await io.read(resultName);
     },
     async close() {
       if (closed) return;
@@ -145,7 +156,7 @@ export async function startFileTcpTargetRelay(
       for (const stream of streams) stream.socket?.destroy();
       await pollTask;
       await Promise.all(writes);
-      await files.write("shutdown", token).catch(recordFailure);
+      await io.write("shutdown", token).catch(recordFailure);
     },
     async dispose() {
       disposal ??= (async () => {

@@ -41,24 +41,24 @@ try {
 }finally{$writer.Dispose()}
 # Exercise the actual tool-command timeout/capture function with the owned Node
 # executable as a controlled native process; this is not a fake WPR success.
-$toolRoot=Join-Path $ArtifactDirectory 'tool';$system32=Join-Path $toolRoot 'System32'
-[IO.Directory]::CreateDirectory($system32)|Out-Null
-Copy-Item -LiteralPath $NodePath -Destination (Join-Path $system32 'wpr.exe')
+$toolRoot=Join-Path $ArtifactDirectory 'tool'
+[IO.Directory]::CreateDirectory($toolRoot)|Out-Null
 $program=Join-Path $toolRoot 'tool.cjs';[IO.File]::WriteAllText($program,"process.stdout.write('tool-stdout');process.stderr.write('tool-stderr');setTimeout(()=>process.exit(0),60000);")
+$originalLocator=(Get-Command Get-WindowsPerformanceRecorderPath).ScriptBlock
 $originalSystemRoot=$env:SystemRoot;$caught=$null
 try {
-    $env:SystemRoot=$toolRoot
-    # Establish that the freshly copied test executable can run before the
-    # deliberately short timeout control; this setup is outside all samples.
+    # Substitute only the executable dependency. Changing SystemRoot prevents
+    # Windows Node from initializing its random-number provider.
+    function Get-WindowsPerformanceRecorderPath { return $NodePath }
     Invoke-OwnedWprCommand -Arguments @('--version') -LogPath (Join-Path $toolRoot 'version.log') -TimeoutMilliseconds 30000
     try {Invoke-OwnedWprCommand -Arguments @($program) -LogPath (Join-Path $toolRoot 'timeout.log') -TimeoutMilliseconds 3000}
     catch {$caught=$_}
-} finally {$env:SystemRoot=$originalSystemRoot}
+} finally {Set-Item Function:\Get-WindowsPerformanceRecorderPath -Value $originalLocator}
+Assert-Control ($env:SystemRoot -ceq $originalSystemRoot) 'native timeout fixture preserves the real Windows environment'
 $toolRecord=Get-Content -LiteralPath (Join-Path $toolRoot 'timeout.log.json') -Raw|ConvertFrom-Json
 Assert-Control ($null -ne $caught -and $caught.Exception.Message -ceq 'WPR command exceeded its bounded wait.') 'native command timeout remains the primary failure'
 Assert-Control ($toolRecord.timedOut -and $toolRecord.processStopped -and $toolRecord.output.outputClosed) 'timed-out exact owned tool exits and both pipes close'
 Assert-Control ([IO.File]::ReadAllText((Join-Path $toolRoot 'timeout.log')).Contains('tool-stdout') -and [IO.File]::ReadAllText((Join-Path $toolRoot 'timeout.log')).Contains('tool-stderr')) 'timeout retains partial stdout and stderr'
-Remove-Item -LiteralPath (Join-Path $system32 'wpr.exe')
 # No WPR execution is claimed here. These seams control recorder outcomes while
 # the target is a separate real process; use actual WPR only in the Windows job.
 function Start-WindowsPerformanceTrace {param([string]$Directory)

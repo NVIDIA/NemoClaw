@@ -4,6 +4,7 @@
 import { randomBytes } from "node:crypto";
 import net, { type AddressInfo, type Socket } from "node:net";
 import { openNativeUiFileOwner } from "./native-ui-file-owner.mts";
+import { measureRelayFiles, type RelayMeasurements } from "./native-broker-relay-protocol.mts";
 
 type Stream = { directory: string; socket: Socket; sequence: number; closing: boolean };
 
@@ -27,8 +28,15 @@ async function writeBrowserFrame(socket: Socket, data: Buffer) {
   });
 }
 
-export async function startFileTcpRelay(relayRoot: string, token: string, launcher: string) {
-  const files = await openNativeUiFileOwner(launcher, relayRoot);
+export async function startFileTcpRelay(
+  relayRoot: string,
+  token: string,
+  launcher: string,
+  measurements?: RelayMeasurements,
+) {
+  const owner = await openNativeUiFileOwner(launcher, relayRoot, measurements);
+  const files = owner;
+  const io = measureRelayFiles(owner, measurements);
   const streams = new Map<string, Stream>();
   const sockets = new Set<Socket>();
   let closed = false;
@@ -72,16 +80,16 @@ export async function startFileTcpRelay(relayRoot: string, token: string, launch
         return;
       }
       streams.set(directory, stream);
-      await files.write(`${directory}/open`, token);
+      await io.write(`${directory}/open`, token);
       socket.on("data", (chunk: Buffer) => {
         if (stream.closing) return;
         socket.pause();
         const file = `${directory}/host-${String(stream.sequence++).padStart(10, "0")}.bin`;
-        void files.write(file, chunk).then(() => socket.resume(), recordFailure);
+        void io.write(file, chunk).then(() => socket.resume(), recordFailure);
       });
       socket.once("close", () => {
         if (!closed && !stream.closing)
-          void files.write(`${directory}/host-close`, Buffer.alloc(0)).catch(recordFailure);
+          void io.write(`${directory}/host-close`, Buffer.alloc(0)).catch(recordFailure);
       });
       socket.resume();
     })().catch(recordFailure);
@@ -110,9 +118,11 @@ export async function startFileTcpRelay(relayRoot: string, token: string, launch
   const poll = setInterval(() => {
     if (polling || closed || failure) return;
     polling = true;
+    const started = measurements?.start();
+    let succeeded = false;
     pollTask = (async () => {
       if (!readyObserved) {
-        const marker = await files.read("ready");
+        const marker = await io.read("ready");
         if (marker !== null) {
           if (marker.toString("utf8") !== token)
             throw new Error("The native agent UI relay identity does not match.");
@@ -122,15 +132,16 @@ export async function startFileTcpRelay(relayRoot: string, token: string, launch
       }
       for (const [directory, stream] of streams) {
         if (closed) break;
-        for (const name of (await files.list(directory))
+        measurements?.scan(true);
+        for (const name of (await io.list(directory))
           .filter((name) => /^sandbox-[0-9]{10}\.bin$/u.test(name))
           .sort()) {
-          const data = await files.read(`${directory}/${name}`);
+          const data = await io.read(`${directory}/${name}`);
           if (data === null) continue;
           await writeBrowserFrame(stream.socket, data);
-          await files.unlink(`${directory}/${name}`);
+          await io.unlink(`${directory}/${name}`);
         }
-        if ((await files.read(`${directory}/sandbox-close`)) !== null) {
+        if ((await io.read(`${directory}/sandbox-close`)) !== null) {
           stream.closing = true;
           stream.socket.end();
           stream.socket.resume();
@@ -138,9 +149,12 @@ export async function startFileTcpRelay(relayRoot: string, token: string, launch
           await files.release(directory);
         }
       }
+      succeeded = true;
     })()
       .catch(recordFailure)
       .finally(() => {
+        if (started !== undefined)
+          measurements!.finish("poll", started, succeeded ? "success" : "failure");
         polling = false;
       });
   }, 10);
@@ -150,6 +164,7 @@ export async function startFileTcpRelay(relayRoot: string, token: string, launch
     browserPort,
     ready,
     failure: failed,
+    nativePerformance: owner.nativePerformance,
     async close() {
       closure ??= (async () => {
         closed = true;
@@ -161,7 +176,7 @@ export async function startFileTcpRelay(relayRoot: string, token: string, launch
         // has not closed. Retain socket ownership through its actual close.
         for (const socket of sockets) socket.destroy();
         await pollTask;
-        await files.write("shutdown", token).catch(recordFailure);
+        await io.write("shutdown", token).catch(recordFailure);
         await new Promise<void>((resolve) => browserServer.close(() => resolve()));
       })();
       return await closure;

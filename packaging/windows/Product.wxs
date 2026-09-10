@@ -14,9 +14,18 @@
     <SummaryInformation
       Description="NemoClaw native Windows ARM64 preview"
       Manufacturer="NVIDIA Corporation" />
+    <?if $(var.NativeRuntimeMsiPrototype) = "true" ?>
+    <!-- The early InstallExecute in the generated transaction authoring runs
+         retirement before the old MSI can remove shared application files. -->
+    <MajorUpgrade
+      Schedule="afterInstallExecute"
+      DowngradeErrorMessage="A newer NemoClaw native Windows candidate is already installed." />
+    <?include $(var.NativeRuntimeMsiAuthoring) ?>
+    <?else ?>
     <MajorUpgrade
       Schedule="afterInstallInitialize"
       DowngradeErrorMessage="A newer NemoClaw native Windows candidate is already installed." />
+    <?endif ?>
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <Property Id="ARPCOMMENTS" Value="NemoClaw native Windows ARM64 preview with pinned OpenShell, MXC, Node.js, and OpenClaw runtime. Host qualification and production activation remain required." />

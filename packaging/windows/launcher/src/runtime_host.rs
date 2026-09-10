@@ -3,6 +3,10 @@
 
 //! Native guardian: create the owned Node process inside its job atomically,
 //! preserving command arguments and waiting for all descendants before release.
+#[path = "runtime_inference_owner.rs"]
+mod inference_owner;
+#[path = "runtime_service_startup.rs"]
+mod service_startup;
 use std::ffi::{OsStr, c_void};
 use std::os::windows::ffi::OsStrExt;
 use std::process::Command;
@@ -333,6 +337,23 @@ pub(crate) fn run(
     lease_handle: RawHandle,
     start_handshake: bool,
 ) -> Result<i32, &'static str> {
+    run_managed(command, flags, lease_handle, start_handshake, None, false)
+}
+
+pub(crate) fn run_managed(
+    mut command: Command,
+    flags: u32,
+    lease_handle: RawHandle,
+    start_handshake: bool,
+    service_root: Option<&std::path::Path>,
+    provisional_service: bool,
+) -> Result<i32, &'static str> {
+    let service = service_root
+        .map(inference_owner::Pending::new)
+        .transpose()?;
+    if let Some(pending) = &service {
+        command.env("NEMOCLAW_RUNTIME_SERVICE_PIPE", &pending.name);
+    }
     let job = Handle(unsafe { CreateJobObjectW(null(), null()) });
     if job.0.is_null() {
         return Err("runtime-host-job");
@@ -350,6 +371,11 @@ pub(crate) fn run(
     {
         return Err("runtime-host-job");
     }
+    let startup_gate = if provisional_service {
+        Some(service_startup::Gate::start(job.0)?)
+    } else {
+        None
+    };
     let inherited_lease = duplicate(lease_handle)?;
     let mut inherited = vec![inherited_lease];
     let mut std = [null_mut(); 3];
@@ -480,6 +506,9 @@ pub(crate) fn run(
     }
     let process = Handle(child.process);
     let _thread = Handle(child.thread);
+    let service_worker = service
+        .map(|pending| pending.start(process.0, child.pid))
+        .transpose()?;
     drop(inherited);
     if let Some(writer) = &handshake_writer {
         let mut written = 0;
@@ -501,13 +530,17 @@ pub(crate) fn run(
     if unsafe { IsProcessInJob(process.0, job.0, &mut in_job) } == 0 || in_job == 0 {
         return Err("runtime-host-job-assignment");
     }
-    if unsafe { WaitForSingleObject(process.0, u32::MAX) } != 0 {
+    if let Some(gate) = &startup_gate {
+        gate.wait_for_process(process.0)?;
+    } else if unsafe { WaitForSingleObject(process.0, u32::MAX) } != 0 {
         return Err("runtime-host-wait");
     }
     let mut code = 1;
     if unsafe { GetExitCodeProcess(process.0, &mut code) } == 0 {
         return Err("runtime-host-exit");
     }
+    let service_result = service_worker.map(|worker| worker.finish()).transpose();
+    let startup_result = startup_gate.map(|gate| gate.finish()).transpose();
     let settle_deadline = Instant::now() + Duration::from_secs(5);
     while active(&job)? != 0 && Instant::now() < settle_deadline {
         std::thread::sleep(Duration::from_millis(25));
@@ -524,6 +557,18 @@ pub(crate) fn run(
             return Err("runtime-host-descendants");
         }
         return Err("runtime-host-left-descendants");
+    }
+    if let Err(error) = service_result {
+        if code == 0 {
+            return Err(error);
+        }
+        eprintln!("The native service request owner also failed cleanup.");
+    }
+    match startup_result {
+        Ok(Some(false)) if code == 0 => return Err("runtime-service-uncommitted"),
+        Err(error) if code == 0 => return Err(error),
+        Err(_) => eprintln!("The provisional native service owner also failed cleanup."),
+        _ => {}
     }
     Ok(code as i32)
 }

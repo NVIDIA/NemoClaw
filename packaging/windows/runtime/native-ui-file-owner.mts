@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
+import type { RelayMeasurements } from "./native-broker-relay-protocol.mts";
 
 const MAX_CHUNK = 1024 * 1024;
 const MAX_RESPONSE = 4 * Math.ceil(MAX_CHUNK / 3) + 128;
@@ -9,7 +10,11 @@ const RELATIVE =
   /^(?:ready|shutdown|stream-[0-9a-f]{16}\/(?:open|host-close|sandbox-close|(?:host|sandbox)-[0-9]{10}\.bin))$/u;
 const STREAM = /^stream-[0-9a-f]{16}$/u;
 
-export async function openNativeUiFileOwner(launcher: string, root: string) {
+export async function openNativeUiFileOwner(
+  launcher: string,
+  root: string,
+  measurements?: RelayMeasurements,
+) {
   const child = spawn(launcher, ["--native-ui-file-owner", root], {
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
@@ -104,6 +109,7 @@ export async function openNativeUiFileOwner(launcher: string, root: string) {
       return Promise.reject(failure);
     }
     queued++;
+    const started = measurements?.start();
     const result = tail
       .then(
         () =>
@@ -121,8 +127,12 @@ export async function openNativeUiFileOwner(launcher: string, root: string) {
         queued--;
       });
     tail = result.then(
-      () => undefined,
-      () => undefined,
+      () => {
+        if (started !== undefined) measurements!.finish("ipc", started, "success");
+      },
+      () => {
+        if (started !== undefined) measurements!.finish("ipc", started, "failure");
+      },
     );
     return result;
   };
@@ -134,7 +144,60 @@ export async function openNativeUiFileOwner(launcher: string, root: string) {
     if (!STREAM.test(value)) throw new Error("The native UI stream name is invalid.");
     return value;
   };
+  if (measurements) {
+    try {
+      if ((await request("performance\tenable")) !== "OK")
+        throw new Error("The native file-owner measurements could not start.");
+    } catch (error) {
+      fail();
+      await completion;
+      throw error;
+    }
+  }
   return {
+    async nativePerformance() {
+      if (!measurements) return null;
+      const response = await request("performance");
+      if (!response.startsWith("OK\t") || response.length > 4096)
+        throw new Error("The native file-owner measurements are invalid.");
+      const result: unknown = JSON.parse(response.slice(3));
+      const keys = [
+        "schemaVersion",
+        "read_success",
+        "read_miss",
+        "read_bytes",
+        "write_success",
+        "write_bytes",
+        "list_success",
+        "list_entries",
+        "flush_calls",
+        "flush_failed",
+        "flush_ns",
+        "flush_max_ns",
+        "binary_flush_calls",
+        "binary_flush_ns",
+      ];
+      if (
+        !result ||
+        typeof result !== "object" ||
+        Object.keys(result).length !== keys.length ||
+        !keys.every(
+          (key) =>
+            Object.hasOwn(result, key) &&
+            Number.isSafeInteger((result as Record<string, unknown>)[key]) &&
+            ((result as Record<string, number>)[key] ?? -1) >= 0,
+        ) ||
+        (result as Record<string, number>).schemaVersion !== 1
+      )
+        throw new Error("The native file-owner measurements are invalid.");
+      return {
+        schemaVersion: 1,
+        instrumentationEnabled: true,
+        clock: "std::time::Instant",
+        durationUnit: "nanoseconds",
+        counters: result as Record<string, number>,
+      };
+    },
     async mkdir(value: string) {
       if ((await request(`mkdir\t${stream(value)}`)) !== "OK")
         throw new Error("The native UI stream could not open.");

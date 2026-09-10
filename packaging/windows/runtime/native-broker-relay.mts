@@ -7,6 +7,7 @@ import {
   BROKER_CONNECTION_LIMIT,
   createBrokerRelayPeer,
   validateBrokerRelayIdentity,
+  type RelayMeasurements,
 } from "./native-broker-relay-protocol.mts";
 
 export async function startNativeBrokerRelay(options: {
@@ -15,11 +16,16 @@ export async function startNativeBrokerRelay(options: {
   brokerPort: number;
   launcher: string;
   signal?: AbortSignal;
+  measurements?: RelayMeasurements;
 }) {
   validateBrokerRelayIdentity(options.relayRoot, options.relayToken);
   if (options.signal?.aborted)
     throw new Error("The native broker transport was stopped before startup.");
-  const files = await openNativeUiFileOwner(options.launcher, options.relayRoot);
+  const files = await openNativeUiFileOwner(
+    options.launcher,
+    options.relayRoot,
+    options.measurements,
+  );
   let relay: Awaited<ReturnType<typeof createBrokerRelayPeer>> | undefined;
   try {
     const slots = Array.from(
@@ -34,6 +40,7 @@ export async function startNativeBrokerRelay(options: {
       side: "host",
       brokerPort: options.brokerPort,
       signal: options.signal,
+      measurements: options.measurements,
     });
     await files.write(
       "ready",
@@ -95,6 +102,7 @@ export async function startNativeBrokerRelay(options: {
     brokerPort: options.brokerPort,
     failure: active.failure,
     diagnostics: active.diagnostics,
+    nativePerformance: files.nativePerformance,
     close,
     dispose() {
       disposal ??= (async () => {

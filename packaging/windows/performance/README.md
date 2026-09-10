@@ -31,6 +31,30 @@ Before designing another runtime cache, run `probe-installed-readonly.mts` again
 
 This gate follows the pinned MXC0.8 source: paths already effectively readable/executable by the relevant AppContainer SIDs are skipped by `filter_paths_needing_grant`, and `ensure_path_grantable_for_ac` accepts their existing access without WRITE_DAC. The empirical receipt decides whether a cache is needed. The root task owns versioning, ownership and upgrade design.
 
+## Contained compile-cache experiment
+
+The explicit component workflow adds `--compile-cache-experiment` and the verified
+baseline payload manifest SHA-256 to the read-only probe. It runs six unchanged
+OpenClaw `config get gateway.mode` commands at the same installed paths: disabled,
+cache population, then two disabled/enabled warm pairs in reversed order. Each
+sample uses the same small observer preload; the command timer includes natural
+process exit and Node's cache flush. No model request is sent. The cache lives only
+in the fresh guest-writable fixture, separated by Node binary hash, payload manifest
+hash and agent. It is never used by the host launcher and is removed with that
+owned fixture. The baseline is verified installed bytes, not an immutable runtime
+seal. The experiment's additional command allowance does not change normal startup
+deadlines or the default feasibility probe.
+
+Node's reported cache directory, exit/output, elapsed time and post-exit cache
+count/bytes/manifest digest are retained per sample. File hashing is outside the
+command timer and warms metadata, so all samples explicitly say `osCold:false`.
+An enabled directory and existing files do not prove individual V8 cache hits;
+`cacheHitAttributionVerified` stays false without corresponding trace evidence.
+These are command measurements, not dashboard startup or a deployment decision.
+Dashboard A/B still requires the actual immutable launch route. See the exact
+[Node22.23.2 compile-cache contract](https://github.com/nodejs/node/blob/v22.23.2/doc/api/module.md#module-compile-cache);
+the newer portable/read-only options are not assumed available in this version.
+
 ## Required CI wiring
 
 Add a manual Windows-only job after both exact installer artifacts exist. Download and verify both before timing or tracing; do not include network transfer in installation time. Reuse one `windows-11-vs2026-arm` job for both variants and the reverse-order round. Run the direct-read feasibility gate first, then uninstrumented samples, then the separately labeled WPR/Node/OpenClaw diagnostic sample. Keep evidence even on failure; do not automatically rerun, dispatch another workflow, or publish a performance claim from incomplete metrics. Restrict any eventual trigger to Windows packaging/workflow paths.

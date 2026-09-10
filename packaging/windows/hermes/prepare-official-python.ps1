@@ -93,6 +93,9 @@ function Assert-PythonPhaseResult {
         $Result.installedAcceptance -isnot [bool] -or $Result.installedAcceptance -ne $false) {
         throw 'The official Python phase did not satisfy its exact locked result contract.'
     }
+    if ($Result.python.cryptographyVersion -cne '50.0.0' -or $Result.python.opensslVersion -cnotmatch '^OpenSSL 3\.5\.8(?: |$)') {
+        throw 'The locked cryptography module did not load its pinned built OpenSSL.'
+    }
     $imports = @($Result.python.imports)
     foreach ($name in @('hermes_cli.main','tools.terminal_tool','tools.file_tools','tools.web_tools','fastapi','uvicorn','winpty')) {
         if ($imports -cnotcontains $name) { throw "The official Python phase did not import $name." }
@@ -125,6 +128,8 @@ $phaseReceipt = [ordered]@{
 }
 $phaseOriginalFindLinks = $env:UV_FIND_LINKS
 $phaseOriginalCargoHome = $env:CARGO_HOME
+$phaseOriginalOpenSslRoot = $env:OPENSSL_DIR
+$phaseOriginalOpenSslStatic = $env:OPENSSL_STATIC
 $phaseFailure = $null
 $phaseReceiptFailure = $null
 try {
@@ -191,6 +196,28 @@ try {
         }
     }
     $phaseReceipt['buildToolPaths'] = $buildPaths
+    $opensslLock = Join-Path $PSScriptRoot $phaseLock.opensslBuildLock
+    if ((Get-FileHash -LiteralPath $opensslLock -Algorithm SHA256).Hash.ToLowerInvariant() -cne $phaseLock.opensslBuildLockSha256) {
+        throw 'The official OpenSSL build prerequisite lock changed.'
+    }
+    $opensslEvidence = Join-Path $phaseEvidence 'openssl'
+    $basePython = Join-Path $phaseSource '.hermes-runtime\python\cpython-3.11.16-windows-aarch64-none\python.exe'
+    $opensslArguments = @('-I', (Join-Path $PSScriptRoot 'prepare-official-openssl.py'), '--artifact-directory', $opensslEvidence,
+        '--compiler-directory', (Split-Path -Parent $cl), '--lock', $opensslLock)
+    foreach ($directory in $buildPaths) { $opensslArguments += @('--build-tool-path', $directory) }
+    & $basePython @opensslArguments
+    if ($LASTEXITCODE -ne 0) { throw 'The pinned native OpenSSL prerequisite failed before the official Python dependency stage.' }
+    $opensslReceipt = Join-Path $opensslEvidence 'openssl-build.json'
+    $openssl = Get-Content -LiteralPath $opensslReceipt -Raw | ConvertFrom-Json
+    if ($openssl.status -cne 'sdk-built' -or $openssl.opensslVersion -cne '3.5.8' -or
+        $openssl.static -isnot [bool] -or $openssl.static -ne $true -or
+        $openssl.inputLockSha256 -cne $phaseLock.opensslBuildLockSha256 -or
+        -not [string]::Equals([IO.Path]::GetFullPath($openssl.sdkRoot), (Join-Path $opensslEvidence 'sdk'), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The OpenSSL prerequisite did not produce its exact owned static SDK.'
+    }
+    $phaseReceipt['opensslReceiptSha256'] = (Get-FileHash -LiteralPath $opensslReceipt -Algorithm SHA256).Hash.ToLowerInvariant()
+    $env:OPENSSL_DIR = $openssl.sdkRoot
+    $env:OPENSSL_STATIC = '1'
     $downloads = Join-Path $phaseEvidence 'downloads'
     [IO.Directory]::CreateDirectory($downloads) | Out-Null
     foreach ($artifact in $phaseLock.artifacts) {
@@ -221,6 +248,8 @@ try {
 finally {
     $env:UV_FIND_LINKS = $phaseOriginalFindLinks
     $env:CARGO_HOME = $phaseOriginalCargoHome
+    $env:OPENSSL_DIR = $phaseOriginalOpenSslRoot
+    $env:OPENSSL_STATIC = $phaseOriginalOpenSslStatic
     try { Write-PythonPhaseJson -Value $phaseReceipt -Path (Join-Path $phaseEvidence 'python-phase.json') }
     catch { $phaseReceiptFailure = $_ }
 }

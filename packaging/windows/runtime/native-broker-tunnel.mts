@@ -8,6 +8,7 @@ import {
   createBrokerRelayPeer,
   validateBrokerRelayIdentity,
   type BrokerRelayFiles,
+  type RelayMeasurements,
 } from "./native-broker-relay-protocol.mts";
 
 const RELATIVE =
@@ -16,7 +17,10 @@ const DIRECTORY = /^stream-[0-9a-f]{16}$/u;
 
 // This adapter runs with the contained process's own authority. Host-side I/O
 // always uses the native file owner; this is not a portable substitute for it.
-export function containedBrokerRelayFiles(root: string): BrokerRelayFiles {
+export function containedBrokerRelayFiles(
+  root: string,
+  measurements?: RelayMeasurements,
+): BrokerRelayFiles {
   const file = (name: string) => {
     if (!RELATIVE.test(name)) throw new Error("The contained broker file name is invalid.");
     return path.join(root, ...name.split("/"));
@@ -56,7 +60,15 @@ export function containedBrokerRelayFiles(root: string): BrokerRelayFiles {
       const descriptor = fs.openSync(file(name), "wx");
       try {
         fs.writeFileSync(descriptor, bytes);
-        fs.fsyncSync(descriptor);
+        const started = measurements?.start();
+        let flushed = false;
+        try {
+          fs.fsyncSync(descriptor);
+          flushed = true;
+        } finally {
+          if (started !== undefined)
+            measurements!.finish("flush", started, flushed ? "success" : "failure");
+        }
       } finally {
         fs.closeSync(descriptor);
       }
@@ -100,11 +112,12 @@ export async function startNativeBrokerTunnel(options: {
   relayRoot: string;
   relayToken: string;
   signal?: AbortSignal;
+  measurements?: RelayMeasurements;
 }) {
   validateBrokerRelayIdentity(options.relayRoot, options.relayToken);
   if (options.signal?.aborted)
     throw new Error("The native broker transport was stopped before startup.");
-  const files = containedBrokerRelayFiles(options.relayRoot);
+  const files = containedBrokerRelayFiles(options.relayRoot, options.measurements);
   const bytes = await files.read("ready");
   if (bytes === null) throw new Error("The host broker transport is not ready.");
   let ready: { schemaVersion?: unknown; transport?: unknown; token?: unknown; slots?: unknown };
@@ -127,6 +140,7 @@ export async function startNativeBrokerTunnel(options: {
     slots: ready.slots as string[],
     side: "sandbox",
     signal: options.signal,
+    measurements: options.measurements,
   });
   if (peer.port === null) {
     await peer.close();
