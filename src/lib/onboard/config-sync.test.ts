@@ -67,21 +67,23 @@ describe("sandbox config sync helpers", () => {
     };
     const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>();
     const inspectSandboxIdentity = vi.fn(() => "original-identity");
-    const syncConfig = createNemoClawConfigSync({
-      inspectSandboxIdentity,
-      getGatewayName: () => "nemoclaw",
-      getProviderSelectionConfig: () => ({
-        endpointType: "custom",
-        endpointUrl: "https://inference.local/v1",
-        ncpPartner: null,
-        model: "model",
-        profile: "inference-local",
-        credentialEnv: "OPENAI_API_KEY",
-        provider: "provider",
-        providerLabel: "Provider",
-      }),
-      sandboxCommandExecutor: { runBuffered },
-    });
+    const syncConfig = createNemoClawConfigSync(
+      {
+        inspectSandboxIdentity,
+        getProviderSelectionConfig: () => ({
+          endpointType: "custom",
+          endpointUrl: "https://inference.local/v1",
+          ncpPartner: null,
+          model: "model",
+          profile: "inference-local",
+          credentialEnv: "OPENAI_API_KEY",
+          provider: "provider",
+          providerLabel: "Provider",
+        }),
+        sandboxCommandExecutor: { runBuffered },
+      },
+      () => "nemoclaw",
+    );
 
     beforeEach(() => {
       vi.useFakeTimers();
@@ -247,21 +249,23 @@ describe("sandbox config sync helpers", () => {
     const revalidateSandboxIdentity = vi.fn(() => {
       throw new Error("sandbox identity changed");
     });
-    const syncConfig = createNemoClawConfigSync({
-      inspectSandboxIdentity: () => "original-identity",
-      getGatewayName: () => "nemoclaw",
-      getProviderSelectionConfig: () => ({
-        endpointType: "custom",
-        endpointUrl: "https://inference.local/v1",
-        ncpPartner: null,
-        model: "model",
-        profile: "inference-local",
-        credentialEnv: "OPENAI_API_KEY",
-        provider: "provider",
-        providerLabel: "Provider",
-      }),
-      sandboxCommandExecutor: { runBuffered },
-    });
+    const syncConfig = createNemoClawConfigSync(
+      {
+        inspectSandboxIdentity: () => "original-identity",
+        getProviderSelectionConfig: () => ({
+          endpointType: "custom",
+          endpointUrl: "https://inference.local/v1",
+          ncpPartner: null,
+          model: "model",
+          profile: "inference-local",
+          credentialEnv: "OPENAI_API_KEY",
+          provider: "provider",
+          providerLabel: "Provider",
+        }),
+        sandboxCommandExecutor: { runBuffered },
+      },
+      () => "nemoclaw",
+    );
 
     await expect(
       syncConfig("spark-box", "provider", "model", revalidateSandboxIdentity),
@@ -279,21 +283,23 @@ describe("sandbox config sync helpers", () => {
       stdout: "",
       stderr: "",
     }));
-    const syncConfig = createNemoClawConfigSync({
-      inspectSandboxIdentity: () => "original-identity",
-      getGatewayName: () => "nemoclaw",
-      getProviderSelectionConfig: () => ({
-        endpointType: "custom",
-        endpointUrl: "https://inference.local/v1",
-        ncpPartner: null,
-        model: "model",
-        profile: "inference-local",
-        credentialEnv: "OPENAI_API_KEY",
-        provider: "provider",
-        providerLabel: "Provider",
-      }),
-      sandboxCommandExecutor: { runBuffered },
-    });
+    const syncConfig = createNemoClawConfigSync(
+      {
+        inspectSandboxIdentity: () => "original-identity",
+        getProviderSelectionConfig: () => ({
+          endpointType: "custom",
+          endpointUrl: "https://inference.local/v1",
+          ncpPartner: null,
+          model: "model",
+          profile: "inference-local",
+          credentialEnv: "OPENAI_API_KEY",
+          provider: "provider",
+          providerLabel: "Provider",
+        }),
+        sandboxCommandExecutor: { runBuffered },
+      },
+      () => "nemoclaw",
+    );
 
     await syncConfig("spark-box", "provider", "model");
 
@@ -309,30 +315,32 @@ describe("sandbox config sync helpers", () => {
   });
 
   it("propagates typed sandbox execution failures", async () => {
-    const syncConfig = createNemoClawConfigSync({
-      inspectSandboxIdentity: () => "original-identity",
-      getGatewayName: () => "nemoclaw",
-      getProviderSelectionConfig: () => ({
-        endpointType: "custom",
-        endpointUrl: "https://inference.local/v1",
-        ncpPartner: null,
-        model: "model",
-        profile: "inference-local",
-        credentialEnv: "OPENAI_API_KEY",
-        provider: "provider",
-        providerLabel: "Provider",
-      }),
-      sandboxCommandExecutor: {
-        runBuffered: async () => ({
-          outcome: {
-            kind: "failed",
-            error: { kind: "timeout", message: "config sync timed out" },
-          },
-          stdout: "",
-          stderr: "",
+    const syncConfig = createNemoClawConfigSync(
+      {
+        inspectSandboxIdentity: () => "original-identity",
+        getProviderSelectionConfig: () => ({
+          endpointType: "custom",
+          endpointUrl: "https://inference.local/v1",
+          ncpPartner: null,
+          model: "model",
+          profile: "inference-local",
+          credentialEnv: "OPENAI_API_KEY",
+          provider: "provider",
+          providerLabel: "Provider",
         }),
+        sandboxCommandExecutor: {
+          runBuffered: async () => ({
+            outcome: {
+              kind: "failed",
+              error: { kind: "timeout", message: "config sync timed out" },
+            },
+            stdout: "",
+            stderr: "",
+          }),
+        },
       },
-    });
+      () => "nemoclaw",
+    );
 
     await expect(syncConfig("spark-box", "provider", "model")).rejects.toThrow(
       "config sync timed out",

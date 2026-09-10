@@ -158,9 +158,8 @@ describe("Hermes GPU boundary", () => {
 
   it("rejects fail-open stale Docker CLI recovery", () => {
     const errors = wfErrors((workflow) => {
-      step(workflow.jobs[GPU], "Recover Docker CLI before native Podman E2E")[
-        "continue-on-error"
-      ] = true;
+      step(workflow.jobs[GPU], "Recover Docker CLI before native Podman E2E")["continue-on-error"] =
+        true;
     });
 
     expect(errors).toContain("hermes-gpu-startup trusted runtime boundary failed");

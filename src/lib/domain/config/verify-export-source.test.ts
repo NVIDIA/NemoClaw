@@ -1,9 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import YAML from "yaml";
 import { Check } from "typebox/value";
 import { ExportSourceValuesSchema } from "./export-evidence";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { runConfigExport } from "../../actions/config/export";
+import { validateNemoClawConfig } from "../../config/schema";
+import {
+  parseNemoClawConfigDocumentName,
+  parseNemoClawConfigDocumentUid,
+} from "../../config/model";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import {
@@ -195,6 +203,36 @@ function verify(
   return verifyExportSource(requestedSandboxName, qualified);
 }
 
+async function exportSnapshots(sequence: readonly ObservedExportSnapshot[]) {
+  let index = 0;
+  const read = vi.fn(async () => sequence[Math.min(index++, sequence.length - 1)]!);
+  const writeStdout = vi.fn(async (_contents: string) => undefined);
+  const publish = vi.fn(() => ({ ok: true, outputPath: "/tmp/alpha.yaml" }) as const);
+  const outcome = await runConfigExport(
+    {
+      sandboxName: "alpha",
+      documentName: parseNemoClawConfigDocumentName("alpha"),
+      target: { kind: "stdout" },
+    },
+    {
+      observe: (name) => observeStableExportSource(name, { read }),
+      createDocumentUid: () => parseNemoClawConfigDocumentUid(sandboxId),
+      writeStdout,
+      publish,
+    },
+  );
+  return { outcome, read, writeStdout, publish };
+}
+
+function proxySnapshot(
+  environment = { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
+) {
+  return {
+    ...snapshot(),
+    registry: { ...entry(), workload: managedWorkload(profileInput({ environment })) },
+  } satisfies ObservedExportSnapshot;
+}
+
 describe("config export source verification (#10938)", () => {
   it("qualifies and verifies two equal snapshots through the observer", async () => {
     const observed = snapshot();
@@ -208,6 +246,126 @@ describe("config export source verification (#10938)", () => {
       source: { sandboxName: "alpha", policy: canonicalPolicy },
     });
   });
+
+  it("exports retained managed proxy settings through the complete action", async () => {
+    const observed = proxySnapshot();
+    const result = await exportSnapshots([observed]);
+
+    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.read).toHaveBeenCalledTimes(2);
+    expect(result.publish).not.toHaveBeenCalled();
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    const config = validateNemoClawConfig(YAML.parse(yaml));
+    expect(config.spec.sandboxes[0]!.network).toEqual({
+      proxy: { host: "proxy.internal", port: 3129 },
+      policy: { explicit: canonicalPolicy },
+    });
+    expect(Object.isFrozen(verifiedSource(verify(observed)).proxy)).toBe(true);
+  });
+
+  it("omits the default proxy from existing canonical exports", async () => {
+    const result = await exportSnapshots([snapshot()]);
+    expect(result.outcome.ok).toBe(true);
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    expect(validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network).toEqual({
+      policy: { explicit: canonicalPolicy },
+    });
+    expect(verifiedSource(verify(snapshot()))).not.toHaveProperty("proxy");
+  });
+
+  it("exports a complete proxy pair when only its port changes", () => {
+    const observed = proxySnapshot({
+      NEMOCLAW_PROXY_HOST: "10.200.0.1",
+      NEMOCLAW_PROXY_PORT: "3129",
+    });
+    expect(verifiedSource(verify(observed)).proxy).toEqual({ host: "10.200.0.1", port: 3129 });
+  });
+
+  it("uses a stable proxy observation after one changed pair", async () => {
+    const changed = proxySnapshot();
+    const result = await exportSnapshots([snapshot(), changed, changed, changed]);
+    expect(result.outcome.ok).toBe(true);
+    expect(result.read).toHaveBeenCalledTimes(4);
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    expect(validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network.proxy).toEqual({
+      host: "proxy.internal",
+      port: 3129,
+    });
+  });
+
+  it("does not publish proxy settings when both snapshot pairs change", async () => {
+    const result = await exportSnapshots([
+      snapshot(),
+      proxySnapshot(),
+      snapshot(),
+      proxySnapshot(),
+    ]);
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: [expect.objectContaining({ category: "unstable-source" })],
+      },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { managedHost: "user:secret-canary@proxy.internal" },
+    { managedHost: "http://proxy.internal" },
+    { managedHost: "proxy.internal\n" },
+    { managedHost: "a".repeat(257) },
+    { managedPort: 0 },
+    { managedPort: 65_536 },
+    { managedPort: 3129.5 },
+    { unexpected: "secret-canary" },
+    { hostHttpUrl: "http://proxy.internal:3129" },
+    { hostHttpsUrl: "http://proxy.internal:3129" },
+    { hostNoProxy: ["private.internal"] },
+  ])("does not publish invalid or unsupported retained proxy fields", async (change) => {
+    const workload = managedWorkload();
+    const profile = JSON.parse(Buffer.from(workload.encodedProfile, "base64url").toString("utf8"));
+    Object.assign(profile.proxy, change);
+    const encodedProfile = Buffer.from(JSON.stringify(profile)).toString("base64url");
+    const observed = snapshot({
+      registry: entry({
+        workload: {
+          ...workload,
+          encodedProfile,
+          startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+        },
+      }),
+    });
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+    expect(JSON.stringify(result.outcome)).not.toContain("secret-canary");
+  });
+
+  it.each([
+    { credentialProxyReplayRequired: true },
+    { corporateCaB64: "secret-canary" },
+    { startupProfileSha256: "c".repeat(64) },
+    { reference: imageRef.replace(/a{64}$/, "b".repeat(64)) },
+  ])(
+    "does not publish proxy settings without eligible matching workload authority",
+    async (change) => {
+      const observed = proxySnapshot();
+      const workload = observed.registry.workload!;
+      const result = await exportSnapshots([
+        {
+          ...observed,
+          registry: { ...observed.registry, workload: { ...workload, ...change } },
+        },
+      ]);
+      expect(result.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
+      expect(result.writeStdout).not.toHaveBeenCalled();
+      expect(result.publish).not.toHaveBeenCalled();
+      expect(JSON.stringify(result.outcome)).not.toContain("secret-canary");
+    },
+  );
 
   it("narrows one supported snapshot to an immutable verified source", () => {
     const result = verify(snapshot());
@@ -540,7 +698,7 @@ describe("config export source verification (#10938)", () => {
     },
   );
 
-  it("rejects any noncanonical managed startup profile", async () => {
+  it("rejects unsupported startup settings alongside a managed proxy", async () => {
     const base = profileInput();
     const dashboard = base.dashboard as Extract<
       ManagedStartupProfileBuilderInput["dashboard"],
@@ -548,6 +706,7 @@ describe("config export source verification (#10938)", () => {
     >;
     const configured = profileInput({
       dashboard: { ...dashboard, url: "http://127.0.0.1:18888", port: 18_888 },
+      environment: { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
     });
     const workload = managedWorkload(configured);
     const raw = snapshot({ registry: entry({ imageTag: workload.reference, workload }) });

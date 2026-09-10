@@ -16,13 +16,15 @@ export interface RunSandboxConfigSyncDeps {
 export interface NemoClawConfigSyncDeps {
   getProviderSelectionConfig(provider: string, model: string): ProviderSelectionConfig | null;
   sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor;
-  getGatewayName(): string;
   inspectSandboxIdentity?: typeof inspectOpenShellSandboxIdentityFingerprint;
 }
 
 const skipSandboxIdentityRevalidation = (_operation: string): void => undefined;
 
-export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
+export function createNemoClawConfigSync(
+  deps: NemoClawConfigSyncDeps,
+  getGatewayName: () => string,
+) {
   return async function syncNemoClawConfigInSandbox(
     sandboxName: string,
     provider: string,
@@ -33,7 +35,7 @@ export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
       getSelectionConfig: () => deps.getProviderSelectionConfig(provider, model),
       runConnectScript: async (name, scriptContent) => {
         const deadlineMs = Date.now() + 60_000;
-        const gatewayName = deps.getGatewayName();
+        const gatewayName = getGatewayName();
         const inspectIdentity =
           deps.inspectSandboxIdentity ?? inspectOpenShellSandboxIdentityFingerprint;
         const identityRequest = { sandboxName: name, gatewayName };

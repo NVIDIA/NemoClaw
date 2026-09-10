@@ -39,7 +39,7 @@ const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
-  "gateway" | "inference" | "policy" | "runtime" | "sandboxName"
+  "gateway" | "inference" | "policy" | "proxy" | "runtime" | "sandboxName"
 >;
 
 function verifiedExportSource(data: VerifiedExportSourceData): VerifiedExportSource {
@@ -295,6 +295,14 @@ function classifyManagedStartupProfile(
   let expected: ManagedStartupProfile;
   try {
     expected = expectedManagedStartupProfile(entry);
+    expected = {
+      ...expected,
+      proxy: {
+        ...expected.proxy,
+        managedHost: profile.proxy.managedHost,
+        managedPort: profile.proxy.managedPort,
+      },
+    };
   } catch {
     return [
       finding(
@@ -679,10 +687,14 @@ function completeVerifiedSource(
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
   const selected = normalizeInferenceSelection(entry);
+  const proxy = authority?.profile.proxy;
   const values = {
     sandboxName: requestedSandboxName,
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
+    ...(proxy && !hasEqualJsonStructure(proxy, expectedManagedStartupProfile(entry).proxy)
+      ? { proxy: { host: proxy.managedHost, port: proxy.managedPort } }
+      : {}),
     inference: {
       provider: selected.provider,
       model: selected.model,
