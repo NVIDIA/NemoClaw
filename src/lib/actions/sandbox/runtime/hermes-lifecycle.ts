@@ -28,9 +28,9 @@ export function createHermesCredentialEnvReconciliationRuntime(
       return result;
     },
     parseRestartCompletion: gatewayRestart.parseManagedGatewayControlCompletion,
-    waitForGateway: (sandboxName: string, revalidate: (operation: string) => void) => {
+    waitForGateway: async (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`checking Hermes gateway health for sandbox '${sandboxName}'`);
-      const healthy = processRecovery.waitForRecoveredSandboxGateway(sandboxName, {
+      const healthy = await processRecovery.waitForRecoveredSandboxGateway(sandboxName, {
         quiet: true,
         initialManagedHealthPassed: true,
         requireManagedProbe: true,

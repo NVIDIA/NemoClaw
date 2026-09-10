@@ -138,7 +138,7 @@ export async function prepareMcpBridgesForDestroy(
   try {
     for (const entry of entries) {
       scrubbedAdapters.push(
-        scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry, providerRuntimeSelection),
+        await scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry, providerRuntimeSelection),
       );
     }
     for (const entry of entries) {
@@ -161,7 +161,7 @@ export async function prepareMcpBridgesForDestroy(
           `Could not prove provider detach for MCP server '${entry.server}'.`,
         );
       }
-      waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+      await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
       // Both an acknowledged detach and a freshly-proven absent binding are
       // rollback responsibilities until destroyPreparedAt is durable. This
       // closes retry-after-process-death gaps where an earlier attempt already
@@ -202,12 +202,12 @@ export async function prepareMcpBridgesForDestroy(
     }
     if (!runtimeRestored) {
       rollbackFailures.push(
-        ...rollbackScrubbedMcpAdapters(
+        ...(await rollbackScrubbedMcpAdapters(
           sandboxName,
           sandbox,
           scrubbedAdapters,
           providerRuntimeSelection,
-        ),
+        )),
       );
     }
     const current = registry.getSandbox(sandboxName);

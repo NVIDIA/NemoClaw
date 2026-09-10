@@ -10,6 +10,7 @@ import {
   findLayerImportBoundaryViolations,
   findManagedRuntimeBoundaryViolations,
 } from "../../scripts/checks/layer-import-boundaries.mts";
+import { testTimeoutOptions } from "../helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 let fixtureCounter = 0;
@@ -42,12 +43,174 @@ function scanFixture(fixture: string, source: string) {
 }
 
 describe("CLI layer import boundaries (#6245)", () => {
-  it("keeps domain, adapter, action, and command layers separated (#6245)", () => {
-    expect(findLayerImportBoundaryViolations()).toEqual([]);
-  });
+  it(
+    "keeps domain, adapter, action, and command layers separated (#6245)",
+    testTimeoutOptions(60_000),
+    () => {
+      expect(findLayerImportBoundaryViolations()).toEqual([]);
+    },
+  );
 
   it("keeps managed runtime orchestration provider-neutral (#9145)", () => {
     expect(findManagedRuntimeBoundaryViolations()).toEqual([]);
+  });
+
+  it("keeps buffered sandbox commands on the async executor (#10991)", () => {
+    const violations = scanFixture(
+      fixturePath("src/lib/onboard", "buffered-exec-helper"),
+      'import { buildOpenshellExecArgs } from "../actions/sandbox/exec";\nexport const value = buildOpenshellExecArgs;\n',
+    );
+
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: "buffered-exec-uses-async-executor" }),
+      ]),
+    );
+  });
+
+  it.each([
+    [
+      "static require destructuring",
+      'const { buildOpenshellExecArgs } = require("../actions/sandbox/exec");\nexport const value = buildOpenshellExecArgs;\n',
+    ],
+    [
+      "TypeScript import equals",
+      'import legacy = require("../actions/sandbox/exec");\nexport const value = legacy.buildOpenshellExecArgs;\n',
+    ],
+    [
+      "namespace import computed property",
+      'import * as legacy from "../actions/sandbox/exec";\nexport const value = legacy["buildOpenshellExecArgs"];\n',
+    ],
+    [
+      "static require namespace computed property",
+      'const legacy = require("../actions/sandbox/exec");\nexport const value = legacy["buildOpenshellExecArgs"];\n',
+    ],
+    [
+      "nested static require destructuring",
+      'export function value() {\n  const { buildOpenshellExecArgs } = require("../actions/sandbox/exec");\n  return buildOpenshellExecArgs;\n}\n',
+    ],
+    [
+      "static require computed destructuring",
+      'const { ["buildOpenshellExecArgs"]: value } = require("../actions/sandbox/exec");\nexport { value };\n',
+    ],
+    [
+      "static require quoted destructuring",
+      'const { "buildOpenshellExecArgs": value } = require("../actions/sandbox/exec");\nexport { value };\n',
+    ],
+    [
+      "direct require property",
+      'export const value = require("../actions/sandbox/exec").buildOpenshellExecArgs;\n',
+    ],
+    [
+      "direct require computed property",
+      'export const value = require("../actions/sandbox/exec")["buildOpenshellExecArgs"];\n',
+    ],
+    [
+      "dynamic import property",
+      'export async function value() {\n  return (await import("../actions/sandbox/exec")).buildOpenshellExecArgs;\n}\n',
+    ],
+    [
+      "awaited dynamic import computed property",
+      'export async function value() {\n  return (await import("../actions/sandbox/exec"))["buildOpenshellExecArgs"];\n}\n',
+    ],
+    [
+      "awaited dynamic import binding",
+      'export async function value() {\n  const { buildOpenshellExecArgs } = await import("../actions/sandbox/exec");\n  return buildOpenshellExecArgs;\n}\n',
+    ],
+    [
+      "export assignment of a namespace import",
+      'import * as legacy from "../actions/sandbox/exec";\nexport = legacy;\n',
+    ],
+    [
+      "default export of a namespace import",
+      'import * as legacy from "../actions/sandbox/exec";\nexport default legacy;\n',
+    ],
+    ["export assignment of a direct require", 'export = require("../actions/sandbox/exec");\n'],
+    ["default export of a direct require", 'export default require("../actions/sandbox/exec");\n'],
+    ["named re-export", 'export { buildOpenshellExecArgs } from "../actions/sandbox/exec";\n'],
+    [
+      "aliased named re-export",
+      'export { buildOpenshellExecArgs as legacyBuild } from "../actions/sandbox/exec";\n',
+    ],
+    ["namespace re-export", 'export * as legacy from "../actions/sandbox/exec";\n'],
+    [
+      "namespace re-export with comments",
+      'export /* keep */ * /* keep */ as legacy from "../actions/sandbox/exec";\n',
+    ],
+    [
+      "namespace re-export with line comments",
+      'export // keep\n* // keep\nas legacy from "../actions/sandbox/exec";\n',
+    ],
+    [
+      "namespace re-export with adjacent comments",
+      'export/**//**/*/**//**/as legacy from "../actions/sandbox/exec";\n',
+    ],
+    [
+      "namespace re-export after an interpolated template",
+      'const value = 1; const template = `x ${value} y`; export * as legacy from "../actions/sandbox/exec";\n',
+    ],
+    ["star re-export", 'export * from "../actions/sandbox/exec";\n'],
+  ])("rejects buffered sandbox commands through %s (#10991)", (_label, source) => {
+    const violations = scanFixture(
+      fixturePath("src/lib/onboard", "buffered-exec-helper-alternate"),
+      source,
+    );
+
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: "buffered-exec-uses-async-executor" }),
+      ]),
+    );
+  });
+
+  it.each([
+    ["another named export", 'export { execSandbox } from "../actions/sandbox/exec";\n'],
+    [
+      "another export renamed to the legacy name",
+      'export { execSandbox as buildOpenshellExecArgs } from "../actions/sandbox/exec";\n',
+    ],
+    [
+      "a type-only named export",
+      'export type { buildOpenshellExecArgs } from "../actions/sandbox/exec";\n',
+    ],
+    ["a type-only star export", 'export type * from "../actions/sandbox/exec";\n'],
+    [
+      "a type-only namespace export",
+      'export type * as legacy from "../actions/sandbox/exec";\n',
+    ],
+    [
+      "comment and string namespace-export bait",
+      '// export * as legacy\nconst bait = "export * as legacy";\nexport { execSandbox } from "../actions/sandbox/exec";\n',
+    ],
+    [
+      "template and regular-expression namespace-export bait",
+      'const template = `export * as`; const pattern = /export * as/;\nexport { execSandbox } from "../actions/sandbox/exec";\n',
+    ],
+  ])("allows %s from the legacy helper module (#10991)", (_label, source) => {
+    const violations = scanFixture(
+      fixturePath("src/lib/onboard", "buffered-exec-helper-allowed-export"),
+      source,
+    );
+
+    expect(violations).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: "buffered-exec-uses-async-executor" }),
+      ]),
+    );
+  });
+
+  it("scans comment-heavy namespace-export near misses without backtracking (#10991)", () => {
+    const comments = "/*x*/".repeat(10_000);
+    const violations = scanFixture(
+      fixturePath("src/lib/onboard", "buffered-exec-helper-comment-noise"),
+      `const value = 1; const asValue = 2; export ${comments} { value }; export ${comments} * ${comments} from "../safe";\n`,
+    );
+
+    expect(violations).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: "buffered-exec-uses-async-executor" }),
+      ]),
+    );
   });
 
   it("collects TypeScript import-equals references (#6245)", () => {
@@ -118,9 +281,7 @@ describe("CLI layer import boundaries (#6245)", () => {
     const violations = scanFixture(fixturePath("src/lib", "bin-lib-call"), source);
 
     expect(violations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ rule: "src-no-bin-lib-shims" }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ rule: "src-no-bin-lib-shims" })]),
     );
   });
 
@@ -270,12 +431,8 @@ describe("CLI layer import boundaries (#6245)", () => {
         "src/lib/domain",
         `emitted-specifier-importer-${sourceExtension.slice(1)}`,
       );
-    const specifier = path
-      .relative(path.dirname(importer), target)
-      .split(path.sep)
-        .join("/");
-      const emittedSpecifier =
-        specifier.slice(0, -sourceExtension.length) + emittedExtension;
+      const specifier = path.relative(path.dirname(importer), target).split(path.sep).join("/");
+      const emittedSpecifier = specifier.slice(0, -sourceExtension.length) + emittedExtension;
       try {
         fs.writeFileSync(target, "export const value = true;\n");
         fs.writeFileSync(
