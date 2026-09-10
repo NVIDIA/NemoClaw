@@ -3,13 +3,18 @@
 
 name: CI / Native Windows Installer Candidate
 
-# Legacy runtime assembly and installer publication require explicit dispatch.
-# Onboarding/UI edits must not rebuild the expanded legacy runtime payload.
+# Finished installer publication requires explicit dispatch.
+# The pinned legacy payload is used only by isolated diagnostic/profiling lanes.
 on:
   workflow_dispatch:
     inputs:
+      finished_windows_product_version:
+        description: MSI product version for the finished preview (must be newer than the legacy preview)
+        required: false
+        default: "0.1.1"
+        type: string
       run_windows_native_installer:
-        description: Build and qualify the no-WSL ARM64 Windows candidate installer
+        description: Build the finished native OpenClaw preview installer, then test it
         required: false
         default: false
         type: boolean
@@ -51,14 +56,205 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-native-installer-${{ github.ref }}${{ inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application' && '-compiled-application' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' && '-host-prerequisites' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'system-drive' && '-system-drive' || inputs.probe_official_hermes_components && '-hermes-components' || inputs.windows_native_diagnostic_source_run_id != '' && '-package-diagnostic' || '' }}
+  group: windows-native-installer-${{ github.ref }}${{ inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && '-finished-package' || inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application' && '-compiled-application' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' && '-host-prerequisites' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'system-drive' && '-system-drive' || inputs.probe_official_hermes_components && '-hermes-components' || inputs.windows_native_diagnostic_source_run_id != '' && '-package-diagnostic' || '' }}
   # Finish the in-flight artifact/evidence; keep only the latest queued request.
   cancel-in-progress: false
 
 jobs:
+  windows-finished-installer:
+    name: Finished Windows OpenClaw preview installer (ARM64)
+    needs: windows-compiled-application
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 120
+    steps:
+      - name: Check out the finished Windows application source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: candidate
+          persist-credentials: false
+      - name: Validate the dedicated finished preview request
+        shell: pwsh
+        env:
+          PRODUCT_VERSION: ${{ inputs.finished_windows_product_version }}
+          OTHER_COMPONENTS: ${{ inputs.probe_official_hermes_components }}
+          OTHER_PROFILE: ${{ inputs.profile_native_windows }}
+          OTHER_RUNTIME: ${{ inputs.test_native_windows_runtime }}
+        run: |
+          $parsedVersion = $null
+          if ($env:PRODUCT_VERSION -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or -not [version]::TryParse($env:PRODUCT_VERSION, [ref]$parsedVersion) -or $parsedVersion -le [version]'0.1.0') {
+            throw 'The finished preview needs an explicit MSI version newer than legacy 0.1.0.'
+          }
+          if (@($env:OTHER_COMPONENTS, $env:OTHER_PROFILE, $env:OTHER_RUNTIME) -contains 'true') {
+            throw 'The finished preview requires its own explicit dispatch.'
+          }
+      - name: Download the exact same-run compiled OpenClaw unit
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.windows-compiled-application.outputs.application_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/finished-windows/application
+      - name: Download the exact same-run application executable and workers
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.windows-compiled-application.outputs.runtime_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/finished-windows/runtime
+      - name: Prepare pinned native Rust
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.95.0-aarch64-pc-windows-msvc
+          target: aarch64-pc-windows-msvc
+          cache: false
+          rustflags: ""
+      - name: Prepare pinned native .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.419
+      - name: Prepare build-only Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.1.0
+        with:
+          python-version: 3.13.13
+          architecture: arm64
+      - name: Reuse only the exact reviewed OpenShell host binaries
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\finished-windows"
+          $msi = "$work\host-source.msi"
+          Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 `
+            -Uri 'https://media.githubusercontent.com/media/NVIDIA/NemoClaw/8856ce6f0263ca55427924e64605b700a7bed6b5/NemoClaw-0.1.0-windows-arm64.msi' -OutFile $msi
+          if ((Get-Item -LiteralPath $msi).Length -ne 259973780 -or `
+              (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant() -cne '2eadf86ba80fbfbb0b84803c32835fcfff0a33a19e2629ead346610db8fb6a8c') {
+            throw 'The immutable native-host source MSI failed verification.'
+          }
+          $extractor = "$env:ProgramFiles\7-Zip\7z.exe"
+          if (-not (Test-Path -LiteralPath $extractor -PathType Leaf)) { throw 'The Windows CI image is missing its explicit7-Zip extraction tool.' }
+          & python "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\extract-openshell-host.py" `
+            --msi $msi --seven-zip $extractor --source-root "$env:GITHUB_WORKSPACE\candidate" --source-revision $env:GITHUB_SHA `
+            --output "$work\openshell-binaries" --scratch "$work\native-extract"
+          if ($LASTEXITCODE -ne 0) { throw 'The two-file native host extraction failed.' }
+      - name: Prepare native host files without any legacy agent tree
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\finished-windows"
+          & python "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\prepare-finished-host.py" `
+            --source-root "$env:GITHUB_WORKSPACE\candidate" --openshell-binaries "$work\openshell-binaries" `
+            --node-root "$work\application\node" --output "$work\host" --cache "$work\downloads"
+          if ($LASTEXITCODE -ne 0) { throw 'Native host input preparation failed.' }
+      - name: Seal the finished application and selected OpenClaw resources
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\finished-windows"
+          $owner = "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer"
+          $inputs = @("$work\host\runtime-payload-receipt.json", "$work\application\build\app\openclaw-resource-closure.json", "$work\runtime\workers\build.json", "$work\runtime\executable\build.json")
+          $identityText = ($inputs | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant() }) -join "`n"
+          $component = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($identityText))).ToLowerInvariant()
+          & python "$owner\assign_runtime_namespace.py" --receipt "$work\namespace.json" --source-revision $env:GITHUB_SHA --component-identity $component
+          if ($LASTEXITCODE -ne 0) { throw 'Immutable namespace assignment failed.' }
+          & python "$owner\assemble_runtime.py" --output "$work\assembled" `
+            --agent "openclaw=$work\application\build\app" --shared-node "$work\host\bin\node.exe" `
+            --node-version 22.23.2 --source-revision $env:GITHUB_SHA --component-identity $component `
+            --namespace-receipt "$work\namespace.json" --worker-build "$work\runtime\workers" --executable-build "$work\runtime\executable"
+          if ($LASTEXITCODE -ne 0) { throw 'The finished runtime could not be sealed.' }
+      - name: Build the finished WPF, guarded launcher, transactional MSI and Burn preview
+        shell: pwsh
+        env:
+          PRODUCT_VERSION: ${{ inputs.finished_windows_product_version }}
+        run: |
+          $work = "$env:RUNNER_TEMP\finished-windows"
+          $tools = "$work\tools"
+          New-Item -ItemType Directory -Path $tools | Out-Null
+          [IO.File]::WriteAllText("$work\global.json", '{"sdk":{"version":"8.0.419","rollForward":"disable","allowPrerelease":false}}', [Text.UTF8Encoding]::new($false))
+          Push-Location $work
+          $config = "$tools\NuGet.Config"
+          [IO.File]::WriteAllText($config, '<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>', [Text.UTF8Encoding]::new($false))
+          & dotnet tool install wix --version 5.0.2 --tool-path $tools --configfile $config
+          if ($LASTEXITCODE -ne 0) { throw 'The pinned WiX tool could not be prepared.' }
+          & "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\build-immutable-package.ps1" `
+            -SourceRoot "$env:GITHUB_WORKSPACE\candidate" -SourceRevision $env:GITHUB_SHA -ProductVersion $env:PRODUCT_VERSION `
+            -HostPayloadRoot "$work\host" -RuntimeAssemblyRoot "$work\assembled" -OutputDirectory "$work\package" `
+            -PythonPath (Get-Command python.exe -CommandType Application | Select-Object -First 1).Source `
+            -DotNetPath (Get-Command dotnet.exe -CommandType Application | Select-Object -First 1).Source -WixPath "$tools\wix.exe"
+          Pop-Location
+      - name: Publish the downloadable preview before installed acceptance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: finished-windows-preview-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/finished-windows/package/*.exe
+            ${{ runner.temp }}/finished-windows/package/*.msi
+            ${{ runner.temp }}/finished-windows/package/*.json
+            ${{ runner.temp }}/finished-windows/assembled/runtime-identity.json
+          if-no-files-found: error
+      - name: Exercise the installed preview, real inference and owned cleanup
+        shell: pwsh
+        env:
+          PRODUCT_VERSION: ${{ inputs.finished_windows_product_version }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          $work = "$env:RUNNER_TEMP\finished-windows"
+          $setup = "$work\package\NemoClawSetup-$env:PRODUCT_VERSION-windows-arm64.exe"
+          $installation = "$env:ProgramFiles\NVIDIA\NemoClaw"
+          if (Test-Path -LiteralPath $installation) { throw 'Fresh preview acceptance requires no preexisting NemoClaw installation.' }
+          $primary = $null
+          $timings = [ordered]@{}
+          function Invoke-OwnedSetup([string]$Action, [string]$Log) {
+            $info = [Diagnostics.ProcessStartInfo]::new()
+            $info.FileName = $setup; $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+            foreach ($value in @($Action, '-quiet', '-norestart', '-log', $Log)) { $info.ArgumentList.Add($value) }
+            $clock = [Diagnostics.Stopwatch]::StartNew()
+            $process = [Diagnostics.Process]::Start($info)
+            try { $process.WaitForExit(); $code = $process.ExitCode } finally { $process.Dispose() }
+            $timings[$Action] = @{ elapsedMilliseconds = $clock.ElapsedMilliseconds; exitCode = $code }
+            if ($code -ne 0) { throw "Finished preview $Action failed with status $code." }
+          }
+          try {
+            Invoke-OwnedSetup '-install' "$work\install.log"
+            & "$work\application\node\node.exe" --experimental-strip-types `
+              "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\qualify-finished-package.mts" `
+              --install-root "$env:ProgramFiles\NVIDIA\NemoClaw" --runtime-identity "$work\assembled\runtime-identity.json" --output "$work\installed-smoke"
+            if ($LASTEXITCODE -ne 0) { throw 'The installed compiled/contained smoke failed.' }
+            & "$work\application\node\node.exe" --experimental-strip-types `
+              "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\qualify-installed-openclaw.mts" `
+              --install-root $installation --runtime-identity "$work\assembled\runtime-identity.json" `
+              --output "$work\installed-acceptance" --browser-driver-root "$work\application\build\app\node_modules\playwright-core"
+            if ($LASTEXITCODE -ne 0) { throw 'The installed OpenClaw real-inference acceptance failed.' }
+          } catch { $primary = $_ }
+          finally {
+            try {
+              Invoke-OwnedSetup '-uninstall' "$work\uninstall.log"
+            } catch { if ($null -eq $primary) { $primary = $_ } else { Write-Warning 'The original failure is preserved; preview cleanup also failed.' } }
+          }
+          try { [IO.File]::WriteAllText("$work\installed-stage-timings.json", ($timings | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false)) }
+          catch { if ($null -eq $primary) { $primary = $_ } else { Write-Warning 'The original failure is preserved; timing evidence also could not be saved.' } }
+          if ($null -ne $primary) { throw $primary }
+      - name: Preserve finished build and installed evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: finished-windows-preview-evidence-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/finished-windows/host/runtime-payload-receipt.json
+            ${{ runner.temp }}/finished-windows/assembled/*.json
+            ${{ runner.temp }}/finished-windows/package/*.json
+            ${{ runner.temp }}/finished-windows/package/build/*.log
+            ${{ runner.temp }}/finished-windows/installed-smoke/
+            ${{ runner.temp }}/finished-windows/installed-acceptance/
+            ${{ runner.temp }}/finished-windows/installed-stage-timings.json
+            ${{ runner.temp }}/finished-windows/*.log
+            ${{ runner.temp }}/finished-windows/openshell-binaries/openshell-reuse.json
+            ${{ runner.temp }}/finished-windows/native-extract/*.log
+          if-no-files-found: warn
+          retention-days: 14
+
+
   windows-compiled-application:
     name: Compile Windows application units (ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application' }}
+    outputs:
+      application_id: ${{ steps.finished_application.outputs.artifact-id }}
+      runtime_id: ${{ steps.finished_runtime.outputs.artifact-id }}
+    if: ${{ github.event_name == 'workflow_dispatch' && ((inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '') || (inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application')) }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 30
     steps:
@@ -152,6 +348,7 @@ jobs:
             "$work\executable-tools\postject\dist\api.js" "$work\executable"
           if ($LASTEXITCODE -ne 0) { throw 'The Windows application EXE build or execution failed.' }
       - name: Preserve the Windows executable proof
+        id: finished_runtime
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: native-windows-runtime-executable-${{ github.sha }}
@@ -162,6 +359,7 @@ jobs:
             ${{ runner.temp }}/compiled-windows-app/workers/
           if-no-files-found: error
       - name: Preserve compiled application units
+        id: finished_application
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: compiled-windows-application-${{ github.sha }}
@@ -195,7 +393,7 @@ jobs:
 
   windows-system-drive-proof:
     name: Native system-drive preparation and MXC proof (ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'system-drive' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'system-drive' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 12
     steps:
@@ -255,7 +453,7 @@ jobs:
 
   windows-host-prerequisite-proof:
     name: Isolated Windows directory permission proof (ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 10
     steps:
@@ -296,448 +494,6 @@ jobs:
             ${{ runner.temp }}/handle-acl-large/*.log
             ${{ runner.temp }}/handle-acl-large/measurement/*.json
           if-no-files-found: error
-
-  windows-native-installer:
-    name: Windows native installer candidate (ARM64, no WSL)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.test_native_windows_runtime && !inputs.profile_native_windows && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id == '' }}
-    runs-on: windows-11-vs2026-arm
-    timeout-minutes: 240
-    steps:
-      - name: Check out the NemoClaw candidate
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: candidate
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Qualify delayed process auditing before the native build
-        shell: powershell
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
-          & "$candidate\scripts\checks\run-windows-native-installer-qualification.ps1" `
-            -ProcessAuditControlOnly `
-            -CandidateCheckout $candidate `
-            -CandidateSha $env:GITHUB_SHA `
-            -ArtifactDirectory "$env:RUNNER_TEMP\windows-native-process-audit-control"
-
-      - name: Upload early process-audit control evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-native-process-audit-control-${{ github.sha }}
-          path: ${{ runner.temp }}/windows-native-process-audit-control/
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Check out the pinned OpenShell Windows candidate
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: NVIDIA/OpenShell
-          ref: bcd517bbe08cc80860c9be57699390cd32e8445f # NVIDIA/OpenShell#2721 merge commit
-          path: openshell
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Set up pinned Rust for the OpenShell ARM64 build
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-        with:
-          toolchain: 1.95.0
-          target: aarch64-pc-windows-msvc
-          cache: true
-          cache-bin: false
-          cache-on-failure: true
-          cache-workspace-crates: true
-          cache-key: openshell-2721-bcd517bbe08c
-          rust-src-dir: openshell
-          rustflags: ""
-
-      - name: Set up pinned .NET SDK for WiX
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 8.0.419
-
-      - name: Set up pinned Node.js for NemoClaw and OpenClaw
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.22.3
-          cache: npm
-          cache-dependency-path: |
-            candidate/package-lock.json
-            candidate/agents/openclaw/openclaw-runtime/package-lock.json
-
-      - name: Set up pinned native ARM64 Python for agent payloads
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.1.0
-        with:
-          python-version: 3.13.13
-          architecture: arm64
-          cache: pip
-          cache-dependency-path: |
-            candidate/packaging/windows/python/*.lock
-
-      - name: Qualify authentic Hermes ConPTY before the native build
-        shell: powershell
-        timeout-minutes: 10
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
-          & "$candidate\scripts\checks\prepare-windows-native-package-payload.ps1" `
-            -HermesPtyControlOnly `
-            -CandidateCheckout $candidate `
-            -OutputDirectory "$env:RUNNER_TEMP\windows-native-hermes-pty-control"
-
-      - name: Upload early Hermes ConPTY control evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-native-hermes-pty-control-${{ github.sha }}
-          path: ${{ runner.temp }}/windows-native-hermes-pty-control/
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Qualify native launcher ownership before OpenShell builds
-        shell: powershell
-        timeout-minutes: 15
-        env:
-          RUST_BACKTRACE: "1"
-          CARGO_TERM_COLOR: never
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
-          $output = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\windows-native-launcher-tests")
-          [IO.Directory]::CreateDirectory($output) | Out-Null
-          $runner = @'
-          # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-          # SPDX-License-Identifier: Apache-2.0
-
-          import json, os, pathlib, re, subprocess, sys, tempfile, threading
-
-          candidate, output = map(pathlib.Path, sys.argv[1:])
-          try:
-              source = (candidate / "scripts/checks/prepare-windows-native-package-payload.ps1").read_text(encoding="utf-8")
-              version = re.search(r"(?m)^\$script:RustVersion = '(\d+\.\d+\.\d+)'$", source)
-              if version is None:
-                  raise RuntimeError("The native launcher Rust version pin is missing")
-              target = tempfile.mkdtemp(prefix="native-launcher-tests-", dir=os.environ["RUNNER_TEMP"])
-              command = ["rustup", "run", version[1], "cargo", "test", "--locked",
-                         "--target", "aarch64-pc-windows-msvc", "--manifest-path",
-                         str(candidate / "packaging/windows/launcher/Cargo.toml"), "--target-dir", target]
-              notice = b"\n[native launcher test output truncated at 256 KiB]\n"
-              limit = 256 * 1024 - len(notice)
-              state = {"bytes": 0, "truncated": False, "error": None}
-              log = (output / "native-tests.log").open("xb", buffering=0)
-              process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
-
-              def drain():
-                  try:
-                      while chunk := process.stdout.read(8192):
-                          kept = chunk[:max(0, limit - state["bytes"])]
-                          log.write(kept)
-                          sys.stdout.buffer.write(kept)
-                          sys.stdout.buffer.flush()
-                          state["bytes"] += len(kept)
-                          state["truncated"] |= len(kept) != len(chunk)
-                  except Exception as error:
-                      state["error"] = str(error)[:2048]
-
-              reader = threading.Thread(target=drain, daemon=True)
-              reader.start()
-              timed_out = False
-              try:
-                  code = process.wait(timeout=600)
-              except subprocess.TimeoutExpired:
-                  timed_out = True
-                  subprocess.run([str(pathlib.Path(os.environ["SystemRoot"]) / "System32/taskkill.exe"),
-                                  "/PID", str(process.pid), "/T", "/F"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
-                  code = process.wait(timeout=10)
-              reader.join(timeout=5)
-              complete = not reader.is_alive()
-              if state["truncated"]:
-                  log.write(notice)
-              log.close()
-              receipt = {"schemaVersion": 1, "candidateSha": os.environ["GITHUB_SHA"],
-                         "rustVersion": version[1], "target": "aarch64-pc-windows-msvc",
-                         "exitCode": code, "timedOut": timed_out, "outputComplete": complete,
-                         "logTruncated": state["truncated"], "captureError": state["error"]}
-              (output / "native-tests.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
-              print(json.dumps(receipt), flush=True)
-              sys.exit(124 if timed_out or not complete else (code or int(state["error"] is not None)))
-          except Exception as error:
-              (output / "control-failure.txt").write_text(f"{type(error).__name__}: {error}"[:4096] + "\n", encoding="utf-8")
-              raise
-          '@
-          $runnerPath = Join-Path $output 'run-native-tests.py'
-          [IO.File]::WriteAllText($runnerPath, $runner, [Text.UTF8Encoding]::new($false))
-          & python.exe -I -u $runnerPath $candidate $output
-          if ($LASTEXITCODE -ne 0) {
-            throw "Early native Windows launcher ownership tests exited with status $LASTEXITCODE."
-          }
-
-      - name: Upload early native launcher ownership diagnostics
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-native-launcher-tests-${{ github.sha }}
-          path: ${{ runner.temp }}/windows-native-launcher-tests/
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Build the pinned NVIDIA/OpenShell#2721 candidate
-        working-directory: openshell
-        shell: powershell
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-          & .\tasks\scripts\windows-msvc.ps1 build aarch64-pc-windows-msvc
-          & .\tasks\scripts\windows-msvc.ps1 artifacts aarch64-pc-windows-msvc
-
-      - name: Qualify native execution, install, repair, recovery, and uninstall
-        shell: powershell
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
-          $openshell = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\openshell")
-          & "$candidate\scripts\checks\run-windows-native-installer-qualification.ps1" `
-            -CandidateCheckout $candidate `
-            -CandidateSha $env:GITHUB_SHA `
-            -OpenShellCheckout $openshell `
-            -OpenShellSha bcd517bbe08cc80860c9be57699390cd32e8445f `
-            -ArtifactDirectory "$env:RUNNER_TEMP\windows-native-installer-receipts"
-
-      - name: Upload full qualification process-audit diagnostics
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-native-installer-process-audit-${{ github.sha }}
-          path: ${{ runner.temp }}/windows-native-installer-receipts.process-audit-control.json
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Upload Windows native installer qualification receipts
-        if: success()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-native-installer-${{ github.sha }}
-          path: ${{ runner.temp }}/windows-native-installer-receipts/
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Build the pinned Node compatibility derivative
-        working-directory: openshell
-        shell: powershell
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-          $patch = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate\packaging\windows\openshell-2721-node-ui.patch")
-          & git apply --check -- $patch
-          if ($LASTEXITCODE -ne 0) { throw 'The NVIDIA/OpenShell#2721 Node UI compatibility patch no longer applies exactly.' }
-          & git apply -- $patch
-          if ($LASTEXITCODE -ne 0) { throw 'The NVIDIA/OpenShell#2721 Node UI compatibility patch failed.' }
-          . .\tasks\scripts\windows-msvc.ps1 build aarch64-pc-windows-msvc
-          Assert-NativeTestTarget 'aarch64-pc-windows-msvc'
-          Invoke-VsCargo `
-            -RustTarget 'aarch64-pc-windows-msvc' `
-            -CargoArgs "cargo test --locked --release --target aarch64-pc-windows-msvc -p openshell-server --lib $Z3ServerFeatures -- compute::tests::mxc_ compute::tests::advertised_mxc_name_ --test-threads=1 --color=never" `
-            -LogName 'test-aarch64-pc-windows-msvc-native-readiness.log'
-          $readinessLog = Join-Path $LogDir 'test-aarch64-pc-windows-msvc-native-readiness.log'
-          $readinessOutput = Get-Content -LiteralPath $readinessLog -Raw
-          if ($readinessOutput -notmatch 'test result: ok\. 4 passed; 0 failed; 0 ignored;') {
-            throw 'The four MXC gateway readiness controls did not all pass.'
-          }
-          Invoke-VsCargo `
-            -RustTarget 'aarch64-pc-windows-msvc' `
-            -CargoArgs 'cargo test --locked --release --target aarch64-pc-windows-msvc -p openshell-cli --lib native_mxc_ready_condition_ -- --test-threads=1 --color=never' `
-            -LogName 'test-aarch64-pc-windows-msvc-native-completion.log'
-          $completionLog = Join-Path $LogDir 'test-aarch64-pc-windows-msvc-native-completion.log'
-          $completionOutput = Get-Content -LiteralPath $completionLog -Raw
-          if ($completionOutput -notmatch 'test result: ok\. 4 passed; 0 failed; 0 ignored;') {
-            throw 'The four MXC completion JSON controls did not all pass.'
-          }
-          & .\tasks\scripts\windows-msvc.ps1 artifacts aarch64-pc-windows-msvc
-
-      - name: Restore the assembled native NemoClaw runtime payload
-        id: windows-runtime-payload-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ${{ runner.temp }}/nemoclaw-native-runtime-payload
-          key: windows-native-runtime-v2-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}-openshell-bcd517bbe08c-${{ hashFiles('candidate/package.json', 'candidate/package-lock.json', 'candidate/bin/**', 'candidate/src/**', 'candidate/nemoclaw/**', 'candidate/agents/**', 'candidate/scripts/lib/package-blueprint-runner-runtime.mts', 'candidate/scripts/checks/prepare-windows-native-package-payload.ps1', 'candidate/packaging/windows/NATIVE-PREVIEW.txt', 'candidate/packaging/windows/MXC-LICENSE.txt', 'candidate/packaging/windows/openshell-2721-node-ui.patch', 'candidate/packaging/windows/python/langgraph-api-0.14.0.dev3-inmemory-no-grpc.patch', 'candidate/packaging/windows/python/langchain-quickjs-0.3.5-no-bsdiff.patch', 'candidate/packaging/windows/python/deepagents-code-0.1.55-windows-dacl.patch', 'candidate/packaging/windows/python/deepagents-sitecustomize.py') }}
-
-      - name: Assemble the native NemoClaw runtime payload
-        shell: powershell
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
-          $openshell = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\openshell")
-          $payloadRoot = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\nemoclaw-native-runtime-payload")
-          if (-not (Test-Path -LiteralPath "$payloadRoot\runtime-payload-receipt.json" -PathType Leaf)) {
-            & "$candidate\scripts\checks\prepare-windows-native-package-payload.ps1" `
-              -CandidateCheckout $candidate `
-              -OpenShellPayloadRoot "$openshell\target\aarch64-pc-windows-msvc\release" `
-              -OutputDirectory $payloadRoot
-          }
-          $payloadReceipt = Get-Content -LiteralPath "$payloadRoot\runtime-payload-receipt.json" -Raw | ConvertFrom-Json
-          if ($payloadReceipt.nemoclaw.revision -cne $env:GITHUB_SHA) {
-            throw 'The cached native NemoClaw runtime payload does not match the exact candidate revision.'
-          }
-          Copy-Item `
-            -LiteralPath "$candidate\packaging\windows\runtime\run-installed-native-turn.mts" `
-            -Destination "$payloadRoot\qualification\run-installed-native-turn.mts" `
-            -Force
-          Copy-Item `
-            -LiteralPath "$openshell\target\aarch64-pc-windows-msvc\release\openshell.exe" `
-            -Destination "$payloadRoot\bin\openshell.exe" `
-            -Force
-          Copy-Item `
-            -LiteralPath "$openshell\target\aarch64-pc-windows-msvc\release\openshell-gateway.exe" `
-            -Destination "$payloadRoot\bin\openshell-gateway.exe" `
-            -Force
-          Copy-Item `
-            -LiteralPath "$candidate\packaging\windows\openshell-2721-node-ui.patch" `
-            -Destination "$payloadRoot\OPENSHELL-NODE-UI-COMPATIBILITY.patch" `
-            -Force
-          Copy-Item `
-            -LiteralPath "$candidate\packaging\windows\NATIVE-PREVIEW.txt" `
-            -Destination "$payloadRoot\NATIVE-PREVIEW.txt" `
-            -Force
-
-      - name: Cache the assembled native NemoClaw runtime payload
-        if: ${{ steps.windows-runtime-payload-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ${{ runner.temp }}/nemoclaw-native-runtime-payload
-          key: ${{ steps.windows-runtime-payload-cache.outputs.cache-primary-key }}
-
-      - name: Separate runtime-unneeded development assets
-        id: windows-development-assets
-        shell: powershell
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
-          $payloadRoot = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\nemoclaw-native-runtime-payload")
-          $diagnosticsRoot = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\nemoclaw-windows-development-assets")
-          # A restored payload does not restore the build checkout's dependencies.
-          # This happens on the package builder, never on the user's machine.
-          if (-not (Test-Path -LiteralPath "$candidate\node_modules\typescript\lib\typescript.js" -PathType Leaf)) {
-            Push-Location $candidate
-            try {
-              & npm.cmd ci --ignore-scripts --no-audit --no-fund
-              if ($LASTEXITCODE -ne 0) { throw 'The locked development-asset auditor could not be prepared.' }
-            } finally { Pop-Location }
-          }
-          & node --experimental-strip-types --no-warnings "$candidate\packaging\windows\performance\partition-payload.mts" `
-            partition $payloadRoot $diagnosticsRoot $env:GITHUB_SHA
-          if ($LASTEXITCODE -ne 0) { throw 'The production/development payload partition failed.' }
-
-      - name: Upload development assets and complete partition provenance
-        if: ${{ always() && steps.windows-development-assets.outcome != 'skipped' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-native-development-assets-${{ github.sha }}
-          path: ${{ runner.temp }}/nemoclaw-windows-development-assets/
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Build ARM64 MSI and setup executable
-        id: windows-package
-        shell: powershell
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
-          $version = [string](Get-Content -LiteralPath "$candidate\package.json" -Raw | ConvertFrom-Json).version
-          $packageRoot = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\nemoclaw-windows-package")
-          $payloadRoot = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\nemoclaw-native-runtime-payload")
-          "product_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "package_root=$packageRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          & "$candidate\scripts\checks\build-windows-native-package.ps1" `
-            -ProductVersion $version `
-            -PayloadRoot $payloadRoot `
-            -OutputDirectory $packageRoot
-          $referenceReceipts = Join-Path $packageRoot 'reference-qualification'
-          [IO.Directory]::CreateDirectory($referenceReceipts) | Out-Null
-          Copy-Item `
-            -Path "$env:RUNNER_TEMP\windows-native-installer-receipts\*" `
-            -Destination $referenceReceipts `
-            -Recurse
-
-      - name: Upload installer for the recorded GitHub download
-        if: ${{ always() && steps.windows-package.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-native-download-source-${{ github.sha }}
-          path: |
-            ${{ steps.windows-package.outputs.package_root }}/NemoClaw-${{ steps.windows-package.outputs.product_version }}-windows-arm64.msi
-            ${{ steps.windows-package.outputs.package_root }}/NemoClawSetup-${{ steps.windows-package.outputs.product_version }}-windows-arm64.exe
-            ${{ steps.windows-package.outputs.package_root }}/package-manifest.json
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Qualify MSI and setup executable
-        shell: powershell
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
-          $version = '${{ steps.windows-package.outputs.product_version }}'
-          $packageRoot = '${{ steps.windows-package.outputs.package_root }}'
-          & "$candidate\scripts\checks\run-windows-native-package-qualification.ps1" `
-            -ProductVersion $version `
-            -MsiPath "$packageRoot\NemoClaw-$version-windows-arm64.msi" `
-            -SetupPath "$packageRoot\NemoClawSetup-$version-windows-arm64.exe" `
-            -PackageManifestPath "$packageRoot\package-manifest.json" `
-            -ArtifactDirectory "$packageRoot\qualification"
-
-      - name: Create native Windows proof-of-life video
-        if: ${{ always() && steps.windows-package.outcome == 'success' }}
-        shell: powershell
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
-          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
-          $version = '${{ steps.windows-package.outputs.product_version }}'
-          $packageRoot = '${{ steps.windows-package.outputs.package_root }}'
-          & "$candidate\scripts\checks\create-windows-native-proof-video.ps1" `
-            -CandidateCheckout $candidate `
-            -ProductVersion $version `
-            -CandidateSha $env:GITHUB_SHA `
-            -GitHubRepository $env:GITHUB_REPOSITORY `
-            -GitHubRunId $env:GITHUB_RUN_ID `
-            -DownloadArtifactName "windows-native-download-source-$env:GITHUB_SHA" `
-            -DesktopDownloadDirectory "$env:USERPROFILE\Desktop\NemoClawDownload" `
-            -MsiPath "$packageRoot\NemoClaw-$version-windows-arm64.msi" `
-            -SetupPath "$packageRoot\NemoClawSetup-$version-windows-arm64.exe" `
-            -PackageManifestPath "$packageRoot\package-manifest.json" `
-            -QualificationReceiptPath "$packageRoot\qualification\package-qualification.json" `
-            -HostReceiptPath "$packageRoot\reference-qualification\host-platform.json" `
-            -OpenShellReceiptPath "$packageRoot\reference-qualification\openshell-source.json" `
-            -OutputDirectory "$packageRoot\proof-video"
-
-      - name: Upload native Windows proof-of-life video
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-native-raw-proof-video-${{ github.sha }}
-          path: ${{ runner.temp }}/nemoclaw-windows-package/proof-video/
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Upload downloadable Windows native package
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: nemoclaw-native-windows-package-${{ github.sha }}
-          path: ${{ runner.temp }}/nemoclaw-windows-package/
-          if-no-files-found: warn
-          retention-days: 14
 
   windows-native-package-diagnostic:
     name: Windows native package/runtime diagnostic (ARM64, no WSL)
@@ -1091,7 +847,7 @@ jobs:
 
   official-hermes-components:
     name: Official Hermes ${{ inputs.official_hermes_phase || 'components' }} probe (Windows ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && inputs.official_hermes_phase != 'application' && inputs.official_hermes_phase != 'system-drive' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && inputs.official_hermes_phase != 'application' && inputs.official_hermes_phase != 'system-drive' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: ${{ inputs.official_hermes_phase == 'runtime' && 180 || 90 }}
     steps:
@@ -1326,7 +1082,7 @@ jobs:
 
   windows-native-profiling:
     name: Installed Windows baseline profiling (diagnostic only)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.profile_native_windows && !inputs.test_native_windows_runtime }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.profile_native_windows && !inputs.test_native_windows_runtime }}
     runs-on: windows-11-vs2026-arm
     # Existing target allowances: 15m install + 30m warm prep + 45m replays
     # + 15m uninstall; download/recording finalization retain bounded headroom.
@@ -1376,7 +1132,7 @@ jobs:
 
   windows-runtime-controls:
     name: Native Windows ownership and isolated MSI controls
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_native_windows_runtime }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.test_native_windows_runtime }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 20
     steps:
@@ -1423,8 +1179,8 @@ jobs:
             $result = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }
           if ($result -ne 0) { throw 'The real native runtime ownership controls failed.' }
-          if ((Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 16 passed; 0 failed; 0 ignored;') {
-            throw 'The six portable and ten Windows ownership controls did not all execute.'
+          if ((Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 18 passed; 0 failed; 0 ignored;') {
+            throw 'The six portable and twelve Windows ownership controls did not all execute.'
           }
 
       - name: Exercise owned child and grandchild lifetime

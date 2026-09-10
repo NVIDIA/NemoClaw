@@ -1,6 +1,9 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <?ifndef SystemDriveMetadataPreparation ?>
+  <?define SystemDriveMetadataPreparation = "false" ?>
+  <?endif ?>
   <Bundle
     Name="NemoClaw"
     Manufacturer="NVIDIA Corporation"
@@ -13,6 +16,20 @@
       <PayloadGroupRef Id="NemoClawBootstrapperPayloads" />
     </BootstrapperApplication>
     <Chain>
+      <?if $(var.SystemDriveMetadataPreparation) = "true" ?>
+      <!-- Enable only after this exact helper has passed system-root and MXC
+           launch qualification. The null-device prerequisite stays upstream. -->
+      <ExePackage
+        Id="MxcSystemDrivePreparation"
+        CacheId="NemoClawSystemDriveMetadata-$(var.SystemDrivePrepSha256)"
+        Name="mxc\NemoClawHostPreparation.exe"
+        SourceFile="$(var.SystemDrivePrepPath)"
+        InstallArguments="prepare-system-drive"
+        PerMachine="yes"
+        Permanent="yes"
+        Compressed="yes"
+        Vital="yes" />
+      <?else ?>
       <ExePackage
         Id="MxcSystemDrivePreparation"
         CacheId="MxcSystemDrivePreparation-0.8.0-arm64"
@@ -23,6 +40,7 @@
         Permanent="yes"
         Compressed="yes"
         Vital="yes" />
+      <?endif ?>
       <ExePackage
         Id="MxcNullDevicePreparation"
         CacheId="MxcNullDevicePreparation-0.8.0-arm64"

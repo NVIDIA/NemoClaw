@@ -9,6 +9,7 @@
     <IntermediateOutputPath>$(PackageIntermediateRoot)\bundle\</IntermediateOutputPath>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+    <SystemDriveMetadataPreparation Condition="'$(SystemDriveMetadataPreparation)' == ''">false</SystemDriveMetadataPreparation>
     <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);SourceRoot=$(SourceRoot);MsiPath=$(MsiPath);WxcHostPrepPath=$(PayloadRoot)\mxc\wxc-host-prep.exe;BootstrapperPath=$(BootstrapperPath);BootstrapperRoot=$(BootstrapperRoot)</DefineConstants>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- The null-device prerequisite is boot-ephemeral by Windows design, so a
@@ -20,7 +21,19 @@
     <Compile Include="Bundle.wxs" />
     <Compile Include="$(GeneratedBootstrapperPayloadAuthoring)" />
   </ItemGroup>
+  <Target Name="ValidateNemoClawSystemDriveMetadata" BeforeTargets="ValidateNemoClawBundleInputs" Condition="'$(SystemDriveMetadataPreparation)' == 'true'">
+    <Error Condition="'$(SystemDrivePrepPath)' == '' or !Exists('$(SystemDrivePrepPath)')" Text="The reviewed native system-drive helper is required." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(SystemDrivePrepSha256)', '^[a-fA-F0-9]{64}$'))" Text="The reviewed native system-drive helper SHA256 is required." />
+    <GetFileHash Files="$(SystemDrivePrepPath)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="SystemDrivePrepHash" />
+    </GetFileHash>
+    <Error Condition="'%(SystemDrivePrepHash.FileHash)' != '$(SystemDrivePrepSha256)'" Text="The native system-drive helper differs from its reviewed SHA256." />
+    <PropertyGroup>
+      <DefineConstants>$(DefineConstants);SystemDriveMetadataPreparation=true;SystemDrivePrepPath=$(SystemDrivePrepPath);SystemDrivePrepSha256=$(SystemDrivePrepSha256)</DefineConstants>
+    </PropertyGroup>
+  </Target>
   <Target Name="ValidateNemoClawBundleInputs" BeforeTargets="ResolveWixExtensionReferences">
+    <Error Condition="'$(SystemDriveMetadataPreparation)' != 'false' and '$(SystemDriveMetadataPreparation)' != 'true'" Text="SystemDriveMetadataPreparation must be an explicit Boolean build choice." />
     <Error Condition="'$(MsiPath)' == ''" Text="MsiPath is required." />
     <Error Condition="!Exists('$(MsiPath)')" Text="The ARM64 MSI input is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-host-prep.exe')" Text="The pinned ARM64 MXC host-preparation input is missing." />
