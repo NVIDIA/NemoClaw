@@ -1174,7 +1174,21 @@ export function createSetupInference(
               }
             }
             revalidateSandboxIdentity?.("publish the host-local inference provider receipt");
-            const committed = normalizeHostLocalInferenceReceipt(hostLocalRoute.prepared.commit());
+            const finalizePublishedResume = hostLocalRoute.prepared.finalizePublishedResume;
+            const committed = normalizeHostLocalInferenceReceipt(
+              finalizePublishedResume
+                ? finalizePublishedResume(() => {
+                    revalidateSandboxIdentity?.(
+                      "finalize the published host-local inference provider receipt",
+                    );
+                    if (sandboxName && !routeReserved) {
+                      throw new Error(
+                        "Host-local inference published resume lost sandbox route reservation authority.",
+                      );
+                    }
+                  })
+                : hostLocalRoute.prepared.commit(),
+            );
             if (
               serializeHostLocalInferenceReceipt(committed) !==
               serializeHostLocalInferenceReceipt(hostLocalRoute.receipt)
