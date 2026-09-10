@@ -53,6 +53,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  windows-host-prerequisite-proof:
+    name: Isolated Windows directory permission proof (ARM64)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 10
+    steps:
+      - name: Check out the Windows packaging controls
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - name: Exercise permission handling on disposable directories
+        shell: pwsh
+        run: |
+          dotnet run --project packaging/windows/tests/host-prerequisites/HandleAcl.Controls.csproj `
+            --configuration Release -- "$env:RUNNER_TEMP\handle-acl-proof"
+          if ($LASTEXITCODE -ne 0) { throw 'The isolated directory permission proof failed.' }
+      - name: Preserve the permission proof result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-directory-permission-proof-${{ github.sha }}
+          path: ${{ runner.temp }}/handle-acl-proof/handle-acl-proof.json
+          if-no-files-found: error
+
   windows-native-installer:
     name: Windows native installer candidate (ARM64, no WSL)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.test_native_windows_runtime && !inputs.profile_native_windows && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id == '' }}

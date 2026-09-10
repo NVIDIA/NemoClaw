@@ -1,0 +1,119 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Text.Json;
+using Nvidia.NemoClaw.HostPrerequisiteControls;
+
+if (!OperatingSystem.IsWindows() || RuntimeInformation.OSArchitecture != Architecture.Arm64 || Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true")
+    throw new InvalidOperationException("This proof requires the disposable GitHub Windows ARM64 runner.");
+if (args.Length != 1) throw new ArgumentException("One fresh evidence directory is required.");
+var temporary = Path.GetFullPath(Environment.GetEnvironmentVariable("RUNNER_TEMP") ?? throw new InvalidOperationException("Runner temporary root missing")).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+var evidence = Path.GetFullPath(args[0]);
+if (!evidence.StartsWith(temporary, StringComparison.OrdinalIgnoreCase) || Directory.Exists(evidence) || File.Exists(evidence))
+    throw new InvalidOperationException("The proof may create only a fresh runner-owned evidence directory.");
+Directory.CreateDirectory(evidence);
+var fixtures = Path.Combine(evidence, "fixtures");
+Directory.CreateDirectory(fixtures);
+var results = new List<object>();
+var observations = new List<object>();
+Exception? primary = null;
+var cleaned = false;
+var cleanupErrors = new List<string>();
+string Tree(string name)
+{
+    var root = Path.Combine(fixtures, name);
+    Directory.CreateDirectory(Path.Combine(root, "child", "grandchild"));
+    File.WriteAllText(Path.Combine(root, "child", "fixture.txt"), "owned ACL proof\n");
+    return root;
+}
+Dictionary<string, string> Children(string root)
+{
+    var records = new Dictionary<string, string>(StringComparer.Ordinal);
+    foreach (var item in Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories))
+    {
+        using var file = DirectoryAcl.Open(item, DirectoryAcl.OrdinaryAclAccess, requireDirectory:false);
+        records.Add(Path.GetRelativePath(root, item), file.Read().Sha256);
+    }
+    return records;
+}
+void EqualChildren(Dictionary<string, string> before, Dictionary<string, string> after)
+{
+    if (before.Count != after.Count || before.Any(row => !after.TryGetValue(row.Key, out var value) || value != row.Value))
+        throw new InvalidOperationException("The proposed metadata update changed a descendant descriptor.");
+}
+try
+{
+    foreach (var protect in new[] { false, true })
+    {
+        var root = Tree(protect ? "protected" : "ordinary");
+        if (protect)
+        {
+            var directory = new DirectoryInfo(root);
+            var security = directory.GetAccessControl(AccessControlSections.Access);
+            security.SetAccessRuleProtection(true, true);
+            directory.SetAccessControl(security);
+        }
+        var children = Children(root);
+        using var owner = DirectoryAcl.Open(root, DirectoryAcl.MaximumAllowed);
+        var before = owner.Read();
+        DirectoryAcl.Result cold;
+        try { cold = owner.Prepare(); }
+        finally { observations.Add(new { phase = protect ? "protected-cold" : "ordinary-cold", attempt = owner.LastAttempt }); }
+        if (!cold.WroteDacl || owner.SetCalls != 1) throw new InvalidOperationException("Cold metadata preparation did not make exactly one DACL update.");
+        var childReadback = Children(root);
+        observations.Add(new { phase = protect ? "protected-children" : "ordinary-children", before = children, after = childReadback });
+        EqualChildren(children, childReadback);
+        var warm = owner.Prepare();
+        if (warm.WroteDacl || owner.SetCalls != 1 || warm.BeforeSha256 != warm.AfterSha256)
+            throw new InvalidOperationException("Exact prepared state did not make a zero-write no-op.");
+        EqualChildren(children, Children(root));
+        results.Add(new { name = protect ? "protected-cold-and-warm" : "ordinary-cold-and-warm", beforeOwner = before.Owner, beforeGroup = before.Group, beforeControl = before.Control, cold, warm, childDescriptors = children, childDescriptorsUnchanged = true });
+    }
+    {
+        var root = Tree("conflict");
+        using var owner = DirectoryAcl.Open(root, DirectoryAcl.MaximumAllowed);
+        var prior = owner.Read();
+        var bad = new CommonAce(AceFlags.None, AceQualifier.AccessAllowed, DirectoryAcl.MetadataMask | 1, new SecurityIdentifier(DirectoryAcl.RequiredSids[1]), false, null);
+        owner.Write(DirectoryAcl.InsertExplicit(prior.Descriptor.DiscretionaryAcl!, [bad]));
+        var seeded = owner.Read(); var setCalls = owner.SetCalls; var refused = false;
+        try { owner.Prepare(); } catch (IOException error) when (error.Message.Contains("conflicts", StringComparison.Ordinal)) { refused = true; }
+        if (!refused || owner.SetCalls != setCalls || owner.Read().Sha256 != seeded.Sha256)
+            throw new InvalidOperationException("A conflicting second trustee was not refused before any partial update.");
+        results.Add(new { name = "conflict-no-partial-write", refused, descriptorUnchanged = true, extraWriteCalls = owner.SetCalls - setCalls });
+    }
+    {
+        // Deliberately inheritable metadata-only ACEs are limited to disposable
+        // control trees. They distinguish the API's propagation behavior; the
+        // proposed preparation path above always emits AceFlags.None.
+        const string syntheticSid = "S-1-5-21-194302675-115028934-934720151-424242";
+        foreach (var maximum in new[] { false, true })
+        {
+            var root = Tree(maximum ? "maximum-handle-control" : "ordinary-handle-control");
+            var children = Children(root);
+            using var owner = DirectoryAcl.Open(root, maximum ? DirectoryAcl.MaximumAllowed : DirectoryAcl.OrdinaryAclAccess);
+            var prior = owner.Read();
+            var inheritable = new CommonAce(AceFlags.ContainerInherit | AceFlags.ObjectInherit, AceQualifier.AccessAllowed, 0x80, new SecurityIdentifier(syntheticSid), false, null);
+            owner.Write(DirectoryAcl.InsertExplicit(prior.Descriptor.DiscretionaryAcl!, [inheritable]));
+            var after = Children(root);
+            var changed = children.Any(row => after[row.Key] != row.Value);
+            observations.Add(new { phase = maximum ? "maximum-propagation-control" : "ordinary-propagation-control", before = children, after });
+            if (maximum && changed) throw new InvalidOperationException("MAXIMUM_ALLOWED did not suppress inheritance propagation as documented.");
+            if (!maximum && !changed) throw new InvalidOperationException("The positive propagation control did not change any descendant.");
+            results.Add(new { name = maximum ? "maximum-handle-no-propagation" : "ordinary-handle-propagation", childDescriptorsChanged = changed, syntheticTrustee = syntheticSid, testOnlyInheritableMask = "0x00000080" });
+        }
+    }
+}
+catch (Exception error) { primary = error; }
+finally
+{
+    try { Directory.Delete(fixtures, true); cleaned = !Directory.Exists(fixtures); }
+    catch (Exception error) { cleanupErrors.Add(error.Message); primary ??= error; }
+    var receipt = new { schemaVersion = 1, classification = "isolated-directory-handle-acl-proof", controllerSource = Environment.GetEnvironmentVariable("GITHUB_SHA"), status = primary is null ? "pass" : "failed", os = RuntimeInformation.OSDescription, processArchitecture = RuntimeInformation.ProcessArchitecture.ToString(), passed = results.Count, results, observations, fixturesRemoved = cleaned, cleanupErrors, error = primary?.ToString(), productionActivated = false, systemDriveTouched = false, saclWriteRequested = false, descriptorObservationScope = "owner, group, DACL and returned control fields; SACL contents not requested", endToEndInstallUnder30SecondsProven = false };
+    try { File.WriteAllText(Path.Combine(evidence, "handle-acl-proof.json"), JsonSerializer.Serialize(receipt, new JsonSerializerOptions { WriteIndented = true }) + "\n"); }
+    catch (Exception error) { primary ??= error; }
+}
+if (primary is not null) throw primary;
+Console.WriteLine("Five real Windows ACL cases passed on isolated directories; no system-drive or install-time claim.");
