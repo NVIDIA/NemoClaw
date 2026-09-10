@@ -656,6 +656,17 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it.each(["src/lib/onboard/dashboard-forward-control.ts", "src/lib/onboard/dashboard-runtime.ts"])(
+    "selects both Hermes onboarding scenarios when %s changes",
+    (changedFile) => {
+      const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+      expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(
+        expect.arrayContaining(["double-onboard-hermes", "onboard-resume-hermes"]),
+      );
+    },
+  );
+
   it("selects only full E2E consumers when the timeout contract changes", () => {
     const changedFile = "tools/e2e/full-e2e-timeout-contract.mts";
 

@@ -20,12 +20,19 @@ it.each([
     source:
       "export function read(value: { name: string } | undefined) { return value && value.name; }",
     rule: "typescript(prefer-optional-chain)",
+    fixes: true,
   },
   {
     name: "incomplete switches in tests",
     file: "nemoclaw/src/example.test.ts",
     source: 'export function read(kind: "one" | "two") { switch (kind) { case "one": return 1; } }',
     rule: "typescript(switch-exhaustiveness-check)",
+  },
+  {
+    name: "floating promises in CommonJS boundaries",
+    file: "nemoclaw/src/example.cts",
+    source: "export function read() { Promise.resolve(); }",
+    rule: "typescript(no-floating-promises)",
   },
   {
     name: "promises imported from other tests",
@@ -45,6 +52,14 @@ it.each([
     file: "nemoclaw/src/example.ts",
     source: "type Result = string; export { Result };",
     rule: "typescript(consistent-type-exports)",
+    fixes: true,
+  },
+  {
+    name: "intentional promise suppression",
+    file: "nemoclaw/src/example.ts",
+    source:
+      "export function read() {\n// oxlint-disable-next-line typescript/no-floating-promises\nPromise.resolve();\n}",
+    rule: "",
   },
   {
     name: "handled promises in production",
@@ -52,7 +67,7 @@ it.each([
     source: "export async function read() { return await Promise.resolve(1); }",
     rule: "",
   },
-])("checks plugin $name through the commit hook", ({ file, source, rule }) => {
+])("checks plugin $name through the commit hook", ({ file, source, rule, fixes }) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-plugin-lint-"));
   try {
     fs.symlinkSync(path.resolve("node_modules"), path.join(root, "node_modules"), "dir");
@@ -72,13 +87,23 @@ it.each([
     expect(init.status, init.stderr).toBe(0);
     const add = spawnSync("git", ["add", "--", file], { cwd: root, encoding: "utf8" });
     expect(add.status, add.stderr).toBe(0);
+    const syntax = spawnSync(
+      path.resolve("node_modules/.bin/prek"),
+      ["run", "oxlint-fix", "--files", file],
+      {
+        cwd: root,
+        encoding: "utf8",
+      },
+    );
+    expect(syntax.status, syntax.stdout + syntax.stderr).toBe(0);
     const result = spawnSync(
       path.resolve("node_modules/.bin/prek"),
       ["run", "oxlint-type-aware", "--files", file],
       { cwd: root, encoding: "utf8" },
     );
     expect(result.status, result.stdout + result.stderr).toBe(rule ? 1 : 0);
-    expect(result.stdout + result.stderr).toContain(rule);
+    expect(fs.readFileSync(path.join(root, file), "utf8") !== source).toBe(fixes ?? false);
+    expect(result.stdout + result.stderr).toContain(fixes ? "" : rule);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

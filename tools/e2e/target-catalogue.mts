@@ -710,6 +710,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       exposeCliBin: true,
       owningPaths: [
         "src/lib/onboard/dashboard.ts",
+        "src/lib/onboard/dashboard-forward-control.ts",
+        "src/lib/onboard/dashboard-runtime.ts",
         "src/lib/onboard/agent-dashboard-forward.ts",
         "src/lib/onboard/sandbox-reuse.ts",
       ],

@@ -4,6 +4,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ensureAgentDashboardForward } from "./agent-dashboard-forward";
+import { canReuseDashboardForwardForAgent } from "./dashboard-runtime";
+
+describe("agent dashboard forward reuse eligibility", () => {
+  it.each([
+    { agent: undefined, expected: true },
+    { agent: null, expected: true },
+    { agent: { name: "openclaw" }, expected: true },
+    { agent: { name: "hermes" }, expected: true },
+    { agent: { name: "pi" }, expected: false },
+    { agent: { name: "deepagents" }, expected: false },
+  ])("permits reuse=$expected for $agent", ({ agent, expected }) => {
+    expect(canReuseDashboardForwardForAgent(agent)).toBe(expected);
+  });
+});
 
 describe("ensureAgentDashboardForward", () => {
   afterEach(() => {

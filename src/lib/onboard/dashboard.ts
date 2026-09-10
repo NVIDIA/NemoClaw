@@ -35,6 +35,7 @@ import {
   isPortBoundOnHost,
   type ListSandboxesFn,
 } from "./dashboard-port";
+import { canReuseDashboardForwardForAgent } from "./dashboard-runtime";
 import {
   ensureMessagingHostForwardForSandbox,
   productionForwardServiceRegistryContext,
@@ -603,7 +604,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     if (!agent) {
       return ensureFinalizationDashboardForward(sandboxName, revalidateSandboxIdentity);
     }
-    const mayReuseForward = agent.name === "openclaw" || agent.name === "hermes";
+    const mayReuseForward = canReuseDashboardForwardForAgent(agent);
     if (mayReuseForward) {
       const registeredPort = getPersistedDashboardPort(sandboxName, listSandboxes);
       if (!process.env.CHAT_UI_URL && registeredPort !== null) {

@@ -51,6 +51,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/automation/lint/config-export-complexity.test.ts",
       "test/automation/lint/adapters.test.ts",
       "test/automation/lint/plugin.test.ts",
+      "test/automation/lint/correctness.test.ts",
     ),
   },
   {
