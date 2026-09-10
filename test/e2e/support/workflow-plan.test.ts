@@ -626,6 +626,16 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it("selects Brave export qualification when its helper changes", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/e2e/live/brave-search-helpers.ts"] },
+    );
+    const rows = Object.values(plan.catalogueMatrices).flat();
+
+    expect(rows.map((row) => row.id)).toEqual(["brave-search"]);
+  });
+
   it("selects only catalogue targets that own changed files", () => {
     const changedFile = "test/e2e/live/snapshot-commands.test.ts";
     const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
