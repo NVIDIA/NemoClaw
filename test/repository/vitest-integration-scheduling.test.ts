@@ -27,9 +27,7 @@ describe("CLI coverage shard scheduling", () => {
     ["invalid shard count", true, "1", "0"],
     ["out-of-range shard", true, "13", "12"],
   ])("does not constrain $0", (_name, isCi, cliShard, cliShardCount) => {
-    expect(
-      resolveCliCoverageShardScheduling({ isCi, cliShard, cliShardCount }),
-    ).toEqual({});
+    expect(resolveCliCoverageShardScheduling({ isCi, cliShard, cliShardCount })).toEqual({});
   });
 });
 
@@ -84,18 +82,18 @@ describe("integration project scheduling", () => {
     });
   });
 
-  it.each([
-    "--maxWorkers=invalid",
-    "--maxWorkers",
-  ])("rejects the invalid local worker cap %s (#6245)", (argument) => {
-    expect(() =>
-      resolveIntegrationProjectScheduling({
-        isCi: false,
-        npmLifecycleEvent: "test",
-        argv: [argument],
-      }),
-    ).toThrow(/--maxWorkers/);
-  });
+  it.each(["--maxWorkers=invalid", "--maxWorkers"])(
+    "rejects the invalid local worker cap %s (#6245)",
+    (argument) => {
+      expect(() =>
+        resolveIntegrationProjectScheduling({
+          isCi: false,
+          npmLifecycleEvent: "test",
+          argv: [argument],
+        }),
+      ).toThrow(/--maxWorkers/);
+    },
+  );
 
   it.each([
     ["CI full suite", { isCi: true, npmLifecycleEvent: "test", argv: [] }],

@@ -4,6 +4,11 @@
 import path from "node:path";
 
 import { dockerBuild, dockerRmi } from "../../adapters/docker";
+import {
+  prepareDockerBuildEnvironment,
+  type DockerBuildEnvironmentInput,
+  warnIfDockerBuildEnvironmentCleanupFailed,
+} from "../../adapters/docker/client-isolation";
 import { fingerprintBuildContext } from "../../adapters/fs/build-context-fingerprint";
 import type { AgentDefinition } from "../../agent/defs";
 import { createAgentSandbox } from "../../agent/onboard";
@@ -11,10 +16,6 @@ import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { stageCreateSandboxBuildContext } from "../../onboard/build-context-stage";
 import { patchStagedDockerfileMessagingPlan } from "../../onboard/dockerfile-patch";
-import {
-  prepareDockerBuildEnvironment,
-  type DockerBuildEnvironmentInput,
-} from "../../onboard/sandbox-prebuild";
 import {
   applyReasoningEffortEnv,
   REASONING_EFFORT_ENV,
@@ -108,6 +109,7 @@ function buildReplacementImage(
   const preparedEnvironment = (deps.prepareBuildEnvironment ?? prepareDockerBuildEnvironment)({
     env: deps.env,
     credentialHelperResponds: deps.credentialHelperResponds,
+    dockerContextIsDefault: deps.dockerContextIsDefault,
     isWslHost: deps.isWslHost,
     allowCredentialIsolation: origin === "generated",
   });
@@ -119,7 +121,10 @@ function buildReplacementImage(
       stdio: ["ignore", "pipe", "pipe"],
     });
   } finally {
-    preparedEnvironment.cleanup();
+    warnIfDockerBuildEnvironmentCleanupFailed(
+      preparedEnvironment.cleanup(),
+      `rebuild image '${imageTag}'`,
+    );
   }
 }
 

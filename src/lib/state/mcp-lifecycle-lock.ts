@@ -2,15 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export {
-  beginCommittedMcpLifecycleContainmentSync,
-  durableMcpLifecycleContainmentFailure,
   isMcpLifecycleLockHeld,
-  type McpLifecycleDeadlineContainment,
-  type McpLifecycleDeadlineFenceOptions,
-  type McpLifecycleDeadlineFenceSyncOptions,
   type McpLifecycleLockOptions,
-  withMcpLifecycleDeadlineFence,
-  withMcpLifecycleDeadlineFenceSync,
   withMcpLifecycleLock,
   withMcpLifecycleLock as withSandboxMutationLock,
   withMcpLifecycleLockSync,
@@ -23,7 +16,4 @@ export {
   readMcpLockPidNamespaceIdentity,
   readMcpLockProcessIdentity,
 } from "./mcp-lifecycle-lock-identity";
-export {
-  getMcpLifecycleLockPath,
-  MCP_LIFECYCLE_LOCK_DIRNAME,
-} from "./mcp-lifecycle-lock-storage";
+export { getMcpLifecycleLockPath, MCP_LIFECYCLE_LOCK_DIRNAME } from "./mcp-lifecycle-lock-storage";

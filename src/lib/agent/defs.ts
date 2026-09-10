@@ -31,13 +31,11 @@ import type {
   AgentMcpCapability,
   AgentStateDirectory,
   AgentStateFile,
-  AgentStateLockPlan,
   AgentVersionScheme,
 } from "./definition-types";
 import {
   loadManifestRecord,
   readBoolean,
-  readConfigShieldsFiles,
   readDashboard,
   readHealthProbe,
   readInference,
@@ -45,7 +43,6 @@ import {
   readObject,
   readPortArray,
   readStateFiles,
-  readStateLockPlanInImage,
   readString,
   readStringArray,
   readStringMap,
@@ -53,8 +50,8 @@ import {
   readVersionScheme,
 } from "./manifest-readers";
 import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
+import { type AgentSkillIntegration, readAgentSkillIntegration } from "./skill-integration";
 import {
-  buildStateLockPlan,
   readStateDirectories,
   stateDirectoryPaths,
   stateDirectoryPrefixes,
@@ -76,10 +73,8 @@ export type {
   AgentStateDirectory,
   AgentStateDirectoryPath,
   AgentStateDirectoryPrefix,
-  AgentStateDirectoryShields,
   AgentStateFile,
   AgentStateFileStrategy,
-  AgentStateLockPlan,
   AgentVersionScheme,
   StateFileFreshHeader,
   StateFileKeyAllowlistRestoreOwnership,
@@ -89,6 +84,7 @@ export type {
   StateFileUserKey,
   StateFileUserKeyType,
 } from "./definition-types";
+export type { AgentSkillIntegration } from "./skill-integration";
 export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
 export { getAgentRuntimeKind, isTerminalAgent } from "./runtime-manifest";
 export type { AgentWebAuth, AgentWebAuthMethod } from "./web-auth";
@@ -127,7 +123,9 @@ export function listAgents(env: NodeJS.ProcessEnv = process.env): string[] {
         .readdirSync(AGENTS_DIR, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .filter((entry) => entry.name !== "nemocua" || isCuaEnabled(env))
-        .filter((entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env))
+        .filter(
+          (entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env),
+        )
         .filter((entry) => fs.existsSync(path.join(AGENTS_DIR, entry.name, "manifest.yaml")))
         .map((entry) => entry.name)
     : [];
@@ -180,9 +178,9 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
   const webAuth = readWebAuth(raw);
   const healthProbe = readHealthProbe(raw);
   const config = readObject(raw, "config");
-  const configShieldsFiles = readConfigShieldsFiles(config);
   const inference = readInference(raw);
   const mcp = readMcpCapability(raw);
+  const skillIntegration = readAgentSkillIntegration(raw);
   if (raw.runtime_auth_state_dirs !== undefined) {
     throw new Error(
       "Agent manifest field 'runtime_auth_state_dirs' was replaced by state_dirs entries with backup: false",
@@ -195,8 +193,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
   const backupStateDirPrefixes = stateDirectoryPrefixes(stateDirectories, { backup: true });
   const nonBackupStateDirs = stateDirectoryPaths(stateDirectories, { backup: false });
   const nonBackupStateDirPrefixes = stateDirectoryPrefixes(stateDirectories, { backup: false });
-  const stateLockPlan = buildStateLockPlan(stateDirectories);
-  const stateLockPlanInImage = readStateLockPlanInImage(raw);
   const stateFiles = readStateFiles(raw);
   const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
@@ -221,7 +217,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
     config,
     inference,
     mcp,
-    state_lock_plan_in_image: stateLockPlanInImage,
     state_files: stateFiles,
     user_managed_files: userManagedFiles,
     _legacy_paths: legacyPathConfig,
@@ -270,7 +265,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
         configFile: readString(config ?? {}, "config_file") ?? "openclaw.json",
         envFile: readString(config ?? {}, "env_file") ?? null,
         format: readString(config ?? {}, "format") ?? "json",
-        shieldsFiles: configShieldsFiles,
       };
     },
 
@@ -280,6 +274,10 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
 
     get mcpCapability(): AgentMcpCapability {
       return mcp;
+    },
+
+    get skillIntegration(): AgentSkillIntegration | null {
+      return skillIntegration;
     },
 
     get stateDirectories(): AgentStateDirectory[] {
@@ -308,14 +306,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
 
     get nonBackupStateDirPrefixes(): string[] {
       return nonBackupStateDirPrefixes;
-    },
-
-    get stateLockPlan(): AgentStateLockPlan {
-      return stateLockPlan;
-    },
-
-    get stateLockPlanInImage(): boolean {
-      return stateLockPlanInImage;
     },
 
     get stateFiles(): AgentStateFile[] {
@@ -364,11 +354,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
     get policyAdditionsPath(): string | null {
       const policyAdditionsPath = path.join(agentDir, "policy-additions.yaml");
       return fs.existsSync(policyAdditionsPath) ? policyAdditionsPath : null;
-    },
-
-    get policyPermissivePath(): string | null {
-      const policyPermissivePath = path.join(agentDir, "policy-permissive.yaml");
-      return fs.existsSync(policyPermissivePath) ? policyPermissivePath : null;
     },
 
     get pluginDir(): string | null {

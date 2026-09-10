@@ -44,6 +44,7 @@ describe("command-registry", () => {
       expect(usages).toContain("nemoclaw tunnel stop");
       expect(usages).toContain("nemoclaw tunnel status");
       expect(usages).toContain("nemoclaw status");
+      expect(usages).toContain("nemoclaw doctor");
     });
 
     it.each(globalCommands())("$usage has global scope", (cmd) => {
@@ -52,17 +53,16 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 60 entries", () => {
-      // 54 visible + 8 hidden (shields×3 + config get/set/rotate-token +
-      // inference get/set).
-      // 54 visible includes the sessions group (root + list + reset + delete +
+    it("returns exactly 61 entries", () => {
+      // 56 visible + 5 hidden (config get/set/rotate-token + inference get/set).
+      // 56 visible includes the skill list command, the sessions group (root + list + reset + delete +
       // export), the agents quartet (add + apply + delete + list), the
       // singular `agent` passthrough that forwards to `openclaw agent`, the
       // download + upload host-side openshell wrappers, the stop + start
       // container lifecycle pair (#6026), the policy baseline exclude + restore
-      // pair, plus five MCP bridge display entries under the `mcp` parent and
+      // pair, plus six MCP bridge display entries under the `mcp` parent and
       // the gateway restart command under the `gateway` parent.
-      expect(sandboxCommands()).toHaveLength(62);
+      expect(sandboxCommands()).toHaveLength(61);
     });
 
     it.each(sandboxCommands())("$usage has sandbox scope", (cmd) => {
@@ -81,9 +81,9 @@ describe("command-registry", () => {
   });
 
   describe("hidden commands", () => {
-    it("exactly 14 hidden commands: help/version aliases + shields + config + inference", () => {
+    it("keeps exactly 11 help, version, config, and inference aliases hidden", () => {
       const hidden = COMMANDS.filter((c) => c.hidden);
-      expect(hidden).toHaveLength(14);
+      expect(hidden).toHaveLength(11);
       const usages = hidden.map((c) => c.usage).sort();
       expect(usages).toEqual([
         "nemoclaw --help",
@@ -95,9 +95,6 @@ describe("command-registry", () => {
         "nemoclaw <name> config set",
         "nemoclaw <name> inference get",
         "nemoclaw <name> inference set",
-        "nemoclaw <name> shields down",
-        "nemoclaw <name> shields status",
-        "nemoclaw <name> shields up",
         "nemoclaw help",
         "nemoclaw version",
       ]);
@@ -121,17 +118,21 @@ describe("command-registry", () => {
       const discoveredIds = new Set(Object.keys(getRegisteredOclifCommandsMetadata()));
       expect(discoveredIds.has(command.commandId), command.usage).toBe(true);
     });
+
+    it("does not discover the removed deploy command (#10572)", () => {
+      expect(getRegisteredOclifCommandsMetadata()).not.toHaveProperty("deploy");
+    });
   });
 
   describe("deprecated commands", () => {
-    it("should include setup, setup-spark, deploy, start, stop", () => {
+    it("includes the remaining compatibility commands and excludes deploy (#10572)", () => {
       const deprecated = COMMANDS.filter((c) => c.deprecated);
       const usages = deprecated.map((c) => c.usage).sort();
       expect(usages).toContain("nemoclaw setup");
       expect(usages).toContain("nemoclaw setup-spark");
-      expect(usages).toContain("nemoclaw deploy");
       expect(usages).toContain("nemoclaw start");
       expect(usages).toContain("nemoclaw stop");
+      expect(usages).not.toContain("nemoclaw deploy");
     });
   });
 
@@ -156,7 +157,6 @@ describe("command-registry", () => {
 
     it("excludes hidden commands", () => {
       const list = canonicalUsageList();
-      expect(list).not.toContain("nemoclaw <name> shields down");
       expect(list).not.toContain("nemoclaw <name> config get");
       expect(list).not.toContain("nemoclaw <name> config set");
       expect(list).not.toContain("nemoclaw <name> config rotate-token");
@@ -175,6 +175,7 @@ describe("command-registry", () => {
       const expected = new Set([
         "agents",
         "completion",
+        "config",
         "host",
         "onboard",
         "profiles",
@@ -182,13 +183,13 @@ describe("command-registry", () => {
         "list",
         "use",
         "launch",
-        "deploy",
         "setup",
         "setup-spark",
         "start",
         "stop",
         "tunnel",
         "status",
+        "doctor",
         "debug",
         "uninstall",
         "credentials",
@@ -209,9 +210,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 31 unique action tokens including empty string", () => {
+    it("returns exactly 30 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(31);
+      expect(tokens).toHaveLength(30);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "agent",
@@ -237,7 +238,6 @@ describe("command-registry", () => {
         "recover",
         "snapshot",
         "share",
-        "shields",
         "config",
         "channels",
         "mcp",

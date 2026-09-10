@@ -40,7 +40,6 @@ const { collectSandboxStatusSnapshot } =
             name: string;
             provider: string;
             model: string;
-            policies: string[];
             agent: string;
           };
           reconcile: () => Promise<{ state: string; output: string }>;
@@ -275,7 +274,6 @@ const { setupNim } = require(${onboardPath});
             name: "dcode-test",
             provider: payload.result.provider,
             model: payload.result.model,
-            policies: [],
             agent: "langchain-deepagents-code",
           }),
           reconcile: async () => ({ state: "missing", output: "" }),
@@ -301,10 +299,7 @@ const { setupNim } = require(${onboardPath});
 
       const configResult = spawnSync(
         process.execPath,
-        [
-          "--experimental-strip-types",
-          path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "generate-config.ts"),
-        ],
+        [path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "generate-config.ts")],
         {
           cwd: REPO_ROOT,
           encoding: "utf8",

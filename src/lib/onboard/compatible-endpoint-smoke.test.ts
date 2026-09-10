@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { OpenShellSandboxBufferedCommandRequest } from "../adapters/openshell/sandbox-command";
 import {
   runSmokeScript,
   writeFakeCurl,
@@ -22,10 +23,44 @@ import {
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
   buildProviderNeutralInferenceSandboxSmokeScript,
-  shouldRunCompatibleEndpointSandboxSmoke,
   spawnOutputToString,
   verifyCompatibleEndpointSandboxSmoke,
 } from "./compatible-endpoint-smoke";
+
+type CompatibleSmokeOptions = Parameters<typeof verifyCompatibleEndpointSandboxSmoke>[0];
+
+function bufferedExecutorThrough(runOpenshell: CompatibleSmokeOptions["runOpenshell"]) {
+  return {
+    runBuffered: vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+      const targetArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const ttyArgs = request.tty === false ? ["--no-tty"] : [];
+      const args = ["sandbox", "exec", "-n", request.sandboxName, ...targetArgs, ...ttyArgs];
+      for (const [key, value] of Object.entries(request.sandboxEnvironment ?? {})) {
+        args.push("--env", `${key}=${value}`);
+      }
+      const result = runOpenshell([...args, "--", ...request.command], {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: request.timeoutMilliseconds,
+      });
+      return result.status === null
+        ? {
+            outcome: {
+              kind: "failed" as const,
+              error: { kind: "invocation" as const, message: "unobservable" },
+            },
+            stdout: spawnOutputToString(result.stdout),
+            stderr: spawnOutputToString(result.stderr),
+          }
+        : {
+            outcome: { kind: "completed" as const, exitCode: result.status },
+            stdout: spawnOutputToString(result.stdout),
+            stderr: spawnOutputToString(result.stderr),
+          };
+    }),
+  };
+}
 
 const providerNeutralCases = ["openclaw", "hermes", "langchain-deepagents-code"].flatMap(
   (agentName) => [
@@ -119,11 +154,13 @@ function providerNeutralResponses(
 function runProviderNeutralScript(options: {
   authority: ProviderNeutralAuthority;
   model?: string;
+  script?: string;
   responses?: unknown[];
   denial?: unknown;
   denialBytes?: readonly number[];
   denialOversized?: boolean;
   directError?: "connection-refused" | "dns" | "timeout";
+  managedProxyResponses?: unknown[];
 }) {
   const model = options.model ?? "qwen3.5-9b";
   const directAuthority = `host.openshell.internal:${String(options.authority.directHostPort)}`;
@@ -140,18 +177,38 @@ function runProviderNeutralScript(options: {
     ? 'b"x" * 1048577'
     : `bytes(${JSON.stringify(denialBytes)})`;
   const prelude = `
+import atexit
 import errno
 import io
 import json
 import socket
+import time
 import urllib.error
 import urllib.request
 
 responses = json.loads(${JSON.stringify(JSON.stringify(responses))})
+managed_proxy_responses = json.loads(${JSON.stringify(
+    JSON.stringify(options.managedProxyResponses ?? []),
+  )})
+managed_proxy_enabled = ${options.managedProxyResponses === undefined ? "False" : "True"}
 denial_bytes = ${denialBody}
-direct_error = ${
-  options.directError === undefined ? "None" : JSON.stringify(options.directError)
-}
+inference_request_tokens = []
+direct_request_count = []
+direct_request_urls = []
+managed_proxy_request_count = []
+managed_proxy_request_urls = []
+sleep_delays = []
+direct_error = ${options.directError === undefined ? "None" : JSON.stringify(options.directError)}
+
+def emit_request_evidence():
+    print("INFERENCE_REQUEST_TOKENS=" + ",".join(str(value) for value in inference_request_tokens))
+    print("DIRECT_REQUEST_COUNT=" + str(len(direct_request_count)))
+    print("DIRECT_REQUEST_URLS=" + ",".join(direct_request_urls))
+    print("MANAGED_PROXY_REQUEST_COUNT=" + str(len(managed_proxy_request_count)))
+    print("MANAGED_PROXY_REQUEST_URLS=" + ",".join(managed_proxy_request_urls))
+    print("SLEEP_DELAYS=" + ",".join(str(value) for value in sleep_delays))
+
+atexit.register(emit_request_evidence)
 
 class FakeResponse:
     def __init__(self, status, payload):
@@ -172,7 +229,13 @@ class FakeOpener:
         if request.full_url.startswith("https://inference.local/"):
             if not responses:
                 raise RuntimeError("test response queue exhausted")
+            request_data = json.loads(request.data.decode("utf-8"))
+            inference_request_tokens.append(
+                request_data.get("max_tokens", request_data.get("max_completion_tokens"))
+            )
             return FakeResponse(200, responses.pop(0))
+        direct_request_count.append(1)
+        direct_request_urls.append(request.full_url)
         if direct_error == "connection-refused":
             raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "refused"))
         if direct_error == "dns":
@@ -187,50 +250,100 @@ class FakeOpener:
             io.BytesIO(denial_bytes),
         )
 
-urllib.request.build_opener = lambda *handlers: FakeOpener()
+class ManagedProxyOpener:
+    def open(self, request, timeout):
+        managed_proxy_request_count.append(1)
+        managed_proxy_request_urls.append(request.full_url)
+        if not managed_proxy_responses:
+            raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "refused"))
+        request_data = json.loads(request.data.decode("utf-8"))
+        inference_request_tokens.append(
+            request_data.get("max_tokens", request_data.get("max_completion_tokens"))
+        )
+        return FakeResponse(200, managed_proxy_responses.pop(0))
+
+def build_test_opener(*handlers):
+    proxy_disabled = any(
+        isinstance(handler, urllib.request.ProxyHandler) and handler.proxies == {}
+        for handler in handlers
+    )
+    if managed_proxy_enabled and not proxy_disabled:
+        return ManagedProxyOpener()
+    return FakeOpener()
+
+urllib.request.build_opener = build_test_opener
+time.sleep = lambda seconds: sleep_delays.append(seconds)
 `;
-  const script = buildProviderNeutralInferenceSandboxSmokeScript(model, options.authority);
-  return spawnSync("python3", ["-c", `${prelude}\n${script}`], { encoding: "utf8" });
+  const script =
+    options.script ?? buildProviderNeutralInferenceSandboxSmokeScript(model, options.authority);
+  return spawnSync("python3", ["-c", `${prelude}\n${script}`], {
+    encoding: "utf8",
+    env:
+      options.managedProxyResponses === undefined
+        ? process.env
+        : {
+            ...process.env,
+            HTTPS_PROXY: "http://openshell-runtime-proxy.invalid:8080",
+            NO_PROXY: "",
+          },
+  });
 }
 
 describe("compatible endpoint sandbox smoke helpers", () => {
-  it("runs only for OpenClaw compatible-endpoint sandboxes with messaging", () => {
-    expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"])).toBe(true);
-    expect(
-      shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"], {
-        name: "openclaw",
-      }),
-    ).toBe(true);
-    expect(
-      shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"], {
-        name: "hermes",
-      }),
-    ).toBe(false);
-    expect(shouldRunCompatibleEndpointSandboxSmoke("nvidia-prod", ["telegram"])).toBe(false);
-    expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", [])).toBe(false);
+  const providerMetadata = (name: string): string =>
+    [
+      `Id: provider-${name}`,
+      `Name: ${name}`,
+      "Type: openai",
+      "Resource version: 1",
+      "Credential keys: COMPATIBLE_API_KEY",
+      "Config keys: OPENAI_BASE_URL",
+    ].join("\n");
+
+  it.each([
+    { agent: { name: "hermes" as const }, provider: "compatible-endpoint" },
+    { agent: { name: "openclaw" as const }, provider: "nvidia-prod" },
+  ])("skips sandbox smoke for $agent.name with $provider", async ({ agent, provider }) => {
+    const runOpenshell = vi.fn();
+
+    await verifyCompatibleEndpointSandboxSmoke({
+      sandboxName: "smoke-sandbox",
+      provider,
+      model: "nvidia/nemotron-3-ultra",
+      runOpenshell,
+      sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
+      redact: (value) => value,
+      agent,
+    });
+
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("normalizes spawn output values to strings", () => {
+  it("normalizes spawn output values to strings", async () => {
     expect(spawnOutputToString("already string")).toBe("already string");
     expect(spawnOutputToString(Buffer.from("buffered"))).toBe("buffered");
     expect(spawnOutputToString(null)).toBe("");
     expect(spawnOutputToString(42)).toBe("42");
   });
 
-  it("budgets the host command timeout for every retry attempt", () => {
+  it("budgets the host command timeout for every retry attempt", async () => {
     const runOpenshell = vi
       .fn()
-      .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
+      .mockImplementationOnce((args: string[]) => ({
+        status: 0,
+        stdout: providerMetadata(args.at(-1) ?? ""),
+      }))
       .mockReturnValueOnce({
         status: 0,
         stdout: "OPENCLAW_CONFIG_OK\nINFERENCE_SMOKE_OK PONG",
       });
 
-    verifyCompatibleEndpointSandboxSmoke({
+    await verifyCompatibleEndpointSandboxSmoke({
       sandboxName: "smoke-sandbox",
       provider: "compatible-endpoint",
       model: "nvidia/nemotron-3-ultra",
       runOpenshell,
+      sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
       redact: (value) => value,
       messagingChannels: ["telegram"],
     });
@@ -242,26 +355,65 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     );
   });
 
-  it("withholds sandbox-route success output when policy authority changes during proof (#9833)", () => {
+  it("fails closed on a typed sandbox transport failure", async () => {
+    const runOpenshell = vi.fn().mockImplementation((args: string[]) => ({
+      status: 0,
+      stdout: providerMetadata(args.at(-1) ?? ""),
+    }));
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`process.exit(${code})`);
+    });
+
+    try {
+      await expect(
+        verifyCompatibleEndpointSandboxSmoke({
+          sandboxName: "smoke-sandbox",
+          provider: "compatible-endpoint",
+          model: "nvidia/nemotron-3-ultra",
+          runOpenshell,
+          sandboxCommandExecutor: {
+            runBuffered: async () => ({
+              outcome: {
+                kind: "failed",
+                error: { kind: "timeout", message: "smoke timed out" },
+              },
+              stdout: "",
+              stderr: "",
+            }),
+          },
+          redact: (value) => value,
+        }),
+      ).rejects.toThrow("process.exit(1)");
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      exit.mockRestore();
+    }
+  });
+
+  it("withholds sandbox-route success output when sandbox identity changes during proof (#9833)", async () => {
     const runOpenshell = vi
       .fn()
-      .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
+      .mockImplementationOnce((args: string[]) => ({
+        status: 0,
+        stdout: providerMetadata(args.at(-1) ?? ""),
+      }))
       .mockReturnValueOnce({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    expect(() =>
+    await expect(
       verifyCompatibleEndpointSandboxSmoke({
         sandboxName: "smoke-sandbox",
         provider: "compatible-endpoint",
         model: "nvidia/nemotron-3-ultra",
         runOpenshell,
+        sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
         redact: (value) => value,
         messagingChannels: ["telegram"],
         beforeSuccess: () => {
-          throw new Error("policy authority changed");
+          throw new Error("sandbox identity changed");
         },
       }),
-    ).toThrow("policy authority changed");
+    ).rejects.toThrow("sandbox identity changed");
 
     expect(runOpenshell).toHaveBeenCalledTimes(2);
     expect(log.mock.calls.flat().join("\n")).not.toContain(
@@ -270,17 +422,21 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     log.mockRestore();
   });
 
-  it("budgets the canonical outer timeout for both tool proofs and direct denial", () => {
+  it("budgets the canonical outer timeout for reasoning retry, tool proof, and direct denial", async () => {
     const runOpenshell = vi
       .fn()
-      .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
+      .mockImplementationOnce((args: string[]) => ({
+        status: 0,
+        stdout: providerMetadata(args.at(-1) ?? ""),
+      }))
       .mockReturnValueOnce({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
 
-    verifyCompatibleEndpointSandboxSmoke({
+    await verifyCompatibleEndpointSandboxSmoke({
       sandboxName: "managed-inference-sandbox",
       provider: "vllm-local",
       model: "qwen3.5-9b",
       runOpenshell,
+      sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
       redact: (value) => value,
       forceCanonicalRoute: true,
       hostLocalInferenceProofAuthority: {
@@ -294,7 +450,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(runOpenshell).toHaveBeenNthCalledWith(
       2,
       expect.any(Array),
-      expect.objectContaining({ timeout: 430_000 }),
+      expect.objectContaining({ timeout: 625_000 }),
     );
   });
 
@@ -303,6 +459,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       label: "provider-neutral",
       forceCanonicalRoute: true,
       provider: "vllm-local",
+      messagingChannels: [] as string[],
       expected: ["Provider-neutral inference provider", "inference.local route cannot reach"],
       unexpected: "Telegram",
     },
@@ -310,10 +467,19 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       label: "compatible-endpoint messaging",
       forceCanonicalRoute: false,
       provider: "compatible-endpoint",
-      expected: ["Compatible endpoint provider", "sandbox would start Telegram"],
-      unexpected: "Provider-neutral inference provider",
+      messagingChannels: ["telegram"],
+      expected: ["Compatible endpoint provider", "inference.local route cannot reach"],
+      unexpected: "Telegram",
     },
-  ])("reports mode-accurate $label provider lookup failures", (testCase) => {
+    {
+      label: "compatible-endpoint without messaging",
+      forceCanonicalRoute: false,
+      provider: "compatible-endpoint",
+      messagingChannels: [] as string[],
+      expected: ["Compatible endpoint provider", "inference.local route cannot reach"],
+      unexpected: "Telegram",
+    },
+  ])("reports mode-accurate $label provider lookup failures", async (testCase) => {
     const errors: string[] = [];
     const error = vi.spyOn(console, "error").mockImplementation((message) => {
       errors.push(String(message));
@@ -321,25 +487,30 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
       throw new Error(`process.exit(${code})`);
     });
+    const runOpenshell = vi.fn().mockReturnValue({
+      status: 1,
+      stderr: "provider query failed",
+    });
 
     try {
-      expect(() =>
+      await expect(
         verifyCompatibleEndpointSandboxSmoke({
           sandboxName: "provider-lookup-failure-sandbox",
           provider: testCase.provider,
           model: "qwen3.5-9b",
-          runOpenshell: vi.fn().mockReturnValue({ status: 1, stderr: "provider query failed" }),
+          runOpenshell,
+          sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
           redact: (value) => value,
-          messagingChannels: ["telegram"],
+          messagingChannels: testCase.messagingChannels,
           forceCanonicalRoute: testCase.forceCanonicalRoute,
         }),
-      ).toThrow("process.exit(1)");
+      ).rejects.toThrow("process.exit(1)");
 
       const diagnostics = errors.join("\n");
       expect(diagnostics).toContain(testCase.expected[0]);
       expect(diagnostics).toContain(testCase.expected[1]);
       expect(diagnostics).not.toContain(testCase.unexpected);
-      expect(diagnostics).toContain("provider query failed");
+      expect(diagnostics).toContain("OpenShell could not inspect the provider");
       expect(exit).toHaveBeenCalledWith(1);
     } finally {
       exit.mockRestore();
@@ -347,84 +518,136 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     }
   });
 
-  it.each(
-    providerNeutralCases,
-  )("runs a real provider-neutral $service request inside the $agentName sandbox", ({
-    agentName,
-    service,
-    provider,
-    port,
-    directHealthPath,
-  }) => {
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
-      .mockReturnValueOnce({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
+  it.each([
+    { label: "none", messagingChannels: [] as string[] },
+    { label: "Telegram", messagingChannels: ["telegram"] },
+  ])(
+    "reports a channel-agnostic sandbox smoke failure for $label messaging (#10405)",
+    async ({ messagingChannels }) => {
+      const errors: string[] = [];
+      const error = vi.spyOn(console, "error").mockImplementation((message) => {
+        errors.push(String(message));
+      });
+      const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+        throw new Error(`process.exit(${code})`);
+      });
+      const runOpenshell = vi
+        .fn()
+        .mockImplementationOnce((args: string[]) => ({
+          status: 0,
+          stdout: providerMetadata(args.at(-1) ?? ""),
+        }))
+        .mockReturnValueOnce({ status: 1, stderr: "curl exit 7" });
 
-    verifyCompatibleEndpointSandboxSmoke({
-      sandboxName: `${agentName}-sandbox`,
-      provider,
-      model: "qwen3.5-9b",
-      endpointUrl: "https://inference.local/v1",
-      runOpenshell,
-      redact: (value) => value,
-      messagingChannels: [],
-      agent: { name: agentName },
-      forceCanonicalRoute: true,
-      hostLocalInferenceProofAuthority: {
-        service,
-        directHostPort: port,
-        directHealthPath,
-        toolCallingRequired: true,
-      },
-    });
+      try {
+        await expect(
+          verifyCompatibleEndpointSandboxSmoke({
+            sandboxName: "no-messaging-sandbox",
+            provider: "compatible-endpoint",
+            model: "issue-10405-model",
+            runOpenshell,
+            sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
+            redact: (value) => value,
+            messagingChannels,
+          }),
+        ).rejects.toThrow("process.exit(1)");
 
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      1,
-      ["provider", "get", provider],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    const sandboxCommand = runOpenshell.mock.calls[1]?.[0] as string[];
-    expect(sandboxCommand.slice(0, 7)).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      `${agentName}-sandbox`,
-      "--",
-      "python3",
-      "-c",
-    ]);
-    expect(sandboxCommand[7]).toContain("opener.open");
-    expect(sandboxCommand[7]).toContain("https://inference.local/v1/chat/completions");
-    expect(sandboxCommand[7]).toContain('"content": "Reply with exactly: PONG"');
-    expect(sandboxCommand[7]).toContain(
-      `host.openshell.internal:${String(port)}/v1/chat/completions`,
-    );
-    expect(sandboxCommand[7]).toContain('direct_method = "POST"');
-    expect(sandboxCommand[7]).toContain("method=direct_method");
-    expect(sandboxCommand[7]).toContain('response_data.get("model") != model');
-    expect(sandboxCommand[7]).toContain('"tool_choice"');
-    expect(sandboxCommand[7]).toContain('direct_denial_error = "policy_denied"');
-    expect(sandboxCommand[7]).toContain('denial.get("error") != direct_denial_error');
-    expect(sandboxCommand[7]).toContain("ProxyHandler({})");
-    expect(sandboxCommand[7]).not.toContain("curl");
-  });
+        expect(runOpenshell).toHaveBeenCalledTimes(2);
+        const diagnostics = errors.join("\n");
+        expect(diagnostics).toContain("Compatible endpoint sandbox smoke check failed");
+        expect(diagnostics).toContain(
+          "Messaging setup is not the root cause; the sandbox inference.local route failed.",
+        );
+        expect(diagnostics).toContain("curl exit 7");
+        expect(diagnostics).not.toContain("Telegram");
+      } finally {
+        exit.mockRestore();
+        error.mockRestore();
+      }
+    },
+  );
 
-  it("fails closed when the provider-neutral sandbox request or direct-host deny proof fails", () => {
+  it.each(providerNeutralCases)(
+    "runs a real provider-neutral $service request inside the $agentName sandbox",
+    async ({ agentName, service, provider, port, directHealthPath }) => {
+      const runOpenshell = vi
+        .fn()
+        .mockImplementationOnce((args: string[]) => ({
+          status: 0,
+          stdout: providerMetadata(args.at(-1) ?? ""),
+        }))
+        .mockReturnValueOnce({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
+
+      await verifyCompatibleEndpointSandboxSmoke({
+        sandboxName: `${agentName}-sandbox`,
+        provider,
+        model: "qwen3.5-9b",
+        endpointUrl: "https://inference.local/v1",
+        runOpenshell,
+        sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
+        redact: (value) => value,
+        messagingChannels: [],
+        agent: { name: agentName },
+        forceCanonicalRoute: true,
+        hostLocalInferenceProofAuthority: {
+          service,
+          directHostPort: port,
+          directHealthPath,
+          toolCallingRequired: true,
+        },
+      });
+
+      expect(runOpenshell).toHaveBeenNthCalledWith(
+        1,
+        ["provider", "get", provider],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      const sandboxCommand = runOpenshell.mock.calls[1]?.[0] as string[];
+      expect(sandboxCommand.slice(0, 7)).toEqual([
+        "sandbox",
+        "exec",
+        "-n",
+        `${agentName}-sandbox`,
+        "--",
+        "python3",
+        "-c",
+      ]);
+      expect(sandboxCommand[7]).toContain("opener.open");
+      expect(sandboxCommand[7]).toContain("https://inference.local/v1/chat/completions");
+      expect(sandboxCommand[7]).toContain('"content": "Reply with exactly: PONG"');
+      expect(sandboxCommand[7]).toContain(
+        `host.openshell.internal:${String(port)}/v1/chat/completions`,
+      );
+      expect(sandboxCommand[7]).toContain('direct_method = "POST"');
+      expect(sandboxCommand[7]).toContain("method=direct_method");
+      expect(sandboxCommand[7]).toContain('response_data.get("model") != model');
+      expect(sandboxCommand[7]).toContain('"tool_choice"');
+      expect(sandboxCommand[7]).toContain('direct_denial_error = "policy_denied"');
+      expect(sandboxCommand[7]).toContain('denial.get("error") != direct_denial_error');
+      expect(sandboxCommand[7]).toContain("ProxyHandler({})");
+      expect(sandboxCommand[7]).not.toContain("curl");
+    },
+  );
+
+  it("fails closed when the provider-neutral sandbox request or direct-host deny proof fails", async () => {
     const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
       throw new Error(`process.exit(${code})`);
     });
     const runOpenshell = vi
       .fn()
-      .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
+      .mockImplementationOnce((args: string[]) => ({
+        status: 0,
+        stdout: providerMetadata(args.at(-1) ?? ""),
+      }))
       .mockReturnValueOnce({ status: 1, stderr: "direct host inference deny could not be proven" });
 
-    expect(() =>
+    await expect(
       verifyCompatibleEndpointSandboxSmoke({
         sandboxName: "hermes-sandbox",
         provider: "ollama-local",
         model: "qwen3.5-9b",
         runOpenshell,
+        sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
         redact: (value) => value,
         agent: { name: "hermes" },
         forceCanonicalRoute: true,
@@ -435,13 +658,13 @@ describe("compatible endpoint sandbox smoke helpers", () => {
           toolCallingRequired: true,
         },
       }),
-    ).toThrow("process.exit(1)");
+    ).rejects.toThrow("process.exit(1)");
 
     expect(exit).toHaveBeenCalledWith(1);
     exit.mockRestore();
   });
 
-  it("builds a sandbox script that checks managed provider routing", () => {
+  it("builds a sandbox script that checks managed provider routing", async () => {
     const script = buildCompatibleEndpointSandboxSmokeScript("provider/model'");
 
     expect(script).toContain("OPENCLAW_CONFIG_OK");
@@ -457,7 +680,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(script).not.toContain("VALIDATE_OPENCLAW_CONFIG");
   });
 
-  it("builds a Python-only provider-neutral route allow and direct-host deny proof", () => {
+  it("builds a Python-only provider-neutral route allow and direct-host deny proof", async () => {
     const script = buildProviderNeutralInferenceSandboxSmokeScript("qwen3.5-9b", {
       service: "nim",
       directHostPort: 8001,
@@ -483,27 +706,211 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(script).not.toContain("curl");
   });
 
-  it.each(
-    allAgentProofAuthorities,
-  )("executes exact model, required tool, and policy-deny proof for $agentName", ({
-    authority,
-  }) => {
-    const result = runProviderNeutralScript({ authority });
+  it.each(allAgentProofAuthorities)(
+    "executes exact model, required tool, and policy-deny proof for $agentName",
+    ({ authority }) => {
+      const result = runProviderNeutralScript({ authority });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+      expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,512");
+      expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=1");
+    },
+  );
+
+  it("retries reasoning-only content through the public sandbox verification path", async () => {
+    const authority = allAgentProofAuthorities[0].authority;
+    const model = "qwen3-vl:4b";
+    const responses = [
+      {
+        model,
+        choices: [
+          {
+            finish_reason: "length",
+            message: { content: "", reasoning_content: "Planning the response." },
+          },
+        ],
+      },
+      { model, choices: [{ message: { content: "PONG" } }] },
+      providerNeutralResponses(model)[1],
+    ];
+    let result: ReturnType<typeof runProviderNeutralScript> | undefined;
+    const runOpenshell = vi
+      .fn()
+      .mockImplementationOnce((args: string[]) => ({
+        status: 0,
+        stdout: providerMetadata(args.at(-1) ?? ""),
+      }))
+      .mockImplementationOnce((args: string[]) => {
+        result = runProviderNeutralScript({
+          authority,
+          model,
+          responses,
+          script: String(args.at(-1)),
+        });
+        return result;
+      });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await verifyCompatibleEndpointSandboxSmoke({
+        sandboxName: "managed-inference-sandbox",
+        provider: "ollama-local",
+        model,
+        runOpenshell,
+        sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
+        redact: (value) => value,
+        forceCanonicalRoute: true,
+        hostLocalInferenceProofAuthority: authority,
+      });
+
+      expect(result?.status, result?.stderr).toBe(0);
+      expect(result?.stderr).toContain("REASONING_ONLY at the initial token limit");
+      expect(result?.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,1024,512");
+      expect(result?.stdout).toContain("DIRECT_REQUEST_COUNT=1");
+      expect(log.mock.calls.flat().join("\n")).toContain(
+        "Provider responds through inference.local inside the sandbox",
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("routes managed inference through the runtime proxy and bypasses it for direct denial (#10423)", async () => {
+    const authority = allAgentProofAuthorities[0].authority;
+    const result = runProviderNeutralScript({
+      authority,
+      managedProxyResponses: providerNeutralResponses("qwen3.5-9b"),
+    });
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    expect(result.stdout).toContain("MANAGED_PROXY_REQUEST_COUNT=2");
+    expect(result.stdout).toContain(
+      "MANAGED_PROXY_REQUEST_URLS=https://inference.local/v1/chat/completions,https://inference.local/v1/chat/completions",
+    );
+    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,512");
+    expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=1");
   });
 
-  it.each(
-    allAgentProofAuthorities,
-  )("accepts exact connection refusal as a direct-host deny proof for $agentName (#9211)", ({
-    authority,
-  }) => {
-    const result = runProviderNeutralScript({ authority, directError: "connection-refused" });
+  it("does not fall back to direct DNS when the managed runtime proxy is unavailable (#10423)", async () => {
+    const result = runProviderNeutralScript({
+      authority: allAgentProofAuthorities[0].authority,
+      managedProxyResponses: [],
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "inference.local content proof transport failed after bounded retries",
+    );
+    expect(result.stdout).toContain("MANAGED_PROXY_REQUEST_COUNT=3");
+    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=");
+    expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=0");
+    expect(result.stdout).toContain("SLEEP_DELAYS=5,10");
+  });
+
+  it("executes the provider-neutral proof for receipt-owned llama.cpp authority (#10423)", async () => {
+    const result = runProviderNeutralScript({
+      authority: {
+        service: "llama-cpp",
+        directHostPort: 18_080,
+        directHealthPath: "/health",
+        toolCallingRequired: true,
+      },
+    });
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,512");
+    expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=1");
+    expect(result.stdout).toContain(
+      "DIRECT_REQUEST_URLS=http://host.openshell.internal:18080/v1/chat/completions",
+    );
   });
+
+  it("fails after one larger-budget attempt when output remains reasoning-only", async () => {
+    const reasoningOnly = {
+      model: "qwen3.5-9b",
+      choices: [
+        {
+          finish_reason: "length",
+          message: { content: null, reasoning_content: "Still planning. SECRET_CANARY" },
+        },
+      ],
+    };
+    const result = runProviderNeutralScript({
+      authority: allAgentProofAuthorities[0].authority,
+      responses: [reasoningOnly, reasoningOnly],
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("content proof failed: REASONING_ONLY");
+    expect(result.stderr).not.toContain("SECRET_CANARY");
+    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,1024");
+    expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=0");
+  });
+
+  it.each([
+    {
+      shape: "CHOICES_MISSING",
+      response: { model: "qwen3.5-9b", choices: [] },
+    },
+    {
+      shape: "MESSAGE_MISSING",
+      response: { model: "qwen3.5-9b", choices: [{ finish_reason: "stop" }] },
+    },
+    {
+      shape: "REASONING_ONLY",
+      response: {
+        model: "qwen3.5-9b",
+        choices: [{ finish_reason: "stop", message: { reasoning: "Planning." } }],
+      },
+    },
+    {
+      shape: "TOOL_CALL_ONLY",
+      response: {
+        model: "qwen3.5-9b",
+        choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{}] } }],
+      },
+    },
+    {
+      shape: "EMPTY_LENGTH",
+      response: {
+        model: "qwen3.5-9b",
+        choices: [{ finish_reason: "length", message: { content: "" } }],
+      },
+    },
+    {
+      shape: "EMPTY_OTHER",
+      response: {
+        model: "qwen3.5-9b",
+        choices: [{ finish_reason: "stop", message: { content: " " } }],
+      },
+    },
+  ])(
+    "reports fixed $shape content-shape evidence without running later proofs",
+    ({ shape, response }) => {
+      const result = runProviderNeutralScript({
+        authority: allAgentProofAuthorities[0].authority,
+        responses: [response],
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`content proof failed: ${shape}`);
+      expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512");
+      expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=0");
+    },
+  );
+
+  it.each(allAgentProofAuthorities)(
+    "accepts exact connection refusal as a direct-host deny proof for $agentName (#9211)",
+    ({ authority }) => {
+      const result = runProviderNeutralScript({ authority, directError: "connection-refused" });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    },
+  );
 
   it.each(["dns", "timeout"] as const)(
     "does not accept a %s transport error as a direct-host deny proof (#9211)",
@@ -518,29 +925,31 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     },
   );
 
-  it.each(allAgentProofAuthorities)("rejects a cross-wired response model for $agentName", ({
-    authority,
-  }) => {
-    const result = runProviderNeutralScript({
-      authority,
-      responses: providerNeutralResponses("other-provider/model"),
-    });
+  it.each(allAgentProofAuthorities)(
+    "rejects a cross-wired response model for $agentName",
+    ({ authority }) => {
+      const result = runProviderNeutralScript({
+        authority,
+        responses: providerNeutralResponses("other-provider/model"),
+      });
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("returned a different model identity");
-  });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("returned a different model identity");
+    },
+  );
 
-  it.each(allAgentProofAuthorities)("rejects a missing required tool call for $agentName", ({
-    authority,
-  }) => {
-    const result = runProviderNeutralScript({
-      authority,
-      responses: providerNeutralResponses("qwen3.5-9b", false),
-    });
+  it.each(allAgentProofAuthorities)(
+    "rejects a missing required tool call for $agentName",
+    ({ authority }) => {
+      const result = runProviderNeutralScript({
+        authority,
+        responses: providerNeutralResponses("qwen3.5-9b", false),
+      });
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("did not return the required tool call");
-  });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("did not return the required tool call");
+    },
+  );
 
   it.each(allAgentProofAuthorities)(
     "accepts semantic empty tool arguments for $agentName",
@@ -576,7 +985,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     },
   );
 
-  it("accepts a content-only proof when durable authority marks tool calling optional", () => {
+  it("accepts a content-only proof when durable authority marks tool calling optional", async () => {
     const authority = {
       ...allAgentProofAuthorities[0].authority,
       toolCallingRequired: false,
@@ -590,7 +999,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
   });
 
-  it("rejects service-specific direct-host authority drift before sandbox execution", () => {
+  it("rejects service-specific direct-host authority drift before sandbox execution", async () => {
     expect(() =>
       buildProviderNeutralInferenceSandboxSmokeScript("qwen3.5-9b", {
         service: "nim",
@@ -601,7 +1010,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     ).toThrow("exact provider health authority");
   });
 
-  it("rejects an oversized provider-neutral inference response before JSON parsing", () => {
+  it("rejects an oversized provider-neutral inference response before JSON parsing", async () => {
     const result = runProviderNeutralScript({
       authority: allAgentProofAuthorities[0].authority,
       responses: [{ __oversized__: true }],
@@ -611,7 +1020,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.stderr).toContain("response exceeded byte limit");
   });
 
-  it("does not mistake a reachable provider's own HTTP 403 for policy denial", () => {
+  it("does not mistake a reachable provider's own HTTP 403 for policy denial", async () => {
     const authority = allAgentProofAuthorities[2].authority;
     const result = runProviderNeutralScript({
       authority,
@@ -622,7 +1031,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.stderr).toContain("was not an OpenShell policy denial");
   });
 
-  it("accepts an exact OpenShell denial with guidance beyond the old 4096-byte window", () => {
+  it("accepts an exact OpenShell denial with guidance beyond the old 4096-byte window", async () => {
     const authority = allAgentProofAuthorities[2].authority;
     const directAuthority = `host.openshell.internal:${String(authority.directHostPort)}`;
     const result = runProviderNeutralScript({
@@ -638,7 +1047,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
   });
 
-  it("rejects an oversized OpenShell policy-denial body before parsing", () => {
+  it("rejects an oversized OpenShell policy-denial body before parsing", async () => {
     const result = runProviderNeutralScript({
       authority: allAgentProofAuthorities[2].authority,
       denialOversized: true,
@@ -648,7 +1057,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.stderr).toContain("policy-denial response exceeded byte limit");
   });
 
-  it("reports malformed OpenShell policy-denial JSON separately", () => {
+  it("reports malformed OpenShell policy-denial JSON separately", async () => {
     const result = runProviderNeutralScript({
       authority: allAgentProofAuthorities[2].authority,
       denialBytes: Array.from(Buffer.from('{"error":', "utf8")),
@@ -658,7 +1067,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.stderr).toContain("policy-denial response was not valid JSON");
   });
 
-  it("reports invalid UTF-8 in an OpenShell policy-denial body separately", () => {
+  it("reports invalid UTF-8 in an OpenShell policy-denial body separately", async () => {
     const result = runProviderNeutralScript({
       authority: allAgentProofAuthorities[2].authority,
       denialBytes: [0xff],
@@ -668,7 +1077,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.stderr).toContain("policy-denial response was not valid UTF-8");
   });
 
-  it("reports OpenShell policy-denial contract format drift separately", () => {
+  it("reports OpenShell policy-denial contract format drift separately", async () => {
     const authority = allAgentProofAuthorities[2].authority;
     const result = runProviderNeutralScript({
       authority,
@@ -683,7 +1092,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.stderr).not.toContain("was not an OpenShell policy denial");
   });
 
-  it("shell-quotes hostile model text through the generated smoke script", () => {
+  it("shell-quotes hostile model text through the generated smoke script", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-quoting-"));
     const sentinel = path.join(tmpDir, "model-command-ran");
     const model = "foo'bar`baz$(touch " + sentinel + ")";
@@ -702,7 +1111,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(fs.existsSync(sentinel)).toBe(false);
   });
 
-  it("retries a reasoning-only length response before failing the sandbox smoke", () => {
+  it("retries a reasoning-only length response before failing the sandbox smoke", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-reasoning-"));
     const model = "provider/reasoning-model";
     const configPath = writeSmokeConfig(tmpDir, model);
@@ -737,7 +1146,7 @@ fi
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
   });
 
-  it("retries a transient non-JSON gateway response", () => {
+  it("retries a transient non-JSON gateway response", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-transient-"));
     const model = "nvidia/nemotron-3-ultra";
     const configPath = writeSmokeConfig(tmpDir, model);
@@ -766,7 +1175,7 @@ fi
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
   });
 
-  it("retries a parseable JSON HTTP 500 response", () => {
+  it("retries a parseable JSON HTTP 500 response", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-json-500-"));
     const model = "nvidia/nemotron-3-ultra";
     const configPath = writeSmokeConfig(tmpDir, model);
@@ -796,7 +1205,7 @@ fi
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
   });
 
-  it("backs off for 5s then 10s between three attempts", () => {
+  it("backs off for 5s then 10s between three attempts", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-backoff-"));
     const model = "nvidia/nemotron-3-ultra";
     const configPath = writeSmokeConfig(tmpDir, model);
@@ -824,7 +1233,7 @@ fi
     expect(fs.readFileSync(sleepFile, "utf-8")).toBe("5\n10\n");
   });
 
-  it("does not retry a parseable JSON HTTP 429 response", () => {
+  it("does not retry a parseable JSON HTTP 429 response", async () => {
     // Fail closed: a blind replay cannot honor Retry-After and amplifies overload.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-json-429-"));
     const model = "nvidia/nemotron-3-ultra";
@@ -851,37 +1260,38 @@ printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}
     expect(fs.readFileSync(callFile, "utf-8")).toBe("1");
   });
 
-  it.each([
-    6, 7, 28, 52, 55, 56,
-  ])("retries transient curl exit %i before succeeding", (exitCode) => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-curl-retry-"));
-    const model = "nvidia/nemotron-3-ultra";
-    const configPath = writeSmokeConfig(tmpDir, model);
-    const { binDir, callFile } = writeFakeCurl(
-      tmpDir,
-      String.raw`
+  it.each([6, 7, 28, 52, 55, 56])(
+    "retries transient curl exit %i before succeeding",
+    (exitCode) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-curl-retry-"));
+      const model = "nvidia/nemotron-3-ultra";
+      const configPath = writeSmokeConfig(tmpDir, model);
+      const { binDir, callFile } = writeFakeCurl(
+        tmpDir,
+        String.raw`
 if [ "$count" -eq 1 ]; then
   exit ${exitCode}
 fi
 printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'
 `,
-    );
-    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
-      attempts: 3,
-      configPath,
-      retryDelaySeconds: 0,
-    });
+      );
+      const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+        attempts: 3,
+        configPath,
+        retryDelaySeconds: 0,
+      });
 
-    const result = runSmokeScript(script, tmpDir, binDir);
+      const result = runSmokeScript(script, tmpDir, binDir);
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
-    expect(result.stderr).toContain(`curl exit ${exitCode}`);
-    expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
-    expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
-  });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+      expect(result.stderr).toContain(`curl exit ${exitCode}`);
+      expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
+      expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
+    },
+  );
 
-  it("does not retry a permanent curl exit", () => {
+  it("does not retry a permanent curl exit", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-curl-terminal-"));
     const model = "nvidia/nemotron-3-ultra";
     const configPath = writeSmokeConfig(tmpDir, model);
@@ -900,7 +1310,7 @@ printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}
     expect(fs.readFileSync(callFile, "utf-8")).toBe("1");
   });
 
-  it("does not retry a permanent JSON response validation failure", () => {
+  it("does not retry a permanent JSON response validation failure", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-permanent-"));
     const model = "nvidia/nemotron-3-ultra";
     const configPath = writeSmokeConfig(tmpDir, model);
@@ -922,7 +1332,7 @@ printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}
     expect(fs.readFileSync(callFile, "utf-8")).toBe("1");
   });
 
-  it("fails after the bounded transient retry budget", () => {
+  it("fails after the bounded transient retry budget", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-exhausted-"));
     const model = "nvidia/nemotron-3-ultra";
     const configPath = writeSmokeConfig(tmpDir, model);
@@ -947,7 +1357,7 @@ printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}
     expect(fs.readFileSync(callFile, "utf-8")).toBe("3");
   });
 
-  it("reports a model-output budget problem when the retry also has no assistant content", () => {
+  it("reports a model-output budget problem when the retry also has no assistant content", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-no-content-"));
     const model = "provider/reasoning-model";
     const configPath = writeSmokeConfig(tmpDir, model);
@@ -975,7 +1385,7 @@ JSON
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
   });
 
-  it("passes the native multiline script through the OpenShell command argument", () => {
+  it("passes the native multiline script through the OpenShell command argument", async () => {
     const command = buildCompatibleEndpointSandboxSmokeCommand("nvidia/model");
 
     expect(command).toBe(buildCompatibleEndpointSandboxSmokeScript("nvidia/model"));

@@ -92,10 +92,10 @@ function createDeps(
 }
 
 describe("prepareOnboardSession", () => {
-  it("stops resume before side effects when saved policy authority is invalid (#9833)", async () => {
+  it("stops resume before side effects when saved sandbox identity is invalid (#9833)", async () => {
     const loadSession = vi.fn((): Session | null => {
       throw new Error(
-        "Refusing to load the onboarding session: the saved policy authority is invalid.",
+        "Refusing to load the onboarding session: the saved sandbox identity is invalid.",
       );
     });
     const { deps } = createDeps(null, { loadSession });
@@ -112,7 +112,7 @@ describe("prepareOnboardSession", () => {
         },
         deps,
       ),
-    ).rejects.toThrow(/saved policy authority is invalid/u);
+    ).rejects.toThrow(/saved sandbox identity is invalid/u);
 
     expect(loadSession).toHaveBeenCalledOnce();
     expect(deps.requireHostMountRuntimeSupport).not.toHaveBeenCalled();
@@ -205,6 +205,48 @@ describe("prepareOnboardSession", () => {
     expect(deps.createSession).not.toHaveBeenCalled();
     expect(deps.saveSession).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "preserves incomplete activation evidence with resume=%s (#11340)",
+    async (resume) => {
+      const activationEvidence = {
+        schemaVersion: 1 as const,
+        activationId: "4b5a8e18-f967-4e27-a3b2-f2cc315abe21",
+        componentId: "policy-governance",
+        lifecycleGeneration: "generation-1",
+        sandboxIdentityFingerprint: `sha256:${"b".repeat(64)}`,
+        resultClass: "ambiguous" as const,
+      };
+      const existing = createSession({
+        sessionId: "incomplete-activation",
+        externalComponentActivation: activationEvidence,
+      });
+      const { deps, getSession } = createDeps(existing);
+
+      await expect(
+        prepareOnboardSession(
+          {
+            resume,
+            fresh: !resume,
+            requestedFromDockerfile: null,
+            requestedSandboxName: "replacement",
+            cannotPrompt: true,
+            nonInteractive: true,
+          },
+          deps,
+        ),
+      ).rejects.toMatchObject({ code: "lifecycle_unsupported" });
+
+      expect(getSession()).toBe(existing);
+      expect(getSession()?.externalComponentActivation).toEqual(activationEvidence);
+      expect(deps.requireHostMountRuntimeSupport).not.toHaveBeenCalled();
+      expect(deps.updateSession).not.toHaveBeenCalled();
+      expect(deps.applySessionRecovery).not.toHaveBeenCalled();
+      expect(deps.clearSession).not.toHaveBeenCalled();
+      expect(deps.createSession).not.toHaveBeenCalled();
+      expect(deps.saveSession).not.toHaveBeenCalled();
+    },
+  );
 
   it("creates a fresh session and records the resolved Dockerfile", async () => {
     const existing = createSession({ sessionId: "old-session" });

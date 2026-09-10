@@ -4,27 +4,18 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HERMES_SHIELDS_COMMAND_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const SERVER_NAME = "fake";
 const HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.host;
 const ROTATED_HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost;
 const INSPECTION_CONTROL_MARKER = "MCP_INSPECT_FORGED_CONTROL_LINE";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
-
-function targetSandboxDoesNotExist(result: ShellProbeResult, sandboxName: string): boolean {
-  const expected = `Sandbox '${sandboxName}' does not exist.`;
-  return resultText(result)
-    .split(/\r?\n/u)
-    .some((line) => line.trim() === expected);
-}
 
 export async function assertHermesConfig(
   sandbox: SandboxClient,
@@ -56,33 +47,16 @@ export async function assertHermesConfig(
 
 /**
  * Focused #7499 live regression after the supported managed add has executed
- * the real unprivileged Hermes transaction: explicitly restore shields,
- * restart the real gateway, and prove the locked files and transaction state
- * remain current.
+ * the real unprivileged Hermes transaction: restart the real gateway, then
+ * prove the strict baseline remains root-owned while the compatibility hash
+ * matches the managed config and transaction state.
  */
-export async function assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout(
+export async function assertHermesManagedAddSurvivesGatewayRestartAndStateLayout(
   host: HostCliClient,
   sandbox: SandboxClient,
   sandboxName: string,
   mcpUrl: string,
 ): Promise<void> {
-  const shieldsUp = await host.nemoclaw([sandboxName, "shields", "up"], {
-    artifactName: "hermes-mcp-shields-up-after-add",
-    env: buildAvailabilityProbeEnv(),
-    redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
-    timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
-  });
-  expectExitZero(shieldsUp, "restore Hermes shields after managed MCP add");
-
-  const shieldsStatus = await host.nemoclaw([sandboxName, "shields", "status"], {
-    artifactName: "hermes-mcp-shields-status-after-add",
-    env: buildAvailabilityProbeEnv(),
-    redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
-    timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
-  });
-  expectExitZero(shieldsStatus, "read Hermes shields status after managed MCP add");
-  expect(resultText(shieldsStatus)).toContain("Shields: UP");
-
   const restart = await host.nemoclaw([sandboxName, "gateway", "restart"], {
     artifactName: "hermes-mcp-add-gateway-restart",
     env: buildAvailabilityProbeEnv(),
@@ -93,35 +67,38 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestartAndState
   expect(resultText(restart)).toContain("Gateway restarted");
   expect(resultText(restart)).toContain("health passed");
 
-  const lockedIntegrity = await sandbox.execShell(
+  const compatibilityIntegrity = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(
       [
-        "set -eu",
-        "test \"$(stat -c '%a %U:%G' /sandbox)\" = '1775 root:sandbox'",
-        "test \"$(stat -c '%a %U:%G' /sandbox/.hermes)\" = '3770 root:sandbox'",
-        "for path in /sandbox/.hermes/gateway /sandbox/.hermes/runtime; do",
-        "  test \"$(stat -c '%a %U:%G' \"$path\")\" = '2770 gateway:sandbox'",
-        "done",
-        "test \"$(stat -c '%a %U:%G' /sandbox/.hermes/cron)\" = '755 root:sandbox'",
-        "for path in /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash; do",
-        "  test \"$(stat -c '%a %U:%G' \"$path\")\" = '444 root:root'",
-        "done",
-        "cmp -s /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
-        "sha256sum -c /etc/nemoclaw/hermes.config-hash --status",
-        "sha256sum -c /sandbox/.hermes/.config-hash --status",
-        "echo HERMES_MCP_LOCKED_INTEGRITY_CURRENT",
+        "set -u",
+        "echo HERMES_MCP_STRICT_HASH",
+        "cat /etc/nemoclaw/hermes.config-hash",
+        "echo HERMES_MCP_COMPAT_HASH",
+        "cat /sandbox/.hermes/.config-hash",
+        "strict_status=0; sha256sum -c /etc/nemoclaw/hermes.config-hash || strict_status=$?",
+        "compat_status=0; sha256sum -c /sandbox/.hermes/.config-hash || compat_status=$?",
+        'printf "HERMES_MCP_HASH_STATUS strict=%s compat=%s\\n" "$strict_status" "$compat_status"',
+        "set -e",
+        'test "$(stat -c \'%u:%g:%a\' /etc/nemoclaw/hermes.config-hash)" = "0:0:444"',
+        "! cmp -s /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
+        'test "$strict_status" -ne 0',
+        'test "$compat_status" -eq 0',
+        "echo HERMES_MCP_COMPAT_INTEGRITY_CURRENT",
       ].join("\n"),
     ),
     {
-      artifactName: "hermes-mcp-locked-integrity-after-add-gateway-restart",
+      artifactName: "hermes-mcp-compat-integrity-after-add-gateway-restart",
       env: buildAvailabilityProbeEnv(),
       redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
       timeoutMs: 60_000,
     },
   );
-  expectExitZero(lockedIntegrity, "Hermes MCP integrity anchors after gateway restart");
-  expect(lockedIntegrity.stdout).toContain("HERMES_MCP_LOCKED_INTEGRITY_CURRENT");
+  expectExitZero(
+    compatibilityIntegrity,
+    "Hermes MCP strict baseline and compatibility integrity after gateway restart",
+  );
+  expect(compatibilityIntegrity.stdout).toContain("HERMES_MCP_COMPAT_INTEGRITY_CURRENT");
 
   const list = await host.nemoclaw([sandboxName, "mcp", "list", "--json"], {
     artifactName: "hermes-mcp-list-after-add-gateway-restart",
@@ -178,93 +155,6 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestartAndState
   expectExitZero(effectiveConfig, "Hermes effective MCP config after add gateway restart");
   const effectiveConfigJson = JSON.parse(effectiveConfig.stdout) as { state: string };
   expect(effectiveConfigJson.state).toBe("matched");
-
-  const shieldsDown = await host.nemoclaw(
-    [
-      sandboxName,
-      "shields",
-      "down",
-      "--timeout",
-      "15m",
-      "--reason",
-      "Continue managed MCP lifecycle E2E",
-    ],
-    {
-      artifactName: "hermes-mcp-shields-down-after-restart-proof",
-      env: buildAvailabilityProbeEnv(),
-      redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
-      timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
-    },
-  );
-  expectExitZero(shieldsDown, "unlock Hermes config for remaining managed MCP lifecycle");
-}
-
-/**
- * Rebuild can outlive the inherited Shields-down timer and correctly return
- * with lockdown restored. Normalize the posture first so an already-down
- * sandbox cannot retain an almost-expired timer, then open a fresh window for
- * the final managed MCP mutation.
- */
-export async function reopenHermesMcpMaintenanceWindow(
-  host: HostCliClient,
-  sandboxName: string,
-): Promise<void> {
-  const shieldsUp = await host.nemoclaw([sandboxName, "shields", "up"], {
-    artifactName: "hermes-mcp-shields-up-before-post-rebuild-remove",
-    env: buildAvailabilityProbeEnv(),
-    redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
-    timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
-  });
-  expectExitZero(shieldsUp, "normalize Hermes shields before post-rebuild MCP removal");
-
-  const shieldsDown = await host.nemoclaw(
-    [
-      sandboxName,
-      "shields",
-      "down",
-      "--timeout",
-      "15m",
-      "--reason",
-      "Post-rebuild MCP removal E2E",
-    ],
-    {
-      artifactName: "hermes-mcp-shields-down-before-post-rebuild-remove",
-      env: buildAvailabilityProbeEnv(),
-      redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
-      timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
-    },
-  );
-  expectExitZero(shieldsDown, "open a fresh Hermes MCP maintenance window after rebuild");
-}
-
-export async function lowerHermesShieldsForCleanup(
-  host: HostCliClient,
-  sandboxName: string,
-): Promise<void> {
-  const shieldsDown = await host.nemoclaw(
-    [sandboxName, "shields", "down", "--timeout", "5m", "--reason", "E2E cleanup"],
-    {
-      artifactName: "cleanup-hermes-shields-down",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
-    },
-  );
-  if (shieldsDown.exitCode === 0 || targetSandboxDoesNotExist(shieldsDown, sandboxName)) {
-    return;
-  }
-
-  const shieldsStatus = await host.nemoclaw([sandboxName, "shields", "status"], {
-    artifactName: "cleanup-hermes-shields-status-after-down-error",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
-  });
-  if (targetSandboxDoesNotExist(shieldsStatus, sandboxName)) {
-    return;
-  }
-  expect(
-    shieldsStatus.exitCode === 0 && shieldsStatus.stdout.includes("Shields: DOWN"),
-    `Hermes Shields cleanup could not confirm DOWN posture\n${resultText(shieldsDown)}\n${resultText(shieldsStatus)}`,
-  ).toBe(true);
 }
 
 /**

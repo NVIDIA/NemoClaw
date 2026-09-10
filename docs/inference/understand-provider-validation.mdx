@@ -10,7 +10,7 @@ content:
   type: "concept"
 ---
 NemoClaw validates the selected provider and model before it creates a sandbox.
-The exact request depends on the provider API that the agent uses.
+The request depends on the provider API that the agent uses.
 
 ## Credential Validation
 
@@ -31,7 +31,7 @@ NemoClaw sends a provider-specific request that exercises the API surface intend
 | Provider | Validation request |
 |---|---|
 | OpenAI | Tries `/responses`, then `/chat/completions`. |
-| NVIDIA Endpoints | Uses `/v1/chat/completions` and skips `/v1/responses`. |
+| NVIDIA Endpoints | Uses `/v1/chat/completions` for model and smoke validation and skips `/v1/responses`. |
 | OpenRouter | Uses `/v1/chat/completions` for catalog, model, and smoke validation. |
 | Google Gemini | Uses the OpenAI-compatible chat-completions path and skips `/v1/responses`. |
 | Other OpenAI-compatible endpoint | Tries `/v1/responses` with tool-calling and streaming checks, then falls back to `/v1/chat/completions`. |
@@ -103,6 +103,13 @@ NemoClaw sends another validation request in any of these cases:
 
 An endpoint that is reachable only through `http://host.openshell.internal:<port>` cannot receive the host-side API probe.
 Verify that route from inside the sandbox after onboarding.
+
+<AgentOnly variant="openclaw">
+
+For OpenClaw, the compatible endpoint check validates `inference.local` from inside the sandbox only when the selected provider is `compatible-endpoint`.
+The check runs whether or not you select a messaging channel and stops onboarding if the route fails.
+
+</AgentOnly>
 
 ## Related Topics
 

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../inference/web-search";
-import type { BaselineExclusionEntry } from "../state/registry";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { NamedMessagingChannel } from "./messaging-prep";
 import {
@@ -38,8 +37,6 @@ export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   extraProviders: readonly string[];
   staleExtraProviders: readonly string[];
   policyTier?: string | null;
-  /** Operator baseline exclusions replayed into create/rebuild policy generation. */
-  baselineExclusions?: readonly BaselineExclusionEntry[];
   /** Internal OpenClaw resume authority for exact registered provider reuse. */
   reuseRegisteredCredentials?: boolean;
 };
@@ -170,7 +167,6 @@ export function createSandboxCreateIntentResolver<
       extraPlaceholderKeys: messaging.extraPlaceholderKeys,
       agentName: input.agent?.name,
       policyTier: resolveSandboxCreatePolicyTier(input.policyTier),
-      baselineExclusions: input.baselineExclusions,
     });
   }
 
@@ -183,16 +179,30 @@ export function createSandboxCreateIntentResolver<
       readonly hermesPortable: boolean;
       readonly requestedExtraProviders?: readonly string[];
       readonly resolvedIntent?: SandboxCreateIntent;
-      readonly planOrdinaryExtraProviders: () => {
-        readonly extraProviders: readonly string[];
-        readonly staleExtraProviders: readonly string[];
-      };
+      readonly planOrdinaryExtraProviders: () =>
+        | {
+            readonly extraProviders: readonly string[];
+            readonly staleExtraProviders: readonly string[];
+          }
+        | Promise<{
+            readonly extraProviders: readonly string[];
+            readonly staleExtraProviders: readonly string[];
+          }>;
     },
   ) {
+    const ordinaryExtraProviderPlan =
+      !options.hermesPortable && !options.requestedExtraProviders
+        ? await options.planOrdinaryExtraProviders()
+        : null;
     const extraProviderPlan = selectHermesPortableExtraProviderPlan(
       options.hermesPortable,
       options.requestedExtraProviders,
-      options.planOrdinaryExtraProviders,
+      () => {
+        if (!ordinaryExtraProviderPlan) {
+          throw new Error("Ordinary extra-provider plan is unavailable.");
+        }
+        return ordinaryExtraProviderPlan;
+      },
     );
     const intent =
       options.resolvedIntent ??

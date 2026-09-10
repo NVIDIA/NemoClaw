@@ -9,10 +9,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import {
-  managedPolicyMetadata,
+  livePolicyMetadata,
   managedRegistrationSource,
   SANDBOX_ID,
-} from "../../helpers/managed-policy-receipt-fixture";
+} from "../../helpers/live-policy-fixture";
 
 const repoRoot = path.join(import.meta.dirname, "../../..");
 const policyModulePath = path.join(repoRoot, "src", "lib", "policy", "index.ts");
@@ -109,7 +109,7 @@ function buildOpenshellStub(
   appliedPolicyPath: string,
 ): string {
   const policyMetadata = {
-    ...JSON.parse(managedPolicyMetadata(SANDBOX_NAME)),
+    ...JSON.parse(livePolicyMetadata(SANDBOX_NAME)),
     policy: YAML.parse(basePolicy),
   };
   return `#!/bin/sh
@@ -311,7 +311,7 @@ const POLICY_SET_FAILURES: ReadonlyArray<PolicySetFailureScenario> = [
     policySetExitCode: UNPARSEABLE_FAILURE_EXIT_CODE,
     policySetStderr: TRANSPORT_RESET_STDERR,
     expectedOperatorMessage: `Could not confirm the policy update for sandbox '${SANDBOX_NAME}'`,
-    expectedGuidance: "read the current policy back before retrying",
+    expectedGuidance: "The current live policy differs from the requested document",
   },
 ];
 
@@ -354,7 +354,7 @@ describe.each(POLICY_SET_FAILURES)(
       const registry = JSON.parse(
         fs.readFileSync(path.join(run.homeDir, ".nemoclaw", "sandboxes.json"), "utf-8"),
       ) as { sandboxes: Record<string, { policies?: string[] }> };
-      expect(registry.sandboxes[SANDBOX_NAME]?.policies).toEqual([]);
+      expect(registry.sandboxes[SANDBOX_NAME]).not.toHaveProperty("policies");
     });
   },
 );
@@ -423,7 +423,7 @@ const SINGLE_PRESET_MUTATIONS: ReadonlyArray<SinglePresetMutationScenario> = [
     basePolicy: BASE_POLICY_WITHOUT_PRESET,
     policySet: { exitCode: UNPARSEABLE_FAILURE_EXIT_CODE, stderr: UNPARSEABLE_FAILURE_STDERR },
     expectedOperatorMessage: `Could not confirm the policy update for sandbox '${SANDBOX_NAME}'`,
-    expectedGuidance: "read the current policy back before retrying",
+    expectedGuidance: "The current live policy differs from the requested document",
     expectedExitCode: UNPARSEABLE_FAILURE_EXIT_CODE,
   },
 ];

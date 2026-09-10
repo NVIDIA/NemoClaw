@@ -7,19 +7,30 @@ import { setupOllamaLocalInference } from "./inference-providers/ollama-local";
 import { bindOpenAiProviderProfile, createProviderReviewDeps } from "./setup-inference";
 
 describe("bindOpenAiProviderProfile", () => {
-  it("imports the profile immediately before an OpenAI provider upsert", () => {
+  it("imports the profile immediately before an OpenAI provider upsert", async () => {
     const events: string[] = [];
-    const profileEvents = ["profile-export", "profile-import"];
+    const profileEvents = ["profile-export", "profile-import", "profile-reexport"];
     const profileResults = [
       { status: 1, stdout: "", stderr: "provider profile not found" },
       { status: 0, stdout: "", stderr: "" },
+      {
+        status: 0,
+        stdout: JSON.stringify({
+          id: "openai",
+          credentials: [],
+          endpoints: [],
+          binaries: [],
+          inference_capable: true,
+        }),
+        stderr: "",
+      },
     ];
     let profileIndex = 0;
     const runOpenshell = vi.fn(() => {
       events.push(profileEvents[profileIndex]!);
       return profileResults[profileIndex++]!;
     });
-    const upsertProvider = vi.fn(() => {
+    const upsertProvider = vi.fn(async () => {
       events.push("upsert");
       return { ok: true };
     });
@@ -32,7 +43,7 @@ describe("bindOpenAiProviderProfile", () => {
       },
     );
 
-    expect(
+    await expect(
       profiledUpsert(
         "compatible-endpoint",
         "openai",
@@ -40,9 +51,9 @@ describe("bindOpenAiProviderProfile", () => {
         "https://inference.example/v1",
         { COMPATIBLE_API_KEY: "test-secret" },
       ),
-    ).toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true });
 
-    expect(events).toEqual(["profile-export", "profile-import", "upsert"]);
+    expect(events).toEqual(["profile-export", "profile-import", "profile-reexport", "upsert"]);
     expect(runOpenshell).toHaveBeenNthCalledWith(
       1,
       ["provider", "profile", "export", "openai", "--output", "json"],
@@ -63,11 +74,21 @@ describe("bindOpenAiProviderProfile", () => {
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      3,
+      ["provider", "profile", "export", "openai", "--output", "json"],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 30_000,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
   });
 
-  it("does not import the OpenAI profile for another provider type", () => {
+  it("does not import the OpenAI profile for another provider type", async () => {
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const profiledUpsert = bindOpenAiProviderProfile(
       upsertProvider,
       runOpenshell,
@@ -77,7 +98,7 @@ describe("bindOpenAiProviderProfile", () => {
       },
     );
 
-    expect(
+    await expect(
       profiledUpsert(
         "anthropic-prod",
         "anthropic",
@@ -85,7 +106,7 @@ describe("bindOpenAiProviderProfile", () => {
         "https://api.anthropic.com",
         {},
       ),
-    ).toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true });
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
@@ -123,10 +144,10 @@ describe("bindOpenAiProviderProfile", () => {
       expected: "does not match NemoClaw's endpointless inference contract",
       guidance: "Remove the conflicting profile",
     },
-  ])("fails closed with fixed guidance for $reason", ({ results, expected, guidance }) => {
+  ])("fails closed with fixed guidance for $reason", async ({ results, expected, guidance }) => {
     let resultIndex = 0;
     const runOpenshell = vi.fn(() => results[resultIndex++]!);
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
     const profiledUpsert = bindOpenAiProviderProfile(
       upsertProvider,
@@ -137,7 +158,7 @@ describe("bindOpenAiProviderProfile", () => {
       },
     );
 
-    expect(() =>
+    await expect(async () =>
       profiledUpsert(
         "compatible-endpoint",
         "openai",
@@ -145,7 +166,7 @@ describe("bindOpenAiProviderProfile", () => {
         "https://inference.example/v1",
         {},
       ),
-    ).toThrow("exit 1");
+    ).rejects.toThrow("exit 1");
 
     expect(upsertProvider).not.toHaveBeenCalled();
     const output = error.mock.calls.flat().join("\n");
@@ -290,7 +311,7 @@ describe("createProviderReviewDeps", () => {
       },
       {
         runOpenshell: () => ({ status: 0 }),
-        upsertProvider: () => ({ ok: true }),
+        upsertProvider: async () => ({ ok: true }),
         verifyInferenceRoute: vi.fn(),
         verifyOnboardInferenceSmoke: vi.fn(),
         isNonInteractive: () => true,
@@ -303,7 +324,6 @@ describe("createProviderReviewDeps", () => {
         validateLocalProvider: () => ({ ok: true }),
         getLocalProviderBaseUrl: () => "http://host.openshell.internal:11435/v1",
         applyLocalInferenceRoute: async () => false,
-        getOllamaWarmupCommand: () => ["ollama", "run", "qwen3.5:9b"],
         run: vi.fn() as never,
         shouldFrontOllamaWithProxy: () => true,
         ensureOllamaAuthProxy,
@@ -313,6 +333,8 @@ describe("createProviderReviewDeps", () => {
         localInference: {
           validateOllamaModelWithToolsOverride: () => ({ ok: true }),
           validateSandboxFacingOllamaModel: () => ({ ok: true }),
+          runOllamaWarmup: () => {},
+          persistResolvedOllamaHost: () => () => {},
         },
         OLLAMA_PROXY_CREDENTIAL_ENV: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
       },

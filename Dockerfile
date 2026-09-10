@@ -37,7 +37,7 @@ RUN --network=default /opt/nemoclaw-build-tools/npm-ci-locked.sh \
 COPY nemoclaw/src/ /opt/nemoclaw/src/
 COPY scripts/checks/verify-openshell-policy-boundary-dependencies.mts /opt/nemoclaw-build-checks/
 RUN npm run build \
-    && node --experimental-strip-types \
+    && node \
         /opt/nemoclaw-build-checks/verify-openshell-policy-boundary-dependencies.mts \
         /opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs
 
@@ -107,7 +107,7 @@ RUN set -eu; \
     strings "$binary" | grep -Fq '/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh'
 
 # Fetch immutable reviewed archives outside RUN instructions. The protected
-# GPU rebuild imports these checksum-addressed source records from the exact
+# GPU rebuild imports these checksum-addressed source records from the
 # amd64 build cache, while every package-materialization RUN remains offline.
 FROM scratch AS wechat-npm-archives
 
@@ -138,7 +138,7 @@ ADD --chmod=0444 --checksum=sha256:b1b01eb1522aea8f652cc7b692d1c417195713deb12b3
 FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
 
 # Reviewed-archive invariants (#5896): checksum-addressed source archives,
-# committed SRI verification, offline installation, and exact architecture.
+# committed SRI verification, offline installation, and architecture selection.
 FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS codex-acp-runtime
 ARG TARGETARCH
 ARG CODEX_ACP_0_11_1_INTEGRITY
@@ -168,7 +168,7 @@ COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/checks/
 COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/seed-reviewed-npm-cache.mts /opt/nemoclaw-build-tools/
 COPY --from=wechat-npm-archives / /opt/wechat-npm-archives/
 RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
-    && node --experimental-strip-types /opt/nemoclaw-build-tools/seed-reviewed-npm-cache.mts \
+    && node /opt/nemoclaw-build-tools/seed-reviewed-npm-cache.mts \
         --lockfile /opt/wechat-runtime/package-lock.json \
         --cache /out/wechat-npm-cache \
         --registry-origin https://registry.npmjs.org/ \
@@ -180,7 +180,7 @@ RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
         --userconfig /dev/null --registry https://registry.npmjs.org/ \
         --cache /out/wechat-npm-cache \
     && NPM_CONFIG_OFFLINE=true \
-        node --experimental-strip-types /opt/nemoclaw-build-tools/reviewed-npm-archive.mts \
+        node /opt/nemoclaw-build-tools/reviewed-npm-archive.mts \
         --lockfile /opt/wechat-runtime/package-lock.json \
         --cache /out/wechat-npm-cache \
         --registry-origin https://registry.npmjs.org/ \
@@ -188,7 +188,7 @@ RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
     && chown -R root:root /out/wechat-npm-cache \
     && chmod -R a+rX,go-w /out/wechat-npm-cache
 
-# Fetch every exact-lock messaging archive outside RUN instructions. BuildKit
+# Fetch every locked messaging archive outside RUN instructions. BuildKit
 # verifies the committed SHA-256 source pins before the selected architecture
 # enters the cache stage; SHA-512 verification against package-lock.json and
 # every package-materialization command then execute with networking disabled.
@@ -486,7 +486,7 @@ ADD --chmod=0444 --checksum=sha256:a6fda898620be2c49d477a0b266f4be3a9eb16da47426
 FROM openclaw-managed-messaging-npm-${TARGETARCH}-archives AS openclaw-managed-messaging-npm-archives
 
 # Keep the complete managed-image messaging dependency graph inert for normal
-# Dockerfile builds. Release-image builds select the exact-lock cache stage.
+# Dockerfile builds. Release-image builds select the lock cache stage.
 FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS openclaw-managed-messaging-npm-cache-0
 RUN install -d -o root -g root -m 0755 /out/npm-cache
 
@@ -506,7 +506,7 @@ RUN --network=none set -eu; \
         *) echo "ERROR: unsupported managed messaging npm target: $TARGETARCH" >&2; exit 1 ;; \
     esac; \
     install -d -o root -g root -m 0755 /out/npm-cache; \
-    node --experimental-strip-types /opt/nemoclaw-build-tools/lib/seed-reviewed-npm-cache.mts \
+    node /opt/nemoclaw-build-tools/lib/seed-reviewed-npm-cache.mts \
         --lockfile /opt/managed-image-messaging-runtime/package-lock.json \
         --cache /out/npm-cache \
         --registry-origin https://registry.npmjs.org/ \
@@ -516,7 +516,7 @@ RUN --network=none set -eu; \
         --ignore-scripts --omit=dev --legacy-peer-deps \
         --userconfig /dev/null --registry https://registry.npmjs.org/ \
         --cache /out/npm-cache; \
-    node --experimental-strip-types /opt/nemoclaw-build-tools/lib/seed-reviewed-npm-cache.mts \
+    node /opt/nemoclaw-build-tools/lib/seed-reviewed-npm-cache.mts \
         --packuments-only \
         --lockfile /opt/managed-image-messaging-runtime/package-lock.json \
         --cache /out/npm-cache \
@@ -540,10 +540,11 @@ COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcpor
 COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
 COPY agents/openclaw/wechat-runtime/package.json /usr/local/lib/nemoclaw/wechat-runtime/package.json
 COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json
-COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
+COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
+COPY scripts/lib/npm-audit-receipt.mts /scripts/lib/npm-audit-receipt.mts
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
@@ -578,10 +579,8 @@ COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-en
 COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
-COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py
 COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
-COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
-COPY agents/openclaw/state-lock-plan.json /usr/local/share/nemoclaw/state-lock-plan.json
+COPY scripts/lib/refresh-openclaw-wechat-placeholder.py /usr/local/lib/nemoclaw/refresh-openclaw-wechat-placeholder.py
 COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
 COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
@@ -595,7 +594,7 @@ COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
 COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts
 COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
-COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
+COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts /src/lib/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 
@@ -614,8 +613,6 @@ ENV AWS_EC2_METADATA_DISABLED=true
 # the same Node image, avoiding a redundant 125 MB layer in that local-only case.
 COPY --from=builder /usr/local/bin/node /usr/local/bin/node
 
-# Dependency review evidence for this runtime pin lives in
-# internal/security-reviews/openclaw-2026.7.1-dependency-review.md.
 ARG OPENCLAW_VERSION=2026.7.1
 ARG OPENCLAW_2026_7_1_INTEGRITY=sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==
 ARG OPENCLAW_2026_7_1_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz
@@ -636,6 +633,7 @@ ARG OPENCLAW_2026_4_24_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-20
 ARG MCPORTER_VERSION=0.7.3
 ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
 ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
+ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=
 
 # A cross-stage root copy is accepted by Docker's legacy builder and creates one
 # final-image layer while preserving metadata on existing parent directories.
@@ -688,26 +686,26 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
       export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
-    node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    node /scripts/patch-bundled-npm-tar.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
-# Reassert the npm-private brace-expansion fix for the exact final filesystem.
+# Reassert the npm-private brace-expansion fix for the final filesystem.
 # hadolint ignore=DL3059
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
       export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
-    node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
+    node /scripts/patch-bundled-npm-brace-expansion.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
-# Reassert the npm-private ip-address fix for the exact final filesystem. When
+# Reassert the npm-private ip-address fix for the final filesystem. When
 # onboarding supplied a corporate CA, use it for the registry-backed download.
 # hadolint ignore=DL3059
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
       export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
-    node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
+    node /scripts/lib/patch-bundled-npm-ip-address.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
@@ -716,7 +714,7 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
 # The conditional install keeps stale bases usable while fresh bases skip apt.
 # tmux is required by OpenClaw's bundled tmux-session flow (#4513); a stale base
 # without it makes that flow fail with `tmux: command not found`.
-# Refs: #2343, #4513, shields-up chattr hardening
+# Refs: #2343, #4513, config transaction hardening
 # hadolint ignore=DL3001
 RUN set -eu; \
     apt-mark manual procps e2fsprogs tmux 2>/dev/null || true; \
@@ -790,7 +788,7 @@ RUN test -f /usr/local/bin/node \
     && json5_unsafe="$(find -L /opt/nemoclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$json5_unsafe"
 # Reviewed-archive invariants (#5896): the dedicated build stage materializes
-# the exact lock, seeds resolver metadata, and re-packs every archive offline
+# the committed lock, seeds resolver metadata, and re-packs every archive offline
 # before this root-owned immutable cache enters the final image.
 COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/
 COPY --from=openclaw-patch-payload / /
@@ -808,45 +806,21 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
         /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
 
-# Pre-install the codex-acp package so the embedded ACPx runtime can
-# call the local binary instead of `npx @zed-industries/codex-acp`.
-#
-# The sandbox's L7 proxy denies @zed-industries/* package URLs
-# (403 policy_denied), and npm still refreshes registry metadata for
-# versioned npx package specs even when the package is globally installed.
-# Installing the binary at build time and configuring ACPx to use it
-# directly keeps TC-SBX-02 off the runtime npm path.
-# The architecture-selected installer stage consumes checksum-addressed local
-# archives with the network disabled, verifies their committed SRI values, and
-# installs both the launcher and its native package together.
-#
+# Install SRI-verified ACP offline; runtime registry access is blocked.
 # hadolint ignore=DL3059,DL4006,DL3016
 COPY --from=codex-acp-runtime /usr/local/lib/node_modules/@zed-industries/ /usr/local/lib/node_modules/@zed-industries/
 COPY --from=codex-acp-runtime /usr/local/bin/codex-acp /usr/local/bin/codex-acp
 RUN command -v codex-acp >/dev/null
 
-# Upgrade OpenClaw if the base image is stale.
-# Reuse exact OpenClaw and locked-mcporter base installs only from a published
-# NemoClaw base whose package provenance marker matches this build target;
-# otherwise reinstall both.
-#
-# The GHCR base image (sandbox-base:latest) may lag behind the version pinned in
-# Dockerfile.base, and legacy/custom bases may report the target version without
-# proving which archive and lifecycle produced it. The marker records package
-# and advisory-audit metadata, not trusted-CI signature attestation. Only a
-# digest-pinned base from the official GHCR publication path supplies that
-# independent gate. Mutable tags and local bases cannot authorize reuse even
-# when their marker matches; the existing version checks reinstall the locked
-# runtimes or reject a newer base. The final image consumes the marker before
-# applying NemoClaw patches so a custom base cannot masquerade as a pristine
-# published base.
-#
-# OPENCLAW_VERSION is the NemoClaw runtime build target. It must be at least the
-# blueprint minimum, which also supports the legacy direct-blueprint image path.
-# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
-# basename in a fresh directory, local-archive-only install, and cleanup.
-# hadolint ignore=DL3059,DL4006,DL3016
-RUN --network=default set -eu; \
+# Upgrade stale bases. Reuse is restricted to matching provenance from an
+# official digest-pinned base; mutable/custom bases reinstall the locked graphs.
+# OPENCLAW_VERSION is the NemoClaw runtime build target and must meet the blueprint minimum.
+# Reviewed archives retain registry and packed-byte SRI, basename, local-only install, and cleanup gates.
+# hadolint ignore=DL3059,DL4006,DL3016,SC2015
+RUN --network=default \
+    --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
+    --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
+    set -eu; \
     if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
         export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
         export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
@@ -874,7 +848,7 @@ RUN --network=default set -eu; \
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
-        OPENCLAW_LOCK_SHA256=60f816dcff6f35179b1c48b4c06db9473497760d45ca1831252c27e8b1d2d665; \
+        OPENCLAW_LOCK_SHA256=248d881ca125bb83da293c4b3f40b46d057095a9fe90b5165255da0de78af9f9; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "ERROR: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)" >&2; exit 1; }; \
@@ -892,7 +866,7 @@ RUN --network=default set -eu; \
     [ -n "$MCPORTER_LOCK_SHA256" ] \
         || { echo "ERROR: Could not hash the committed mcporter lockfile" >&2; exit 1; }; \
     MCPORTER_AUDIT_POLICY_SHA256="$(sha256sum /scripts/npm-audit-exceptions.json | awk '{print $1}')"; \
-    MCPORTER_EXPECTED_AUDIT_EXCEPTIONS="$(node --experimental-strip-types --input-type=module -e \
+    MCPORTER_EXPECTED_AUDIT_EXCEPTIONS="$(node --input-type=module -e \
         'import fs from "node:fs"; import { parseAuditExceptionRegistry } from "/scripts/lib/reviewed-npm-audit.mts"; const policy=parseAuditExceptionRegistry(fs.readFileSync("/scripts/npm-audit-exceptions.json", "utf-8")); const ids=policy.exceptions.filter((entry)=>entry.graph==="mcporter-runtime").map((entry)=>entry.advisory).sort(); process.stdout.write(ids.join(",") || "none");')"; \
     MCPORTER_EXPECTED_AUDIT_STATUS=clean; \
     if [ "$MCPORTER_EXPECTED_AUDIT_EXCEPTIONS" != "none" ]; then MCPORTER_EXPECTED_AUDIT_STATUS=accepted-exceptions; fi; \
@@ -937,18 +911,18 @@ RUN --network=default set -eu; \
     rm -f "$OPENCLAW_EXPECTED_PROVENANCE"; \
     rm -rf "$OPENCLAW_PROVENANCE_PATH"; \
     if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
-        echo "INFO: Reusing reviewed base OpenClaw $CUR_VER with exact provenance"; \
+        echo "INFO: Reusing reviewed base OpenClaw $CUR_VER with matching reviewed provenance"; \
     elif [ "$(printf '%s\n%s' "$OPENCLAW_VERSION" "$CUR_VER" | sort -V | head -n1)" = "$OPENCLAW_VERSION" ] \
         && [ "$CUR_VER" != "$OPENCLAW_VERSION" ]; then \
         echo "ERROR: Base image has OpenClaw $CUR_VER, which is newer than reviewed target $OPENCLAW_VERSION" >&2; exit 1; \
     else \
-        echo "INFO: Base image OpenClaw $CUR_VER lacks exact reviewed provenance; installing $OPENCLAW_VERSION"; \
+        echo "INFO: Base image OpenClaw $CUR_VER lacks matching reviewed provenance; installing $OPENCLAW_VERSION"; \
         # npm 10's atomic-move install can hit EROFS on overlayfs when the prior
         # install spans image layers. Removing it first also prevents unreviewed
         # files from surviving a same-version reinstall.
         rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
         if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
-            node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-lock \
+            node /scripts/lib/reviewed-npm-archive.mts --verify-lock \
                 --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
                 --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
                 --registry-origin https://registry.npmjs.org/ \
@@ -957,7 +931,7 @@ RUN --network=default set -eu; \
             npm --prefix /usr/local/lib/nemoclaw/openclaw-runtime ci \
                 --ignore-scripts --omit=dev --no-audit --no-fund --no-progress \
                 --userconfig /dev/null --registry https://registry.npmjs.org/; \
-            node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+            node /scripts/lib/reviewed-npm-archive.mts \
                 --verify-installed-lock --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
                 --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
                 --install-root /usr/local/lib/nemoclaw/openclaw-runtime \
@@ -967,13 +941,13 @@ RUN --network=default set -eu; \
             ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw /usr/local/lib/node_modules/openclaw; \
             ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw /usr/local/bin/openclaw; \
         else \
-            OPENCLAW_SOURCE_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+            OPENCLAW_SOURCE_PACK_PATH="$(node /scripts/lib/reviewed-npm-archive.mts \
                 --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
                 --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}")"; \
             OPENCLAW_PACK_PATH="$OPENCLAW_SOURCE_PACK_PATH"; \
             OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"; \
             if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
-                OPENCLAW_REMEDIATION_JSON="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
+                OPENCLAW_REMEDIATION_JSON="$(node /scripts/lib/openclaw-npm-remediation.mts \
                     --archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@${OPENCLAW_VERSION}" \
                     --working-directory "$OPENCLAW_PACK_DIR")"; \
                 OPENCLAW_PACK_PATH="$(node -e 'const value = JSON.parse(process.argv[1]); if (!value.remediated || typeof value.archivePath !== "string") process.exit(1); process.stdout.write(value.archivePath)' "$OPENCLAW_REMEDIATION_JSON")"; \
@@ -991,12 +965,12 @@ RUN --network=default set -eu; \
         2026.3.11) npm ls -g --depth=1 openclaw tar >/dev/null ;; \
     esac; \
     if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
-        echo "INFO: Reusing reviewed base mcporter $CUR_MCPORTER_VER with exact lock provenance"; \
+        echo "INFO: Reusing reviewed base mcporter $CUR_MCPORTER_VER with matching lock provenance"; \
     else \
-        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only \
+        node /scripts/lib/reviewed-npm-archive.mts --verify-only \
             --package-spec "mcporter@${MCPORTER_VERSION}" --integrity "$MCPORTER_EXPECTED_INTEGRITY" \
             --tarball-url "$MCPORTER_EXPECTED_TARBALL" --label "mcporter ${MCPORTER_VERSION}"; \
-        # Reinstall from the committed lock when exact protected base provenance
+        # Reinstall from the committed lock when matching protected base provenance
         # is unavailable; matching top-level versions can hide transitive drift.
         echo "INFO: Installing locked mcporter $MCPORTER_VERSION dependency graph"; \
         rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter; \
@@ -1008,7 +982,22 @@ RUN --network=default set -eu; \
             'const { StreamableHTTPServerTransport } = await import("file:///usr/local/lib/nemoclaw/mcporter-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js"); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await transport.close();'; \
         ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter; \
         test "$(mcporter --version)" = "$MCPORTER_VERSION"; \
-        node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
+    fi; \
+    MCPORTER_RECEIPT=/run/secrets/nemoclaw-mcporter-audit-receipt; \
+    MCPORTER_RAW_REPORT=/run/secrets/nemoclaw-mcporter-audit-raw-report; \
+    if [ -f "$MCPORTER_RECEIPT" ] || [ -f "$MCPORTER_RAW_REPORT" ] || [ -n "${NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256:-}" ]; then \
+        [ -f "$MCPORTER_RECEIPT" ] && [ -f "$MCPORTER_RAW_REPORT" ] && printf %s "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" | grep -qxE '[0-9a-f]{64}' \
+            || { echo "ERROR: cached mcporter audit requires paired receipt, raw report, and receipt SHA-256" >&2; exit 1; }; \
+        printf '%s  %s\n' "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" "$MCPORTER_RECEIPT" | sha256sum -c -; \
+node /scripts/lib/npm-audit-receipt.mts \
+--receipt "$MCPORTER_RECEIPT" \
+--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
+--package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
+--raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
+--graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json \
+--registry https://registry.yarnpkg.com --threshold high --legacy-audit true; \
+    else \
+        node /scripts/lib/reviewed-npm-audit.mts \
             --directory /usr/local/lib/nemoclaw/mcporter-runtime \
             --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high; \
     fi
@@ -1058,7 +1047,7 @@ RUN --network=default set -eu; \
 # OpenClaw's web_fetch SSRF guard blocks *.internal hostnames before the
 # OpenShell L7 proxy sees the request. NemoClaw users legitimately reach
 # host-local approved services through host.openshell.internal after the
-# OpenShell policy explicitly allows that host:port. Add this exact hostname
+# OpenShell policy explicitly allows that host:port. Add this hostname
 # only to the web_fetch trusted-env-proxy policy, only inside an OpenShell
 # sandbox. The generic SSRF helper and strict/direct DNS-pinned paths remain
 # unmodified, so metadata/link-local/private IP literals are unchanged.
@@ -1183,7 +1172,7 @@ RUN set -eu; \
     # Reviewed against openclaw@2026.7.1 dist: fetchWithWebToolsNetworkGuard \
     # passes useEnvProxy into withTrustedEnvProxyGuardedFetchMode(resolved), and \
     # the SSRF guard consumes policy.allowedHostnames to skip private-network \
-    # checks for an exact normalized hostname. hostnameAllowlist only gates \
+    # checks for a normalized hostname. hostnameAllowlist only gates \
     # hostname pattern matching and does not bypass .internal/private blocking. \
     # Executable fixture proof lives in test/security/fetch-guard-patch-regression.test.ts; \
     # the live network-policy E2E exercises this path in the assembled image. \
@@ -1373,14 +1362,14 @@ RUN set -eu; \
 # Removal criteria: drop when upstream OpenClaw fixes openclaw/openclaw#70164
 # and openclaw/openclaw#50298, or when NemoClaw no longer ships an affected OpenClaw.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Keep OpenClaw 2026.7.1 scope-upgrade approvals inside the gateway's
 # canonical locked pairing writer (#4462). The upstream devices CLI otherwise
 # asks for the very scopes it is trying to approve, so the handshake fails
 # before device.pair.approve runs and its operator.admin retry fails likewise.
-# This exact-dist patch allows only a signed, device-token-authenticated CLI to
+# This dist patch allows only a signed, device-token-authenticated CLI to
 # approve its own complete operator-only request while it already holds
 # operator.pairing; the canonical pairing function repeats identity, role, and
 # bounded-scope validation after acquiring its state lock.
@@ -1388,7 +1377,7 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-chat-
 # Removal criteria: drop when upstream OpenClaw can approve the same bounded
 # self-upgrade through the gateway using only operator.pairing.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Keep backend RPC initiated by the OpenClaw gateway daemon on loopback while
@@ -1403,7 +1392,7 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-devic
 # gateway URL.
 # hadolint ignore=DL3059
 RUN if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
-      node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts \
+      node /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts \
         /usr/local/lib/node_modules/openclaw/dist; \
     fi
 
@@ -1419,7 +1408,7 @@ RUN if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
 # Removal criteria: drop when upstream OpenClaw emits these structured fields
 # from its assistant error formatter for unreachable inference failures.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Patch OpenClaw's MCP stdio launcher so npx-backed MCP servers run with -y.
@@ -1429,7 +1418,7 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue
 # Removal criteria: drop when upstream OpenClaw normalizes npx MCP server args
 # and emits actionable MCP startup timeout diagnostics.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Recover from a transient remote Streamable HTTP MCP startup failure. OpenClaw
@@ -1443,7 +1432,7 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-n
 # Removal criterion: drop when upstream OpenClaw provides bounded startup retry,
 # negative-catalog invalidation, and temporary-transport failure attribution.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Keep OpenClaw's 1,500 ms tools/list catalog timeout by default. A validated
@@ -1454,7 +1443,7 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-r
 # Removal criterion: drop when upstream OpenClaw exposes an equivalent bounded
 # tools/list-only runtime setting.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Emit a redacted managed-transport diagnostic when a remote Streamable HTTP MCP
@@ -1470,14 +1459,14 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-t
 # Removal criterion: drop when upstream OpenClaw emits phase-classified,
 # redacted transport diagnostics for remote MCP fetch failures.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts \
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Run the compact tool catalog shim for OpenClaw selection runtimes that still
 # need it. OpenClaw 2026.7.1 ships a built-in catalog surface, so the script
 # skips cleanly after classifying the compiled selection-*.js shape.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # OpenClaw 2026.7.1 moved gateway startup work into shared and per-agent SQLite
@@ -1489,13 +1478,13 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-tool-
 # avoids a non-owner chmod when a reviewed shared database mode is already
 # safe, keeps generated models files readable by the shared group, and ignores
 # the obsolete update-check cache migration that cannot archive across a
-# shields-protected parent.
+# root-owned parent.
 #
 # Removal criteria: drop when upstream OpenClaw supports a split-user,
 # group-shared state databases and split-user cache migrations without
 # startup warnings.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Set up blueprint for local resolution.
@@ -1504,17 +1493,15 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-share
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
-# Copy only the configuration inputs needed by the expensive non-messaging
-# offline plugin install. The full candidate runtime payload is copied after
-# all offline installs so unrelated runtime changes retain these cached layers.
+# Copy configuration inputs before the cached non-messaging plugin install.
 COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
 COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts
-COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
+COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts /src/lib/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 
 RUN chmod 755 /scripts/generate-openclaw-config.mts \
-        /scripts/validate-openclaw-tool-search.mts \
-    && chmod 444 /src/lib/tool-disclosure.ts \
+        /scripts/validate-openclaw-tool-search.mts /src /src/lib \
+    && chmod 444 /src/lib/*.ts \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \
     && find /usr/local/share/nemoclaw/openclaw-plugins -type d -exec chmod 755 {} + \
@@ -1551,15 +1538,14 @@ ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 ARG NEMOCLAW_INFERENCE_INPUTS=text
 # Per-request inference timeout (seconds) baked into agents.defaults.timeoutSeconds
 # and models.providers.<provider-id>.timeoutSeconds.
-# Increase for slow local inference (e.g., CPU Ollama). openclaw.json is
-# immutable at runtime (Landlock read-only), so this can only be changed by
-# rebuilding via `nemoclaw onboard`. Ref: issue #2281
+# Increase for slow local inference (e.g., CPU Ollama). The host CLI manages
+# runtime changes to the mutable OpenClaw config. Ref: issue #2281
 ARG NEMOCLAW_AGENT_TIMEOUT=600
 # Cadence for OpenClaw's periodic heartbeat
 # (agents.defaults.heartbeat.every). Accepts Go-style durations like "30m",
 # "5m", "1h"; "0m" disables heartbeat. Empty default preserves the OpenClaw
-# built-in cadence. openclaw.json is immutable at runtime, so this can only
-# change at image build time. Ref: issue #2880
+# built-in cadence. The image value is the initial default; the mutable runtime
+# config can be changed through the host CLI. Ref: issue #2880
 ARG NEMOCLAW_AGENT_HEARTBEAT_EVERY=
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # Base64-encoded messaging build plan for messaging build inputs and agent
@@ -1672,7 +1658,9 @@ RUN case "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" in \
     && command -v setpriv >/dev/null 2>&1
 
 WORKDIR /sandbox
-RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox"
+RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox" \
+    && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile \
+    && chmod 644 /sandbox/.bashrc /sandbox/.profile
 USER sandbox
 
 # Write openclaw.json with gateway config but WITHOUT the real auth token.
@@ -1683,8 +1671,7 @@ USER sandbox
 #   Non-root mode: $XDG_RUNTIME_DIR/nemoclaw/gateway-token (sandbox:sandbox 0400)
 # See: scripts/nemoclaw-start.sh generate_gateway_token()
 #
-# Config is mutable by default (group-writable sandbox:sandbox). Immutability
-# is opt-in via `shields up` (DAC 444 root:root + chattr +i).
+# Config remains mutable at runtime (group-writable sandbox:sandbox).
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 #
 # Generate base openclaw.json from environment variables. Messaging build
@@ -1696,7 +1683,7 @@ USER sandbox
 # block until after build-time OpenClaw doctor/plugin commands complete.
 RUN NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0 \
     NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
-    node --experimental-strip-types /scripts/generate-openclaw-config.mts
+    node /scripts/generate-openclaw-config.mts
 
 # Validate the patched OpenClaw tool-search contract against real generated
 # configs for both supported disclosure modes. This runs at image build time so
@@ -1714,8 +1701,8 @@ RUN set -eu; \
             NEMOCLAW_TOOL_DISCLOSURE="$mode" \
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0 \
             NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
-            node --experimental-strip-types /scripts/generate-openclaw-config.mts; \
-        node --experimental-strip-types /scripts/validate-openclaw-tool-search.mts \
+            node /scripts/generate-openclaw-config.mts; \
+        node /scripts/validate-openclaw-tool-search.mts \
             /usr/local/lib/node_modules/openclaw/dist \
             "$validation_home/.openclaw/openclaw.json" \
             "$mode" \
@@ -1753,7 +1740,7 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
                 "$plugin_archive" "$expected_integrity"; \
             printf '%s\n' "$plugin_archive"; \
         else \
-            node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+            node /scripts/lib/reviewed-npm-archive.mts \
                 --package-spec "$plugin_spec" --integrity "$expected_integrity" \
                 --tarball-url "$expected_tarball" --label "OpenClaw plugin ${plugin_spec}"; \
         fi; \
@@ -1766,7 +1753,7 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
         plugin_install_archive="$plugin_archive"; \
         case "$plugin_spec" in \
             "@openclaw/diagnostics-otel@2026.7.1") \
-                remediation_json="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
+                remediation_json="$(node /scripts/lib/openclaw-npm-remediation.mts \
                     --archive "$plugin_archive" --package-spec "$plugin_spec" \
                     --working-directory "$plugin_work_root")"; \
                 plugin_install_archive="$(node -e 'const value = JSON.parse(process.argv[1]); if (!value.remediated || typeof value.archivePath !== "string") process.exit(1); process.stdout.write(value.archivePath)' "$remediation_json")" \
@@ -1821,7 +1808,7 @@ RUN chmod 755 /src/lib/messaging/applier/build/messaging-build-applier.mts \
 # forwards explicit runtime env, so nemoclaw-start reads this generic artifact
 # when the env plan is absent.
 # hadolint ignore=DL3059
-RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
+RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
 USER sandbox
 
 # npm still needs a writable _cacache/tmp while OpenClaw packs the verified archive,
@@ -1856,7 +1843,7 @@ RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,targ
     fi; \
     NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache" \
         OPENCLAW_VERSION="${OPENCLAW_VERSION}" \
-        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
+        node /src/lib/messaging/applier/build/messaging-build-applier.mts \
             --agent openclaw --phase "$messaging_phase"; \
     rm -rf "$install_cache"; \
     trap - EXIT; \
@@ -1911,7 +1898,7 @@ RUN managed_runtime_assertion_failed() { \
     fi; \
     discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
       || managed_image_command_failed mcp-tool-discovery-bundle-execution "$?"; \
-    node -e 'const expected = { protocol: 1, ok: false, detail: "tool discovery received invalid runtime arguments" }; const standaloneSecretPatterns = [/(?:nvapi-|nvcf-|gh[pousr]_|sk-proj-|sk-ant-|hf_|glpat-|gsk_|pypi-|tvly-)[A-Za-z0-9_-]{10,}/gu, /github_pat_[A-Za-z0-9_]{30,}/gu, /sk-[A-Za-z0-9_-]{20,}/gu, /(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}/gu, /A(?:K|S)IA[A-Z0-9]{16}/gu, /\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/gu, /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/gu, /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/gu, /\b[A-Za-z0-9_=-]{32,}\b/gu]; const redactContextSecrets = (value) => value.replace(/\b(?:Bearer|Basic)\s+\S+/giu, "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/giu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])KEY["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>"); const sanitize = (value) => { if (value === undefined) return "<missing>"; if (value === null || typeof value === "boolean" || typeof value === "number") return value; if (typeof value !== "string") return "<" + (Array.isArray(value) ? "array" : typeof value) + ">"; let printable = value.replace(/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*/gu, "<REDACTED>").replace(/[^\x20-\x7e]/gu, "?"); for (const pattern of standaloneSecretPatterns) printable = printable.replace(pattern, "<REDACTED>"); printable = redactContextSecrets(printable); return printable.length <= 240 ? printable : printable.slice(0, 237) + "..."; }; let result; let parsed = true; try { result = JSON.parse(process.argv[1]); } catch { parsed = false; } const record = parsed && result !== null && typeof result === "object" && !Array.isArray(result) ? result : undefined; if (record && record.protocol === expected.protocol && record.ok === expected.ok && record.detail === expected.detail) process.exit(0); const actual = record ? { protocol: sanitize(record.protocol), ok: sanitize(record.ok), detail: sanitize(record.detail) } : parsed ? { type: result === null ? "null" : Array.isArray(result) ? "array" : typeof result, value: sanitize(result) } : { type: "invalid-json", preview: sanitize(process.argv[1]) }; console.error("ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual=%s expected=%s", JSON.stringify(actual), JSON.stringify(expected)); process.exit(1);' "$discovery_contract" \
+    node -e 'const expected={protocol:2,ok:false,count:0,tools:[],truncated:false,detail:"tool discovery received invalid runtime arguments",failedStage:"preflight",failureClass:"precondition"}; const secretPatterns = [/(?:nvapi-|nvcf-|gh[pousr]_|sk-proj-|sk-ant-|hf_|glpat-|gsk_|pypi-|tvly-)[A-Za-z0-9_-]{10,}/gu, /github_pat_[A-Za-z0-9_]{30,}/gu, /sk-[A-Za-z0-9_-]{20,}/gu, /(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}/gu, /A(?:K|S)IA[A-Z0-9]{16}/gu, /\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/gu, /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/gu, /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/gu, /\b[A-Za-z0-9_=-]{32,}\b/gu]; const redact = (value) => value.replace(/\b(?:Bearer|Basic)\s+\S+/giu, "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/giu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])KEY["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>"); const sanitize = (value) => { if (value === undefined) return "<missing>"; if (value === null || typeof value === "boolean" || typeof value === "number") return value; if (typeof value !== "string") return "<" + (Array.isArray(value) ? "array" : typeof value) + ">"; let text = value.replace(/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*/gu, "<REDACTED>").replace(/[^\x20-\x7e]/gu, "?"); for (const pattern of secretPatterns) text = text.replace(pattern, "<REDACTED>"); text = redact(text); return text.length <= 240 ? text : text.slice(0, 237) + "..."; }; let result; let parsed = true; try { result = JSON.parse(process.argv[1]); } catch { parsed = false; } const record = parsed && result !== null && typeof result === "object" && !Array.isArray(result) ? result : undefined; if(record&&Object.keys(record).length===8&&Object.keys(expected).every(k=>k==="tools"?Array.isArray(record[k])&&!record[k].length:record[k]===expected[k]))process.exit(0); const actual = record ? Object.fromEntries(Object.keys(expected).map(k=>[k,sanitize(record[k])])) : parsed ? { type: result === null ? "null" : Array.isArray(result) ? "array" : typeof result, value: sanitize(result) } : { type: "invalid-json", preview: sanitize(process.argv[1]) }; console.error("ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual=%s expected=%s", JSON.stringify(actual), JSON.stringify(expected)); process.exit(1);' "$discovery_contract" \
       || exit 1; \
     discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
       || managed_image_command_failed mcp-tool-discovery-tree-find-execution "$?"; \
@@ -1935,26 +1922,21 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/bin/nemoclaw-managed-startup-hold \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /scripts/generate-openclaw-config.mts \
-        /scripts/validate-openclaw-tool-search.mts \
-    && chmod 444 /src/lib/tool-disclosure.ts \
+        /scripts/validate-openclaw-tool-search.mts /src /src/lib \
+    && chmod 444 /src/lib/*.ts \
         /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control \
         /usr/local/lib/nemoclaw/gateway-supervisor.sh \
-        /usr/local/lib/nemoclaw/state-dir-guard.py \
-        /usr/local/share/nemoclaw/state-lock-plan.json \
         /usr/local/lib/nemoclaw/openclaw-config-guard.py \
         /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
-    && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py \
-        /usr/local/lib/nemoclaw/openclaw-config-guard.py \
-        /usr/local/lib/nemoclaw/managed-gateway-control.py \
-    && chmod 444 /usr/local/share/nemoclaw/state-lock-plan.json \
+    && chmod 500 /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh \
         /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
         /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
-        /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
-    && chmod 555 /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py \
+    && chmod 555 /usr/local/lib/nemoclaw/openclaw-config-guard.py \
+        /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads-compiled-channels ]; then \
         find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \
             -exec sh -c 'for file do cp "$file" "/usr/local/lib/nemoclaw/preloads/$(basename "$file")"; done' sh {} +; \
@@ -2002,15 +1984,15 @@ RUN NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
 
 # Apply messaging render and post-agent-install build-file hooks after agent/plugin installation.
 # hadolint ignore=DL3059,DL4006
-RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase post-agent-install
+RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase post-agent-install
 
 # A managed image is a neutral capability carrier, not an all-channels-enabled
 # deployment. Regenerate after every optional plugin is installed so OpenClaw's
 # install registry survives while every optional plugin/channel remains inert.
-# Validate the exact generated file through the pinned OpenClaw CLI.
+# Validate the generated file through the pinned OpenClaw CLI.
 # hadolint ignore=DL3059,DL4006,SC2016
 RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        node --experimental-strip-types /scripts/generate-openclaw-config.mts; \
+        node /scripts/generate-openclaw-config.mts; \
         validation="$(openclaw config validate --json)"; \
         node -e 'const result=JSON.parse(process.argv[1]); if (result.valid !== true) process.exit(1)' "$validation"; \
         node -e 'const fs=require("node:fs"), path=require("node:path"); const config=JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8")); const root="/usr/local/lib/node_modules/openclaw/dist/extensions"; const bundled=fs.readdirSync(root, {withFileTypes:true}).filter((entry)=>entry.isDirectory()).map((entry)=>entry.name).flatMap((id)=>{ const packagePath=path.join(root, id, "package.json"); if (!fs.existsSync(packagePath)) return []; const packageManifest=JSON.parse(fs.readFileSync(packagePath, "utf8")); if (!packageManifest.openclaw?.channel?.id) return []; const pluginManifest=JSON.parse(fs.readFileSync(path.join(root, id, "openclaw.plugin.json"), "utf8")); return [{channelId:packageManifest.openclaw.channel.id, pluginId:pluginManifest.id}]; }); if (!bundled.some(({channelId})=>channelId === "imessage") || !bundled.some(({channelId})=>channelId === "telegram")) throw new Error(`unexpected bundled OpenClaw channel inventory: ${bundled.map(({channelId})=>channelId).join(",")}`); for (const {channelId, pluginId} of bundled) { if (config.plugins?.entries?.[pluginId]?.enabled !== false || config.channels?.[channelId]?.enabled !== false) throw new Error(`bundled OpenClaw channel is not neutral: ${channelId}`); }'; \
@@ -2365,8 +2347,6 @@ RUN check_metadata() { \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && check_metadata /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root:444' \
     && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root:700' \
-    && check_metadata /usr/local/lib/nemoclaw/state-dir-guard.py 'root:root:500' \
-    && check_metadata /usr/local/share/nemoclaw/state-lock-plan.json 'root:root:444' \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'
 
 # Health check: poll the gateway's /health endpoint so Docker (and Compose)
@@ -2408,10 +2388,10 @@ RUN check_metadata() { \
 #           host-side delivery-chain monitoring (verify-deployment.ts, host
 #           port forward, sandbox status).
 #
-# nemoclaw-start records `pid starttime` for the exact gateway process in
+# nemoclaw-start records `pid starttime` for the gateway process in
 # /tmp/nemoclaw-gateway.pid on every launch.  When curl sees connection
 # refused, validate both values against `/proc/<pid>/stat` field 22 before
-# accepting the exact OpenClaw gateway cmdline fallback.  A numeric PID or
+# accepting the OpenClaw gateway cmdline fallback.  A numeric PID or
 # OpenClaw-looking argv alone is insufficient because either can belong to a
 # recycled process.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \

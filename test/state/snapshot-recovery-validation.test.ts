@@ -53,7 +53,7 @@ beforeEach(() => {
 });
 
 describe("prepared rebuild backup recovery validation (#6114)", () => {
-  it("removes only an exact backup child owned by the target sandbox", () => {
+  it("removes only an exact backup child owned by the target sandbox (#10639)", () => {
     const manifest = writeBackup("alpha", "2026-07-01T06-50-42-043Z");
     const outsidePath = path.join(TMP_HOME, "outside-backup");
     fs.mkdirSync(outsidePath, { recursive: true });
@@ -64,7 +64,7 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
     expect(fs.existsSync(outsidePath)).toBe(true);
   });
 
-  it("refuses to remove a backup path that is a symbolic link", () => {
+  it("refuses to remove a backup path that is a symbolic link (#10639)", () => {
     const sandboxBackupRoot = path.join(BACKUPS_ROOT, "alpha");
     const backupPath = path.join(sandboxBackupRoot, "2026-07-01T06-50-42-043Z");
     const outsidePath = path.join(TMP_HOME, "outside-backup");
@@ -185,7 +185,9 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
       ],
     ],
   ])("rejects image-plugin provenance with %s", (_case, openclawImagePluginInstalls) => {
-    writeBackup("alpha", "2026-07-01T06-50-42-046Z", { openclawImagePluginInstalls });
+    writeBackup("alpha", "2026-07-01T06-50-42-046Z", {
+      openclawImagePluginInstalls,
+    });
 
     expect(sandboxState.getLatestBackup("alpha")).toBeNull();
   });
@@ -252,15 +254,23 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
   });
 
   it("requires a non-empty managed-image fingerprint", () => {
-    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: "0.0.71" })).toBe(true);
+    expect(
+      sandboxState.hasPositiveManagedImageEvidence({
+        nemoclawVersion: "0.0.71",
+      }),
+    ).toBe(true);
     expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: null })).toBe(false);
     expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: "  " })).toBe(false);
-    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: 123 } as never)).toBe(
-      false,
-    );
-    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: {} } as never)).toBe(
-      false,
-    );
+    expect(
+      sandboxState.hasPositiveManagedImageEvidence({
+        nemoclawVersion: 123,
+      } as never),
+    ).toBe(false);
+    expect(
+      sandboxState.hasPositiveManagedImageEvidence({
+        nemoclawVersion: {},
+      } as never),
+    ).toBe(false);
   });
 
   it("allows legacy managed-image recovery only with per-row authority and no custom image (#6114)", () => {

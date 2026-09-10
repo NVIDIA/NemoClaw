@@ -362,11 +362,7 @@ async function collectOpenPrOverlaps(
         }
       }
       const uniqueSameFiles = [...new Set(allSameFiles)];
-      if (
-        uniqueSameFiles.length === 0 &&
-        duplicateLinkedIssues.length === 0 &&
-        !replacesCurrentPr
-      )
+      if (uniqueSameFiles.length === 0 && duplicateLinkedIssues.length === 0 && !replacesCurrentPr)
         return null;
       return {
         number,
@@ -445,5 +441,8 @@ export function extractIssueRefs(text: string, prNumber: number): number[] {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await writeGitHubReviewContext(process.env, "artifacts/pr-review-advisor-context/github-context.json");
+  await writeGitHubReviewContext(
+    process.env,
+    "artifacts/pr-review-advisor-context/github-context.json",
+  );
 }

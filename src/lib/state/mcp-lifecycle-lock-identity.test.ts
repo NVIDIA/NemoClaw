@@ -101,7 +101,7 @@ describe("MCP lifecycle lock identity properties", () => {
     const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     const readFileSync = vi.spyOn(fs, "readFileSync").mockImplementation((filePath) => {
       expect(filePath).toBe("/proc/4242/stat");
-      return "4242 (shields timer) Z 1 2 3";
+      return "4242 (mutation owner) Z 1 2 3";
     });
     const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
 

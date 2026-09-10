@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /bin
+    - /lib
+    - /lib64
+    - /etc
+    # The Portable profile acceptance path executes the immutable Hermes venv.
+    - /opt/hermes
+    - /proc
+    - /dev/urandom
+  read_write:
+    - /tmp
+    - /dev/null
+
+landlock:
+  compatibility: best_effort
+
+# OpenShell-managed Hermes runs through the image's supported same-UID path.
+# Resolve the reviewed account names from the image instead of assuming the
+# legacy sandbox-base fixture's numeric 1000:1000 identity.
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies: {}

@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-e2e
-description: Dispatches and reports trusted GitHub Actions E2E runs. Use for focused, full, exact staging Launchable, manual PR, and release-decision requests.
+description: Runs local live E2E or dispatches and reports trusted GitHub Actions E2E. Use for local, focused, full, staging Launchable, manual PR, and release-decision requests.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -8,29 +8,39 @@ description: Dispatches and reports trusted GitHub Actions E2E runs. Use for foc
 
 # Run Maintainer E2E
 
-Use `.github/workflows/e2e.yaml` from trusted `main`. Do not substitute local live E2E unless the maintainer explicitly requests local execution.
-
-Push runs publish `Relevant E2E`. Only a full manual run publishes `Release qualification`. That
-aggregate reports the full suite; it does not decide whether a tag can proceed. A generic E2E
-request does not authorize `Exact staging Brev Launchable`.
-
 ## Route the Request
 
-- For E2E against a pull request revision, read and follow [Manual PR Runs](references/manual-pr.md).
-- To dispatch ordinary, focused, exact staging Launchable, or full E2E on `main`, read and follow
-  [Main Runs](references/main-runs.md) and the Launchable boundary below.
-- For a release decision inspection, use the section below. Do not load a dispatch reference unless the maintainer requests a new run.
+| Request | Procedure |
+| --- | --- |
+| Run working-tree source or a selected local commit | [Local Runs](references/local-runs.md) |
+| Run the latest PR commit on GitHub, including failure-triggered comparison with its exact base | [Manual PR Runs](references/manual-pr.md) |
+| Run the current `main` commit on GitHub | [Main Runs](references/main-runs.md) and the Launchable boundary below |
+| Inspect existing evidence for a release decision | [Report the Release Context](#report-the-release-context) |
+| Classify one failed GitHub Actions job | Load `nemoclaw-maintainer-classify-ci-failure`; this skill still owns dispatch and run-level reporting. |
 
-## Exact Staging Brev Launchable Boundary
+A new GitHub candidate run tests the latest PR commit or the current `main` commit.
+Manual PR runs may replay the PR base after a candidate failure, as described in their procedure.
+Report arbitrary historical candidate selection as unsupported. Preserve the workflow's identity and trust checks.
+
+Push runs select change-relevant E2E and publish `Relevant E2E`; they do not always run the full
+suite. Only a full manual run publishes `Release qualification`. That aggregate reports the full
+suite; it does not decide whether a tag can proceed. A generic E2E request does not authorize
+`Exact staging Brev Launchable`.
+
+Use `.github/workflows/e2e.yaml` from trusted `main` for GitHub runs. Do not substitute local live
+E2E unless the maintainer explicitly requests local execution. Do not load a dispatch reference for
+a release inspection unless the maintainer requests a new run.
+
+## Staging Brev Launchable Boundary
 
 `Exact staging Brev Launchable` runs only for a trusted manual dispatch against `main`. Launchable
 mode selects only that job. Full mode adds it to the default E2E selection. The trusted workflow
 requires repository `maintain` or `admin` permission before the job's source checkout.
 
-The job builds the exact candidate image, deploys the standing Launchable, and verifies all of these
+The job builds the candidate image, deploys the standing Launchable, and verifies all of these
 results before it succeeds:
 
-- environment access and the exact booted image;
+- environment access and the booted image;
 - the candidate SHA, image-repository SHA, baked checkout with no uncommitted changes, and absence of runtime overrides;
 - hosted and sandbox inference through the preinstalled full E2E suite; and
 - Brev workspace deletion and confirmed absence.
@@ -42,8 +52,9 @@ results before it succeeds:
 - `NEMOCLAW_IMAGE_DISPATCH_TOKEN` is exposed as `GH_TOKEN` only to the trusted host script. It
   grants Actions read/write access to `brevdev/nemoclaw-image` for workflow dispatch, run inspection,
   and artifact download.
-- `NVIDIA_INFERENCE_API_KEY` is exported into the Brev guest for the full E2E process. Code in the
-  baked candidate checkout can read and use it.
+- `NVIDIA_API_KEY` supplies the public NVIDIA endpoint credential. The workflow exports it as
+  `NVIDIA_INFERENCE_API_KEY` into the Brev guest for full E2E. Code in the baked candidate checkout
+  can read and use it.
 
 `brev login` writes `BREV_API_KEY` and `BREV_ORG_ID` to `$HOME/.brev/credentials.json` on the
 GitHub-hosted runner. Later trusted steps and processes in that job can read the file. The workflow
@@ -62,7 +73,8 @@ record exists only after the job confirms workspace absence. A preparation failu
 artifact. A later failure can retain only `lane.log` and the phase artifacts created before exit.
 
 The job uses the `staging-brev-launchable-cpu` concurrency group without cancelling a running job.
-GitHub keeps at most one pending job in that group, so a newer job can replace an older pending job.
+All Launchable consumers use `queue: max`, which preserves up to 100 pending entries.
+GitHub cancels new entries when the queue is full.
 A queued, waiting, or accepted dispatch is not a successful result.
 
 ## Inspect the Newest Full Main Run
@@ -96,7 +108,7 @@ jobs. Do not perform that legacy scan.
 
 Dispatch and verify new PR and `main` runs only through the selected reference above. Those references
 own permission checks, selector validation, candidate resolution, correlation IDs, bounded run lookup,
-exact-SHA binding, result verification, credential boundaries, and resource cleanup. Do not
+SHA binding, result verification, credential boundaries, and resource cleanup. Do not
 reconstruct those commands here.
 
 The PR reference also owns the native-runtime producer's first-attempt, ephemeral-runner, unprivileged
@@ -106,7 +118,7 @@ account, Docker isolation, evidence, and cleanup requirements.
 
 Return:
 
-- exact `createdAt`, `startedAt`, and `updatedAt` values, labeling `updatedAt` as last updated;
+- Exact `createdAt`, `startedAt`, and `updatedAt` values, labeling `updatedAt` as last updated;
 - workflow attempt;
 - age at inspection time calculated from `createdAt`;
 - tested commit SHA;

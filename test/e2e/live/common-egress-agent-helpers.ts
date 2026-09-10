@@ -8,13 +8,12 @@
 // classification without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-export { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   runBoundedRetry,
   type BoundedRetryResult,
   type RetryEvidence,
   type RetryFailureClass,
-} from "../fixtures/retry-policy.ts";
+} from "../../../tools/e2e/retry-evidence.mts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 export const COMMON_EGRESS_TEST_TIMEOUT_MS = 40 * 60_000;

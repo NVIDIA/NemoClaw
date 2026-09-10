@@ -3,20 +3,23 @@
 
 import type { McpBridgeEntry } from "../../state/registry";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import {
   type AdapterRegistrationInspection,
   inspectAdapterRegistrationCommand,
 } from "./mcp-bridge-adapter-inspection";
 import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
 
-export function inspectDeepAgentsAdapterRegistration(
+export async function inspectDeepAgentsAdapterRegistration(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
-): AdapterRegistrationInspection {
-  return inspectAdapterRegistrationCommand(
+): Promise<AdapterRegistrationInspection> {
+  return await inspectAdapterRegistrationCommand(
     sandboxName,
     entry,
     buildDeepAgentsMcpStatusCommand(entry, credentialRevision),
+    runtimeSelection,
   );
 }

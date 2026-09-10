@@ -43,7 +43,11 @@ import {
   PORTABLE_OLLAMA_IMAGE,
   PORTABLE_PROBE_IMAGE,
 } from "./hermes-portable-ollama-authority";
-import { prepareHermesPortableOllamaProviderRetirement } from "./hermes-portable-ollama-gateway-transaction";
+import {
+  prepareHermesPortableOllamaProviderRetirement,
+  prepareHermesPortableOllamaPublishedInferenceAuthority,
+  prepareHermesPortableOllamaPublishedReceiptAuthority,
+} from "./hermes-portable-ollama-gateway-transaction";
 import { createHermesPortableOllamaInferenceResolver } from "./hermes-portable-ollama-inference";
 import { PORTABLE_HOST_GATEWAY_IP } from "./portable-profile";
 
@@ -53,6 +57,41 @@ const NETWORK_ID = "6".repeat(64);
 const GPU_DEVICE = "nvidia.com/gpu=GPU-12345678-1234-1234-1234-123456789abc";
 const temporaryDirectories: string[] = [];
 const environmentRestorers: Array<() => void> = [];
+
+function exactTestFileIdentity(metadata: fs.BigIntStats): string {
+  return [
+    metadata.dev,
+    metadata.ino,
+    metadata.mode,
+    metadata.nlink,
+    metadata.uid,
+    metadata.gid,
+    metadata.size,
+    metadata.mtimeNs,
+    metadata.ctimeNs,
+  ].join(":");
+}
+
+function snapshotExactTestFile(filePath: string) {
+  const descriptor = fs.openSync(
+    filePath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    expect(before.isFile()).toBe(true);
+    expect(before.isSymbolicLink()).toBe(false);
+    expect(before.nlink).toBe(1n);
+    const contents = fs.readFileSync(descriptor, "utf8");
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const named = fs.lstatSync(filePath, { bigint: true });
+    expect(exactTestFileIdentity(after)).toBe(exactTestFileIdentity(before));
+    expect(exactTestFileIdentity(named)).toBe(exactTestFileIdentity(after));
+    return { contents, metadata: after };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
 
 interface PullFailure {
   readonly image: string;
@@ -126,7 +165,7 @@ function executableAuthorityDeps(): PodmanExecutableAuthorityDeps {
   };
 }
 
-function createRuntimeFixture(pullFailure?: PullFailure) {
+function createRuntimeFixture(pullFailure?: PullFailure, gatewayName = "nemoclaw") {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-inference-"));
   temporaryDirectories.push(homeDir);
   const runtime = runtimeAuthority(homeDir);
@@ -172,6 +211,7 @@ function createRuntimeFixture(pullFailure?: PullFailure) {
     : capture;
   const resolverOptions = {
     runtimeContext: { authority: runtime, environmentScope },
+    gatewayName,
     credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
     getReservationSessionId: () => "portable-session",
     runGatewayOpenshell,
@@ -255,6 +295,7 @@ function gatewayJournal(fixture: ReturnType<typeof createRuntimeFixture>) {
   return JSON.parse(fs.readFileSync(gatewayJournalPath(fixture), "utf8")) as {
     phase: string;
     intent: {
+      gatewayName: string;
       providerCredentialEnv: string;
       transactionId: string;
       targetSha256: string;
@@ -290,6 +331,73 @@ afterEach(() => {
 });
 
 describe("Hermes Portable Ollama inference activation", () => {
+  it("binds committed receipt and journal without another live provider observation", async () => {
+    const fixture = createRuntimeFixture();
+    const journal = await publishPortableInference(fixture);
+    const receiptPath = inferenceReceiptPath(fixture);
+    const journalPath = gatewayJournalPath(fixture);
+    const receiptBefore = snapshotExactTestFile(receiptPath);
+    const journalBefore = snapshotExactTestFile(journalPath);
+    const callsBefore = fixture.gatewayProvider.calls().length;
+
+    const authority = prepareHermesPortableOllamaPublishedReceiptAuthority({
+      directory: path.dirname(receiptPath),
+      gatewayName: journal.intent.gatewayName,
+      sandboxName: journal.intent.sandboxName,
+      credentialEnv: journal.intent.credentialEnv,
+    });
+    authority.assertCurrent();
+
+    expect(authority.serializedReceipt).toBe(receiptBefore.contents);
+    expect(fixture.gatewayProvider.calls()).toHaveLength(callsBefore);
+    expect(snapshotExactTestFile(receiptPath)).toEqual(receiptBefore);
+    expect(snapshotExactTestFile(journalPath)).toEqual(journalBefore);
+  });
+
+  it("re-proves committed publication through a verification-only receipt writer", async () => {
+    const fixture = createRuntimeFixture();
+    const journal = await publishPortableInference(fixture);
+    const receiptPath = inferenceReceiptPath(fixture);
+    const journalPath = gatewayJournalPath(fixture);
+    const receiptBefore = snapshotExactTestFile(receiptPath);
+    const journalBefore = snapshotExactTestFile(journalPath);
+    const mutationsBefore = fixture.gatewayProvider
+      .calls()
+      .filter(({ args }) => args[0] === "provider" && args[1] !== "get").length;
+
+    const authority = prepareHermesPortableOllamaPublishedInferenceAuthority({
+      directory: path.dirname(receiptPath),
+      gatewayName: journal.intent.gatewayName,
+      sandboxName: journal.intent.sandboxName,
+      credentialEnv: journal.intent.credentialEnv,
+      runGatewayOpenshell: fixture.gatewayProvider.run,
+    });
+    authority.assertCurrent();
+    expect(authority.receiptWriter.writeExact(receiptBefore.contents)).toBe(receiptBefore.contents);
+
+    const receiptAfter = snapshotExactTestFile(receiptPath);
+    const journalAfter = snapshotExactTestFile(journalPath);
+    expect(receiptAfter.contents).toBe(receiptBefore.contents);
+    expect(journalAfter.contents).toBe(journalBefore.contents);
+    expect(receiptAfter.metadata).toMatchObject({
+      dev: receiptBefore.metadata.dev,
+      ino: receiptBefore.metadata.ino,
+      mtimeNs: receiptBefore.metadata.mtimeNs,
+      ctimeNs: receiptBefore.metadata.ctimeNs,
+    });
+    expect(journalAfter.metadata).toMatchObject({
+      dev: journalBefore.metadata.dev,
+      ino: journalBefore.metadata.ino,
+      mtimeNs: journalBefore.metadata.mtimeNs,
+      ctimeNs: journalBefore.metadata.ctimeNs,
+    });
+    expect(
+      fixture.gatewayProvider
+        .calls()
+        .filter(({ args }) => args[0] === "provider" && args[1] !== "get").length,
+    ).toBe(mutationsBefore);
+  });
+
   it("retires the exact committed provider and reconciles a repeated absence (#9608)", async () => {
     const fixture = createRuntimeFixture();
     const journal = await publishPortableInference(fixture);
@@ -433,6 +541,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const resolverOptions = {
       runtimeContext: null,
+      gatewayName: "nemoclaw",
       credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
       getReservationSessionId: () => null,
       runGatewayOpenshell: () => ({ status: 1, stdout: "", stderr: "" }),
@@ -533,9 +642,7 @@ describe("Hermes Portable Ollama inference activation", () => {
       ),
     ).toBe(true);
     expect(podmanEvents.some((event) => event.includes("executable=docker"))).toBe(false);
-    expect(
-      podmanEvents.some((event) => event.includes("--env OLLAMA_CONTEXT_LENGTH")),
-    ).toBe(true);
+    expect(podmanEvents.some((event) => event.includes("--env OLLAMA_CONTEXT_LENGTH"))).toBe(true);
     expect(
       fixture.gatewayProvider
         .calls()
@@ -582,6 +689,44 @@ describe("Hermes Portable Ollama inference activation", () => {
     );
   });
 
+  it("preserves the selected gateway through publication and retirement for a non-default port (#10778)", async () => {
+    const gatewayName = "nemoclaw-18080";
+    const fixture = createRuntimeFixture(undefined, gatewayName);
+    const selection = fixture.resolve()!;
+    const route = prepareManagedRoute(fixture, selection);
+    route.prepared.validateBeforeCommit();
+    const mutation = await selection.prepareGatewayMutation({
+      ...gatewayMutationInput,
+      gatewayName,
+    });
+    createExactGatewayProvider(mutation);
+    await mutation.commit();
+    route.prepared.commit();
+    const journal = gatewayJournal(fixture);
+
+    expect(journal.intent.gatewayName).toBe(gatewayName);
+    const published = prepareHermesPortableOllamaPublishedReceiptAuthority({
+      directory: path.dirname(gatewayJournalPath(fixture)),
+      gatewayName,
+      sandboxName: journal.intent.sandboxName,
+      credentialEnv: journal.intent.credentialEnv,
+    });
+    published.assertCurrent();
+    const retirement = prepareHermesPortableOllamaProviderRetirement({
+      directory: path.dirname(gatewayJournalPath(fixture)),
+      transactionId: journal.intent.transactionId,
+      targetSha256: journal.intent.targetSha256,
+      gatewayName,
+      sandboxName: journal.intent.sandboxName,
+      model: journal.intent.model,
+      credentialEnv: journal.intent.credentialEnv,
+      runGatewayOpenshell: fixture.gatewayProvider.run,
+    });
+    expect(retirement.present).toBe(true);
+    retirement.removeAndVerify();
+    retirement.verifyAbsent();
+  });
+
   it("recovers a committed gateway transaction before checking rebound live authority (#9596)", async () => {
     const fixture = createRuntimeFixture();
     const selection = fixture.resolve()!;
@@ -607,9 +752,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     expect(gatewayJournal(fixture)).toEqual(durableJournal);
     await expect(resumed.prepareGatewayMutation(gatewayMutationInput)).resolves.toBeDefined();
     expect(
-      fixture.events.filter((event) =>
-        event.includes("provider create --name ollama-local"),
-      ),
+      fixture.events.filter((event) => event.includes("provider create --name ollama-local")),
     ).toHaveLength(1);
   });
 

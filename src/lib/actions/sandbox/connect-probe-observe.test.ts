@@ -8,6 +8,7 @@ import {
   createConnectHarness,
   requireDist,
 } from "../../../../test/support/connect-flow-test-harness";
+import { HermesPortableRecoveryRollbackError } from "../../onboard/experimental/hermes-portable-lifecycle";
 
 describe("connectSandbox probe-only observe mode", () => {
   let exitSpy: MockInstance;
@@ -39,6 +40,16 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("does not require portable authority for an ordinary Hermes probe-only recovery", async () => {
+    const harness = createConnectHarness({ agentName: "hermes" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.inspectPortableReceiptDispositionSpy).toHaveBeenCalled();
+    expect(harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it("runs portable lifecycle recovery before the live sandbox lookup (#8441)", async () => {
     const harness = createConnectHarness();
 
@@ -53,6 +64,32 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.recoverPortableDemoLifecycleSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.ensureLiveSandboxSpy.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("prints classified Portable recovery and rollback results without nested diagnostics (#11248)", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+    });
+    const nestedDiagnostic = "Bearer do-not-print";
+    harness.recoverPortableDemoLifecycleSpy.mockImplementation(() => {
+      throw new HermesPortableRecoveryRollbackError(
+        "startup-launch",
+        "openshell-terminal-settlement",
+        new Error(nestedDiagnostic),
+        new Error(nestedDiagnostic),
+      );
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = harness.errorSpy.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toContain("primary=startup-launch");
+    expect(output).toContain("rollback=openshell-terminal-settlement-unproved");
+    expect(output).not.toContain(nestedDiagnostic);
+    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
   });
 
   it("settles completed Portable pairing before publishing probe readiness (#9207)", async () => {
@@ -104,7 +141,7 @@ describe("connectSandbox probe-only observe mode", () => {
         );
       },
     );
-    expect(listInvocations).toHaveLength(2);
+    expect(listInvocations).toHaveLength(3);
     const listArgs = harness.captureOpenshellSpy.mock.calls
       .map((call) => call[0])
       .filter(
@@ -114,6 +151,7 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(listArgs).toEqual([
       ["sandbox", "list", "-g", "nemoclaw-8091"],
       ["sandbox", "list", "-g", "nemoclaw-8091"],
+      ["sandbox", "list", "-g", "nemoclaw-8091"],
     ]);
     const liveLookupOrder = harness.ensureLiveSandboxSpy.mock.invocationCallOrder;
     expect(liveLookupOrder).toHaveLength(2);
@@ -121,6 +159,10 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(recoveryOrder).toHaveLength(1);
     expect(listInvocations[1]).toBeLessThan(liveLookupOrder[1]);
     expect(liveLookupOrder[1]).toBeLessThan(recoveryOrder[0]);
+    expect(recoveryOrder[0]).toBeLessThan(listInvocations[2]!);
+    expect(listInvocations[2]).toBeLessThan(
+      harness.publishLaunchReadinessSpy.mock.invocationCallOrder[0]!,
+    );
     expect(harness.logSpy).toHaveBeenCalledWith(
       expect.stringContaining("restored dashboard port forward"),
     );
@@ -139,6 +181,7 @@ describe("connectSandbox probe-only observe mode", () => {
 
   it("waits through the initial Error after starting a stopped container (#10466)", async () => {
     const harness = createConnectHarness({
+      registryEntry: { stopped: true },
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
       listOutputs: ["alpha Error", "alpha Provisioning", "alpha Ready"],
     });
@@ -167,8 +210,46 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.dockerStartSpy.mock.invocationCallOrder[0]!).toBeLessThan(
       listInvocations[0]!.order,
     );
-    expect(listInvocations).toHaveLength(3);
+    expect(listInvocations).toHaveLength(4);
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { stopped: false });
+    expect(harness.registryEntries[0]?.stopped).toBe(false);
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("retains stop intent when a recovered container cannot publish the registry update", async () => {
+    const harness = createConnectHarness({
+      registryEntry: { stopped: true },
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      listOutputs: ["alpha Error", "alpha Provisioning", "alpha Ready"],
+    });
+    harness.registryUpdateSpy.mockReturnValue(false);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "could not clear its intentional-stop record",
+    );
+
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { stopped: false });
+    expect(harness.registryEntries[0]?.stopped).toBe(true);
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
+  it("clears stop intent before probe-only process recovery fails", async () => {
+    const harness = createConnectHarness({
+      registryEntry: { stopped: true },
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      listOutputs: ["alpha Error", "alpha Provisioning", "alpha Ready"],
+      processCheck: { checked: false, wasRunning: false, recovered: false },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.registryEntries[0]?.stopped).toBe(false);
+    expect(harness.registryUpdateSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.checkAndRecoverSpy.mock.invocationCallOrder[0],
+    );
   });
 
   it.each([
@@ -222,7 +303,7 @@ describe("connectSandbox probe-only observe mode", () => {
   it("fails before recovery when the initial Error persists after Docker starts (#10466)", async () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
-      listOutputs: Array.from({ length: 11 }, () => "alpha Error"),
+      listOutputs: Array.from({ length: 21 }, () => "alpha Error"),
     });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
@@ -230,7 +311,7 @@ describe("connectSandbox probe-only observe mode", () => {
     );
 
     expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
-    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(11);
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(21);
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });

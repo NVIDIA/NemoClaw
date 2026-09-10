@@ -10,7 +10,6 @@ export {
   type ExtraProviderReconciliationPlan,
   planRegisteredExtraProviders,
   type ReconcileExtraProvidersDeps,
-  reconcileRegisteredExtraProviders,
 } from "./extra-provider-reconciliation";
 export function removeManagedHermesStateVolume(
   context: import("./managed-workload/hermes-state-volume").ManagedHermesStateVolumeContext,
@@ -19,6 +18,15 @@ export function removeManagedHermesStateVolume(
   const volumeModule =
     require("./managed-workload/hermes-state-volume") as typeof import("./managed-workload/hermes-state-volume");
   return volumeModule.removeManagedHermesStateVolume(context, deps);
+}
+
+export function removeManagedAgentStateVolumes(
+  context: import("./managed-workload/hermes-state-volume").ManagedHermesStateVolumeContext,
+  deps: import("./managed-workload/hermes-state-volume").ManagedHermesStateVolumeDeps = {},
+): readonly import("./managed-workload/hermes-state-volume").ManagedAgentStateVolumeCleanupResult[] {
+  const volumeModule =
+    require("./managed-workload/hermes-state-volume") as typeof import("./managed-workload/hermes-state-volume");
+  return volumeModule.removeManagedAgentStateVolumes(context, deps);
 }
 
 export type SandboxProviderRunOpenshell = (
@@ -152,9 +160,7 @@ export function detachSandboxProviders(
     // OpenShell resolves provider detach by mutable sandbox name. These checks detect
     // replacement and stop later detaches; they do not make this command an atomic,
     // identity-bound mutation. Operators must not mutate the sandbox concurrently.
-    deps.revalidateSandboxIdentity?.(
-      `detaching provider '${name}' from sandbox '${sandboxName}'`,
-    );
+    deps.revalidateSandboxIdentity?.(`detaching provider '${name}' from sandbox '${sandboxName}'`);
     const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -247,10 +253,9 @@ export function recoverAttachedProvider(
  * downstream operations that immediately follow the cleanup already surface
  * the same residual attachment with an actionable, name-scoped error:
  *
- *   - The onboard recreate path runs `upsertMessagingProviders(...,
- *     { replaceExisting: true })` next; its `provider delete` step calls
- *     `process.exit(1)` with the exact OpenShell FailedPrecondition diagnostic
- *     for any provider still attached.
+ *   - The onboard recreate path runs typed messaging provider application with
+ *     `replaceExisting: true` next; a residual attachment rejects with a
+ *     name-scoped `MessagingProviderApplyError` and preserves retry state.
  *   - The destroy path runs `runOpenshell(["sandbox", "delete", sandboxName])`
  *     next; that call hard-fails on non-`alreadyGone` errors before any
  *     registry state is removed, so a real gateway outage stops destroy

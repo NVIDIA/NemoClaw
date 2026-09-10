@@ -11,7 +11,6 @@ import secrets
 import stat
 import sys
 import tomllib
-import tomli_w
 
 MAX_CONFIG_BYTES = 16 * 1024 * 1024
 
@@ -20,25 +19,31 @@ def fail(message):
     raise SystemExit(message)
 
 
-def parse_config_payload(payload, label):
+def parse_config_payload(payload, label, config_format):
     if len(payload) > MAX_CONFIG_BYTES:
         fail(f"{label} config exceeds the restore size limit")
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError:
         fail(f"{label} config is not valid UTF-8")
-    try:
-        parsed = tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
-        fail(f"{label} config is not valid TOML")
+    if config_format == "json":
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            fail(f"{label} config is not valid JSON")
+    else:
+        try:
+            parsed = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            fail(f"{label} config is not valid TOML")
     if not isinstance(parsed, dict):
-        fail(f"{label} config must be a TOML document")
+        fail(f"{label} config must be a {config_format.upper()} object")
     return text, parsed
 
 
-def read_stdin_config(label):
+def read_stdin_config(label, config_format):
     payload = sys.stdin.buffer.read(MAX_CONFIG_BYTES + 1)
-    return parse_config_payload(payload, label)
+    return parse_config_payload(payload, label, config_format)
 
 
 def open_config_parent(base_dir, relative_path):
@@ -65,10 +70,14 @@ def open_config_parent(base_dir, relative_path):
     return fd, segments[-1]
 
 
-def read_regular_file_at(parent_fd, name, label):
+def read_regular_file_at(parent_fd, name, label, config_format, allow_missing):
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(name, flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        if allow_missing:
+            return "", {}, None
+        fail(f"{label} config is missing or unsafe")
     except OSError:
         fail(f"{label} config is missing or unsafe")
     try:
@@ -89,7 +98,7 @@ def read_regular_file_at(parent_fd, name, label):
             chunks.append(chunk)
     finally:
         os.close(fd)
-    text, parsed = parse_config_payload(b"".join(chunks), label)
+    text, parsed = parse_config_payload(b"".join(chunks), label, config_format)
     return text, parsed, metadata
 
 

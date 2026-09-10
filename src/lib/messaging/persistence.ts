@@ -34,7 +34,7 @@ export type PersistedSandboxMessagingInputReference = Pick<
 
 export type PersistedSandboxMessagingChannelPlan = Pick<
   SandboxMessagingChannelPlan,
-  "channelId" | "configured" | "disabled"
+  "channelId" | "configured" | "disabled" | "pendingRemoval"
 > & {
   readonly inputs?: readonly PersistedSandboxMessagingInputReference[];
 } & Partial<
@@ -67,7 +67,6 @@ export type PersistedSandboxMessagingPlan = Omit<
 > & {
   readonly channels: readonly PersistedSandboxMessagingChannelPlan[];
   readonly credentialBindings?: readonly PersistedSandboxMessagingCredentialBindingPlan[];
-  readonly networkPolicy?: SandboxMessagingPlan["networkPolicy"];
   readonly agentRender?: readonly SandboxMessagingAgentRenderPlan[];
   readonly buildSteps?: readonly SandboxMessagingBuildStepPlan[];
   readonly runtimeSetup?: SandboxMessagingRuntimeSetupPlan;
@@ -81,7 +80,7 @@ export function compactSandboxMessagingPlanForPersistence(
   const {
     channels,
     credentialBindings,
-    networkPolicy,
+    networkPolicy: _networkPolicy,
     agentRender: _agentRender,
     buildSteps: _buildSteps,
     runtimeSetup: _runtimeSetup,
@@ -91,12 +90,12 @@ export function compactSandboxMessagingPlanForPersistence(
   } = clonePlan(plan);
   return {
     ...rest,
-    networkPolicy,
     channels: channels.map((channel) => ({
       channelId: channel.channelId,
       active: channel.active,
       configured: channel.configured,
       disabled: channel.disabled,
+      ...(channel.pendingRemoval === true ? { pendingRemoval: true } : {}),
       inputs: channel.inputs
         .flatMap((input) => {
           const compact: PersistedSandboxMessagingInputReference = {
@@ -221,6 +220,7 @@ function normalizePersistedChannel(
     selected: channel.selected ?? configured,
     configured,
     disabled,
+    ...(channel.pendingRemoval === true ? { pendingRemoval: true } : {}),
     inputs,
     ...(hostForward ? { hostForward } : {}),
     hooks: Array.isArray(channel.hooks) ? [...channel.hooks] : [],

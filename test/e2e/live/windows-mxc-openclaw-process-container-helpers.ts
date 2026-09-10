@@ -26,6 +26,7 @@ import {
   type ChildProcessProgress,
   spawnObservedChild,
 } from "../fixtures/observed-child-process.ts";
+import { isExactOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { PollingError, pollUntil } from "../fixtures/polling.ts";
 
 type QualificationProgress = ChildProcessProgress & {
@@ -830,7 +831,7 @@ function normalizeWindowsIdentityValue(value: string): string {
 
 function commandLineHasExactArgument(commandLine: string, expected: string): boolean {
   const escaped = normalizeWindowsIdentityValue(expected).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  return new RegExp(`(?:^|[\\s\"])${escaped}(?=$|[\\s\"])`, "u").test(
+  return new RegExp(`(?:^|[\\s"])${escaped}(?=$|[\\s"])`, "u").test(
     normalizeWindowsIdentityValue(commandLine),
   );
 }
@@ -844,7 +845,7 @@ function commandLineHasExactArgumentPair(
   const pair = [first, second]
     .map((value) => normalizeWindowsIdentityValue(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
     .join('[\\s"]+');
-  return new RegExp(`(?:^|[\\s\"])${pair}(?=$|[\\s\"])`, "u").test(normalized);
+  return new RegExp(`(?:^|[\\s"])${pair}(?=$|[\\s"])`, "u").test(normalized);
 }
 
 export function sameWindowsProcessIdentity(
@@ -1335,7 +1336,7 @@ async function observeWindowsProcessIdentity(
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      `$process = Get-CimInstance Win32_Process -Filter \"ProcessId = ${processId}\" -ErrorAction Stop; if ($null -eq $process) { exit 3 }; $process | Select-Object ProcessId, ParentProcessId, ExecutablePath, CommandLine, CreationDate | ConvertTo-Json -Compress`,
+      `$process = Get-CimInstance Win32_Process -Filter "ProcessId = ${processId}" -ErrorAction Stop; if ($null -eq $process) { exit 3 }; $process | Select-Object ProcessId, ParentProcessId, ExecutablePath, CommandLine, CreationDate | ConvertTo-Json -Compress`,
     ],
     environment,
     progress,
@@ -1740,29 +1741,7 @@ export async function observeWindowsMxcForwardHealthReadiness(input: {
 }
 
 export function parseOpenClawExactChatReply(output: string): boolean {
-  const value = parseEmbeddedJson(output, "OpenClaw agent output");
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("status" in value) ||
-    value.status !== "ok" ||
-    !("result" in value) ||
-    typeof value.result !== "object" ||
-    value.result === null ||
-    !("payloads" in value.result) ||
-    !Array.isArray(value.result.payloads) ||
-    value.result.payloads.length !== 1
-  ) {
-    return false;
-  }
-  const [payload] = value.result.payloads;
-  return (
-    typeof payload === "object" &&
-    payload !== null &&
-    "text" in payload &&
-    typeof payload.text === "string" &&
-    payload.text === "CHAT_OK"
-  );
+  return isExactOpenClawAgentText(output, "CHAT_OK");
 }
 
 export function assertCleanCheckoutIdentity(input: {

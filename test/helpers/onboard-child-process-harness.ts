@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
+import { addAbortListener } from "node:events";
 import path from "node:path";
+import type { TestContext } from "vitest";
+import { ownChildProcess } from "./child-process-lifecycle";
 import {
   createHostProcessWorkspace,
   type HostProcessWorkspace,
@@ -73,6 +76,10 @@ export interface RunOnboardProcessOptions {
   cwd?: string;
   /** Kill the child after this many milliseconds. */
   timeoutMs?: number;
+  /** Signal used when the timeout expires. */
+  killSignal?: NodeJS.Signals;
+  /** Optional stdin for interactive process fixtures. */
+  input?: string;
 }
 
 /** The decoded outcome of one spawned process run. */
@@ -96,6 +103,8 @@ export function runOnboardProcess(
     encoding: "utf-8",
     env: options.env,
     ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
+    ...(options.killSignal === undefined ? {} : { killSignal: options.killSignal }),
+    ...(options.input === undefined ? {} : { input: options.input }),
   });
   const stdout = result.stdout ?? "";
   const stderr = result.stderr ?? "";
@@ -107,6 +116,56 @@ export function runOnboardProcess(
     stderr,
     output: `${stdout}\n${stderr}`,
   };
+}
+
+/** Runs a Node fixture asynchronously and waits for its pipes to close. */
+export function runOnboardProcessAsync(
+  argv: readonly string[],
+  options: Pick<RunOnboardProcessOptions, "env" | "cwd"> & {
+    timeoutMs: number;
+    context: Pick<TestContext, "signal" | "onTestFinished">;
+  },
+): Promise<OnboardProcessResult> {
+  return new Promise((resolve) => {
+    options.context.signal.throwIfAborted();
+    const child = execFile(
+      process.execPath,
+      [...argv],
+      {
+        cwd: options.cwd ?? testRepoRoot,
+        env: options.env,
+        encoding: "utf8",
+        timeout: options.timeoutMs,
+        killSignal: "SIGKILL",
+      },
+      (error, stdout, stderr) => {
+        // Launch errors can invoke this callback before the child closes.
+        void owner.closed.then(() =>
+          resolve({
+            status: error ? (typeof error.code === "number" ? error.code : null) : 0,
+            signal: child.signalCode,
+            error: error && typeof error.code !== "number" ? error : undefined,
+            stdout,
+            stderr,
+            output: `${stdout}\n${stderr}`,
+          }),
+        );
+      },
+    );
+    const owner = ownChildProcess(child);
+    options.context.onTestFinished(owner.terminate);
+    const abort = addAbortListener(options.context.signal, () => child.kill("SIGKILL"));
+    child.once("close", () => abort[Symbol.dispose]());
+    child.stdin?.end();
+  });
+}
+
+/** Runs a generated onboarding script with a bounded hard-kill timeout. */
+export function runBoundedOnboardScript(
+  scriptPath: string,
+  options: Omit<RunOnboardProcessOptions, "killSignal" | "timeoutMs">,
+): OnboardProcessResult {
+  return runOnboardProcess([scriptPath], { ...options, timeoutMs: 45_000, killSignal: "SIGKILL" });
 }
 
 /**

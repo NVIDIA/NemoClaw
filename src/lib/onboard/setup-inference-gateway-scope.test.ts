@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { scopeGatewayOpenshellArgs } from "../adapters/openshell/gateway-scope";
 import { createInferenceRouteHelpers } from "./inference-route";
 import {
   bindGatewayUpsertProvider,
   createRoutedResumeProviderUpsert,
   createGatewayScopedOpenshellRunner,
-  scopeGatewayOpenshellArgs,
   selectGatewayForFollowupOrExit,
 } from "./setup-inference";
 
@@ -124,9 +124,14 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("keeps an omitted provider env separate from the bound gateway", () => {
-    const upsert = vi.fn(() => ({ ok: true }));
-    bindGatewayUpsertProvider(upsert, GATEWAY)("openai-api", "openai", "OPENAI_API_KEY", null);
+  it("keeps an omitted provider env separate from the bound gateway", async () => {
+    const upsert = vi.fn(async () => ({ ok: true }));
+    await bindGatewayUpsertProvider(upsert, GATEWAY)(
+      "openai-api",
+      "openai",
+      "OPENAI_API_KEY",
+      null,
+    );
     expect(upsert).toHaveBeenCalledWith(
       "openai-api",
       "openai",
@@ -137,7 +142,7 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     );
   });
 
-  it("registers the OpenAI profile before a routed resume provider mutation (#10155)", () => {
+  it("registers the OpenAI profile before a routed resume provider mutation (#10155)", async () => {
     const events: string[] = [];
     const results = [
       {
@@ -146,12 +151,23 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
         stderr: "Error: status: 'NotFound', message: \"provider profile not found\"",
       },
       { status: 0, stdout: "", stderr: "" },
+      {
+        status: 0,
+        stdout: JSON.stringify({
+          id: "openai",
+          credentials: [],
+          endpoints: [],
+          binaries: [],
+          inference_capable: true,
+        }),
+        stderr: "",
+      },
     ];
     const run = vi.fn((args: string[]) => {
       events.push(args.join(" "));
       return results.shift()!;
     });
-    const upsert = vi.fn(() => {
+    const upsert = vi.fn(async () => {
       events.push("provider mutation");
       return { ok: true };
     });
@@ -166,7 +182,7 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     });
 
     expect(
-      reupsertRoutedProvider(
+      await reupsertRoutedProvider(
         GATEWAY,
         "nvidia-router",
         "http://host.openshell.internal:4000/v1",
@@ -183,7 +199,8 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     expect(events[1]).toMatch(
       new RegExp(`^provider profile -g ${GATEWAY} import --file .*openai\\.yaml$`, "u"),
     );
-    expect(events[2]).toBe("provider mutation");
+    expect(events[2]).toBe(`provider profile -g ${GATEWAY} export openai --output json`);
+    expect(events[3]).toBe("provider mutation");
     expect(upsert).toHaveBeenCalledWith(
       "nvidia-router",
       "openai",
@@ -194,7 +211,7 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     );
   });
 
-  it("blocks a routed resume provider mutation when OpenAI profile import fails (#10155)", () => {
+  it("blocks a routed resume provider mutation when OpenAI profile import fails (#10155)", async () => {
     const sensitiveDiagnostic = "unauthorized nvapi-TEST-NOT-A-REAL-VALUE";
     const results = [
       {
@@ -205,7 +222,7 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
       { status: 13, stdout: "", stderr: sensitiveDiagnostic },
     ];
     const run = vi.fn(() => results.shift()!);
-    const upsert = vi.fn(() => ({ ok: true }));
+    const upsert = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
     const reupsertRoutedProvider = createRoutedResumeProviderUpsert({
       upsertProvider: upsert,
@@ -217,14 +234,14 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
       },
     });
 
-    expect(() =>
+    await expect(
       reupsertRoutedProvider(
         GATEWAY,
         "nvidia-router",
         "http://host.openshell.internal:4000/v1",
         "NVIDIA_INFERENCE_API_KEY",
       ),
-    ).toThrow("exit 1");
+    ).rejects.toThrow("exit 1");
 
     expect(upsert).not.toHaveBeenCalled();
     expect(run).toHaveBeenCalledTimes(2);
@@ -287,7 +304,6 @@ describe("gateway-scoped inference route readers", () => {
           provider: "openai-api",
           model: "gpt-test",
           gpuEnabled: false,
-          policies: [],
         },
       ],
     }));

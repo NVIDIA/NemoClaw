@@ -26,6 +26,8 @@
 
 import type { GpuInfo } from "./local";
 
+export const DEFAULT_OLLAMA_MODEL_TAG = "nemotron-3-nano:30b";
+
 export interface OllamaModelEntry {
   tag: string;
   requiredMemoryMB: number;

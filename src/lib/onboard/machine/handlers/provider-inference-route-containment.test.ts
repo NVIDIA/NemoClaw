@@ -86,7 +86,6 @@ function createDeps() {
   const deps: Options["deps"] = {
     checkGatewayRouteCompatibility: calls.checkGatewayRouteCompatibility,
     preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
-    preflightPolicyRequirements: vi.fn(),
     getSandboxRecoveryAuthority: (): "missing" => "missing",
     withGatewayRouteMutationLock: async (_gatewayName, operation) => await operation(),
     withModelRouterPortLifecycleLock: async (_port, operation) => await operation(),
@@ -245,7 +244,7 @@ describe("provider route containment", () => {
     expect(calls.setupNim).toHaveBeenCalledOnce();
     expect(calls.preflightGatewayRouteDiscovery).toHaveBeenCalledWith({
       gatewayName: "nemoclaw-9090",
-      sandboxName: null,
+      sandboxName: "target-sandbox",
       route: {
         provider: "nvidia-prod",
         model: "nvidia/test",

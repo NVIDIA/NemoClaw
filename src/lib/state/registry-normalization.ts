@@ -2,303 +2,36 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isObjectRecord } from "../core/json-types";
-import {
-  parseNemoClawPolicyCreationReceipt,
-  type NemoClawPolicyCreationReceipt,
-} from "../policy/merge";
-import { normalizeTrustedPrivatePolicyPinReceipt } from "../policy/trusted-private-endpoints";
-import type {
-  BaselineExclusionEntry,
-  BaselineExclusionTransition,
-  CustomPolicyEntry,
-  RecordedSandboxPolicyAuthority,
-  SandboxEntry,
-} from "./registry/types";
-import { normalizePendingSandboxPolicyVerification } from "./registry/pending-policy-verification";
+import type { SandboxEntry } from "./registry/types";
+import { normalizePendingSandboxCreateIdentity } from "./registry/pending-create-identity";
 
-export { normalizePendingSandboxPolicyVerification };
+export { normalizePendingSandboxCreateIdentity };
 
-const BASELINE_TRANSITION_ID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const BASELINE_TRANSITION_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
-const SHA256_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
-const RESERVATION_SESSION_CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
+const POLICY_SHADOW_FIELDS = [
+  "baselineExclusions",
+  "baselineExclusionTransition",
+  "customPolicies",
+  "policies",
+  "policyAuthority",
+  "policyCreationReceipt",
+  "pendingPolicyVerification",
+  "policyHash",
+  "policyPresetsFinalized",
+  "policyTier",
+  "policyVersion",
+  "observedPolicyAuthority",
+] as const;
 
-/** Keep legacy absence unknown and reject every unrecognized authority value. */
-export function normalizeSandboxPolicyAuthority(
-  value: unknown,
-): RecordedSandboxPolicyAuthority | undefined {
-  if (value === undefined) return undefined;
-  if (value === "nemoclaw-managed" || value === "externally-managed") return value;
-  throw new Error(
-    "Sandbox registry contains an invalid policy authority; repair the registry before continuing",
-  );
-}
-
-/** Clone one complete policy-creation receipt and reject every partial form. */
-export function cloneSandboxPolicyCreationReceipt(
-  value: unknown,
-): NemoClawPolicyCreationReceipt | undefined {
-  if (value === undefined) return undefined;
-  try {
-    return parseNemoClawPolicyCreationReceipt(value);
-  } catch {
-    throw new Error(
-      "Sandbox registry contains an invalid policy creation receipt; repair the registry before continuing",
-    );
-  }
-}
-
-/** Remove policy attribution that an external authority owns and normalize managed state. */
+/** Remove legacy policy shadow state without interpreting or replaying it. */
 export function normalizeSandboxPolicyAttribution(entry: SandboxEntry): SandboxEntry {
-  const requestedPolicyAuthority = normalizeSandboxPolicyAuthority(entry.policyAuthority);
-  const parsedPolicyCreationReceipt = cloneSandboxPolicyCreationReceipt(
-    entry.policyCreationReceipt,
-  );
-  if (
-    parsedPolicyCreationReceipt &&
-    (parsedPolicyCreationReceipt.sandboxName !== entry.name ||
-      parsedPolicyCreationReceipt.gatewayName !== entry.gatewayName ||
-      parsedPolicyCreationReceipt.gatewayPort !== entry.gatewayPort ||
-      parsedPolicyCreationReceipt.lifecycleGeneration !== entry.lifecycleGeneration ||
-      parsedPolicyCreationReceipt.sandboxIdentityFingerprint !==
-        entry.lifecycleLiveIdentityFingerprint)
-  ) {
-    throw new Error(
-      "Sandbox registry policy creation receipt does not match its gateway and sandbox identity",
+  const result = { ...entry } as SandboxEntry & Record<string, unknown>;
+  for (const field of POLICY_SHADOW_FIELDS) delete result[field];
+  if (result.pendingCreateIdentity !== undefined) {
+    result.pendingCreateIdentity = normalizePendingSandboxCreateIdentity(
+      result.pendingCreateIdentity,
     );
   }
-  const hasManagedReceipt =
-    requestedPolicyAuthority === "nemoclaw-managed" && parsedPolicyCreationReceipt !== undefined;
-  const policyAuthority =
-    requestedPolicyAuthority === "nemoclaw-managed" && !hasManagedReceipt
-      ? undefined
-      : requestedPolicyAuthority;
-  const policyCreationReceipt = hasManagedReceipt ? parsedPolicyCreationReceipt : undefined;
-  const pendingPolicyVerification = normalizePendingSandboxPolicyVerification(
-    entry.pendingPolicyVerification,
-  );
-  if (
-    pendingPolicyVerification &&
-    (entry.pendingRouteReservation !== true ||
-      typeof entry.reservationSessionId !== "string" ||
-      entry.reservationSessionId.length === 0 ||
-      entry.reservationSessionId.length > 256 ||
-      RESERVATION_SESSION_CONTROL_CHARACTER.test(entry.reservationSessionId) ||
-      requestedPolicyAuthority !== undefined ||
-      parsedPolicyCreationReceipt !== undefined ||
-      pendingPolicyVerification.sandboxName !== entry.name ||
-      pendingPolicyVerification.gatewayName !== entry.gatewayName ||
-      pendingPolicyVerification.gatewayPort !== entry.gatewayPort ||
-      pendingPolicyVerification.lifecycleGeneration !== entry.lifecycleGeneration ||
-      pendingPolicyVerification.sandboxIdentityFingerprint !==
-        entry.lifecycleLiveIdentityFingerprint)
-  ) {
-    throw new Error(
-      "Sandbox registry pending policy verification does not match its route reservation",
-    );
-  }
-  const {
-    policies: _policies,
-    customPolicies: _customPolicies,
-    baselineExclusions: _baselineExclusions,
-    baselineExclusionTransition: _baselineExclusionTransition,
-    policyPresetsFinalized: _policyPresetsFinalized,
-    policyTier: _policyTier,
-    policyAuthority: _policyAuthority,
-    policyCreationReceipt: _policyCreationReceipt,
-    pendingPolicyVerification: _pendingPolicyVerification,
-    ...rest
-  } = entry;
-  if (policyAuthority === "externally-managed") {
-    return {
-      ...rest,
-      policies: [],
-      policyAuthority,
-      ...(pendingPolicyVerification ? { pendingPolicyVerification } : {}),
-    };
-  }
-
-  const baselineExclusions = normalizeBaselineExclusions(entry.baselineExclusions);
-  const baselineExclusionTransition = normalizeBaselineExclusionTransition(
-    entry.baselineExclusionTransition,
-  );
-  const customPolicies = normalizeCustomPolicyEntries(entry.customPolicies);
-  return {
-    ...rest,
-    ...(entry.policies !== undefined ? { policies: entry.policies } : {}),
-    ...(customPolicies ? { customPolicies } : {}),
-    ...(baselineExclusions ? { baselineExclusions } : {}),
-    ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
-    ...(entry.policyPresetsFinalized !== undefined
-      ? { policyPresetsFinalized: entry.policyPresetsFinalized }
-      : {}),
-    ...(entry.policyTier !== undefined ? { policyTier: entry.policyTier } : {}),
-    ...(policyAuthority !== undefined ? { policyAuthority } : {}),
-    ...(policyCreationReceipt ? { policyCreationReceipt } : {}),
-    ...(pendingPolicyVerification ? { pendingPolicyVerification } : {}),
-  };
-}
-
-/** Normalize persisted custom policy content and its generated-pin authority. */
-export function normalizeCustomPolicyEntries(value: unknown): CustomPolicyEntry[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    throw new Error(
-      "Sandbox registry customPolicies must be an array; repair the registry before rebuilding",
-    );
-  }
-  const entries: CustomPolicyEntry[] = [];
-  for (const item of value) {
-    if (
-      !isObjectRecord(item) ||
-      typeof item.name !== "string" ||
-      item.name.trim().length === 0 ||
-      typeof item.content !== "string" ||
-      (item.pendingContent !== undefined && typeof item.pendingContent !== "string") ||
-      (item.sourcePath !== undefined && typeof item.sourcePath !== "string") ||
-      (item.appliedAt !== undefined && typeof item.appliedAt !== "string")
-    ) {
-      throw new Error(
-        "Sandbox registry contains a malformed custom policy; repair the registry before rebuilding",
-      );
-    }
-    let trustedPrivatePins;
-    try {
-      trustedPrivatePins = normalizeTrustedPrivatePolicyPinReceipt(
-        item.content,
-        item.trustedPrivatePins,
-      );
-    } catch {
-      throw new Error(
-        `Sandbox registry custom policy '${item.name}' has invalid trusted-private pin authority; repair the registry before rebuilding`,
-      );
-    }
-    entries.push({
-      name: item.name,
-      content: item.content,
-      ...(item.pendingContent !== undefined ? { pendingContent: item.pendingContent } : {}),
-      ...(item.sourcePath !== undefined ? { sourcePath: item.sourcePath } : {}),
-      ...(item.appliedAt !== undefined ? { appliedAt: item.appliedAt } : {}),
-      ...(trustedPrivatePins ? { trustedPrivatePins } : {}),
-    });
-  }
-  return entries.length > 0 ? entries : undefined;
-}
-
-function isCanonicalIsoTimestamp(value: string): boolean {
-  const parsed = new Date(value);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
-}
-
-function normalizeBaselineExclusionEntry(item: unknown): BaselineExclusionEntry {
-  if (!isObjectRecord(item)) {
-    throw new Error(
-      "Sandbox registry contains a malformed baseline exclusion; repair the registry before rebuilding",
-    );
-  }
-  const version = item.version;
-  const agent = typeof item.agent === "string" ? item.agent.trim() : "";
-  const key = typeof item.key === "string" ? item.key.trim() : "";
-  const digest = typeof item.digest === "string" ? item.digest.trim() : "";
-  const acknowledgedAt =
-    typeof item.acknowledgedAt === "string" ? item.acknowledgedAt.trim() : item.acknowledgedAt;
-  if (
-    version !== 1 ||
-    !BASELINE_TRANSITION_KEY_PATTERN.test(agent) ||
-    !BASELINE_TRANSITION_KEY_PATTERN.test(key) ||
-    !SHA256_DIGEST_PATTERN.test(digest) ||
-    (acknowledgedAt !== undefined &&
-      (typeof acknowledgedAt !== "string" || !isCanonicalIsoTimestamp(acknowledgedAt)))
-  ) {
-    throw new Error(
-      "Sandbox registry contains an invalid versioned baseline exclusion; repair the registry before rebuilding",
-    );
-  }
-  const entry: BaselineExclusionEntry = { version, agent, key, digest };
-  if (typeof acknowledgedAt === "string") entry.acknowledgedAt = acknowledgedAt;
-  if (item.appliedAgentVersion === null) {
-    entry.appliedAgentVersion = null;
-  } else if (typeof item.appliedAgentVersion === "string") {
-    entry.appliedAgentVersion = item.appliedAgentVersion;
-  } else if (item.appliedAgentVersion !== undefined) {
-    throw new Error(
-      `Sandbox registry baseline exclusion '${key}' has an invalid agent version; repair the registry before rebuilding`,
-    );
-  }
-  return entry;
-}
-
-/**
- * Coerce a persisted `baselineExclusions` value into well-formed entries.
- * A legacy registry without the field yields `undefined`, while malformed
- * exclusion state fails closed so rebuild cannot silently restore egress that
- * the operator intended to remove.
- */
-export function normalizeBaselineExclusions(value: unknown): BaselineExclusionEntry[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    throw new Error(
-      "Sandbox registry baselineExclusions must be an array; repair the registry before rebuilding",
-    );
-  }
-  const byKey = new Map<string, BaselineExclusionEntry>();
-  for (const item of value) {
-    const entry = normalizeBaselineExclusionEntry(item);
-    const { key } = entry;
-    byKey.set(key, entry);
-  }
-  return byKey.size > 0 ? [...byKey.values()] : undefined;
-}
-
-/** Normalize the crash-recovery journal, rejecting partial or forged states. */
-export function normalizeBaselineExclusionTransition(
-  value: unknown,
-): BaselineExclusionTransition | undefined {
-  if (value === undefined) return undefined;
-  if (!isObjectRecord(value)) {
-    throw new Error(
-      "Sandbox registry contains a malformed baseline exclusion transition; repair the registry before rebuilding",
-    );
-  }
-  const id = typeof value.id === "string" ? value.id.trim() : "";
-  const operation = value.operation;
-  const startedAt = typeof value.startedAt === "string" ? value.startedAt.trim() : "";
-  if (
-    !BASELINE_TRANSITION_ID_PATTERN.test(id) ||
-    (operation !== "exclude" && operation !== "restore") ||
-    !isCanonicalIsoTimestamp(startedAt)
-  ) {
-    throw new Error(
-      "Sandbox registry contains an incomplete baseline exclusion transition; repair the registry before rebuilding",
-    );
-  }
-  const exclusion = normalizeBaselineExclusionEntry(value.exclusion);
-  if (
-    !BASELINE_TRANSITION_KEY_PATTERN.test(exclusion.key) ||
-    !SHA256_DIGEST_PATTERN.test(exclusion.digest) ||
-    (exclusion.acknowledgedAt !== undefined && !isCanonicalIsoTimestamp(exclusion.acknowledgedAt))
-  ) {
-    throw new Error(
-      "Sandbox registry contains an invalid baseline exclusion transition source; repair the registry before rebuilding",
-    );
-  }
-  const targetLiveDigest =
-    value.targetLiveDigest === null
-      ? null
-      : typeof value.targetLiveDigest === "string"
-        ? value.targetLiveDigest.trim()
-        : "";
-  if (
-    (operation === "exclude" && targetLiveDigest !== null) ||
-    (operation === "restore" &&
-      (targetLiveDigest === null || !SHA256_DIGEST_PATTERN.test(targetLiveDigest)))
-  ) {
-    throw new Error(
-      `Sandbox registry baseline exclusion transition '${exclusion.key}' has an invalid live target; repair the registry before rebuilding`,
-    );
-  }
-  return { id, operation, exclusion, targetLiveDigest, startedAt };
+  return result;
 }
 
 export function parseSandboxRegistryEntries(value: unknown): Array<[string, SandboxEntry]> {

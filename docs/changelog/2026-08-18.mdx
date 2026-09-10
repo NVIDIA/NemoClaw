@@ -9,13 +9,13 @@ NemoClaw v0.0.111 extends the explicit experimental Portable profile with receip
 It makes Shields recovery, sandbox rebuilds, provider routing, and messaging bootstrap more diagnosable and less likely to leave ambiguous state.
 It also improves headless and local-inference onboarding, managed gateway recovery, uninstall cleanup, and release qualification.
 
-- Experimental Portable Hermes onboarding now publishes `pending`, `configuring`, and `active` lifecycle receipts that bind the selected rootless Podman socket, exact container, startup command, policy, and registry identity.
+- Experimental Portable Hermes onboarding now publishes `pending`, `configuring`, and `active` lifecycle receipts that bind the selected rootless Podman socket, container, startup command, policy, and registry identity.
   An active receipt supports `launch`, `connect`, `recover`, `start`, `stop`, `status`, and read-only `doctor` without falling back to Docker; incomplete receipts direct operators to resume onboarding, and unsupported commands fail before effects.
-  Portable onboarding also keeps every agent off Docker-labeled recreation, requires the exact stopped container to reach its terminal `exited` state, accepts the managed Hermes startup command through the root helper, and settles receipt-owned Portable uninstall in one invocation.
+  Portable onboarding also keeps every agent off Docker-labeled recreation, requires the stopped container to reach its terminal `exited` state, accepts the managed Hermes startup command through the root helper, and settles receipt-owned Portable uninstall in one invocation.
   The Portable network now configures `169.254.1.2/32` as the OpenShell host gateway and attaches the managed registry at the distinct `169.254.1.3` address.
   For more information, refer to the [NemoHermes CLI Commands Reference](/user-guide/hermes/reference/commands), [Set Up an OpenAI-Compatible Endpoint](/user-guide/hermes/inference/custom-endpoints/set-up-openai-compatible-endpoint), and [Uninstall NemoClaw](/user-guide/hermes/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
   Related changes: [PR #9424](https://github.com/NVIDIA/NemoClaw/pull/9424), [PR #9447](https://github.com/NVIDIA/NemoClaw/pull/9447), [PR #9476](https://github.com/NVIDIA/NemoClaw/pull/9476), [PR #9509](https://github.com/NVIDIA/NemoClaw/pull/9509), [PR #9511](https://github.com/NVIDIA/NemoClaw/pull/9511), and [PR #9513](https://github.com/NVIDIA/NemoClaw/pull/9513).
-- OpenClaw `connect` now reports a Shields auto-relock that occurs during the active terminal session, keeps the session open, and prints the exact host command to lower Shields again.
+- OpenClaw `connect` now reports a Shields auto-relock that occurs during the active terminal session, keeps the session open, and prints the host command to lower Shields again.
   `backup-all` recovers lockdown from its trusted policy snapshot and stops before processing another sandbox when it cannot restore the prior Shields state.
   Rebuild carries read-only host mounts into the recreate session and fails closed on an older journal that cannot prove the original host-mount identity.
   OpenClaw rebuild also verifies the final `openclaw.json` and `.config-hash` pair, restores Shields, and exits nonzero when it cannot confirm config integrity.
@@ -35,12 +35,12 @@ It also improves headless and local-inference onboarding, managed gateway recove
   The Open network-policy tier documentation also lists the experimental Microsoft Teams preset alongside the other messaging presets.
   For more information, refer to [Enable Channels During Onboarding](/user-guide/openclaw/manage-sandboxes/messaging-channels/enable-channels-during-onboarding) and [Network Policies Reference](/user-guide/openclaw/reference/network-policies).
   Related changes: [PR #9474](https://github.com/NVIDIA/NemoClaw/pull/9474), [PR #9477](https://github.com/NVIDIA/NemoClaw/pull/9477), [PR #9478](https://github.com/NVIDIA/NemoClaw/pull/9478), [PR #9479](https://github.com/NVIDIA/NemoClaw/pull/9479), and [PR #9504](https://github.com/NVIDIA/NemoClaw/pull/9504).
-- Managed sandbox recovery now waits through exact bounded gateway startup states, stops downstream connect or launch work after a direct recovery failure, and preserves sanitized diagnostics when rollback or replacement identity cannot be confirmed.
+- Managed sandbox recovery now waits through bounded gateway startup states, stops downstream connect or launch work after a direct recovery failure, and preserves sanitized diagnostics when rollback or replacement identity cannot be confirmed.
   Onboarding releases its temporary dashboard port reservation before the host forward starts, so the selected port remains available for that forward and later onboarding work.
   Hermes GPU fallback rollback can restore the shared-state directory's setgid mode after ownership changes.
   If restoration still fails, NemoClaw revalidates both container identities before removing only the transaction-owned replacement and leaving the original container stopped for cleanup.
   Identity drift stops rollback without container mutation.
-  Docker replacement failures include the exact transaction-owned container identity, exit state, and a bounded redacted log tail, while the shared private-network boundary keeps inference and managed MCP target validation consistent.
+  Docker replacement failures include the transaction-owned container identity, exit state, and a bounded redacted log tail, while the shared private-network boundary keeps inference and managed MCP target validation consistent.
   New migration snapshots now use the canonical directory name and matching manifest identity so the documented list, prune, and delete retention commands can manage them.
   Failed skill installation also removes its temporary SSH configuration, and NemoClaw recognizes the OpenShell `0.0.106` manifest contract used by the release.
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [Custom Endpoint Security](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).

@@ -7,7 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "scripts",
+  "nemoclaw-start.sh",
+);
 
 function messagingRuntimeSetupSection(src: string, planPath: string): string {
   const start = src.indexOf("# ── Messaging runtime setup from manifest metadata");
@@ -104,7 +110,9 @@ describe("messaging runtime env aliases", () => {
         timeout: 5000,
       });
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
+      expect(result.stdout).toContain(
+        "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-v42_SLACK_BOT_TOKEN",
+      );
       expect(result.stderr).toContain("[channels] normalized Slack alias");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

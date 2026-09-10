@@ -7,7 +7,10 @@ import path from "node:path";
 
 import { cloneAndDeepFreeze } from "../../core/immutable";
 
-export const MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION = 2 as const;
+export const MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION = 3 as const;
+export const MXC_OPENSHELL_DISTRIBUTION_AUTHORITY_CONTRACT_VERSION = 1 as const;
+export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID =
+  "openshell-v0-0-24-mxc-v0-7-0-rc1-qualification" as const;
 
 const PROVIDER_ID = "mxc";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -42,6 +45,11 @@ interface MxcOpenShellAttachmentExpectation {
   readonly gateway: ExactGatewayIdentity;
 }
 
+export type MxcOpenShellDistributionAcceptance = "qualification" | "accepted";
+
+export type MxcOpenShellDistributionProfileId =
+  typeof MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID;
+
 export interface MxcOpenShellAttachmentObservation extends MxcOpenShellAttachmentExpectation {
   readonly distributionRoot: string;
   readonly mxcRoot: string;
@@ -55,6 +63,16 @@ export interface MxcOpenShellAttachmentAuthority {
   readonly contractVersion: typeof MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION;
   readonly providerId: "mxc";
   readonly mode: "attach-existing";
+  readonly acceptance: MxcOpenShellDistributionAcceptance;
+  readonly distributionProfileId: MxcOpenShellDistributionProfileId;
+  readonly acceptedIdentitySha256: string;
+}
+
+export interface MxcOpenShellDistributionAuthority {
+  readonly contractVersion: typeof MXC_OPENSHELL_DISTRIBUTION_AUTHORITY_CONTRACT_VERSION;
+  readonly providerId: "mxc";
+  readonly profileId: MxcOpenShellDistributionProfileId;
+  readonly acceptance: MxcOpenShellDistributionAcceptance;
   readonly acceptedIdentitySha256: string;
 }
 
@@ -62,6 +80,8 @@ export interface MxcOpenShellAttachmentReceipt {
   readonly contractVersion: typeof MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION;
   readonly providerId: "mxc";
   readonly mode: "attach-existing";
+  readonly acceptance: MxcOpenShellDistributionAcceptance;
+  readonly distributionProfileId: MxcOpenShellDistributionProfileId;
   readonly authoritySha256: string;
   readonly distribution: ExactDistributionIdentity & { readonly root: string };
   readonly components: {
@@ -81,8 +101,50 @@ export class MxcOpenShellAttachmentError extends Error {
 
 const ACCEPTED_IDENTITIES = new WeakMap<
   MxcOpenShellAttachmentAuthority,
-  MxcOpenShellAttachmentExpectation
+  Readonly<{
+    acceptance: MxcOpenShellDistributionAcceptance;
+    distributionProfileId: MxcOpenShellAttachmentAuthority["distributionProfileId"];
+    expectation: MxcOpenShellAttachmentExpectation;
+  }>
 >();
+
+const DISTRIBUTION_AUTHORITIES = new WeakMap<
+  MxcOpenShellDistributionAuthority,
+  MxcOpenShellAttachmentAuthority
+>();
+
+/** Immutable development checkpoint supplied by the OpenShell/MXC team. */
+export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE = cloneAndDeepFreeze({
+  profileId: MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
+  acceptance: "qualification" as const,
+  compatibility: {
+    nativeArchitecture: "x64" as const,
+    backend: "process_container" as const,
+    mxcVersion: "0.7.0-rc1",
+  },
+  expectation: {
+    distribution: {
+      version: "0.0.24",
+      revision: "e1b48323e4efcb560900508bdcd76d2b5d216678",
+      sha256: "296ba2677f8f692b1c3f14b4fae6bb2a75d52f94c071ec2ebdf676405a80613d",
+    },
+    components: {
+      cliSha256: "23d00a88daa5f2aa6151d9112a6845e843ca1e08cbaf55f8eaa337b72dd9155a",
+      gatewaySha256: "62b3e231f5d40c5d178d08172ddb65536f124bdb8c7c04d90fb9dca50a5ac137",
+      wxcExecSha256: "6049c64723af1173c3739dc6cd6b2f33f6c021bb2832c4216233cba7f71aee9a",
+    },
+    gateway: {
+      configSha256: "1c86a32a52d068677b5140975c6b870d5ed46dc553500ebb790b58e207ac7290",
+      driver: "mxc" as const,
+      backend: "process_container" as const,
+    },
+  },
+});
+
+const DISTRIBUTION_PROFILES = {
+  [MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID]:
+    MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE,
+} as const;
 
 function record(value: unknown, label: string): Record<string, unknown> {
   if (
@@ -267,6 +329,8 @@ function sameIdentity(
  */
 function createMxcOpenShellAttachmentAuthority(
   expectation: unknown,
+  acceptance: MxcOpenShellDistributionAcceptance,
+  distributionProfileId: MxcOpenShellAttachmentAuthority["distributionProfileId"],
 ): MxcOpenShellAttachmentAuthority {
   const accepted = cloneAndDeepFreeze(parseExpectation(expectation, "accepted attachment"));
   const acceptedIdentitySha256 = createHash("sha256")
@@ -275,6 +339,8 @@ function createMxcOpenShellAttachmentAuthority(
         contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
         providerId: PROVIDER_ID,
         mode: "attach-existing",
+        acceptance,
+        distributionProfileId,
         accepted,
       }),
       "utf8",
@@ -284,41 +350,73 @@ function createMxcOpenShellAttachmentAuthority(
     contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
     providerId: PROVIDER_ID,
     mode: "attach-existing" as const,
+    acceptance,
+    distributionProfileId,
     acceptedIdentitySha256,
   });
-  ACCEPTED_IDENTITIES.set(authority, accepted);
+  ACCEPTED_IDENTITIES.set(
+    authority,
+    cloneAndDeepFreeze({ acceptance, distributionProfileId, expectation: accepted }),
+  );
+  return authority;
+}
+
+function createDistributionAuthority(
+  profileId: MxcOpenShellDistributionAuthority["profileId"],
+  acceptance: MxcOpenShellDistributionAcceptance,
+  expectation: unknown,
+): MxcOpenShellDistributionAuthority {
+  const attachmentAuthority = createMxcOpenShellAttachmentAuthority(
+    expectation,
+    acceptance,
+    profileId,
+  );
+  const authority = Object.freeze({
+    contractVersion: MXC_OPENSHELL_DISTRIBUTION_AUTHORITY_CONTRACT_VERSION,
+    providerId: PROVIDER_ID,
+    profileId,
+    acceptance,
+    acceptedIdentitySha256: attachmentAuthority.acceptedIdentitySha256,
+  });
+  DISTRIBUTION_AUTHORITIES.set(authority, attachmentAuthority);
   return authority;
 }
 
 /**
- * Create the fixed, non-production authority used by attachment contract tests.
+ * Create qualification authority from one provider-owned immutable development checkpoint.
  *
- * The caller may vary only the SemVer value under test. Component identities stay fixed so this
- * helper cannot turn caller-observed digests into accepted provider authority.
+ * Stable-release acceptance remains a separate record and decision. Host observations cannot add
+ * or replace a record in this catalogue.
  */
-export function createMxcOpenShellAttachmentTestAuthority(
-  version: string,
-): MxcOpenShellAttachmentAuthority {
-  return createMxcOpenShellAttachmentAuthority({
-    distribution: {
-      version,
-      revision: "a".repeat(40),
-      sha256: "1".repeat(64),
-    },
-    components: {
-      cliSha256: "2".repeat(64),
-      gatewaySha256: "3".repeat(64),
-      wxcExecSha256: "4".repeat(64),
-    },
-    gateway: {
-      configSha256: "5".repeat(64),
-      driver: "mxc",
-      backend: "process_container",
-    },
-  });
+export function createMxcOpenShellDistributionAuthority(
+  profileId: MxcOpenShellDistributionProfileId,
+): MxcOpenShellDistributionAuthority {
+  if (!Object.hasOwn(DISTRIBUTION_PROFILES, profileId)) {
+    throw new MxcOpenShellAttachmentError("distribution profile is not provider-owned");
+  }
+  const profile = DISTRIBUTION_PROFILES[profileId];
+  return createDistributionAuthority(profile.profileId, profile.acceptance, profile.expectation);
 }
 
-function acceptedIdentity(authority: unknown): MxcOpenShellAttachmentExpectation {
+/** Resolve the opaque attachment capability carried by a provider-owned distribution authority. */
+export function resolveMxcOpenShellDistributionAuthority(
+  authority: MxcOpenShellDistributionAuthority,
+): MxcOpenShellAttachmentAuthority {
+  if (typeof authority !== "object" || authority === null) {
+    throw new MxcOpenShellAttachmentError("distribution authority is not provider-owned");
+  }
+  const attachmentAuthority = DISTRIBUTION_AUTHORITIES.get(authority);
+  if (!attachmentAuthority) {
+    throw new MxcOpenShellAttachmentError("distribution authority is not provider-owned");
+  }
+  return attachmentAuthority;
+}
+
+function acceptedIdentity(authority: unknown): Readonly<{
+  acceptance: MxcOpenShellDistributionAcceptance;
+  distributionProfileId: MxcOpenShellAttachmentAuthority["distributionProfileId"];
+  expectation: MxcOpenShellAttachmentExpectation;
+}> {
   if (typeof authority !== "object" || authority === null) {
     throw new MxcOpenShellAttachmentError("accepted identity authority is not provider-owned");
   }
@@ -340,9 +438,9 @@ export function qualifyMxcOpenShellAttachment(
   authority: MxcOpenShellAttachmentAuthority,
   observation: unknown,
 ): MxcOpenShellAttachmentReceipt {
-  const expected = acceptedIdentity(authority);
+  const accepted = acceptedIdentity(authority);
   const observed = parseObservation(observation);
-  if (!sameIdentity(expected, observed)) {
+  if (!sameIdentity(accepted.expectation, observed)) {
     throw new MxcOpenShellAttachmentError(
       "observed distribution identity does not match the accepted identity",
     );
@@ -351,6 +449,8 @@ export function qualifyMxcOpenShellAttachment(
     contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
     providerId: PROVIDER_ID,
     mode: "attach-existing" as const,
+    acceptance: accepted.acceptance,
+    distributionProfileId: accepted.distributionProfileId,
     distribution: { ...observed.distribution, root: observed.distributionRoot },
     components: {
       cli: { path: observed.cliPath, sha256: observed.components.cliSha256 },

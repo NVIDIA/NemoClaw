@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import type { RetainedSandboxRecoveryContext } from "../state/onboard-session";
+import { cliName } from "./branding";
 
 // Re-exported so the onboard entrypoint imports its sandbox default/cancel
 // lifecycle helpers from a single module.
@@ -54,26 +56,39 @@ export interface SandboxCancelRollback {
 export function buildCancelRollbackMessage(
   sandboxName: string,
   sandboxIdentityFingerprint?: string,
+  recoveryContext?: Pick<RetainedSandboxRecoveryContext, "createAttemptNonce">,
 ): string[] {
   return [
     "",
     `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}'.`,
+    ...(recoveryContext
+      ? [
+          `  Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${recoveryContext.createAttemptNonce}`,
+        ]
+      : []),
     ...(sandboxIdentityFingerprint
       ? [
           `  Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}`,
-          "  Preserve this fingerprint for identity-bound inspection, recovery, or removal.",
+          "  Preserve this fingerprint as retained recovery evidence; it does not authorize deletion by mutable name.",
         ]
       : [
           "  Its durable identity fingerprint is unavailable; preserve the registry and onboarding recovery state.",
-          "  Ask an OpenShell administrator to establish the exact sandbox identity before recovery or removal.",
+          "  NemoClaw cannot verify this sandbox identity or authorize its removal without a recorded fingerprint.",
         ]),
     "  NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.",
     "  Do not delete the sandbox by mutable sandbox name.",
     "  Shared inference providers are gateway configuration and are not sandbox cleanup targets.",
-    "  Sandbox-scoped provider registrations or gateway-bound credentials may remain when the durable recovery record lists them.",
-    "  Ask an OpenShell administrator to inspect the exact sandbox identity and remove only sandbox-scoped resources whose ownership is confirmed for this retained sandbox.",
-    "  A recorded credential environment name alone does not prove exposure; rotate a credential only when identity-bound inspection proves that it was exposed or attached to a retained sandbox-scoped resource.",
-    "  NemoClaw has no supported operation to clear this recovery record; use a different sandbox name for later onboarding.",
+    ...(sandboxIdentityFingerprint
+      ? [
+          `  Run '${cliName()} ${sandboxName} destroy'. If OpenShell confirms the retained sandbox absent, destroy removes only verified residual containers and can clear the matching recovery record.`,
+          recoveryContext
+            ? "  If it is still live or presence is unknown, destroy refuses deletion. Inspect the owning gateway for diagnosis only; do not delete by mutable name."
+            : "  If it is still live or presence is unknown, preserve the displayed fingerprint; destroy refuses deletion and preserves the recovery record.",
+        ]
+      : [
+          `  Run '${cliName()} ${sandboxName} destroy'. It can clear the recovery record only after OpenShell confirms the sandbox absent and residual cleanup succeeds.`,
+          "  If the sandbox is present or presence is unknown, preserve the recovery record and do not delete by mutable name.",
+        ]),
   ];
 }
 
@@ -194,12 +209,13 @@ export function createSandboxCancelRollback(
         guidanceReported = true;
         if (recoveryPersistenceFailed) {
           deps.log(
-            "  NemoClaw could not save the onboarding recovery record; preserve the registry entry and exact sandbox identity for administrator recovery.",
+            "  NemoClaw could not save the onboarding recovery record; preserve the registry entry and terminal output. Do not delete the sandbox by mutable name.",
           );
         }
         for (const line of buildCancelRollbackMessage(
           sandboxName,
           identityFingerprint ?? undefined,
+          armedSandbox.context,
         )) {
           deps.log(line);
         }

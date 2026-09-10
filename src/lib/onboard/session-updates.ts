@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import type { ServingProfileProvenance } from "../inference/serving/types";
 import type { WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
@@ -24,8 +23,6 @@ export interface OnboardSessionUpdateInput {
   webSearchConfig?: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure | string;
   observabilityEnabled?: boolean;
-  policyPresets?: string[] | null;
-  policyAuthority?: SandboxPolicyAuthority | null;
   messagingPlan?: SandboxMessagingPlan | null;
   hermesToolGateways?: string[] | null;
   /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
@@ -89,8 +86,6 @@ export function toSessionUpdates(updates: OnboardSessionUpdateInput = {}): Sessi
   if (typeof updates.observabilityEnabled === "boolean") {
     normalized.observabilityEnabled = updates.observabilityEnabled;
   }
-  if (updates.policyPresets !== undefined) normalized.policyPresets = updates.policyPresets;
-  if (updates.policyAuthority !== undefined) normalized.policyAuthority = updates.policyAuthority;
   if (updates.messagingPlan !== undefined) normalized.messagingPlan = updates.messagingPlan;
   if (updates.hermesToolGateways !== undefined)
     normalized.hermesToolGateways = updates.hermesToolGateways;

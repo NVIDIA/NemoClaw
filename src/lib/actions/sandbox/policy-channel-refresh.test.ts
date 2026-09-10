@@ -80,9 +80,7 @@ beforeEach(() => {
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: "alpha",
     agent: null,
-    policies: ["pypi"],
   });
-  vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
 
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
   vi.spyOn(onboardSession, "updateSession").mockReturnValue(
@@ -212,6 +210,31 @@ describe("applyExternalPreset refresh contract (--from-file)", () => {
   it("does not refresh on --dry-run with --from-file", async () => {
     await addSandboxPolicy("alpha", { fromFile: tempFile, yes: true, dryRun: true });
 
+    expect(applyPresetContentMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a link-local metadata endpoint during --from-file dry-run", async () => {
+    loadPresetFromFileMock.mockReturnValue({
+      presetName: "metadata",
+      content: `preset:
+  name: metadata
+network_policies:
+  metadata:
+    endpoints:
+      - { host: 169.254.169.254, port: 80, protocol: rest }
+`,
+    });
+
+    await expect(
+      captureExit(() => addSandboxPolicy("alpha", { fromFile: tempFile, yes: true, dryRun: true })),
+    ).resolves.toBe(1);
+
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /endpoint host.*is rejected.*explicit trust only for RFC1918, CGNAT, or IPv6 unique local/i,
+      ),
+    );
     expect(applyPresetContentMock).not.toHaveBeenCalled();
     expect(refreshSpy).not.toHaveBeenCalled();
   });

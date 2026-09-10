@@ -107,10 +107,6 @@ export function help(): void {
   lines.push(
     `    ${D}  Use host-side commands or re-run onboard for durable ${AGENT_PRODUCT_NAME} settings.${R}`,
   );
-  lines.push(
-    `    ${D}  Run \`${CLI_NAME} <name> shields up\` to lock config for sensitive workloads.${R}`,
-  );
-
   lines.push("");
   lines.push(`  ${D}Powered by NVIDIA OpenShell · Nemotron · Agent Toolkit`);
   lines.push(`  Credentials registered with the OpenShell gateway${R}`);

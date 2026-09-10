@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Regression for #5967: `nemoclaw <sandbox> policy-list` must render `● discord`
-// (and any enabled messaging channel preset) once it is recorded in the registry
-// and active on the gateway. This is the reporter's observation step — the
+// (and any enabled messaging channel preset) once it is active in OpenShell.
+// This is the reporter's observation step — the
 // rendered marker the operator actually reads — complementing the merge/persist
 // tests that cover the upstream state policy-list consumes.
 
@@ -88,13 +88,13 @@ describe("listSandboxPolicies rendering (#5967)", () => {
     expect(lineFor("discord")).not.toContain("● discord");
   });
 
-  it("flags a registry/gateway mismatch when Discord is recorded but not active on the gateway", () => {
+  it("does not invent local ownership when the two live policy views disagree", () => {
     mocked.getAppliedPresets.mockReturnValue(["discord", "npm"]);
     mocked.getGatewayPresets.mockReturnValue(["npm"]);
 
     listSandboxPolicies("nemoclaw-5967");
 
     expect(lineFor("discord")).toContain("○ discord");
-    expect(lineFor("discord")).toContain("recorded locally, not active on gateway");
+    expect(lineFor("discord")).not.toContain("recorded locally");
   });
 });

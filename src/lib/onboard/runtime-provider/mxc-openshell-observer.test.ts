@@ -38,7 +38,7 @@ const PATHS = {
 
 function request(): MxcOpenShellAttachmentObservationRequest {
   return {
-    contractVersion: 2,
+    contractVersion: 3,
     providerId: "mxc",
     mode: "attach-existing",
     observedDistribution: {

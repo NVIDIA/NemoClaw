@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import { shellQuote } from "../../core/shell-quote";
 import { MANAGED_PROVIDER_ID } from "../../inference/config";
 import { isSafeModelId } from "../../validation";
@@ -221,8 +222,25 @@ export function reconcilePinnedSessionModels(
   };
 }
 
-function readPrimaryModelRef(sandboxName: string): string | null {
-  const res = executeSandboxCommand(sandboxName, `cat ${OPENCLAW_CONFIG_PATH} 2>/dev/null`);
+async function executeReconcileCommand(
+  sandboxName: string,
+  command: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+) {
+  return runtimeSelection
+    ? await executeSandboxCommand(sandboxName, command, { runtimeSelection })
+    : await executeSandboxCommand(sandboxName, command);
+}
+
+async function readPrimaryModelRef(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<string | null> {
+  const res = await executeReconcileCommand(
+    sandboxName,
+    `cat ${OPENCLAW_CONFIG_PATH} 2>/dev/null`,
+    runtimeSelection,
+  );
   if (!res || res.status !== 0 || !res.stdout.trim()) return null;
   try {
     const config = JSON.parse(res.stdout) as {
@@ -249,17 +267,22 @@ function readPrimaryModelRef(sandboxName: string): string | null {
  * discard conversation state. This recovery can be removed when OpenClaw
  * exposes an offline, race-free session-model reset operation.
  */
-export function reconcileStalePinnedSessionModelsAfterRebuild(
+export async function reconcileStalePinnedSessionModelsAfterRebuild(
   sandboxName: string,
   log: RebuildLog,
-): void {
-  const primary = readPrimaryModelRef(sandboxName);
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<void> {
+  const primary = await readPrimaryModelRef(sandboxName, runtimeSelection);
   if (!primary) {
     log("Session model reconcile skipped: could not read agents.defaults.model.primary");
     return;
   }
   const sessionsPath = defaultAgentSessionsPath(DEFAULT_AGENT_ID);
-  const readResult = executeSandboxCommand(sandboxName, `cat ${sessionsPath} 2>/dev/null`);
+  const readResult = await executeReconcileCommand(
+    sandboxName,
+    `cat ${sessionsPath} 2>/dev/null`,
+    runtimeSelection,
+  );
   if (!readResult || readResult.status !== 0 || !readResult.stdout.trim()) {
     log(`Session model reconcile skipped: no session store at ${sessionsPath}`);
     return;
@@ -269,9 +292,10 @@ export function reconcileStalePinnedSessionModelsAfterRebuild(
     log("Session model reconcile: no stale pinned session models");
     return;
   }
-  const writeResult = executeSandboxCommand(
+  const writeResult = await executeReconcileCommand(
     sandboxName,
     buildSessionStoreReplaceCommand(sessionsPath, reconciled.content, readResult.stdout),
+    runtimeSelection,
   );
   if (!writeResult || writeResult.status !== 0) {
     log(

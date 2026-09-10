@@ -9,7 +9,6 @@ import {
 } from "../../../src/lib/sandbox-base-image/types";
 import {
   createRebuildHermesOldBaseResolutionMetadata,
-  verifyRebuildHermesCurrentBaseReuse,
   verifyRebuildHermesFinalBaseIdentity,
   verifyRebuildHermesOldBaseIsStale,
 } from "../live/rebuild-hermes-base-identity.ts";
@@ -52,14 +51,12 @@ function resolutionLabels(metadata: SandboxBaseImageResolutionMetadata): Record<
 
 function imageInspect(input: {
   id: string;
-  repoTags?: string[];
   repoDigests?: string[];
   labels?: Record<string, string>;
   layers?: string[];
 }): string {
   return JSON.stringify({
     Id: input.id,
-    RepoTags: input.repoTags ?? [],
     RepoDigests: input.repoDigests ?? [],
     Os: "linux",
     Architecture: "amd64",
@@ -166,145 +163,75 @@ describe("rebuild-Hermes base identity", () => {
     ).toThrow("was not classified stale by resolution key mismatch");
   });
 
-  it.each([
-    ["published", currentMetadata()],
-    [
-      "repository-built",
-      currentMetadata({
-        ref: "nemoclaw-hermes-sandbox-base-local:current",
-        digest: null,
-        source: "local",
-        pinnedRemoteRef: undefined,
-      }),
-    ],
-  ])("verifies a direct %s current-base reuse alias (#7144)", (_kind, expected) => {
-    const reuseRef = "nemoclaw-hermes-sandbox-base-local:e2e-current";
+  it.each([false, true])(
+    "proves the final image uses the phase 1 layers for stale mode %s (#7144)",
+    (staleBaseMode) => {
+      const expected = currentMetadata();
+      const old = oldMetadata();
+      const finalImageId = `sha256:${"f".repeat(64)}`;
 
-    expect(
-      verifyRebuildHermesCurrentBaseReuse(
-        expected,
-        reuseRef,
-        imageInspect({
-          id: expected.imageId,
-          repoDigests: expected.digest ? [`${imageName}@${expected.digest}`] : [],
-        }),
-        imageInspect({
-          id: expected.imageId,
-          repoTags: [reuseRef],
-          repoDigests: expected.digest ? [`${imageName}@${expected.digest}`] : [],
-        }),
-      ),
-    ).toMatchObject({
-      reuseImageId: expected.imageId,
-      pinnedReuseRef: `nemoclaw-hermes-sandbox-base-local:image-${"c".repeat(64)}`,
-      sourceDigest: expected.digest,
-      sourceImageId: expected.imageId,
-      sourceRef: expected.ref,
-      layerCount: rootFsLayers.length,
-      rootFsChain: expect.stringMatching(/^[0-9a-f]{64}$/),
-    });
-  });
+      expect(
+        verifyRebuildHermesFinalBaseIdentity(
+          staleBaseMode,
+          expected,
+          old,
+          imageInspect({ id: imageId, repoDigests: [expected.ref] }),
+          imageInspect({
+            id: old.imageId,
+            repoDigests: [old.ref],
+            layers: oldRootFsLayers,
+          }),
+          imageInspect({
+            id: finalImageId,
+            layers: [...rootFsLayers, `sha256:${"7".repeat(64)}`],
+            labels: resolutionLabels(expected),
+          }),
+        ),
+      ).toMatchObject({
+        lane: staleBaseMode ? "stale-base" : "current-base",
+        imageName,
+        ref: expected.ref,
+        digest,
+        contentIdentity: digest,
+        imageId,
+        pinnedRemoteRef,
+        source: "pinned",
+        oldImageId: `sha256:${"e".repeat(64)}`,
+        finalImageId,
+        currentBaseLayerCount: rootFsLayers.length,
+        finalLayerCount: rootFsLayers.length + 1,
+        currentBaseRootFsChain: expect.stringMatching(/^[0-9a-f]{64}$/),
+        oldBaseRootFsChain: expect.stringMatching(/^[0-9a-f]{64}$/),
+        resolutionLabelsVerified: true,
+      });
+    },
+  );
 
-  it("rejects a reuse alias that changes identity, tags, or layers (#7144)", () => {
-    const expected = currentMetadata();
-    const reuseRef = "nemoclaw-hermes-sandbox-base-local:e2e-current";
-    const source = imageInspect({ id: imageId, repoDigests: [expected.ref] });
+  it.each([false, true])(
+    "fails when final provenance is missing for stale mode %s (#7144)",
+    (staleBaseMode) => {
+      const expected = currentMetadata();
+      const old = oldMetadata();
 
-    expect(() =>
-      verifyRebuildHermesCurrentBaseReuse(
-        expected,
-        reuseRef,
-        source,
-        imageInspect({ id: `sha256:${"f".repeat(64)}`, repoTags: [reuseRef] }),
-      ),
-    ).toThrow("changed the phase 1 image identity");
-    expect(() =>
-      verifyRebuildHermesCurrentBaseReuse(
-        expected,
-        reuseRef,
-        source,
-        imageInspect({ id: imageId }),
-      ),
-    ).toThrow("did not retain its test-owned local ref");
-    expect(() =>
-      verifyRebuildHermesCurrentBaseReuse(
-        expected,
-        reuseRef,
-        source,
-        imageInspect({ id: imageId, repoTags: [reuseRef], layers: oldRootFsLayers }),
-      ),
-    ).toThrow("changed the phase 1 root filesystem layers");
-  });
-
-  it.each([
-    false,
-    true,
-  ])("proves the final image uses the phase 1 layers for stale mode %s (#7144)", (staleBaseMode) => {
-    const expected = currentMetadata();
-    const old = oldMetadata();
-    const finalImageId = `sha256:${"f".repeat(64)}`;
-
-    expect(
-      verifyRebuildHermesFinalBaseIdentity(
-        staleBaseMode,
-        expected,
-        old,
-        imageInspect({ id: imageId, repoDigests: [expected.ref] }),
-        imageInspect({
-          id: old.imageId,
-          repoDigests: [old.ref],
-          layers: oldRootFsLayers,
-        }),
-        imageInspect({
-          id: finalImageId,
-          layers: [...rootFsLayers, `sha256:${"7".repeat(64)}`],
-          labels: resolutionLabels(expected),
-        }),
-      ),
-    ).toMatchObject({
-      lane: staleBaseMode ? "stale-base" : "current-base",
-      imageName,
-      ref: expected.ref,
-      digest,
-      contentIdentity: digest,
-      imageId,
-      pinnedRemoteRef,
-      source: "pinned",
-      oldImageId: `sha256:${"e".repeat(64)}`,
-      finalImageId,
-      currentBaseLayerCount: rootFsLayers.length,
-      finalLayerCount: rootFsLayers.length + 1,
-      currentBaseRootFsChain: expect.stringMatching(/^[0-9a-f]{64}$/),
-      oldBaseRootFsChain: expect.stringMatching(/^[0-9a-f]{64}$/),
-      resolutionLabelsVerified: true,
-    });
-  });
-
-  it.each([
-    false,
-    true,
-  ])("fails when final provenance is missing for stale mode %s (#7144)", (staleBaseMode) => {
-    const expected = currentMetadata();
-    const old = oldMetadata();
-
-    expect(() =>
-      verifyRebuildHermesFinalBaseIdentity(
-        staleBaseMode,
-        expected,
-        old,
-        imageInspect({ id: imageId, repoDigests: [expected.ref] }),
-        imageInspect({
-          id: old.imageId,
-          repoDigests: [old.ref],
-          layers: oldRootFsLayers,
-        }),
-        imageInspect({
-          id: `sha256:${"f".repeat(64)}`,
-          layers: [...rootFsLayers, `sha256:${"7".repeat(64)}`],
-        }),
-      ),
-    ).toThrow("did not retain the resolved phase 1 base metadata");
-  });
+      expect(() =>
+        verifyRebuildHermesFinalBaseIdentity(
+          staleBaseMode,
+          expected,
+          old,
+          imageInspect({ id: imageId, repoDigests: [expected.ref] }),
+          imageInspect({
+            id: old.imageId,
+            repoDigests: [old.ref],
+            layers: oldRootFsLayers,
+          }),
+          imageInspect({
+            id: `sha256:${"f".repeat(64)}`,
+            layers: [...rootFsLayers, `sha256:${"7".repeat(64)}`],
+          }),
+        ),
+      ).toThrow("did not retain the resolved phase 1 base metadata");
+    },
+  );
 
   it("fails closed on mutable metadata or a different final filesystem (#7144)", () => {
     const expected = currentMetadata();

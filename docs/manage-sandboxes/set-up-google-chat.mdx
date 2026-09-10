@@ -51,7 +51,7 @@ The proxy forwards only `POST /googlechat` to OpenClaw and limits webhook reques
 It is separate from `nemoclaw tunnel start`, which remains the explicit full-dashboard tunnel command.
 Install `cloudflared` on the host before enrollment when you do not already have a public endpoint.
 
-When the dedicated Google Chat tunnel is not running, NemoClaw starts it and prints the exact HTTPS endpoint ending in `/googlechat`.
+When the dedicated Google Chat tunnel is not running, NemoClaw starts it and prints the HTTPS endpoint ending in `/googlechat`.
 Copy that complete URL into the Google Chat API HTTP endpoint field without adding a trailing slash, then confirm the prompt.
 NemoClaw stops the dedicated tunnel and webhook proxy if you do not confirm the endpoint or if enrollment fails before confirmation.
 
@@ -224,7 +224,7 @@ For a selected owning gateway, it prints the managed recovery command; correct a
 If no owning managed gateway is registered, NemoClaw does not attempt activation or print that command; register and select the sandbox's owning gateway before recovery.
 Do not submit the pairing code again unless OpenClaw reports that it was not accepted.
 
-If the webhook returns an error, verify that the public endpoint still ends in `/googlechat`, the dedicated tunnel and webhook proxy are running, and the Google Chat API configuration contains the exact same URL.
+If the webhook returns an error, verify that the public endpoint still ends in `/googlechat`, the dedicated tunnel and webhook proxy are running, and the Google Chat API configuration contains the same URL.
 </AgentOnly>
 
 <AgentOnly variant="hermes">

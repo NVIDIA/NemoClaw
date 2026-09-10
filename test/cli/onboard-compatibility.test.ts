@@ -334,10 +334,11 @@ describe("CLI onboard compatibility", () => {
     );
   });
 
-  it("deploy --help exits 0 and shows deprecated usage", () => {
+  it("treats deploy as a sandbox name after the command is removed (#10572)", () => {
     const r = run("deploy --help");
     expect(r.code).toBe(0);
-    expect(r.out).toContain("deploy [instance-name]");
-    expect(r.out).toContain("Deprecated Brev-specific bootstrap path");
+    expect(r.out).toContain("Usage: nemoclaw deploy connect [--probe-only]");
+    expect(r.out).not.toContain("deploy [instance-name]");
+    expect(r.out).not.toContain("Deprecated Brev-specific bootstrap path");
   });
 });

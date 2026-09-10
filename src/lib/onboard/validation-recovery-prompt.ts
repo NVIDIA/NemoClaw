@@ -22,14 +22,14 @@ export interface ValidationRecoveryPromptHelpers {
     label: string,
     helpUrl?: string | null,
     validator?: ((value: string) => string | null) | null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<ValidationRecoveryCredentialResult>;
   promptValidationRecovery(
     label: string,
     recovery: ProbeRecovery,
     credentialEnv?: string | null,
     helpUrl?: string | null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<"credential" | "selection" | "retry" | "model">;
 }
 
@@ -41,7 +41,7 @@ export function createValidationRecoveryPromptHelpers(
     label: string,
     helpUrl: string | null = null,
     validator: ((value: string) => string | null) | null = null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<ValidationRecoveryCredentialResult> {
     if (helpUrl) {
       console.log("");
@@ -67,7 +67,7 @@ export function createValidationRecoveryPromptHelpers(
         console.error(validationError);
         continue;
       }
-      revalidatePolicyRequirements?.(`save ${label}`);
+      revalidateSandboxIdentity?.(`save ${label}`);
       saveCredential(envName, key);
       process.env[envName] = key;
       console.log("");
@@ -82,7 +82,7 @@ export function createValidationRecoveryPromptHelpers(
     recovery: ProbeRecovery,
     credentialEnv: string | null = null,
     helpUrl: string | null = null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<"credential" | "selection" | "retry" | "model"> {
     if (deps.isNonInteractive()) {
       process.exit(1);
@@ -124,7 +124,7 @@ export function createValidationRecoveryPromptHelpers(
           `${label} API key`,
           helpUrl,
           validator,
-          revalidatePolicyRequirements,
+          revalidateSandboxIdentity,
         );
         if (result.kind === "selection") {
           console.log("  Returning to provider selection.");
@@ -147,7 +147,7 @@ export function createValidationRecoveryPromptHelpers(
           `${label} API key`,
           helpUrl,
           validator,
-          revalidatePolicyRequirements,
+          revalidateSandboxIdentity,
         );
         if (result.kind === "selection") {
           console.log("  Returning to provider selection.");

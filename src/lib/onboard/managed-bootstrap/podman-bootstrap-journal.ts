@@ -23,7 +23,9 @@ export type PodmanBootstrapJournalPhase =
   | "state-volume-created"
   | "replacement-created"
   | "original-stopped"
-  | "rollback-authorized";
+  | "rollback-authorized"
+  | "commit-authorized"
+  | "committed";
 
 export interface PodmanBootstrapJournal {
   readonly schemaVersion: typeof PODMAN_BOOTSTRAP_JOURNAL_SCHEMA_VERSION;
@@ -65,10 +67,25 @@ export interface PodmanBootstrapJournalStore {
   /** Make rollback the only legal pre-commit outcome. */
   readonly authorizeRollback: (
     bootstrapIdentity: string,
-    expected: readonly Exclude<PodmanBootstrapJournalPhase, "rollback-authorized">[],
+    expected: readonly Exclude<
+      PodmanBootstrapJournalPhase,
+      "rollback-authorized" | "commit-authorized" | "committed"
+    >[],
   ) => PodmanBootstrapJournal;
+  /** Durably make commit the only legal terminal outcome before original removal. */
+  readonly authorizeCommit: (
+    bootstrapIdentity: string,
+    expected: readonly Exclude<
+      PodmanBootstrapJournalPhase,
+      "rollback-authorized" | "commit-authorized" | "committed"
+    >[],
+  ) => PodmanBootstrapJournal;
+  /** Record that exact final runtime identity and canonical name were independently proven. */
+  readonly recordCommitted: (bootstrapIdentity: string) => PodmanBootstrapJournal;
   /** Remove the journal only after exact rollback state is independently proven. */
   readonly removeAfterRollback: (bootstrapIdentity: string) => void;
+  /** Remove commit authority only after the committed runtime was independently proven. */
+  readonly removeAfterCommit: (bootstrapIdentity: string) => void;
 }
 
 class PodmanBootstrapJournalExistsError extends Error {
@@ -122,6 +139,8 @@ function exactPhase(value: unknown): PodmanBootstrapJournalPhase {
       "replacement-created",
       "original-stopped",
       "rollback-authorized",
+      "commit-authorized",
+      "committed",
     ].includes(String(value))
   ) {
     fail("phase is unsupported");
@@ -245,8 +264,13 @@ export function normalizePodmanBootstrapJournal(value: unknown): PodmanBootstrap
       (replacementStateVolumeMountpoint !== null || replacementRuntimeId !== null)) ||
     (normalized.phase === "state-volume-created" &&
       (replacementStateVolumeMountpoint === null || replacementRuntimeId !== null)) ||
-    (["replacement-created", "original-stopped"].includes(normalized.phase) &&
-      (replacementStateVolumeMountpoint === null || replacementRuntimeId === null))
+    (["replacement-created", "original-stopped", "commit-authorized", "committed"].includes(
+      normalized.phase,
+    ) &&
+      (replacementStateVolumeMountpoint === null || replacementRuntimeId === null)) ||
+    (normalized.phase === "rollback-authorized" &&
+      replacementRuntimeId !== null &&
+      replacementStateVolumeMountpoint === null)
   ) {
     fail("phase does not match the replacement runtime identity");
   }
@@ -438,15 +462,24 @@ export function createFilePodmanBootstrapJournalStore(
     const contents = readPrivateFile(target, "journal");
     if (contents === null) return null;
     const journal = parsePodmanBootstrapJournal(contents);
-    const decision = readPrivateFile(decisionPath(target), "rollback decision");
+    const decision = readPrivateFile(decisionPath(target), "terminal decision");
     if (decision === null) return journal;
-    if (decision !== "rollback-authorized\n") {
-      fail("rollback decision is invalid");
+    if (decision !== "rollback-authorized\n" && decision !== "commit-authorized\n") {
+      fail("terminal decision is invalid");
     }
-    if (journal.phase === "rollback-authorized") return journal;
+    const decidedPhase = decision.trim() as "rollback-authorized" | "commit-authorized";
+    if (
+      journal.phase === decidedPhase ||
+      (decidedPhase === "commit-authorized" && journal.phase === "committed")
+    ) {
+      return journal;
+    }
+    if (journal.phase === "rollback-authorized" || journal.phase === "committed") {
+      fail("journal terminal phase conflicts with its durable decision");
+    }
     const decided = normalizePodmanBootstrapJournal({
       ...journal,
-      phase: "rollback-authorized",
+      phase: decidedPhase,
     });
     atomicWrite(directory, target, serializePodmanBootstrapJournal(decided), false);
     return decided;
@@ -460,8 +493,8 @@ export function createFilePodmanBootstrapJournalStore(
       }
       assertDirectory(directory);
       const target = journalPath(directory, normalized.bootstrapIdentity);
-      if (readPrivateFile(decisionPath(target), "rollback decision") !== null) {
-        fail("stale rollback decision exists for this bootstrap identity");
+      if (readPrivateFile(decisionPath(target), "terminal decision") !== null) {
+        fail("stale terminal decision exists for this bootstrap identity");
       }
       atomicWrite(directory, target, serializePodmanBootstrapJournal(normalized), true);
     },
@@ -487,7 +520,7 @@ export function createFilePodmanBootstrapJournalStore(
         fail(`journal directory contains an unsupported entry: ${name}`);
       }
       for (const identity of decisions) {
-        if (!identities.has(identity)) fail(`rollback decision ${identity} has no journal`);
+        if (!identities.has(identity)) fail(`terminal decision ${identity} has no journal`);
       }
       return Object.freeze(
         [...identities].sort().map((identity) => {
@@ -576,7 +609,10 @@ export function createFilePodmanBootstrapJournalStore(
     },
     authorizeRollback(
       bootstrapIdentity: string,
-      expected: readonly Exclude<PodmanBootstrapJournalPhase, "rollback-authorized">[],
+      expected: readonly Exclude<
+        PodmanBootstrapJournalPhase,
+        "rollback-authorized" | "commit-authorized" | "committed"
+      >[],
     ) {
       if (!Array.isArray(expected) || expected.length === 0) {
         fail("rollback authorization requires at least one expected phase");
@@ -594,7 +630,7 @@ export function createFilePodmanBootstrapJournalStore(
       } catch (error) {
         if (
           !(error instanceof PodmanBootstrapJournalExistsError) ||
-          readPrivateFile(decision, "rollback decision") !== "rollback-authorized\n"
+          readPrivateFile(decision, "terminal decision") !== "rollback-authorized\n"
         ) {
           throw error;
         }
@@ -606,6 +642,57 @@ export function createFilePodmanBootstrapJournalStore(
       atomicWrite(directory, target, serializePodmanBootstrapJournal(updated), false);
       return updated;
     },
+    authorizeCommit(
+      bootstrapIdentity: string,
+      expected: readonly Exclude<
+        PodmanBootstrapJournalPhase,
+        "rollback-authorized" | "commit-authorized" | "committed"
+      >[],
+    ) {
+      if (!Array.isArray(expected) || expected.length === 0) {
+        fail("commit authorization requires at least one expected phase");
+      }
+      assertDirectory(directory);
+      const target = journalPath(directory, bootstrapIdentity);
+      const current = load(bootstrapIdentity);
+      if (current?.phase === "commit-authorized" || current?.phase === "committed") return current;
+      if (!current || !expected.includes(current.phase as (typeof expected)[number])) {
+        fail(`commit authorization is not allowed from ${current?.phase ?? "absent"}`);
+      }
+      const decision = decisionPath(target);
+      try {
+        atomicWrite(directory, decision, "commit-authorized\n", true);
+      } catch (error) {
+        if (
+          !(error instanceof PodmanBootstrapJournalExistsError) ||
+          readPrivateFile(decision, "terminal decision") !== "commit-authorized\n"
+        ) {
+          throw error;
+        }
+      }
+      const updated = normalizePodmanBootstrapJournal({
+        ...current,
+        phase: "commit-authorized",
+      });
+      atomicWrite(directory, target, serializePodmanBootstrapJournal(updated), false);
+      return updated;
+    },
+    recordCommitted(bootstrapIdentity: string) {
+      assertDirectory(directory);
+      const target = journalPath(directory, bootstrapIdentity);
+      const current = load(bootstrapIdentity);
+      if (current?.phase === "committed") return current;
+      if (!current || current.phase !== "commit-authorized") {
+        fail(`commit recording requires commit-authorized, found ${current?.phase ?? "absent"}`);
+      }
+      const updated = normalizePodmanBootstrapJournal({ ...current, phase: "committed" });
+      atomicWrite(directory, target, serializePodmanBootstrapJournal(updated), false);
+      const persisted = load(bootstrapIdentity);
+      if (!persisted || !sameJournal(persisted, updated)) {
+        fail("committed runtime identity was not durably re-readable");
+      }
+      return persisted;
+    },
     removeAfterRollback(bootstrapIdentity: string) {
       assertDirectory(directory);
       const target = journalPath(directory, bootstrapIdentity);
@@ -614,7 +701,29 @@ export function createFilePodmanBootstrapJournalStore(
         fail(`rollback removal requires rollback-authorized, found ${current?.phase ?? "absent"}`);
       }
       const decision = decisionPath(target);
-      if (readPrivateFile(decision, "rollback decision") !== null) {
+      if (readPrivateFile(decision, "terminal decision") !== null) {
+        fs.unlinkSync(decision);
+        fsyncDirectory(directory);
+      }
+      fs.unlinkSync(target);
+      fsyncDirectory(directory);
+    },
+    removeAfterCommit(bootstrapIdentity: string) {
+      assertDirectory(directory);
+      const target = journalPath(directory, bootstrapIdentity);
+      const current = load(bootstrapIdentity);
+      if (!current || current.phase !== "committed") {
+        fail(`commit removal requires committed, found ${current?.phase ?? "absent"}`);
+      }
+      const decision = decisionPath(target);
+      const terminalDecision = readPrivateFile(decision, "terminal decision");
+      if (terminalDecision !== null && terminalDecision !== "commit-authorized\n") {
+        fail("commit removal requires its durable terminal decision");
+      }
+      // A committed journal is itself sufficient terminal authority. This
+      // makes compaction retryable after a crash between removing the decision
+      // file and removing the committed journal.
+      if (terminalDecision !== null) {
         fs.unlinkSync(decision);
         fsyncDirectory(directory);
       }

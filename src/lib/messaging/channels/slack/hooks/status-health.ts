@@ -32,7 +32,7 @@ export type SlackStatusHealthHookOptions = ChannelStatusHealthHookOptions;
 function canRunSlackProbe(inputs: MessagingHookInputMap | undefined): boolean {
   return (
     inputs?.channelEnabledInRegistry === true &&
-    inputs.presetInRegistry === true &&
+    inputs.presetApplied === true &&
     inputs.presetOnGateway === true
   );
 }
@@ -46,27 +46,29 @@ export function createSlackStatusHealthHook(
     const sandboxName = normalizeString(context.inputs?.currentSandbox);
     if (!execute || !sandboxName) return {};
 
-    const timeoutMs =
-      typeof options.timeoutMs === "number" &&
-      Number.isFinite(options.timeoutMs) &&
-      options.timeoutMs > 0
-        ? options.timeoutMs
-        : DEFAULT_CHANNEL_STATUS_HEALTH_TIMEOUT_MS;
-    const probe = canRunSlackProbe(context.inputs)
-      ? runSlackStatusProbe(execute, sandboxName, timeoutMs)
-      : UNREACHABLE_PROBE;
-    const report = evaluateSlackReadiness(context.inputs, probe);
-    return {
-      outputs: {
-        channelHealth: {
-          kind: "status",
-          value: {
-            type: MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE,
-            report,
-          } as unknown as MessagingSerializableValue,
+    return (async () => {
+      const timeoutMs =
+        typeof options.timeoutMs === "number" &&
+        Number.isFinite(options.timeoutMs) &&
+        options.timeoutMs > 0
+          ? options.timeoutMs
+          : DEFAULT_CHANNEL_STATUS_HEALTH_TIMEOUT_MS;
+      const probe = canRunSlackProbe(context.inputs)
+        ? await runSlackStatusProbe(execute, sandboxName, timeoutMs)
+        : UNREACHABLE_PROBE;
+      const report = evaluateSlackReadiness(context.inputs, probe);
+      return {
+        outputs: {
+          channelHealth: {
+            kind: "status",
+            value: {
+              type: MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE,
+              report,
+            } as unknown as MessagingSerializableValue,
+          },
         },
-      },
-    };
+      };
+    })();
   };
 }
 
@@ -93,14 +95,14 @@ const UNREACHABLE_PROBE: SlackStatusProbe = {
   lastTransitionAt: null,
 };
 
-function runSlackStatusProbe(
+async function runSlackStatusProbe(
   execute: NonNullable<SlackStatusHealthHookOptions["executeSandboxCommand"]>,
   sandboxName: string,
   timeoutMs: number,
-): SlackStatusProbe {
+): Promise<SlackStatusProbe> {
   let payload: unknown;
   try {
-    const result = execute(
+    const result = await execute(
       sandboxName,
       `openclaw channels status --channel slack --probe --json --timeout ${timeoutMs}`,
       timeoutMs,
@@ -138,7 +140,7 @@ function evaluateSlackReadiness(
     probedAt: normalizeString(inputs?.probedAt) ?? "",
     lastTransitionAt: probe.lastTransitionAt,
     channelEnabledInRegistry: Boolean(inputs?.channelEnabledInRegistry),
-    presetInRegistry: Boolean(inputs?.presetInRegistry),
+    presetApplied: Boolean(inputs?.presetApplied),
     presetOnGateway: normalizeBoolean(inputs?.presetOnGateway),
     probeReachable: probe.probeReachable,
     pluginConfigured: probe.pluginConfigured,
@@ -168,7 +170,7 @@ function evaluateSlackReadiness(
   const classify = (): ChannelReadiness => {
     if (!input.channelEnabledInRegistry)
       return result("terminal", "runtime", "channel_not_registered");
-    if (!input.presetInRegistry || input.presetOnGateway === false)
+    if (!input.presetApplied || input.presetOnGateway === false)
       return result("terminal", "policy", "policy_missing");
     if (input.presetOnGateway === null)
       return result("waiting", "network", "policy_status_unavailable");
@@ -237,7 +239,7 @@ function evaluateSlackReadiness(
   };
 
   const readiness = classify();
-  const policyMissing = !input.presetInRegistry || input.presetOnGateway === false;
+  const policyMissing = !input.presetApplied || input.presetOnGateway === false;
   const liveSignals = canProbe
     ? [
         runtimeSignal(),
@@ -276,7 +278,7 @@ function evaluateSlackReadiness(
       signal(
         "Policy coverage",
         policyMissing ? "fail" : input.presetOnGateway === true ? "ok" : "info",
-        !input.presetInRegistry
+        !input.presetApplied
           ? "slack preset not recorded for the sandbox"
           : input.presetOnGateway === false
             ? "slack preset missing from the OpenShell gateway"

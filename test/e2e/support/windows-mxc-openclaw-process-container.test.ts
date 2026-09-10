@@ -306,7 +306,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(
       createWindowsMxcOpenShellAttachmentObservationRequest(parsed, gatewayConfigPath),
     ).toEqual({
-      contractVersion: 2,
+      contractVersion: 3,
       providerId: "mxc",
       mode: "attach-existing",
       observedDistribution: {
@@ -552,17 +552,20 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     ).toThrow(/does not match/u);
   });
 
-  it("requires the OpenShell gateway path and ordered port argument pair (#8178)", () => {
+  it.each([
+    { name: "bare", portArguments: "--port 17670" },
+    { name: "quoted", portArguments: '"--port" "17670"' },
+  ])("requires the gateway path and ordered $name port arguments (#8178)", ({ portArguments }) => {
     const identity = {
-      commandLine: '"C:\\package\\openshell-gateway.exe" --port 17670 --disable-tls',
+      commandLine: `"C:\\package (release)\\openshell-gateway.exe" ${portArguments} --disable-tls`,
       creationDate: "20260804180000.000000-420",
-      executablePath: "C:\\package\\openshell-gateway.exe",
+      executablePath: "C:\\package (release)\\openshell-gateway.exe",
       parentProcessId: 40,
       processId: 41,
     };
     expect(() =>
       assertExpectedOpenShellGatewayProcessIdentity(identity, {
-        gatewayPath: "C:\\package\\openshell-gateway.exe",
+        gatewayPath: "C:\\package (release)\\openshell-gateway.exe",
         port: 17670,
       }),
     ).not.toThrow();
@@ -570,9 +573,9 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       assertExpectedOpenShellGatewayProcessIdentity(
         {
           ...identity,
-          commandLine: '"C:\\package\\openshell-gateway.exe" --disable-tls 17670 --port',
+          commandLine: '"C:\\package (release)\\openshell-gateway.exe" --disable-tls 17670 --port',
         },
-        { gatewayPath: "C:\\package\\openshell-gateway.exe", port: 17670 },
+        { gatewayPath: "C:\\package (release)\\openshell-gateway.exe", port: 17670 },
       ),
     ).toThrow(/does not match/u);
   });
@@ -762,20 +765,29 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(parseOpenClawHealthResult('{"ok":false}')).toBe(false);
     expect(
       parseOpenClawExactChatReply(
-        JSON.stringify({ status: "ok", result: { payloads: [{ text: "CHAT_OK" }] } }),
+        JSON.stringify({ status: "ok", result: { payloads: [{ text: "CHAT_OK" }], meta: {} } }),
       ),
     ).toBe(true);
     expect(
       parseOpenClawExactChatReply(
         JSON.stringify({
           status: "ok",
-          result: { payloads: [{ text: "CHAT_OK" }, { text: "extra" }] },
+          result: { payloads: [{ text: "CHAT_OK" }, { text: "extra" }], meta: {} },
         }),
       ),
     ).toBe(false);
     expect(
       parseOpenClawExactChatReply(
-        JSON.stringify({ status: "ok", result: { payloads: [{ text: "not exact" }] } }),
+        JSON.stringify({ status: "ok", result: { payloads: [{ text: "not exact" }], meta: {} } }),
+      ),
+    ).toBe(false);
+    expect(
+      parseOpenClawExactChatReply(
+        JSON.stringify({
+          status: "ok",
+          result: { payloads: [{ text: "CHAT_OK" }], meta: {} },
+          tool_calls: [{ function: { name: "read", arguments: "{}" } }],
+        }),
       ),
     ).toBe(false);
   });
@@ -1034,7 +1046,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     (text) => {
       expect(
         parseOpenClawExactChatReply(
-          JSON.stringify({ status: "ok", result: { payloads: [{ text }] } }),
+          JSON.stringify({ status: "ok", result: { payloads: [{ text }], meta: {} } }),
         ),
       ).toBe(false);
     },

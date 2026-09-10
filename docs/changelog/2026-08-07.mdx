@@ -13,7 +13,7 @@ It also improves Shields recovery, uninstall ownership, Hermes operations, netwo
   For more information, refer to [Understand Provider Validation](/user-guide/openclaw/inference/validate-inference/understand-provider-validation), [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), and [Additional Setup for Windows Machines](/user-guide/openclaw/get-started/additional-setup/windows-preparation).
 - Managed vLLM onboarding now accepts its authenticated loopback endpoint without requiring an unrelated trusted-private capability.
   Dual DGX Spark discovery accepts the filtered `ip neighbor` output produced by the host and names the failed rail check, while eligible native Linux ARM64 hosts can prove denylisted GPU names with the bounded Docker CUDA workload.
-  The experimental managed llama.cpp lifecycle also uses the exact loopback port declared by its selected recipe.
+  The experimental managed llama.cpp lifecycle also uses the loopback port declared by its selected recipe.
   For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), [Set Up vLLM on Two DGX Sparks](/user-guide/openclaw/inference/local-inference/set-up-vllm-on-two-dgx-sparks), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
 - Shields down can now recover an OpenClaw sandbox whose protected startup failed before readiness, but only after the installed guard proves that no startup child or readiness lease remains.
   Hermes Shields transitions now wait for the trusted inference route to converge and roll back the existing transaction when the bounded route check fails.

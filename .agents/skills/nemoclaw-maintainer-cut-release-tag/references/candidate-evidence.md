@@ -4,7 +4,7 @@
 # Candidate Evidence
 
 Candidate evidence is the release-specific evidence required for the planned candidate. Use the
-exact version and candidate from `plan.json`. These are read-only checks. Run every section before
+version and candidate from `plan.json`. These are read-only checks. Run every section before
 the general E2E decision. Keep the shell only until its evidence is copied into the release brief.
 
 ```bash
@@ -266,7 +266,7 @@ Record all of this evidence in the release brief:
 - the canonical release entry and path for a current-main plan; or
 - the plan-bound release-entry exception for a historical plan.
 
-Then offer exactly these choices:
+Then offer exactly these three choices:
 
 1. Proceed with the candidate as shown.
 2. Create or update a docs PR for the uncovered range.

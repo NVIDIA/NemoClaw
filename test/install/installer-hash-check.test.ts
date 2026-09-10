@@ -11,6 +11,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS,
+  V0072_CHECKSUM_MANIFESTS,
+  V0072_CONSUMED_ASSET_DIGESTS,
   V0099_ASSET_DIGESTS,
   V0099_CHECKSUM_MANIFESTS,
   V00101_ASSET_DIGESTS,
@@ -19,12 +22,21 @@ import {
   V00103_ASSET_DIGESTS,
   V00103_CHECKSUM_MANIFESTS,
   V00103_SANDBOX_BUILD_DIGESTS,
-  V00103_SUPERVISOR_MANIFEST_DIGEST,
   V00106_ASSET_DIGESTS,
   V00106_CHECKSUM_MANIFESTS,
   V00106_SANDBOX_BUILD_DIGESTS,
-  V00106_SUPERVISOR_MANIFEST_DIGEST,
+  V00116_ASSET_DIGESTS,
+  V00116_CHECKSUM_MANIFESTS,
+  V00116_SANDBOX_BUILD_DIGESTS,
+  v00116Pins,
 } from "../helpers/openshell-release-fixtures";
+import {
+  addV00106OperationalTrust,
+  installerReleaseTemplate,
+  removeV00106OperationalTrust,
+} from "../helpers/openshell-installer-template";
+
+import { selectPreparedGatewayRuntime } from "../helpers/prepared-gateway-runtime";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const INSTALLER_TEMPLATE = fs.readFileSync(
@@ -35,51 +47,18 @@ const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
-const SUPERVISOR_RUNTIME_TEMPLATE = fs.readFileSync(
-  path.join(REPO_ROOT, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
-  "utf8",
-);
-const ASSET_DIGESTS = new Map([
-  [
-    "openshell-x86_64-unknown-linux-musl.tar.gz",
-    "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4",
-  ],
-  [
-    "openshell-aarch64-unknown-linux-musl.tar.gz",
-    "a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045",
-  ],
-  [
-    "openshell-aarch64-apple-darwin.tar.gz",
-    "117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d",
-  ],
-  [
-    "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
-    "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877",
-  ],
-  [
-    "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
-    "a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108",
-  ],
-  [
-    "openshell-gateway-aarch64-apple-darwin.tar.gz",
-    "8c07362107393eb5f4ae4b9ee9f4257fd53862c51ad8dd96f2fe31bb6d8d7ffb",
-  ],
-  [
-    "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
-    "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230",
-  ],
-  [
-    "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
-    "2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0",
-  ],
-  ["openshell.rb", "4b75a7e3a7630eb8954d73ca828b394d5e0646adbaa4b087b2435329d53b61b3"],
-]);
+const ASSET_DIGESTS = V0072_CONSUMED_ASSET_DIGESTS;
 const FORMULA_ASSET = "openshell.rb";
 const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
-const SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST = `sha256:${"c".repeat(64)}`;
+const SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST =
+  INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS.get("9.9.9")!;
+const SYNTHETIC_SUPERVISOR_RUNTIME_TEMPLATE_SHA256 =
+  "c3c9df4f5764d4997881b5e2bd2989345b93db97f449fe611a9df75de17a9e2a";
 const SYNTHETIC_SANDBOX_BUILD_DIGESTS = ["a".repeat(64), "b".repeat(64)] as const;
 const ASSETS = [...ASSET_DIGESTS.keys()].filter((asset) => asset !== FORMULA_ASSET);
 const INSTALLER_ASSETS = [...ASSETS, FORMULA_ASSET];
+const SYNTHETIC_BREV_ASSETS = [ASSETS[0]];
+const SYNTHETIC_INSTALLER_ASSETS = [ASSETS[0], FORMULA_ASSET];
 const UNPUBLISHED_ASSET = "openshell-sandbox-aarch64-unknown-linux-gnu-unpublished.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_ASSET = "openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_DIGEST =
@@ -88,6 +67,11 @@ const OFFICIAL_UNEXPECTED_BREV_ASSET = "openshell-driver-vm-aarch64-unknown-linu
 const OFFICIAL_UNEXPECTED_BREV_DIGEST =
   "5e6ba04030938e7be21b8b83af9a34b888deffb4c65e7e70dd6845c3bc7e264f";
 const SYMLINK_INPUT_MARKER = "LEAK565";
+const STABLE_GNU_SANDBOX_SELECTOR = `    SANDBOX_LIBC="gnu"
+    if [ "$RESOLVED_CHANNEL" = "dev" ]; then
+      SANDBOX_LIBC="musl"
+    fi`;
+const STABLE_MUSL_SANDBOX_SELECTOR = '    SANDBOX_LIBC="musl"';
 type FixtureMode =
   | "allowlisted-alternate-version"
   | "brev-bypassed-comparison"
@@ -155,6 +139,7 @@ type FixtureMode =
   | "reviewed-release-cohorts"
   | "reviewed-release-cohorts-url-drift"
   | "secondary-installer-version-mismatch"
+  | "stable-gnu-v00116"
   | "symlink-installer-input"
   | "symlink-scripts-parent"
   | "duplicate-trusted-release"
@@ -368,6 +353,8 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
     source.replace(ASSETS.at(-1) ?? "missing", UNPUBLISHED_ASSET),
   "runtime-consumers-newer-than-tables": (source) =>
     source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.85"'),
+  "stable-gnu-v00116": (source) =>
+    source.replace(STABLE_MUSL_SANDBOX_SELECTOR, STABLE_GNU_SANDBOX_SELECTOR),
 };
 
 function addInstallerReleaseTable(
@@ -414,7 +401,6 @@ INSTALLER_MUTATIONS["reviewed-release-cohorts-url-drift"] = (source) =>
     "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name",
     "https://attacker.invalid/openshell/${RELEASE_TAG}/$name",
   );
-
 for (const mode of [
   "complete-multiple-installer-versions",
   "secondary-installer-version-mismatch",
@@ -467,51 +453,20 @@ const INPUT_MUTATIONS: Partial<Record<FixtureMode, (context: InputMutationContex
     fs.symlinkSync(scriptsTarget, candidateScriptsDir, "dir");
   },
 };
-const CHECKSUM_MANIFESTS = new Map([
-  [
-    "openshell-checksums-sha256.txt",
-    `37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4  openshell-x86_64-unknown-linux-musl.tar.gz
-a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045  openshell-aarch64-unknown-linux-musl.tar.gz
-117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d  openshell-aarch64-apple-darwin.tar.gz
-911dd804074c620b3ba353f17e39a8195222c0764072621a154164432d7906d0  openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz
-5e6ba04030938e7be21b8b83af9a34b888deffb4c65e7e70dd6845c3bc7e264f  openshell-driver-vm-aarch64-unknown-linux-gnu.tar.gz
-cdcdf0d0b5a231c0c7631787de014462093ffdeb5c85de853594fd215b0fa98a  openshell-driver-vm-aarch64-apple-darwin.tar.gz
-f4807cdaf3598c1fbcd0f35c888bf7f42210e1f4ab27700a1200d5bf80e56e9a  openshell_0.0.72-1_amd64.deb
-e38eca3badbba827c7342e2d738b277c8714081a54700ce4dc6c5395e1608d6b  openshell_0.0.72-1_arm64.deb
-626aa3c781027231a2085ebbdb5a4e2ae88c1c0977bfb1fd7ddaab501efe37c5  openshell-0.0.72-1.fc44.aarch64.rpm
-abca83026aa8192a82c54316e6f15f38583fdd59d936535d07fe7bb5e6824a32  openshell-0.0.72-1.fc44.x86_64.rpm
-cf349d3cd5fb5f05419ee088a4784206ce117af07f427e0667290955659c7530  openshell-gateway-0.0.72-1.fc44.aarch64.rpm
-523087b888d6641a1798c3400492028d5c236870f321ab87d28918e3ae523c20  openshell-gateway-0.0.72-1.fc44.x86_64.rpm
-fc590490e1a89c00b8f95b5449de9107cb9f070bd4a8cefb0f2389baf0d95f67  openshell-0.0.72-py3-none-macosx_13_0_arm64.whl
-e104152e6840dc2bed10856251ed6b3a020ed5f5550e735a325028a0990b475b  openshell-0.0.72-py3-none-manylinux_2_39_aarch64.whl
-c7feaca0c8c97ace952bd047408a91732fbcb298517481152d8e53d49c5fc88f  openshell-0.0.72-py3-none-manylinux_2_39_x86_64.whl
-`,
-  ],
-  [
-    "openshell-gateway-checksums-sha256.txt",
-    `03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz
-a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz
-8c07362107393eb5f4ae4b9ee9f4257fd53862c51ad8dd96f2fe31bb6d8d7ffb  openshell-gateway-aarch64-apple-darwin.tar.gz
-`,
-  ],
-  [
-    "openshell-sandbox-checksums-sha256.txt",
-    `811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz
-2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz
-`,
-  ],
-]);
+const CHECKSUM_MANIFESTS = V0072_CHECKSUM_MANIFESTS;
 const CHECKSUM_MANIFESTS_BY_VERSION = new Map([
   ["0.0.99", V0099_CHECKSUM_MANIFESTS],
   ["0.0.101", V00101_CHECKSUM_MANIFESTS],
   ["0.0.103", V00103_CHECKSUM_MANIFESTS],
   ["0.0.106", V00106_CHECKSUM_MANIFESTS],
+  ["0.0.116", V00116_CHECKSUM_MANIFESTS],
 ]);
 const ASSET_DIGESTS_BY_VERSION = new Map([
   ["0.0.99", V0099_ASSET_DIGESTS],
   ["0.0.101", V00101_ASSET_DIGESTS],
   ["0.0.103", V00103_ASSET_DIGESTS],
   ["0.0.106", V00106_ASSET_DIGESTS],
+  ["0.0.116", V00116_ASSET_DIGESTS],
 ]);
 const trustAlternateRelease = (source: string): string => {
   const digests = SYNTHETIC_SANDBOX_BUILD_DIGESTS;
@@ -537,10 +492,15 @@ const trustAlternateRelease = (source: string): string => {
     },
     installerTemplateSha256: [
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "ec5d942bf1b1af45ffbdb2c1ceeb8ede25a0169d9f856ad3a83577d81088ee37",
     ],
     manifests: [
 ${manifests}
     ],
+    pinLayout: {
+      brev: { assets: ["${SYNTHETIC_BREV_ASSETS.join('", "')}"], manifests: [] },
+      installer: { assets: ["${SYNTHETIC_INSTALLER_ASSETS.join('", "')}"], manifests: [] },
+    },
     sandboxBuilds: [
       { required: false, sha256: "${digests[0]}" },
       { required: false, sha256: "${digests[1]}" },
@@ -550,7 +510,7 @@ ${manifests}
       manifestDigest: "${SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST}",
       required: false,
       runtimeTemplateSha256: [
-        "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
+        "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
       ],
     },
     version: "9.9.9",
@@ -565,6 +525,15 @@ const removeFirstReleaseFormula = (source: string): string =>
     /    formula: \{\n      asset: "openshell\.rb",\n      sha256: "[a-f0-9]{64}",\n      url: "https:\/\/github\.com\/NVIDIA\/OpenShell\/releases\/download\/v0\.0\.72\/openshell\.rb",\n    \},/u,
     "    formula: undefined as never,",
   );
+const trustSyntheticSupervisorRuntimeTemplate = (source: string): string => {
+  const marker = "      runtimeTemplateSha256: [\n";
+  const result = source.replaceAll(
+    marker,
+    `${marker}        "${SYNTHETIC_SUPERVISOR_RUNTIME_TEMPLATE_SHA256}",\n`,
+  );
+  assert.notEqual(result, source, "synthetic supervisor runtime trust anchors");
+  return result;
+};
 const PARSER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
   "allowlisted-alternate-version": trustAlternateRelease,
   "duplicate-trusted-release": (source) =>
@@ -652,64 +621,8 @@ function replacePinFunction(
   return `${source.slice(0, start)}${replacement}${source.slice(next)}`;
 }
 
-function addV00106OperationalTrust(source: string): string {
-  const withIdentityCheck = source.replace(
-    "pinned_sandbox_build_version() {",
-    `is_pinned_openshell_v00106_linux_x86_64_install() {
-  local openshell_bin="$1"
-  local gateway_bin="$2"
-  local sandbox_bin="$3"
-  local openshell_sha gateway_sha sandbox_sha
-
-  [ "$OS" = "Linux" ] && [ "$ARCH_LABEL" = "x86_64" ] || return 1
-  openshell_sha="$(file_sha256 "$openshell_bin")" || return 1
-  gateway_sha="$(file_sha256 "$gateway_bin")" || return 1
-  sandbox_sha="$(file_sha256 "$sandbox_bin")" || return 1
-  [ "$openshell_sha" = "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59" ] \\
-    && [ "$gateway_sha" = "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c" ] \\
-    && [ "$sandbox_sha" = "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8" ]
-}
-
-pinned_sandbox_build_version() {`,
-  );
-  const capabilityMarker = "  # OpenShell #1865 has no authoritative CLI/RPC capability query yet.";
-  const result = withIdentityCheck.replace(
-    capabilityMarker,
-    `  # The v0.0.106 release binaries are stripped and no longer retain every
-  # source-level capability marker used by the development-build fallback
-  # below. Accept only the reviewed executable byte identities as the stable
-  # release capability proof; arbitrary binaries that merely report 0.0.106
-  # must still pass the fail-closed marker checks.
-  if is_pinned_openshell_v00106_linux_x86_64_install \\
-    "$openshell_bin" "$gateway_bin" "$sandbox_bin"; then
-    return 0
-  fi
-
-${capabilityMarker}`,
-  );
-  expect(withIdentityCheck, "v0.0.106 executable identity helper").not.toBe(source);
-  expect(result, "v0.0.106 capability proof").not.toBe(withIdentityCheck);
-  return result;
-}
-
-function removeV00106OperationalTrust(source: string): string {
-  const identityStart = source.indexOf("is_pinned_openshell_v00106_linux_x86_64_install() {");
-  const sandboxStart = source.indexOf("pinned_sandbox_build_version() {", identityStart);
-  expect([identityStart, sandboxStart], "v0.0.106 helper boundaries").not.toContain(-1);
-  const withoutIdentity = `${source.slice(0, identityStart)}${source.slice(sandboxStart)}`;
-  const capabilityStart = withoutIdentity.indexOf(
-    "  # The v0.0.106 release binaries are stripped and no longer retain every",
-  );
-  const fallbackStart = withoutIdentity.indexOf(
-    "  # OpenShell #1865 has no authoritative CLI/RPC capability query yet.",
-    capabilityStart,
-  );
-  expect([capabilityStart, fallbackStart], "v0.0.106 proof boundaries").not.toContain(-1);
-  return `${withoutIdentity.slice(0, capabilityStart)}${withoutIdentity.slice(fallbackStart)}`;
-}
-
 function renderInstallerTemplate(openshellVersion: string, pinFunction: string): string {
-  const selected = INSTALLER_TEMPLATE.replaceAll("test/install/", "test/")
+  const selected = installerReleaseTemplate(INSTALLER_TEMPLATE, openshellVersion)
     .replace(/^MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m, `MIN_VERSION="${openshellVersion}"`)
     .replace(/^MAX_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m, `MAX_VERSION="${openshellVersion}"`)
     .replace(
@@ -728,14 +641,18 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
         ? withPinFunction
         : addV00106OperationalTrust(withPinFunction)
       : removeV00106OperationalTrust(withPinFunction);
-  const sandboxFunctionStart = operationalTemplate.indexOf("pinned_sandbox_build_version() {");
-  const sandboxFunctionEnd = operationalTemplate.indexOf(
+  const releaseTemplate =
+    openshellVersion === "0.0.116"
+      ? operationalTemplate.replace(STABLE_GNU_SANDBOX_SELECTOR, STABLE_MUSL_SANDBOX_SELECTOR)
+      : operationalTemplate;
+  const sandboxFunctionStart = releaseTemplate.indexOf("pinned_sandbox_build_version() {");
+  const sandboxFunctionEnd = releaseTemplate.indexOf(
     "\ncomponent_build_version() {",
     sandboxFunctionStart,
   );
   expect(sandboxFunctionStart, "sandbox build map template start").not.toBe(-1);
   expect(sandboxFunctionEnd, "sandbox build map template end").not.toBe(-1);
-  const sandboxFunction = operationalTemplate.slice(sandboxFunctionStart, sandboxFunctionEnd);
+  const sandboxFunction = releaseTemplate.slice(sandboxFunctionStart, sandboxFunctionEnd);
   const hasSandboxBuild = sandboxFunction.includes(`printf '%s\\n' "${openshellVersion}"`);
   const selectedDigests =
     openshellVersion === "0.0.101"
@@ -744,13 +661,15 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
         ? V00103_SANDBOX_BUILD_DIGESTS
         : openshellVersion === "0.0.106"
           ? V00106_SANDBOX_BUILD_DIGESTS
-          : openshellVersion === "9.9.9"
-            ? SYNTHETIC_SANDBOX_BUILD_DIGESTS
-            : undefined;
+          : openshellVersion === "0.0.116"
+            ? V00116_SANDBOX_BUILD_DIGESTS
+            : openshellVersion === "9.9.9"
+              ? SYNTHETIC_SANDBOX_BUILD_DIGESTS
+              : undefined;
   expect(hasSandboxBuild || selectedDigests, `sandbox fixture ${openshellVersion}`).toBeTruthy();
   return hasSandboxBuild
-    ? operationalTemplate
-    : addSandboxBuildPins(operationalTemplate, openshellVersion, selectedDigests!);
+    ? releaseTemplate
+    : addSandboxBuildPins(releaseTemplate, openshellVersion, selectedDigests!);
 }
 
 function renderBrevTemplate(openshellVersion: string, pinFunction: string): string {
@@ -767,29 +686,15 @@ function renderBrevTemplate(openshellVersion: string, pinFunction: string): stri
 }
 
 function renderSupervisorRuntime(openshellVersion: string): string {
-  const hasManifestIdentity = SUPERVISOR_RUNTIME_TEMPLATE.includes(
-    `  "${openshellVersion}": "sha256:`,
-  );
-  const manifestDigest =
-    openshellVersion === "0.0.103"
-      ? V00103_SUPERVISOR_MANIFEST_DIGEST
-      : openshellVersion === "0.0.106"
-        ? V00106_SUPERVISOR_MANIFEST_DIGEST
-        : openshellVersion === "9.9.9"
-          ? SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST
-          : undefined;
-  expect(
-    hasManifestIdentity || manifestDigest,
-    `supervisor fixture ${openshellVersion}`,
-  ).toBeTruthy();
-  return hasManifestIdentity
-    ? SUPERVISOR_RUNTIME_TEMPLATE
-    : SUPERVISOR_RUNTIME_TEMPLATE.replace(
-        "const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {\n",
-        `const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
-  "${openshellVersion}": "${manifestDigest}",
-`,
-      );
+  assert(INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS.has(openshellVersion));
+  const pins = [...INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS]
+    .filter(([version]) => version !== "9.9.9" || openshellVersion === version)
+    .map(([version, digest]) => `  "${version}": "${digest}",`)
+    .join("\n");
+  return `const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
+${pins}
+};
+`;
 }
 
 function createFixture(
@@ -799,6 +704,20 @@ function createFixture(
   const checksumManifests =
     CHECKSUM_MANIFESTS_BY_VERSION.get(openshellVersion) ?? CHECKSUM_MANIFESTS;
   const assetDigests = ASSET_DIGESTS_BY_VERSION.get(openshellVersion) ?? ASSET_DIGESTS;
+  const installerPins = openshellVersion === "0.0.116" ? v00116Pins("installer") : undefined;
+  const brevPins = openshellVersion === "0.0.116" ? v00116Pins("Brev launchable") : undefined;
+  const installerAssets =
+    installerPins?.map(({ asset }) => asset) ??
+    (openshellVersion === "9.9.9" ? SYNTHETIC_INSTALLER_ASSETS : INSTALLER_ASSETS);
+  const brevAssets =
+    brevPins?.map(({ asset }) => asset) ??
+    (openshellVersion === "9.9.9" ? SYNTHETIC_BREV_ASSETS : ASSETS.slice(0, 2));
+  const installerDigests = installerPins
+    ? new Map(installerPins.map(({ asset, sha256 }) => [asset, sha256]))
+    : assetDigests;
+  const brevDigests = brevPins
+    ? new Map(brevPins.map(({ asset, sha256 }) => [asset, sha256]))
+    : assetDigests;
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-hash-"));
   const scriptsDir = path.join(fixtureRoot, "scripts");
   const checksDir = path.join(scriptsDir, "checks");
@@ -815,9 +734,14 @@ function createFixture(
     "utf8",
   );
   fs.writeFileSync(path.join(scriptsDir, "check-installer-hash.sh"), checker);
-  fs.copyFileSync(
-    path.join(REPO_ROOT, "scripts", "checks", "extract-installer-pins.mts"),
+  fs.writeFileSync(
     path.join(checksDir, "extract-installer-pins.mts"),
+    trustSyntheticSupervisorRuntimeTemplate(
+      fs.readFileSync(
+        path.join(REPO_ROOT, "scripts", "checks", "extract-installer-pins.mts"),
+        "utf8",
+      ),
+    ),
   );
 
   fs.writeFileSync(
@@ -834,10 +758,10 @@ function createFixture(
       openshellVersion,
       renderPinFunction(
         "openshell_pinned_sha256",
-        INSTALLER_ASSETS,
+        installerAssets,
         openshellVersion,
         formatting,
-        assetDigests,
+        installerDigests,
       ),
     ),
   );
@@ -847,10 +771,10 @@ function createFixture(
       openshellVersion,
       renderPinFunction(
         "openshell_cli_pinned_sha256",
-        ASSETS.slice(0, 2),
+        brevAssets,
         openshellVersion,
         formatting,
-        assetDigests,
+        brevDigests,
       ),
     ),
   );
@@ -972,9 +896,11 @@ function runFixture(
   );
   const parserSource = fs.readFileSync(trustedParserPath, "utf8");
   const mutateParser = PARSER_MUTATIONS[mode];
-  const parserResult = mutateParser?.(parserSource) ?? parserSource;
-  expect(parserResult === parserSource, `parser mutation ${mode}`).toBe(mutateParser === undefined);
-  fs.writeFileSync(trustedParserPath, parserResult);
+  const mutatedParserSource = mutateParser?.(parserSource) ?? parserSource;
+  expect(mutatedParserSource === parserSource, `parser mutation ${mode}`).toBe(
+    mutateParser === undefined,
+  );
+  fs.writeFileSync(trustedParserPath, trustSyntheticSupervisorRuntimeTemplate(mutatedParserSource));
   fs.writeFileSync(
     targetChecker,
     trustedChecker
@@ -1133,6 +1059,7 @@ describe("installer hash verification", () => {
     ["0.0.101", V00101_CHECKSUM_MANIFESTS, V00101_ASSET_DIGESTS],
     ["0.0.103", V00103_CHECKSUM_MANIFESTS, V00103_ASSET_DIGESTS],
     ["0.0.106", V00106_CHECKSUM_MANIFESTS, V00106_ASSET_DIGESTS],
+    ["0.0.116", V00116_CHECKSUM_MANIFESTS, V00116_ASSET_DIGESTS],
   ] as const)(
     "accepts the complete trusted OpenShell %s release identity",
     (version, manifests, assets) => {
@@ -1140,7 +1067,64 @@ describe("installer hash verification", () => {
     },
   );
 
-  it("selects a second complete trusted release from the allowlist", () => {
+  it.each(["0.0.72", "0.0.99", "0.0.101", "0.0.103", "0.0.106", "0.0.116"])(
+    "accepts the gateway-preparation template with the selected OpenShell %s release (#11212)",
+    (version) => {
+      const root = createFixture(version);
+      const runtimePath = "src/lib/onboard/docker-driver-gateway-runtime.ts";
+      const candidatePins = fs.readFileSync(path.join(root, runtimePath), "utf8");
+      const source = fs.readFileSync(path.join(REPO_ROOT, runtimePath), "utf8");
+      const prepared = selectPreparedGatewayRuntime(source).replace(
+        /const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{[\s\S]*?\n\};/,
+        candidatePins.trim(),
+      );
+      fs.writeFileSync(path.join(root, runtimePath), prepared);
+      const result = spawnSync(
+        "node",
+        [
+          "--no-warnings",
+          path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts"),
+          "--blueprint",
+          path.join(root, "nemoclaw-blueprint/blueprint.yaml"),
+          "--installer",
+          path.join(root, "scripts/install-openshell.sh"),
+          "--brev-installer",
+          path.join(root, "scripts/brev-launchable-ci-cpu.sh"),
+          "--supervisor-runtime",
+          path.join(root, runtimePath),
+          "--format",
+          "tsv",
+        ],
+        { encoding: "utf8" },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(version);
+    },
+  );
+
+  it("rejects v0.0.116 pins when the stable selector requests a GNU sandbox (#10790)", () => {
+    const result = runFixture("stable-gnu-v00116", "0.0.116", true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("installer operational template is not base-trusted");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it.each([
+    ["installer", "installer-changed-url", "installer operational template"],
+    ["Brev launchable", "brev-changed-url", "Brev launchable operational template"],
+  ] as const)(
+    "rejects an operational mutation of the base-trusted v0.0.116 %s fixture",
+    (_consumer, mode, diagnostic) => {
+      const result = runFixture(mode, "0.0.116", true);
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain(`${diagnostic} is not base-trusted`);
+      expect(result.stdout).not.toContain("All installer hashes are current");
+    },
+  );
+
+  it("accepts a base-trusted release with non-default consumer cardinality", () => {
     const result = runFixture("allowlisted-alternate-version", "9.9.9", true);
 
     expect(result.status).toBe(0);

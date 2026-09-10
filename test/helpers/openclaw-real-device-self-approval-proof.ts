@@ -1509,10 +1509,7 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
     fs.mkdirSync(portableControllerBin);
     fs.writeFileSync(
       path.join(portableControllerBin, "openclaw"),
-      [
-        "#!/bin/sh",
-        'exec "$NEMOCLAW_PROOF_NODE" "$NEMOCLAW_PROOF_OPENCLAW" "$@"',
-      ].join("\n"),
+      ["#!/bin/sh", 'exec "$NEMOCLAW_PROOF_NODE" "$NEMOCLAW_PROOF_OPENCLAW" "$@"'].join("\n"),
       { mode: 0o700 },
     );
     const controllerEnv: NodeJS.ProcessEnv = {
@@ -1539,7 +1536,6 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       name: "portable-controller-proof",
       agent: "openclaw",
       agentVersion: options.version,
-      policyPresetsFinalized: true,
       lifecycleGeneration: "portable-controller-generation",
       lifecycleLiveIdentityFingerprint: "portable-controller-live-identity",
       gatewayName: resolveGatewayName(port),
@@ -1616,11 +1612,7 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
             ),
           runPortablePairingProducer: (sandboxName, gatewayName) => {
             producerCalls += 1;
-            runPortableOpenClawPairingRequestProducer(
-              sandboxName,
-              gatewayName,
-              controllerExecDeps,
-            );
+            runPortableOpenClawPairingRequestProducer(sandboxName, gatewayName, controllerExecDeps);
           },
           runPortablePairingApproval: (_sandboxName, _gatewayName, _expectedIdentity) => {
             approvalCalls += 1;
@@ -2188,14 +2180,10 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
 }
 
 export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptions): Promise<void> {
-  const patch = spawnSync(
-    options.nodeExecutable,
-    ["--experimental-strip-types", options.patchScript, options.dist],
-    {
-      encoding: "utf8",
-      timeout: options.timeoutMs,
-    },
-  );
+  const patch = spawnSync(options.nodeExecutable, [options.patchScript, options.dist], {
+    encoding: "utf8",
+    timeout: options.timeoutMs,
+  });
   requireSuccess(patch, "apply bounded device self-approval patch");
   requireIncludes(
     patch.stdout,
@@ -2203,14 +2191,10 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     "device self-approval patch output",
   );
 
-  const audit = spawnSync(
-    options.nodeExecutable,
-    ["--experimental-strip-types", options.patchScript, "--audit", options.dist],
-    {
-      encoding: "utf8",
-      timeout: options.timeoutMs,
-    },
-  );
+  const audit = spawnSync(options.nodeExecutable, [options.patchScript, "--audit", options.dist], {
+    encoding: "utf8",
+    timeout: options.timeoutMs,
+  });
   requireSuccess(audit, "audit bounded device self-approval patch");
   for (const marker of [
     "gateway call device-identity runtime:",

@@ -49,7 +49,7 @@ The scenarios enable provider-derived policy and restore its prior setting.
 They exchange a refresh token through a public HTTPS OAuth endpoint and prove that the sandbox sees only opaque placeholders.
 They prove that a child launched after rotation receives a different revision-scoped placeholder and that the protected resource receives both bearers.
 They also check secret-free plan, status, state, logs, request ledgers, and ownership-aware rollback.
-`TC-INF-13` additionally uses the Entra v2 token-path shape, `ENTRA_ACCESS_TOKEN`, and the exact Microsoft Graph `GET /v1.0/me` credential-delivery rule.
+`TC-INF-13` additionally uses the Entra v2 token-path shape, `ENTRA_ACCESS_TOKEN`, and the Microsoft Graph `GET /v1.0/me` credential-delivery rule.
 It proves that a `GET /v1.0/users` request is rejected before its bearer reaches the fixture.
 The deterministic fixture proves the complete Entra-shaped runtime path without storing a third-party tenant credential in pull-request CI; tenant acceptance remains a maintainer-run check against Microsoft Entra and Graph.
 
@@ -73,7 +73,7 @@ This check prevents an attachment whose provider-derived network policy and cred
 
 Copy `nemoclaw-blueprint/provider-profiles/okta-runtime-v1.yaml` into your blueprint as `provider-profiles/acme-okta-runtime.yaml`.
 You may choose another tenant-specific filename.
-Set `profile_path` to that exact relative path.
+Set `profile_path` to that relative path.
 
 Set `token_url` to the tenant's authorization-server token endpoint.
 Replace `api.example.okta.com` with the approved upstream API host.
@@ -144,7 +144,7 @@ OpenShell retains the refresh material in the gateway credential store until rol
 
 Copy `nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml` into your blueprint as `provider-profiles/acme-entra-runtime.yaml`.
 Replace `organizations` in `token_url` with the Directory (tenant) ID for the application registration.
-The built-in policy accepts only the exact `login.microsoftonline.com` token issuer and `graph.microsoft.com` resource host.
+The built-in policy accepts only the `login.microsoftonline.com` token issuer and `graph.microsoft.com` resource host.
 It does not admit national-cloud endpoints or tenant-controlled custom domains.
 Bearer delivery is restricted to exactly `GET /v1.0/me`.
 
@@ -205,7 +205,7 @@ During plan, the runner reports only the provider type, provider name, and crede
 It does not report secret material.
 
 During apply, the runner inspects the target sandbox before identity mutation.
-It requires either the exact sandbox name in the `Ready` phase or an explicit sandbox-not-found result.
+It requires either the sandbox name in the `Ready` phase or an explicit sandbox-not-found result.
 If sandbox creation races with another creator, the runner repeats the same inspection.
 It inspects the sandbox again after inference routing and immediately before identity attachment.
 If the sandbox changed, the runner compensates without attachment.
@@ -222,7 +222,7 @@ The runner validates an existing provider's non-secret binding to report a preci
 It never reuses that provider because OpenShell does not expose a secret-safe snapshot that rollback could restore.
 
 Only an absent provider proceeds to profile import.
-When the profile is already registered, the runner first requires an exact export match.
+When the profile is already registered, the runner first requires an export match.
 It then creates the provider, configures gateway-managed OAuth refresh, and performs the initial token rotation.
 
 Before attachment, the runner creates or reuses the configured inference provider.

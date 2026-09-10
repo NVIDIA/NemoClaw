@@ -20,6 +20,7 @@ export interface StreamSandboxCreateResult {
   output: string;
   sawProgress: boolean;
   forcedReady?: boolean;
+  readyTerminationTimedOut?: boolean;
 }
 
 export interface StreamSandboxCreateOptions {
@@ -446,7 +447,7 @@ export function streamSandboxCreate(
               readyTerminationTimer = setTimeout(() => {
                 lines.push("OpenShell create client did not exit after Ready; aborting cutover.");
                 terminateChild("SIGKILL");
-                finish(1);
+                finish(1, { readyTerminationTimedOut: true });
               }, READY_TERMINATION_TIMEOUT_MS);
               readyTerminationTimer.unref?.();
               sawProgress = true;

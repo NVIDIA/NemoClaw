@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 
 import * as dockerRunNamespace from "../../../src/lib/adapters/docker/run.ts";
 import * as openshellRuntimeNamespace from "../../../src/lib/adapters/openshell/runtime.ts";
+import * as sandboxCommandCliNamespace from "../../../src/lib/adapters/openshell/sandbox-command-cli.ts";
 import * as managedBootstrapAdapterNamespace from "../../../src/lib/onboard/managed-bootstrap/adapter.ts";
 import * as dockerGpuPatchCloneNamespace from "../../../src/lib/onboard/docker-gpu-patch-clone.ts";
 import type {
@@ -59,6 +60,11 @@ const openshellRuntime = (
     ? openshellRuntimeNamespace.default
     : openshellRuntimeNamespace
 ) as typeof import("../../../src/lib/adapters/openshell/runtime.ts");
+const { createCliOpenShellSandboxCommandExecutor } = (
+  "default" in sandboxCommandCliNamespace
+    ? sandboxCommandCliNamespace.default
+    : sandboxCommandCliNamespace
+) as typeof import("../../../src/lib/adapters/openshell/sandbox-command-cli.ts");
 
 type StartupCommandRecreate = typeof recreateOpenShellDockerSandboxWithStartupCommand;
 type DockerCapture = NonNullable<DockerGpuPatchDeps["dockerCapture"]>;
@@ -76,6 +82,7 @@ export type LegacyKeepaliveHandoffReceipt = {
 };
 
 export type LegacyKeepaliveFixtureDeps = {
+  commandExecutor: NonNullable<DockerGpuPatchDeps["commandExecutor"]>;
   recreate: StartupCommandRecreate;
   dockerCapture: DockerCapture;
   runOpenshell: NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
@@ -83,6 +90,7 @@ export type LegacyKeepaliveFixtureDeps = {
 };
 
 const defaultDeps: LegacyKeepaliveFixtureDeps = {
+  commandExecutor: createCliOpenShellSandboxCommandExecutor(),
   recreate: recreateOpenShellDockerSandboxWithStartupCommand,
   dockerCapture: defaultDockerCapture,
   runOpenshell: openshellRuntime.runOpenshell,
@@ -105,16 +113,12 @@ function isLegacyKeepaliveHandoffReceiptCandidate(
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    ["oldContainerId", "newContainerId", "startupCommand"].some((key) =>
-      Object.hasOwn(value, key),
-    )
+    ["oldContainerId", "newContainerId", "startupCommand"].some((key) => Object.hasOwn(value, key))
   );
 }
 
 /** Read one final machine receipt without treating recreation progress as JSON. */
-export function parseLegacyKeepaliveHandoffReceipt(
-  output: string,
-): LegacyKeepaliveHandoffReceipt {
+export function parseLegacyKeepaliveHandoffReceipt(output: string): LegacyKeepaliveHandoffReceipt {
   const lines = output
     .split(/\r?\n/u)
     .map((line) => line.trim())
@@ -310,10 +314,10 @@ function legacyKeepaliveDockerCapture(
   };
 }
 
-export function createLegacyKeepaliveFixture(
+export async function createLegacyKeepaliveFixture(
   options: LegacyKeepaliveFixtureOptions,
   deps: Partial<LegacyKeepaliveFixtureDeps> = defaultDeps,
-): ReturnType<StartupCommandRecreate> {
+): Promise<Awaited<ReturnType<StartupCommandRecreate>>> {
   requireFixtureInput(options.sandboxName.trim() !== "", "sandbox name is required");
   requireFixtureInput(
     DOCKER_CONTAINER_ID_PATTERN.test(options.expectedContainerId),
@@ -324,7 +328,7 @@ export function createLegacyKeepaliveFixture(
   const dockerCapture = deps.dockerCapture ?? defaultDeps.dockerCapture;
   const runOpenshell = deps.runOpenshell ?? defaultDeps.runOpenshell;
   const runCaptureOpenshell = deps.runCaptureOpenshell ?? defaultDeps.runCaptureOpenshell;
-  const result = recreate(
+  const result = await recreate(
     {
       sandboxName: options.sandboxName,
       expectedOldContainerId: options.expectedContainerId,
@@ -332,6 +336,7 @@ export function createLegacyKeepaliveFixture(
       timeoutSecs: options.timeoutSecs ?? DEFAULT_RECREATE_TIMEOUT_SECS,
     },
     {
+      commandExecutor: deps.commandExecutor ?? defaultDeps.commandExecutor,
       dockerCapture: legacyKeepaliveDockerCapture(options.expectedContainerId, dockerCapture),
       runCaptureOpenshell,
       runOpenshell,
@@ -357,13 +362,13 @@ export function createLegacyKeepaliveFixture(
   return result;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const [sandboxName, expectedContainerId, ...extraArgs] = process.argv.slice(2);
   requireFixtureInput(
     sandboxName !== undefined && expectedContainerId !== undefined && extraArgs.length === 0,
     "usage: gateway-guard-legacy-keepalive-fixture <sandbox-name> <container-id>",
   );
-  const result = createLegacyKeepaliveFixture({ sandboxName, expectedContainerId });
+  const result = await createLegacyKeepaliveFixture({ sandboxName, expectedContainerId });
   process.stdout.write(
     `${JSON.stringify({
       oldContainerId: result.oldContainerId,
@@ -377,11 +382,9 @@ const invokedAsScript =
   process.argv[1] !== undefined &&
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 if (invokedAsScript) {
-  try {
-    main();
-  } catch (error: unknown) {
+  main().catch((error: unknown) => {
     const detail = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${redactString(detail)}\n`);
     process.exitCode = 1;
-  }
+  });
 }

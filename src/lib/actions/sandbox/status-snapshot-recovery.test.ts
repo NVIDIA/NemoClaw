@@ -11,7 +11,6 @@ import { collectSandboxStatusSnapshot, getSandboxStatusReport } from "./status-s
 const sandbox: SandboxEntry = {
   name: "alpha",
   agent: "openclaw",
-  policies: [],
   provider: "nvidia",
   model: "nvidia/nemotron",
   openshellDriver: "docker",
@@ -33,6 +32,12 @@ const clearPreflight: SandboxStatusPreflightResult = {
   failureLayer: null,
   suppressInferenceProbe: false,
   exitCode: 0,
+};
+
+const intentionalStopPreflight: SandboxStatusPreflightResult = {
+  ...clearPreflight,
+  intentionalStopConfirmed: true,
+  suppressInferenceProbe: true,
 };
 
 const conflictPreflight: SandboxStatusPreflightResult = {
@@ -74,8 +79,8 @@ function snapshotDeps(recoveryResult: unknown) {
     },
     probeProviderHealthImpl,
     probeSandboxInferenceGatewayHealthImpl,
-    probeSandboxInferenceInvocationImpl: vi.fn(() => ({ ok: true }) as const),
-    recoverSandboxProcesses: vi.fn(() => recoveryResult) as never,
+    probeSandboxInferenceInvocationImpl: vi.fn(async () => ({ ok: true }) as const),
+    recoverSandboxProcesses: vi.fn(async () => recoveryResult) as never,
   };
 }
 
@@ -177,6 +182,33 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
     expect(snapshot.lookup.state).toBe("present");
   });
 
+  it("does not recover delivery after provider-confirmed intentional stop (#11025)", async () => {
+    const deps = {
+      ...snapshotDeps({
+        checked: true,
+        wasRunning: false,
+        recovered: true,
+        forwardRecovered: true,
+      }),
+      reconcile: () =>
+        Promise.resolve({
+          state: "present" as const,
+          phase: "Ready",
+          output: "Phase: Ready",
+        }),
+    };
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps,
+      preflight: intentionalStopPreflight,
+    });
+
+    expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
+    expect(snapshot.lookup.state).toBe("present");
+    expect(snapshot.inferenceHealth).toBeNull();
+    expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       "inspection",
@@ -196,17 +228,6 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
         forwardRecovered: false,
         secretBoundaryRefused: true,
         secretBoundaryReason: "persisted secret boundary refused recovery",
-      },
-    ],
-    [
-      "mcp-reconciliation",
-      {
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        mcpReconciliationRefused: true,
-        mcpReconciliationReason: "MCP intent mismatch",
       },
     ],
     [

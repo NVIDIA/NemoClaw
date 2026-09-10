@@ -232,6 +232,7 @@ function normalizeStartupReceipt(
   runtime: HostLocalInferenceRuntime,
   request: HostLocalInferenceStartupRequest,
   receipt: HostLocalInferenceReceipt,
+  authorityMode: "current" | "published-recovery" = "current",
 ): HostLocalInferenceReceipt {
   const normalized = normalizeHostLocalInferenceReceipt(receipt);
   if (request.service === "llama-cpp") {
@@ -284,15 +285,17 @@ function normalizeStartupReceipt(
       "devices" in normalized.runtime.gpu &&
       canonicalGpuDevices(normalized.runtime.gpu.devices) ===
         canonicalGpuDevices(request.managed.gpuDevices);
+  const currentEngineMatchesReceipt =
+    normalized.engineAuthority.authorityId === operation.engine.authorityId &&
+    normalized.engineAuthority.authorityId === runtime.authorityId &&
+    normalized.engineAuthority.bindingSha256 === operation.bindingSha256;
   if (
     normalized.providerId !== operation.providerId ||
     normalized.providerId !== runtime.providerId ||
     normalized.engineAuthority.providerId !== operation.providerId ||
     normalized.engineAuthority.operation !== "host-local-inference" ||
     normalized.engineAuthority.engineId !== operation.engine.engineId ||
-    normalized.engineAuthority.authorityId !== operation.engine.authorityId ||
-    normalized.engineAuthority.authorityId !== runtime.authorityId ||
-    normalized.engineAuthority.bindingSha256 !== operation.bindingSha256 ||
+    (authorityMode === "current" && !currentEngineMatchesReceipt) ||
     normalized.service !== request.service ||
     !endpointMatches ||
     !runtimeMatches ||
@@ -352,9 +355,10 @@ function providerBaseUrl(receipt: HostLocalInferenceReceipt): string {
   return `http://${receipt.endpoint.host}:${String(receipt.endpoint.port)}/v1`;
 }
 
-export function prepareHostLocalInferenceStartup(
+function prepareHostLocalInferenceStartupWithAuthority(
   operation: HostLocalInferenceOperation,
   request: HostLocalInferenceStartupRequest,
+  authorityMode: "current" | "published-recovery",
 ): HostLocalInferenceStartupRoute {
   requireApplication(request.application);
   operation.assertAuthority();
@@ -423,7 +427,7 @@ export function prepareHostLocalInferenceStartup(
   }
   let receipt: HostLocalInferenceReceipt;
   try {
-    receipt = normalizeStartupReceipt(operation, runtime, request, prepared.receipt);
+    receipt = normalizeStartupReceipt(operation, runtime, request, prepared.receipt, authorityMode);
   } catch (error) {
     try {
       rollbackRejectedStartup(prepared);
@@ -470,6 +474,34 @@ export function prepareHostLocalInferenceStartup(
     gatewayProviderBaseUrl: providerBaseUrl(receipt),
     applicationBaseUrl: HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
   });
+}
+
+export function prepareHostLocalInferenceStartup(
+  operation: HostLocalInferenceOperation,
+  request: HostLocalInferenceStartupRequest,
+): HostLocalInferenceStartupRoute {
+  return prepareHostLocalInferenceStartupWithAuthority(operation, request, "current");
+}
+
+/**
+ * Resume one already-published Hermes Portable Ollama runtime. Its provider
+ * owns the immutable creation authority while the operation owns the current
+ * execution endpoint. No other startup shape may use this split.
+ */
+export function prepareHermesPortablePublishedHostLocalInferenceStartup(
+  operation: HostLocalInferenceOperation,
+  request: HostLocalInferenceStartupRequest,
+): HostLocalInferenceStartupRoute {
+  if (
+    request.application !== "hermes" ||
+    request.service !== "ollama" ||
+    isHostOllamaRequest(request) ||
+    request.resumeReceipt === undefined ||
+    request.recover === true
+  ) {
+    throw new Error("Hermes Portable published inference recovery authority is invalid.");
+  }
+  return prepareHostLocalInferenceStartupWithAuthority(operation, request, "published-recovery");
 }
 
 export function hostLocalInferenceApplicationBaseUrl(

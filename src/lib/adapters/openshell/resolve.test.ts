@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PodmanExecutableStat } from "../podman/executable-authority";
-import { resolveOpenshell } from "./resolve";
+import { openshellNotFoundDiagnosticLines, resolveOpenshell } from "./resolve";
 import {
   assertHermesPortableOpenShellExecutableAuthority,
   captureHermesPortableOpenShellExecutableAuthority,
@@ -19,11 +19,7 @@ function executableAuthorityHarness() {
   let executableInode = 10n;
   let executableBytes = Buffer.from("openshell-binary");
   let parentInode = 20n;
-  const stat = (
-    kind: "directory" | "file",
-    inode: bigint,
-    size = 0n,
-  ): PodmanExecutableStat => ({
+  const stat = (kind: "directory" | "file", inode: bigint, size = 0n): PodmanExecutableStat => ({
     dev: 1n,
     ino: inode,
     mode: kind === "file" ? 0o100755n : 0o40755n,
@@ -170,6 +166,17 @@ describe("lib/resolve-openshell", () => {
     ).toBeNull();
   });
 
+  it("lists every fallback candidate when OpenShell is unavailable (#9805)", () => {
+    expect(openshellNotFoundDiagnosticLines({ HOME: "/fakehome", PATH: "/usr/bin" })).toEqual(
+      expect.arrayContaining([
+        "    - /fakehome/.local/bin/openshell",
+        "    - /opt/homebrew/bin/openshell",
+        "    - /usr/local/bin/openshell",
+        "    - /usr/bin/openshell",
+      ]),
+    );
+  });
+
   it("skips home candidate when home is not absolute", () => {
     expect(
       resolveOpenshell({
@@ -196,12 +203,7 @@ describe("Hermes portable OpenShell executable authority", () => {
     expect(authority.version).toBe("0.0.106");
     expect(authority.executable.executablePath).toBe(AUTHORITY_BINARY);
     expect(
-      assertHermesPortableOpenShellExecutableAuthority(
-        authority,
-        childEnv,
-        childEnv,
-        harness.deps,
-      ),
+      assertHermesPortableOpenShellExecutableAuthority(authority, childEnv, childEnv, harness.deps),
     ).toBe(AUTHORITY_BINARY);
   });
 
@@ -271,27 +273,17 @@ describe("Hermes portable OpenShell executable authority", () => {
     harness.changeDigest();
 
     expect(() =>
-      assertHermesPortableOpenShellExecutableAuthority(
-        authority,
-        childEnv,
-        childEnv,
-        harness.deps,
-      ),
+      assertHermesPortableOpenShellExecutableAuthority(authority, childEnv, childEnv, harness.deps),
     ).toThrow("executable generation changed after reservation");
   });
 
   it("rejects OpenShell 0.0.101 before authority capture or reuse (#9211)", () => {
     const harness = executableAuthorityHarness();
     expect(() =>
-      captureHermesPortableOpenShellExecutableAuthority(
-        AUTHORITY_BINARY,
-        childEnv,
-        childEnv,
-        {
-          ...harness.deps,
-          runVersion: () => ({ status: 0, stdout: "openshell 0.0.101\n", stderr: "" }),
-        },
-      ),
+      captureHermesPortableOpenShellExecutableAuthority(AUTHORITY_BINARY, childEnv, childEnv, {
+        ...harness.deps,
+        runVersion: () => ({ status: 0, stdout: "openshell 0.0.101\n", stderr: "" }),
+      }),
     ).toThrow("requires OpenShell 0.0.106");
 
     const reuseHarness = executableAuthorityHarness();
@@ -302,15 +294,10 @@ describe("Hermes portable OpenShell executable authority", () => {
       reuseHarness.deps,
     );
     expect(() =>
-      assertHermesPortableOpenShellExecutableAuthority(
-        authority,
-        childEnv,
-        childEnv,
-        {
-          ...reuseHarness.deps,
-          runVersion: () => ({ status: 0, stdout: "openshell 0.0.101\n", stderr: "" }),
-        },
-      ),
+      assertHermesPortableOpenShellExecutableAuthority(authority, childEnv, childEnv, {
+        ...reuseHarness.deps,
+        runVersion: () => ({ status: 0, stdout: "openshell 0.0.101\n", stderr: "" }),
+      }),
     ).toThrow("requires OpenShell 0.0.106");
   });
 });

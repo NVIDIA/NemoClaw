@@ -107,7 +107,6 @@ export default async function refresh_locked_npm_cache_seed(input: {
   try {
     const generateCommand = [
       "node",
-      "--experimental-strip-types",
       "--no-warnings",
       generator,
       "export",

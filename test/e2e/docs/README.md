@@ -99,7 +99,85 @@ exits 0. That exit-0 skip is specific to the typed-registry matrix; the
 catalogue path sets `NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1` and exits nonzero
 when its selection runs no tests.
 
-## How To Run
+## Run Live E2E Locally
+
+Review the selected revision and local changes before running setup or live E2E on your workstation.
+A detached worktree shares host privileges, credentials, and Docker access.
+Run source you have not reviewed and trusted in a disposable isolated environment.
+Keep workstation credentials and its Docker socket outside that environment.
+Supply only test-specific credentials and follow the selected test's cleanup and revocation contract.
+
+Run `test:live-e2e` from the checkout whose source you want to test. The command
+deletes and rebuilds `dist/` from source in that checkout before Vitest starts.
+It includes tracked and untracked source inputs, runs selected test files serially,
+and does not retry a failed test. It deletes direct edits under generated `dist/`
+and `nemoclaw/runner-dist/` paths.
+
+| Goal | Checkout | Command |
+| --- | --- | --- |
+| Run one test file with local changes | Current working tree | `npm run test:live-e2e -- test/e2e/live/<name>.test.ts --silent=false --reporter=default` |
+| Run all locally eligible live test files | Current working tree | `npm run test:live-e2e -- --silent=false --reporter=default` |
+| Run one test file at a commit | Detached worktree at the commit | Use the same focused command in that worktree. |
+| Run all locally eligible live test files at a commit | Detached worktree at the commit | Use the same aggregate command in that worktree. |
+
+A local aggregate run is not the GitHub full E2E matrix. Tests that require another
+platform, runner, credential, service, or explicit target-specific opt-in can skip
+or fail locally. GitHub Actions owns those job capabilities and the strict full-run
+aggregate. Interactive TUI targets require the `expect` utility on the local runner.
+For trusted GitHub runs targeting the latest PR commit or current `main`, follow
+[Run Maintainer E2E](../../../.agents/skills/nemoclaw-maintainer-e2e/SKILL.md).
+
+### Run the current working tree
+
+Use a repository-relative test file to select one live E2E implementation.
+Add `-t` when the file contains more than one test and you need one named case:
+
+```bash
+npm run test:live-e2e -- \
+  test/e2e/live/<name>.test.ts \
+  -t '<test-name-regex>' \
+  --silent=false --reporter=default
+```
+
+Omit `-t` to run the complete file. Omit the test file to collect every
+`e2e-live` test file that the local host can run. That aggregate tests `HEAD`
+only when `git status --short` is empty. Otherwise, it tests working-tree source.
+
+Review the selected test's environment checks and cleanup contract before you start
+it. Live tests can install software and mutate Docker, OpenShell, sandbox, and
+external-service state.
+
+### Run a commit without changing the current checkout
+
+Create a detached worktree, prepare that checkout, and run the selected command
+inside it:
+
+```bash
+SHA='<commit-sha>'
+COMMIT="$(git rev-parse --verify "${SHA}^{commit}")"
+WORKTREE="$(mktemp -d -t nemoclaw-e2e-XXXXXXXX)"
+rmdir "$WORKTREE"
+git worktree add --detach "$WORKTREE" "$COMMIT"
+(
+  cd "$WORKTREE"
+  npm run dev:setup
+  NEMOCLAW_E2E_EXPECTED_SHA="$COMMIT" npm run test:live-e2e -- \
+    test/e2e/live/<name>.test.ts \
+    -t '<test-name-regex>' \
+    --silent=false --reporter=default
+)
+```
+
+Omit `-t` to run the complete file. Omit the test file for the aggregate local
+run. The detached worktree selects the commit. `NEMOCLAW_E2E_EXPECTED_SHA` supplies
+that identity to tests that consume it. Do not use it in a dirty checkout to claim
+that a run tested only the named commit.
+
+The subshell returns to the primary checkout and leaves the worktree in place.
+Remove external resources recorded by a failed test. Preserve any needed artifacts.
+Then run `git worktree remove "$WORKTREE"`.
+
+## Inspect E2E Selection and Support
 
 ```bash
 # List canonical target ids
@@ -117,15 +195,9 @@ npx vitest run --project e2e-support --silent=false --reporter=default
 # Validate every live test and workflow-selected integration test without running bodies
 npm run test:e2e-phases:check
 
-# Opt-in live E2E targets
-npm run test:live-e2e -- --silent=false --reporter=default
-
 # Rank one or more downloaded/extracted live artifact directories
 npm run test:runtime-audit -- e2e-artifacts/run-1 e2e-artifacts/run-2
 ```
-
-The aggregate local command rebuilds the CLI before Vitest starts and runs E2E
-test files serially. It does not retry a failed test.
 
 After an eligible `E2E main` push workflow completes, `E2E / Main Retry Evidence` records its conclusion and source-attempt evidence.
 It does not request a broad failed-job or workflow rerun.
@@ -239,7 +311,7 @@ calls require a positive timeout shorter than the first heartbeat plus
 only in redacted artifacts.
 
 Audited subprocess helpers require the fixture-provided frozen, canonical
-`progress` capability. Forward that exact object unchanged instead of copying
+`progress` capability. Forward that object unchanged instead of copying
 it or constructing a look-alike or no-op adapter. A module-private brand,
 runtime registry, frozen-object check, type system, and semantic checker enforce
 this boundary.
@@ -249,12 +321,15 @@ command execution, test outcomes, or registered resource release.
 
 The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 
-When adding or changing a live test, update `test/e2e/mock-parity.json` with
-the fast PR-collected test that covers its mockable contract. If the behavior
-cannot be reproduced without real infrastructure, record a concise
-`liveOnlyReason` instead. The PR and `main` CLI coverage shards enforce this
-changed-file policy alongside the `e2e-support` project without requiring an
-immediate backfill of untouched tests.
+When you add or make a non-comment source change to a live E2E test or a
+`test/e2e/live/` helper, update `test/e2e/mock-parity.json`. List each changed
+helper under `liveSources` for its owning live test. If the entry has mapped
+fast tests, make a non-comment source change to at least one mapped fast test
+in the same PR. Use
+`liveOnlyReason` only when no fast test can reproduce the contract. The PR and
+`main` CLI coverage shards enforce this changed-file policy alongside the
+`e2e-support` project without requiring an immediate backfill of untouched
+tests.
 
 ## Repository Layout
 
@@ -285,12 +360,12 @@ test/e2e/
   required workflow dispatch flag.
   Runner, credential, evidence, and cleanup requirements remain job-specific.
   A maintainer can also dispatch the trusted `main` workflow against the latest
-  commit from an open internal or fork PR. The manual path validates the actor,
+  commit from an open PR whose source branch is in `NVIDIA/NemoClaw`. The manual path validates the actor,
   PR number, PR source repository, candidate commit SHA, base commit SHA,
   workflow SHA, review reason, and allowed jobs, targets, and Launchable
   combination before candidate checkout.
   A trusted `main` native runtime producer run requires the executing workflow
-  commit and `workflow_sha` input to equal the exact PR-recorded base commit.
+  commit and `workflow_sha` input to equal the PR-recorded base commit.
   The producer accepts only a same-repository PR and the first workflow attempt.
   The host-side preparation step receives the long-lived `NVIDIA_API_KEY`
   repository secret in its environment. It creates runner-local registry
@@ -300,24 +375,18 @@ test/e2e/
   authentication but does not revoke the key. The key remains valid in the
   issuing NVIDIA service until it expires or that service revokes it.
 
-  For a PR revision run, leave `jobs` and
-  `targets` empty. The run selects every default-selected free-standing workflow
-  E2E except `Exact staging Brev Launchable`, every catalogue target in the
-  `standard` profile, all shared credential-free tests, and these
-  controller-selected registry targets:
-  `ubuntu-policy-custom-missing-presets-negative`,
-  `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and
-  `ubuntu-repo-docker-post-reboot-recovery`. Keep
-  `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for
-  this default selection. If the DGX Spark flag is `true`, GitHub can pause the
+  Manual PR E2E rejects fork sources, including NVIDIA sibling repositories.
+  Review and adopt fork contributions onto a repository branch before dispatch.
+  Repository writers are trusted to populate the shared compiled cache before merging.
+
+  For a PR revision run, leave `jobs` and `targets` empty for all default-selected
+  workflow E2E, catalogue profiles, shared tests, and registry targets.
+  `Exact staging Brev Launchable` requires its separate opt-in.
+  Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for
+  the default selection. If the DGX Spark flag is `true`, GitHub can pause the
   qualification job for the `approve-dgx-spark-image-qualification` environment.
   An authorized environment reviewer must approve it before qualification starts.
-  Accepted nonempty `jobs` values are:
-
-  - `inference-routing`
-  - `managed-image-protected-runtime`
-  - `native-runtime-qualification-producer`
-  The `jetson-nvmap-gpu` target is also accepted when `allow_jetson_dispatch` is `true`.
+  Supported jobs and targets can also be selected individually.
   Refer to [NemoClaw E2E CI](../README.md).
 
 - [Jetson dispatch controller](jetson-dispatch.md) defines the NemoClaw-owned
@@ -349,7 +418,8 @@ test/e2e/
 - `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Compatibility`.
   It runs the Ubuntu 26.04 compatibility contracts and four full-suite Vitest shards on each of macOS and WSL.
   Each macOS shard installs the pinned OpenShell formula.
-  Shard 1 has a 60-minute budget for live E2E; the other shards have 30 minutes.
+  Shard 1 has a 150-minute job timeout. Its live E2E has a 70-minute timeout, and every other step shares the remaining job time.
+  The other shards have 30 minutes.
   WSL shard 1 has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
   On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
   Otherwise, those live tests skip and the platform contracts remain as evidence.
@@ -362,9 +432,9 @@ test/e2e/
   `NVIDIA_INFERENCE_API_KEY` remains valid until it expires or is revoked; the workflow does not revoke it.
 - `.github/workflows/portable-profile-e2e.yaml` provides experimental portable-profile evidence on matching `main` changes or manual dispatches.
 - `.github/workflows/podman-cpu-proof.yaml` provides PR-only experimental runtime evidence with Docker disabled.
-- `.github/workflows/sandbox-images-and-e2e.yaml` provides reusable image build and test evidence through manual dispatch and `workflow_call`.
+- `.github/workflows/sandbox-images.yaml` provides reusable image build and test evidence through manual dispatch and `workflow_call`.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
-- The `staging-brev-launchable` job validates the exact baked candidate in
+- The `staging-brev-launchable` job validates the baked candidate in
   preinstalled mode. Generic Brev VMs with source overlays are not a
   qualification boundary.
 - `vitest.config.ts` contains `e2e-support` for fast fixture/support tests and

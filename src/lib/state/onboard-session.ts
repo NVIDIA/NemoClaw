@@ -11,10 +11,9 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
-import { GATEWAY_PORT } from "../core/ports";
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import {
   parseServingProfileProvenance,
   type ServingProfileProvenance,
@@ -63,19 +62,21 @@ import {
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import {
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
-  parseNemoClawPolicyCreationReceipt,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
+  retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
+  resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
-  type RetainedSandboxVerifiedEffectivePolicyIdentity,
+  validSafeEvidence,
 } from "./onboard-session/retained-sandbox-recovery";
-import type { SandboxHostMount } from "./registry/types";
+import type { SandboxEntry, SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
 
 export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
+export type { RetainedSandboxRecoveryRecord } from "./onboard-session/retained-sandbox-recovery";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
@@ -85,11 +86,15 @@ export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
 export const RETAINED_SANDBOX_RECOVERY_FILE = retainedSandboxRecoveryFile(SESSION_DIR);
+const LEGACY_STATE_MIGRATION_LOCK = path.join(
+  nemoclawStateRoot(process.env.HOME || "/tmp", DEFAULT_GATEWAY_PORT),
+  ".gateway-state-migration.lock",
+);
 const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 
-export class InvalidPersistedPolicyAuthorityError extends Error {}
 export class InvalidPersistedApfInterceptorIntentError extends Error {}
 export class InvalidPersistedCancellationRecoveryError extends Error {}
+export class InvalidPersistedExternalComponentActivationError extends Error {}
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;
@@ -131,10 +136,17 @@ export interface SessionCancellationRecovery {
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string;
-  readonly verifiedEffectivePolicyIdentity: RetainedSandboxVerifiedEffectivePolicyIdentity | null;
   readonly createAttemptNonce: string;
-  readonly policyCreationReceipt: RetainedSandboxRecoveryRecord["policyCreationReceipt"];
   readonly recordedAt: string;
+}
+
+export interface ExternalComponentActivationIncomplete {
+  readonly schemaVersion: 1;
+  readonly activationId: string;
+  readonly componentId: string;
+  readonly lifecycleGeneration: string;
+  readonly sandboxIdentityFingerprint: string;
+  readonly resultClass: "failed" | "ambiguous";
 }
 
 function sameCancellationRecovery(
@@ -142,10 +154,6 @@ function sameCancellationRecovery(
   right: SessionCancellationRecovery | null,
 ): boolean {
   if (left === null || right === null) return left === right;
-  const leftPolicy = left.verifiedEffectivePolicyIdentity;
-  const rightPolicy = right.verifiedEffectivePolicyIdentity;
-  const leftReceipt = left.policyCreationReceipt;
-  const rightReceipt = right.policyCreationReceipt;
   return (
     left.reason === right.reason &&
     left.sandboxName === right.sandboxName &&
@@ -154,22 +162,7 @@ function sameCancellationRecovery(
     left.gatewayPort === right.gatewayPort &&
     left.lifecycleGeneration === right.lifecycleGeneration &&
     left.createAttemptNonce === right.createAttemptNonce &&
-    left.recordedAt === right.recordedAt &&
-    (leftPolicy === null || rightPolicy === null
-      ? leftPolicy === rightPolicy
-      : leftPolicy.hash === rightPolicy.hash &&
-        leftPolicy.activeVersion === rightPolicy.activeVersion) &&
-    (leftReceipt === null || rightReceipt === null
-      ? leftReceipt === rightReceipt
-      : leftReceipt.schemaVersion === rightReceipt.schemaVersion &&
-        leftReceipt.origin === rightReceipt.origin &&
-        leftReceipt.gatewayName === rightReceipt.gatewayName &&
-        leftReceipt.gatewayPort === rightReceipt.gatewayPort &&
-        leftReceipt.sandboxName === rightReceipt.sandboxName &&
-        leftReceipt.lifecycleGeneration === rightReceipt.lifecycleGeneration &&
-        leftReceipt.sandboxIdentityFingerprint === rightReceipt.sandboxIdentityFingerprint &&
-        leftReceipt.policyHash === rightReceipt.policyHash &&
-        leftReceipt.policyVersion === rightReceipt.policyVersion)
+    left.recordedAt === right.recordedAt
   );
 }
 
@@ -272,6 +265,8 @@ export interface Session {
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
   cancellationRecovery: SessionCancellationRecovery | null;
+  /** Secret-free evidence for one activation that did not reach verified success. */
+  externalComponentActivation: ExternalComponentActivationIncomplete | null;
   agent: string | null;
   sandboxName: string | null;
   provider: string | null;
@@ -309,9 +304,6 @@ export interface Session {
   /** Operator-selected APF create mode; this is not observed policy provenance. */
   apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
-  policyPresets: string[] | null;
-  /** Policy authority selected from OpenShell metadata before policy-dependent effects. */
-  policyAuthority: SandboxPolicyAuthority | null;
   messagingPlan: SandboxMessagingPlan | null;
   /** Non-secret names of credential providers registered before sandbox setup completed. */
   stagedCredentialProviders: string[];
@@ -388,13 +380,12 @@ export interface SessionUpdates {
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
   hermesToolGateways?: string[] | null;
-  policyPresets?: string[] | null;
-  policyAuthority?: SandboxPolicyAuthority | null;
   messagingPlan?: SandboxMessagingPlan | null;
   migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
+  externalComponentActivation?: ExternalComponentActivationIncomplete | null;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
   /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
   stationExpressModelIdentity?: string;
@@ -426,13 +417,12 @@ export interface DebugSessionSummary {
   observabilityRequestedExplicitly: boolean;
   apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
-  policyPresets: string[] | null;
-  policyAuthority: SandboxPolicyAuthority | null;
   gpuPassthrough: boolean;
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
   cancellationRecovery: SessionCancellationRecovery | null;
+  externalComponentActivation: ExternalComponentActivationIncomplete | null;
   gatewayAuthority: GatewayOwnerDescription | null;
   machine: OnboardMachineSnapshot;
   steps: Record<string, StepState>;
@@ -570,10 +560,6 @@ function parseVllmGpuDevice(value: unknown): string | null {
 
 function readHermesAuthMethod(value: SessionJsonValue | undefined): HermesAuthMethod | null {
   return value === "oauth" || value === "api_key" ? value : null;
-}
-
-function readPolicyAuthority(value: unknown): SandboxPolicyAuthority | null {
-  return value === "nemoclaw-managed" || value === "externally-managed" ? value : null;
 }
 
 function readPositiveInteger(value: SessionJsonValue | undefined): number | null {
@@ -843,23 +829,6 @@ function parseSessionCancellationRecovery(
   const gatewayPort = value.gatewayPort;
   const lifecycleGeneration = readString(value.lifecycleGeneration);
   const createAttemptNonce = readString(value.createAttemptNonce);
-  const verifiedEffectivePolicyIdentity = (() => {
-    if (value.verifiedEffectivePolicyIdentity === null) return null;
-    if (!isObject(value.verifiedEffectivePolicyIdentity)) return undefined;
-    const hash = readString(value.verifiedEffectivePolicyIdentity.hash);
-    const activeVersion = value.verifiedEffectivePolicyIdentity.activeVersion;
-    return hash && Number.isSafeInteger(activeVersion) && Number(activeVersion) > 0
-      ? { hash, activeVersion: Number(activeVersion) }
-      : undefined;
-  })();
-  let policyCreationReceipt: RetainedSandboxRecoveryRecord["policyCreationReceipt"] = null;
-  if (value.policyCreationReceipt !== null) {
-    try {
-      policyCreationReceipt = parseNemoClawPolicyCreationReceipt(value.policyCreationReceipt);
-    } catch {
-      return null;
-    }
-  }
   if (
     !sandboxName ||
     sandboxName.length > NAME_MAX_LENGTH ||
@@ -871,17 +840,8 @@ function parseSessionCancellationRecovery(
     Number(gatewayPort) < 1024 ||
     Number(gatewayPort) > 65_535 ||
     !lifecycleGeneration ||
-    verifiedEffectivePolicyIdentity === undefined ||
     !createAttemptNonce ||
-    !/^[0-9a-f]{62}$/u.test(createAttemptNonce) ||
-    (policyCreationReceipt !== null &&
-      (policyCreationReceipt.gatewayName !== gatewayName ||
-        policyCreationReceipt.gatewayPort !== Number(gatewayPort) ||
-        policyCreationReceipt.sandboxName !== sandboxName ||
-        policyCreationReceipt.lifecycleGeneration !== lifecycleGeneration ||
-        policyCreationReceipt.sandboxIdentityFingerprint !== fingerprint ||
-        policyCreationReceipt.policyHash !== verifiedEffectivePolicyIdentity?.hash ||
-        policyCreationReceipt.policyVersion !== verifiedEffectivePolicyIdentity?.activeVersion))
+    !/^[0-9a-f]{62}$/u.test(createAttemptNonce)
   ) {
     return null;
   }
@@ -892,10 +852,51 @@ function parseSessionCancellationRecovery(
     gatewayName,
     gatewayPort: Number(gatewayPort),
     lifecycleGeneration,
-    verifiedEffectivePolicyIdentity,
     createAttemptNonce,
-    policyCreationReceipt,
     recordedAt,
+  };
+}
+
+function parseExternalComponentActivation(
+  value: SessionJsonValue | undefined,
+): ExternalComponentActivationIncomplete | null {
+  if (!isObject(value)) return null;
+  const activationId = readString(value.activationId);
+  const componentId = readString(value.componentId);
+  const lifecycleGeneration = readString(value.lifecycleGeneration);
+  const sandboxIdentityFingerprint = readString(value.sandboxIdentityFingerprint);
+  if (
+    value.schemaVersion !== 1 ||
+    !activationId ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(activationId) ||
+    !componentId ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(componentId) ||
+    !lifecycleGeneration ||
+    !validSafeEvidence(lifecycleGeneration) ||
+    !sandboxIdentityFingerprint ||
+    !/^sha256:[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint) ||
+    (value.resultClass !== "failed" && value.resultClass !== "ambiguous") ||
+    Object.keys(value).some(
+      (field) =>
+        ![
+          "schemaVersion",
+          "activationId",
+          "componentId",
+          "lifecycleGeneration",
+          "sandboxIdentityFingerprint",
+          "resultClass",
+        ].includes(field),
+    )
+  ) {
+    return null;
+  }
+  return {
+    schemaVersion: 1,
+    activationId,
+    componentId,
+    lifecycleGeneration,
+    sandboxIdentityFingerprint,
+    resultClass: value.resultClass,
   };
 }
 
@@ -984,7 +985,6 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     ...defaultSteps(),
     ...(overrides.steps ?? {}),
   };
-  const policyAuthority = readPolicyAuthority(overrides.policyAuthority);
   const session: Session = {
     version: SESSION_VERSION,
     sessionId,
@@ -998,6 +998,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     failure: overrides.failure ?? null,
     cancellationRecovery: parseSessionCancellationRecovery(
       overrides.cancellationRecovery as SessionJsonValue | undefined,
+    ),
+    externalComponentActivation: parseExternalComponentActivation(
+      overrides.externalComponentActivation as SessionJsonValue | undefined,
     ),
     agent: overrides.agent ?? null,
     sandboxName: overrides.sandboxName ?? null,
@@ -1034,9 +1037,6 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
     apfInterceptorRequested: overrides.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
-    policyPresets:
-      policyAuthority === "externally-managed" ? null : readStringArray(overrides.policyPresets),
-    policyAuthority,
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
     stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
@@ -1071,12 +1071,6 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   ) {
     throw new InvalidPersistedApfInterceptorIntentError(
       "Refusing to load the onboarding session: the saved APF selection is invalid.",
-    );
-  }
-  const policyAuthority = readPolicyAuthority(data.policyAuthority);
-  if (hasOwn(data, "policyAuthority") && data.policyAuthority !== null && !policyAuthority) {
-    throw new InvalidPersistedPolicyAuthorityError(
-      "Refusing to load the onboarding session: the saved policy authority is invalid.",
     );
   }
   const servingProfileProvenance = parseServingProfileProvenance(data.servingProfileProvenance);
@@ -1134,6 +1128,18 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
       "Refusing to load the onboarding session: saved recovery authority is incomplete.",
     );
   }
+  const externalComponentActivation = parseExternalComponentActivation(
+    data.externalComponentActivation,
+  );
+  if (
+    hasOwn(data, "externalComponentActivation") &&
+    data.externalComponentActivation !== null &&
+    !externalComponentActivation
+  ) {
+    throw new InvalidPersistedExternalComponentActivationError(
+      "Refusing to load the onboarding session: saved external component activation evidence is incomplete.",
+    );
+  }
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -1166,8 +1172,6 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
     apfInterceptorRequested: data.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
-    policyPresets: readStringArray(data.policyPresets),
-    policyAuthority,
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
     stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
@@ -1178,6 +1182,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     lastCompletedStep: readString(data.lastCompletedStep),
     failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
     cancellationRecovery,
+    externalComponentActivation,
     metadata: parseSessionMetadata(data.metadata),
     checkpoint: data.checkpoint as unknown as OnboardCheckpoint | null,
   });
@@ -1290,9 +1295,8 @@ export function loadSession(): Session | null {
     return normalized;
   } catch (error) {
     if (
-      error instanceof InvalidPersistedPolicyAuthorityError ||
       error instanceof InvalidPersistedApfInterceptorIntentError ||
-      error instanceof InvalidPersistedCancellationRecoveryError
+      error instanceof InvalidPersistedExternalComponentActivationError
     ) {
       throw error;
     }
@@ -1304,8 +1308,10 @@ export function loadSession(): Session | null {
 }
 
 function serializeSessionForDisk(session: Session): Record<string, unknown> {
+  const { externalComponentActivation, ...persistentSession } = session;
   return {
-    ...session,
+    ...persistentSession,
+    ...(externalComponentActivation ? { externalComponentActivation } : {}),
     messagingPlan: session.messagingPlan
       ? compactSandboxMessagingPlanForPersistence(session.messagingPlan)
       : session.messagingPlan,
@@ -1663,6 +1669,13 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
     try {
       heldLockDirectory = openPinnedSessionDirectory();
       assertOnboardLockOwned();
+      // Legacy-port migration holds its lock before checking every onboard
+      // writer lock. Recheck here after atomically claiming onboard.lock so
+      // either the writer or the migrator wins, never both.
+      if (fs.existsSync(LEGACY_STATE_MIGRATION_LOCK)) {
+        releaseOnboardLock();
+        return { acquired: false, lockFile: LOCK_FILE, stale: false };
+      }
     } catch (error) {
       heldLockFd = null;
       if (heldLockDirectory !== null) fs.closeSync(heldLockDirectory.descriptor);
@@ -1761,24 +1774,8 @@ export function releaseOnboardLock(): void {
     return;
   }
 
-  // Fallback (no fd held — e.g., a test wrote the lock file directly,
-  // or a previous release already ran): preserve the legacy pid-based
-  // behavior so we never unlink a malformed lock and never unlink a
-  // lock owned by another pid.
-  try {
-    let snapshot: LockFileSnapshot;
-    try {
-      snapshot = readLockFileSnapshot();
-    } catch (error) {
-      if (isErrnoException(error) && error.code === "ENOENT") return;
-      throw error;
-    }
-    if (!snapshot.info) return;
-    if (snapshot.info.pid !== process.pid) return;
-    unlinkIfInodeMatches(LOCK_FILE, snapshot.inode);
-  } catch {
-    return;
-  }
+  // A PID match does not prove ownership across hosts or PID namespaces.
+  // Without the retained descriptor, this process has no cleanup authority.
 }
 
 // ── Step management ──────────────────────────────────────────────
@@ -1932,20 +1929,6 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
       (value) => typeof value === "string",
     );
   }
-  if (updates.policyPresets === null) {
-    safe.policyPresets = null;
-  } else if (Array.isArray(updates.policyPresets)) {
-    safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
-  }
-  if (updates.policyAuthority === null) {
-    safe.policyAuthority = null;
-  } else {
-    const policyAuthority = readPolicyAuthority(updates.policyAuthority);
-    if (policyAuthority) {
-      safe.policyAuthority = policyAuthority;
-      if (policyAuthority === "externally-managed") safe.policyPresets = null;
-    }
-  }
   if (updates.messagingPlan === null) {
     safe.messagingPlan = null;
   } else {
@@ -1976,6 +1959,14 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else if (updates.wechatConfig === null) {
     safe.wechatConfig = null;
   }
+  if (updates.externalComponentActivation === null) {
+    safe.externalComponentActivation = null;
+  } else {
+    const activation = parseExternalComponentActivation(
+      updates.externalComponentActivation as SessionJsonValue | undefined,
+    );
+    if (activation) safe.externalComponentActivation = activation;
+  }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {
       gatewayName: updates.metadata.gatewayName,
@@ -1998,9 +1989,7 @@ export interface RetainedSandboxRecoveryContext {
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string;
-  readonly verifiedEffectivePolicyIdentity: RetainedSandboxVerifiedEffectivePolicyIdentity | null;
   readonly createAttemptNonce: string;
-  readonly policyCreationReceipt: RetainedSandboxRecoveryRecord["policyCreationReceipt"];
 }
 
 function retainedSandboxResourceEvidence(session: Session) {
@@ -2031,9 +2020,7 @@ function persistIndependentRetainedSandboxRecovery(
     gatewayName: context.gatewayName,
     gatewayPort: context.gatewayPort,
     lifecycleGeneration: context.lifecycleGeneration,
-    verifiedEffectivePolicyIdentity: context.verifiedEffectivePolicyIdentity,
     createAttemptNonce: context.createAttemptNonce,
-    policyCreationReceipt: context.policyCreationReceipt,
     resources: retainedSandboxResourceEvidence(session),
     reason,
   });
@@ -2061,9 +2048,7 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
           gatewayName: recovery.gatewayName,
           gatewayPort: recovery.gatewayPort,
           lifecycleGeneration: recovery.lifecycleGeneration,
-          verifiedEffectivePolicyIdentity: recovery.verifiedEffectivePolicyIdentity,
           createAttemptNonce: recovery.createAttemptNonce,
-          policyCreationReceipt: recovery.policyCreationReceipt,
           resources: retainedSandboxResourceEvidence(current),
           reason: recovery.reason,
           recordedAt: recovery.recordedAt,
@@ -2079,12 +2064,126 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
   });
 }
 
+const safeRecoveryEvidence = (value: unknown): string[] =>
+  validSafeEvidence(value) ? [value] : [];
+
+function pendingCreateRecoveryResources(
+  entry: SandboxEntry,
+): RecordRetainedSandboxRecoveryInput["resources"] {
+  return {
+    sharedInferenceProviders: safeRecoveryEvidence(entry.provider),
+    sandboxScopedProviders: safeRecoveryEvidence(entry.hermesInferenceProvider),
+    credentialEnvironmentVariables: safeRecoveryEvidence(entry.credentialEnv),
+  };
+}
+
+function retainedRecoveryMatchesPendingCreate(
+  record: RetainedSandboxRecoveryRecord,
+  entry: SandboxEntry,
+): boolean {
+  const checkpoint = entry.pendingCreateIdentity;
+  return Boolean(
+    checkpoint &&
+    record.sandboxName === checkpoint.sandboxName &&
+    record.sandboxIdentityFingerprint === checkpoint.sandboxIdentityFingerprint &&
+    record.gatewayName === checkpoint.gatewayName &&
+    record.gatewayPort === checkpoint.gatewayPort &&
+    record.lifecycleGeneration === checkpoint.lifecycleGeneration &&
+    record.createAttemptNonce === checkpoint.createAttemptNonce,
+  );
+}
+
+/**
+ * Reconstruct the independent retained-sandbox record when the verified-create
+ * registry checkpoint is the only recovery authority that survived a crash.
+ */
+export function reconstructRetainedSandboxRecoveryFromPendingCreate(
+  entry: SandboxEntry,
+): RetainedSandboxRecoveryRecord | null {
+  const checkpoint = entry.pendingCreateIdentity;
+  const createAttemptNonce = checkpoint?.createAttemptNonce;
+  if (!checkpoint || entry.pendingRouteReservation !== true || !createAttemptNonce) {
+    return null;
+  }
+  if (
+    entry.name !== checkpoint.sandboxName ||
+    entry.gatewayName !== checkpoint.gatewayName ||
+    entry.gatewayPort !== checkpoint.gatewayPort ||
+    entry.lifecycleGeneration !== checkpoint.lifecycleGeneration ||
+    entry.lifecycleLiveIdentityFingerprint !== checkpoint.sandboxIdentityFingerprint
+  ) {
+    throw new Error(
+      `Cannot reconstruct retained sandbox recovery for '${entry.name}': its verified create checkpoint does not match the registry lifecycle authority.`,
+    );
+  }
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery reconstruction", () => {
+    const records = readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE);
+    const sameName = records.filter((record) => record.sandboxName === entry.name);
+    if (sameName.length === 1 && retainedRecoveryMatchesPendingCreate(sameName[0]!, entry)) {
+      return sameName[0]!;
+    }
+    if (sameName.length > 0) {
+      throw new Error(
+        `Cannot reconstruct retained sandbox recovery for '${entry.name}': its independent recovery authority conflicts with the verified create checkpoint.`,
+      );
+    }
+    return writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, {
+      sandboxName: checkpoint.sandboxName,
+      sandboxIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+      gatewayName: checkpoint.gatewayName,
+      gatewayPort: checkpoint.gatewayPort,
+      lifecycleGeneration: checkpoint.lifecycleGeneration,
+      createAttemptNonce,
+      resources: pendingCreateRecoveryResources(entry),
+      reason: "retained_after_sandbox_creation_failure",
+    });
+  });
+}
+
 export function recordRetainedSandboxRecovery(
   input: RecordRetainedSandboxRecoveryInput,
 ): RetainedSandboxRecoveryRecord {
   return withOwnedOnboardLock("nemoclaw retained sandbox recovery", () =>
     writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, input),
   );
+}
+
+export function retainedSandboxRecoveryMatchesSession(
+  record: RetainedSandboxRecoveryRecord,
+  session: Pick<Session, "cancellationRecovery"> | null | undefined,
+): boolean {
+  const recovery = session?.cancellationRecovery;
+  if (!recovery) return false;
+  return (
+    record.sandboxName === recovery.sandboxName &&
+    record.sandboxIdentityFingerprint === recovery.sandboxIdentityFingerprint &&
+    record.gatewayName === recovery.gatewayName &&
+    record.gatewayPort === recovery.gatewayPort &&
+    record.lifecycleGeneration === recovery.lifecycleGeneration &&
+    record.createAttemptNonce === recovery.createAttemptNonce
+  );
+}
+
+/** Clear one recovery-only session after destroy verifies the retained resources absent. */
+export function resolveRetainedSandboxRecovery(record: RetainedSandboxRecoveryRecord): boolean {
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery completion", () => {
+    if (!retainedSandboxRecoveryAuthorityIsCurrent(RETAINED_SANDBOX_RECOVERY_FILE, record)) {
+      return false;
+    }
+    const current = loadSession();
+    if (current && retainedSandboxRecoveryMatchesSession(record, current)) {
+      current.status = "failed";
+      current.resumable = false;
+      current.sandboxName = null;
+      current.cancellationRecovery = null;
+      saveSession(current);
+    }
+    // Release the recovery-only session first. If this write fails, the exact
+    // independent record remains available for a later completion attempt. If
+    // record retirement then fails, that record still blocks only the retained
+    // name while a different explicitly named onboarding run can proceed.
+    return retireRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, record);
+  });
 }
 
 export function markCancellationRecovery(
@@ -2119,7 +2218,7 @@ export function markCancellationRecovery(
       session.failure = {
         step: session.lastStepStarted,
         message:
-          "Onboarding was cancelled after sandbox creation; administrator recovery is required.",
+          "Onboarding was cancelled after sandbox creation; retained recovery blocks this sandbox name until destroy confirms absence and completes cleanup.",
         recordedAt,
         interrupted: true,
       };
@@ -2365,6 +2464,29 @@ export function checkpointVllmInstallModel(modelId: string): Session {
   });
 }
 
+/** Persist the exact profile needed to retry an interrupted managed llama.cpp install. */
+export function checkpointManagedLlamaCppSelection(input: {
+  model: string;
+  servingProfileProvenance: ServingProfileProvenance;
+}): Session {
+  const model = parseVllmInstallModel(input.model);
+  const provenance = parseServingProfileProvenance(input.servingProfileProvenance);
+  if (!model || provenance?.recipe.backend !== "install-llama-cpp") {
+    throw new Error("Managed llama.cpp install produced an invalid selection checkpoint.");
+  }
+  return updateSession((session) => {
+    const providerStep = session.steps.provider_selection;
+    if (providerStep?.status !== "in_progress") {
+      throw new Error(
+        "Managed llama.cpp selection can only be checkpointed during provider selection.",
+      );
+    }
+    session.provider = "llama-cpp-local";
+    session.model = model;
+    session.servingProfileProvenance = provenance;
+  });
+}
+
 /**
  * Single synchronous terminal-failure owner for process-exit / backstop paths.
  *
@@ -2569,13 +2691,12 @@ export function summarizeForDebug(
     observabilityRequestedExplicitly: session.observabilityRequestedExplicitly,
     apfInterceptorRequested: session.apfInterceptorRequested,
     hermesToolGateways: session.hermesToolGateways,
-    policyPresets: session.policyPresets,
-    policyAuthority: session.policyAuthority,
     gpuPassthrough: session.gpuPassthrough,
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,
     failure: sanitizeFailure(session.failure),
     cancellationRecovery: session.cancellationRecovery,
+    externalComponentActivation: session.externalComponentActivation,
     gatewayAuthority,
     machine: session.machine,
     steps: Object.fromEntries(

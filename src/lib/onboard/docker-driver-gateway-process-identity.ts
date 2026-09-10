@@ -5,6 +5,10 @@ import fs from "node:fs";
 
 import { resolveGatewayName } from "./gateway-binding";
 import {
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
+  NO_EXTERNAL_COMPONENT_GATEWAY_IDENTITY,
+} from "./docker-driver-gateway-config";
+import {
   gatewayProcessCmdlineMatches,
   OPENSHELL_GATEWAY_PROCESS_NAMES,
 } from "./gateway-process-identity";
@@ -43,6 +47,9 @@ export function readDockerDriverGatewayProcessEnvironment(
   } catch {
     return null;
   }
+  if (env[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV] === undefined) {
+    env[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV] = NO_EXTERNAL_COMPONENT_GATEWAY_IDENTITY;
+  }
   return env;
 }
 
@@ -52,8 +59,7 @@ export function hasDockerDriverGatewayEnvironment(
 ): boolean {
   if (!env) return false;
   return (
-    env.OPENSHELL_DRIVERS === "docker" ||
-    env.OPENSHELL_DRIVERS === "podman" ||
+    Boolean(env.OPENSHELL_DRIVERS?.trim()) ||
     Boolean(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) ||
     env.OPENSHELL_GRPC_ENDPOINT === expectedEndpoint
   );

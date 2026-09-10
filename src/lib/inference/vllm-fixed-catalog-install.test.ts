@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostLocalVllmSelectionResult } from "./serving/host-local-vllm-selection";
 import type { VllmProfile } from "./vllm";
 
+type ResolveHostLocalVllmSelection =
+  (typeof import("./serving/host-local-vllm-selection"))["resolveHostLocalVllmSelection"];
+
 const mocks = vi.hoisted(() => ({
   dockerCapture: vi.fn(),
   dockerForceRm: vi.fn(),
@@ -21,7 +24,7 @@ const mocks = vi.hoisted(() => ({
   persistHostLocalVllmRuntimeReceipt: vi.fn(),
   probeDockerStorage: vi.fn(),
   probeHostStorage: vi.fn(),
-  resolveHostLocalVllmSelection: vi.fn<() => HostLocalVllmSelectionResult>(() => ({
+  resolveHostLocalVllmSelection: vi.fn<ResolveHostLocalVllmSelection>(() => ({
     kind: "not-selected",
   })),
   runCapture: vi.fn(),
@@ -105,6 +108,21 @@ async function resolveActualHostLocalSelection(
   return selection as SelectedHostLocalVllm;
 }
 
+function vllmInstallTestReadinessAtMemory(profile: VllmProfile, availableMemoryBytes: number) {
+  return vllmInstallTestReadiness(profile).map(({ nodeId, report }) => ({
+    nodeId,
+    report: {
+      ...report,
+      observations: report.observations.map((observation) =>
+        observation.id === "host.gpu.memory_total_bytes" ||
+        observation.id === "host.gpu.memory_per_device_bytes"
+          ? { ...observation, value: availableMemoryBytes }
+          : observation,
+      ),
+    },
+  }));
+}
+
 function mockSuccessfulAuthenticatedReadiness(servedModelId: string): void {
   mocks.runCurlProbe
     .mockReturnValueOnce({
@@ -151,6 +169,77 @@ describe("fixed catalog vLLM installs", () => {
   afterEach(() => {
     spies.restore();
     process.env = { ...originalEnv };
+  });
+
+  it("reports automatic GPU memory rejection before install effects", async () => {
+    const profile = detectVllmProfile({ platform: "n1x", type: "nvidia" })!;
+    const availableMemoryBytes = 23_730_323_456;
+    const readinessReports = vllmInstallTestReadinessAtMemory(profile, availableMemoryBytes);
+    const actualSelection = await vi.importActual<
+      typeof import("./serving/host-local-vllm-selection")
+    >("./serving/host-local-vllm-selection");
+    mocks.resolveHostLocalVllmSelection.mockImplementation((...args) =>
+      actualSelection.resolveHostLocalVllmSelection(...args),
+    );
+    const reason = `vllm-install-test-host: GPU memory capacity ${String(availableMemoryBytes)} is below the recipe minimum 64000000000 bytes.`;
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      readinessReports,
+    });
+
+    expect({
+      result,
+      errors: spies.errSpy.mock.calls,
+      installEffects: {
+        capture: mocks.runCapture.mock.calls.length,
+        pull: mocks.dockerPullWithProgressWatchdog.mock.calls.length,
+        run: mocks.dockerRunDetached.mock.calls.length,
+      },
+    }).toEqual({
+      result: { ok: false },
+      errors: expect.arrayContaining([[`  vLLM install failed: ${reason}`]]),
+      installEffects: { capture: 0, pull: 0, run: 0 },
+    });
+  });
+
+  it("reports the N1x memory rejection after interactive model selection", async () => {
+    const profile = detectVllmProfile({ platform: "n1x", type: "nvidia" })!;
+    const availableMemoryBytes = 23_730_323_456;
+    const readinessReports = vllmInstallTestReadinessAtMemory(profile, availableMemoryBytes);
+    const actualSelection = await vi.importActual<
+      typeof import("./serving/host-local-vllm-selection")
+    >("./serving/host-local-vllm-selection");
+    mocks.resolveHostLocalVllmSelection.mockImplementation((...args) =>
+      actualSelection.resolveHostLocalVllmSelection(...args),
+    );
+    const promptFn = vi.fn(async () => "1");
+    const reason = `vllm-install-test-host: GPU memory capacity ${String(availableMemoryBytes)} is below the recipe minimum 64000000000 bytes.`;
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: false,
+      promptFn,
+      readinessReports,
+    });
+
+    expect({
+      result,
+      promptCalls: promptFn.mock.calls.length,
+      errors: spies.errSpy.mock.calls,
+      installEffects: {
+        capture: mocks.runCapture.mock.calls.length,
+        pull: mocks.dockerPullWithProgressWatchdog.mock.calls.length,
+        run: mocks.dockerRunDetached.mock.calls.length,
+      },
+    }).toEqual({
+      result: { ok: false },
+      promptCalls: 1,
+      errors: expect.arrayContaining([[`  vLLM install failed: ${reason}`]]),
+      installEffects: { capture: 0, pull: 0, run: 0 },
+    });
   });
 
   it.each([
@@ -219,6 +308,113 @@ describe("fixed catalog vLLM installs", () => {
     expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
   });
 
+  /**
+   * Resume replays NemoClaw's own checkpoint, so the preset-driven install
+   * paths below run the real selection guard rather than a canned result.
+   */
+  async function withActualSelectionGuard(
+    readinessReports: ReturnType<typeof vllmInstallTestReadiness>,
+  ): Promise<void> {
+    const actualSelection = await vi.importActual<
+      typeof import("./serving/host-local-vllm-selection")
+    >("./serving/host-local-vllm-selection");
+    mocks.resolveHostLocalVllmSelection.mockImplementation((base, env, options) =>
+      actualSelection.resolveHostLocalVllmSelection(base, env, {
+        ...options,
+        readinessReports,
+      }),
+    );
+  }
+
+  it("resumes a checkpointed model under an explicitly selected serving preset", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const modelIntent = "muse-glimmer-30b";
+    const selected = await resolveActualHostLocalSelection(
+      profile,
+      { NEMOCLAW_VLLM_MODEL: modelIntent },
+      modelIntent,
+    );
+    process.env.NEMOCLAW_SERVING_PRESET = selected.presetId;
+    const readinessReports = vllmInstallTestReadiness(profile, modelIntent);
+    await withActualSelectionGuard(readinessReports);
+    const servedModelId = selected.model.servedModelId ?? selected.model.id;
+    mockSuccessfulVllmInstall(mocks, selected.profile.containerName);
+    mockSuccessfulAuthenticatedReadiness(servedModelId);
+    const beforeInstall = vi.fn();
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      modelIntent,
+      readinessReports,
+      beforeInstall,
+      resolveManagedBridgeHost: () => "172.18.0.1",
+    });
+
+    expect(spies.errSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("NEMOCLAW_SERVING_PRESET conflicts with NEMOCLAW_VLLM_MODEL"),
+    );
+    expect(result).toEqual({ ok: true });
+    // The preset stays the model authority, so the install that onboarding
+    // records is the one the preset selects.
+    expect(beforeInstall).toHaveBeenCalledWith(servedModelId);
+  });
+
+  it("rejects a resumed model the serving preset does not select", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const presetModel = "muse-glimmer-30b";
+    const selected = await resolveActualHostLocalSelection(
+      profile,
+      { NEMOCLAW_VLLM_MODEL: presetModel },
+      presetModel,
+    );
+    process.env.NEMOCLAW_SERVING_PRESET = selected.presetId;
+    const readinessReports = vllmInstallTestReadiness(profile, presetModel);
+    await withActualSelectionGuard(readinessReports);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      modelIntent: "qwen3.6-35b-a3b-nvfp4",
+      readinessReports,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(spies.errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("the resumed model 'qwen3.6-35b-a3b-nvfp4' does not match"),
+    );
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+  });
+
+  it("still rejects an operator model override against a serving preset", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const presetModel = "muse-glimmer-30b";
+    const selected = await resolveActualHostLocalSelection(
+      profile,
+      { NEMOCLAW_VLLM_MODEL: presetModel },
+      presetModel,
+    );
+    process.env.NEMOCLAW_SERVING_PRESET = selected.presetId;
+    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-35b-a3b-nvfp4";
+    const readinessReports = vllmInstallTestReadiness(profile, presetModel);
+    await withActualSelectionGuard(readinessReports);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      readinessReports,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(spies.errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("NEMOCLAW_SERVING_PRESET conflicts with NEMOCLAW_VLLM_MODEL"),
+    );
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+  });
+
   it("defers non-interactive custom arguments to the established installer", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-35b-a3b-nvfp4";
     process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = '["--max-model-len","32768"]';
@@ -273,10 +469,7 @@ describe("fixed catalog vLLM installs", () => {
 
   it("still rejects extra serve arguments for a fixed catalog recipe", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "muse-glimmer-30b";
-    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([
-      "--max-model-len",
-      "4096",
-    ]);
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify(["--max-model-len", "4096"]);
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const actualSelection = await vi.importActual<
       typeof import("./serving/host-local-vllm-selection")

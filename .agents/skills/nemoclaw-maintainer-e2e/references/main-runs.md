@@ -22,7 +22,7 @@ or “complete.” Ask only when the request contains conflicting mode phrases.
 
 Ordinary mode selects the default E2E suite without `Exact staging Brev Launchable`. Focused mode
 selects named jobs or typed targets; set only one selector input. Launchable mode runs only that
-exact job. Full mode adds it to the default suite.
+job. Full mode adds it to the default suite.
 
 The full `Release qualification` job is strict: every release-required job must succeed. It does not
 waive failed jobs. Its result reports the run; it does not decide whether a release can proceed.
@@ -44,8 +44,9 @@ Before dispatch:
 
 `Exact staging Brev Launchable` uses `BREV_API_KEY` and `BREV_ORG_ID` during trusted host
 preparation. It exposes `NEMOCLAW_IMAGE_DISPATCH_TOKEN` only to the trusted host script as
-`GH_TOKEN`. It exports `NVIDIA_INFERENCE_API_KEY` into the Brev guest for full E2E. Candidate code in
-that guest can read the inference key. The workflow requires repository `maintain` or `admin`
+`GH_TOKEN`. It exports the public `NVIDIA_API_KEY` secret as `NVIDIA_INFERENCE_API_KEY` into the Brev
+guest for full E2E. Candidate code in that guest can read the inference key.
+The workflow requires repository `maintain` or `admin`
 permission before source checkout. If cleanup fails, remove the recorded workspace. Rotate or revoke
 credentials that may remain accessible.
 
@@ -65,8 +66,9 @@ git fetch --prune origin main
 CANDIDATE_SHA="$(git rev-parse origin/main)"
 ```
 
-A new dispatch tests the `origin/main` commit resolved here. If the caller supplied another candidate
-SHA, report the difference. Do not reject it or decide the release outcome.
+A new dispatch tests the `origin/main` commit resolved here. It cannot select an arbitrary historical
+commit. If the caller supplied another candidate SHA, report that this path cannot test it. Do not
+dispatch a different commit or decide the release outcome.
 
 ## Dispatch Once
 
@@ -133,7 +135,7 @@ RUN_SHA="$(jq -r '.[0].headSha' <<<"$MATCHES")"
 test "$RUN_SHA" = "$CANDIDATE_SHA"
 ```
 
-The exact-SHA comparison proves which commit the selected run tested. It is not a tag-authorization
+The SHA comparison proves which commit the selected run tested. It is not a tag-authorization
 rule. If the run does not appear after the bounded search, inspect GitHub Actions for the correlation
 ID. Do not dispatch again.
 
@@ -143,7 +145,8 @@ Wait for completion:
 gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw
 ```
 
-The Launchable concurrency group does not cancel a running E2E job. GitHub can replace an older pending run with a newer pending run in the same group.
+The Launchable concurrency group runs one entry at a time and preserves up to 100 pending entries
+with `queue: max`. GitHub cancels new entries when the queue is full.
 
 ## Verify and Report
 

@@ -195,7 +195,15 @@ describe("CLI dispatch", () => {
       );
       // The Docker-driver gateway is healthy, so no Gateway check should fail.
       expect(report.checks.filter((c) => c.group === "Gateway" && c.status === "fail")).toEqual([]);
-      expect(report.status).toBe("ok");
+      expect(report.checks.find((check) => check.label === "Config permissions")).toEqual({
+        group: "Sandbox",
+        label: "Config permissions",
+        status: "warn",
+        detail: expect.stringContaining(
+          "No running direct OpenShell sandbox container found for 'alpha'",
+        ),
+      });
+      expect(report.status).toBe("warn");
       expect(r.code).toBe(0);
     },
   );
@@ -301,7 +309,15 @@ describe("CLI dispatch", () => {
       expect(
         report.checks.filter((check) => check.group === "Gateway" && check.status === "fail"),
       ).toEqual([]);
-      expect(report.status).toBe("ok");
+      expect(report.checks.find((check) => check.label === "Config permissions")).toEqual({
+        group: "Sandbox",
+        label: "Config permissions",
+        status: "warn",
+        detail: expect.stringContaining(
+          "Runtime provider 'kubernetes' does not support privileged sandbox control.",
+        ),
+      });
+      expect(report.status).toBe("warn");
 
       const calls = fs.readFileSync(hostCalls, "utf8");
       expect(calls).toContain(
@@ -395,36 +411,15 @@ describe("CLI dispatch", () => {
         }),
       );
       expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
-      expect(report.status).toBe("ok");
-    },
-  );
-
-  it(
-    "doctor reports fresh shields state as not configured instead of down",
-    testTimeoutOptions(30_000),
-    ({ resources }) => {
-      const setup = createDoctorTestSetup(resources, "nemoclaw-cli-doctor-shields-default-", [
-        'case "$*" in',
-        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
-        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
-        "esac",
-      ]);
-
-      const r = setup.runDoctor("alpha doctor --json");
-
-      const report = JSON.parse(r.out) as {
-        checks: Array<{ label: string; status: string; detail: string; hint?: string }>;
-      };
-      const shields = report.checks.find((check) => check.label === "Shields");
-      expect(shields).toEqual(
-        expect.objectContaining({
-          status: "info",
-          detail: "not configured (default mutable state)",
-        }),
-      );
-      expect(shields?.detail).not.toBe("down");
+      expect(report.checks.find((check) => check.label === "Config permissions")).toEqual({
+        group: "Sandbox",
+        label: "Config permissions",
+        status: "warn",
+        detail: expect.stringContaining(
+          "Runtime provider 'kubernetes' does not support privileged sandbox control.",
+        ),
+      });
+      expect(report.status).toBe("warn");
     },
   );
 

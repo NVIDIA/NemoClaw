@@ -7,7 +7,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as dockerDriverGatewayEnv from "./docker-driver-gateway-env";
-import { gatewayIdForStateDir } from "./docker-driver-gateway-config";
+import {
+  gatewayIdForStateDir,
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
+} from "./docker-driver-gateway-config";
 import {
   createDockerDriverGatewayRuntimeHelpers,
   type DockerDriverGatewayRuntimeDeps,
@@ -82,7 +85,7 @@ describe("docker-driver gateway runtime helpers", () => {
     try {
       withEnv(
         {
-          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: `  ${stateDir}  `,
           NEMOCLAW_OPENSHELL_GATEWAY_BIN: gatewayBin,
           NEMOCLAW_OPENSHELL_SANDBOX_BIN: sandboxBin,
           OPENSHELL_DOCKER_NETWORK_NAME: "custom-openshell-docker",
@@ -93,6 +96,9 @@ describe("docker-driver gateway runtime helpers", () => {
           });
 
           expect(helpers.getDockerDriverGatewayStateDir()).toBe(path.resolve(stateDir));
+          expect(helpers.getDockerDriverGatewayPidFile()).toBe(
+            path.join(path.resolve(stateDir), "openshell-gateway.pid"),
+          );
           expect(helpers.resolveOpenShellGatewayBinary()).toBe(path.resolve(gatewayBin));
           expect(helpers.resolveOpenShellSandboxBinary()).toBe(path.resolve(sandboxBin));
 
@@ -108,11 +114,31 @@ describe("docker-driver gateway runtime helpers", () => {
           expect(env.OPENSHELL_DB_URL).toBe(
             `sqlite:${path.join(path.resolve(stateDir), "openshell.db")}`,
           );
+          helpers.rememberDockerDriverGatewayPid(4242);
+          writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+            desiredEnv: {},
+            endpoint: "https://127.0.0.1:18080",
+            pid: 4242,
+          });
+          helpers.clearDockerDriverGatewayRuntimeFiles();
+          expect(fs.existsSync(path.join(stateDir, "openshell-gateway.pid"))).toBe(false);
+          expect(fs.existsSync(getDockerDriverGatewayRuntimeMarkerPath(stateDir))).toBe(false);
         },
       );
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    ["relative", "relative-gateway-state"],
+    ["shared root", path.join(os.homedir(), ".local", "state", "nemoclaw")],
+  ])("rejects a %s state-directory override through the binding owner", (_scenario, configured) => {
+    withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: configured }, () => {
+      expect(() => makeHelpers().helpers.getDockerDriverGatewayStateDir()).toThrow(
+        /absolute dedicated gateway state directory|shared NemoClaw state root/,
+      );
+    });
   });
 
   it("uses the moving dev supervisor image for an explicit or detected dev runtime", () => {
@@ -256,8 +282,7 @@ describe("docker-driver gateway runtime helpers", () => {
                 const gone = new Error("ESRCH") as NodeJS.ErrnoException;
                 gone.code = "ESRCH";
                 throw gone;
-              })()
-        ) as typeof process.kill);
+              })()) as typeof process.kill);
         const originalExistsSync = fs.existsSync.bind(fs);
         const originalReadFileSync = fs.readFileSync.bind(fs);
         const replacementCmdline = `/proc/${String(replacementPid)}/cmdline`;
@@ -265,15 +290,13 @@ describe("docker-driver gateway runtime helpers", () => {
         vi.spyOn(fs, "existsSync").mockImplementation(((candidate) =>
           candidate === gatewayBin || candidate === replacementCmdline
             ? true
-            : originalExistsSync(candidate)
-        ) as typeof fs.existsSync);
+            : originalExistsSync(candidate)) as typeof fs.existsSync);
         vi.spyOn(fs, "readFileSync").mockImplementation(((candidate, options) =>
           candidate === replacementCmdline
             ? `${gatewayBin}\0`
             : candidate === replacementEnvironment
               ? `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${namespace}\0`
-              : originalReadFileSync(candidate, options as never)
-        ) as typeof fs.readFileSync);
+              : originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync);
 
         expect(helpers.isDockerDriverGatewayStateInUse()).toBe(true);
       });
@@ -330,6 +353,14 @@ describe("docker-driver gateway runtime helpers", () => {
             ],
           ]);
           const { helpers, runCapture } = makeHelpers({
+            loadDockerDriverGatewayEnv: () => ({
+              ...dockerDriverGatewayEnv,
+              buildDockerDriverGatewayEnv: (options) =>
+                dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
+                  ...options,
+                  architecture: "arm64",
+                }),
+            }),
             runCapture: vi.fn((args) => processOutput.get(args.join(" ")) ?? ""),
           });
           const desiredEnv = helpers.getDockerDriverGatewayEnv(null, "darwin");
@@ -526,10 +557,74 @@ describe("docker-driver gateway runtime helpers", () => {
     ).toBe("NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS=1 (expected <unset>)");
   });
 
-  it("reuses a systemd-owned gateway without detached cleanup identity (#6903)", () => {
+  it("marks a gateway stale when its external component identity differs (#11340)", () => {
+    const { helpers } = makeHelpers();
+    expect(
+      helpers.getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: {
+          OPENSHELL_DRIVERS: "docker",
+          [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "prior-component",
+        },
+        processExe: "/usr/bin/openshell-gateway",
+        desiredEnv: {
+          OPENSHELL_DRIVERS: "docker",
+          [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "approved-component",
+        },
+        gatewayBin: "/usr/bin/openshell-gateway",
+      })?.reason,
+    ).toBe(
+      `${NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV}=prior-component (expected approved-component)`,
+    );
+  });
+
+  it("marks a gateway stale after persisted external component removal (#11340)", () => {
+    const { helpers } = makeHelpers();
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nc-component-removal-"));
+    try {
+      fs.chmodSync(stateDir, 0o700);
+      const options = {
+        platform: "linux" as const,
+        stateDir,
+        getDockerSupervisorImage: () => "supervisor:test",
+        resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
+      };
+      const env = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv(options);
+      dockerDriverGatewayEnv.configureDockerDriverGatewayExternalComponent(env, {
+        componentId: "policy-governance",
+        interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
+      });
+      const processEnv = { ...env };
+      dockerDriverGatewayEnv.configureDockerDriverGatewayExternalComponent(env, null);
+      const desiredEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv(options);
+      const snapshot = {
+        processExe: "/usr/bin/openshell-gateway",
+        gatewayBin: "/usr/bin/openshell-gateway",
+        desiredEnv,
+      };
+      expect(desiredEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]).toBe("none");
+      expect(
+        helpers.getDockerDriverGatewayRuntimeDriftFromSnapshot({ ...snapshot, processEnv })?.reason,
+      ).toBe(
+        `${NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV}=${processEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]} (expected none)`,
+      );
+      expect(
+        helpers.getDockerDriverGatewayRuntimeDriftFromSnapshot({
+          ...snapshot,
+          processEnv: desiredEnv,
+        }),
+      ).toBeNull();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses a systemd-owned gateway with a legacy unset component identity (#11340)", () => {
     const pid = 12_350;
     const gatewayBin = "/usr/bin/openshell-gateway";
-    const desiredEnv = { OPENSHELL_DRIVERS: "docker" };
+    const desiredEnv = {
+      OPENSHELL_DRIVERS: "docker",
+      [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "none",
+    };
     const { helpers } = makeHelpers({
       runCapture: vi.fn(() => gatewayBin),
     });
