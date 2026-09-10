@@ -134,13 +134,32 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
   });
 
   it("still rejects a genuinely unsupported provider name", async () => {
+    const output = "nvidia-prod\nqa-non-inference\ncompatible-endpoint\nollama-local\n";
+    const captureOpenshell = vi.fn(() => ({ status: 0, output, stdout: output, stderr: "" }));
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
-      entry: { name: "alpha", agent: "openclaw" },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw-18080",
+      },
+      captureOpenshell,
     });
     await expect(
       runInferenceSet({ provider: "totally-made-up", model: "nvidia/model-a" }, deps),
-    ).rejects.toThrow(/Unsupported provider 'totally-made-up'/);
+    ).rejects.toThrow(
+      "Unsupported provider 'totally-made-up'. Selectable providers registered on gateway " +
+        "'nemoclaw-18080': compatible-endpoint, nvidia-prod, ollama-local.",
+    );
+    expect(captureOpenshell).toHaveBeenCalledWith(
+      ["provider", "list", "-g", "nemoclaw-18080", "--names"],
+      expect.objectContaining({ timeout: 5_000 }),
+    );
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
   it("hands OpenShell the exact `compatible-anthropic-endpoint` name, never the `anthropicCompatible` alias (#6321)", async () => {
