@@ -254,6 +254,7 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 
 # Cross-stage root copies are accepted by Docker's legacy builder and create
 # one final-image layer while preserving metadata on existing parent paths.
+# hadolint ignore=DL3067
 COPY --from=hermes-npm-patch-payload / /
 
 # The immutable selected base owns the reviewed Hindsight and agent-browser
@@ -447,13 +448,14 @@ RUN _hermes_certifi=$(/opt/hermes/.venv/bin/python -c 'import certifi; print(cer
 ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 ENV HERMES_TUI_DIR="/opt/hermes/ui-tui"
 
+# hadolint ignore=DL3067
 COPY --from=hermes-agent-payload / /
 
 # Managed MCP and ACP require their packaged Hermes client surfaces. A
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7c74c3f190845fef222e3aac1bd7074d58968447e78221114344545c149595c2
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=085fa6866b33295e4efed2a10197d56369d98b25cee1fe0dde7f97e892950cc8
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -481,7 +483,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 # same-version wheel selected by its lazy installer. Bind that production
 # boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
 ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7c74c3f190845fef222e3aac1bd7074d58968447e78221114344545c149595c2
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=085fa6866b33295e4efed2a10197d56369d98b25cee1fe0dde7f97e892950cc8
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
@@ -494,6 +496,7 @@ RUN printf '%s  %s\n' \
         /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
     && rm /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch
 
+# hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /
 
 # Keep the root-owned managed-startup handoff in this image-only layer. The
@@ -793,7 +796,7 @@ RUN node \
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,hermes-cli-adapter-v1.json,validate-cli-adapter.py,validate-env-secret-boundary.py,finalize-tirith-marker.py,cron-restore-control.py}`.
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=3c769f05292b840424a8feec9a9eb441e393a48bf0212bd824b0db8a33a66331
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=20de8ca3316dcd1e606ffb34a8adfd82f39e558882d3fbfa221da699cae712cc
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=99c21aef7974db5f2bb1f1fdccffc4374894d1dce3ea58490ee8a8ec59330518
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=adc35f1ed8248eb87a76357795649e6301c0030d2e9ad5aa11e2a9520fc4afaf
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
@@ -825,6 +828,7 @@ RUN printf '%s  %s\n' \
 # The wrapper's shebang pins `/usr/bin/python3 -I` (isolated mode); fail the
 # build if that absolute path is missing or non-executable so a base-image
 # upgrade that drops it cannot ship a wrapper that ENOEXECs at runtime.
+# hadolint ignore=DL3067
 COPY --from=hermes-wrapper-payload / /
 
 RUN test -x /usr/bin/python3 \
@@ -958,6 +962,7 @@ RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
 WORKDIR /sandbox
 RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:999:/sandbox" \
     && rm -rf /sandbox/.cache
+# hadolint ignore=DL3066
 USER sandbox
 
 # Set up blueprint for local resolution
@@ -979,6 +984,7 @@ RUN /opt/hermes/.venv/bin/python -I \
     fi \
     && rm -rf /sandbox/.cache
 
+# hadolint ignore=DL3066
 USER root
 
 # Install the generated policy manifest outside the mutable Hermes home. Python
@@ -1070,6 +1076,7 @@ RUN set -eu; \
         /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py profile-policy
 
+# hadolint ignore=DL3066
 USER sandbox
 
 # Prove that the installed dashboard seeder carries every reviewed policy value
@@ -1091,6 +1098,7 @@ RUN dashboard_probe=/tmp/nemoclaw-dashboard-policy-probe.yaml \
 # Hermes home. Custom images use this same image-owned tree for reviewed
 # plugins. /sandbox/.hermes/plugins remains mutable state for Hermes' same-UID
 # topology and is ignored by the identity-proven separated gateway.
+# hadolint ignore=DL3066
 USER root
 # hadolint ignore=DL3059
 RUN rm -rf /opt/hermes/plugins/nemoclaw \
@@ -1100,6 +1108,7 @@ RUN rm -rf /opt/hermes/plugins/nemoclaw \
     && find /opt/hermes/plugins/nemoclaw -type d -exec chmod 0755 {} + \
     && find /opt/hermes/plugins/nemoclaw -type f -exec chmod 0444 {} +
 
+# hadolint ignore=DL3066
 USER sandbox
 
 # Apply messaging render and post-agent-install build-file hooks after agent/plugin installation.
@@ -1127,7 +1136,7 @@ ENV HERMES_ENVIRONMENT_HINT="You are running inside an NVIDIA OpenShell sandbox,
 # The sandbox user can write config; the gateway user can read it via
 # supplementary sandbox-group membership and create Hermes v0.14 runtime dirs
 # without being able to remove sticky-protected config files.
-# hadolint ignore=DL3002
+# hadolint ignore=DL3002,DL3066
 USER root
 
 # Flatten stale published base images that still contain the old .hermes-data

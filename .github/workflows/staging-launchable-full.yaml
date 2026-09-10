@@ -11,6 +11,7 @@ permissions:
 
 concurrency:
   group: staging-brev-launchable-cpu
+  queue: max
   cancel-in-progress: false
 
 jobs:

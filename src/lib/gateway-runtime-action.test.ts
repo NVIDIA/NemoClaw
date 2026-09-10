@@ -39,6 +39,7 @@ describe("gateway observations and recovery", () => {
   });
 
   it("passes the recorded gateway and runtime selection to every recovery observation (#10514)", async () => {
+    const output = { error: vi.fn(), log: vi.fn(), step: vi.fn(), warn: vi.fn() };
     const runtimeSelection = {
       gatewayName: "nemoclaw-8090",
       workspace: "default",
@@ -51,6 +52,7 @@ describe("gateway observations and recovery", () => {
     const result = await gatewayRuntime.recoverNamedGatewayRuntime({
       gatewayName: "nemoclaw-8090",
       runtimeSelection,
+      output,
     });
     expect(result).toMatchObject({ recovered: true, via: "start" });
     expect(observe).toHaveBeenCalledTimes(3);
@@ -65,6 +67,7 @@ describe("gateway observations and recovery", () => {
       gatewayName: "nemoclaw-8090",
       gatewayPort: 8090,
       runtimeSelection,
+      output,
     });
   });
 

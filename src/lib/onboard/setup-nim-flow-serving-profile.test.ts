@@ -93,10 +93,14 @@ describe("serving profile onboarding against a running vLLM", () => {
     const observedModels: unknown[] = [];
     const handleVllmSelection = acceptVllmSelection(observedModels);
 
-    await selectAgainstRunningVllm(handleVllmSelection, () => null, () => ({
-      id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
-      servedModelId: "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
-    }));
+    await selectAgainstRunningVllm(
+      handleVllmSelection,
+      () => null,
+      () => ({
+        id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        servedModelId: "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
+      }),
+    );
 
     expect(observedModels).toEqual(["nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4"]);
     expect(handleVllmSelection).toHaveBeenCalledWith(

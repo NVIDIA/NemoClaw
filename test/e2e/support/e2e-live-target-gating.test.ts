@@ -81,9 +81,20 @@ function missingDeclaredTarget(wired: boolean): never {
 
 describe("live E2E target gating", () => {
   it(
-    "collects the bootstrap install test through the trusted-main legacy path",
+    "keeps the formatted bootstrap entry point valid through real Vitest collection",
     testTimeoutOptions(90_000),
     () => {
+      const formatted = spawnSync(
+        process.execPath,
+        [
+          path.join(REPO_ROOT, "node_modules", "oxfmt", "bin", "oxfmt"),
+          "--check",
+          path.join(LIVE_E2E_ROOT, "bootstrap-install-smoke.test.ts"),
+        ],
+        { cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000 },
+      );
+      expect(formatted.status, formatted.stderr || formatted.stdout).toBe(0);
+
       const legacy = listLiveTests({
         enabled: true,
         env: { E2E_TARGET_ID: "launchable-smoke" },

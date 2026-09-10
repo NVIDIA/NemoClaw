@@ -112,7 +112,7 @@ export function settleInferenceSetOpenClawPairing(
 export interface InferenceGatewayRestartDeps {
   appendAuditEntry: (entry: OperationalAuditEntry) => void;
   log: (message: string) => void;
-  restartSandboxGateway: (sandboxName: string) => GatewayRestartResult;
+  restartSandboxGateway: (sandboxName: string) => Promise<GatewayRestartResult>;
   settleOpenClawPairing: (
     target: InferenceSetOpenClawPairingTarget,
   ) => InferenceSetOpenClawPairingResult;
@@ -160,7 +160,9 @@ export interface InferenceMutation<T extends InferenceResultForGateway> {
 // Remove pairing settlement when OpenClaw no longer requires a separate
 // allowlisted device-scope upgrade after a route change.
 
-export function defaultInferenceGatewayRestart(sandboxName: string): GatewayRestartResult {
+export async function defaultInferenceGatewayRestart(
+  sandboxName: string,
+): Promise<GatewayRestartResult> {
   const recovery: typeof import("./sandbox/process-recovery") = require("./sandbox/process-recovery");
   return recovery.restartSandboxGateway(sandboxName, { quiet: true });
 }
@@ -256,10 +258,10 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
   };
 }
 
-export function completeInferencePostCommit<T extends InferenceResultForGateway>(
+export async function completeInferencePostCommit<T extends InferenceResultForGateway>(
   mutation: InferenceMutation<T>,
   deps: InferenceGatewayRestartDeps,
-): void {
+): Promise<void> {
   const { result } = mutation;
   if (mutation.openClawGatewayRestartRequired) {
     deps.log(
@@ -267,7 +269,7 @@ export function completeInferencePostCommit<T extends InferenceResultForGateway>
     );
     let restartFailure: string | null = null;
     try {
-      const restart = deps.restartSandboxGateway(result.sandboxName);
+      const restart = await deps.restartSandboxGateway(result.sandboxName);
       if (!restart.ok) restartFailure = restart.failureLayer;
     } catch {
       restartFailure = "restart exception";

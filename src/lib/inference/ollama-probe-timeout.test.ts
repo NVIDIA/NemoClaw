@@ -3,11 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  OLLAMA_LOCALHOST,
-  setResolvedOllamaHost,
-  validateOllamaModel,
-} from "./local";
+import { OLLAMA_LOCALHOST, setResolvedOllamaHost, validateOllamaModel } from "./local";
 
 afterEach(() => {
   vi.restoreAllMocks();

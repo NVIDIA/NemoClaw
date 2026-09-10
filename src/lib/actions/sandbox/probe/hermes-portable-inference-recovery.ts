@@ -20,7 +20,7 @@ export interface HermesPortableInferenceConnectRecoveryInput {
   readonly sandboxName: string;
   readonly authority: HermesPortableActiveLifecycleAuthority;
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
-  readonly verifyRoute: () => SandboxEntry;
+  readonly verifyRoute: () => Promise<SandboxEntry>;
   readonly prepareProbeDependency?: () => HermesPortableOllamaPreparedProbeDependency;
   readonly assertCallerTransactionCurrent?: () => void;
   readonly assertCallerCurrent?: () => void;
@@ -49,10 +49,10 @@ export function inspectHermesPortableInferenceReadinessRuntimeForConnectProbe(
 }
 
 /** Resume exact published Ollama authority for one probe-only connect operation. */
-export function recoverHermesPortableInferenceForConnectProbe(
+export async function recoverHermesPortableInferenceForConnectProbe(
   input: HermesPortableInferenceConnectRecoveryInput,
 ) {
-  return recoverHermesPortableOllamaInference({
+  return await recoverHermesPortableOllamaInference({
     intent: "connect-probe-only",
     sandboxName: input.sandboxName,
     entry: input.authority.entry,

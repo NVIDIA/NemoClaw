@@ -79,7 +79,11 @@ describe("rebuild gateway drift preflight", () => {
       } as never);
     getNamedGatewayLifecycleStateSpy = vi
       .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
-      .mockResolvedValue({ state: "healthy_named", activeGateway: "nemoclaw", status: "" } as never);
+      .mockResolvedValue({
+        state: "healthy_named",
+        activeGateway: "nemoclaw",
+        status: "",
+      } as never);
     recoverDockerDriverSandboxSpy = vi
       .spyOn(dockerDriverRecovery, "recoverDockerDriverSandbox")
       .mockReturnValue({ recovered: false, via: null });
@@ -127,12 +131,7 @@ describe("rebuild gateway drift preflight", () => {
     };
 
     expect(
-      checkRebuildGatewaySchemaPreflight(
-        "alpha",
-        makeSandboxEntry(),
-        bail,
-        runtimeSelection,
-      ),
+      checkRebuildGatewaySchemaPreflight("alpha", makeSandboxEntry(), bail, runtimeSelection),
     ).toBe(true);
     expect(gatewayDrift.detectOpenShellStateRpcPreflightIssue).toHaveBeenCalledWith({
       gatewayName: "nemoclaw",

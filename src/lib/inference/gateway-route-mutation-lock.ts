@@ -71,5 +71,9 @@ export function withModelRouterPortLifecycleLock<T>(
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("Model Router port must be an integer from 1 to 65535.");
   }
-  return withMcpLifecycleLock(`${MODEL_ROUTER_PORT_LOCK_PREFIX}${String(port)}`, operation, resolveModelRouterPortLifecycleLockOptions(options));
+  return withMcpLifecycleLock(
+    `${MODEL_ROUTER_PORT_LOCK_PREFIX}${String(port)}`,
+    operation,
+    resolveModelRouterPortLifecycleLockOptions(options),
+  );
 }

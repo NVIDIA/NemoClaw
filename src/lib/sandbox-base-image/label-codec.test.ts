@@ -84,14 +84,15 @@ describe("sandbox base-image resolution label codec", () => {
     ).toBeNull();
   });
 
-  it.each(
-    SANDBOX_BASE_IMAGE_RESOLUTION_SOURCES,
-  )("accepts the shared %s resolution source (#4680)", (source) => {
-    expect(parseSandboxBaseImageResolutionLabels(encoded({ ...metadata, source }))).toEqual({
-      ...metadata,
-      source,
-    });
-  });
+  it.each(SANDBOX_BASE_IMAGE_RESOLUTION_SOURCES)(
+    "accepts the shared %s resolution source (#4680)",
+    (source) => {
+      expect(parseSandboxBaseImageResolutionLabels(encoded({ ...metadata, source }))).toEqual({
+        ...metadata,
+        source,
+      });
+    },
+  );
 
   it("reads valid resolution metadata through the Docker inspect adapter (#4680)", () => {
     mocks.dockerImageInspectFormat.mockReturnValue(JSON.stringify(encoded(metadata)));
