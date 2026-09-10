@@ -46,6 +46,7 @@ def scenario(
     expected_start="424242",
     expected_namespace="trusted",
     limit=32768,
+    mode_selection=False,
 ):
     with tempfile.TemporaryDirectory() as root:
         proc_root = os.path.join(root, "proc")
@@ -68,6 +69,9 @@ def scenario(
             )
         guard.PROC_ROOT = proc_root
         guard.MAX_PROC_ENTRIES = limit
+        if mode_selection:
+            guard._startup_markers_absent = lambda identity: True
+            return guard.mutable_config_modes(guard.Identity(0, 0, 1000, 1000))
         return guard._startup_process_identity_is_live(
             expected_start,
             os.stat(namespaces[expected_namespace]).st_ino,
@@ -79,6 +83,8 @@ def supervised_scenario(
     limit=32768,
     required_pid=None,
     namespace_access=True,
+    mode_selection=False,
+    markers_absent=True,
 ):
     with tempfile.TemporaryDirectory() as root:
         proc_root = os.path.join(root, "proc")
@@ -130,6 +136,9 @@ def supervised_scenario(
                 return original_namespace_reader(proc_pid_fd)
             guard._proc_pid_namespace_inode = child_only_namespace_reader
         try:
+            if mode_selection:
+                guard._startup_markers_absent = lambda identity: markers_absent
+                return guard.mutable_config_modes(guard.Identity(0, 0, 1000, 1000))
             return guard._openshell_supervised_nonroot_start_is_live(
                 0,
                 1000,
@@ -241,6 +250,19 @@ proof.update({
         (412, "424242", entrypoint, 1000, 1, 1, "nested"),
     ], required_pid=413),
 })
+if len(sys.argv) > 2:
+    child = (412, "424242", entrypoint, 1000, 412, 1)
+    proof = {
+        "same_user": supervised_scenario([child], mode_selection=True),
+        "root_child": supervised_scenario([
+            (412, "424242", entrypoint, 0, 412, 1),
+        ], mode_selection=True),
+        "root_marker": supervised_scenario([child], mode_selection=True, markers_absent=False),
+        "direct_same_user": scenario([(1, "424242", entrypoint, "trusted", 1000)], mode_selection=True),
+        "direct_root": scenario([(1, "424242", entrypoint, "trusted", 0)], mode_selection=True),
+        "direct_foreign_user": scenario([(1, "424242", entrypoint, "trusted", 1001)], mode_selection=True),
+        "direct_spoof": scenario([(1, "424242", spoof, "trusted", 1000)], mode_selection=True),
+    }
 print(json.dumps(proof))
 `;
 
@@ -249,8 +271,8 @@ const GUARDS = [
   ["Hermes", path.resolve("agents/hermes/runtime-config-guard.py")],
 ] as const;
 
-function runIdentityHarness(guardPath: string) {
-  const result = spawnSync("python3", ["-c", IDENTITY_HARNESS, guardPath], {
+function runIdentityHarness(guardPath: string, ...args: string[]) {
+  const result = spawnSync("python3", ["-c", IDENTITY_HARNESS, guardPath, ...args], {
     encoding: "utf-8",
     timeout: 5000,
   });
@@ -258,6 +280,18 @@ function runIdentityHarness(guardPath: string) {
   expect(result.status, result.stderr).toBe(0);
   return JSON.parse(result.stdout);
 }
+
+it("uses private OpenClaw modes only for the authenticated same-user process tree", () => {
+  expect(runIdentityHarness(GUARDS[0][1], "modes")).toEqual({
+    same_user: [0o700, 0o600],
+    root_child: [0o2770, 0o660],
+    root_marker: [0o2770, 0o660],
+    direct_same_user: [0o700, 0o600],
+    direct_root: [0o2770, 0o660],
+    direct_foreign_user: [0o2770, 0o660],
+    direct_spoof: [0o2770, 0o660],
+  });
+});
 
 describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
   it("authenticates exactly one root namespace init and rejects stale or spoofed identities (#2426)", () => {
