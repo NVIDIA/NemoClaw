@@ -6,6 +6,7 @@ import type {
   NemoClawConfig,
   NemoClawConfigDocumentName,
   NemoClawConfigDocumentUid,
+  NemoClawAgentConfig,
   NemoClawInferenceProviderConfig,
 } from "../../config/model";
 import type { VerifiedExportSource } from "./export-evidence";
@@ -39,6 +40,31 @@ function inferenceProvider(
   return source.inference.credentialEnv === undefined
     ? provider
     : { ...provider, credential: { env: source.inference.credentialEnv } };
+}
+
+function primaryAgent(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig {
+  return {
+    name: "primary",
+    ...agentSettings(source),
+    ...(source.auth === undefined
+      ? {}
+      : { auth: { method: source.auth.method, providerRef: providerName } }),
+    inference: {
+      routes: [
+        {
+          name: "primary",
+          providerRef: providerName,
+          overrides: {
+            model: source.inference.model,
+            ...("serving" in source.inference
+              ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
+              : {}),
+            ...("overrides" in source.inference ? source.inference.overrides : {}),
+          },
+        },
+      ],
+    },
+  };
 }
 
 export interface ExportConfigBuildIdentity {
@@ -88,27 +114,7 @@ export function buildExportConfig(
             ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
           },
           ...(source.webSearch ? { integrations: { webSearch: source.webSearch } } : {}),
-          agents: [
-            {
-              name: "primary",
-              ...agentSettings(source),
-              inference: {
-                routes: [
-                  {
-                    name: "primary",
-                    providerRef: providerName,
-                    overrides: {
-                      model: source.inference.model,
-                      ...("serving" in source.inference
-                        ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
-                        : {}),
-                      ...("overrides" in source.inference ? source.inference.overrides : {}),
-                    },
-                  },
-                ],
-              },
-            },
-          ],
+          agents: [primaryAgent(source, providerName)],
         },
       ],
     },

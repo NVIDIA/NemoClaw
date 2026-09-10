@@ -307,6 +307,23 @@
                           "maxLength": 63,
                           "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
                         },
+                        "auth": {
+                          "type": "object",
+                          "required": ["method", "providerRef"],
+                          "properties": {
+                            "method": {
+                              "type": "string",
+                              "const": "api-key"
+                            },
+                            "providerRef": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 63,
+                              "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                            }
+                          },
+                          "additionalProperties": false
+                        },
                         "inference": {
                           "type": "object",
                           "required": ["routes"],
@@ -432,6 +449,23 @@
                           "minLength": 1,
                           "maxLength": 63,
                           "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                        },
+                        "auth": {
+                          "type": "object",
+                          "required": ["method", "providerRef"],
+                          "properties": {
+                            "method": {
+                              "type": "string",
+                              "const": "api-key"
+                            },
+                            "providerRef": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 63,
+                              "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                            }
+                          },
+                          "additionalProperties": false
                         },
                         "inference": {
                           "type": "object",
