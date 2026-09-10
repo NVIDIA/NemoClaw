@@ -92,7 +92,7 @@ try {
     $ready = Read-CaptureLine | ConvertFrom-Json
     if ($ready.phase -cne 'ready' -or $ready.processId -ne $process.Id -or $ready.entryCount -ne 2080) { throw 'The capture boundary did not identify the actual owned process/tree.' }
     $captureAttempted = $true
-    Invoke-CaptureCommand -Path $logman -Name 'start-exact-file-provider' -Arguments @('create','trace',$session,'-o',$trace,'-f','bincirc','-max','32','-bs','64','-nb','16','64','-p',$provider.Id.ToString(),$keyword,'5','-ets')
+    Invoke-CaptureCommand -Path $logman -Name 'start-exact-file-provider' -Arguments @('create','trace',$session,'-o',$trace,'-f','bincirc','-max','32','-bs','64','-nb','16','64','-p',$provider.Id.ToString('B'),$keyword,'5','-ets')
     $captureStarted = $true
     $process.StandardInput.WriteLine('capture-ready'); $process.StandardInput.Flush()
     if ((Read-CaptureLine) -cne 'capture-complete') { throw 'The measurement did not finish the expected API intervals.' }
