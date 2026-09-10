@@ -145,7 +145,8 @@ Wait for completion:
 gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw
 ```
 
-The Launchable concurrency group does not cancel a running E2E job. GitHub can replace an older pending run with a newer pending run in the same group.
+The Launchable concurrency group runs one entry at a time and preserves up to 100 pending entries
+with `queue: max`. GitHub cancels new entries when the queue is full.
 
 ## Verify and Report
 

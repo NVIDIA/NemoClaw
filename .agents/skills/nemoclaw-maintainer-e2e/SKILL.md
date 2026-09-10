@@ -73,7 +73,8 @@ record exists only after the job confirms workspace absence. A preparation failu
 artifact. A later failure can retain only `lane.log` and the phase artifacts created before exit.
 
 The job uses the `staging-brev-launchable-cpu` concurrency group without cancelling a running job.
-GitHub keeps at most one pending job in that group, so a newer job can replace an older pending job.
+All Launchable consumers use `queue: max`, which preserves up to 100 pending entries.
+GitHub cancels new entries when the queue is full.
 A queued, waiting, or accepted dispatch is not a successful result.
 
 ## Inspect the Newest Full Main Run
