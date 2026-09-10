@@ -10,8 +10,8 @@ import { delimiter, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
 import { CONTAINER_REACHABILITY_IMAGE } from "../../../inference/local";
-import type { SandboxExecSignalSource } from "../exec";
-import type { AgentDispatchChild } from "./passthrough-dispatch";
+import type { ProcessSessionSignals } from "../../../core/process-session";
+import type { CapturedProcessChild } from "../../../core/process-capture";
 import {
   maybeWarmOllamaAfterDaemonRestart,
   runOllamaRecoveryCapture,
@@ -72,12 +72,12 @@ function completingRecoverySpawner(
     const childEvents = new EventEmitter();
     const stderr = new EventEmitter();
     const stdout = new EventEmitter();
-    const child: AgentDispatchChild = {
+    const child: CapturedProcessChild = {
       exitCode: null,
       signalCode: null,
       kill: vi.fn(() => true),
       once: ((event: string, listener: (...args: unknown[]) => void) =>
-        childEvents.once(event, listener)) as AgentDispatchChild["once"],
+        childEvents.once(event, listener)) as CapturedProcessChild["once"],
       stderr,
       stdout,
     };
@@ -385,7 +385,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     const stderr = new EventEmitter();
     const stdout = new EventEmitter();
     const cleanup = vi.fn(() => ({ ok: true as const }));
-    const child: AgentDispatchChild = {
+    const child: CapturedProcessChild = {
       exitCode: null,
       signalCode: null,
       kill: vi.fn((signal) => {
@@ -394,11 +394,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
         return true;
       }),
       once: ((event: string, listener: (...args: unknown[]) => void) =>
-        childEvents.once(event, listener)) as AgentDispatchChild["once"],
+        childEvents.once(event, listener)) as CapturedProcessChild["once"],
       stderr,
       stdout,
     };
-    const signalSource: SandboxExecSignalSource = {
+    const signalSource: ProcessSessionSignals = {
       add: (signal, listener) => signalEvents.on(signal, listener),
       remove: (signal, listener) => signalEvents.off(signal, listener),
     };
@@ -444,7 +444,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     const childEvents = new EventEmitter();
     const signalEvents = new EventEmitter();
     const cleanup = vi.fn(() => ({ ok: true as const }));
-    let child: AgentDispatchChild;
+    let child: CapturedProcessChild;
     const kill = vi
       .fn<(signal: NodeJS.Signals) => boolean>()
       .mockReturnValueOnce(true)
@@ -458,11 +458,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       signalCode: null,
       kill,
       once: ((event: string, listener: (...args: unknown[]) => void) =>
-        childEvents.once(event, listener)) as AgentDispatchChild["once"],
+        childEvents.once(event, listener)) as CapturedProcessChild["once"],
       stderr: new EventEmitter(),
       stdout: new EventEmitter(),
     };
-    const signalSource: SandboxExecSignalSource = {
+    const signalSource: ProcessSessionSignals = {
       add: (signal, listener) => signalEvents.on(signal, listener),
       remove: (signal, listener) => signalEvents.off(signal, listener),
     };
