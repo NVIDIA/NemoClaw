@@ -241,9 +241,9 @@ If either identity cannot be verified, do not remove files by name alone.
 Do not remove the requested output file to clean up a temporary link.
 
 Version 1 exports managed OpenClaw sandboxes and canonical managed Hermes sandboxes in the default workspace.
-Supported sandboxes use an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
-They can use hosted external inference, the native NVIDIA hosted provider with its default endpoint, or the verified managed local vLLM configuration.
-The managed vLLM export is limited to its fixed managed serving identity and complete live runtime evidence.
+Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
+A managed OpenClaw sandbox can also use the verified managed local vLLM configuration.
+The managed vLLM export runs only on Linux x86_64 and requires its fixed managed serving identity and complete live runtime evidence.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
 For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.
@@ -259,6 +259,7 @@ Other profiles fail with a diagnostic instead of producing an incomplete documen
 Use `nemoclaw-acp` to connect an external Agent Client Protocol (ACP) client to a compatible managed Hermes sandbox.
 The command starts an ACP session and writes protocol traffic only to standard output.
 It writes lifecycle diagnostics to standard error.
+It requires the supported OpenShell version and the system SSH client on Linux or macOS.
 
 Specify the registered sandbox name.
 If the name is registered on more than one gateway, specify its NemoClaw gateway name.
