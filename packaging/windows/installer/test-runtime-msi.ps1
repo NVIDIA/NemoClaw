@@ -35,7 +35,8 @@ $cleanupFailures = [Collections.Generic.List[string]]::new()
 $results = [Collections.Generic.List[object]]::new()
 $receipt = [ordered]@{ schemaVersion = 1; classification = 'connected-msi-boundary-fixtures';
     sourceRevision = $SourceRevision; completeRuntime = $false; installedAcceptance = $false;
-    status = 'failed'; results = $results; cleanupFailures = $cleanupFailures }
+    status = 'failed'; results = $results; cleanupFailures = $cleanupFailures;
+    snapshots = [ordered]@{}; snapshotDiffsFromFirstInstall = [ordered]@{} }
 
 function Invoke-FixtureMsi {
     param([string]$Action,[string]$Msi,[string]$Label)
@@ -64,7 +65,21 @@ function Invoke-FixtureMsi {
     }
 }
 
+function Add-FixtureSnapshotEvidence {
+    param([string]$Label, [string]$Value)
+    if (-not $Label) { return }
+    $receipt.snapshots[$Label] = $Value
+    if ($receipt.snapshots.Contains('first-install')) {
+        $receipt.snapshotDiffsFromFirstInstall[$Label] = @(Compare-Object -CaseSensitive `
+            -ReferenceObject ([string[]]($receipt.snapshots['first-install'] -split "`n")) `
+            -DifferenceObject ([string[]]($Value -split "`n")) | ForEach-Object {
+                [pscustomobject]@{ side = $_.SideIndicator; row = $_.InputObject }
+            })
+    }
+}
+
 function Get-FixtureSnapshot {
+    param([string]$Label = '')
     $records = [Collections.Generic.List[string]]::new()
     $records.Add('D|/|' + (Get-Acl -LiteralPath $installation).Sddl)
     foreach ($item in @(Get-ChildItem -LiteralPath $installation -Recurse -Force | Sort-Object FullName)) {
@@ -74,7 +89,9 @@ function Get-FixtureSnapshot {
         if ($item.PSIsContainer) { $records.Add('D|' + $relative + '|' + $acl) }
         else { $records.Add('F|' + $relative + '|' + (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash + '|' + $acl) }
     }
-    return $records.ToArray() -join "`n"
+    $value = $records.ToArray() -join "`n"
+    Add-FixtureSnapshotEvidence -Label $Label -Value $value
+    return $value
 }
 
 function Assert-FixtureCurrent {
@@ -219,7 +236,7 @@ try {
     $installed = Invoke-FixtureMsi '/i' $first.msi 'first-install'; $results.Add($installed)
     if ($installed.exitCode -ne 0) { throw 'The first MSI fixture did not install successfully.' }
     Assert-FixtureCurrent $first
-    $snapshot = Get-FixtureSnapshot
+    $snapshot = Get-FixtureSnapshot -Label 'first-install'
     $lease = Start-FixtureLease $helper
     $receipt.heldLease = $lease.readiness
     $receipt.leaseProcess = $lease.evidence
@@ -232,18 +249,20 @@ try {
         if ($lease.process.HasExited) { throw 'The owned lease helper exited before busy maintenance.' }
         $result = Invoke-FixtureMsi $case.Action $case.Msi $case.Label; $results.Add($result)
         Add-FixtureLeaseObservation $lease ($case.Label + '-after')
-        if ($lease.process.HasExited -or $result.exitCode -ne 1603 -or (Get-FixtureSnapshot) -cne $snapshot) {
+        if ($lease.process.HasExited -or $result.exitCode -ne 1603 -or (Get-FixtureSnapshot -Label $case.Label) -cne $snapshot) {
             throw 'Active-reader maintenance did not refuse before changing the installed tree or ACLs.'
         }
         Assert-FixtureCurrent $first
     }
+    [void](Get-FixtureSnapshot -Label 'before-lease-release')
     $closingLease = $lease; $lease = $null
     Stop-FixtureLease $closingLease
+    [void](Get-FixtureSnapshot -Label 'after-lease-release')
     $repair = Invoke-FixtureMsi '/fa' $first.msi 'released-direct-repair'; $results.Add($repair)
-    if ($repair.exitCode -ne 0 -or (Get-FixtureSnapshot) -cne $snapshot) { throw 'Repair after lease release did not preserve the exact runtime.' }
+    if ($repair.exitCode -ne 0 -or (Get-FixtureSnapshot -Label 'released-direct-repair') -cne $snapshot) { throw 'Repair after lease release did not preserve the exact runtime.' }
     foreach ($fixture in @($fixtures[2],$fixtures[3])) {
         $failed = Invoke-FixtureMsi '/i' $fixture.msi $fixture.label; $results.Add($failed)
-        if ($failed.exitCode -ne 1603 -or (Get-FixtureSnapshot) -cne $snapshot) {
+        if ($failed.exitCode -ne 1603 -or (Get-FixtureSnapshot -Label $fixture.label) -cne $snapshot) {
             throw 'Actual MSI rollback did not restore the prior files and descriptor after the controlled failure.'
         }
         if ($fixture.label -ceq 'commit-failure' -and
