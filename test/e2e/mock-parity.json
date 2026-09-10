@@ -637,6 +637,7 @@
         "test/e2e/support/mcp-bridge-hermes-http.test.ts",
         "test/e2e/support/mcp-bridge-onboard-env.test.ts",
         "test/e2e/support/mcp-bridge-reliability.test.ts",
+        "test/e2e/support/mcp-bridge-servers.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/mcp-bridge-sandbox.test.ts",
         "test/e2e/support/mcp-bridge-tool-discovery.test.ts",

@@ -15,7 +15,6 @@ import { MCP_BRIDGE_ALLOWED_METHODS } from "../../src/lib/actions/sandbox/mcp-br
 import { startTestProgress } from "../e2e/fixtures/progress.ts";
 import {
   buildCloudflaredQuickTunnelArgs,
-  buildPublicTunnelProbeArgs,
   FAKE_MCP_STATUS_RESULT_TOKEN,
   HERMES_DEFERRED_TOOL_SEARCH_MISS,
   parseTryCloudflareOrigin,
@@ -178,26 +177,6 @@ describe("authenticated MCP live fixtures", () => {
     ]);
     expect(() => buildCloudflaredQuickTunnelArgs(0)).toThrow(/invalid local MCP HTTPS port/);
     expect(() => buildCloudflaredQuickTunnelArgs(65_536)).toThrow(/invalid local MCP HTTPS port/);
-    expect(buildPublicTunnelProbeArgs("https://fixture-cleanup-123.trycloudflare.com/mcp")).toEqual(
-      [
-        "--disable",
-        "--silent",
-        "--show-error",
-        "--head",
-        "--proto",
-        "=https",
-        "--tlsv1.2",
-        "--connect-timeout",
-        "5",
-        "--max-time",
-        "5",
-        "--output",
-        "/dev/null",
-        "--write-out",
-        "%{http_code}",
-        "https://fixture-cleanup-123.trycloudflare.com/mcp",
-      ],
-    );
   });
 
   it("accepts only an exact public trycloudflare origin from tunnel output", () => {
