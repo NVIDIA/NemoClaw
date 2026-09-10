@@ -206,11 +206,7 @@ function queueLegacyMcpResponse(
   requestId: string | number | null,
   payload: unknown,
 ): LegacyQueueResult {
-  if (
-    session.phase === "closed" ||
-    session.response.destroyed ||
-    session.response.writableEnded
-  ) {
+  if (session.phase === "closed" || session.response.destroyed || session.response.writableEnded) {
     return { ok: false, status: 410, message: "legacy MCP event stream is closed" };
   }
   const requestIdKey = jsonRpcIdKey(requestId);
@@ -601,9 +597,7 @@ export async function startCompatibleMock(options: {
         ) {
           return "invalid";
         }
-        return names.includes(toolName)
-          ? "target"
-          : "miss";
+        return names.includes(toolName) ? "target" : "miss";
       };
       const hasExpectedHermesDescription = (index: number, toolName: string) => {
         const parsed = parsedToolResult(index, "call_hermes_tool_describe");
@@ -649,8 +643,7 @@ export async function startCompatibleMock(options: {
               arguments: { name: deniedToolProbe.toolName, arguments: {} },
             };
           } else if (toolResultCount === 1) {
-            deniedToolProbeComplete =
-              isDeniedBridgeToolResult(0, "call_denied_tool_bridge");
+            deniedToolProbeComplete = isDeniedBridgeToolResult(0, "call_denied_tool_bridge");
             if (!deniedToolProbeComplete) {
               protocolError = "denied-tool bridge call did not report a policy denial";
             }
@@ -669,9 +662,7 @@ export async function startCompatibleMock(options: {
           };
         } else if (
           toolResultCount === 1 &&
-          !hasExpectedToolResult(0, "call_denied_tool_search", [
-            `- ${deniedToolProbe.toolName}:`,
-          ])
+          !hasExpectedToolResult(0, "call_denied_tool_search", [`- ${deniedToolProbe.toolName}:`])
         ) {
           protocolError = "search_tools did not return the denied progressive target";
         } else if (toolResultCount === 1 && !visibleToolNames.has(deniedToolProbe.toolName)) {
@@ -777,29 +768,29 @@ export async function startCompatibleMock(options: {
       const responseMessage = deniedToolProbeComplete
         ? { role: "assistant", content: deniedToolProbe?.resultToken }
         : sawAuthenticatedToolResult
-        ? {
-            role: "assistant",
-            content: options.toolResultToken,
-          }
-        : protocolError
-          ? { role: "assistant", content: `mock protocol error: ${protocolError}` }
-          : plannedToolCall && (deniedToolProbeRequested || options.toolChallenge)
-            ? {
-                role: "assistant",
-                content: null,
-                tool_calls: [
-                  {
-                    index: 0,
-                    id: plannedToolCall.id,
-                    type: "function",
-                    function: {
-                      name: plannedToolCall.name,
-                      arguments: JSON.stringify(plannedToolCall.arguments),
+          ? {
+              role: "assistant",
+              content: options.toolResultToken,
+            }
+          : protocolError
+            ? { role: "assistant", content: `mock protocol error: ${protocolError}` }
+            : plannedToolCall && (deniedToolProbeRequested || options.toolChallenge)
+              ? {
+                  role: "assistant",
+                  content: null,
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: plannedToolCall.id,
+                      type: "function",
+                      function: {
+                        name: plannedToolCall.name,
+                        arguments: JSON.stringify(plannedToolCall.arguments),
+                      },
                     },
-                  },
-                ],
-              }
-            : { role: "assistant", content: "ok" };
+                  ],
+                }
+              : { role: "assistant", content: "ok" };
       const finishReason = "tool_calls" in responseMessage ? "tool_calls" : "stop";
       if (body.stream) {
         res.writeHead(200, {
@@ -1091,10 +1082,13 @@ export async function startFakeMcpHttpsServer(options: {
     }
     const requestId = jsonRpcId(parsedPayload.id);
     const isNotification =
-      typeof parsedPayload.method === "string" && MCP_NOTIFICATION_METHODS.has(parsedPayload.method);
+      typeof parsedPayload.method === "string" &&
+      MCP_NOTIFICATION_METHODS.has(parsedPayload.method);
     if (legacySession) {
       if (sessionId !== "") {
-        respondJson(400, { error: { message: "legacy MCP requests must not mix session headers" } });
+        respondJson(400, {
+          error: { message: "legacy MCP requests must not mix session headers" },
+        });
         return;
       }
       if (parsedPayload.method === "initialize") {

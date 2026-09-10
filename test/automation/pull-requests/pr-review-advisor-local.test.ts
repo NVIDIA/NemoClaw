@@ -166,10 +166,7 @@ describe("local PR review advisor", () => {
     const githubEnv = path.join(temporaryDirectory(), "github-env");
     execFileSync(
       process.execPath,
-      [
-        "--no-warnings",
-        path.resolve("tools/pr-review-advisor/export-runtime-env.mts"),
-      ],
+      ["--no-warnings", path.resolve("tools/pr-review-advisor/export-runtime-env.mts")],
       { env: { ...process.env, GITHUB_ENV: githubEnv } },
     );
 
@@ -385,10 +382,7 @@ describe("local PR review advisor", () => {
 
     const result = spawnSync(
       process.execPath,
-      [
-        "--no-warnings",
-        path.resolve("tools/pr-review-advisor/local-review.mts"),
-      ],
+      ["--no-warnings", path.resolve("tools/pr-review-advisor/local-review.mts")],
       { cwd: source, encoding: "utf8" },
     );
 
@@ -423,8 +417,12 @@ describe("local PR review advisor", () => {
     expect(fs.existsSync(path.join(snapshot, "ignored.txt"))).toBe(false);
     expect(fs.readlinkSync(path.join(snapshot, "tracked-internal-link"))).toBe("committed.txt");
     expect(fs.readlinkSync(path.join(snapshot, "tracked-retargeted-link"))).toBe("committed.txt");
-    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-internal-link"])).toContain("120000 blob");
-    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-retargeted-link"])).toContain("120000 blob");
+    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-internal-link"])).toContain(
+      "120000 blob",
+    );
+    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-retargeted-link"])).toContain(
+      "120000 blob",
+    );
     expect(git(snapshot, ["ls-tree", refs.headRef, "untracked-link"])).toContain("120000 blob");
     expect(fs.existsSync(path.join(snapshot, "untracked-link"))).toBe(false);
     expect(git(source, ["status", "--porcelain=v1", "-uall"])).toBe(before);

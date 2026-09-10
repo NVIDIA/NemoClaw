@@ -3137,7 +3137,8 @@ function readManifest(backupPath: string): RebuildManifest | null {
 // ── Listing ────────────────────────────────────────────────────────
 
 export type RebuildRecoveryManifestValidation =
-  { ok: true; manifest: RebuildManifest } | { ok: false; reason: string };
+  | { ok: true; manifest: RebuildManifest }
+  | { ok: false; reason: string };
 
 function legacyStateFilesArePresent(backupPath: string, manifest: RebuildManifest): boolean {
   if (manifest.backupComplete !== undefined) return true;

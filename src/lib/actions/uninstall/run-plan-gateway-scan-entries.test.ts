@@ -169,44 +169,42 @@ function writeForeignCliShims(shims: readonly string[]): void {
 }
 
 describe("uninstall gateway-directory scan", () => {
-  it.each([
-    [".DS_Store"],
-    [".localized"],
-    ["._sandboxes.json"],
-  ])("removes the CLI shims when the gateways directory holds only %s (#7905)", (entry) => {
-    const { home, shims } = makeHome("nemoclaw-uninstall-metadata-", [entry]);
+  it.each([[".DS_Store"], [".localized"], ["._sandboxes.json"]])(
+    "removes the CLI shims when the gateways directory holds only %s (#7905)",
+    (entry) => {
+      const { home, shims } = makeHome("nemoclaw-uninstall-metadata-", [entry]);
 
-    try {
-      const { result, logs, survivors } = uninstall(home, shims);
+      try {
+        const { result, logs, survivors } = uninstall(home, shims);
 
-      expect(result.exitCode).toBe(0);
-      expect(logs).not.toContain(SCOPED_RETENTION_LOG);
-      expect(survivors).toEqual([]);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
+        expect(result.exitCode).toBe(0);
+        expect(logs).not.toContain(SCOPED_RETENTION_LOG);
+        expect(survivors).toEqual([]);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   // "._" carries no name, and a directory or symlink is a shape that may hide
   // live gateway state, so each of these keeps the conservative treatment.
-  it.each([
-    ["not-a-port"],
-    ["._"],
-    [".DS_Store/"],
-  ])("keeps the CLI shims when the gateways directory holds %s (#7905)", (entry) => {
-    const { home, shims } = makeHome("nemoclaw-uninstall-conservative-", [entry]);
-    writeScopedGatewayState(home);
+  it.each([["not-a-port"], ["._"], [".DS_Store/"]])(
+    "keeps the CLI shims when the gateways directory holds %s (#7905)",
+    (entry) => {
+      const { home, shims } = makeHome("nemoclaw-uninstall-conservative-", [entry]);
+      writeScopedGatewayState(home);
 
-    try {
-      const { result, logs, survivors } = uninstall(home, shims);
+      try {
+        const { result, logs, survivors } = uninstall(home, shims);
 
-      expect(result.exitCode).toBe(0);
-      expect(logs).toContain(SCOPED_RETENTION_LOG);
-      expect(survivors).toEqual(shims);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
+        expect(result.exitCode).toBe(0);
+        expect(logs).toContain(SCOPED_RETENTION_LOG);
+        expect(survivors).toEqual(shims);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "keeps the CLI shims for a desktop-metadata symlink (#7905)",
@@ -230,11 +228,7 @@ describe("uninstall gateway-directory scan", () => {
     },
   );
 
-  it.each([
-    ["not-a-port"],
-    ["._"],
-    [".DS_Store/"],
-  ])(
+  it.each([["not-a-port"], ["._"], [".DS_Store/"]])(
     "removes managed CLI shims with --destroy-user-data when the gateways directory holds %s (#9277)",
     (entry) => {
       const { home, shims } = makeHome("nemoclaw-uninstall-destroy-shim-", [entry]);

@@ -15,7 +15,13 @@ const HERMES_BASE_DOCKERFILE = path.join(
   "hermes",
   "Dockerfile.base",
 );
-const HERMES_MANIFEST = path.join(import.meta.dirname, "../..", "agents", "hermes", "manifest.yaml");
+const HERMES_MANIFEST = path.join(
+  import.meta.dirname,
+  "../..",
+  "agents",
+  "hermes",
+  "manifest.yaml",
+);
 const TARGET_TAG = "v2026.8.27";
 
 const CURRENT_INSTALLED_BASE = [

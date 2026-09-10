@@ -158,10 +158,7 @@ describe("docker-driver gateway runtime helpers", () => {
         isOpenshellDevVersion: (versionOutput) => String(versionOutput).includes("-dev."),
       });
       expect(() =>
-        detected.helpers.getDockerDriverGatewayEnv(
-          "openshell 0.0.72-dev.8+g7bce1223",
-          "linux",
-        ),
+        detected.helpers.getDockerDriverGatewayEnv("openshell 0.0.72-dev.8+g7bce1223", "linux"),
       ).toThrow("exact stable OpenShell 0.0.116");
     });
   });
@@ -187,8 +184,7 @@ describe("docker-driver gateway runtime helpers", () => {
       withTemporaryGatewayState(() =>
         withEnv(
           {
-            OPENSHELL_DOCKER_SUPERVISOR_IMAGE:
-              "registry.example.test/supervisor@sha256:override",
+            OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "registry.example.test/supervisor@sha256:override",
           },
           () => image("0.0.116"),
         ),

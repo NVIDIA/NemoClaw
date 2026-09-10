@@ -12,10 +12,7 @@ import { describe, expect, it } from "vitest";
 import { patchLangfuseCredentials } from "../../../agents/hermes/patch-langfuse-credentials.mts";
 
 const patcherPath = fileURLToPath(
-  new URL(
-    "../../../agents/hermes/patch-langfuse-credentials.mts",
-    import.meta.url,
-  ),
+  new URL("../../../agents/hermes/patch-langfuse-credentials.mts", import.meta.url),
 );
 
 const pinnedValidatorFixture = `\
@@ -110,9 +107,7 @@ describe("Hermes Langfuse OpenShell credential compatibility", () => {
 
   it("fails closed when the pinned Hermes validator shape drifts (#7446)", () => {
     expect(() =>
-      patchLangfuseCredentials(
-        pinnedValidatorFixture.replace("pk-lf-", "pk-live-"),
-      ),
+      patchLangfuseCredentials(pinnedValidatorFixture.replace("pk-lf-", "pk-live-")),
     ).toThrow("Hermes Langfuse credential-name binding shape changed");
     expect(() =>
       patchLangfuseCredentials(
@@ -125,17 +120,11 @@ describe("Hermes Langfuse OpenShell credential compatibility", () => {
   });
 
   it("runs under the image build Node runtime and patches the requested file (#7446)", () => {
-    const directory = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-hermes-langfuse-cli-"),
-    );
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-langfuse-cli-"));
     const fixturePath = path.join(directory, "__init__.py");
     fs.writeFileSync(fixturePath, pinnedValidatorFixture, "utf8");
 
-    const result = spawnSync(
-      process.execPath,
-      [patcherPath, fixturePath],
-      { encoding: "utf8" },
-    );
+    const result = spawnSync(process.execPath, [patcherPath, fixturePath], { encoding: "utf8" });
 
     expect(result.status, result.stderr).toBe(0);
     const patched = fs.readFileSync(fixturePath, "utf8");

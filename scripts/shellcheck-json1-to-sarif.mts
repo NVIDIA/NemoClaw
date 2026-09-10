@@ -192,8 +192,7 @@ function formatError(error: unknown): string {
 
 function usage(): string {
   return (
-    "Usage: node scripts/shellcheck-json1-to-sarif.mts " +
-    "<shellcheck.json> <shellcheck.sarif>"
+    "Usage: node scripts/shellcheck-json1-to-sarif.mts " + "<shellcheck.json> <shellcheck.sarif>"
   );
 }
 

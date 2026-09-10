@@ -205,23 +205,23 @@ function imageFileArgs(path: string): string[] {
 }
 
 describe("messaging plan image boundary helper", () => {
-  it.each([
-    "openclaw",
-    "hermes",
-  ] as const)("builds a deterministic placeholder-only %s plan", (agent) => {
-    expect(encodeMessagingBoundaryPlan(agent)).toBe(encodeMessagingBoundaryPlan(agent));
-    const plan = decodePlan(agent);
-    expect(plan).toEqual(createMessagingBoundaryPlan(agent));
-    expect(plan.fullPlanOnlySentinel).toBe(FULL_PLAN_ONLY_SENTINEL);
-    expect(plan.credentialBindings).toEqual([
-      expect.objectContaining({
-        providerEnvKey: "MSTEAMS_APP_PASSWORD",
-        placeholder: TEAMS_SECRET_PLACEHOLDER,
-      }),
-    ]);
-    expect(JSON.stringify(plan)).not.toContain("client-secret-value");
-    expect(JSON.stringify(plan)).not.toContain("password-value");
-  });
+  it.each(["openclaw", "hermes"] as const)(
+    "builds a deterministic placeholder-only %s plan",
+    (agent) => {
+      expect(encodeMessagingBoundaryPlan(agent)).toBe(encodeMessagingBoundaryPlan(agent));
+      const plan = decodePlan(agent);
+      expect(plan).toEqual(createMessagingBoundaryPlan(agent));
+      expect(plan.fullPlanOnlySentinel).toBe(FULL_PLAN_ONLY_SENTINEL);
+      expect(plan.credentialBindings).toEqual([
+        expect.objectContaining({
+          providerEnvKey: "MSTEAMS_APP_PASSWORD",
+          placeholder: TEAMS_SECRET_PLACEHOLDER,
+        }),
+      ]);
+      expect(JSON.stringify(plan)).not.toContain("client-secret-value");
+      expect(JSON.stringify(plan)).not.toContain("password-value");
+    },
+  );
 
   it("emits agent-specific Teams render, install, and runtime outputs", () => {
     const openclaw = decodePlan("openclaw");
@@ -258,8 +258,7 @@ describe("messaging plan image boundary helper", () => {
         channelId: "teams",
         envKey: "MSTEAMS_APP_PASSWORD",
         targetEnvKey: "TEAMS_CLIENT_SECRET",
-        match:
-          "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_MSTEAMS_APP_PASSWORD$",
+        match: "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_MSTEAMS_APP_PASSWORD$",
         value: TEAMS_SECRET_PLACEHOLDER,
       },
     ]);
@@ -268,18 +267,18 @@ describe("messaging plan image boundary helper", () => {
     ]);
   });
 
-  it.each([
-    "openclaw",
-    "hermes",
-  ] as const)("verifies real-image evidence for %s through an injectable Docker runner", (agent) => {
-    const mock = successfulDockerRunner(agent);
-    expect(verifyMessagingPlanImageBoundary(IMAGE, agent, mock.runner)).toEqual({
-      image: IMAGE,
-      agent,
-      runtimePlanPath: RUNTIME_PLAN_PATH,
-    });
-    mock.assertComplete();
-  });
+  it.each(["openclaw", "hermes"] as const)(
+    "verifies real-image evidence for %s through an injectable Docker runner",
+    (agent) => {
+      const mock = successfulDockerRunner(agent);
+      expect(verifyMessagingPlanImageBoundary(IMAGE, agent, mock.runner)).toEqual({
+        image: IMAGE,
+        agent,
+        runtimePlanPath: RUNTIME_PLAN_PATH,
+      });
+      mock.assertComplete();
+    },
+  );
 
   it.each([
     [

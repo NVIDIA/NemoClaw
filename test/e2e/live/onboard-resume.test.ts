@@ -588,14 +588,11 @@ test(
     // re-probe and complete without recreating the sandbox.
     // ──────────────────────────────────────────────────────────────────
     progress.phase("retry final verification after route repair");
-    const sandboxBeforeRouteFailure = await sandbox.openshell(
-      ["sandbox", "get", SANDBOX_NAME],
-      {
-        artifactName: "phase-3-5-sandbox-before-route-failure",
-        env: probeEnv,
-        timeoutMs: 30_000,
-      },
-    );
+    const sandboxBeforeRouteFailure = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+      artifactName: "phase-3-5-sandbox-before-route-failure",
+      env: probeEnv,
+      timeoutMs: 30_000,
+    });
     const sandboxIdBeforeRouteFailure = parseOpenShellSandboxId(
       resultText(sandboxBeforeRouteFailure),
     );

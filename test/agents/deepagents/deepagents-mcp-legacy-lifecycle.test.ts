@@ -201,24 +201,22 @@ beforeEach(() => {
     policyState = "absent";
     return true;
   });
-  mocks.captureRecordedSandboxBasePolicy
-    .mockReset()
-    .mockImplementation(() =>
-      policyState === "absent"
-        ? "version: 1\nnetwork_policies: {}\n"
-        : YAML.stringify({
-            version: 1,
-            network_policies: YAML.parse(
-              bridge.buildMcpBridgePolicyYaml(
-                "github",
-                "https://8.8.8.8/github",
-                "deepagents-config",
-                { addresses: ["8.8.8.8"] },
-                "alpha-mcp-github",
-              ),
-            ).network_policies,
-          }),
-    );
+  mocks.captureRecordedSandboxBasePolicy.mockReset().mockImplementation(() =>
+    policyState === "absent"
+      ? "version: 1\nnetwork_policies: {}\n"
+      : YAML.stringify({
+          version: 1,
+          network_policies: YAML.parse(
+            bridge.buildMcpBridgePolicyYaml(
+              "github",
+              "https://8.8.8.8/github",
+              "deepagents-config",
+              { addresses: ["8.8.8.8"] },
+              "alpha-mcp-github",
+            ),
+          ).network_policies,
+        }),
+  );
 
   mocks.executeGatewaySupervisorAction.mockReset();
   mocks.executeSandboxCommand

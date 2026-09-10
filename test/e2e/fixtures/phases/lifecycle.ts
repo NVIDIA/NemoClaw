@@ -252,8 +252,10 @@ export class LifecyclePhaseFixture {
   trackInstallerGatewayUserService(): void {
     const env = buildAvailabilityProbeEnv();
     const configured = env.XDG_CONFIG_HOME;
-    const configHome = configured && path.isAbsolute(configured)
-      ? configured : path.join(env.HOME ?? os.homedir(), ".config");
+    const configHome =
+      configured && path.isAbsolute(configured)
+        ? configured
+        : path.join(env.HOME ?? os.homedir(), ".config");
     const unit = path.join(configHome, "systemd", "user", "nemoclaw-openshell-gateway.service");
     try {
       fs.lstatSync(unit);

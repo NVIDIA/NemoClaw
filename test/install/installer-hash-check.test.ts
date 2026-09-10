@@ -625,10 +625,7 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
       : withPinFunction;
   const releaseTemplate =
     openshellVersion === "0.0.116"
-      ? operationalTemplate.replace(
-          STABLE_GNU_SANDBOX_SELECTOR,
-          STABLE_MUSL_SANDBOX_SELECTOR,
-        )
+      ? operationalTemplate.replace(STABLE_GNU_SANDBOX_SELECTOR, STABLE_MUSL_SANDBOX_SELECTOR)
       : removeV00116SandboxBuildTrust(operationalTemplate);
   const sandboxFunctionStart = releaseTemplate.indexOf("pinned_sandbox_build_version() {");
   const sandboxFunctionEnd = releaseTemplate.indexOf(
@@ -1104,19 +1101,14 @@ describe("installer hash verification", () => {
   it.each([
     ["malformed-trusted-formula", "0.0.116"],
     ["mismatched-trusted-formula-url", "0.0.72"],
-  ] as const)(
-    "fails closed when a trusted formula record is invalid: %s",
-    (mode, version) => {
-      const result = runFixture(mode, undefined, true);
+  ] as const)("fails closed when a trusted formula record is invalid: %s", (mode, version) => {
+    const result = runFixture(mode, undefined, true);
 
-      expect(result.status).toBe(1);
-      expect(result.stdout).toContain(
-        `trusted OpenShell v${version} formula record is invalid`,
-      );
-      expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
-      expect(result.stdout).not.toContain("All installer hashes are current");
-    },
-  );
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(`trusted OpenShell v${version} formula record is invalid`);
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
 
   it("fails closed when the live formula differs from its trusted release digest", () => {
     const result = runFixture("trusted-formula-mismatch", undefined, true);

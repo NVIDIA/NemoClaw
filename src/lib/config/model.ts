@@ -94,6 +94,17 @@ const UuidSchema = Type.Unsafe<NemoClawConfigDocumentUid>({
   pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
 });
 export const TcpPortSchema = Type.Integer({ minimum: 1, maximum: 65_535 });
+export const NemoClawManagedProxyConfigSchema = Type.Object(
+  {
+    host: Type.String({
+      minLength: 1,
+      maxLength: 256,
+      pattern: "^[A-Za-z0-9._-]+$(?![\\s\\S])",
+    }),
+    port: TcpPortSchema,
+  },
+  { additionalProperties: false },
+);
 export const CredentialEnvironmentReferenceNameSchema = Type.String({
   pattern: CREDENTIAL_ENVIRONMENT_REFERENCE_PATTERN,
 });
@@ -272,6 +283,7 @@ const NemoClawSandboxConfigSchema = Type.Object(
     runtime: NemoClawSandboxRuntimeConfigSchema,
     network: Type.Object(
       {
+        proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
         policy: Type.Object(
           { explicit: NemoClawExplicitPolicySchema },
           { additionalProperties: false },
