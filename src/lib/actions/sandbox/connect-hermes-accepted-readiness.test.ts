@@ -443,7 +443,7 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledOnce();
     expect(harness.assertHermesPortableOperatingCommandCurrentSpy).toHaveBeenCalledTimes(10);
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
-    expect(harness.runSandboxExecChildSpy).not.toHaveBeenCalled();
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });
 
   it("recovers a stopped schema-6 lifecycle before retrying accepted authority", async () => {
@@ -648,7 +648,7 @@ describe("Hermes accepted launch-readiness probe", () => {
 
     expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalledOnce();
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
-    expect(harness.runSandboxExecChildSpy).not.toHaveBeenCalled();
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });
 
   it("rejects retained operating-command authority drift before success", async () => {
@@ -665,7 +665,7 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.requalifyPortableAgentAuthoritySpy).not.toHaveBeenCalled();
     expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
-    expect(harness.runSandboxExecChildSpy).not.toHaveBeenCalled();
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });
 
   it("rejects a substituted registry row even when readiness accepts that row", async () => {
@@ -688,7 +688,7 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.requalifyPortableAgentAuthoritySpy).not.toHaveBeenCalled();
     expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
-    expect(harness.runSandboxExecChildSpy).not.toHaveBeenCalled();
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });
 
   it("routes every OpenShell-backed readiness observation through retained authority", async () => {
