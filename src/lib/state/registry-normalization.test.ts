@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { CLI_NAME } from "../cli/branding";
+
 const originalHome = process.env.HOME;
 const temporaryHomes: string[] = [];
 
@@ -374,9 +376,25 @@ describe("sandbox registry normalization", () => {
     f.sessionStore.saveSession(mutate(f.before!));
 
     expect(f.validate).toThrow("incomplete lifecycle identity");
+    expect(f.validate).toThrow(
+      `Run \`${CLI_NAME} legacy rebuild --yes\` to record its lifecycle identity, then rerun this command.`,
+    );
     expect(f.registry.getSandbox("legacy")).toEqual(f.expected);
     expect(f.inspect).not.toHaveBeenCalled();
     expect(f.sessionStore.isOnboardLockHeldByCurrentProcess()).toBe(false);
+  });
+
+  it("omits the rebuild remedy when the recorded gateway differs from the target", async () => {
+    const f = await prepareMessagingIdentityRecovery({
+      gatewayName: "nemoclaw-8081",
+      gatewayPort: 8081,
+    });
+
+    expect(f.validate).toThrow(
+      /^Sandbox 'legacy' has incomplete lifecycle identity for messaging provider attachment\.$/u,
+    );
+    expect(f.registry.getSandbox("legacy")).toEqual(f.expected);
+    expect(f.inspect).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -187,7 +187,7 @@ Correct the reported forwarding error, then run `$$nemoclaw <sandbox> rebuild --
 If an older registry entry lacks lifecycle identity, channel provider operations restore missing fields only from a matching completed onboarding receipt.
 The receipt must identify the same live sandbox on the recorded gateway.
 Missing proof or conflicting identity stops the operation; `--force` does not override this check.
-Preserve the registry and onboarding state for maintainer-assisted recovery if the check still fails.
+When no matching receipt exists, run `$$nemoclaw <sandbox> rebuild --yes` to record its lifecycle identity, then rerun the channel command.
 
 ## Stop All Delivery
 

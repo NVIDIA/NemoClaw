@@ -1000,17 +1000,17 @@ export function revalidateMessagingProviderAttachmentTarget(
         onboardSession,
       ) ?? expected;
   }
-  const lifecycleGeneration = expected?.lifecycleGeneration;
-  const expectedFingerprint = expected?.lifecycleLiveIdentityFingerprint;
-  if (
-    !expected ||
-    typeof lifecycleGeneration !== "string" ||
-    typeof expectedFingerprint !== "string" ||
-    (expected.gatewayName && expected.gatewayName !== gatewayName)
-  ) {
+  if (!expected || (expected.gatewayName && expected.gatewayName !== gatewayName)) {
+    throw new Error(
+      `Sandbox '${sandboxName}' has incomplete lifecycle identity for messaging provider attachment.`,
+    );
+  }
+  const lifecycleGeneration = expected.lifecycleGeneration;
+  const expectedFingerprint = expected.lifecycleLiveIdentityFingerprint;
+  if (typeof lifecycleGeneration !== "string" || typeof expectedFingerprint !== "string") {
     throw new Error(
       `Sandbox '${sandboxName}' has incomplete lifecycle identity for messaging provider attachment. ` +
-        "Missing fields require a matching completed onboarding receipt. Preserve the registry and onboarding state for recovery.",
+        `Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to record its lifecycle identity, then rerun this command.`,
     );
   }
   const liveFingerprint = policyChannelDependencies.inspectMessagingProviderAttachmentTarget(
