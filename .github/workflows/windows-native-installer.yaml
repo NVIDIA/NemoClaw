@@ -16,6 +16,11 @@ on:
         required: false
         default: ""
         type: string
+      profile_native_windows:
+        description: Diagnostic profiling of the exact installed f8 baseline only (no installer publication or comparison)
+        required: false
+        default: false
+        type: boolean
       probe_official_hermes_components:
         description: Run the selected official Hermes Windows probe without publishing an installer
         required: false
@@ -41,13 +46,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-native-installer-${{ github.ref }}
+  group: windows-native-installer-${{ github.ref }}${{ inputs.profile_native_windows && '-profiling' || '' }}
   cancel-in-progress: true
 
 jobs:
   windows-native-installer:
     name: Windows native installer candidate (ARM64, no WSL)
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id == '') }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.profile_native_windows && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id == '') }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 240
     steps:
@@ -489,7 +494,7 @@ jobs:
 
   windows-native-package-diagnostic:
     name: Windows native package/runtime diagnostic (ARM64, no WSL)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id != '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.profile_native_windows && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id != '' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 90
     steps:
@@ -839,7 +844,7 @@ jobs:
 
   official-hermes-components:
     name: Official Hermes ${{ inputs.official_hermes_phase || 'components' }} probe (Windows ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && !inputs.profile_native_windows }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 60
     steps:
@@ -1022,4 +1027,52 @@ jobs:
             !${{ runner.temp }}/official-hermes-python/cargo-home/
             !${{ runner.temp }}/official-hermes-python/dependency-stage/uv-cache/
           if-no-files-found: error
+          retention-days: 14
+
+  windows-native-profiling:
+    name: Installed Windows baseline profiling (diagnostic only)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.profile_native_windows }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 90
+    steps:
+      - name: Check out the profiling controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate the explicit profiling request
+        shell: powershell
+        env:
+          OTHER_BUILD: ${{ inputs.run_windows_native_installer }}
+          OTHER_COMPONENTS: ${{ inputs.probe_official_hermes_components }}
+          OTHER_DIAGNOSTIC: ${{ inputs.windows_native_diagnostic_source_run_id }}
+        run: |
+          if ($env:OTHER_BUILD -eq 'true' -or $env:OTHER_COMPONENTS -eq 'true' -or $env:OTHER_DIAGNOSTIC) {
+            throw 'Profiling is a separate explicit dispatch and cannot also build or run component diagnostics.'
+          }
+
+      - name: Set up the profiling controller Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.22.3
+          architecture: arm64
+
+      - name: Record actual installation and dashboard CPU and file I/O
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\packaging\windows\performance\run-profiling-phase.ps1" `
+            -ArtifactDirectory "$env:RUNNER_TEMP\windows-native-profiling" `
+            -HarnessNodePath ((Get-Command node.exe -CommandType Application | Select-Object -First 1).Source) `
+            -ControllerSha $env:GITHUB_SHA
+
+      - name: Upload profiling evidence including failures and capped traces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-native-profiling-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/windows-native-profiling/
+            !${{ runner.temp }}/windows-native-profiling/baseline/baseline-setup.exe
+          if-no-files-found: warn
+          compression-level: 6
           retention-days: 14
