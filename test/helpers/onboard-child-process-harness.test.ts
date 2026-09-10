@@ -10,9 +10,10 @@ import {
 } from "./onboard-child-process-harness";
 
 const keepAlive = `
-  require("node:fs").writeFileSync("child.pid", String(process.pid));
   process.on("SIGTERM", () => {});
-  process.stdout.write("started\\n");
+  process.stdout.write("started\\n", () => {
+    require("node:fs").writeFileSync("child.pid", String(process.pid));
+  });
   setInterval(() => {}, 1000);
 `;
 
@@ -76,7 +77,8 @@ describe("asynchronous onboarding process fixtures", () => {
     { mode: "timeout", timeoutMs: 2_000, cancel: (_controller: AbortController) => undefined },
     {
       mode: "abort",
-      timeoutMs: 5_000,
+      // Exceed the test limit so a broken abort cannot pass via the process timeout.
+      timeoutMs: 30_000,
       cancel: (controller: AbortController) => controller.abort(),
     },
   ])(
