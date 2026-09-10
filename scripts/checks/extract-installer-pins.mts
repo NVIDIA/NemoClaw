@@ -196,6 +196,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
     pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
@@ -315,6 +317,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
     pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
@@ -366,6 +370,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
     pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
@@ -414,6 +420,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
     pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
@@ -482,6 +490,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
     pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
@@ -543,6 +553,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
         // Exact #11251 template after the reviewed 0.0.116-only recovery gate.
         "593ced09573f8cea5d2323b6d388ebb5d30f6da241d4f511e5364a3057887911",
         // Exact #11251 template after stable supervisor override binding.
