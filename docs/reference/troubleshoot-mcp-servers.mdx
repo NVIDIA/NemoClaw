@@ -14,7 +14,17 @@ Use the reported status or lifecycle error to choose the matching remediation.
 ## Credential Resolution Is Unknown
 
 If `mcp status <server>` reports identical placeholder and control rejections, first confirm the stored credential is valid.
-Rotate it with `mcp restart` when in doubt.
+To replace the credential, export the recorded environment variable and run restart:
+
+```bash
+export <CREDENTIAL_ENV>='replacement-value'
+$$nemoclaw <sandbox> mcp restart <server>
+unset <CREDENTIAL_ENV>
+```
+
+Without an exported replacement, restart does not rotate the credential.
+It verifies the existing stored credential and reuses it only when the credential-resolution probe succeeds.
+A failed or inconclusive probe exits before policy, provider, or adapter changes.
 
 For identical HTTP 401 or 403 responses, a confirmed-valid credential means the OpenShell gateway on this host is not rewriting the recorded resolver placeholder on egress.
 Every agent request receives the same authentication failure even when provider, attachment, readiness, and adapter checks report healthy.
@@ -67,7 +77,7 @@ If restart still cannot prove the revision, repair the reported OpenShell provid
 
 ## Add Transaction Is Incomplete
 
-If status reports an incomplete add transaction, rerun the original `mcp add` command with the same URL and environment-variable name.
+If status reports an incomplete add transaction, rerun the original `mcp add` command with the same URL, environment-variable name, and any `--deny-tool` options.
 Re-export the value if the provider still needs to be created.
 
 To abandon the transaction, run `mcp remove <server> --force`.
@@ -97,6 +107,22 @@ Use `nemo-deepagents <name> mcp ...` for servers that need OpenShell credential 
 If a Hermes sandbox is alive but its gateway is not running after a supervisor or container restart, run `$$nemoclaw <sandbox> recover` before retrying the MCP command.
 Recovery re-establishes the managed service lifecycle, API forwarding, and the exit-75 reload loop used for transactional MCP configuration changes.
 </AgentOnly>
+
+## Collect Sandbox Logs
+
+Read recent sandbox logs while you reproduce an MCP failure:
+
+```bash
+$$nemoclaw <sandbox> logs --tail 200
+```
+
+<AgentOnly variant="openclaw,hermes">
+The command reads agent gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+The command reads OpenShell logs, including audit events, so policy denials appear with other OpenShell log entries.
+</AgentOnly>
+If NemoClaw cannot enable OpenShell audit logs, it prints a warning and the policy denial events can be missing.
 
 <AgentOnly variant="openclaw">
 
@@ -235,14 +261,7 @@ $$nemoclaw <sandbox> rebuild
 Verify that later successful MCP requests emit no `managed_transport_shadow` line groups.
 
 To find the matching sandbox audit record, read the sandbox log for the same endpoint around the failure time.
-The `logs` command reads both OpenClaw gateway output and OpenShell audit events, so it needs no separate audit flag.
-
-```bash
-$$nemoclaw <sandbox> logs --tail 200
-```
-
 Match on `target` and the timestamp.
-If NemoClaw cannot enable OpenShell audit logs, it prints a warning and the policy denial events can be missing from the output.
 `diagnostic_id` is a local identifier created for one line group when identifier generation succeeds.
 NemoClaw attempts to create it before the request starts, but does not add it to the request.
 It is not a distributed trace identifier and does not appear in OpenShell audit events.
@@ -383,7 +402,7 @@ Do not treat matching DNS pins as evidence that the path, method, adapter identi
 
 ## Lifecycle Lock Times Out
 
-Confirm that no `mcp add`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for the sandbox is still running, then retry the original command.
+Confirm that no `mcp add`, `mcp update`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for the sandbox is still running, then retry the original command.
 NemoClaw recovers a lock only when its local process is provably dead or its PID has a different process-start identity.
 
 It does not expose a force-unlock flag.

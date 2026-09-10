@@ -13,12 +13,14 @@ import {
   isCredentialField,
   isSafeCredentialPlaceholder,
   isSensitiveFile,
+  redactCredentialText,
   sanitizeEnvFileContent,
   SECRET_BLOCK_PATTERNS,
   SECRET_PATTERNS,
   stripCredentials,
   STRUCTURED_TOKEN_PATTERNS,
   TOKEN_PREFIX_PATTERNS,
+  URL_TOKEN_PATTERN_SOURCE,
   valueLooksLikeSecret,
 } from "./credential-filter-boundary.cjs";
 
@@ -27,6 +29,18 @@ function asConfigValue(value: ConfigValue): ConfigValue {
 }
 
 describe("shared credential filter", () => {
+  it.each([
+    ["ordinary", "https://example.test/path"],
+    ["single-quote-split userinfo", "https://operator:secret'fragment@example.test/path"],
+    ["double-quote-split userinfo", 'https://operator:secret"fragment@example.test/path'],
+    ["credential query", "https://example.test/path?apiKey=opaque"],
+    ["credential fragment", "https://example.test/path#token=opaque"],
+    ["delimiter suffix", "https://example.test/path)."],
+    ["malformed authority", "https://operator:secret@[not-an-ip/path"],
+  ])("matches the complete %s URL token", (_case, value) => {
+    expect(value.match(new RegExp(URL_TOKEN_PATTERN_SOURCE, "giu"))).toEqual([value]);
+  });
+
   it("preserves the ConfigValue return contract (#8291)", () => {
     const value = asConfigValue({ token: "opaque-secret-value" });
     const result = stripCredentials(value);
@@ -98,6 +112,46 @@ describe("shared credential filter", () => {
 
   it("preserves a value that has no secret shape (#8291)", () => {
     expect(valueLooksLikeSecret("keep-me")).toBe(false);
+    expect(stripCredentials({ model: "unused" })).toEqual({ model: "unused" });
+  });
+
+  it("strips URL userinfo from non-credential fields", () => {
+    expect(stripCredentials({ host: "https://operator:opaque-value@api.example" })).toEqual({
+      host: CREDENTIAL_PLACEHOLDER,
+    });
+  });
+
+  it("fully redacts credential-bearing URLs and non-uppercase assignments in diagnostics", () => {
+    const urlCredential = "opaque-url-credential";
+    const assignmentCredential = "opaque-lowercase-credential";
+    const redacted = redactCredentialText(
+      `policy write failed at https://operator:${urlCredential}@api.example apiKey=${assignmentCredential}`,
+    );
+
+    expect(redacted).toContain("policy write failed at");
+    expect(redacted).toContain("https://api.example/");
+    expect(redacted).toContain("apiKey=<REDACTED>");
+    expect(redacted).not.toContain(urlCredential);
+    expect(redacted).not.toContain(assignmentCredential);
+    expect(redacted).toContain("<REDACTED>");
+
+    const queryAndHash = redactCredentialText(
+      "failed at https://api.example/path?apiKey=opaque-query-credential#token=opaque-hash-credential",
+    );
+    expect(queryAndHash).toContain("apiKey=<REDACTED>");
+    expect(queryAndHash).not.toContain("opaque-query-credential");
+    expect(queryAndHash).not.toContain("opaque-hash-credential");
+    expect(redactCredentialText("failed at https://%")).toBe("failed at <REDACTED>");
+  });
+
+  it.each(["'", '"'])("fully redacts URL userinfo split by %s", (quote) => {
+    const credential = "opaque-url-credential";
+
+    expect(
+      redactCredentialText(
+        `failed at https://operator:${credential}${quote}fragment@example.test/path`,
+      ),
+    ).toBe("failed at https://example.test/path");
   });
 
   it.each([

@@ -138,4 +138,26 @@ jq -e --arg candidateSha "$CANDIDATE_SHA" '
   }
 mv "$restore_dir/nemoclaw/dist" "$GITHUB_WORKSPACE/nemoclaw/dist"
 mv "$restore_dir/dist" "$GITHUB_WORKSPACE/dist"
+managed_catalog="$GITHUB_WORKSPACE/dist/e2e-managed-image-catalog.json"
+if [[ -e "$managed_catalog" || -L "$managed_catalog" ]]; then
+  [[ -f "$managed_catalog" && ! -L "$managed_catalog" && -s "$managed_catalog" ]] || {
+    echo "::error::restored managed-image catalog is not a nonempty regular file"
+    exit 1
+  }
+  managed_revision="$(jq -er '
+    [to_entries[].value.source.revision] as $revisions |
+    ($revisions | unique) as $unique |
+    if (($revisions | length) > 0 and
+        ($unique | length) == 1 and
+        ($unique[0] | type == "string" and test("^[a-f0-9]{40}$")))
+    then $unique[0]
+    else error("managed-image catalog must identify one exact publication revision")
+    end
+  ' "$managed_catalog")" || {
+    echo "::error::restored managed-image catalog publication revision is invalid"
+    exit 1
+  }
+  printf 'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\n' "$managed_catalog" >>"$GITHUB_ENV"
+  printf 'NEMOCLAW_E2E_MANAGED_IMAGE_REVISION=%s\n' "$managed_revision" >>"$GITHUB_ENV"
+fi
 node "$GITHUB_WORKSPACE/bin/nemoclaw.js" --version >/dev/null

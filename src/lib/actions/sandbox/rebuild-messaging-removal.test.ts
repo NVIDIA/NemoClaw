@@ -1,14 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 
 const mocks = vi.hoisted(() => ({ runOpenshell: vi.fn() }));
 
-vi.mock("../../adapters/openshell/runtime", () => ({
+vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
   runOpenshell: mocks.runOpenshell,
 }));
 
@@ -66,6 +67,10 @@ describe("post-restore messaging removal", () => {
     });
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("applies the config tombstone and retires it before Hermes restart", () => {
     const finalized = finalizePendingMessagingRemovalsAfterRestore(removalPlan(), vi.fn());
 
@@ -84,5 +89,43 @@ describe("post-restore messaging removal", () => {
 
     const finalized = finalizePendingMessagingRemovalsAfterRestore(removalPlan(), vi.fn());
     expect(finalized?.channels).toEqual([]);
+  });
+
+  it("pins every post-restore config operation to the rebuild target (#10514)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient.invalid");
+    vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient/tls");
+    vi.stubEnv("OPENSHELL_TOKEN", "ambient-token");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "ambient-workspace");
+    const runtimeSelection = {
+      gatewayName: "recorded-gateway",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+
+    finalizePendingMessagingRemovalsAfterRestore(removalPlan(), vi.fn(), runtimeSelection);
+
+    expect(mocks.runOpenshell).toHaveBeenCalled();
+    const selectedTargets = mocks.runOpenshell.mock.calls.map(([, options]) => ({
+      endpoint: options.env.OPENSHELL_GATEWAY_ENDPOINT,
+      gateway: options.env.OPENSHELL_GATEWAY,
+      insecure: options.env.OPENSHELL_GATEWAY_INSECURE,
+      replaceEnv: options.replaceEnv,
+      tlsDir: options.env.OPENSHELL_LOCAL_TLS_DIR,
+      token: options.env.OPENSHELL_TOKEN,
+      workspace: options.env.OPENSHELL_WORKSPACE,
+    }));
+    expect(selectedTargets).toEqual(
+      new Array(selectedTargets.length).fill({
+        endpoint: undefined,
+        gateway: "recorded-gateway",
+        insecure: undefined,
+        replaceEnv: true,
+        tlsDir: "/authority/tls",
+        token: undefined,
+        workspace: "default",
+      }),
+    );
   });
 });

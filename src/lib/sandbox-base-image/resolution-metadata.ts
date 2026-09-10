@@ -40,9 +40,9 @@ export function validateSandboxBaseImageResolutionMetadata(input: {
   pinnedRemoteRef?: string;
   requireOpenshellSandboxAbi: boolean;
   minGlibcVersion: string;
-  inspected: LocalImageMetadata | null;
+  inspectLocalImage: () => LocalImageMetadata | null;
 }): BaseImageResolutionValidation {
-  const { metadata, inspected } = input;
+  const { metadata } = input;
   if (metadata.key !== input.expectedKey || metadata.imageName !== input.imageName) {
     return { ok: false, reason: "key_mismatch" };
   }
@@ -64,6 +64,7 @@ export function validateSandboxBaseImageResolutionMetadata(input: {
   if (metadata.digest === null && metadata.source !== "local") {
     return { ok: false, reason: "repo_digest_missing" };
   }
+  const inspected = input.inspectLocalImage();
   if (
     !inspected ||
     inspected.Id !== metadata.imageId ||
@@ -176,7 +177,7 @@ export function reuseSandboxBaseImageResolutionHint(
     pinnedRemoteRef: options.pinnedRemoteRef,
     requireOpenshellSandboxAbi: options.requireOpenshellSandboxAbi === true,
     minGlibcVersion: options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC,
-    inspected: inspectLocalImageMetadata(hint.ref),
+    inspectLocalImage: () => inspectLocalImageMetadata(hint.ref),
   });
   if (!validation.ok) {
     addTraceEvent("nemoclaw.sandbox_base_image.cache_stale", { reason: validation.reason });

@@ -19,6 +19,7 @@ import {
   parseSandboxPhase,
   shouldSelectNamedGatewayForReuse,
 } from "../../../src/lib/state/gateway.js";
+import { OPENSHELL_GATEWAY_START_LINE } from "../../helpers/openshell-gateway-start-output.ts";
 
 const OPENSHELL_STATUS_ERROR_CONTRACT = JSON.parse(
   readFileSync(
@@ -108,6 +109,25 @@ Gateway: other-gw
 Server: https://127.0.0.1:9090/
 Connected
 `;
+
+describe("OpenShell gateway startup output", () => {
+  it.each([
+    "  Starting OpenShell gateway...",
+    "  Starting OpenShell gateway via managed service...",
+  ])("recognizes a gateway start line: %s", (startupLine) => {
+    expect(`before\n${startupLine}\nafter`).toMatch(OPENSHELL_GATEWAY_START_LINE);
+  });
+
+  it("does not treat an onboarding phase heading as a gateway start", () => {
+    const resumeOutput = [
+      "  [2/8] Starting OpenShell gateway",
+      "  ──────────────────────────────────────────────────",
+      "  [resume] Skipping gateway (running)",
+    ].join("\n");
+
+    expect(resumeOutput).not.toMatch(OPENSHELL_GATEWAY_START_LINE);
+  });
+});
 
 describe("hasStaleGateway", () => {
   it("returns true when output contains the named gateway", () => {
@@ -231,10 +251,11 @@ describe("isGatewayHealthy", () => {
     expect(isGatewayHealthy("", GW_INFO_NAMED, wrongName)).toBe(false);
   });
 
-  it("does not trigger fallback when status is non-empty", () => {
-    // Non-empty status that lacks Connected/Server Status should not fall through to fallback
-    const nonEmptyStatus = "some unexpected output";
-    expect(isGatewayHealthy(nonEmptyStatus, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(false);
+  it.each([
+    "Starting OpenShell gateway...",
+    "Starting OpenShell gateway via managed service...",
+  ])("does not treat startup progress as gateway health: %s", (startupMessage) => {
+    expect(isGatewayHealthy(startupMessage, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(false);
   });
 
   it("returns false for Disconnected status (regression)", () => {
@@ -454,7 +475,7 @@ describe("shouldSelectNamedGatewayForReuse", () => {
 describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
   const sandboxOutput = "Sandbox:\n  Id: abc\n  Phase: Ready\n\nPolicy:\n  schema-stub";
 
-  it("rewrites the YAML version line to the gateway active version", () => {
+  it("preserves the YAML schema version and labels the applied revision", () => {
     const livePolicy = [
       "Version:      5",
       "Hash:         738a54c8520a",
@@ -466,9 +487,13 @@ describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
       "  include_workdir: false",
     ].join("\n");
 
-    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, livePolicy);
-    expect(merged).toContain("  version: 6");
-    expect(merged).not.toContain("  version: 1");
+    const merged = mergeLivePolicyIntoSandboxOutput(
+      sandboxOutput,
+      livePolicy.split("---\n")[1] ?? "",
+      6,
+    );
+    expect(merged).toContain("  Applied revision: 6");
+    expect(merged).toContain("  version: 1");
     expect(merged).not.toContain("  version: 5");
   });
 
@@ -477,7 +502,11 @@ describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
       "\n",
     );
 
-    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, livePolicy);
+    const merged = mergeLivePolicyIntoSandboxOutput(
+      sandboxOutput,
+      livePolicy.split("---\n")[1] ?? "",
+      null,
+    );
     expect(merged).toContain("  version: 1");
   });
 
@@ -499,11 +528,11 @@ describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
   });
 
   it("returns the original output when livePolicy is an error string", () => {
-    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, "Error: not found");
+    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, "Error: not found", null);
     expect(merged).toBe(sandboxOutput);
   });
 
-  it("rewrites version when metadata and separator are ANSI-wrapped", () => {
+  it("preserves the schema version when metadata and separator are ANSI-wrapped", () => {
     const livePolicy = [
       "\x1b[1mVersion:\x1b[0m      5",
       "\x1b[1mActive:\x1b[0m       6",
@@ -513,8 +542,12 @@ describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
       "  include_workdir: false",
     ].join("\n");
 
-    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, livePolicy);
-    expect(merged).toContain("  version: 6");
-    expect(merged).not.toContain("  version: 1");
+    const merged = mergeLivePolicyIntoSandboxOutput(
+      sandboxOutput,
+      livePolicy.split("\x1b[2m---\x1b[0m\n")[1] ?? "",
+      6,
+    );
+    expect(merged).toContain("  Applied revision: 6");
+    expect(merged).toContain("  version: 1");
   });
 });

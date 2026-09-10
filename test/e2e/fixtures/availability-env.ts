@@ -4,6 +4,9 @@
 import { buildChildEnv } from "./redaction.ts";
 
 const AVAILABILITY_PROBE_EXTRA_ENV_KEYS = [
+  "CONTAINERS_CONF",
+  "CONTAINERS_STORAGE_CONF",
+  "DBUS_SESSION_BUS_ADDRESS",
   "DOCKER_CONFIG",
   "DOCKER_CONTEXT",
   "DOCKER_HOST",
@@ -18,18 +21,21 @@ const AVAILABILITY_PROBE_EXTRA_ENV_KEYS = [
   "NEMOCLAW_E2E_EXPECTED_SHA",
   "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG",
   "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_REVISION",
   "NEMOCLAW_OLLAMA_PULL_TIMEOUT",
   "NEMOCLAW_EXPERIMENTAL_PROFILE",
+  "NEMOCLAW_GATEWAY_RUNTIME",
   "NEMOCLAW_RUN_LIVE_E2E",
   "NEMOCLAW_TRACE_DIR",
+  "OPENSHELL_PODMAN_SOCKET",
 ];
 
 export function buildAvailabilityProbeEnv(
   base: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  // Availability probes run outside live target phases but need the shared
-  // child environment and PATH policy. Add Docker discovery settings, the
-  // workflow-owned local-model pull budget, and the selected managed-image
+  // Availability probes run outside live target phases, but they need
+  // the same child-env and PATH policy. Add container-runtime discovery,
+  // the workflow-owned local-model pull budget, and the selected managed-image
   // cohort revision and receipt to that boundary.
   return buildChildEnv(base, {
     additionalAllowedEnv: AVAILABILITY_PROBE_EXTRA_ENV_KEYS,

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { stopStaleDashboardListenersForSandbox } from "../stale-gateway-cleanup";
 import {
   type CoreOnboardFlowPhases,
   createProviderInferenceOnboardFlowPhase,
@@ -35,15 +34,7 @@ type SandboxCompositionOptions<
   Context extends OnboardFlowContext,
   MessagingChannelConfig,
   ResourceProfile,
-> = Omit<
-  SandboxOnboardFlowPhaseOptions<Context, MessagingChannelConfig, ResourceProfile>,
-  "deps"
-> & {
-  deps: Omit<
-    SandboxOnboardFlowPhaseOptions<Context, MessagingChannelConfig, ResourceProfile>["deps"],
-    "stopStaleDashboardListenersForSandbox"
-  >;
-};
+> = SandboxOnboardFlowPhaseOptions<Context, MessagingChannelConfig, ResourceProfile>;
 
 export interface CoreOnboardFlowCompositionInput<
   Context extends OnboardFlowContext,
@@ -72,15 +63,7 @@ export function createCoreOnboardFlowPhases<
     }),
     sandbox: createSandboxOnboardFlowPhase<Context, MessagingChannelConfig, ResourceProfile>({
       ...input.sandbox,
-      deps: {
-        ...input.sandbox.deps,
-        stopStaleDashboardListenersForSandbox: (sandboxes, sandboxName) => {
-          stopStaleDashboardListenersForSandbox(
-            sandboxes as Parameters<typeof stopStaleDashboardListenersForSandbox>[0],
-            sandboxName,
-          );
-        },
-      },
+      deps: input.sandbox.deps,
     }),
   };
 }

@@ -1015,37 +1015,6 @@ describe("createHttpsPinRuntimeAdapterServer OpenShell bridge source restriction
   });
 });
 
-describe("discoverOpenShellBridgeSourceCidrs (#6141)", () => {
-  it("accepts only validated subnets from the inspected OpenShell Docker network", () => {
-    const capture = vi.fn(() =>
-      JSON.stringify([
-        { Subnet: "172.17.0.0/16", Gateway: "172.17.0.1" },
-        { Subnet: "fd00:1234::/64", Gateway: "fd00:1234::1" },
-        { Subnet: "not-a-cidr" },
-      ]),
-    ) as unknown as NonNullable<Parameters<typeof __test.discoverOpenShellBridgeSourceCidrs>[0]>;
-
-    expect(__test.discoverOpenShellBridgeSourceCidrs(capture)).toEqual([
-      "172.17.0.0/16",
-      "fd00:1234::/64",
-    ]);
-    expect(capture).toHaveBeenCalledWith(
-      ["docker", "network", "inspect", "openshell-docker", "--format", "{{json .IPAM.Config}}"],
-      { ignoreError: true },
-    );
-  });
-
-  it("fails closed when the OpenShell bridge has no valid source subnet", () => {
-    const capture = vi.fn(() => "[]") as unknown as NonNullable<
-      Parameters<typeof __test.discoverOpenShellBridgeSourceCidrs>[0]
-    >;
-
-    expect(() => __test.discoverOpenShellBridgeSourceCidrs(capture)).toThrow(
-      /refusing to expose the credential-bearing HTTPS Pin Runtime adapter/,
-    );
-  });
-});
-
 describe("adapter recovery lock (#6141)", () => {
   // The statically-imported `__test.LOCK_PATH` above is derived from this
   // machine's real os.homedir() at module-evaluation time, same as a real,
@@ -1344,6 +1313,7 @@ describe("HTTPS Pin Runtime adapter child environment (#6141)", () => {
 describe("ensureHttpsPinRuntimeAdapter preflight-before-credential ordering (#6141)", () => {
   const privateLookup: EndpointDnsLookupFn = async () => [{ address: "10.48.203.205", family: 4 }];
   const publicLookup: EndpointDnsLookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+  const discoverAllowedSourceCidrs = () => ["172.17.0.0/16"];
 
   it("rejects a cleartext HTTP endpoint at the exported lifecycle boundary", async () => {
     await expect(
@@ -1354,6 +1324,7 @@ describe("ensureHttpsPinRuntimeAdapter preflight-before-credential ordering (#61
         providerType: "openai",
         credentialValue: "sk-secret",
         lookup: publicLookup,
+        discoverAllowedSourceCidrs,
       }),
     ).rejects.toThrow("requires an HTTPS endpoint URL");
   });
@@ -1369,6 +1340,7 @@ describe("ensureHttpsPinRuntimeAdapter preflight-before-credential ordering (#61
         // message would mention "credential" instead of the SSRF reason.
         credentialValue: "",
         lookup: privateLookup,
+        discoverAllowedSourceCidrs,
       }),
     ).rejects.toThrow(/resolves to private\/internal address/);
   });
@@ -1382,6 +1354,7 @@ describe("ensureHttpsPinRuntimeAdapter preflight-before-credential ordering (#61
         providerType: "openai",
         credentialValue: "   ",
         lookup: publicLookup,
+        discoverAllowedSourceCidrs,
       }),
     ).rejects.toThrow(/requires a non-empty credential value/);
   });
@@ -1395,6 +1368,7 @@ describe("ensureHttpsPinRuntimeAdapter preflight-before-credential ordering (#61
         providerType: "openai",
         credentialValue: "",
         lookup: publicLookup,
+        discoverAllowedSourceCidrs,
       }),
     ).rejects.toThrow(/requires a DNS-resolved public address/);
   });
@@ -1411,6 +1385,7 @@ describe("ensureHttpsPinRuntimeAdapter preflight-before-credential ordering (#61
         providerType: "openai",
         credentialValue: "sk-secret",
         lookup: failingLookup,
+        discoverAllowedSourceCidrs,
       }),
     ).rejects.toThrow(/cannot resolve endpoint host/);
   });

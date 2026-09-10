@@ -9,8 +9,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getCredential } from "../credentials/store";
 import { loadServingCatalog } from "../inference/serving/catalog-loader";
+import { listServingProfiles } from "../inference/serving/profile-list";
 import { servingProfileProvenance } from "../inference/serving/profile-provenance";
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV } from "../inference/vllm-models";
+import type { SystemReadinessReport } from "../readiness/types";
 import { resolveOnboardOptions, runOnboardCommand, servingProfileProviderKey } from "./command";
 import type { OnboardFlags } from "./command-support";
 import { PortableInferenceDescriptorError } from "./experimental/portable-inference-descriptor";
@@ -20,7 +22,11 @@ import {
   LOCAL_MODEL_PROFILE_ENABLED_ENV,
   LOCAL_MODEL_PROFILE_RUNTIME_ENV,
 } from "./local-model-profile/plan";
-import { OnboardResumeIntentError, OnboardResumeIntentRaceError } from "./session-bootstrap";
+import {
+  OnboardRestoreSnapshotDriftError,
+  OnboardResumeIntentError,
+  OnboardResumeIntentRaceError,
+} from "./session-bootstrap";
 import { MANAGED_VLLM_PROVIDER_KEY } from "./vllm-menu";
 
 afterEach(() => {
@@ -368,13 +374,19 @@ describe("onboard command options", () => {
           source: first,
           target: "/sandbox/project",
           readOnly: true,
-          sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
+          sourceIdentity: {
+            device: expect.any(String),
+            inode: expect.any(String),
+          },
         },
         {
           source: second,
           target: "/sandbox/reference",
           readOnly: true,
-          sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
+          sourceIdentity: {
+            device: expect.any(String),
+            inode: expect.any(String),
+          },
         },
       ]);
     } finally {
@@ -458,8 +470,13 @@ describe("onboard command options", () => {
     const env = { NEMOCLAW_TOOL_DISCLOSURE: "progressive" };
 
     expect(
-      resolve({ "experimental-profile": "portable", "tool-disclosure": "progressive" }, { env })
-        .toolDisclosure,
+      resolve(
+        {
+          "experimental-profile": "portable",
+          "tool-disclosure": "progressive",
+        },
+        { env },
+      ).toolDisclosure,
     ).toBe("progressive");
     expect(
       resolve(
@@ -486,14 +503,20 @@ describe("onboard command options", () => {
           },
         },
       ),
-    ).toMatchObject({ resume: true, fresh: false, experimentalProfile: "portable" });
+    ).toMatchObject({
+      resume: true,
+      fresh: false,
+      experimentalProfile: "portable",
+    });
   });
 
   it("maps --no-observability to an explicit disabled request", () => {
     expect(
       resolve(
         { agent: "dcode", observability: false },
-        { listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"] },
+        {
+          listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"],
+        },
       ).observabilityEnabled,
     ).toBe(false);
   });
@@ -569,7 +592,9 @@ describe("onboard command options", () => {
     expect(
       resolve(
         { agent: "hermes", observability: false },
-        { listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"] },
+        {
+          listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"],
+        },
       ).observabilityEnabled,
     ).toBe(false);
   });
@@ -782,7 +807,10 @@ describe("onboard command options", () => {
             "tool-disclosure": "direct",
           },
           env,
-          resolveResumeIntent: () => ({ effectiveResume: true, snapshot: null }),
+          resolveResumeIntent: () => ({
+            effectiveResume: true,
+            snapshot: null,
+          }),
           runOnboard: async () => {
             throw new OnboardResumeIntentRaceError();
           },
@@ -904,6 +932,52 @@ describe("onboard command options", () => {
     expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
   });
 
+  it("rejects native Podman --profile before onboarding while managed vLLM requires Docker (#10891)", () => {
+    const catalog = loadServingCatalog();
+    const profileId = "vllm.dgx-spark-gb10.single.qwen3-6-35b-a3b-nvfp4";
+    const dockerUnavailableReport = {
+      schemaVersion: "1.1.0",
+      mutated: false,
+      provenance: {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        observedAt: new Date().toISOString(),
+      },
+      observations: [],
+      capabilities: [{ id: "host.docker.available", state: "unknown" }],
+      qualifications: [],
+      findings: [
+        {
+          id: "host.docker.unavailable",
+          severity: "blocking",
+          summary: "Docker is unavailable.",
+          capabilityIds: ["host.docker.available"],
+        },
+      ],
+      evidence: [],
+      status: "incompatible",
+      exitCode: 2,
+    } satisfies SystemReadinessReport;
+    const profiles = listServingProfiles(catalog, {
+      readinessReports: [{ nodeId: "podman-host", report: dockerUnavailableReport }],
+    });
+    const errors: string[] = [];
+
+    expect(() =>
+      resolve(
+        { profile: profileId },
+        {
+          env: { NEMOCLAW_GATEWAY_RUNTIME: "podman" },
+          listServingProfiles: () => profiles,
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors).toEqual([
+      `  Serving profile '${profileId}' is incompatible: podman-host: readiness status is incompatible.`,
+    ]);
+  });
+
   it("selects the managed llama.cpp provider for a llama-cpp profile (#9313)", async () => {
     const env: NodeJS.ProcessEnv = {};
     let observedProvider: string | undefined;
@@ -932,7 +1006,10 @@ describe("onboard command options", () => {
       ...catalog,
       presets: catalog.presets.map((preset) => ({
         ...preset,
-        spec: { ...preset.spec, plan: { ...preset.spec.plan, backend: "future-backend" } },
+        spec: {
+          ...preset.spec,
+          plan: { ...preset.spec.plan, backend: "future-backend" },
+        },
       })),
       recipes: catalog.recipes.map((recipe) => ({
         ...recipe,
@@ -1133,7 +1210,9 @@ describe("onboard command options", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agents-manifest-"));
     const manifestPath = path.join(tmpDir, "agents.yaml");
     fs.writeFileSync(manifestPath, "agents: []\n");
-    const env: NodeJS.ProcessEnv = { NEMOCLAW_EXTRA_AGENTS_JSON: "previous-manifest" };
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_EXTRA_AGENTS_JSON: "previous-manifest",
+    };
     let observed: string | undefined;
 
     try {
@@ -1206,7 +1285,9 @@ describe("onboard command options", () => {
         flags: {},
         env: {},
         runOnboard: async () => {
-          throw Object.assign(new Error("Prompt closed before input"), { code: "EOF" });
+          throw Object.assign(new Error("Prompt closed before input"), {
+            code: "EOF",
+          });
         },
         error: (message = "") => errors.push(message),
         exit: exitWithCode,
@@ -1236,6 +1317,25 @@ describe("onboard command options", () => {
     // No stack frames leaked into the user-facing output.
     expect(output).not.toContain(".js:");
     expect(output).not.toContain("    at ");
+  });
+
+  it("prints a clean CLI error when restore snapshot authority changes (#10546)", async () => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw new OnboardRestoreSnapshotDriftError(
+            "Selected restore snapshot changed before sandbox creation.",
+          );
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(errors).toEqual(["  Selected restore snapshot changed before sandbox creation."]);
   });
 
   it("redacts credentials in a gateway declaration diagnostic (#9035)", async () => {
@@ -1356,7 +1456,9 @@ describe("onboard command options", () => {
         flags: {},
         env: {},
         runOnboard: async () => {
-          throw Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
+          throw Object.assign(new Error("Prompt interrupted"), {
+            code: "SIGINT",
+          });
         },
         error: () => {},
         exit,

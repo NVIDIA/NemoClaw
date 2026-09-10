@@ -25,6 +25,7 @@ The contributor lifecycle has one owner for each stage: `nemoclaw-contributor-on
 Component-specific guidance belongs in the `AGENTS.md` file of the package it describes, not in a skill.
 Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
 Skills that write or review explanatory text must follow the shared [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md) contract.
+Keep repository skill workflows agent-harness agnostic. State required capabilities, actions, and observable results instead of requiring harness-specific tool names. A skill may name a client or command when that client or command is the user-visible subject. Harness-specific automation may assist with a workflow, but it does not define or replace the skill's requirements.
 
 ## Architecture
 
@@ -139,7 +140,11 @@ Every source file needs the repository SPDX header; the pre-commit hook inserts 
 - `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.19+
 - `test/`: **ESM** (`import`/`export`)
 - Do not add new JavaScript source files. Prefer TypeScript when modifying existing JavaScript. New test files must use TypeScript.
-- Oxlint uses `oxlint.config.ts`. The isolated `oxlint.type-aware.config.ts` configuration enforces `typescript/no-floating-promises` for plugin sources.
+- Oxlint uses `oxlint.config.ts`. The isolated `oxlint.type-aware.config.ts` configuration checks promises in plugin and adapter sources.
+  Adapter checks use `--tsconfig tsconfig.cli.json` and also reject misused promises, invalid awaits, and incomplete switches.
+- Adapter sources and tests require type-only imports and exports, strict equality, and no unused variables or explicit `any`.
+  Production adapters also reject non-null assertions and nested ternaries.
+- Oxfmt covers all `src/lib/adapters` files. The formatting hook also formats changes to existing adapters.
 
 - Use `eslint-plugin-sonarjs` only for the `oxlint.config.ts` cognitive-complexity rules documented in [`tools/lint/DEPENDENCY-REVIEW.md`](tools/lint/DEPENDENCY-REVIEW.md).
 - Keep function complexity low; existing complexity hotspots are tracked separately

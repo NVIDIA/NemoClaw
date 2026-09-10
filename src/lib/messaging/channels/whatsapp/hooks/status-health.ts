@@ -100,42 +100,44 @@ export function createWhatsappStatusHealthHook(
     // this hook).
     if (!execute || !sandboxName) return {};
 
-    const agent = normalizeString(context.inputs?.agent) ?? "openclaw";
-    const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
-    const probe =
-      agent === "openclaw"
-        ? runOpenclawStatusProbe(execute, sandboxName, timeoutMs)
-        : agent === "hermes"
-          ? runHermesSessionProbe(execute, sandboxName, timeoutMs)
-          : null;
-    if (!probe) return {};
+    return (async () => {
+      const agent = normalizeString(context.inputs?.agent) ?? "openclaw";
+      const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+      const probe =
+        agent === "openclaw"
+          ? await runOpenclawStatusProbe(execute, sandboxName, timeoutMs)
+          : agent === "hermes"
+            ? await runHermesSessionProbe(execute, sandboxName, timeoutMs)
+            : null;
+      if (!probe) return {};
 
-    const input: WhatsappProbeInput = {
-      agent,
-      paired: probe.paired,
-      heartbeat: probe.heartbeat,
-      heartbeatParseError: null,
-      bridgeProcessAlive: probe.bridgeProcessAlive,
-      recentLogSignals: probe.recentLogSignals,
-      probeReachable: probe.probeReachable,
-      probedAt: normalizeString(context.inputs?.probedAt) ?? "",
-      presetApplied: Boolean(context.inputs?.presetApplied),
-      presetOnGateway: normalizeTristate(context.inputs?.presetOnGateway),
-      channelEnabledInRegistry: Boolean(context.inputs?.channelEnabledInRegistry),
-      ...(probe.sessionLocations ? { sessionLocations: probe.sessionLocations } : {}),
-    };
-    const report = evaluateWhatsappDiagnostics(input);
-    return {
-      outputs: {
-        channelHealth: {
-          kind: "status",
-          value: {
-            type: MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE,
-            report,
-          } as unknown as MessagingSerializableValue,
+      const input: WhatsappProbeInput = {
+        agent,
+        paired: probe.paired,
+        heartbeat: probe.heartbeat,
+        heartbeatParseError: null,
+        bridgeProcessAlive: probe.bridgeProcessAlive,
+        recentLogSignals: probe.recentLogSignals,
+        probeReachable: probe.probeReachable,
+        probedAt: normalizeString(context.inputs?.probedAt) ?? "",
+        presetApplied: Boolean(context.inputs?.presetApplied),
+        presetOnGateway: normalizeTristate(context.inputs?.presetOnGateway),
+        channelEnabledInRegistry: Boolean(context.inputs?.channelEnabledInRegistry),
+        ...(probe.sessionLocations ? { sessionLocations: probe.sessionLocations } : {}),
+      };
+      const report = evaluateWhatsappDiagnostics(input);
+      return {
+        outputs: {
+          channelHealth: {
+            kind: "status",
+            value: {
+              type: MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE,
+              report,
+            } as unknown as MessagingSerializableValue,
+          },
         },
-      },
-    };
+      };
+    })();
   };
 }
 
@@ -191,15 +193,15 @@ const PROBE_UNREACHABLE: ProbeResult = {
  * reflects the in-process bridge's current state, so this replaces the old
  * log-scraping + pgrep + dir-listing signals with a single trusted source.
  */
-function runOpenclawStatusProbe(
+async function runOpenclawStatusProbe(
   execute: NonNullable<WhatsappStatusHealthHookOptions["executeSandboxCommand"]>,
   sandboxName: string,
   timeoutMs: number,
-): ProbeResult {
+): Promise<ProbeResult> {
   const command = `openclaw channels status --channel whatsapp --json --timeout ${timeoutMs}`;
-  let exec: ReturnType<typeof execute>;
+  let exec: Awaited<ReturnType<typeof execute>>;
   try {
-    exec = execute(sandboxName, command, timeoutMs);
+    exec = await execute(sandboxName, command, timeoutMs);
   } catch {
     return PROBE_UNREACHABLE;
   }
@@ -239,15 +241,15 @@ function runOpenclawStatusProbe(
   return mapOpenclawWaState(wa);
 }
 
-function runHermesSessionProbe(
+async function runHermesSessionProbe(
   execute: NonNullable<WhatsappStatusHealthHookOptions["executeSandboxCommand"]>,
   sandboxName: string,
   timeoutMs: number,
-): ProbeResult {
+): Promise<ProbeResult> {
   const configuredProbeTimeoutMs = Math.floor(timeoutMs / 4);
   const configProbeTimeoutMs = Math.floor(timeoutMs / 4);
   const defaultProbeTimeoutMs = timeoutMs - configProbeTimeoutMs - configuredProbeTimeoutMs;
-  const defaultLocations = probeHermesSessionDirs(
+  const defaultLocations = await probeHermesSessionDirs(
     execute,
     sandboxName,
     HERMES_DEFAULT_SESSION_DIR,
@@ -264,11 +266,15 @@ function runHermesSessionProbe(
   if (configProbeTimeoutMs < 1 || configuredProbeTimeoutMs < 1) {
     return hermesProbeResult(defaultLocations, "default");
   }
-  const configured = readHermesConfiguredSessionDir(execute, sandboxName, configProbeTimeoutMs);
+  const configured = await readHermesConfiguredSessionDir(
+    execute,
+    sandboxName,
+    configProbeTimeoutMs,
+  );
   if (configured.source !== "config") {
     return hermesProbeResult(defaultLocations, configured.source);
   }
-  const configuredLocations = probeHermesSessionDirs(
+  const configuredLocations = await probeHermesSessionDirs(
     execute,
     sandboxName,
     configured.dir,
@@ -298,15 +304,15 @@ function hermesProbeResult(
   };
 }
 
-function probeHermesSessionDirs(
+async function probeHermesSessionDirs(
   execute: NonNullable<WhatsappStatusHealthHookOptions["executeSandboxCommand"]>,
   sandboxName: string,
   gatewaySessionDir: string,
   timeoutMs: number,
-): WhatsappSessionLocations | null {
-  let exec: ReturnType<typeof execute>;
+): Promise<WhatsappSessionLocations | null> {
+  let exec: Awaited<ReturnType<typeof execute>>;
   try {
-    exec = execute(sandboxName, hermesSessionProbeCommand(gatewaySessionDir), timeoutMs);
+    exec = await execute(sandboxName, hermesSessionProbeCommand(gatewaySessionDir), timeoutMs);
   } catch {
     return null;
   }
@@ -316,15 +322,15 @@ function probeHermesSessionDirs(
 
 type HermesSessionPathSource = NonNullable<WhatsappSessionLocations["gatewaySessionPathSource"]>;
 
-function readHermesConfiguredSessionDir(
+async function readHermesConfiguredSessionDir(
   execute: NonNullable<WhatsappStatusHealthHookOptions["executeSandboxCommand"]>,
   sandboxName: string,
   timeoutMs: number,
-): { readonly dir: string; readonly source: HermesSessionPathSource } {
+): Promise<{ readonly dir: string; readonly source: HermesSessionPathSource }> {
   const fallback = { dir: HERMES_DEFAULT_SESSION_DIR, source: "default" } as const;
-  let exec: ReturnType<typeof execute>;
+  let exec: Awaited<ReturnType<typeof execute>>;
   try {
-    exec = execute(sandboxName, hermesConfiguredSessionPathCommand(), timeoutMs);
+    exec = await execute(sandboxName, hermesConfiguredSessionPathCommand(), timeoutMs);
   } catch {
     return fallback;
   }

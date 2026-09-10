@@ -150,14 +150,14 @@ describe("sandbox base-image resolution key", () => {
     expect(second).not.toBe(first);
   });
 
-  it("isolates pinned-first resolution policy", () => {
+  it("isolates required pinned resolution policy", () => {
     const root = fixture();
     const base = {
       ...options(root),
       pinnedRemoteRef: "example/base@sha256:first",
     };
 
-    expect(createSandboxBaseImageResolutionKey({ ...base, preferPinnedRemoteRef: true })).not.toBe(
+    expect(createSandboxBaseImageResolutionKey({ ...base, requirePinnedRemoteRef: true })).not.toBe(
       createSandboxBaseImageResolutionKey(base),
     );
   });
@@ -166,7 +166,7 @@ describe("sandbox base-image resolution key", () => {
     const root = fixture();
     const base = options(root);
 
-    expect(createSandboxBaseImageResolutionKey({ ...base, preferPinnedRemoteRef: false })).toBe(
+    expect(createSandboxBaseImageResolutionKey({ ...base, requirePinnedRemoteRef: false })).toBe(
       createSandboxBaseImageResolutionKey(base),
     );
   });

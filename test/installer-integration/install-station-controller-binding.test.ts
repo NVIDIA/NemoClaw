@@ -285,6 +285,24 @@ verify_dual_station_controller_uid_binding 1001 "$config_dir" "$binding_file"
     }
   });
 
+  it.each([
+    ["direct root", "0", "", "1002", "pid=42 process=openshell"],
+    ["non-root controller", "1001", "", "1001", "pid=42 process=openshell"],
+    ["another non-root user", "1001", "", "1002", ""],
+    ["sudo controller", "0", "1001", "1001", "pid=42 process=openshell"],
+    ["another sudo user", "0", "1001", "1002", ""],
+  ])("scopes agent conflicts for %s", (_case, effectiveUid, sudoUid, ownerUid, expected) => {
+    const { home, result, output } = runSourced(
+      `agent_process_conflicts '${ownerUid} 42 1 openshell x' '${effectiveUid}' '${sudoUid}' 99 98`,
+    );
+    try {
+      expect(result.status, output).toBe(0);
+      expect(output.trim()).toBe(expected);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("recognizes only the frozen legacy head and routes it around workload preparation", () => {
     const digest =
       "vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416";

@@ -206,7 +206,7 @@ $$nemoclaw headless-agent status
 $$nemoclaw headless-agent connect --probe-only
 ```
 
-`$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified. Its main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox, then sends one inference request over the same route when that probe reports the route reachable. The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` when the route returned HTTP `500` through `599`.
+`$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified. Its main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox, then sends an inference request over the same route when that probe reports the route reachable. It repeats both probes up to three total attempts when that request returns a transient gateway status; refer to the [CLI commands reference](../reference/commands) for the retried statuses and their token cost. The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` after a final failure or after all transient attempts fail.
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -217,6 +217,7 @@ During an SSH session, `status` points to `$$nemoclaw headless-agent dashboard-u
 `connect --probe-only` waits up to 300 seconds by default for a cold sandbox to become ready. It then verifies or repairs the in-sandbox agent process and host forwards without opening a shell. It does not restart or replace the shared host OpenShell gateway.
 
 The command prints one `Probe timing:` line with elapsed milliseconds for `readiness`, `authority`, `lifecycle`, `gateway`, `processes`, `forward`, `inference`, `pairing`, and `publication` stages. Use the stage values to identify where a slow or failed deployment spent its time. The line also reports lifecycle and forward actions and names the failed stage when available. Timing collection is diagnostic and fail-open. The command exit status remains the readiness decision: status `0` means the complete probe passed, and any nonzero status means the host is not ready for launch.
+Refer to the [probe timing reference](../reference/commands#$$nemoclaw-name-connect) for observation counts, readiness decisions, and Portable Hermes diagnostics.
 
 Readiness requires all of these results:
 
@@ -274,7 +275,8 @@ Deep Agents Code does not expose a dashboard URL or gateway token. Model traffic
 
 <AgentOnly variant="openclaw">
 
-OpenClaw generates a new gateway token when the sandbox container starts with mutable configuration. If Shields are up, a non-root start preserves the sealed token because the sandbox user cannot replace the protected configuration. Retrieve the dashboard URL or token again after the container starts or a replacement sandbox is created.
+OpenClaw generates a new gateway token when the sandbox container starts with mutable configuration.
+Retrieve the dashboard URL or token again after the container starts or a replacement sandbox is created.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -350,9 +352,8 @@ Use a newly reviewed commit SHA for each planned update instead of relying on th
 | Direct edits to generated profile, config, or environment files | May remain until regeneration | Agent-specific and usually excluded or filtered | Regenerated or filtered by the current manifest |
 
 <AgentOnly variant="openclaw">
-  | OpenClaw gateway token | Rotated when the container starts with mutable configuration; preserved
-  for a non-root start while Shields are up | Not captured; a replacement sandbox generates a new
-  token | Rotated for the replacement sandbox |
+  | OpenClaw gateway token | Rotated when the container starts with mutable configuration | Not
+  captured; a replacement sandbox generates a new token | Rotated for the replacement sandbox |
 </AgentOnly>
 <AgentOnly variant="hermes">
   | Hermes `API_SERVER_KEY` | Preserved | Not captured; a replacement sandbox generates a new token
@@ -441,7 +442,7 @@ Run `openshell sandbox list` and inspect the row for `headless-agent`. `NotReady
 
 ### Inference Returns HTTP 5xx
 
-An HTTP status from `500` through `599` makes the authoritative `inference.local` route unhealthy. Check the configured provider and host egress, then run:
+A final HTTP status from `500` through `599` makes the authoritative `inference.local` route unhealthy. HTTP `502`, `503`, and `504` report unhealthy only after all transient attempts fail. Check the configured provider and host egress, then run:
 
 ```bash
 $$nemoclaw headless-agent doctor

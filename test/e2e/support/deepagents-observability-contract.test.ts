@@ -302,10 +302,13 @@ describe("Deep Agents observability policy proof", () => {
 });
 
 describe("bounded private OTLP capture server", () => {
-  it("accepts only private bridge addresses unless a hermetic test opts into loopback", () => {
+  it("accepts only approved host bridge addresses unless a hermetic test opts into loopback", () => {
     expect(isPrivateBridgeIpv4("10.1.2.3")).toBe(true);
     expect(isPrivateBridgeIpv4("172.31.0.1")).toBe(true);
     expect(isPrivateBridgeIpv4("192.168.1.1")).toBe(true);
+    expect(isPrivateBridgeIpv4("169.254.2.2")).toBe(true);
+    expect(isPrivateBridgeIpv4("169.254.2.3")).toBe(false);
+    expect(isPrivateBridgeIpv4("169.254.169.254")).toBe(false);
     expect(isPrivateBridgeIpv4("127.0.0.1")).toBe(false);
     expect(isPrivateBridgeIpv4("127.0.0.1", true)).toBe(true);
     expect(isPrivateBridgeIpv4("0.0.0.0", true)).toBe(false);

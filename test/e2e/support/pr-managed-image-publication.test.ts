@@ -21,6 +21,7 @@ import {
 import { githubRequest } from "../../../tools/e2e/base-image-publication.mts";
 import {
   assembleManagedImageCatalog,
+  main,
   resolvePrManagedImageCatalog,
   selectManagedImagePublicationRun,
   writeManagedImageCatalog,
@@ -76,6 +77,12 @@ function contract(agent: ManagedImageAgent, index: number): ManagedImageContract
   return contractForCohort(agent, index, `ghrun-${RUN_ID}-1`);
 }
 
+function contractArchive(agent: ManagedImageAgent, index: number): Buffer {
+  return artifactZip([
+    { name: "contract.json", contents: `${JSON.stringify(contract(agent, index))}\n` },
+  ]);
+}
+
 function treeEntry(entryPath: string, sha: string) {
   return { mode: "100644", path: entryPath, sha, type: "blob" };
 }
@@ -109,13 +116,11 @@ function candidateRequest(options: {
   readonly run?: unknown;
   readonly runPages?: readonly unknown[];
   readonly artifactHeadSha?: string;
-  readonly artifactRunAttempt?: number;
   readonly artifactRunId?: number;
   readonly missingAgent?: ManagedImageAgent;
 }) {
   const candidateRepository = options.candidateRepository ?? CANONICAL_REPOSITORY;
   const changedPath = options.changedPath ?? "Dockerfile.base";
-  const artifactRunAttempt = options.artifactRunAttempt ?? 1;
   const artifactRunId = options.artifactRunId ?? RUN_ID;
   const baseEntries = [
     treeEntry(changedPath, "3".repeat(40)),
@@ -166,10 +171,8 @@ function candidateRequest(options: {
     responses.set(`${runsPath}&page=${index + 1}`, page);
   }
   for (const [index, agent] of SHIPPED_MANAGED_IMAGE_AGENTS.entries()) {
-    const name = `managed-pr-contract-${artifactRunId}-${artifactRunAttempt}-${agent}`;
-    const archive = artifactZip([
-      { name: "contract.json", contents: `${JSON.stringify(contract(agent, index))}\n` },
-    ]);
+    const name = `managed-pr-contract-${artifactRunId}-${agent}`;
+    const archive = contractArchive(agent, index);
     const id = index + 100;
     responses.set(
       `/repos/${CANONICAL_REPOSITORY}/actions/runs/${artifactRunId}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
@@ -230,6 +233,7 @@ function downloadContract(
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -243,6 +247,17 @@ describe("exact PR managed-image publication", () => {
 
     await expect(
       resolvePrManagedImageCatalog(input, candidateRequest({ imageChanged: false }), download),
+    ).resolves.toBe("base-cohort");
+    expect(download).not.toHaveBeenCalled();
+    expect(fs.existsSync(input.outputPath)).toBe(false);
+  });
+
+  it("uses the exact PR base as the base-history cohort", async () => {
+    const input = { ...resolverInput(), candidateSha: BASE_SHA };
+    const download = vi.fn(downloadContract);
+
+    await expect(
+      resolvePrManagedImageCatalog(input, candidateRequest({ imageChanged: true }), download),
     ).resolves.toBe("base-cohort");
     expect(download).not.toHaveBeenCalled();
     expect(fs.existsSync(input.outputPath)).toBe(false);
@@ -264,6 +279,65 @@ describe("exact PR managed-image publication", () => {
       ),
     );
     expect(fs.statSync(input.outputPath).mode & 0o777).toBe(0o600);
+  });
+
+  it("keeps artifact download evidence out of the machine-readable selection", async () => {
+    const input = resolverInput();
+    const apiRequest = candidateRequest({ imageChanged: true });
+    const artifactResponses = new Map<string, Response>(
+      SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+        const archive = contractArchive(agent, index);
+        return [
+          `/repos/${CANONICAL_REPOSITORY}/actions/artifacts/${index + 100}/zip`,
+          new Response(new Uint8Array(archive), {
+            status: 200,
+            headers: { "content-length": String(archive.length) },
+          }),
+        ] as const;
+      }),
+    );
+    let standardOutput = "";
+    let standardError = "";
+    vi.spyOn(process.stdout, "write").mockImplementation(((chunk: string | Uint8Array) => {
+      standardOutput += chunk.toString();
+      return true;
+    }) as typeof process.stdout.write);
+    vi.spyOn(console, "log").mockImplementation((...values: unknown[]) => {
+      standardOutput += `${values.map(String).join(" ")}\n`;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation(((chunk: string | Uint8Array) => {
+      standardError += chunk.toString();
+      return true;
+    }) as typeof process.stderr.write);
+    vi.spyOn(console, "error").mockImplementation((...values: unknown[]) => {
+      standardError += `${values.map(String).join(" ")}\n`;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (request: string | URL | Request) => {
+        const url = new URL(String(request));
+        return (
+          artifactResponses.get(url.pathname) ??
+          Response.json(await apiRequest(`${url.pathname}${url.search}`))
+        );
+      }),
+    );
+
+    await main([input.outputPath], {
+      BASE_SHA,
+      CANDIDATE_REPOSITORY: CANONICAL_REPOSITORY,
+      CANDIDATE_SHA,
+      GITHUB_TOKEN: "test-token",
+      PR_NUMBER: String(PR_NUMBER),
+    });
+
+    const artifactEvidence = Array.from(
+      { length: SHIPPED_MANAGED_IMAGE_AGENTS.length },
+      () => "artifact-content-read attempt=1 outcome=passed-first-attempt\n",
+    ).join("");
+    expect(standardOutput).toBe("candidate-catalog\n");
+    expect(standardOutput).not.toContain("artifact-content-read");
+    expect(standardError).toBe(artifactEvidence);
   });
 
   it("selects a candidate catalog when only managed-image onboarding runtime changes", async () => {
@@ -298,7 +372,10 @@ describe("exact PR managed-image publication", () => {
       return contractPath;
     });
     const assembledPath = path.join(assemblyRoot, "assembled", "catalog.json");
-    writeManagedImageCatalog(contractPaths, CANDIDATE_SHA, assembledPath, `ghrun-${RUN_ID}-1`);
+    writeManagedImageCatalog(contractPaths, CANDIDATE_SHA, assembledPath, {
+      id: RUN_ID,
+      attempt: 1,
+    });
 
     expect(fs.readFileSync(assembledPath)).toEqual(fs.readFileSync(input.outputPath));
     expect(fs.statSync(assembledPath).mode & 0o777).toBe(0o600);
@@ -332,11 +409,23 @@ describe("exact PR managed-image publication", () => {
     expect(download).not.toHaveBeenCalled();
   });
 
+  it("resolves an earlier producer cohort after a failed-job rerun", async () => {
+    const request = vi.fn(
+      candidateRequest({ imageChanged: true, run: workflowRun({ run_attempt: 2 }) }),
+    );
+
+    await expect(
+      resolvePrManagedImageCatalog(resolverInput(), request, downloadContract),
+    ).resolves.toBe("candidate-catalog");
+    expect(request).toHaveBeenCalledWith(
+      expect.stringContaining(`name=managed-pr-contract-${RUN_ID}-openclaw`),
+    );
+  });
+
   it("uses the newest successful Images run after an earlier failure", async () => {
     const laterRunId = RUN_ID + 10;
     const request = vi.fn(
       candidateRequest({
-        artifactRunAttempt: 2,
         artifactRunId: laterRunId,
         imageChanged: true,
         run: {
@@ -423,14 +512,13 @@ describe("exact PR managed-image publication", () => {
       resolvePrManagedImageCatalog(
         resolverInput(),
         candidateRequest({
-          artifactRunAttempt: 2,
           artifactRunId: laterRunId,
           imageChanged: true,
           run: workflowRun({ id: laterRunId, run_attempt: 2 }),
         }),
         downloadContract,
       ),
-    ).rejects.toThrow("do not match the selected workflow run cohort");
+    ).rejects.toThrow("producer run does not match the consumer run");
   });
 
   it("rejects missing or ambiguous exact-candidate Images runs", async () => {
@@ -517,11 +605,10 @@ describe("exact PR managed-image publication", () => {
     };
 
     expect(() =>
-      assembleManagedImageCatalog(
-        [substituted, ...contracts.slice(1)],
-        CANDIDATE_SHA,
-        `ghrun-${RUN_ID}-1`,
-      ),
+      assembleManagedImageCatalog([substituted, ...contracts.slice(1)], CANDIDATE_SHA, {
+        id: RUN_ID,
+        attempt: 1,
+      }),
     ).toThrow("do not match the candidate commit");
   });
 
@@ -535,5 +622,39 @@ describe("exact PR managed-image publication", () => {
         },
       }),
     ).rejects.toThrow("GitHub API path must stay within an allowed repository");
+  });
+});
+
+describe("PR managed-image contract reruns", () => {
+  it("accepts one producer-owned cohort after a partial producer rerun", () => {
+    const contracts = SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) =>
+      contractForCohort(agent, index, `ghrun-${RUN_ID}-1`),
+    );
+
+    expect(
+      assembleManagedImageCatalog(contracts, CANDIDATE_SHA, { id: RUN_ID, attempt: 2 }),
+    ).toEqual(Object.fromEntries(contracts.map((value) => [value.agent, value])));
+  });
+
+  it.each([
+    [
+      "mixed attempts",
+      [`ghrun-${RUN_ID}-1`, `ghrun-${RUN_ID}-1`, `ghrun-${RUN_ID}-2`],
+      "one publication cohort",
+    ],
+    ["another run", ["ghrun-7000-1", "ghrun-7000-1", "ghrun-7000-1"], "producer run"],
+    [
+      "a future attempt",
+      [`ghrun-${RUN_ID}-3`, `ghrun-${RUN_ID}-3`, `ghrun-${RUN_ID}-3`],
+      "producer attempt",
+    ],
+  ])("rejects contracts from %s", (_case, cohorts, message) => {
+    const contracts = SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) =>
+      contractForCohort(agent, index, cohorts[index] as ManagedImageContractV1["source"]["cohort"]),
+    );
+
+    expect(() =>
+      assembleManagedImageCatalog(contracts, CANDIDATE_SHA, { id: RUN_ID, attempt: 2 }),
+    ).toThrow(message);
   });
 });

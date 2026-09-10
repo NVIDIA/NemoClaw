@@ -3,11 +3,9 @@
 
 import { type SpawnSyncOptions, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { waitUntil } from "../core/wait";
-import { DEFAULT_GATEWAY_PORT, resolveGatewayStateDirForPort } from "./gateway/state-dir";
 import {
   gatewayIdForStateDir,
   hasStateScopedSandboxNamespace,
@@ -17,7 +15,11 @@ import {
   clearDockerDriverGatewayRuntimeMarker,
   getDockerDriverGatewayRuntimeMarkerPath,
   parseDockerDriverGatewayRuntimeMarker,
+  readOwnedDockerDriverGatewayRuntimeFile,
+  resolveDockerDriverGatewayPidFile,
+  resolveDockerDriverGatewayStateDir,
 } from "./docker-driver-gateway-runtime-marker";
+import { resolveRegisteredRuntimeProvider } from "./runtime-provider/selection";
 import {
   canonicalGatewayTargetMatches,
   type OpenShellGatewayProcessTarget,
@@ -25,6 +27,10 @@ import {
 } from "./gateway-process-identity";
 
 export { hasStateScopedSandboxNamespace } from "./docker-driver-gateway-config";
+export {
+  resolveDockerDriverGatewayPidFile,
+  resolveDockerDriverGatewayStateDir,
+} from "./docker-driver-gateway-runtime-marker";
 
 export interface RunResult {
   status: number | null;
@@ -122,25 +128,6 @@ function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean 
   );
 }
 
-export function resolveDockerDriverGatewayStateDir(
-  env: NodeJS.ProcessEnv = process.env,
-  homeDir: string = env.HOME || os.homedir(),
-  gatewayPort: number = DEFAULT_GATEWAY_PORT,
-): string {
-  return resolveGatewayStateDirForPort({
-    configured: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
-    home: homeDir,
-    port: gatewayPort,
-  });
-}
-
-export function resolveDockerDriverGatewayPidFile(
-  env: NodeJS.ProcessEnv = process.env,
-  homeDir: string = env.HOME || os.homedir(),
-): string {
-  return path.join(resolveDockerDriverGatewayStateDir(env, homeDir), "openshell-gateway.pid");
-}
-
 function defaultDeps(overrides: Partial<HostGatewayProcessDeps> = {}): HostGatewayProcessDeps {
   const env = overrides.env ?? process.env;
   return {
@@ -236,20 +223,36 @@ function warnForeignUserGateway(pid: number, deps: HostGatewayProcessDeps): void
   );
 }
 
-function readOwnedRuntimeFile(filePath: string, uid: number): string | null {
-  if (typeof fs.constants.O_NOFOLLOW !== "number") return null;
-  let descriptor: number | undefined;
+/** Recover provider identity only from the selected gateway's owned runtime marker. */
+export function resolveOwnedHostGatewayRuntimeProviderId(options: {
+  gatewayName: string;
+  gatewayPort: number;
+  stateDir: string;
+  architecture?: NodeJS.Architecture;
+  platform?: NodeJS.Platform;
+  uid?: number;
+}): string | null {
+  const platform = options.platform ?? process.platform;
+  const architecture = options.architecture ?? process.arch;
+  const uid = options.uid ?? (typeof process.getuid === "function" ? process.getuid() : -1);
+  if (uid < 0 || !canonicalGatewayTargetMatches(options.gatewayName, options.gatewayPort)) {
+    return null;
+  }
+  const markerText = readOwnedDockerDriverGatewayRuntimeFile(
+    getDockerDriverGatewayRuntimeMarkerPath(options.stateDir),
+    uid,
+  );
+  const marker = markerText ? parseDockerDriverGatewayRuntimeMarker(markerText) : null;
+  if (!marker || marker.platform !== platform || marker.arch !== architecture) return null;
+  let markerPort = 0;
   try {
-    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    const stat = fs.fstatSync(descriptor);
-    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== uid || stat.size > 64 * 1024)
-      return null;
-    return fs.readFileSync(descriptor, "utf-8");
+    markerPort = Number(new URL(marker.endpoint).port);
   } catch {
     return null;
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
   }
+  if (markerPort !== options.gatewayPort) return null;
+  const provider = resolveRegisteredRuntimeProvider(marker.driver);
+  return provider?.gateway.supported === true ? provider.identity.id : null;
 }
 
 export function processUsesStateScopedSandboxNamespace(
@@ -358,15 +361,31 @@ function scopedGatewayOwnershipFailure(
   pidFile: string,
   target: { name: string; port: number },
 ): string | null {
-  if (!hasStateScopedSandboxNamespace(stateDir)) {
-    return "gateway config does not prove an isolated sandbox namespace";
-  }
   const uid = typeof process.getuid === "function" ? process.getuid() : -1;
-  const pidText = readOwnedRuntimeFile(pidFile, uid);
-  const markerText = readOwnedRuntimeFile(getDockerDriverGatewayRuntimeMarkerPath(stateDir), uid);
+  const pidText = readOwnedDockerDriverGatewayRuntimeFile(pidFile, uid);
+  const markerText = readOwnedDockerDriverGatewayRuntimeFile(
+    getDockerDriverGatewayRuntimeMarkerPath(stateDir),
+    uid,
+  );
   const marker = markerText ? parseDockerDriverGatewayRuntimeMarker(markerText) : null;
   if (Number(pidText?.trim()) !== pid || marker?.pid !== pid) {
     return "PID file and runtime marker do not identify the same process";
+  }
+  const provider = resolveRegisteredRuntimeProvider(marker.driver);
+  if (!provider?.gateway.supported) {
+    return "runtime marker does not identify a registered gateway provider";
+  }
+  let processOwnership: "scoped-namespace" | "runtime-marker";
+  try {
+    processOwnership = provider.gateway.observeHostRuntime({
+      environment: deps.env,
+      platform: marker.platform,
+    }).gatewayConfig.processOwnership;
+  } catch {
+    return "runtime marker provider ownership could not be observed";
+  }
+  if (processOwnership === "scoped-namespace" && !hasStateScopedSandboxNamespace(stateDir)) {
+    return "gateway config does not prove an isolated sandbox namespace";
   }
   let markerPort = 0;
   try {
@@ -381,7 +400,10 @@ function scopedGatewayOwnershipFailure(
   ) {
     return "runtime marker does not identify the selected gateway";
   }
-  if (!processUsesStateScopedSandboxNamespace(pid, stateDir, deps)) {
+  if (
+    processOwnership === "scoped-namespace" &&
+    !processUsesStateScopedSandboxNamespace(pid, stateDir, deps)
+  ) {
     return "gateway process owner and loaded sandbox namespace cannot be proven";
   }
   if (

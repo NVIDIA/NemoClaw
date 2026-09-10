@@ -300,7 +300,6 @@ const { setupNim } = require(${onboardPath});
       const configResult = spawnSync(
         process.execPath,
         [
-          "--experimental-strip-types",
           path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "generate-config.ts"),
         ],
         {

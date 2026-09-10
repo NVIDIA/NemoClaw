@@ -35,7 +35,7 @@ Track each observed workflow run by run ID, attempt, status, conclusion, and job
 Repeat these steps continuously while the loop remains authorized:
 
 1. Refresh `origin/main`. List automatic E2E runs for that commit SHA and later `main` commit SHAs.
-2. Inspect only new or changed runs. Read failed job logs and artifacts far enough to identify the earliest actionable product, test, workflow, runner, or cleanup failure.
+2. Inspect only new or changed runs. Load `nemoclaw-maintainer-classify-ci-failure` to read one failed job's bounded logs and optional retained artifact before identifying the earliest actionable product, test, workflow, runner, or cleanup failure.
 3. Group failures that share the same causal signature. Do not equate a job name with a root cause.
 4. Reconcile each group with open PRs before editing. If another maintainer owns it, record that PR and take the next unowned group.
 5. Prefer a peer E2E maintenance PR that needs review or a final merge decision before starting another fix.
@@ -85,7 +85,7 @@ Read [Review and Merge](references/review-and-merge.md) before reviewing, approv
 
 Observe automatic push runs and replacement attempts that the workflow starts. Never use `gh run rerun`, `gh workflow run .github/workflows/e2e.yaml`, or local live E2E to duplicate an automatic run.
 
-Approving a first-time contributor's ordinary `pull_request` workflow after trust review is not a manual E2E dispatch. Environment approval for a secret-bearing or hardware E2E job is different: follow `nemoclaw-maintainer-e2e` only when the maintainer explicitly requests that run.
+Approving a first-time contributor's ordinary `pull_request` workflow after trust review is not a manual E2E dispatch. Environment approval for a secret-bearing or hardware E2E job is different: follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) only when the maintainer explicitly requests that run.
 
 Never weaken, skip, delete, relabel, or narrow coverage to make a failure disappear. Do not freeze `main`, block unrelated merges, or ask other maintainers to wait.
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
 import {
   OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
@@ -16,7 +17,7 @@ import {
 } from "../../../onboard/sandbox-recreate-probe";
 import type { SandboxEntry } from "../../../state/registry";
 import {
-  buildSandboxInferenceRouteProbeArgs,
+  buildSandboxInferenceRouteProbeRequest,
   type InferenceRouteProbeAgent,
   parseSandboxInferenceRouteProbeResult,
 } from "../connect-inference-route-probe";
@@ -52,15 +53,16 @@ export type LaunchReadinessObservationStage =
 export interface LaunchReadinessHealthDeps {
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
-  capture?: (args: string[]) => LaunchReadinessCaptureResult;
+  capture?: LaunchReadinessBoundCapture;
+  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   gatewayHealth?: (sandboxName: string, gatewayName: string) => Promise<boolean | null>;
   forwardsHealthy?: (sandboxName: string, gatewayName: string) => boolean | null;
-  smoke?: typeof runAgentSmokeCommands;
+  smoke?: (sandboxName: string, agent: AgentDefinition) => ReturnType<typeof runAgentSmokeCommands>;
   inferenceProbe?: (
     sandboxName: string,
     agent: InferenceRouteProbeAgent,
     gatewayName: string,
-  ) => ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
+  ) => Promise<ReturnType<typeof parseSandboxInferenceRouteProbeResult>>;
   inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
   recordObservationTiming?: (stage: LaunchReadinessObservationStage, elapsedMs: number) => void;
   recordObservationFailure?: (stage: LaunchReadinessObservationStage) => void;
@@ -74,32 +76,25 @@ export type LaunchReadinessBoundCapture = (
 /** Route every OpenShell-backed readiness observation through one bound capture owner. */
 export function createBoundLaunchReadinessDeps(
   capture: LaunchReadinessBoundCapture,
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor,
 ): LaunchReadinessHealthDeps & { observeSandbox: SandboxRecreateObserver } {
   return {
-    capture: (args) =>
+    capture: (args, options) =>
       capture(args, {
-        ignoreError: true,
-        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+        ...options,
+        ignoreError: options?.ignoreError ?? true,
+        timeout: options?.timeout ?? OPENSHELL_PROBE_TIMEOUT_MS,
       }),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
       isSandboxGatewayRunningForStatus(sandboxName, gatewayName, {
-        capture: async (args, options) =>
-          capture(args, {
-            ...options,
-            timeout: options?.timeout ?? OPENSHELL_PROBE_TIMEOUT_MS,
-          }),
+        commandExecutor,
       }),
     forwardsHealthy: (sandboxName, gatewayName) =>
       areSandboxLaunchForwardsHealthy(sandboxName, gatewayName, capture),
     inferenceProbe: (sandboxName, agent, gatewayName) =>
-      parseSandboxInferenceRouteProbeResult(
-        capture(buildSandboxInferenceRouteProbeArgs(sandboxName, agent, gatewayName), {
-          ignoreError: true,
-          includeStreams: true,
-          timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
-        }),
-      ),
+      probeInferenceRoute(sandboxName, agent, gatewayName, commandExecutor),
+    commandExecutor,
   };
 }
 
@@ -144,7 +139,7 @@ export function recordLaunchReadinessObservationFailure(
 
 export function captureLaunchReadiness(
   args: string[],
-  options: { includeStreams?: boolean; maxBuffer?: number } = {},
+  options: NonNullable<Parameters<typeof captureOpenshell>[1]> = {},
 ): LaunchReadinessCaptureResult {
   return captureOpenshell(args, {
     ignoreError: true,
@@ -184,16 +179,28 @@ export function resolveTrustedLaunchAgent(
   return agent;
 }
 
-function probeInferenceRoute(
+async function probeInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   gatewayName: string,
-): ReturnType<typeof parseSandboxInferenceRouteProbeResult> {
-  return parseSandboxInferenceRouteProbeResult(
-    captureLaunchReadiness(buildSandboxInferenceRouteProbeArgs(sandboxName, agent, gatewayName), {
-      includeStreams: true,
-    }),
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor,
+): Promise<ReturnType<typeof parseSandboxInferenceRouteProbeResult>> {
+  const completed = await commandExecutor.runBuffered(
+    buildSandboxInferenceRouteProbeRequest(
+      sandboxName,
+      agent,
+      gatewayName,
+      OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+    ),
   );
+  return parseSandboxInferenceRouteProbeResult({
+    status: completed.outcome.kind === "completed" ? completed.outcome.exitCode : null,
+    output: completed.stdout,
+    stderr:
+      completed.outcome.kind === "completed"
+        ? completed.stderr
+        : completed.stderr || completed.outcome.error.message,
+  });
 }
 
 export async function requireLaunchSemanticHealth(
@@ -206,13 +213,12 @@ export async function requireLaunchSemanticHealth(
   deps: LaunchReadinessHealthDeps,
 ): Promise<void> {
   if (isTerminalAgent(agent)) {
-    const smoke = (deps.smoke ?? runAgentSmokeCommands)(
-      sandboxName,
-      agent,
-      (args, _options) =>
-        (deps.capture ?? ((captureArgs) => captureLaunchReadiness(captureArgs)))(args),
-      gatewayName,
-    );
+    const smoke = deps.smoke
+      ? await deps.smoke(sandboxName, agent)
+      : deps.commandExecutor
+        ? await runAgentSmokeCommands(sandboxName, agent, deps.commandExecutor, gatewayName)
+        : null;
+    if (!smoke) throw new LaunchReadinessEvidenceError();
     if (!smoke.ok) {
       const trustedExit = smoke.output?.match(/(?:^|\n)NEMOCLAW_AGENT_SMOKE_EXIT:(\d+)(?:\n|$)/);
       if (!trustedExit) throw new LaunchReadinessEvidenceError();
@@ -266,7 +272,13 @@ export async function requireLaunchSemanticHealth(
     const inferenceStartedAt = performance.now();
     let inference: ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
     try {
-      inference = (deps.inferenceProbe ?? probeInferenceRoute)(sandboxName, agent, gatewayName);
+      const inferenceProbe =
+        deps.inferenceProbe ??
+        ((name: string, targetAgent: InferenceRouteProbeAgent, targetGateway: string) => {
+          if (!deps.commandExecutor) throw new LaunchReadinessEvidenceError();
+          return probeInferenceRoute(name, targetAgent, targetGateway, deps.commandExecutor);
+        });
+      inference = await inferenceProbe(sandboxName, agent, gatewayName);
     } catch (error) {
       recordLaunchReadinessObservationFailure(deps, "inference-route");
       throw error;
@@ -289,9 +301,9 @@ export async function requireLaunchSemanticHealth(
         recordLaunchReadinessObservationFailure(deps, "inference-route");
         throw new LaunchReadinessEvidenceError();
       }
-      let invocation: ReturnType<typeof runSandboxInferenceInvocationProbe>;
+      let invocation: Awaited<ReturnType<typeof runSandboxInferenceInvocationProbe>>;
       try {
-        invocation = (deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe)({
+        invocation = await (deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe)({
           sandboxName,
           gatewayName,
           agentName,
