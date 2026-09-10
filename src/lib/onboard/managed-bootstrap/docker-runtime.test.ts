@@ -357,7 +357,9 @@ describe("Docker managed-bootstrap GPU probe diagnostics", () => {
       thrown = error instanceof Error ? error.message : String(error);
     }
 
-    expect(thrown).toContain("Docker did not accept a compatibility GPU mode for managed bootstrap.");
+    expect(thrown).toContain(
+      "Docker did not accept a compatibility GPU mode for managed bootstrap.",
+    );
     expect(thrown).toContain("Error response from daemon: unauthorized");
     expect(thrown).toContain("@sha256:41eb2663a761...");
     expect(thrown).not.toContain(digest);
