@@ -65,6 +65,7 @@ import {
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
+  retainedRebuildSessionFileName,
   resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
@@ -1237,10 +1238,7 @@ function loadSessionFile(filePath: string, strict = false): Session | null {
 }
 
 function rebuildSessionFile(sandboxName: string): string {
-  if (sandboxName.length > NAME_MAX_LENGTH || !NAME_VALID_PATTERN.test(sandboxName)) {
-    throw new Error("Cannot select rebuild recovery for an invalid sandbox name.");
-  }
-  return path.join(SESSION_DIR, `.onboard-rebuild-${sandboxName}.json`);
+  return path.join(SESSION_DIR, retainedRebuildSessionFileName(sandboxName));
 }
 
 function loadRetainedRebuildSession(sandboxName: string): Session | null {

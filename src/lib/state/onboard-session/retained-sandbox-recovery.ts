@@ -18,6 +18,13 @@ export function retainedSandboxRecoveryFile(sessionDirectory: string): string {
   return path.join(sessionDirectory, "retained-sandbox-recovery.json");
 }
 
+export function retainedRebuildSessionFileName(sandboxName: string): `.onboard-rebuild-${string}.json` {
+  if (sandboxName.length > NAME_MAX_LENGTH || !NAME_VALID_PATTERN.test(sandboxName)) {
+    throw new Error("Cannot select rebuild recovery for an invalid sandbox name.");
+  }
+  return `.onboard-rebuild-${sandboxName}.json`;
+}
+
 export type RetainedSandboxRecoveryReason =
   | "cancelled_after_sandbox_creation"
   | "retained_after_sandbox_creation_failure";

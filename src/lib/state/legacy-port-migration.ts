@@ -18,6 +18,7 @@ import {
 import {
   listRetainedSandboxRecoveryRecords,
   retainedSandboxRecoveryFile,
+  retainedRebuildSessionFileName,
   type RetainedSandboxRecoveryRecord,
 } from "./onboard-session/retained-sandbox-recovery";
 import { nemoclawStateRoot, resolveHome } from "./state-root";
@@ -54,8 +55,9 @@ const HOST_SHARED_BUNDLE_ENTRIES = [
   "ollama-proxy-port",
   "ollama-proxy-token",
 ] as const;
-type LegacyBundleEntry = (typeof LEGACY_BUNDLE_ENTRIES)[number];
-const LEGACY_BUNDLE_ENTRY_SET: ReadonlySet<string> = new Set(LEGACY_BUNDLE_ENTRIES);
+type LegacyBundleEntry =
+  | (typeof LEGACY_BUNDLE_ENTRIES)[number]
+  | ReturnType<typeof retainedRebuildSessionFileName>;
 const HOST_SHARED_BUNDLE_ENTRY_SET: ReadonlySet<string> = new Set(HOST_SHARED_BUNDLE_ENTRIES);
 const MIGRATABLE_BUNDLE_ENTRIES: readonly LegacyBundleEntry[] = LEGACY_BUNDLE_ENTRIES.filter(
   (entry) => !HOST_SHARED_BUNDLE_ENTRY_SET.has(entry),
@@ -459,8 +461,12 @@ function readMigrationIntent(home: string, sharedRoot: string): LegacyPortMigrat
   ) {
     throw migrationError("migration intent has inconsistent ownership metadata");
   }
+  const allowedBundleEntries: ReadonlySet<string> = new Set([
+    ...LEGACY_BUNDLE_ENTRIES,
+    ...selectedSandboxNames.map(retainedRebuildSessionFileName),
+  ]);
   for (const entry of rawBundleEntries) {
-    if (!LEGACY_BUNDLE_ENTRY_SET.has(entry)) {
+    if (!allowedBundleEntries.has(entry)) {
       throw migrationError(`migration intent contains unsupported bundle entry ${entry}`);
     }
   }
@@ -904,11 +910,14 @@ export function migrateLegacyPortState(
 
     if (selectedNames.length === 0 && !sessionBelongsToSelected && !selectedRecovery) return result;
 
-    const entriesToMove: readonly LegacyBundleEntry[] = wholeLegacyBundleBelongsToSelected
-      ? MIGRATABLE_BUNDLE_ENTRIES
-      : sessionBelongsToSelected
-        ? SESSION_BOUND_ENTRIES
-        : [];
+    const entriesToMove: readonly LegacyBundleEntry[] = [
+      ...(wholeLegacyBundleBelongsToSelected
+        ? MIGRATABLE_BUNDLE_ENTRIES
+        : sessionBelongsToSelected
+          ? SESSION_BOUND_ENTRIES
+          : []),
+      ...selectedNames.map(retainedRebuildSessionFileName),
+    ];
     let moveSession = false;
     if (sessionBelongsToSelected) {
       moveSession = preflightMovePath(

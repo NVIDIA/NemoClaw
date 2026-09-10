@@ -378,7 +378,19 @@ When NemoClaw is ready to reopen dispatch and no operator drain remains, its roo
 
 ### Continue an Interrupted Replacement
 
-Before `rebuild` deletes the existing sandbox, NemoClaw records a replacement journal in the onboarding session. The journal binds the operation to the sandbox name, recorded OpenShell gateway, source identity, and replacement settings. It stores fingerprints instead of credential values or raw OpenShell sandbox IDs.
+Before `rebuild` deletes the existing sandbox, NemoClaw records a replacement journal in the active onboarding session.
+The journal binds the operation to the sandbox name, recorded OpenShell gateway, source identity, and replacement settings.
+It stores fingerprints instead of credential values or raw OpenShell sandbox IDs.
+
+Rebuilding another sandbox can retain this session in `.onboard-rebuild-<sandbox>.json` under the selected NemoClaw state directory.
+Rerunning the affected sandbox's rebuild restores its retained session automatically.
+For a non-default gateway port, these files reside under `~/.nemoclaw/gateways/<port>/`.
+An unfinished ordinary onboarding session must be resumed or completed before retained rebuild recovery can replace it.
+
+<Warning title="Preserve Rebuild Recovery Files">
+Do not manually delete `onboard-session.json` or retained `.onboard-rebuild-<sandbox>.json` files to resolve an interrupted replacement.
+Keep the recovery files and rerun the affected sandbox's rebuild with the same settings.
+</Warning>
 
 If `rebuild` stops after recording the journal, rerun the command with the same replacement settings. The rerun takes one of these actions:
 

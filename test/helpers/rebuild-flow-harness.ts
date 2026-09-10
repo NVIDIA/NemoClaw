@@ -69,6 +69,7 @@ export const rebuildManagedImage = requireDist("./rebuild-managed-image-prefligh
 export const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
 export const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image-context.js");
 export const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
+export const rebuildPreflightPhase = requireDist("./rebuild-preflight-phase.js") as typeof import("../../src/lib/actions/sandbox/rebuild-preflight-phase");
 export const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
 export const registry = requireDist("../../state/registry.js");
 export const registryPersistence = requireDist("../../state/registry/persistence.js");

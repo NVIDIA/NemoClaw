@@ -1166,6 +1166,13 @@ After `policy list` reads the live OpenShell policy, compare that one authoritat
 
 If a previous `$$nemoclaw onboard` attempt fails partway through (for example, a provider or inference-setup step reporting an error), NemoClaw records the failure in `~/.nemoclaw/onboard-session.json`.
 
+<Warning title="Preserve Interrupted Rebuild Recovery">
+The resume and fresh-onboarding commands below apply to ordinary onboarding failures.
+For an interrupted rebuild, do not manually delete `onboard-session.json` or `.onboard-rebuild-<sandbox>.json` files from the selected state directory.
+Rebuild recovery can be retained separately while another sandbox owns the active session.
+Follow [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement) to rerun the affected sandbox's rebuild with the same settings.
+</Warning>
+
 When you re-run the installer, it detects the failed session and does not silently retry it. Silent retry would loop on the same failure if your original choice, such as an unreachable provider, was the cause.
 
 - In an interactive terminal, the installer prompts whether to resume the failed session or start fresh. Press `R` (or Enter) to retry the same session, or `f` to discard it and make fresh choices.
@@ -1256,12 +1263,6 @@ $$nemoclaw onboard --experimental-profile portable --fresh
 OpenClaw resume does not repeat completed non-secret sandbox, web search, messaging, or resource choices. Resume also reuses registered web search and messaging credentials when the same onboarding session recorded their successful OpenShell registration and OpenShell still reports the exact expected name, type, and credential keys. If the session lacks that registration receipt, the provider is missing, or its binding does not match, interactive resume requests the credential again; non-interactive resume preserves the completed choice, reports the required environment variable, and exits so you can export it before retrying `$$nemoclaw onboard --resume`.
 
 </AgentOnly>
-
-As a last resort, you can also delete the session file directly and re-run the installer:
-
-```bash
-rm ~/.nemoclaw/onboard-session.json
-```
 
 ### Kubernetes namespace not ready
 
