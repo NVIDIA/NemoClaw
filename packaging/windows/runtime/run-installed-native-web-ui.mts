@@ -902,7 +902,13 @@ async function driveBrowser(
         return { browserVersion, demonstratedAgentChoices, disabledAgentChoices, turns: [] };
       }
     }
-    await page.waitForURL(`${openClawUrl}/chat`, { timeout: 30_000 });
+    await page.waitForURL(
+      (url: URL) => {
+        const expected = new URL(`${openClawUrl}/chat`);
+        return url.origin === expected.origin && url.pathname === expected.pathname;
+      },
+      { timeout: 30_000 },
+    );
     const composer = page.locator(".agent-chat__composer-combobox > textarea").first();
     await composer.waitFor({ state: "visible", timeout: 90_000 });
     await page.waitForFunction(

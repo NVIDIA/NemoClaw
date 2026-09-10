@@ -8,7 +8,12 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
-import { harvestReplay, makeDiagnosticReplay } from "./profile-replay.mts";
+import { stripTypeScriptTypes } from "node:module";
+import {
+  harvestReplay,
+  makeDiagnosticReplay,
+  matchesProfileChatNavigation,
+} from "./profile-replay.mts";
 import { assertDashboardReceipt } from "./profile-installed-openclaw.mts";
 
 const original = process.env.NEMOCLAW_PROFILE_BASELINE_RUNNER;
@@ -248,3 +253,56 @@ test(
     }
   },
 );
+
+test("the profiling chat gate accepts application session state only on its expected origin and path", () => {
+  const expected = "http://127.0.0.1:51258/chat";
+  assert.equal(matchesProfileChatNavigation(new URL(expected), expected), true);
+  assert.equal(
+    matchesProfileChatNavigation(new URL(expected + "?session=agent%3Amain%3Amain"), expected),
+    true,
+  );
+  assert.equal(
+    matchesProfileChatNavigation(
+      new URL("http://127.0.0.1:51259/chat?session=agent%3Amain%3Amain"),
+      expected,
+    ),
+    false,
+  );
+  assert.equal(
+    matchesProfileChatNavigation(new URL("https://127.0.0.1:51258/chat"), expected),
+    false,
+  );
+  assert.equal(
+    matchesProfileChatNavigation(new URL("http://localhost:51258/chat"), expected),
+    false,
+  );
+  assert.equal(
+    matchesProfileChatNavigation(
+      new URL("http://127.0.0.1:51258/launching.html?session=agent%3Amain%3Amain"),
+      expected,
+    ),
+    false,
+  );
+  assert.equal(matchesProfileChatNavigation(new URL(expected + "/other"), expected), false);
+});
+
+test("the normal Windows qualifier preserves the expected chat origin and path with session queries", () => {
+  const source = fs.readFileSync(
+    new URL("../runtime/run-installed-native-web-ui.mts", import.meta.url),
+    "utf8",
+  );
+  const match = source.match(
+    /await page\.waitForURL\(\s*(\(url: URL\) => \{[\s\S]*?\n\s*\}),\s*\{ timeout: 30_000 \},?\s*\)/u,
+  );
+  assert(match, "the actual normal qualifier callback must be available");
+  const callback = stripTypeScriptTypes("const predicate=" + match[1]);
+  const accepts = new Function("openClawUrl", callback + ";return predicate;")(
+    "http://127.0.0.1:51258",
+  ) as (url: URL) => boolean;
+  assert.equal(accepts(new URL("http://127.0.0.1:51258/chat?session=agent%3Amain%3Amain")), true);
+  assert.equal(accepts(new URL("http://127.0.0.1:51258/chat")), true);
+  assert.equal(accepts(new URL("http://127.0.0.1:51259/chat")), false);
+  assert.equal(accepts(new URL("http://127.0.0.1:51258/launching.html")), false);
+  assert.equal(accepts(new URL("https://127.0.0.1:51258/chat")), false);
+  assert.equal(accepts(new URL("http://localhost:51258/chat")), false);
+});

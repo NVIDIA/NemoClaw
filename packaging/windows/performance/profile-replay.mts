@@ -11,6 +11,11 @@ export const BASELINE_RUNNER_SHA256 =
   "1dec4d760c023e973cf908e9f488023843ba5d8038fb6069e87da5e94fa8784a";
 const hash = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
 
+export function matchesProfileChatNavigation(actual: URL, expectedUrl: string): boolean {
+  const expected = new URL(expectedUrl);
+  return actual.origin === expected.origin && actual.pathname === expected.pathname;
+}
+
 export function makeDiagnosticReplay(
   source: string,
   installedHelpers: string,
@@ -34,7 +39,8 @@ export function makeDiagnosticReplay(
       /from "\.\/([^"/]+\.mts)"/gu,
       (_all, name: string) =>
         `from ${JSON.stringify(pathToFileURL(path.join(installedHelpers, name)).href)}`,
-    ) + `import { harvestReplay } from ${JSON.stringify(pathToFileURL(collectorModule).href)};\n`;
+    ) +
+    `import { harvestReplay, matchesProfileChatNavigation } from ${JSON.stringify(pathToFileURL(collectorModule).href)};\n`;
   replace("bind original helper imports to the installed baseline", beforeHeader, afterHeader);
   replace(
     "own diagnostic output and shutdown facts",
@@ -108,6 +114,11 @@ writeFileSync(join(profilingRoot, "active-plugins.json"), JSON.stringify({ schem
     "close the trace budget on every guest exit",
     "  await stopOwnedGateway(agentFailed, async () => { await brokerTunnel?.close(); });",
     "  clearInterval(profilingBudget);\n  await stopOwnedGateway(agentFailed, async () => { await brokerTunnel?.close(); });",
+  );
+  replace(
+    "accept the dashboard session query on the exact expected origin and path",
+    "    await page.waitForURL(`${openClawUrl}/chat`, { timeout: 30_000 });",
+    "    await page.waitForURL((url) => matchesProfileChatNavigation(url, `${openClawUrl}/chat`), { timeout: 30_000 });",
   );
   replace(
     "measure a real post-response dashboard idle interval",

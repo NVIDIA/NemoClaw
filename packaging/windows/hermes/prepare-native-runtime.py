@@ -74,7 +74,7 @@ def owned_relative(value: str, root: Path) -> Path:
 def relative_expression(value: str, project: Path) -> str:
     relative = owned_relative(value, project)
     args = ", ".join(repr(part) for part in relative.parts)
-    return f"str(_NemoClawPath(__file__).resolve().parents[3].joinpath({args}))"
+    return f"str(_NemoClawSource.joinpath({args}))"
 
 
 def relocate_finder(data: bytes, project: Path) -> bytes:
@@ -149,7 +149,17 @@ def relocate_finder(data: bytes, project: Path) -> bytes:
     ]
     lines = text.splitlines(keepends=True)
     insertion = futures[-1].end_lineno if futures else 0
-    lines.insert(insertion, "from pathlib import Path as _NemoClawPath\n")
+    # The installer and native lease validate the final, nonredirected tree.
+    # Guest Python must not ask GetFinalPathNameByHandle to rediscover that path:
+    # MXC can permit ordinary reads while rejecting that unrelated operation.
+    lines.insert(
+        insertion,
+        "from pathlib import Path as _NemoClawPath\n"
+        "_NemoClawFile = _NemoClawPath(__file__)\n"
+        "if not _NemoClawFile.is_absolute() or '..' in _NemoClawFile.parts:\n"
+        "    raise ImportError('The generated Hermes finder requires its absolute installed path')\n"
+        "_NemoClawSource = _NemoClawFile.parents[3]\n",
+    )
     updated = "".join(lines)
     ast.parse(updated)
     return updated.encode("utf-8")

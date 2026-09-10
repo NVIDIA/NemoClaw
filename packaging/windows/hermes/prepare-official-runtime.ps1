@@ -26,6 +26,8 @@ try {
     $baseControlPython=Join-Path $RuntimeRoot 'hermes-agent\.hermes-runtime\python\cpython-3.11.16-windows-aarch64-none\python.exe'
     & $baseControlPython -I (Join-Path $PSScriptRoot 'test_official_runtime_build.py')
     if($LASTEXITCODE -ne 0){throw 'The official runtime controller controls failed before provisioning.'}
+    & $baseControlPython -I (Join-Path $PSScriptRoot 'test_generated_finder_paths.py')
+    if($LASTEXITCODE -ne 0){throw 'The generated canonical finder controls failed before provisioning.'}
     # Same selected VS environment and exact current native dependency controller.
     # Failure here precedes any large browser or desktop dependency download.
     & (Join-Path $PSScriptRoot 'prepare-official-python.ps1') -RuntimeRoot $RuntimeRoot `
