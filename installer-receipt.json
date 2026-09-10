@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "classification": "unsigned-native-windows-arm64-preview-qualification-failed",
-  "candidateSha": "b9c89e0500e6e5e472054727cd33a404bf14845b",
+  "classification": "unsigned-native-windows-arm64-preview-qualification-pending",
+  "candidateSha": "f8a1d8c702c879d2984d76d2e0419641bb1ccd97",
   "sourceRepository": "https://github.com/NVIDIA/NemoClaw",
   "sourcePullRequest": 10799,
-  "sourceWorkflowRun": 34423257671,
+  "sourceWorkflowRun": 34432913829,
   "sourceWorkflowAttempts": [
     1
   ],
-  "sourceArtifactId": 10133010607,
-  "packageManifestSha256": "9f538d50ebd89b300903e9e419a8e90d2de5c2a5aeee60541aeb801d37026689",
+  "sourceArtifactId": 10137183974,
+  "packageManifestSha256": "d36e977401cf8188350e657137bf649c654f4554a6c4da299f9b2b9353e7066e",
   "openshell": {
     "repository": "https://github.com/NVIDIA/OpenShell",
     "pullRequest": 2721,
@@ -19,25 +19,25 @@
   "files": [
     {
       "name": "NemoClaw-0.1.0-windows-arm64.msi",
-      "size": 260846540,
-      "sha256": "44987bf9dbf9ed6d4bddf5ac99e82749cd5bac416b967d15acb51f4cddf0211d"
+      "size": 260871084,
+      "sha256": "4dce45ab9c1306062fc2d0b4825eca8a9801d9904fbd67748a62a40ba36a3fc8"
     },
     {
       "name": "NemoClawSetup-0.1.0-windows-arm64.exe",
-      "size": 304785247,
-      "sha256": "2a0f0c17709e6a3e2fdd76d63d08245bce3bdb1fc1260b9a1be561120740bfb4"
+      "size": 304743283,
+      "sha256": "0377de7a402f266f190b62084ada986612538de3cd6bd7358d267d4432bf3f04"
     }
   ],
   "qualification": {
     "architecture": "arm64",
     "retainedReferenceInstallerChecks": "passed",
     "earlyAndRepeatedProcessAudit": "passed",
-    "installedAcceptance": "failed: source workflow did not complete acceptance",
+    "installedAcceptance": "pending",
     "requiredCompleteNativePasses": 2,
     "completeNativePasses": 0,
     "physicalN1x": "not-qualified",
     "productionSupport": false
   },
   "criticalSourcePayloadHashesMatched": 28,
-  "payloadFiles": 83245
+  "payloadFiles": 83241
 }
