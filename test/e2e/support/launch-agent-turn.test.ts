@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { execFile, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -25,6 +25,7 @@ import {
   SUBPROCESS_ENV_ALLOWED_NAMES,
   SUBPROCESS_ENV_ALLOWED_PREFIXES,
 } from "../../../src/lib/subprocess-env";
+import { superviseChild } from "../../helpers/process-supervisor.ts";
 import { testTimeout } from "../../helpers/timeouts";
 import {
   LAUNCH_TURN_SCRIPT,
@@ -76,29 +77,17 @@ interface LaunchFixtureInvocation {
   env?: NodeJS.ProcessEnv;
 }
 
-interface LaunchFixtureResult {
-  signal: NodeJS.Signals | null;
-  status: number | null;
-  stderr: string;
-  stdout: string;
-}
-
-function runLaunchCommand(
-  command: string,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-): Promise<LaunchFixtureResult> {
-  return new Promise((resolve) => {
-    execFile(
-      command,
-      args,
-      { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 15_000 },
-      (error, stdout, stderr) => {
-        const status = typeof error?.code === "number" ? error.code : error ? null : 0;
-        resolve({ signal: error?.signal ?? null, status, stderr, stdout });
-      },
-    );
+async function runLaunchCommand(command: string, args: string[], env: NodeJS.ProcessEnv) {
+  let stderr = "";
+  let stdout = "";
+  const child = spawn(command, args, { detached: true, env, stdio: ["ignore", "pipe", "pipe"] });
+  const result = await superviseChild(child, {
+    killGraceMs: 1_000,
+    onStderr: (chunk) => (stderr += chunk),
+    onStdout: (chunk) => (stdout += chunk),
+    timeoutMs: 15_000,
   });
+  return { signal: result.signal, status: result.exitCode, stderr, stdout };
 }
 
 it("reports a residual PTY monitor socket without removing it (#9384)", async () => {
