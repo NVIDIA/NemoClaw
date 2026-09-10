@@ -7,10 +7,37 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import {
+  OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES,
+  parseOpenClawAutoPairRuntimeEnvValue,
+} from "../../src/lib/onboard/openclaw-runtime-env";
 import { sliceBlock } from "../helpers/corporate-ca-support";
 
-const HELPER = path.join(import.meta.dirname, "..", "..", "scripts", "lib", "entrypoint-env-wrapper.sh");
+const HELPER = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "scripts",
+  "lib",
+  "entrypoint-env-wrapper.sh",
+);
 const OPENCLAW_START = path.join(import.meta.dirname, "..", "..", "scripts", "nemoclaw-start.sh");
+const AUTO_PAIR_PARITY_CASES = OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES.flatMap((rule) =>
+  (rule.kind === "polls"
+    ? ["1", " 1 ", String(rule.maximum), String(rule.maximum + 1), "0.5", "1e1"]
+    : [
+        "0.05",
+        " 1 ",
+        String(rule.maximum),
+        String(rule.maximum + 1),
+        "1e-324",
+        "2.4703282292062327e-324",
+        "2.4703282292062328e-324",
+        "3e-324",
+        ".1e309",
+      ]
+  ).map((value) => ({ rule, value })),
+);
 
 function runNormalizer(argv: readonly string[]) {
   const harness = [
@@ -134,6 +161,11 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       message: "Malformed managed startup env wrapper",
     },
     {
+      name: "rejects the removed fast-deadline control",
+      argv: ["env", "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS=3", "nemoclaw-start"],
+      message: "unsupported variable 'NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS'",
+    },
+    {
       name: "rejects a managed name after an unmanaged assignment",
       argv: ["env", "FOO=bar", "OPENCLAW_HOME=/sandbox", "/bin/sh", "-c", ":"],
       message: "Malformed managed startup env wrapper",
@@ -150,6 +182,159 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     expect(result.stderr).toContain(message);
     expect(result.stdout).toBe("");
   });
+
+  it.each([
+    {
+      name: "an infinite poll count",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=Infinity",
+    },
+    {
+      name: "a lowercase infinite poll count",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=inf",
+    },
+    {
+      name: "a poll count that overflows to infinity",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=1e309",
+    },
+    {
+      name: "a poll count past the safe integer range",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=9007199254740993",
+    },
+    { name: "a zero poll count", assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=0" },
+    { name: "a negative poll count", assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=-1" },
+    { name: "a fractional poll count", assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=0.5" },
+    {
+      name: "a poll count in exponent form",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=3e0",
+    },
+    {
+      name: "an infinite fast-reentry interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=Infinity",
+    },
+    {
+      name: "a zero fast-reentry interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=0",
+    },
+    {
+      name: "a negative fast-reentry interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=-1",
+    },
+    {
+      name: "a not-a-number fast-reentry interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=nan",
+    },
+    {
+      name: "an infinite slow interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=Infinity",
+    },
+    { name: "a suffixed slow interval", assignment: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=5s" },
+    {
+      name: "a slow interval with an underscore separator",
+      assignment: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=1_000",
+    },
+    { name: "an infinite run timeout", assignment: "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=inf" },
+    {
+      name: "an interval that underflows to zero",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=1e-999",
+    },
+    {
+      name: "a fractional mantissa past the finite ceiling",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=.1e310",
+    },
+    {
+      name: "an interval above the operational limit",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=300.01",
+    },
+    {
+      name: "a slow interval above the operational limit",
+      assignment: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=301",
+    },
+    {
+      name: "a run timeout above the operational limit",
+      assignment: "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=300.01",
+    },
+    {
+      name: "a watcher deadline above its operational limit",
+      assignment: "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=86401",
+    },
+    {
+      name: "an infinite watcher deadline",
+      assignment: "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=Infinity",
+    },
+  ])("fails closed for an out-of-range auto-pair control: $name (#11161)", ({ assignment }) => {
+    const result = runNormalizer(["env", assignment, "nemoclaw-start", "/bin/sh", "-c", ":"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "[SECURITY] Managed startup env wrapper contains an out-of-range assignment.",
+    );
+    expect(result.stdout).toBe("");
+  });
+
+  it.each([
+    {
+      name: "a sub-second interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=0.05",
+      probe: "FAST_REENTRY_INTERVAL=0.05",
+    },
+    {
+      name: "a leading-zero interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=03.5",
+      probe: "FAST_REENTRY_INTERVAL=03.5",
+    },
+    {
+      name: "an interval in exponent form",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=3e2",
+      probe: "FAST_REENTRY_INTERVAL=3e2",
+    },
+    {
+      name: "the maximum fast-reentry interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=300",
+      probe: "FAST_REENTRY_INTERVAL=300",
+    },
+    {
+      name: "an empty value that defers to the built-in default",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=",
+      probe: "FAST_REENTRY_INTERVAL=",
+    },
+    {
+      name: "a whitespace-only value that defers to the built-in default",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=   ",
+      probe: "FAST_REENTRY_INTERVAL=   ",
+    },
+    {
+      name: "a poll count at the operational boundary",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=1728000",
+      probe: "FAST_REENTRY_POLLS=1728000",
+    },
+    {
+      name: "a two-digit poll count",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=99",
+      probe: "FAST_REENTRY_POLLS=99",
+    },
+  ])("promotes an in-range auto-pair control: $name (#11161)", ({ assignment, probe }) => {
+    const result = runNormalizer(["env", assignment, "nemoclaw-start", "/bin/sh", "-c", ":"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(probe);
+  });
+
+  it.each(AUTO_PAIR_PARITY_CASES)(
+    "matches the shared $rule.name grammar and limit for $value at the entrypoint boundary (#11161)",
+    ({ rule, value }) => {
+      const expected = parseOpenClawAutoPairRuntimeEnvValue(rule, value) !== null;
+      const result = runNormalizer([
+        "env",
+        `${rule.name}=${value}`,
+        "nemoclaw-start",
+        "/bin/sh",
+        "-c",
+        ":",
+      ]);
+
+      expect(result.status, `${rule.name}=${value}`).toBe(expected ? 0 : 1);
+    },
+  );
 
   it("unwraps the sandbox-create env self-wrapper and applies dashboard port defaults", () => {
     const normalizer = fs.readFileSync(

@@ -2667,15 +2667,67 @@ approval_request_decision, gateway_approval_env, policy_allowed_scopes = load_ap
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
 
-def _env_seconds(name, default):
-    raw = os.environ.get(name, '').strip()
-    if not raw:
+# The watcher inherits these names straight from PID 1's environment: a plain
+# `docker run -e NAME=Infinity` never passes through the entrypoint env-wrapper
+# that rejects them, so every value is re-bounded here rather than assumed.
+# 'Infinity'/'inf'/'1e309' all parse to float inf, and each consumer overflows
+# differently: int() at FAST_REENTRY_POLLS, time.sleep() above ~9.3e9, and
+# subprocess timeouts at or above 2147484. The operational limits below keep a
+# misconfigured watcher diagnosable: it lives for at most one day, no individual
+# command or sleep waits more than five minutes, and the poll ceiling is exactly
+# one day at the minimum 50 ms interval. Out-of-range input falls back to the
+# default, preserving the fail-soft contract this helper has always had for
+# unparseable input (#11161).
+_ENV_INTERVAL_MIN = 0.05
+_ENV_SLEEP_MAX = 300.0
+_ENV_TIMEOUT_MAX = 300.0
+_ENV_DEADLINE_MAX = 86400.0
+_ENV_POLLS_MAX = 1728000
+_ENV_SECONDS_VALUE = re.compile(
+    r'^\+?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]{1,3})?$'
+)
+_ENV_POLLS_VALUE = re.compile(r'^\+?[0-9]+$')
+
+
+def _env_default(name, default):
+    print(f'[auto-pair] warning invalid direct environment {name}; using default={default}')
+    return default
+
+
+def _env_seconds(name, default, minimum, maximum):
+    configured = os.environ.get(name)
+    if configured is None or configured == '':
         return default
+    raw = configured.strip()
+    if not raw or _ENV_SECONDS_VALUE.fullmatch(raw) is None:
+        return _env_default(name, default)
     try:
         value = float(raw)
     except ValueError:
+        return _env_default(name, default)
+    if value < minimum or value > maximum:
+        return _env_default(name, default)
+    return value
+
+
+def _env_polls(name, default):
+    # Keep direct process-environment parsing on the same decimal-integer
+    # grammar as the host renderer and entrypoint wrapper. Python otherwise
+    # accepts forms such as 1e1 that the managed handoff rejects.
+    configured = os.environ.get(name)
+    if configured is None or configured == '':
         return default
-    return value if value > 0 else default
+    raw = configured.strip()
+    if not raw or _ENV_POLLS_VALUE.fullmatch(raw) is None:
+        return _env_default(name, default)
+    significant_digits = raw.removeprefix('+').lstrip('0')
+    if not significant_digits or len(significant_digits) > 16:
+        return _env_default(name, default)
+    try:
+        value = int(raw, 10)
+    except ValueError:
+        return _env_default(name, default)
+    return value if 0 < value <= _ENV_POLLS_MAX else _env_default(name, default)
 
 
 # Total runtime cap. After convergence the watcher polls at a slow cadence,
@@ -2684,7 +2736,8 @@ def _env_seconds(name, default):
 # scopes that the gateway holds as pending until something approves them; an
 # exited watcher leaves those upgrades stuck and the agent falls back to
 # embedded mode. Defaults: 8h total, 5s slow-mode cadence.
-DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
+DEADLINE_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800, 1, _ENV_DEADLINE_MAX)
+DEADLINE = time.time() + DEADLINE_SECS
 # After convergence the watcher polls at SLOW_INTERVAL. A late allowlisted
 # scope upgrade — e.g. `openclaw tui` or `openclaw agent` invoked after the
 # watcher entered slow mode — can wait up to SLOW_INTERVAL before being
@@ -2704,11 +2757,15 @@ DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
 # 1s cadence by design. This is a polling-cadence fix only. Non-allowlisted scopes such
 # as `operator.admin` are still rejected by the device approval policy, and
 # requests that need them must be approved through a separate operator path.
-SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 5)
+SLOW_INTERVAL = _env_seconds(
+    'NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 5, _ENV_INTERVAL_MIN, _ENV_SLEEP_MAX,
+)
 # Fast reentry temporarily restores 1s polling after a fresh allowlisted
 # request; canonical settlement and approval policy remain unchanged.
-FAST_REENTRY_POLLS = int(_env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS', 5))
-FAST_REENTRY_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS', 1)
+FAST_REENTRY_POLLS = _env_polls('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS', 5)
+FAST_REENTRY_INTERVAL = _env_seconds(
+    'NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS', 1, _ENV_INTERVAL_MIN, _ENV_SLEEP_MAX,
+)
 FAST_REENTRY_REMAINING = 0
 FAST_REENTRY_BUMPED_REQUEST_IDS = set()
 APPROVED = 0
@@ -2727,7 +2784,7 @@ MALFORMED_REQUEST_ID_REPORTED = False
 # exit, timeout reduction, and token cleanup for a more comprehensive fix.
 # The approval_request_decision helper is shared with connect-time approvals.
 
-RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
+RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10, _ENV_INTERVAL_MIN, _ENV_TIMEOUT_MAX)
 
 
 def _read_json_object(path):
@@ -3063,16 +3120,24 @@ def run(*args, strip_gateway_env=False, force_device_pairing=False, pairing_sett
         env = dict(os.environ)
         env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
         env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'
+    remaining_seconds = DEADLINE - time.time()
+    if remaining_seconds <= 0:
+        return 124, '', ''
+    timeout_seconds = min(RUN_TIMEOUT_SECS, remaining_seconds)
     try:
         proc = subprocess.run(
-            args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS, env=env,
+            args,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            env=env,
         )
         return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
     except subprocess.TimeoutExpired as exc:
         # 124 matches GNU `timeout` exit status so log scrapers can spot it.
         out = (exc.stdout or '') if isinstance(exc.stdout, str) else ''
         err = (exc.stderr or '') if isinstance(exc.stderr, str) else ''
-        print(f'[auto-pair] timeout calling {args[1] if len(args) > 1 else "openclaw"} {args[2] if len(args) > 2 else ""}'.rstrip())
+        print(f'[auto-pair] timeout calling {args[1] if len(args) > 1 else "openclaw"} {args[2] if len(args) > 2 else ""} limit={timeout_seconds:g}s'.rstrip())
         return 124, out.strip(), err.strip()
 
 
@@ -3091,12 +3156,13 @@ def sleep_for_next_poll(default_seconds, productive=True):
     # silently drain the bounded window before a productive poll observes
     # the cascading upgrades.
     global FAST_REENTRY_REMAINING
+    remaining_seconds = max(0.0, DEADLINE - time.time())
     if FAST_REENTRY_REMAINING > 0:
         if productive:
             FAST_REENTRY_REMAINING -= 1
-        time.sleep(min(FAST_REENTRY_INTERVAL, default_seconds))
+        time.sleep(min(FAST_REENTRY_INTERVAL, default_seconds, remaining_seconds))
         return
-    time.sleep(default_seconds)
+    time.sleep(min(default_seconds, remaining_seconds))
 
 
 while time.time() < DEADLINE:
@@ -3309,7 +3375,7 @@ while time.time() < DEADLINE:
         sleep_for_next_poll(1)
 else:
     publish_status('stopped')
-    print(f'[auto-pair] watcher deadline reached approvals={APPROVED}')
+    print(f'[auto-pair] watcher deadline reached approvals={APPROVED} limit={DEADLINE_SECS:g}s')
 PYAUTOPAIR
   AUTO_PAIR_PID=$!
   if ! capture_openclaw_pid_start_identity "$AUTO_PAIR_PID" AUTO_PAIR_PID_START_IDENTITY; then

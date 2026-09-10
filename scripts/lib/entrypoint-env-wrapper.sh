@@ -31,6 +31,7 @@ nemoclaw_normalize_entrypoint_env_wrapper() {
 
   local -a _nemoclaw_original_argv=("$@")
   local -a _nemoclaw_assignments=()
+  local -a _nemoclaw_numeric_args=()
   local _nemoclaw_self_index=-1
   local _nemoclaw_index
   local _nemoclaw_break_index
@@ -43,7 +44,6 @@ nemoclaw_normalize_entrypoint_env_wrapper() {
   _nemoclaw_supported_names="${_nemoclaw_supported_names}|OPENCLAW_HOME|OPENCLAW_STATE_DIR"
   _nemoclaw_supported_names="${_nemoclaw_supported_names}|OPENCLAW_WORKSPACE_DIR"
   _nemoclaw_supported_names="${_nemoclaw_supported_names}|NEMOCLAW_AUTO_PAIR_DEADLINE_SECS"
-  _nemoclaw_supported_names="${_nemoclaw_supported_names}|NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS"
   _nemoclaw_supported_names="${_nemoclaw_supported_names}|NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS"
   _nemoclaw_supported_names="${_nemoclaw_supported_names}|NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS"
   _nemoclaw_supported_names="${_nemoclaw_supported_names}|NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS"
@@ -139,9 +139,56 @@ nemoclaw_normalize_entrypoint_env_wrapper() {
         return 1
         ;;
     esac
+    case "$_nemoclaw_name" in
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS)
+        _nemoclaw_numeric_args+=(polls "${_nemoclaw_token#*=}" 1 1728000)
+        ;;
+      NEMOCLAW_AUTO_PAIR_DEADLINE_SECS)
+        _nemoclaw_numeric_args+=(seconds "${_nemoclaw_token#*=}" 1 86400)
+        ;;
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS | \
+        NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS)
+        _nemoclaw_numeric_args+=(seconds "${_nemoclaw_token#*=}" 0.05 300)
+        ;;
+      NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS)
+        _nemoclaw_numeric_args+=(seconds "${_nemoclaw_token#*=}" 0.05 300)
+        ;;
+    esac
     _nemoclaw_assignments+=("$_nemoclaw_token")
     _nemoclaw_seen_names="${_nemoclaw_seen_names}${_nemoclaw_name}|"
   done
+
+  # Every shipped image provides the root-owned system Python at this fixed
+  # path. Isolated mode ignores user-controlled Python environment and site
+  # packages. Values remain argv data, and one process checks the complete
+  # vector before any assignment reaches the root environment. float() uses
+  # the same binary64 underflow boundary as the TypeScript launch validator.
+  if [ "${#_nemoclaw_numeric_args[@]}" -gt 0 ] && ! /usr/bin/python3 -I -c '
+import math, re, sys
+seconds = re.compile(r"\+?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]{1,3})?\Z")
+polls = re.compile(r"\+?[0-9]+\Z")
+try:
+    for index in range(1, len(sys.argv), 4):
+        kind, raw, minimum, maximum = sys.argv[index:index + 4]
+        raw = raw.strip()
+        if not raw:
+            continue
+        grammar = seconds if kind == "seconds" else polls
+        digits = raw.removeprefix("+").lstrip("0")
+        if grammar.fullmatch(raw) is None or (kind == "polls" and (not digits or len(digits) > 16)):
+            raise ValueError
+        value = float(raw) if kind == "seconds" else int(raw, 10)
+        lower = float(minimum) if kind == "seconds" else int(minimum)
+        upper = float(maximum) if kind == "seconds" else int(maximum)
+        if not math.isfinite(value) or not lower <= value <= upper:
+            raise ValueError
+except (OverflowError, ValueError):
+    raise SystemExit(1)
+' "${_nemoclaw_numeric_args[@]}" 2>/dev/null; then
+    printf '%s\n' \
+      '[SECURITY] Managed startup env wrapper contains an out-of-range assignment.' >&2
+    return 1
+  fi
 
   # Export only after the complete vector has passed validation so malformed
   # input cannot leave a partially mutated root process.

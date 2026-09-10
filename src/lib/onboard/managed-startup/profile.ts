@@ -667,11 +667,6 @@ export const MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS = Object.freeze({
       "operator scheduler tuning is applied by the application environment transaction",
     ),
     deferredRuntimeInput(
-      "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
-      "application-environment",
-      "operator scheduler tuning is applied by the application environment transaction",
-    ),
-    deferredRuntimeInput(
       "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
       "application-environment",
       "operator scheduler tuning is applied by the application environment transaction",

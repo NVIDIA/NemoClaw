@@ -7,22 +7,16 @@ import { formatEnvAssignment } from "../core/url-utils";
 import { isValidProxyHost, isValidProxyPort } from "./dockerfile-patch";
 import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
 import { HERMES_API_PORT_ENV, resolveOnboardHermesApiPort } from "./hermes-api-port";
-import {
-  appendHermesDashboardEnvArgs,
-  type HermesDashboardOnboardState,
-} from "./hermes-dashboard";
+import { appendHermesDashboardEnvArgs, type HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
-import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
+import {
+  appendOpenClawRuntimeEnvArgs,
+  OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES,
+  openClawAutoPairRuntimeEnvRequirement,
+  parseOpenClawAutoPairRuntimeEnvValue,
+} from "./openclaw-runtime-env";
 
 const STARTUP_COMMAND_TOKEN = /^[A-Za-z0-9_./:=,@%+\-\[\]]+$/u;
-const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
-  "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
-  "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
-  "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
-  "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
-  "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
-  "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
-] as const;
 const OPENCLAW_DIAGNOSTIC_RUNTIME_ENV_KEYS = ["NEMOCLAW_MCP_SHADOW_DIAGNOSTICS"] as const;
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV = "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS";
 const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS = 1500;
@@ -34,9 +28,14 @@ function appendOpenClawAutoPairRuntimeEnvArgs(
   env: NodeJS.ProcessEnv,
 ): void {
   if (agent && agent.name !== "openclaw") return;
-  for (const key of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS) {
-    const value = env[key]?.trim();
-    if (value) envArgs.push(formatEnvAssignment(key, value));
+  for (const rule of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES) {
+    const raw = env[rule.name];
+    if (raw === undefined || raw.trim() === "") continue;
+    const parsed = parseOpenClawAutoPairRuntimeEnvValue(rule, raw);
+    if (!parsed) {
+      throw new Error(`${rule.name} must be ${openClawAutoPairRuntimeEnvRequirement(rule)}.`);
+    }
+    envArgs.push(formatEnvAssignment(rule.name, parsed.input));
   }
 }
 
