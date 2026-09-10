@@ -233,7 +233,7 @@ export async function runAgentDispatch(
 
 /**
  * Stdio for a non-interactive agent dispatch. An interactive terminal is
- * withheld from fd 0. Message-bearing invocations also withhold idle pipes;
+ * withheld from fd 0. Inline-message invocations also withhold idle pipes;
  * other calls preserve redirected input.
  */
 export function agentDispatchStdio(stdinIsTty: boolean = isStdinTty(), stdin = true): StdioOptions {

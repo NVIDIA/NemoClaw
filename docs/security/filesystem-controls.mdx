@@ -41,7 +41,9 @@ This directory remains writable so the agent can manage its own config, install 
 NemoClaw does not provide post-provisioning immutability for the OpenClaw config or state tree.
 
 - **DAC permissions (default).**
-  The sandbox user owns `/sandbox/.openclaw` with mode `2770` (setgid `sandbox:sandbox`) and `openclaw.json` with mode `660`, so the agent and its group can read and write config directly.
+  When the existing process checks verify that the agent and gateway share the sandbox identity, `/sandbox/.openclaw` uses native mode `0700` and `openclaw.json` uses `0600`.
+  Separate gateway identities and unverified layouts retain `2770` (setgid `sandbox:sandbox`) and `0660` so existing shared access continues.
+  Rebuild existing sandboxes after updating NemoClaw to apply these defaults.
 - **Config integrity hash.**
   The image includes a SHA256 hash of `openclaw.json`.
   In mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor.
@@ -53,7 +55,7 @@ NemoClaw does not provide post-provisioning immutability for the OpenClaw config
 
 | Aspect | Detail |
 |---|---|
-| Default | The sandbox keeps `/sandbox/.openclaw` writable (`2770 sandbox:sandbox`), sets `openclaw.json` to `660 sandbox:sandbox`, lets the agent manage state directly, and has the entrypoint place `OPENCLAW_GATEWAY_TOKEN` in `/tmp/nemoclaw-proxy-env.sh` for interactive shells. The gateway process does not receive the token through its environment or process arguments. |
+| Default | The sandbox user owns writable config and state, with private permissions for verified same-user launches. The entrypoint places `OPENCLAW_GATEWAY_TOKEN` in `/tmp/nemoclaw-proxy-env.sh` for interactive shells. The gateway process does not receive the token through its environment or process arguments. |
 | What you can change | Use supported host commands for managed config changes. Use OpenShell policy to constrain filesystem access outside the writable agent state tree. |
 | Risk of default | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS or redirecting inference to an attacker-controlled endpoint. |
 | Recommendation | Treat agent config and state as agent-controlled. Keep credentials in OpenShell providers, restrict network policy, and recreate the sandbox from trusted state after suspected compromise. |

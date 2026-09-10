@@ -470,9 +470,7 @@ function gatewayCommandText(result: GatewayCommandResult): string {
 function gatewayReportsProviderAbsent(output: string, provider: string): boolean {
   const escaped = provider.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   return (
-    new RegExp(`provider\\s+['\"\`]${escaped}['\"\`]\\s+(?:was\\s+)?not found`, "iu").test(
-      output,
-    ) ||
+    new RegExp(`provider\\s+['"\`]${escaped}['"\`]\\s+(?:was\\s+)?not found`, "iu").test(output) ||
     (/code:\s*['"]some requested entity was not found['"]/iu.test(output) &&
       /message:\s*['"]provider not found['"]/iu.test(output))
   );

@@ -230,7 +230,7 @@ describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
                       process.execPath,
                       [
                         "-e",
-                        "require('node:fs').readFileSync(0); setInterval(()=>{},1000); process.stdout.write('started');",
+                        "const fs = require('node:fs'); fs.writeSync(1, 'started'); fs.readFileSync(0); setInterval(()=>{},1000);",
                       ],
                       {
                         stdio: [
