@@ -140,8 +140,9 @@ Every source file needs the repository SPDX header; the pre-commit hook inserts 
 - `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.19+
 - `test/`: **ESM** (`import`/`export`)
 - Do not add new JavaScript source files. Prefer TypeScript when modifying existing JavaScript. New test files must use TypeScript.
-- Oxlint uses `oxlint.config.ts`. The isolated `oxlint.type-aware.config.ts` configuration checks promises in plugin and adapter sources.
-  Adapter checks use `--tsconfig tsconfig.cli.json` and also reject misused promises, invalid awaits, and incomplete switches.
+- Oxlint uses `oxlint.config.ts`. The same configuration owns ordinary and type-aware rules for plugin and adapter sources.
+  Type-aware checks discover `src/lib/adapters/tsconfig.json` and `nemoclaw/src/tsconfig.json`, which extend the CLI and plugin test projects.
+  Adapter checks also reject misused promises, invalid awaits, and incomplete switches.
 - Adapter sources and tests require type-only imports and exports, strict equality, and no unused variables or explicit `any`.
   Production adapters also reject non-null assertions and nested ternaries.
 - Oxfmt covers all `src/lib/adapters` files. The formatting hook also formats changes to existing adapters.

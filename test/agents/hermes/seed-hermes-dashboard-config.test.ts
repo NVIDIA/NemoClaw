@@ -36,7 +36,6 @@ const PY_YAML_AVAILABLE =
 const GENERATED_HEX_TOKEN = Array.from({ length: 64 }, (_value, index) =>
   (index % 16).toString(16),
 ).join("");
-const TAVILY_API_KEY_PLACEHOLDER = "openshell:resolve:env:TAVILY_API_KEY";
 
 const POLICY_SETTINGS: HermesBuildSettings = {
   model: "nvidia-routed",
@@ -527,44 +526,46 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     },
   );
 
-  it("mirrors only dashboard-needed gateway .env keys for Hermes 0.16 chat setup", () => {
-    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
-    const dst = path.join(tmpDir, "dash.yaml");
-    const envSrc = path.join(tmpDir, "gw.env");
-    const envDst = path.join(tmpDir, "dash.env");
-    fs.writeFileSync(
-      envSrc,
-      [
-        "API_SERVER_HOST=127.0.0.1",
-        "API_SERVER_PORT=18642",
-        `API_SERVER_KEY=${GENERATED_HEX_TOKEN}`,
-        `TAVILY_API_KEY=${TAVILY_API_KEY_PLACEHOLDER}`,
-        "FIRECRAWL_GATEWAY_URL=http://host.openshell.internal:11436/firecrawl",
-        "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
-        "MODAL_GATEWAY_URL=http://host.openshell.internal:11436/modal",
-        "OPENAI_API_KEY=do-not-copy",
-        "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-        "TERMINAL_CWD=/sandbox",
-        "",
-      ].join("\n"),
-    );
+  it.each(["openshell:resolve:env:TAVILY_API_KEY", "openshell:resolve:env:v17_TAVILY_API_KEY"])(
+    "re-seeds dashboard dotenv without a stale Tavily reference [case %#]",
+    (staleReference) => {
+      const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+      const dst = path.join(tmpDir, "dash.yaml");
+      const envSrc = path.join(tmpDir, "gw.env");
+      const envDst = path.join(tmpDir, "dash.env");
+      fs.writeFileSync(
+        envSrc,
+        [
+          "API_SERVER_HOST=127.0.0.1",
+          "API_SERVER_PORT=18642",
+          `API_SERVER_KEY=${GENERATED_HEX_TOKEN}`,
+          "FIRECRAWL_GATEWAY_URL=http://host.openshell.internal:11436/firecrawl",
+          "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
+          "MODAL_GATEWAY_URL=http://host.openshell.internal:11436/modal",
+          "OPENAI_API_KEY=do-not-copy",
+          "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+          "TERMINAL_CWD=/sandbox",
+          "",
+        ].join("\n"),
+      );
+      fs.writeFileSync(envDst, `TAVILY_API_KEY=${staleReference}\n`);
 
-    const res = runSeed(src, dst, envSrc, envDst);
-    expect(res.status).toBe(0);
+      const res = runSeed(src, dst, envSrc, envDst);
+      expect(res.status).toBe(0);
 
-    expect(fs.readFileSync(envDst, "utf-8")).toBe(
-      [
-        "API_SERVER_HOST=127.0.0.1",
-        "API_SERVER_PORT=18642",
-        `TAVILY_API_KEY=${TAVILY_API_KEY_PLACEHOLDER}`,
-        "FIRECRAWL_GATEWAY_URL=http://host.openshell.internal:11436/firecrawl",
-        "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
-        "MODAL_GATEWAY_URL=http://host.openshell.internal:11436/modal",
-        "",
-      ].join("\n"),
-    );
-    expect(fs.statSync(envDst).mode & 0o777).toBe(0o600);
-  });
+      expect(fs.readFileSync(envDst, "utf-8")).toBe(
+        [
+          "API_SERVER_HOST=127.0.0.1",
+          "API_SERVER_PORT=18642",
+          "FIRECRAWL_GATEWAY_URL=http://host.openshell.internal:11436/firecrawl",
+          "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
+          "MODAL_GATEWAY_URL=http://host.openshell.internal:11436/modal",
+          "",
+        ].join("\n"),
+      );
+      expect(fs.statSync(envDst).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it("keeps API_SERVER_KEY out of the dashboard .env mirror", () => {
     const src = writeYaml("gw.yaml", GATEWAY_CONFIG);

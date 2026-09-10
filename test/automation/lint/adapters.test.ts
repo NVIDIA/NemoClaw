@@ -51,6 +51,19 @@ it.each([
     rule: "eslint(no-nested-ternary)",
   },
   {
+    name: "promises from imported source",
+    source: 'import { readRemote } from "./dependency"; export function read() { readRemote(); }',
+    rule: "typescript(no-floating-promises)",
+    typed: true,
+  },
+  {
+    name: "promises from Node declarations",
+    source:
+      'import { readFile } from "node:fs/promises"; export function read() { readFile("example"); }',
+    rule: "typescript(no-floating-promises)",
+    typed: true,
+  },
+  {
     name: "floating promises",
     source: "export function read() { Promise.resolve(); }",
     rule: "typescript(no-floating-promises)",
@@ -92,12 +105,19 @@ it.each([
     const file = `src/lib/adapters/example/read${test ? ".test" : ""}.ts`;
     fs.symlinkSync(path.resolve("node_modules"), path.join(root, "node_modules"), "dir");
     fs.copyFileSync("oxlint.config.ts", path.join(root, "oxlint.config.ts"));
-    fs.copyFileSync("oxlint.type-aware.config.ts", path.join(root, "oxlint.type-aware.config.ts"));
     fs.copyFileSync("oxc.ignore-patterns.ts", path.join(root, "oxc.ignore-patterns.ts"));
     fs.copyFileSync("tsconfig.cli.json", path.join(root, "tsconfig.cli.json"));
     fs.copyFileSync(".pre-commit-config.yaml", path.join(root, ".pre-commit-config.yaml"));
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    fs.copyFileSync(
+      "src/lib/adapters/tsconfig.json",
+      path.join(root, "src/lib/adapters/tsconfig.json"),
+    );
     fs.writeFileSync(path.join(root, file), source);
+    fs.writeFileSync(
+      path.join(root, "src/lib/adapters/example/dependency.ts"),
+      "export async function readRemote() { return 1; }",
+    );
     const init = spawnSync("git", ["init", "--quiet"], { cwd: root, encoding: "utf8" });
     expect(init.status, init.stderr).toBe(0);
     const add = spawnSync("git", ["add", "--", file], { cwd: root, encoding: "utf8" });
