@@ -53,10 +53,14 @@ describe("Review queue E2E results", () => {
       "unknown",
     );
   });
-  it("does not infer success from absent or empty selection evidence (#11489)", () => {
-    for (const selected of [null, [], ["generate-matrix"], ["live", "live"], ["unrecorded"]]) {
-      expect(() => buildReviewQueueResult(identity, selected, needs)).toThrow();
-    }
+  it.each([
+    { selected: null },
+    { selected: [] },
+    { selected: ["generate-matrix"] },
+    { selected: ["live", "live"] },
+    { selected: ["unrecorded"] },
+  ])("rejects invalid selection evidence $selected (#11489)", ({ selected }) => {
+    expect(() => buildReviewQueueResult(identity, selected, needs)).toThrow();
   });
   it("rejects invalid identity and incomplete workflow results (#11489)", () => {
     expect(() =>
