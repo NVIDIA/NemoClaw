@@ -204,10 +204,7 @@ function clampDiagnostic(text: string, limit: number, tailLength: number): strin
   if (text.length <= limit) return text;
   const omissionMarker = (count: number): string => ` ... [${count} characters omitted] ... `;
   // Reserve the marker at its widest: the omitted count never exceeds the text length.
-  const head = text.slice(
-    0,
-    Math.max(0, limit - tailLength - omissionMarker(text.length).length),
-  );
+  const head = text.slice(0, Math.max(0, limit - tailLength - omissionMarker(text.length).length));
   const tail = text.slice(-tailLength);
   return `${head}${omissionMarker(text.length - head.length - tail.length)}${tail}`;
 }
