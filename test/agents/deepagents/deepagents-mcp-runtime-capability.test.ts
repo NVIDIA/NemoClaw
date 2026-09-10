@@ -32,7 +32,7 @@ beforeEach(() => {
 type ProbeResult = { status: number; stdout: string; stderr: string } | null;
 
 async function runDeepAgentsProbe(result: ProbeResult) {
-  mocks.executeSandboxCommand.mockReset().mockReturnValue(result);
+  mocks.executeSandboxCommand.mockReset().mockResolvedValue(result);
   const runtimeSelection = {
     gatewayName: "nemoclaw-8091",
     workspace: "default",
