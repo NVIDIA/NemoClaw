@@ -12,9 +12,7 @@ import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-
 import { sanitizeReadinessText } from "../../readiness/sanitize";
 import type { SandboxEntry } from "../../state/registry";
 import type { RuntimeProviderDestroyIdentityReceipt } from "../../onboard/runtime-provider/contract";
-import {
-  type DockerSandboxIdentityObservation,
-} from "../../adapters/docker/inspect";
+import { type DockerSandboxIdentityObservation } from "../../adapters/docker/inspect";
 import {
   registeredRuntimeProviderSupportsContainerEngineOperation,
   resolveRegisteredRuntimeProvider,
@@ -258,7 +256,9 @@ export function assertUnambiguousDestroyContainerIdentity(
         deps.sandbox && captureProviderIdentity
           ? captureProviderIdentity(deps.sandbox, sandboxName)
           : captureProviderIdentityByName?.(sandboxName);
-      return providerIdentity ? { identities: undefined, providerIdentity } : { identities: undefined };
+      return providerIdentity
+        ? { identities: undefined, providerIdentity }
+        : { identities: undefined };
     } catch (captureError) {
       const detail = deps.redact(
         captureError instanceof Error ? captureError.message : String(captureError),

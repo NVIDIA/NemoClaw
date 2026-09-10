@@ -467,8 +467,10 @@ describe("credentials oclif commands", () => {
           opts: {
             env: expect.any(Object),
             ignoreError: true,
+            maxBuffer: 64 * 1024,
             replaceEnv: true,
             stdio: ["ignore", "pipe", "pipe"],
+            suppressOutput: true,
             timeout: 30_000,
           },
         },

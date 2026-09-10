@@ -282,7 +282,9 @@ describe("sandbox workload preparation", () => {
       expect(
         readLiveE2eManagedImageCatalogContracts({ path: catalogPath, revision: REVISION }),
       ).toEqual(
-        new Map(SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)])),
+        new Map(
+          SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)]),
+        ),
       );
       expect(() =>
         readLiveE2eManagedImageCatalogContracts({ path: symlinkPath, revision: REVISION }),
@@ -564,7 +566,8 @@ describe("sandbox workload preparation", () => {
         ...input("openclaw"),
         customDockerfilePath: "/workspace/CustomDockerfile",
         environment: {
-          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "ghcr.io/nvidia/nemoclaw/sandbox-base:local-only-no-push",
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF:
+            "ghcr.io/nvidia/nemoclaw/sandbox-base:local-only-no-push",
         },
       },
       { resolveCatalog },

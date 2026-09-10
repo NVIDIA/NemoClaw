@@ -131,48 +131,49 @@ describe("enforceMessagingChannelConflicts — Slack Socket Mode gateway axis (#
   it.each([
     { mode: "interactive", nonInteractive: false },
     { mode: "non-interactive", nonInteractive: true },
-  ])("aborts an enabled credential-bearing channel with an unavailable hash in $mode mode (#7808)", async ({
-    nonInteractive,
-  }) => {
-    const currentPlan = makePlan("bob", {
-      channels: [tgChannel()],
-      credentialBindings: [{ ...tgBinding(), credentialAvailable: false }],
-    });
-    const listSandboxes = vi.fn(() => ({
-      sandboxes: [
-        planEntry(
-          "alice",
-          makePlan("alice", {
-            channels: [tgChannel()],
-            credentialBindings: [tgBinding("alice-hash")],
-          }),
-        ),
-      ],
-    }));
-    const promptContinue = vi.fn(async () => true);
-    const { deps, error, exit } = makeDeps({
-      currentPlan,
-      registry: {
-        listSandboxes,
-        updateSandbox: vi.fn(() => true),
-      },
-      isNonInteractive: () => nonInteractive,
-      promptContinue,
-    });
+  ])(
+    "aborts an enabled credential-bearing channel with an unavailable hash in $mode mode (#7808)",
+    async ({ nonInteractive }) => {
+      const currentPlan = makePlan("bob", {
+        channels: [tgChannel()],
+        credentialBindings: [{ ...tgBinding(), credentialAvailable: false }],
+      });
+      const listSandboxes = vi.fn(() => ({
+        sandboxes: [
+          planEntry(
+            "alice",
+            makePlan("alice", {
+              channels: [tgChannel()],
+              credentialBindings: [tgBinding("alice-hash")],
+            }),
+          ),
+        ],
+      }));
+      const promptContinue = vi.fn(async () => true);
+      const { deps, error, exit } = makeDeps({
+        currentPlan,
+        registry: {
+          listSandboxes,
+          updateSandbox: vi.fn(() => true),
+        },
+        isNonInteractive: () => nonInteractive,
+        promptContinue,
+      });
 
-    await expect(enforceMessagingChannelConflicts(deps as never)).rejects.toBeInstanceOf(
-      AbortError,
-    );
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("credential hashes are unavailable for telegram"),
-    );
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("Onboarding and rebuild do not support a conflict override"),
-    );
-    expect(listSandboxes).not.toHaveBeenCalled();
-    expect(promptContinue).not.toHaveBeenCalled();
-    expect(exit).toHaveBeenCalledWith(1);
-  });
+      await expect(enforceMessagingChannelConflicts(deps as never)).rejects.toBeInstanceOf(
+        AbortError,
+      );
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("credential hashes are unavailable for telegram"),
+      );
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("Onboarding and rebuild do not support a conflict override"),
+      );
+      expect(listSandboxes).not.toHaveBeenCalled();
+      expect(promptContinue).not.toHaveBeenCalled();
+      expect(exit).toHaveBeenCalledWith(1);
+    },
+  );
 
   it("aborts when the credential conflict registry read fails (#7808)", async () => {
     const promptContinue = vi.fn(async () => true);

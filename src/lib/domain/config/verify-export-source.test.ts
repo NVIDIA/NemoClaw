@@ -1,9 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import YAML from "yaml";
 import { Check } from "typebox/value";
 import { ExportSourceValuesSchema } from "./export-evidence";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { runConfigExport } from "../../actions/config/export";
+import { validateNemoClawConfig } from "../../config/schema";
+import {
+  parseNemoClawConfigDocumentName,
+  parseNemoClawConfigDocumentUid,
+} from "../../config/model";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import {
@@ -22,6 +30,7 @@ const sandboxId = "018f47e2-9d93-7d15-9c41-3ecf70b2550f";
 const fingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
 const endpoint = "https://api.openai.com/v1";
 const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
+const hermesImageRef = "ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:" + "c".repeat(64);
 const policy =
   "version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\nnetwork_policies:\n  api:\n    name: api\n    endpoints: [{host: api.example.com, port: 443}]\n    binaries: [{path: /usr/bin/curl}]\nfilesystem_policy:\n  include_workdir: false\n  read_only: [/usr]\n  read_write: [/sandbox]\n";
 const canonicalPolicy = {
@@ -68,6 +77,27 @@ function profileInput(
     environment: {},
     corporateCa: null,
     ...overrides,
+  };
+}
+
+function hermesProfileInput(): ManagedStartupProfileBuilderInput {
+  return {
+    ...profileInput(),
+    agent: "hermes",
+    inference: {
+      ...profileInput().inference,
+      primaryModelRef: null,
+      compatibility: null,
+    },
+    dashboard: {
+      agent: "hermes",
+      mode: "disabled",
+      url: "http://127.0.0.1:18789",
+      browserUrl: "http://127.0.0.1:18789",
+      publicPort: null,
+      internalPort: null,
+      tuiEnabled: false,
+    },
   };
 }
 
@@ -141,12 +171,14 @@ function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): ObservedExpo
       endpoint,
       endpointEvidence: {
         endpoint,
-        gatewayName: "nemoclaw",
-        providerName: "openai-api",
-        providerId: "provider-id",
-        workspace: "default",
-        resourceVersion: "8",
-        configKey: "OPENAI_BASE_URL",
+        provider: {
+          gatewayName: "nemoclaw",
+          workspace: "default",
+          name: "openai-api",
+          id: "provider-id",
+          resourceVersion: "8",
+        },
+        source: { kind: "provider-config", key: "OPENAI_BASE_URL" },
       },
       credentialEnv: "OPENAI_API_KEY",
     },
@@ -167,6 +199,47 @@ function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): ObservedExpo
     },
     ...overrides,
   };
+}
+
+function braveSnapshot(): ObservedExportSnapshot {
+  const value = snapshot();
+  return {
+    ...value,
+    registry: entry({
+      webSearchEnabled: true,
+      webSearchProvider: "brave",
+      workload: managedWorkload(
+        profileInput({ webSearch: { fetchEnabled: true, provider: "brave" } }),
+      ),
+    }),
+    sandbox: { ...value.sandbox, providerNames: ["alpha-brave-search"] },
+    webSearchProvider: {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      name: "alpha-brave-search",
+      id: "brave-provider-id",
+      resourceVersion: "4",
+      type: "brave",
+      profileWorkspace: "default",
+      profile: { id: "brave", source: "user", scope: "workspace", resourceVersion: "4" },
+      credentialKeys: ["BRAVE_API_KEY"],
+      configKeys: [],
+    },
+  };
+}
+
+function hermesSnapshot(registryOverrides: Partial<SandboxEntry> = {}): ObservedExportSnapshot {
+  const workload = managedWorkload(hermesProfileInput(), hermesImageRef);
+  return snapshot({
+    registry: entry({
+      agent: "hermes",
+      imageTag: hermesImageRef,
+      workload,
+      hermesApiPort: 8642,
+      ...registryOverrides,
+    }),
+    sandbox: { ...snapshot().sandbox, imageRef: hermesImageRef },
+  });
 }
 
 function findings(result: ReturnType<typeof verifyExportSource>) {
@@ -193,7 +266,128 @@ function verify(
   return verifyExportSource(requestedSandboxName, qualified);
 }
 
+async function exportSnapshots(sequence: readonly ObservedExportSnapshot[]) {
+  let index = 0;
+  const read = vi.fn(async () => sequence[Math.min(index++, sequence.length - 1)]!);
+  const writeStdout = vi.fn(async (_contents: string) => undefined);
+  const publish = vi.fn(() => ({ ok: true, outputPath: "/tmp/alpha.yaml" }) as const);
+  const outcome = await runConfigExport(
+    {
+      sandboxName: "alpha",
+      documentName: parseNemoClawConfigDocumentName("alpha"),
+      target: { kind: "stdout" },
+    },
+    {
+      observe: (name) => observeStableExportSource(name, { read }),
+      createDocumentUid: () => parseNemoClawConfigDocumentUid(sandboxId),
+      writeStdout,
+      publish,
+    },
+  );
+  return { outcome, read, writeStdout, publish };
+}
+
+function proxySnapshot(
+  environment = { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
+) {
+  return {
+    ...snapshot(),
+    registry: { ...entry(), workload: managedWorkload(profileInput({ environment })) },
+  } satisfies ObservedExportSnapshot;
+}
+
 describe("config export source verification (#10938)", () => {
+  it.each([false, true])(
+    "verifies Brave with optional inference attachment %s (#10904)",
+    (attached) => {
+      const value = braveSnapshot();
+      const providers = attached
+        ? [value.inference.provider, "alpha-brave-search"]
+        : ["alpha-brave-search"];
+      const result = verify({ ...value, sandbox: { ...value.sandbox, providerNames: providers } });
+      expect(verifiedSource(result).webSearch).toEqual({
+        provider: "brave",
+        agentRefs: ["primary"],
+        credential: { env: "BRAVE_API_KEY" },
+      });
+    },
+  );
+
+  it.each([
+    [],
+    ["foreign-brave-search"],
+    ["alpha-brave-search", "alpha-brave-search"],
+    ["alpha-brave-search", "extra"],
+    ["alpha-brave-search", "openai-api", "openai-api"],
+  ])("rejects missing or unexpected Brave attachments %j (#10904)", (...providerNames) => {
+    const value = braveSnapshot();
+    expect(
+      findings(verify({ ...value, sandbox: { ...value.sandbox, providerNames } })),
+    ).toContainEqual(
+      expect.objectContaining({ field: "source.sandbox.providers", category: "unsupported" }),
+    );
+  });
+
+  it.each([
+    { gatewayName: "foreign" },
+    { workspace: "foreign" },
+    { name: "foreign-brave-search" },
+    { id: "" },
+    { resourceVersion: "" },
+    { resourceVersion: "0" },
+    { type: "generic" },
+    { credentialKeys: ["TAVILY_API_KEY"] },
+    { credentialKeys: ["BRAVE_API_KEY", "OTHER_KEY"] },
+    { configKeys: ["BASE_URL"] },
+    { profileWorkspace: "foreign" },
+    { profileWorkspace: undefined },
+    { profile: undefined },
+    { profile: { id: "other", source: "builtin", scope: "", resourceVersion: "0" } },
+    { profile: { id: "brave", source: "user", scope: "platform", resourceVersion: "1" } },
+    { profile: { id: "brave", source: "builtin", scope: "workspace", resourceVersion: "0" } },
+    { profile: { id: "brave", source: "builtin", scope: "", resourceVersion: "1" } },
+  ])("rejects mismatched Brave metadata %j (#10904)", (change) => {
+    const value = braveSnapshot();
+    expect(
+      findings(verify({ ...value, webSearchProvider: { ...value.webSearchProvider!, ...change } })),
+    ).toContainEqual(expect.objectContaining({ field: "source.webSearch", category: "drifted" }));
+  });
+
+  it("requires Brave metadata and matching startup intent (#10904)", () => {
+    const value = braveSnapshot();
+    expect(findings(verify({ ...value, webSearchProvider: undefined }))).toContainEqual(
+      expect.objectContaining({ field: "source.webSearch", category: "missing-provenance" }),
+    );
+    expect(
+      findings(verify({ ...value, registry: { ...value.registry, workload: managedWorkload() } })),
+    ).toContainEqual(
+      expect.objectContaining({ field: "source.workload.startupProfile", category: "unsupported" }),
+    );
+    expect(
+      findings(verify({ ...value, registry: { ...value.registry, webSearchProvider: "tavily" } })),
+    ).toContainEqual(
+      expect.objectContaining({
+        field: "spec.sandboxes[].integrations.webSearch",
+        category: "unsupported",
+      }),
+    );
+  });
+
+  it("keeps unrelated startup settings unsupported with Brave enabled (#10904)", () => {
+    const value = braveSnapshot();
+    const workload = managedWorkload(
+      profileInput({
+        webSearch: { fetchEnabled: true, provider: "brave" },
+        environment: { NEMOCLAW_AGENT_TIMEOUT: "900" },
+      }),
+    );
+    expect(
+      findings(verify({ ...value, registry: { ...value.registry, workload } })),
+    ).toContainEqual(
+      expect.objectContaining({ field: "source.workload.startupProfile", category: "unsupported" }),
+    );
+  });
+
   it("qualifies and verifies two equal snapshots through the observer", async () => {
     const observed = snapshot();
     const result = await observeStableExportSource("alpha", {
@@ -207,6 +401,126 @@ describe("config export source verification (#10938)", () => {
     });
   });
 
+  it("exports retained managed proxy settings through the complete action", async () => {
+    const observed = proxySnapshot();
+    const result = await exportSnapshots([observed]);
+
+    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.read).toHaveBeenCalledTimes(2);
+    expect(result.publish).not.toHaveBeenCalled();
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    const config = validateNemoClawConfig(YAML.parse(yaml));
+    expect(config.spec.sandboxes[0]!.network).toEqual({
+      proxy: { host: "proxy.internal", port: 3129 },
+      policy: { explicit: canonicalPolicy },
+    });
+    expect(Object.isFrozen(verifiedSource(verify(observed)).proxy)).toBe(true);
+  });
+
+  it("omits the default proxy from existing canonical exports", async () => {
+    const result = await exportSnapshots([snapshot()]);
+    expect(result.outcome.ok).toBe(true);
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    expect(validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network).toEqual({
+      policy: { explicit: canonicalPolicy },
+    });
+    expect(verifiedSource(verify(snapshot()))).not.toHaveProperty("proxy");
+  });
+
+  it("exports a complete proxy pair when only its port changes", () => {
+    const observed = proxySnapshot({
+      NEMOCLAW_PROXY_HOST: "10.200.0.1",
+      NEMOCLAW_PROXY_PORT: "3129",
+    });
+    expect(verifiedSource(verify(observed)).proxy).toEqual({ host: "10.200.0.1", port: 3129 });
+  });
+
+  it("uses a stable proxy observation after one changed pair", async () => {
+    const changed = proxySnapshot();
+    const result = await exportSnapshots([snapshot(), changed, changed, changed]);
+    expect(result.outcome.ok).toBe(true);
+    expect(result.read).toHaveBeenCalledTimes(4);
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    expect(validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network.proxy).toEqual({
+      host: "proxy.internal",
+      port: 3129,
+    });
+  });
+
+  it("does not publish proxy settings when both snapshot pairs change", async () => {
+    const result = await exportSnapshots([
+      snapshot(),
+      proxySnapshot(),
+      snapshot(),
+      proxySnapshot(),
+    ]);
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: [expect.objectContaining({ category: "unstable-source" })],
+      },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { managedHost: "user:secret-canary@proxy.internal" },
+    { managedHost: "http://proxy.internal" },
+    { managedHost: "proxy.internal\n" },
+    { managedHost: "a".repeat(257) },
+    { managedPort: 0 },
+    { managedPort: 65_536 },
+    { managedPort: 3129.5 },
+    { unexpected: "secret-canary" },
+    { hostHttpUrl: "http://proxy.internal:3129" },
+    { hostHttpsUrl: "http://proxy.internal:3129" },
+    { hostNoProxy: ["private.internal"] },
+  ])("does not publish invalid or unsupported retained proxy fields", async (change) => {
+    const workload = managedWorkload();
+    const profile = JSON.parse(Buffer.from(workload.encodedProfile, "base64url").toString("utf8"));
+    Object.assign(profile.proxy, change);
+    const encodedProfile = Buffer.from(JSON.stringify(profile)).toString("base64url");
+    const observed = snapshot({
+      registry: entry({
+        workload: {
+          ...workload,
+          encodedProfile,
+          startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+        },
+      }),
+    });
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+    expect(JSON.stringify(result.outcome)).not.toContain("secret-canary");
+  });
+
+  it.each([
+    { credentialProxyReplayRequired: true },
+    { corporateCaB64: "secret-canary" },
+    { startupProfileSha256: "c".repeat(64) },
+    { reference: imageRef.replace(/a{64}$/, "b".repeat(64)) },
+  ])(
+    "does not publish proxy settings without eligible matching workload authority",
+    async (change) => {
+      const observed = proxySnapshot();
+      const workload = observed.registry.workload!;
+      const result = await exportSnapshots([
+        {
+          ...observed,
+          registry: { ...observed.registry, workload: { ...workload, ...change } },
+        },
+      ]);
+      expect(result.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
+      expect(result.writeStdout).not.toHaveBeenCalled();
+      expect(result.publish).not.toHaveBeenCalled();
+      expect(JSON.stringify(result.outcome)).not.toContain("secret-canary");
+    },
+  );
+
   it("narrows one supported snapshot to an immutable verified source", () => {
     const result = verify(snapshot());
 
@@ -214,6 +528,7 @@ describe("config export source verification (#10938)", () => {
       kind: "verified",
       source: {
         sandboxName: "alpha",
+        agent: "openclaw",
         runtime: { provider: "docker", imageRef },
         inference: { api: "openai-responses" },
       },
@@ -225,11 +540,27 @@ describe("config export source verification (#10938)", () => {
     expect(Object.isFrozen(source.policy)).toBe(true);
   });
 
+  it("verifies a canonical managed Hermes source (#11286)", () => {
+    const result = verify(hermesSnapshot());
+
+    expect(result).toMatchObject({
+      kind: "verified",
+      source: {
+        sandboxName: "alpha",
+        agent: "hermes",
+        runtime: { provider: "docker", imageRef: hermesImageRef },
+        inference: { api: "openai-responses" },
+      },
+    });
+    expect(Check(ExportSourceValuesSchema, verifiedSource(result))).toBe(true);
+  });
+
   it.each([
     { sandboxName: "alpha--beta" },
     { runtime: { provider: "docker", imageRef: "registry/image:latest" } },
     { gateway: { name: "nemoclaw", port: 0 } },
     { inference: { provider: "e\u0301".repeat(257) } },
+    { inference: { provider: "vllm-local" } },
     { inference: { api: "openai-unknown" } },
     { inference: { endpoint: "https://user:secret@api.example.com/v1" } },
     { inference: { endpoint: "https://api.example.com/%0A%" } },
@@ -248,7 +579,7 @@ describe("config export source verification (#10938)", () => {
   it("reports every excluded registry capability", () => {
     const result = classifyExportRegistry(
       entry({
-        agent: "hermes",
+        agent: "unsupported-agent",
         fromDockerfile: "/tmp/Dockerfile",
         sandboxGpuEnabled: true,
         hostMounts: [{ source: "/host", target: "/sandbox", readOnly: true }],
@@ -276,6 +607,83 @@ describe("config export source verification (#10938)", () => {
         "spec.sandboxes[].agents[0].type",
         "spec.inferenceProviders",
       ]),
+    );
+  });
+
+  it.each([
+    [
+      "Hermes tool gateways",
+      { hermesToolGateways: ["browser"] },
+      "spec.sandboxes[].agents[0].tools",
+    ],
+    [
+      "Hermes dashboard",
+      { hermesDashboardEnabled: true, hermesDashboardPort: 18_790 },
+      "spec.sandboxes[].agents[0].dashboard",
+    ],
+    [
+      "invalid Hermes dashboard port evidence",
+      { hermesDashboardPort: 0 },
+      "spec.sandboxes[].agents[0].dashboard",
+    ],
+    [
+      "Hermes authentication",
+      { hermesAuthMethod: "api_key" as const },
+      "spec.sandboxes[].agents[0].authentication",
+    ],
+    [
+      "Hermes inference provider",
+      { hermesInferenceProvider: "hermes-provider" },
+      "spec.sandboxes[].agents[0].authentication",
+    ],
+    ["non-default Hermes API port", { hermesApiPort: 8643 }, "spec.sandboxes[].agents[0].api"],
+  ])("rejects excluded %s state (#11286)", (_case, registryOverrides, field) => {
+    expect(findings(verify(hermesSnapshot(registryOverrides)))).toContainEqual(
+      expect.objectContaining({ category: "unsupported", field }),
+    );
+  });
+
+  it("rejects stale agent-specific state on an OpenClaw registry row (#11286)", () => {
+    expect(
+      findings(verify(snapshot({ registry: entry({ hermesToolGateways: ["browser"] }) }))),
+    ).toContainEqual({
+      category: "unsupported",
+      diagnostic: "V1 export does not support stale agent-specific registry state.",
+      field: "source.registry",
+    });
+  });
+
+  it("rejects OpenClaw workload authority for a Hermes registry row (#11286)", () => {
+    const result = verify(
+      hermesSnapshot({ workload: managedWorkload(profileInput(), hermesImageRef) }),
+    );
+
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({ field: "source.workload", category: "missing-provenance" }),
+    );
+  });
+
+  it("rejects a noncanonical managed Hermes startup profile (#11286)", () => {
+    const configured = hermesProfileInput();
+    const workload = managedWorkload(
+      {
+        ...configured,
+        dashboard: {
+          agent: "hermes",
+          mode: "loopback-forwarded",
+          url: "http://127.0.0.1:19189",
+          browserUrl: "http://127.0.0.1:19189",
+          publicPort: 19_189,
+          internalPort: 29_189,
+          tuiEnabled: false,
+        },
+      },
+      hermesImageRef,
+    );
+    const result = verify(hermesSnapshot({ workload }));
+
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({ field: "source.workload.startupProfile", category: "unsupported" }),
     );
   });
 
@@ -310,12 +718,14 @@ describe("config export source verification (#10938)", () => {
         endpoint: "http://local",
         endpointEvidence: {
           endpoint: "http://local",
-          gatewayName: "other",
-          providerName: "other",
-          providerId: "other-id",
-          workspace: "default",
-          resourceVersion: "9",
-          configKey: "OPENAI_BASE_URL",
+          provider: {
+            gatewayName: "other",
+            workspace: "default",
+            name: "other",
+            id: "other-id",
+            resourceVersion: "9",
+          },
+          source: { kind: "provider-config", key: "OPENAI_BASE_URL" },
         },
         credentialEnv: null,
       },
@@ -360,7 +770,7 @@ describe("config export source verification (#10938)", () => {
         ...value.inference,
         endpointEvidence: {
           ...value.inference.endpointEvidence!,
-          providerName: "other-provider",
+          provider: { ...value.inference.endpointEvidence!.provider, name: "other-provider" },
         },
       },
     });
@@ -376,6 +786,63 @@ describe("config export source verification (#10938)", () => {
     );
     expect(findings(mismatchResult)).toContainEqual(
       expect.objectContaining({ field: "source.inference.endpoint", category: "drifted" }),
+    );
+  });
+
+  it.each([
+    {
+      label: "provider identity",
+      provider: "openai-api",
+      api: "openai-completions",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      endpoint: "https://integrate.api.nvidia.com/v1",
+    },
+    {
+      label: "API family",
+      provider: "nvidia-prod",
+      api: "anthropic-messages",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      endpoint: "https://integrate.api.nvidia.com/v1",
+    },
+    {
+      label: "endpoint",
+      provider: "nvidia-prod",
+      api: "openai-completions",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      endpoint: "https://different.example/v1",
+    },
+    {
+      label: "credential reference",
+      provider: "nvidia-prod",
+      api: "openai-completions",
+      credentialEnv: null,
+      endpoint: "https://integrate.api.nvidia.com/v1",
+    },
+  ])("rejects builtin NVIDIA evidence with the wrong $label", ({ label: _label, ...inference }) => {
+    const value = snapshot();
+    const result = verify({
+      ...value,
+      inference: {
+        ...value.inference,
+        ...inference,
+        endpointEvidence: {
+          endpoint: inference.endpoint,
+          provider: {
+            gatewayName: "nemoclaw",
+            workspace: "default",
+            name: inference.provider,
+            id: "provider-id",
+            resourceVersion: "8",
+          },
+          source: { kind: "builtin-profile", profileId: "nvidia" },
+        },
+      },
+    });
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({
+        field: "source.inference.endpoint",
+        category: "drifted",
+      }),
     );
   });
 
@@ -479,7 +946,7 @@ describe("config export source verification (#10938)", () => {
     },
   );
 
-  it("rejects any noncanonical managed startup profile", async () => {
+  it("rejects unsupported startup settings alongside a managed proxy", async () => {
     const base = profileInput();
     const dashboard = base.dashboard as Extract<
       ManagedStartupProfileBuilderInput["dashboard"],
@@ -487,6 +954,7 @@ describe("config export source verification (#10938)", () => {
     >;
     const configured = profileInput({
       dashboard: { ...dashboard, url: "http://127.0.0.1:18888", port: 18_888 },
+      environment: { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
     });
     const workload = managedWorkload(configured);
     const raw = snapshot({ registry: entry({ imageTag: workload.reference, workload }) });

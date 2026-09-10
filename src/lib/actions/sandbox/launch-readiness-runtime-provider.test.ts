@@ -86,9 +86,7 @@ describe("launch readiness runtime-provider projection", () => {
       ) as { mcpSha256: string };
 
     expect(project().mcpSha256).not.toBe(project(["delete_*"]).mcpSha256);
-    expect(project(["delete_*"]).mcpSha256).not.toBe(
-      project(["delete_*", "submit_*"]).mcpSha256,
-    );
+    expect(project(["delete_*"]).mcpSha256).not.toBe(project(["delete_*", "submit_*"]).mcpSha256);
     expect(project(["delete_*"], ["replacement_*"]).mcpSha256).not.toBe(
       project(["delete_*"]).mcpSha256,
     );

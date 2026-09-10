@@ -81,21 +81,17 @@ function applyPersistedAutomaticGatewayPort() {
       process.env[name] === undefined ? [] : [[name, process.env[name]]],
     ),
   );
-  const result = spawnSync(
-    "/bin/bash",
-    [resolver, "--internal-resolve-automatic-gateway-port"],
-    {
-      encoding: "utf8",
-      env: {
-        HOME: process.env.HOME || "/",
-        PATH: "/usr/bin:/bin",
-        NEMOCLAW_GATEWAY_PORT: "",
-        ...configuredPorts,
-      },
-      maxBuffer: 64 * 1024,
-      timeout: 5_000,
+  const result = spawnSync("/bin/bash", [resolver, "--internal-resolve-automatic-gateway-port"], {
+    encoding: "utf8",
+    env: {
+      HOME: process.env.HOME || "/",
+      PATH: "/usr/bin:/bin",
+      NEMOCLAW_GATEWAY_PORT: "",
+      ...configuredPorts,
     },
-  );
+    maxBuffer: 64 * 1024,
+    timeout: 5_000,
+  });
   if (result.error || result.status !== 0 || result.signal) {
     throw new Error(SAFE_AUTOMATIC_GATEWAY_PORT_DIAGNOSTIC);
   }

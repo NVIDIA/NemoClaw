@@ -126,9 +126,9 @@ describe("dual-Station controller UID binding", () => {
     expect(resolveHostGlobalVllmLifecycleLockOptions({}, homeDir).stateDir).toBe(
       path.join(homeDir, ".nemoclaw", "state"),
     );
-    expect(resolveHostGlobalVllmLifecycleLockOptions({ stateDir: "/isolated" }, homeDir).stateDir).toBe(
-      "/isolated",
-    );
+    expect(
+      resolveHostGlobalVllmLifecycleLockOptions({ stateDir: "/isolated" }, homeDir).stateDir,
+    ).toBe("/isolated");
   });
 
   it("uses an explicitly isolated state directory for filesystem lock behavior", async () => {

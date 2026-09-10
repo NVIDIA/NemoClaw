@@ -16,6 +16,11 @@ const mocks = vi.hoisted(() => ({
   waitForMcpBridgeCondition: vi.fn((condition: () => boolean) =>
     Array.from({ length: 12 }).some(() => condition()),
   ),
+  waitForMcpBridgeConditionAsync: vi.fn(async (condition: () => Promise<boolean>) => {
+    const attempt = async (remaining: number): Promise<boolean> =>
+      remaining === 0 ? false : (await condition()) || attempt(remaining - 1);
+    return attempt(12);
+  }),
 }));
 
 vi.mock("./process-recovery", () => ({
@@ -41,6 +46,7 @@ vi.mock("./mcp-bridge-provider-readiness", async (importOriginal) => ({
 
 vi.mock("./mcp-bridge/timing", () => ({
   waitForMcpBridgeCondition: mocks.waitForMcpBridgeCondition,
+  waitForMcpBridgeConditionAsync: mocks.waitForMcpBridgeConditionAsync,
 }));
 
 import {
@@ -325,37 +331,40 @@ describe("Hermes MCP adapter credential revision", () => {
   });
 });
 
-describe.each(reconciliationCases)("$name MCP credential revision reconciliation", (adapterCase) => {
-  beforeEach(() => {
-    mocks.executeSandboxCommand.mockReset();
-    mocks.runOpenshellProviderCommand.mockReset();
-    mocks.getSandbox.mockReset();
-    mocks.getSandbox.mockReturnValue(sandbox);
-    mocks.observeMcpCredentialRevision.mockReset();
-    mocks.observeMcpCredentialRevision.mockReturnValue("v12");
-  });
+describe.each(reconciliationCases)(
+  "$name MCP credential revision reconciliation",
+  (adapterCase) => {
+    beforeEach(() => {
+      mocks.executeSandboxCommand.mockReset();
+      mocks.runOpenshellProviderCommand.mockReset();
+      mocks.getSandbox.mockReset();
+      mocks.getSandbox.mockReturnValue(sandbox);
+      mocks.observeMcpCredentialRevision.mockReset();
+      mocks.observeMcpCredentialRevision.mockResolvedValue("v12");
+    });
 
-  it("reconciles registration to a later stable revision", () => {
-    mocks.observeMcpCredentialRevision.mockReturnValueOnce("v11");
-    adapterCase.arrange();
+    it("reconciles registration to a later stable revision", async () => {
+      mocks.observeMcpCredentialRevision.mockResolvedValueOnce("v11");
+      adapterCase.arrange();
 
-    expect(
-      registerAgentAdapterAtCurrentCredentialRevision(
-        "alpha",
-        adapterCase.adapter,
-        adapterCase.entry,
-        runtimeSelection,
-        { GITHUB_TOKEN: "host-only-secret" },
-        "v11",
-      ),
-    ).toBe("v12");
+      await expect(
+        registerAgentAdapterAtCurrentCredentialRevision(
+          "alpha",
+          adapterCase.adapter,
+          adapterCase.entry,
+          runtimeSelection,
+          { GITHUB_TOKEN: "host-only-secret" },
+          "v11",
+        ),
+      ).resolves.toBe("v12");
 
-    const mutationCalls = adapterCase.mutationCalls();
-    expect(mutationCalls).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
-    expect(mutationCalls).toContain("openshell:resolve:env:v12_GITHUB_TOKEN");
-    expect(mutationCalls).not.toContain("host-only-secret");
-  });
-});
+      const mutationCalls = adapterCase.mutationCalls();
+      expect(mutationCalls).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
+      expect(mutationCalls).toContain("openshell:resolve:env:v12_GITHUB_TOKEN");
+      expect(mutationCalls).not.toContain("host-only-secret");
+    });
+  },
+);
 
 describe("MCP adapter credential revision reconciliation failures", () => {
   beforeEach(() => {
@@ -365,7 +374,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
     mocks.observeMcpCredentialRevision.mockReset();
   });
 
-  it("keeps one operation target after the registry target changes (#10514)", () => {
+  it("keeps one operation target after the registry target changes (#10514)", async () => {
     const operationSelection = {
       gatewayName: "nemoclaw-8091",
       localTlsDir: "/authority/gateway-8091/tls",
@@ -383,7 +392,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
           ? commandSuccess
           : registered,
     );
-    mocks.observeMcpCredentialRevision.mockImplementation(() => {
+    mocks.observeMcpCredentialRevision.mockImplementation(async () => {
       mocks.getSandbox.mockReturnValue({
         agent: "openclaw",
         gatewayName: "foreign-gateway",
@@ -392,7 +401,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
       return "v11";
     });
 
-    expect(
+    await expect(
       registerAgentAdapterAtCurrentCredentialRevision(
         "alpha",
         "mcporter",
@@ -401,11 +410,11 @@ describe("MCP adapter credential revision reconciliation failures", () => {
         {},
         "v11",
       ),
-    ).toBe("v11");
+    ).resolves.toBe("v11");
     expect(mocks.getSandbox()).toMatchObject({ gatewayName: "foreign-gateway" });
-    expect(
-      mocks.executeSandboxCommand.mock.calls.map((call) => call[2]?.runtimeSelection),
-    ).toEqual(Array(mocks.executeSandboxCommand.mock.calls.length).fill(operationSelection));
+    expect(mocks.executeSandboxCommand.mock.calls.map((call) => call[2]?.runtimeSelection)).toEqual(
+      Array(mocks.executeSandboxCommand.mock.calls.length).fill(operationSelection),
+    );
     expect(mocks.observeMcpCredentialRevision.mock.calls.map((call) => call[2])).toEqual(
       Array(mocks.observeMcpCredentialRevision.mock.calls.length).fill(operationSelection),
     );
@@ -413,8 +422,8 @@ describe("MCP adapter credential revision reconciliation failures", () => {
 
   it.each(["absent", "canonical"] as const)(
     "fails closed when reconciliation observes %s credential authority",
-    (observation) => {
-      mocks.observeMcpCredentialRevision.mockReturnValue(observation);
+    async (observation) => {
+      mocks.observeMcpCredentialRevision.mockResolvedValue(observation);
       mocks.executeSandboxCommand.mockImplementation((_sandbox, command: string) =>
         command === "command -v mcporter"
           ? { status: 0, stdout: "/usr/bin/mcporter\n", stderr: "" }
@@ -423,7 +432,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
             : registered,
       );
 
-      expect(() =>
+      await expect(
         registerAgentAdapterAtCurrentCredentialRevision(
           "alpha",
           "mcporter",
@@ -432,13 +441,13 @@ describe("MCP adapter credential revision reconciliation failures", () => {
           {},
           "v11",
         ),
-      ).toThrow("did not expose a revision-scoped credential");
+      ).rejects.toThrow("did not expose a revision-scoped credential");
     },
   );
 
-  it("fails closed when the credential revision never stabilizes", () => {
+  it("fails closed when the credential revision never stabilizes", async () => {
     let revision = 10;
-    mocks.observeMcpCredentialRevision.mockImplementation(() => `v${(revision += 1)}`);
+    mocks.observeMcpCredentialRevision.mockImplementation(async () => `v${(revision += 1)}`);
     mocks.executeSandboxCommand.mockImplementation((_sandbox, command: string) =>
       command === "command -v mcporter"
         ? { status: 0, stdout: "/usr/bin/mcporter\n", stderr: "" }
@@ -447,7 +456,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
           : registered,
     );
 
-    expect(() =>
+    await expect(
       registerAgentAdapterAtCurrentCredentialRevision(
         "alpha",
         "mcporter",
@@ -456,15 +465,15 @@ describe("MCP adapter credential revision reconciliation failures", () => {
         {},
         "v10",
       ),
-    ).toThrow("credential revision did not stabilize");
+    ).rejects.toThrow("credential revision did not stabilize");
   });
 
-  it("fails closed when both bounded registrations advance the revision", () => {
+  it("fails closed when both bounded registrations advance the revision", async () => {
     mocks.observeMcpCredentialRevision
-      .mockReturnValueOnce("v11")
-      .mockReturnValueOnce("v11")
-      .mockReturnValueOnce("v11")
-      .mockReturnValue("v12");
+      .mockResolvedValueOnce("v11")
+      .mockResolvedValueOnce("v11")
+      .mockResolvedValueOnce("v11")
+      .mockResolvedValue("v12");
     mocks.executeSandboxCommand.mockImplementation((_sandbox, command: string) =>
       command === "command -v mcporter"
         ? { status: 0, stdout: "/usr/bin/mcporter\n", stderr: "" }
@@ -473,7 +482,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
           : registered,
     );
 
-    expect(() =>
+    await expect(
       registerAgentAdapterAtCurrentCredentialRevision(
         "alpha",
         "mcporter",
@@ -482,7 +491,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
         {},
         "v10",
       ),
-    ).toThrow("credential revision did not stabilize");
+    ).rejects.toThrow("credential revision did not stabilize");
     expect(
       mocks.executeSandboxCommand.mock.calls.filter(([, command]) =>
         String(command).includes("config' 'add"),
