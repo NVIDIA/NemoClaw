@@ -272,6 +272,25 @@ describe("sandbox oclif command adapters", () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it("keeps policy list pending until the asynchronous action completes", async () => {
+    let finish!: () => void;
+    mocks.listSandboxPolicies.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    let completed = false;
+    const pending = SandboxPolicyListCommand.run(["alpha"], rootDir).then(() => {
+      completed = true;
+    });
+    await vi.waitFor(() => expect(mocks.listSandboxPolicies).toHaveBeenCalledWith("alpha"));
+    expect(completed).toBe(false);
+    finish();
+    await pending;
+    expect(completed).toBe(true);
+  });
+
   it("maps inspection commands to their action helpers", async () => {
     await SandboxStatusCommand.run(["alpha"], rootDir);
     await SandboxPolicyListCommand.run(["alpha"], rootDir);

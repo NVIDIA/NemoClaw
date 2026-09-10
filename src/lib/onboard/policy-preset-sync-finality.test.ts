@@ -34,7 +34,7 @@ describe("waitForPolicyMutation", () => {
 
   it("attempts a rejected policy submission exactly once (#9206)", async () => {
     let attempts = 0;
-    const mutate = (): boolean => {
+    const mutate = async (): Promise<boolean> => {
       attempts += 1;
       throw new Error(REJECTION_ERROR_MESSAGE);
     };
@@ -48,7 +48,7 @@ describe("waitForPolicyMutation", () => {
 
   it("attempts a policy submission with an unconfirmed result exactly once (#9206)", async () => {
     let attempts = 0;
-    const mutate = (): boolean => {
+    const mutate = async (): Promise<boolean> => {
       attempts += 1;
       throw new Error(UNCONFIRMED_ERROR_MESSAGE);
     };
@@ -71,7 +71,7 @@ describe("waitForPolicyMutation", () => {
       () => true,
     ];
     let attempts = 0;
-    const mutate = (): boolean => {
+    const mutate = async (): Promise<boolean> => {
       const behaviour = behaviours[attempts] ?? (() => true);
       attempts += 1;
       return behaviour();
@@ -86,7 +86,7 @@ describe("waitForPolicyMutation", () => {
 
   it("attempts a policy mutation that returns false exactly once (#9206)", async () => {
     let attempts = 0;
-    const mutate = (): boolean => {
+    const mutate = async (): Promise<boolean> => {
       attempts += 1;
       return false;
     };

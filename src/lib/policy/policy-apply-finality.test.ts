@@ -229,7 +229,7 @@ describe("applyPresets finality when openshell rejects the composed policy", () 
     const error = await applyWeatherPreset();
 
     expect((error as Error).message).not.toContain(CREDENTIAL_TOKEN);
-    expect((error as Error).message).toContain("nvap");
+    expect((error as Error).message).toContain("rejected: header carries <REDACTED>");
     const reported = [
       ...vi.mocked(console.error).mock.calls,
       ...vi.mocked(console.log).mock.calls,

@@ -95,6 +95,7 @@ export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
 }
 
 export interface CaptureOpenshellAsyncOptions extends CaptureOpenshellOptions {
+  outputLimitBytes?: number;
   killGraceMs?: number;
   spawnImpl?: OpenshellSpawn;
 }
@@ -364,7 +365,7 @@ export function captureOpenshellCommandAsync(
     timeoutKillSignal:
       opts.killSignal === "SIGTERM" || opts.killSignal === "SIGKILL" ? opts.killSignal : undefined,
     timeoutMilliseconds: opts.timeout,
-    outputLimitBytes: opts.maxBuffer,
+    outputLimitBytes: opts.outputLimitBytes,
   }).then((result) => ({
     status: result.status ?? (result.timedOut ? null : 1),
     output: `${result.stdout}${shouldIncludeStderr(opts) ? result.stderr : ""}`.trim(),

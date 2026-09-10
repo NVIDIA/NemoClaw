@@ -153,7 +153,7 @@ export function captureResolvedOpenshellAsync(args: CommandArgs, opts: RunnerOpt
     includeStderr: opts.includeStderr,
     includeStreams: opts.includeStreams,
     timeout: opts.timeout,
-    maxBuffer: opts.maxBuffer,
+    outputLimitBytes: opts.maxBuffer,
   });
 }
 

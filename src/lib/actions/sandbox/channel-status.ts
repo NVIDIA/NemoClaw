@@ -57,7 +57,7 @@ type ExecRunner = (
 type StatusDeps = {
   loadAgent?: (name: string) => AgentDefinition;
   getSandbox?: typeof registry.getSandbox;
-  getAppliedPresets?: (sandboxName: string) => string[] | Promise<string[]>;
+  getAppliedPresets?: (sandboxName: string, timeoutMs?: number) => string[] | Promise<string[]>;
   getGatewayPresets?: (
     sandboxName: string,
     timeoutMs?: number,
@@ -550,6 +550,21 @@ function withStatusDeadline(deps: Required<StatusDeps>, deadlineMs: number): Req
   };
   return {
     ...deps,
+    getAppliedPresets: async (sandboxName, requestedTimeoutMs) => {
+      const timeoutMs = boundedTimeoutMs(requestedTimeoutMs);
+      if (timeoutMs === null) return [];
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          deps.getAppliedPresets(sandboxName, timeoutMs),
+          new Promise<string[]>((resolve) => {
+            timer = setTimeout(() => resolve([]), timeoutMs);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
     getGatewayPresets: async (sandboxName, requestedTimeoutMs) => {
       const timeoutMs = boundedTimeoutMs(requestedTimeoutMs);
       return timeoutMs === null ? null : await deps.getGatewayPresets(sandboxName, timeoutMs);
@@ -610,7 +625,9 @@ async function waitForChannelReadiness(
     elapsedMs = Math.max(0, deps.nowMs() - startedAt);
   }
   const state: ChannelStatusWaitState =
-    lastObserved.state === "waiting" ? "timeout" : lastObserved.state;
+    lastObserved.state === "waiting" || (elapsedMs >= timeoutMs && lastObserved.state !== "ready")
+      ? "timeout"
+      : lastObserved.state;
   return {
     schemaVersion: 1,
     sandbox: sandboxName,

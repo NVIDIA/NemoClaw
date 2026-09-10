@@ -301,30 +301,36 @@ export function createCliOpenShellSandboxPolicyWriter(
         };
       }
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
+      let submission!: OpenShellSandboxPolicySetSubmission;
+      let failure: { error: unknown } | undefined;
       try {
         const policyPath = path.join(directory, "policy.yaml");
         fs.writeFileSync(policyPath, request.document, { encoding: "utf-8", mode: 0o600 });
-        return parsePolicySet(
+        submission = parsePolicySet(
           await deps.capture(
             policySetArgs(request, policyPath),
             captureOptions(request, deps.defaultTimeoutMs),
           ),
         );
-      } finally {
-        // A retained policy is never reported as a clean result, even after a successful write.
-        let reason: string | null = null;
-        try {
-          fs.rmSync(directory, { recursive: true, force: true });
-        } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code;
-          reason = typeof code === "string" && /^[A-Z_]+$/.test(code) ? code : "removal failed";
-        }
-        if (!reason && fs.existsSync(directory)) reason = "the path still exists";
-        if (reason)
-          throw new Error(
-            `Could not remove the temporary policy directory '${directory}' (${reason}). It still holds the composed sandbox policy; remove it before retrying.`,
-          );
+      } catch (error) {
+        failure = { error };
       }
+      // A retained policy is never reported as a clean result, even after a successful write.
+      let reason: string | null = null;
+      try {
+        fs.rmSync(directory, { recursive: true, force: true });
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        reason = typeof code === "string" && /^[A-Z_]+$/.test(code) ? code : "removal failed";
+      }
+      if (!reason && fs.existsSync(directory)) reason = "the path still exists";
+      if (reason)
+        throw new Error(
+          `Could not remove the temporary policy directory '${directory}' (${reason}). It still holds the composed sandbox policy; remove it before retrying.`,
+          failure ? { cause: failure.error } : undefined,
+        );
+      if (failure) throw failure.error;
+      return submission;
     },
   };
 }

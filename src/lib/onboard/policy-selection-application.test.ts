@@ -40,7 +40,13 @@ describe("onboarding policy application", () => {
         }
       },
     );
-    syncPresetSelection.mockImplementation(() => events.push("policies synchronized"));
+    let finishSync!: () => void;
+    syncPresetSelection.mockImplementation(async () => {
+      await new Promise<void>((resolve) => {
+        finishSync = resolve;
+      });
+      events.push("policies synchronized");
+    });
     seedInitialPolicyContext.mockImplementation(() => events.push("policy context seeded"));
     const application = createOnboardPolicyApplication({
       localInferenceProviders: [],
@@ -66,9 +72,11 @@ describe("onboarding policy application", () => {
       env: {},
     });
 
-    await expect(
-      application.setupPoliciesWithSelection("alpha", { selectedPresets: ["npm"] }),
-    ).resolves.toEqual(["npm"]);
+    const pending = application.setupPoliciesWithSelection("alpha", { selectedPresets: ["npm"] });
+    await vi.waitFor(() => expect(syncPresetSelection).toHaveBeenCalled());
+    expect(events).toEqual(["lock entered"]);
+    finishSync();
+    await expect(pending).resolves.toEqual(["npm"]);
     expect(withSandboxMutationLock).toHaveBeenCalledOnce();
     expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
     expect(syncPresetSelection).toHaveBeenCalledWith("alpha", [], ["npm"]);

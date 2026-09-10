@@ -314,3 +314,55 @@ describe("CLI OpenShell sandbox policy writer", () => {
     });
   });
 });
+
+it("reports retained policy material and preserves a simultaneous capture failure", async () => {
+  const captureFailure = new Error("capture failed");
+  let directory = "";
+  const capture = vi.fn(async (args: string[]) => {
+    directory = path.dirname(args[args.indexOf("--policy") + 1]!);
+    throw captureFailure;
+  });
+  const remove = vi.spyOn(fs, "rmSync").mockImplementation(() => {
+    throw Object.assign(new Error("removal failed"), { code: "EACCES" });
+  });
+  try {
+    await expect(
+      createCliOpenShellSandboxPolicyWriter({ capture }).setSandboxPolicy({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+        document: POLICY,
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("Could not remove the temporary policy directory"),
+      cause: captureFailure,
+    });
+    expect(fs.existsSync(path.join(directory, "policy.yaml"))).toBe(true);
+  } finally {
+    remove.mockRestore();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("does not report success when submitted policy material cannot be removed", async () => {
+  let directory = "";
+  const capture = vi.fn(async (args: string[]) => {
+    directory = path.dirname(args[args.indexOf("--policy") + 1]!);
+    return captured({ output: "" });
+  });
+  const remove = vi.spyOn(fs, "rmSync").mockImplementation(() => {
+    throw Object.assign(new Error("removal failed"), { code: "EACCES" });
+  });
+  try {
+    await expect(
+      createCliOpenShellSandboxPolicyWriter({ capture }).setSandboxPolicy({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+        document: POLICY,
+      }),
+    ).rejects.toThrow("It still holds the composed sandbox policy; remove it before retrying.");
+    expect(fs.existsSync(path.join(directory, "policy.yaml"))).toBe(true);
+  } finally {
+    remove.mockRestore();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

@@ -22,10 +22,10 @@ function policies(
   const customPresets = (options.custom ?? []).map((name) => ({ name }));
   return {
     setupPolicyPresetSupported: () => true,
-    listSetupPolicyPresets: () => setupPresets,
-    listCustomPresets: () => customPresets,
-    customPresetOwnsNetworkPolicyKey: () => options.customOwnsObservability === true,
-    getAppliedPresets: () => options.applied ?? [],
+    listSetupPolicyPresets: async () => setupPresets,
+    listCustomPresets: async () => customPresets,
+    customPresetOwnsNetworkPolicyKey: async () => options.customOwnsObservability === true,
+    getAppliedPresets: async () => options.applied ?? [],
     clampSetupPolicyPresetNames(
       names: string[],
       selectablePresets: Preset[],

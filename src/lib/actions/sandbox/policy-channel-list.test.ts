@@ -35,9 +35,9 @@ describe("policy list live state", () => {
       { file: "npm.yaml", name: "npm", description: "npm registry" },
       { file: "pypi.yaml", name: "pypi", description: "Python packages" },
     ]);
-    mocks.listCustomPresets.mockReturnValue([]);
-    mocks.getAppliedPresets.mockReturnValue(["npm"]);
-    mocks.getGatewayPresets.mockReturnValue(["npm"]);
+    mocks.listCustomPresets.mockResolvedValue([]);
+    mocks.getAppliedPresets.mockResolvedValue(["npm"]);
+    mocks.getGatewayPresets.mockResolvedValue(["npm"]);
   });
 
   it("marks presets from the current OpenShell policy as active", async () => {
@@ -47,11 +47,11 @@ describe("policy list live state", () => {
   });
 
   it("lists namespaced custom presets derived from live policy", async () => {
-    mocks.listCustomPresets.mockReturnValue([
+    mocks.listCustomPresets.mockResolvedValue([
       { file: "corp.yaml", name: "corp", description: "custom OpenShell policy" },
     ]);
-    mocks.getAppliedPresets.mockReturnValue(["corp"]);
-    mocks.getGatewayPresets.mockReturnValue(["corp"]);
+    mocks.getAppliedPresets.mockResolvedValue(["corp"]);
+    mocks.getGatewayPresets.mockResolvedValue(["corp"]);
     await listSandboxPolicies("alpha");
     expect(output()).toContain("● corp [user-added]");
   });

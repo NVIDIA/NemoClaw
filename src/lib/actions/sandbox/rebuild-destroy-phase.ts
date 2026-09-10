@@ -426,6 +426,12 @@ export async function runRebuildDestroyPhase(
         message: "Replacement validation failed before sandbox deletion.",
       };
     }
+    if (validation.ok && !rebuildDeleteTargetMatchesRegistry(deleteTarget)) {
+      validation = {
+        ok: false,
+        message: "Sandbox delete target changed during rebuild preparation.",
+      };
+    }
     if (!validation.ok) {
       const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
         sandboxName,

@@ -160,12 +160,12 @@ describe("WSL sandbox name handling", () => {
     ["applyPresets", async (name: string) => await applyPresets(name, ["npm"])],
   ])(
     "%s rejects 20-character and consecutive-hyphen names before policy side effects (#8497)",
-    (_entrypoint, invoke) => {
-      ["a".repeat(20), "legacy--box"].forEach(async (name) => {
-        await expect((async () => await invoke(name))()).rejects.toThrow(
-          /Allowed format: 1-19 characters/,
-        );
-      });
+    async (_entrypoint, invoke) => {
+      await Promise.all(
+        ["a".repeat(20), "legacy--box"].map(async (name) => {
+          await expect(invoke(name)).rejects.toThrow(/Allowed format: 1-19 characters/);
+        }),
+      );
       expect(policySideEffects.runCapture).not.toHaveBeenCalled();
       expect(policySideEffects.run).not.toHaveBeenCalled();
     },

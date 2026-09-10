@@ -32,10 +32,20 @@ function runScript(body: string): { stdout: string; stderr: string; status: numb
     const runner = require(${JSON.stringify(RUNNER_PATH)});
     const YAML = require("yaml");
   `;
-  const result = spawnSync(process.execPath, ["-e", preamble + body], {
-    cwd: REPO_ROOT,
-    encoding: "utf-8",
-  });
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      preamble +
+        "\n(async () => {\n" +
+        body +
+        "\n})().catch(error => { console.error(error); process.exitCode = 1; });",
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+    },
+  );
   return { stdout: result.stdout || "", stderr: result.stderr || "", status: result.status };
 }
 
@@ -48,7 +58,7 @@ function buildGatewayYaml(presetNames: string[]): string {
   const { stdout } = runScript(`
     const parts = ["version: 1", "", "network_policies:"];
     for (const name of ${names}) {
-      const content = policies.loadPresetForSandbox("repro-2010-sandbox", name);
+      const content = await policies.loadPresetForSandbox("repro-2010-sandbox", name);
       if (!content) continue;
       const entries = policies.extractPresetEntries(content);
       if (!entries) continue;
@@ -72,7 +82,7 @@ function buildGatewayYamlWithCustom(
   const { stdout } = runScript(`
     const parts = ["version: 1", "", "network_policies:"];
     for (const name of ${names}) {
-      const content = policies.loadPresetForSandbox("repro-2010-sandbox", name);
+      const content = await policies.loadPresetForSandbox("repro-2010-sandbox", name);
       if (!content) continue;
       const entries = policies.extractPresetEntries(content);
       if (!entries) continue;
@@ -140,7 +150,7 @@ function callGetGatewayPresets(
       return pk.length > 0 && pk.every(k => keys.has(k));
     };
     for (const preset of policies.listPresets()) {
-      const c = policies.loadPresetForSandbox("repro-2010-sandbox", preset.name); if (!c) continue;
+      const c = await policies.loadPresetForSandbox("repro-2010-sandbox", preset.name); if (!c) continue;
       if (matchContent(c)) matched.push(preset.name);
     }
     for (const entry of customPresets) {

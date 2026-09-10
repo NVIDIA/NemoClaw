@@ -151,7 +151,7 @@ describe("addSandboxPolicy refresh contract", () => {
   });
 
   it("does not refresh when the policy library reports apply failure", async () => {
-    applyPresetMock.mockReturnValue(false);
+    applyPresetMock.mockResolvedValue(false);
 
     await expect(
       captureExit(() => addSandboxPolicy("alpha", { preset: "pypi", yes: true })),
@@ -270,7 +270,7 @@ describe("removeSandboxPolicy refresh contract", () => {
   });
 
   it("does not refresh when the policy library reports remove failure", async () => {
-    removePresetMock.mockReturnValue(false);
+    removePresetMock.mockResolvedValue(false);
 
     await expect(
       captureExit(() => removeSandboxPolicy("alpha", { preset: "pypi", yes: true })),
@@ -305,7 +305,7 @@ describe("applyChannelPresetIfAvailable refresh contract", () => {
   });
 
   it("does not refresh when policy library reports apply failure", async () => {
-    applyPresetMock.mockReturnValue(false);
+    applyPresetMock.mockResolvedValue(false);
 
     const ok = await applyChannelPresetIfAvailable("alpha", "discord");
 
@@ -317,9 +317,7 @@ describe("applyChannelPresetIfAvailable refresh contract", () => {
   });
 
   it("does not refresh when policy library throws", async () => {
-    applyPresetMock.mockImplementation(() => {
-      throw new Error("preset YAML missing");
-    });
+    applyPresetMock.mockRejectedValue(new Error("preset YAML missing"));
 
     const ok = await applyChannelPresetIfAvailable("alpha", "discord");
 
@@ -357,7 +355,7 @@ describe("removeChannelPresetIfPresent refresh contract", () => {
 
   it("does not refresh when policy library reports remove failure", async () => {
     vi.spyOn(policies, "getAppliedPresets").mockResolvedValue(["discord"]);
-    removePresetMock.mockReturnValue(false);
+    removePresetMock.mockResolvedValue(false);
 
     await removeChannelPresetIfPresent("alpha", "discord");
 
@@ -367,9 +365,7 @@ describe("removeChannelPresetIfPresent refresh contract", () => {
 
   it("does not refresh when policy library throws", async () => {
     vi.spyOn(policies, "getAppliedPresets").mockResolvedValue(["discord"]);
-    removePresetMock.mockImplementation(() => {
-      throw new Error("preset removal racing with rebuild");
-    });
+    removePresetMock.mockRejectedValue(new Error("preset removal racing with rebuild"));
 
     await removeChannelPresetIfPresent("alpha", "discord");
 
