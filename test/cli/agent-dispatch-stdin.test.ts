@@ -18,9 +18,20 @@ function openPipe(inputPath: string): number {
   return fs.openSync(inputPath, fs.constants.O_RDWR);
 }
 
-// OpenShell 0.0.106 reads non-terminal stdin to EOF before sending ExecSandbox.
-// Exercise that process boundary with an open FIFO and with finite redirected input.
-const inputs = [
+function finiteInput(inputPath: string): number {
+  fs.writeFileSync(inputPath, "PIPED_INPUT");
+  return fs.openSync(inputPath, "r");
+}
+
+// OpenShell reads fd 0 before dispatch; OpenClaw then reads the selected message file.
+// Observe both the received input and the original command through a real child.
+const inputs: Array<{
+  name: string;
+  args: string[];
+  expected: string;
+  open: (inputPath: string) => number;
+  prepareMessageFile?: (root: string) => string;
+}> = [
   {
     name: "an open pipe with a message argument",
     args: ["-m", "ARG_MESSAGE"],
@@ -45,39 +56,62 @@ const inputs = [
     open: openPipe,
   },
   {
-    name: "an open pipe with a message file",
-    args: ["--verbose", "off", "--message-file", "/sandbox/task.md"],
-    expected: "",
-    open: openPipe,
+    name: "an ordinary message file and finite stdin",
+    args: ["--verbose", "off"],
+    expected: "FILE_MESSAGE",
+    open: finiteInput,
+    prepareMessageFile(root) {
+      const file = path.join(root, "message");
+      fs.writeFileSync(file, "FILE_MESSAGE");
+      return file;
+    },
+  },
+  {
+    name: "a message-file symlink to stdin",
+    args: [],
+    expected: "PIPED_INPUT",
+    open: finiteInput,
+    prepareMessageFile(root) {
+      const file = path.join(root, "message-link");
+      fs.symlinkSync("/dev/stdin", file);
+      return file;
+    },
+  },
+  {
+    name: "a relative symlink chain to stdin",
+    args: [],
+    expected: "PIPED_INPUT",
+    open: finiteInput,
+    prepareMessageFile(root) {
+      fs.symlinkSync("/dev/stdin", path.join(root, "source"));
+      const file = path.join(root, "message-chain");
+      fs.symlinkSync("source", file);
+      return file;
+    },
   },
   {
     name: "finite redirected input without a message argument",
     args: [],
     expected: "PIPED_INPUT",
-    open(inputPath: string) {
-      fs.writeFileSync(inputPath, "PIPED_INPUT");
-      return fs.openSync(inputPath, "r");
-    },
+    open: finiteInput,
   },
   ...["/dev/stdin", "/dev/fd/0", "/proc/self/fd/0", "/proc/thread-self/fd/0"].map((file) => ({
     name: `finite redirected input through message file ${file}`,
     args: ["--message-file", file],
     expected: "PIPED_INPUT",
-    open(inputPath: string) {
-      fs.writeFileSync(inputPath, "PIPED_INPUT");
-      return fs.openSync(inputPath, "r");
-    },
+    open: finiteInput,
   })),
 ];
 
 describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
   it.each([false, true].flatMap((json) => inputs.map((input) => ({ ...input, json }))))(
     "dispatches with $name (JSON: $json) (#11371)",
-    async ({ json, args, expected, open }) => {
+    async ({ json, args, expected, open, prepareMessageFile }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-stdin-"));
       const inputPath = path.join(root, "input");
       let closeInput = () => {};
       try {
+        const messageFile = prepareMessageFile?.(root);
         const inputFd = open(inputPath);
         closeInput = () => fs.closeSync(inputFd);
         const stdout: string[] = [];
@@ -97,6 +131,7 @@ describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
           "main",
           ...(json ? ["--json"] : []),
           ...args,
+          ...(messageFile ? ["--message-file", messageFile] : []),
         ];
         await expect(
           invoke("alpha", command, proc, {
@@ -111,10 +146,11 @@ describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
                     [
                       "-e",
                       `
-              const input = require('node:fs').readFileSync(0, 'utf8');
-              console.log(JSON.stringify({payloads: [{text: JSON.stringify({input, args: process.argv.slice(1)})}]}));
+              const input = require('node:fs').readFileSync(process.argv[1], 'utf8');
+              console.log(JSON.stringify({payloads: [{text: JSON.stringify({input, args: process.argv.slice(2)})}]}));
             `,
                       "--",
+                      messageFile ?? "/dev/stdin",
                       ...args,
                     ],
                     {

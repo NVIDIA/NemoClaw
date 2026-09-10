@@ -18,7 +18,7 @@ import { expect } from "../fixtures/e2e-test.ts";
 import type { E2EInferenceAdapter } from "../fixtures/inference-adapter.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 // The injected E2E inference adapter (#5745) is the single source of the
@@ -448,38 +448,31 @@ export async function route(
 export async function openclawTurn(
   host: HostCliClient,
   inference: AgentTurnInference,
-  progress?: Pick<TestProgress, "onOutput">,
+  progress: Pick<TestProgress, "onOutput">,
   options: {
-    artifactName?: string;
-    prompt?: string;
-    sessionId?: string;
-  } = {},
+    artifactName: string;
+    args: string[];
+    stdin?: ShellProbeRunOptions["stdin"];
+  },
 ): Promise<{ result: ShellProbeResult; elapsedMs: number }> {
-  const prompt =
-    options.prompt ?? "What is 6 multiplied by 7? Reply with only the integer, no extra words.";
-  const sessionId = options.sessionId ?? "e2e-turn-latency";
   const started = process.hrtime.bigint();
-  // The host fixture holds stdin open until the CLI exits. The released
-  // wrapper waits for EOF before OpenShell dispatches to the Ready sandbox.
   const result = await host.nemoclaw(
     [
       OPENCLAW_SANDBOX,
       "agent",
       "--agent",
       "main",
-      "--json",
       "--thinking",
       "off",
       "--session-id",
-      sessionId,
-      "-m",
-      prompt,
+      "e2e-turn-latency",
+      ...options.args,
     ],
     {
-      stdin: "open-pipe",
-      artifactName: options.artifactName ?? "openclaw-agent-turn",
+      stdin: options.stdin,
+      artifactName: options.artifactName,
       env: env(OPENCLAW_SANDBOX, "openclaw", inference),
-      onOutput: progress?.onOutput,
+      onOutput: progress.onOutput,
       redactionValues: inference.redactionValues(),
       timeoutMs: (MAX_TURN_SECONDS + 30) * 1000,
     },

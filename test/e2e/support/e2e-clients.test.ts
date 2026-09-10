@@ -120,11 +120,13 @@ describe("E2E fixture clients", () => {
   });
 
   it.each([
-    { stdin: undefined, expectedTimeout: false },
-    { stdin: "open-pipe" as const, expectedTimeout: true },
+    { stdin: undefined, expectedTimeout: false, expectedOutput: "EOF" },
+    { stdin: "open-pipe" as const, expectedTimeout: true, expectedOutput: "" },
+    { stdin: { text: "" }, expectedTimeout: false, expectedOutput: "EOF" },
+    { stdin: { text: "PRIVATE_INPUT" }, expectedTimeout: false, expectedOutput: "[REDACTED]EOF" },
   ])(
     "keeps the configured host command's input open only when requested ($stdin)",
-    async ({ stdin, expectedTimeout }) => {
+    async ({ stdin, expectedTimeout, expectedOutput }) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-host-stdin-"));
       const progress = startTestProgress("host stdin", ["run configured command", "verify input"], {
         logLine: () => undefined,
@@ -139,12 +141,15 @@ describe("E2E fixture clients", () => {
         const host = new HostCliClient(probe, { cliPath: process.execPath });
         progress.phase("run configured command");
         const result = await host.nemoclaw(
-          ["-e", "process.stdin.resume(); process.stdin.on('end', () => console.log('EOF'));"],
-          { stdin, timeoutMs: 2_000, persistArtifacts: false },
+          [
+            "-e",
+            "process.stdin.on('data', data => process.stdout.write(data)); process.stdin.on('end', () => console.log('EOF'));",
+          ],
+          { stdin, timeoutMs: 2_000, persistArtifacts: false, redactionValues: ["PRIVATE_INPUT"] },
         );
         progress.phase("verify input");
         expect(result.timedOut).toBe(expectedTimeout);
-        expect(result.stdout.trim()).toBe(expectedTimeout ? "" : "EOF");
+        expect(result.stdout.trim()).toBe(expectedOutput);
       } finally {
         progress.stop();
         fs.rmSync(tmp, { recursive: true, force: true });

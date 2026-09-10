@@ -7,6 +7,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import type { ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import { normalizeMode } from "../fixtures/inference-adapter.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
@@ -152,29 +153,115 @@ runAgentTurnLatencyTest(
     assertOpenClawConfig(openclawConfig.stdout, inference.model);
 
     progress.phase("run OpenClaw hosted inference turns");
-    const openclaw = await openclawTurn(host, inference, progress);
-    expect(openclaw.result.exitCode, resultText(openclaw.result)).toBe(0);
-    assertNoOpenClawTransportErrors(resultText(openclaw.result));
-    expect(
-      containsAnswer(parseOpenClawAgentText(openclaw.result.stdout), "42"),
-      resultText(openclaw.result),
-    ).toBe(true);
-    expect(openclaw.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
+    const messageFile = "/sandbox/e2e-turn-message.txt";
+    const stdinLink = "/sandbox/e2e-turn-stdin";
+    const stdinChain = "/sandbox/e2e-turn-stdin-chain";
+    const filePrompt = "Reply with exactly FILE_MESSAGE_OK and no other text.";
+    for (const setup of [
+      { name: "file", command: ["tee", messageFile], stdin: { text: filePrompt } },
+      { name: "stdin-link", command: ["ln", "-s", "/dev/stdin", stdinLink], stdin: undefined },
+      {
+        name: "stdin-chain",
+        command: ["ln", "-s", "e2e-turn-stdin", stdinChain],
+        stdin: undefined,
+      },
+    ]) {
+      const result = await sandbox.exec(OPENCLAW_SANDBOX, setup.command, {
+        artifactName: `prepare-agent-message-${setup.name}`,
+        env: env(OPENCLAW_SANDBOX, "openclaw", inference),
+        stdin: setup.stdin,
+        onOutput: progress.onOutput,
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode, resultText(result)).toBe(0);
+    }
 
-    const openclawFollowUp = await openclawTurn(host, inference, progress, {
-      artifactName: "openclaw-agent-follow-up-turn",
-      prompt: "What is seven multiplied by eight? Reply with only the integer, no extra words.",
-    });
-    expect(openclawFollowUp.result.exitCode, resultText(openclawFollowUp.result)).toBe(0);
-    assertNoOpenClawTransportErrors(resultText(openclawFollowUp.result));
-    expect(
-      containsAnswer(parseOpenClawAgentText(openclawFollowUp.result.stdout), "56"),
-      resultText(openclawFollowUp.result),
-    ).toBe(true);
-    expect(openclawFollowUp.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
+    const formats = [
+      { name: "json", args: ["--json"], readText: parseOpenClawAgentText },
+      { name: "text", args: [], readText: (raw: string) => raw },
+    ];
+    const fileInputs = [
+      {
+        name: "regular-file-with-stdin",
+        path: messageFile,
+        stdin: { text: "Reply with exactly WRONG_STDIN_SOURCE and no other text." },
+        expected: "FILE_MESSAGE_OK",
+      },
+      { name: "regular-file", path: messageFile, stdin: undefined, expected: "FILE_MESSAGE_OK" },
+      {
+        name: "stdin-file",
+        path: "/dev/stdin",
+        stdin: { text: "Reply with exactly STDIN_MESSAGE_OK and no other text." },
+        expected: "STDIN_MESSAGE_OK",
+      },
+      {
+        name: "stdin-symlink",
+        path: stdinLink,
+        stdin: { text: "Reply with exactly SYMLINK_MESSAGE_OK and no other text." },
+        expected: "SYMLINK_MESSAGE_OK",
+      },
+      {
+        name: "stdin-chain",
+        path: stdinChain,
+        stdin: { text: "Reply with exactly CHAIN_MESSAGE_OK and no other text." },
+        expected: "CHAIN_MESSAGE_OK",
+      },
+    ];
+    const turns: Array<{
+      artifactName: string;
+      args: string[];
+      stdin?: ShellProbeRunOptions["stdin"];
+      expected: string;
+      readText: (raw: string) => string;
+    }> = [
+      {
+        artifactName: "openclaw-agent-turn",
+        args: [
+          "--json",
+          "-m",
+          "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
+        ],
+        stdin: "open-pipe",
+        expected: "42",
+        readText: parseOpenClawAgentText,
+      },
+      {
+        artifactName: "openclaw-agent-follow-up-turn",
+        args: [
+          "-m",
+          "What is seven multiplied by eight? Reply with only the integer, no extra words.",
+        ],
+        stdin: "open-pipe",
+        expected: "56",
+        readText: (raw: string) => raw,
+      },
+      ...fileInputs.flatMap((input) =>
+        formats.map((format) => ({
+          artifactName: `openclaw-agent-${input.name}-${format.name}`,
+          args: [...format.args, "--message-file", input.path],
+          stdin: input.stdin,
+          expected: input.expected,
+          readText: format.readText,
+        })),
+      ),
+    ];
+    const turnTimes: Record<string, number> = {};
+    for (const turn of turns) {
+      progress.event(`OpenClaw turn: ${turn.artifactName}`);
+      const completed = await openclawTurn(host, inference, progress, turn);
+      expect(completed.result.exitCode, resultText(completed.result)).toBe(0);
+      assertNoOpenClawTransportErrors(resultText(completed.result));
+      expect(
+        containsAnswer(turn.readText(completed.result.stdout), turn.expected),
+        resultText(completed.result),
+      ).toBe(true);
+      expect(completed.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
+      turnTimes[turn.artifactName] = completed.elapsedMs;
+    }
     results.openclaw = {
-      firstTurnElapsedMs: openclaw.elapsedMs,
-      followUpTurnElapsedMs: openclawFollowUp.elapsedMs,
+      firstTurnElapsedMs: turnTimes["openclaw-agent-turn"],
+      followUpTurnElapsedMs: turnTimes["openclaw-agent-follow-up-turn"],
+      turns: turnTimes,
     };
 
     progress.phase("replace OpenClaw with Hermes sandbox");

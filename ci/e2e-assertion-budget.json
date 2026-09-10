@@ -15,26 +15,26 @@
     "testFileCount": 86,
     "liveFileCount": 222,
     "direct": {
-      "expectCalls": 1800,
-      "matcherAssertions": 1769,
+      "expectCalls": 1798,
+      "matcherAssertions": 1767,
       "nodeAssertions": 105,
-      "namedAssertionHelpers": 601,
+      "namedAssertionHelpers": 600,
       "failCalls": 8,
       "throwGuards": 87,
       "objectFieldAssertions": 243,
-      "assertionPoints": 2813,
+      "assertionPoints": 2810,
       "generatedProbeBlocks": 122,
       "generatedProbeConditions": 322
     },
     "unique": {
-      "expectCalls": 2290,
-      "matcherAssertions": 2254,
+      "expectCalls": 2288,
+      "matcherAssertions": 2252,
       "nodeAssertions": 126,
-      "namedAssertionHelpers": 905,
+      "namedAssertionHelpers": 904,
       "failCalls": 38,
       "throwGuards": 633,
       "objectFieldAssertions": 342,
-      "assertionPoints": 4298,
+      "assertionPoints": 4295,
       "generatedProbeBlocks": 276,
       "generatedProbeConditions": 943
     },
@@ -46,7 +46,7 @@
       "transitiveGeneratedProbeBlocks"
     ],
     "files": {
-      "test/e2e/live/agent-turn-latency.test.ts": [22,26,31,46,1],
+      "test/e2e/live/agent-turn-latency.test.ts": [20,23,29,43,1],
       "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts": [28,64,28,68,5],
       "test/e2e/live/bootstrap-install-smoke.test.ts": [0,0,14,30,3],
       "test/e2e/live/brave-search.test.ts": [19,22,27,32,1],

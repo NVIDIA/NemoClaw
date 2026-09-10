@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { posix } from "node:path";
-
 // OpenClaw owns argv validation. Inspect its supported options only to choose
 // stdin, output, and deadline behavior; never rewrite or read message payloads.
 // Unknown options stop inspection because their argument arity is unknown.
@@ -84,19 +82,13 @@ function findOption(command: readonly string[], flags: readonly string[]): Agent
   return found;
 }
 
-const STDIN_MESSAGE_FILES = new Set([
-  "/dev/stdin",
-  "/dev/fd/0",
-  "/proc/self/fd/0",
-  "/proc/thread-self/fd/0",
-]);
-
 export function canCloseAgentStdin(command: readonly string[]): boolean {
-  // Inline input needs no stdin, including conflicting or incomplete options
-  // that must reach OpenClaw's usage error. File paths resolve inside Linux.
+  // Only an inline message proves that valid input needs no stdin. Any sandbox
+  // file can resolve to fd 0 through symlinks, regardless of its pathname.
   if (findOption(command, ["--message"])) return true;
+  // A missing/empty file argument fails upstream before any file is read.
   const file = findOption(command, ["--message-file"]);
-  return file !== undefined && !STDIN_MESSAGE_FILES.has(posix.normalize(file.value?.trim() ?? ""));
+  return file !== undefined && !file.value?.trim();
 }
 
 export function requestsOpenClawJsonOutput(command: readonly string[]): boolean {

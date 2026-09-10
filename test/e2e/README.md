@@ -35,6 +35,15 @@ before those targets run; local runners must provide it themselves.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
+The `agent-turn-latency` target checks the configured host CLI with both text and
+JSON output. Inline-message turns keep the parent stdin pipe open. File-message
+turns exercise an ordinary sandbox file, `/dev/stdin`, a sandbox symlink to stdin,
+and a relative symlink chain, and require the actual model answer from each input.
+The shared process fixture supplies finite input and EOF for stdin-backed files.
+These cases are selectable for both Docker and Podman through the existing runtime
+matrix. Host stdin is preserved for nonempty message-file arguments because only
+the sandbox can resolve their paths.
+
 ## CI execution shape
 
 ### Candidate CLI Artifact
