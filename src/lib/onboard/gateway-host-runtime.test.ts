@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createGatewayHostRuntime, type GatewayHostRuntimeDeps } from "./gateway-host-runtime";
@@ -97,6 +98,41 @@ describe("gateway host runtime ownership", () => {
 
     expect(() => createGatewayHostRuntime(createDeps()).assertGatewayStartAllowed(false)).toThrow(
       /openshell-gateway\.service/,
+    );
+  });
+
+  it.each([8080, 18080])(
+    "rejects gateway startup on port %s when the host declaration selector is missing (#11347)",
+    (gatewayPort) => {
+      delete process.env[GATEWAY_MANAGEMENT_ENV_VAR];
+      const entry = fs.lstatSync(process.cwd());
+      vi.spyOn(fs, "lstatSync").mockReturnValue(entry);
+      const runOpenshell = vi.fn();
+      const runtime = createGatewayHostRuntime(createDeps({ runOpenshell }));
+
+      expect(() =>
+        runtime.assertGatewayStartAllowed(false, {
+          gatewayName: gatewayPort === 8080 ? "nemoclaw" : `nemoclaw-${gatewayPort}`,
+          gatewayPort,
+        }),
+      ).toThrow(GatewayManagementDeclarationError);
+      expect(runOpenshell).not.toHaveBeenCalled();
+    },
+  );
+
+  it("blocks startup when a host declaration appears after self-management was bound (#11347)", () => {
+    delete process.env[GATEWAY_MANAGEMENT_ENV_VAR];
+    const entry = fs.lstatSync(process.cwd());
+    const inspect = vi.spyOn(fs, "lstatSync").mockImplementation(() => {
+      throw Object.assign(new Error("no host declaration"), { code: "ENOENT" });
+    });
+    const runtime = createGatewayHostRuntime(createDeps());
+    expect(runtime.getGatewayOwner()).toMatchObject({ mode: "nemoclaw-managed" });
+
+    inspect.mockReturnValue(entry);
+
+    expect(() => runtime.assertGatewayStartAllowed(false)).toThrow(
+      /set NEMOCLAW_GATEWAY_MANAGEMENT=/,
     );
   });
 

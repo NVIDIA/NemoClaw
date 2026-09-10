@@ -562,26 +562,6 @@ function parseSystemctlState(value = ""): boolean | null {
   return null;
 }
 
-/**
- * Pick the Docker authority conflict observer for one assessment. The default
- * observer probes this host's own sockets, so it applies only when the
- * assessment probes the local host itself: injected Docker evidence or a
- * command transport (tests, a remote host) gets no observer unless the caller
- * injects one (#10622).
- */
-export function resolveDockerAuthorityConflictObserver(
-  opts: AssessHostOpts,
-): AssessHostOpts["observeDockerAuthorityConflictImpl"] {
-  return (
-    opts.observeDockerAuthorityConflictImpl ??
-    (opts.dockerInfoOutput === undefined &&
-    opts.runCaptureImpl === undefined &&
-    opts.runCaptureExImpl === undefined
-      ? observeDockerAuthorityConflict
-      : undefined)
-  );
-}
-
 /** Assess the host: Docker, GPU, OpenShell, and the advisories they imply. */
 export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const platform = opts.platform ?? process.platform;
@@ -641,7 +621,15 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   // identities is an authority conflict (#10622). It is observed only when
   // DOCKER_HOST is unset, because a set DOCKER_HOST is honoured before any
   // socket probe.
-  const observeConflict = resolveDockerAuthorityConflictObserver(opts);
+  // Injected evidence or transports can describe a remote host. Only the local
+  // assessment defaults to local socket probes; repeat them after remediation.
+  const observeConflict =
+    opts.observeDockerAuthorityConflictImpl ??
+    (opts.dockerInfoOutput === undefined &&
+    opts.runCaptureImpl === undefined &&
+    opts.runCaptureExImpl === undefined
+      ? observeDockerAuthorityConflict
+      : undefined);
   const dockerAuthorityConflict =
     observeConflict !== undefined &&
     dockerInstalled &&

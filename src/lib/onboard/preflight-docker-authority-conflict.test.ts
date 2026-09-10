@@ -1,15 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import * as platform from "../platform";
 import type { DockerAuthorityConflict } from "../platform";
-import {
-  assessHost,
-  planHostAdvisories,
-  resolveDockerAuthorityConflictObserver,
-} from "./preflight";
+import { assessHost, planHostAdvisories } from "./preflight";
 
 // Regression: NemoClaw #10622. The default Docker authority is unreachable
 // and the socket fallback meets both a Podman and a Docker engine. Detection
@@ -42,10 +41,6 @@ function runCaptureImpl(command: readonly string[]): string {
 }
 
 describe("assessHost Docker authority conflict (#10622)", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   it("carries the conflict so onboarding names both engines, not a docker-group fix", () => {
     const observe = vi.fn(() => CONFLICT);
     const assessment = assessHost({
@@ -175,17 +170,50 @@ describe("assessHost Docker authority conflict (#10622)", () => {
   });
 });
 
-describe("resolveDockerAuthorityConflictObserver (#10622)", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+describe("local Docker authority observation (#10622)", () => {
+  function localHostOptions() {
+    // Exercise the default process transport without contacting the host's Docker service.
+    const bin = mkdtempSync(join(tmpdir(), "nemoclaw-authority-"));
+    onTestFinished(() => rmSync(bin, { recursive: true, force: true }));
+    writeFileSync(join(bin, "docker"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+    writeFileSync(join(bin, "systemctl"), "#!/bin/sh\necho active\n", { mode: 0o700 });
+    symlinkSync("/bin/sh", join(bin, "sh"));
+    vi.stubEnv("PATH", bin);
+    vi.stubEnv("DOCKER_HOST", undefined);
+    return {
+      platform: "linux" as const,
+      env: {},
+      commandExistsImpl,
+      resolveOpenshellImpl: () => null,
+      gpuProbeImpl: () => false,
+      readFileImpl: () => "",
+      readdirImpl: () => [],
+      release: "",
+      procVersion: "",
+    };
+  }
 
-  it("wires the real observer when the assessment probes the local host itself", () => {
-    vi.spyOn(platform, "observeDockerAuthorityConflict").mockReturnValue(CONFLICT);
+  it("uses the default observer and refreshes conflict evidence on the next assessment", () => {
+    const opts = localHostOptions();
+    const observe = vi
+      .spyOn(platform, "observeDockerAuthorityConflict")
+      .mockReturnValueOnce(CONFLICT)
+      .mockReturnValueOnce(null);
+    const first = assessHost(opts);
+    expect(first.dockerProbeIssue).toBeUndefined();
+    expect(first.dockerAuthorityConflict).toEqual(CONFLICT);
+    expect(observe).toHaveBeenNthCalledWith(1, { env: opts.env, platform: opts.platform });
+    const firstIds = planHostAdvisories(first).map((action) => action.id);
+    expect(firstIds).toContain("docker_authority_conflict");
+    expect(firstIds).not.toContain("docker_group_permission");
+    expect(firstIds).not.toContain("start_docker");
 
-    expect(resolveDockerAuthorityConflictObserver({})?.({ env: {}, platform: "linux" })).toEqual(
-      CONFLICT,
+    const second = assessHost(opts);
+    expect(second.dockerAuthorityConflict).toBeUndefined();
+    expect(planHostAdvisories(second).map((action) => action.id)).not.toContain(
+      "docker_authority_conflict",
     );
+    expect(observe).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -193,19 +221,15 @@ describe("resolveDockerAuthorityConflictObserver (#10622)", () => {
     ["a command transport", { runCaptureImpl: () => "" }],
     [
       "an extended command transport",
-      { runCaptureExImpl: () => ({ stdout: "", stderr: "", exitCode: 1, timedOut: false }) },
+      {
+        runCaptureExImpl: () => ({ stdout: "", stderr: "", exitCode: 1, timedOut: false }),
+      },
     ],
-  ])("wires no observer when the caller injects %s", (_case, opts) => {
-    expect(resolveDockerAuthorityConflictObserver(opts)).toBeUndefined();
-  });
-
-  it("prefers an injected observer over the default", () => {
-    vi.spyOn(platform, "observeDockerAuthorityConflict").mockReturnValue(null);
-
-    expect(
-      resolveDockerAuthorityConflictObserver({
-        observeDockerAuthorityConflictImpl: () => CONFLICT,
-      })?.({ env: {}, platform: "linux" }),
-    ).toEqual(CONFLICT);
+  ])("does not observe local sockets when the caller injects %s", (_case, injected) => {
+    const opts = localHostOptions();
+    const observe = vi.spyOn(platform, "observeDockerAuthorityConflict").mockReturnValue(CONFLICT);
+    const assessment = assessHost({ ...opts, ...injected });
+    expect(assessment.dockerAuthorityConflict).toBeUndefined();
+    expect(observe).not.toHaveBeenCalled();
   });
 });

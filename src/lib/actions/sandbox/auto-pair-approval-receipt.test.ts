@@ -19,40 +19,35 @@ describe("auto-pair approval receipts (#4616)", () => {
   const pythonUnavailable =
     spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0;
 
-  it.skipIf(pythonUnavailable).each(
+  it.skipIf(pythonUnavailable).each([
+    [{ NEMOCLAW_LIST_SLEEP_MS: "800" }, "list-timeout"],
+    [{ NEMOCLAW_LIST_EXIT_CODE: "1", NEMOCLAW_LIST_STDERR: "raw failure" }, "list-command-failed"],
     [
-        [{ NEMOCLAW_LIST_SLEEP_MS: "800" }, "list-timeout"],
-        [
-          { NEMOCLAW_LIST_EXIT_CODE: "1", NEMOCLAW_LIST_STDERR: "raw failure" },
-          "list-command-failed",
-        ],
-        [
-          {
-            NEMOCLAW_LIST_EXIT_CODE: "1",
-            NEMOCLAW_LIST_STDERR: "scope upgrade pending approval raw detail",
-          },
-          "list-scope-upgrade-pending",
-        ],
-        [
-          {
-            NEMOCLAW_LIST_EXIT_CODE: "1",
-            NEMOCLAW_LIST_STDERR: "device pairing required raw detail",
-          },
-          "list-device-pairing-required",
-        ],
-        [
-          {
-            NEMOCLAW_LIST_EXIT_CODE: "1",
-            NEMOCLAW_LIST_STDERR: "gateway connect failed raw detail",
-          },
-          "list-gateway-connect-failed",
-        ],
-        [{ NEMOCLAW_LIST_STDOUT: "" }, "list-empty-output"],
-        [{ NEMOCLAW_LIST_STDOUT: "raw invalid json" }, "list-invalid-json"],
-        [{ NEMOCLAW_LIST_STDOUT: "[]\n" }, "list-invalid-output"],
-        [{ NEMOCLAW_LIST_STDOUT: "{}\n" }, "list-missing-pending"],
-    ] as const,
-  )(
+      {
+        NEMOCLAW_LIST_EXIT_CODE: "1",
+        NEMOCLAW_LIST_STDERR: "scope upgrade pending approval raw detail",
+      },
+      "list-scope-upgrade-pending",
+    ],
+    [
+      {
+        NEMOCLAW_LIST_EXIT_CODE: "1",
+        NEMOCLAW_LIST_STDERR: "device pairing required raw detail",
+      },
+      "list-device-pairing-required",
+    ],
+    [
+      {
+        NEMOCLAW_LIST_EXIT_CODE: "1",
+        NEMOCLAW_LIST_STDERR: "gateway connect failed raw detail",
+      },
+      "list-gateway-connect-failed",
+    ],
+    [{ NEMOCLAW_LIST_STDOUT: "" }, "list-empty-output"],
+    [{ NEMOCLAW_LIST_STDOUT: "raw invalid json" }, "list-invalid-json"],
+    [{ NEMOCLAW_LIST_STDOUT: "[]\n" }, "list-invalid-output"],
+    [{ NEMOCLAW_LIST_STDOUT: "{}\n" }, "list-missing-pending"],
+  ] as const)(
     "omits raw output from devices-list failure classifications [case %#]",
     (environment, receipt) => {
       const policy = readAutoPairApprovalPolicyModule();

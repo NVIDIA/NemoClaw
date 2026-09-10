@@ -130,7 +130,7 @@ export const retryDockerProbe: AdvisoryCheck<HostAssessment> = {
   },
 };
 
-/** Quote a value for a POSIX shell so a path with spaces survives `export`. */
+/** Quote a socket value for the manual POSIX-shell recovery command. */
 function shellSingleQuoted(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
@@ -152,6 +152,7 @@ export const chooseDockerAuthority: AdvisoryCheck<HostAssessment> = {
       return null;
     }
     const [first, second] = conflict.candidates;
+    const docker = first.identity === "docker" ? first : second;
     return hostAdvisory(chooseDockerAuthority, {
       title: "Choose the Docker authority",
       kind: "manual",
@@ -160,10 +161,14 @@ export const chooseDockerAuthority: AdvisoryCheck<HostAssessment> = {
         `${first.identity} at ${first.socketPath} and ${second.identity} at ${second.socketPath}. ` +
         "NemoClaw did not choose between them and kept the default authority. " +
         "It did not diagnose why that authority is unreachable, and it withholds the docker-group and start-Docker remedies while two other engines answer. " +
-        "Set DOCKER_HOST to the socket you want; NemoClaw honours it before any probe. Or repair the default authority.",
+        "Set DOCKER_HOST to the Docker socket below, or repair the default authority. " +
+        "A Podman compatibility socket cannot satisfy the Docker runtime requirement." +
+        (host.platform === "linux"
+          ? " To use native rootless Podman on a qualified Linux host, set NEMOCLAW_GATEWAY_RUNTIME=podman before onboarding. " +
+            "Review the requirements at https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/reference/platform-support#deployment-paths."
+          : ""),
       commands: [
-        `export DOCKER_HOST=${shellSingleQuoted(`unix://${first.socketPath}`)}   # ${first.identity}`,
-        `# or: export DOCKER_HOST=${shellSingleQuoted(`unix://${second.socketPath}`)}   # ${second.identity}`,
+        `export DOCKER_HOST=${shellSingleQuoted(`unix://${docker.socketPath}`)}`,
         "nemoclaw onboard",
       ],
     });

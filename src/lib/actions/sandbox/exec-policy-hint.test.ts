@@ -301,9 +301,7 @@ describe("maybeEmitScopeUpgradeHint (#9744)", () => {
         OPENCLAW_CRON_ADD,
         h.base,
       );
-      expect(hint).toContain(
-        "nemoclaw my-assistant exec -- openclaw devices approve <requestId>",
-      );
+      expect(hint).toContain("nemoclaw my-assistant exec -- openclaw devices approve <requestId>");
       expect(hint).not.toContain(leakedId);
       expect(hint).not.toContain("operator.admin");
       expect(hint).not.toContain("unrelated-device-fingerprint");

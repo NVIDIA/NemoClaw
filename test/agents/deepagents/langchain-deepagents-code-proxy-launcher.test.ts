@@ -272,11 +272,16 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     const lines = result.stdout.trimEnd().split("\n");
     const managedProxy = "http://managed-proxy.internal:65535";
     const managedNoProxy = "localhost,127.0.0.1,::1,managed-proxy.internal";
-    expect(PROXY_URL_ENV_NAMES.every((name) => lines.includes(`LAUNCHER_${name}=${managedProxy}`))).toBe(true);
+    expect(
+      PROXY_URL_ENV_NAMES.every((name) => lines.includes(`LAUNCHER_${name}=${managedProxy}`)),
+    ).toBe(true);
     expect(lines).toContain(`LAUNCHER_${TRUSTED_FETCH_PROXY_ENV_NAME}=${managedProxy}`);
-    expect(NO_PROXY_ENV_NAMES.every((name) =>
-        lines.includes(`LAUNCHER_${name}=${managedNoProxy}`))).toBe(true);
-    expect(CLEARED_PROXY_ENV_NAMES.every((name) => lines.includes(`LAUNCHER_${name}=__unset__`))).toBe(true);
+    expect(
+      NO_PROXY_ENV_NAMES.every((name) => lines.includes(`LAUNCHER_${name}=${managedNoProxy}`)),
+    ).toBe(true);
+    expect(
+      CLEARED_PROXY_ENV_NAMES.every((name) => lines.includes(`LAUNCHER_${name}=__unset__`)),
+    ).toBe(true);
     const output = `${result.stdout}\n${result.stderr}`;
     expect(output).not.toContain("inference.local");
     expect(output).not.toContain("corp-proxy.example");
@@ -669,15 +674,13 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     },
   );
 
-  it.each(
-    [
-        "# Invalid state:",
-        "# Source boundary:",
-        "# Source-fix constraint:",
-        "# Regression:",
-        "# Removal condition:",
-      ],
-  )("documents the proxy-only source boundary and removal condition [%s] (#6191)", (marker) => {
+  it.each([
+    "# Invalid state:",
+    "# Source boundary:",
+    "# Source-fix constraint:",
+    "# Regression:",
+    "# Removal condition:",
+  ])("documents the proxy-only source boundary and removal condition [%s] (#6191)", (marker) => {
     const start = readAgentFile("start.sh");
     const launcher = readAgentFile("dcode-launcher.sh");
     const headlessCheck = fs.readFileSync(headlessCheckPath, "utf8");
@@ -713,7 +716,11 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       expect(result.status).not.toBe(0);
       expect(startResult.status).not.toBe(0);
       expect(result.stdout).not.toContain("LAUNCHER_");
-      expect(Object.values(managedProxy).every((value) => !`${result.stdout}\n${result.stderr}\n${startResult.stderr}`.includes(value))).toBe(true);
+      expect(
+        Object.values(managedProxy).every(
+          (value) => !`${result.stdout}\n${result.stderr}\n${startResult.stderr}`.includes(value),
+        ),
+      ).toBe(true);
     },
   );
 });

@@ -127,21 +127,19 @@ describe("http-proxy-fix rewrite for a deepinfra-style failure (#2344)", () => {
     expect("auth" in (captured ?? {})).toBe(false);
   });
 
-  it.each(
-    [
-        "Host",
-        "host",
-        "Proxy-Authorization",
-        "Proxy-Connection",
-        "Proxy-Authenticate",
-        "Connection",
-        "Keep-Alive",
-        "TE",
-        "Trailer",
-        "Transfer-Encoding",
-        "Upgrade",
-      ],
-  )(
+  it.each([
+    "Host",
+    "host",
+    "Proxy-Authorization",
+    "Proxy-Connection",
+    "Proxy-Authenticate",
+    "Connection",
+    "Keep-Alive",
+    "TE",
+    "Trailer",
+    "Transfer-Encoding",
+    "Upgrade",
+  ])(
     "strips Host / Proxy-* / RFC-7230-§6.1 hop-by-hop headers; preserves target-intent headers [%s]",
     (k) => {
       http.request({

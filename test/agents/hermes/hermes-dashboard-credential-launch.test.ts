@@ -89,18 +89,21 @@ describe.skipIf(!PYTHON_AVAILABLE)("Hermes dashboard credential launch", () => {
   it.each([
     ["weak", "API_SERVER_KEY=weak\n"],
     ["duplicate", `API_SERVER_KEY=${GENERATED_KEY}\nAPI_SERVER_KEY=${"b".repeat(64)}\n`],
-  ])("refuses a %s API server credential source without launching Hermes (#8008)", (_label, source) => {
-    const sourcePath = path.join(tmpDir, "gateway.env");
-    fs.writeFileSync(sourcePath, source);
+  ])(
+    "refuses a %s API server credential source without launching Hermes (#8008)",
+    (_label, source) => {
+      const sourcePath = path.join(tmpDir, "gateway.env");
+      fs.writeFileSync(sourcePath, source);
 
-    const { result, markerPath } = runDashboard(sourcePath);
+      const { result, markerPath } = runDashboard(sourcePath);
 
-    expect(result.status).toBe(1);
-    expect(fs.existsSync(markerPath)).toBe(false);
-    expect(result.stderr).toContain("[SECURITY]");
-    expect(result.stderr).not.toContain("weak");
-    expect(result.stderr).not.toContain(GENERATED_KEY);
-  });
+      expect(result.status).toBe(1);
+      expect(fs.existsSync(markerPath)).toBe(false);
+      expect(result.stderr).toContain("[SECURITY]");
+      expect(result.stderr).not.toContain("weak");
+      expect(result.stderr).not.toContain(GENERATED_KEY);
+    },
+  );
 
   it("refuses a symlinked API server credential source without launching Hermes (#8008)", () => {
     const realPath = path.join(tmpDir, "real-gateway.env");

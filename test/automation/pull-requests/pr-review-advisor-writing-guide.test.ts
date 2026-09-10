@@ -40,5 +40,4 @@ describe("PR Review Advisor writing guide", () => {
 
     expect(() => readTrustedWritingGuide()).toThrow("Writing guide unavailable");
   });
-
 });

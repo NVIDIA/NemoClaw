@@ -30,14 +30,10 @@ const CORPORATE_CA_SHA256 = createHash("sha256")
   .digest("hex");
 
 function runFixture(args: readonly string[]) {
-  return spawnSync(
-    process.execPath,
-    ["--no-warnings", SCRIPT_PATH, ...args],
-    {
-      encoding: "utf8",
-      timeout: 10_000,
-    },
-  );
+  return spawnSync(process.execPath, ["--no-warnings", SCRIPT_PATH, ...args], {
+    encoding: "utf8",
+    timeout: 10_000,
+  });
 }
 
 describe("generate-managed-startup-profile-fixture.mts CLI", () => {
@@ -89,25 +85,26 @@ describe("generate-managed-startup-profile-fixture.mts CLI", () => {
     expect(profile.corporateCa.bundleSha256).toBeNull();
   });
 
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("honors every supported optional flag together for %s", (agent) => {
-    const result = runFixture([
-      "--agent",
-      agent,
-      "--changed",
-      "--corporate-ca",
-      "--without-host-proxy",
-    ]);
-    const profile = decodeManagedStartupProfile(result.stdout.trim());
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "honors every supported optional flag together for %s",
+    (agent) => {
+      const result = runFixture([
+        "--agent",
+        agent,
+        "--changed",
+        "--corporate-ca",
+        "--without-host-proxy",
+      ]);
+      const profile = decodeManagedStartupProfile(result.stdout.trim());
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(profile.agent).toBe(agent);
-    expect(profile.inference.model).toBe(CHANGED_MODEL);
-    expect(profile.proxy.hostHttpUrl).toBeNull();
-    expect(profile.proxy.hostHttpsUrl).toBeNull();
-    expect(profile.proxy.hostNoProxy).toEqual([]);
-    expect(profile.corporateCa.bundleSha256).toBe(CORPORATE_CA_SHA256);
-  });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(profile.agent).toBe(agent);
+      expect(profile.inference.model).toBe(CHANGED_MODEL);
+      expect(profile.proxy.hostHttpUrl).toBeNull();
+      expect(profile.proxy.hostHttpsUrl).toBeNull();
+      expect(profile.proxy.hostNoProxy).toEqual([]);
+      expect(profile.corporateCa.bundleSha256).toBe(CORPORATE_CA_SHA256);
+    },
+  );
 });

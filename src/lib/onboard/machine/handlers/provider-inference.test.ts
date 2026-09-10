@@ -447,11 +447,7 @@ describe("handleProviderInferenceState", () => {
 
     expect(calls.setupNim).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
-    expect(calls.recoverProvider).toHaveBeenCalledWith(
-      "nemoclaw",
-      "ollama-local",
-      null,
-    );
+    expect(calls.recoverProvider).toHaveBeenCalledWith("nemoclaw", "ollama-local", null);
     expect(calls.skipped).toHaveBeenCalledWith("provider_selection", "ollama-local / llama3.1");
     expect(calls.recordSkip).toHaveBeenCalledWith("provider_selection", {
       reason: "resume",

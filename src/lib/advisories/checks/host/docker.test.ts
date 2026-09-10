@@ -105,11 +105,25 @@ describe("Docker host advisories (#3213)", () => {
     expect(advisory?.reason).toContain("did not choose between them");
     expect(advisory?.reason).toContain("did not diagnose why");
     expect(advisory?.commands).toEqual([
-      "export DOCKER_HOST='unix:///run/user/1000/podman/podman.sock'   # podman",
-      "# or: export DOCKER_HOST='unix:///var/run/docker.sock'   # docker",
+      "export DOCKER_HOST='unix:///var/run/docker.sock'",
       "nemoclaw onboard",
     ]);
   });
+
+  it.each(["linux", "darwin", "win32"] as const)(
+    "offers native Podman guidance only for Linux when the platform is %s (#10622)",
+    (platform) => {
+      const result = runAdvisories(
+        DOCKER_HOST_ADVISORY_CHECKS,
+        host({ platform, dockerAuthorityConflict: CONFLICT }),
+        { phase: "preflight.host" },
+      );
+      const reason = result.advisories[0]?.reason ?? "";
+      expect(reason.includes("NEMOCLAW_GATEWAY_RUNTIME=podman")).toBe(platform === "linux");
+      expect(reason.includes("qualified Linux host")).toBe(platform === "linux");
+      expect(reason.includes("platform-support#deployment-paths")).toBe(platform === "linux");
+    },
+  );
 
   it("quotes a socket path that contains a space (#10622)", () => {
     const result = runAdvisories(
@@ -132,7 +146,7 @@ describe("Docker host advisories (#3213)", () => {
     );
 
     expect(result.advisories[0]?.commands?.[0]).toBe(
-      "export DOCKER_HOST='unix:///Users/Jane Doe/.docker/run/docker.sock'   # docker",
+      "export DOCKER_HOST='unix:///Users/Jane Doe/.docker/run/docker.sock'",
     );
   });
 

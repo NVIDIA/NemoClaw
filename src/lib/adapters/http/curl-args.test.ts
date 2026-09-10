@@ -217,13 +217,11 @@ describe("validateCurlProbeArgs — credential-leak defence", () => {
     ).not.toThrow();
   });
 
-  it.each(
-    [
-        "llm.corp.example:443:10.0.0.8",
-        "llm.corp.example:443:93.184.216.34",
-        "llm.corp.example:443:10.0.0.8,93.184.216.34,8.8.8.8",
-      ],
-  )(
+  it.each([
+    "llm.corp.example:443:10.0.0.8",
+    "llm.corp.example:443:93.184.216.34",
+    "llm.corp.example:443:10.0.0.8,93.184.216.34,8.8.8.8",
+  ])(
     "requires the exact mixed public and private pin set at the curl boundary [%s] (#8176)",
     async (mapping) => {
       const endpointUrl = "https://llm.corp.example/v1/models";
