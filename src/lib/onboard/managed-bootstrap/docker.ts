@@ -39,11 +39,13 @@ import type {
 } from "../docker-gpu-patch-types";
 import {
   getDockerGpuSupervisorReconnectTimeoutSecs,
+  waitForOpenShellFinalHandoff,
   waitForOpenShellSupervisorReconnect,
 } from "../docker-gpu-supervisor-reconnect";
 import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
 import {
   hasOpenShellSandboxOwnership,
+  isExactOpenShellDockerSandboxReplacement,
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
   queryOpenShellDockerSandboxContainers,
@@ -2380,10 +2382,90 @@ export function createDockerManagedBootstrapAdapter(
     removeDockerBootstrapJournalDurably(journal, deps);
     return recoveredReceipt(journal, sourcePhase, finalization);
   };
-  const finishRecoveredCommit = (
+  const finishCommittedHandoff = async (
+    transaction: DockerBootstrapTransaction,
+    backupPresent: boolean,
+    removeBackup: () => void,
+  ): Promise<void> => {
+    const pending = (detail: string) =>
+      new ManagedBootstrapDurableCommitCleanupPendingError({
+        bootstrapIdentity: transaction.bootstrapIdentity,
+        cleanupRuntimeId: transaction.replacementRuntimeId,
+        detail,
+      });
+    if (!deps.runOpenshell || !deps.runCaptureOpenshell || !deps.commandExecutor) {
+      throw pending("OpenShell lifecycle and execution are required for the final handoff");
+    }
+    const sandboxName = transaction.sandbox.sandboxName;
+    const timeoutMs = getDockerGpuSupervisorReconnectTimeoutSecs(1) * 1000;
+    const lifecycle = (action: "stop" | "start") => {
+      const result = deps.runOpenshell!(["sandbox", action, sandboxName], {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: timeoutMs,
+        killProcessTreeOnTimeout: true,
+        killSignal: "SIGKILL",
+      });
+      if (!hasZeroDockerExitStatus(result)) {
+        throw pending(`OpenShell ${action} was not acknowledged during the final handoff`);
+      }
+    };
+    if (backupPresent || !isStableRunning(inspectExact(transaction.replacementRuntimeId, deps))) {
+      // OpenShell 0.0.106 can attribute the backup's death to the replacement.
+      // Keep its row Stopped through exact removal, then let OpenShell start own
+      // the new lifecycle. The shared-state commit fence already forbids rollback.
+      lifecycle("stop");
+      const stopped = deps.dockerStop(transaction.replacementRuntimeId, {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
+      });
+      const replacement = inspectExact(transaction.replacementRuntimeId, deps);
+      assertTransactionReplacement(transaction, replacement);
+      if (
+        !isExplicitlyStopped(replacement) ||
+        dockerContainerName(replacement) !== transaction.originalName
+      ) {
+        throw pending(
+          `the exact replacement is not stopped under its authoritative name: ${commandDetail(stopped)}`,
+        );
+      }
+      if (backupPresent) removeBackup();
+    }
+    const exactReplacement = (requireRunning: boolean, remainingMs: number) =>
+      isExactOpenShellDockerSandboxReplacement(
+        sandboxName,
+        transaction.replacementRuntimeId,
+        requireRunning,
+        { dockerRun: deps.dockerRun },
+        remainingMs,
+        deps.now,
+      );
+    if (!exactReplacement(false, DOCKER_GPU_PATCH_TIMEOUT_MS)) {
+      throw pending("the exact replacement is not the sole sandbox runtime before OpenShell start");
+    }
+    lifecycle("start");
+    const handoff = await waitForOpenShellFinalHandoff(
+      sandboxName,
+      deps.now().getTime() + timeoutMs,
+      {
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+        commandExecutor: deps.commandExecutor,
+        sleep: deps.sleep,
+        now: deps.now,
+        replacementIsExactAndRunning: (remainingMs) => exactReplacement(true, remainingMs),
+      },
+    );
+    if (!handoff.acknowledged) {
+      throw pending(
+        `OpenShell final handoff was not acknowledged (phase: ${handoff.lastSandboxPhase ?? "unknown"})`,
+      );
+    }
+  };
+  const finishRecoveredCommit = async (
     journal: DockerBootstrapTransaction,
     sourcePhase: DockerBootstrapTransaction["phase"],
-  ): ManagedBootstrapRecoveryReceipt => {
+  ): Promise<ManagedBootstrapRecoveryReceipt> => {
     if (journal.phase !== "shared-state-committed" || journal.commitReceipt === null) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
         bootstrapIdentity: journal.bootstrapIdentity,
@@ -2402,7 +2484,7 @@ export function createDockerManagedBootstrapAdapter(
     assertTransactionReplacement(journal, replacement);
     if (
       dockerContainerName(replacement) !== journal.originalName ||
-      !isStableRunning(replacement) ||
+      (!isStableRunning(replacement) && !isExplicitlyStopped(replacement)) ||
       normalizeDockerManagedBootstrapLaunchSpec(replacement).hash !== journal.replacementSpecHash
     ) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
@@ -2447,6 +2529,8 @@ export function createDockerManagedBootstrapAdapter(
           detail: "the shared commit receipt was retired before exact backup absence was proven",
         });
       }
+    }
+    await finishCommittedHandoff(journal, original !== null, () => {
       const removed = deps.dockerRm(journal.originalRuntimeId, {
         ignoreError: true,
         suppressOutput: true,
@@ -2462,7 +2546,7 @@ export function createDockerManagedBootstrapAdapter(
           detail: `${commandDetail(removed) || "Docker removal failed"}; exact backup absence was not proven`,
         });
       }
-    }
+    });
     if (sharedStatus === "committed") {
       try {
         clearDockerManagedStartupSharedStateCommitReceipt(sharedTransaction, deps);
@@ -2503,10 +2587,10 @@ export function createDockerManagedBootstrapAdapter(
     removeDockerBootstrapJournalDurably(journal, deps);
     return recoveredReceipt(journal, sourcePhase, finalization);
   };
-  const finishRecoveredRollbackPhase = (
+  const finishRecoveredRollbackPhase = async (
     journal: DockerBootstrapTransaction,
     sourcePhase: DockerBootstrapTransaction["phase"],
-  ): ManagedBootstrapRecoveryReceipt => {
+  ): Promise<ManagedBootstrapRecoveryReceipt> => {
     if (journal.phase === "owner-cleanup-required") {
       return finishRecoveredRollback(journal, sourcePhase);
     }
@@ -2946,7 +3030,7 @@ export function createDockerManagedBootstrapAdapter(
     }
     return completeRollbackTransaction(handle, activeJournal);
   };
-  const commitBootstrapNow = (
+  const commitBootstrapNow = async (
     handle: ManagedBootstrapHeldWorkloadHandle,
     receipt: ManagedBootstrapCompletionReceipt,
     transaction: DockerBootstrapTransaction,
@@ -2954,7 +3038,7 @@ export function createDockerManagedBootstrapAdapter(
       readonly sharedStateStatus: "committed" | "none";
       readonly sharedStateTransaction: ReturnType<typeof managedSharedStateTransaction>;
     },
-  ): ManagedBootstrapFinalizationReceipt => {
+  ): Promise<ManagedBootstrapFinalizationReceipt> => {
     if (
       transaction.phase !== "shared-state-committed" ||
       transaction.replacementRuntimeId !== receipt.runtimeId ||
@@ -3007,6 +3091,8 @@ export function createDockerManagedBootstrapAdapter(
         });
       }
       assertExplicitlyStopped(original, "commit rollback backup");
+    }
+    await finishCommittedHandoff(transaction, original !== null, () => {
       const beforeRemove = deps.journalStore.load(transaction.bootstrapIdentity);
       if (!beforeRemove || !sameDockerBootstrapJournal(beforeRemove, transaction)) {
         throw new ManagedBootstrapCommitStateIndeterminateError({
@@ -3030,7 +3116,7 @@ export function createDockerManagedBootstrapAdapter(
           detail: `${commandDetail(removed) || "Docker removal failed"}; exact backup absence was not proven`,
         });
       }
-    }
+    });
 
     if (input.sharedStateStatus === "committed") {
       try {
@@ -3253,9 +3339,9 @@ export function createDockerManagedBootstrapAdapter(
           const finalized = compactRecoveredFinalization(journal, sourcePhase);
           receipts.push(
             finalized ??
-              (journal.phase === "shared-state-committed"
+              (await (journal.phase === "shared-state-committed"
                 ? finishRecoveredCommit(journal, sourcePhase)
-                : finishRecoveredRollbackPhase(journal, sourcePhase)),
+                : finishRecoveredRollbackPhase(journal, sourcePhase))),
           );
         } catch (error) {
           try {

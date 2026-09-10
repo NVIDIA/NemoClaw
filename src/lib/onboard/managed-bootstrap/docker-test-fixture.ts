@@ -139,6 +139,7 @@ function originalInspect(inputs = agentInputs()): DockerContainerInspect {
         "openshell.ai/managed-by": "openshell",
         "openshell.ai/sandbox-name": "alpha",
         "openshell.ai/sandbox-id": "sandbox-alpha",
+        "openshell.ai/sandbox-namespace": "default",
         ...inputs.metadata,
       },
       Entrypoint: [SUPERVISOR[0]],
@@ -397,18 +398,26 @@ export function fixture(options: DockerFixtureOptions = {}) {
             : ok(NEW_ID);
         }
         case "ps":
-          return ok(original ? OLD_ID : "");
+          return ok([original?.Id, replacement?.Id].filter(Boolean).join("\n"));
         case "volume":
           return ok();
         case "rm":
           return ok();
         case "inspect": {
-          const id = String(args[3] ?? "");
+          const id = String(args.at(-1) ?? "");
           if (dockerInspectUnknownIds.has(id)) {
             return { status: 1, stderr: `injected unknown inspect state for ${id}` };
           }
           try {
-            inspect(id);
+            const container = inspect(id);
+            if (args.includes("--format")) {
+              const format = args[args.indexOf("--format") + 1];
+              return ok(
+                format === "{{json .State.Running}}"
+                  ? JSON.stringify(container.State?.Running)
+                  : String(container.Config?.Labels?.["openshell.ai/sandbox-namespace"] ?? ""),
+              );
+            }
             return ok(`[{"Id":"${id}"}]`);
           } catch {
             return { status: 1, stderr: `Error response from daemon: No such container: ${id}` };
@@ -566,8 +575,21 @@ export function fixture(options: DockerFixtureOptions = {}) {
         ? { status: 1, stderr: "lost rm acknowledgement" }
         : result;
     }),
-    runCaptureOpenshell: vi.fn(() => `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`),
-    runOpenshell: vi.fn(() => ok()),
+    runCaptureOpenshell: vi.fn((args) =>
+      args[1] === "list"
+        ? "NAME  CREATED  PHASE\nalpha  2026-07-31 12:30:00  Ready\n"
+        : `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`,
+    ),
+    runOpenshell: vi.fn((args) => {
+      if (args[1] === "stop" || args[1] === "start") {
+        events.push(`openshell:${args[1]}`);
+        const target = [original, replacement].find((value) => value?.Name === "/openshell-alpha");
+        if (!target) return { status: 1, stderr: "canonical container absent" };
+        target.State = { ...target.State, Running: args[1] === "start" };
+      }
+      return ok();
+    }),
+    sleep: vi.fn(),
     now: () => new Date("2026-07-31T12:30:00.000Z"),
   };
   return {
