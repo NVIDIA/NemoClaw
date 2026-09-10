@@ -2674,9 +2674,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     collector: null,
     span: null,
   };
-  let completed = false,
-    preserveDeferredExitSession = false,
-    preserveIncompleteSession = false;
+  let completed = false;
+  let preserveIncompleteSession = false;
+  registerIncompleteOnboardExitHandlerForSession(
+    { ...onboardSession, releaseOnboardLock: portableRetirementEntry.release },
+    () => completed || preserveIncompleteSession,
+  );
+  let preserveDeferredExitSession = false;
   try {
     await portableRetirementEntry.run(async () => {
       const entryOptions = resolveEntryOptions();
@@ -2798,10 +2802,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         );
         process.exit(1);
       }
-      registerIncompleteOnboardExitHandlerForSession(
-        onboardSession,
-        () => completed || preserveIncompleteSession,
-      );
       const agent = await selectOnboardAgent({
         agentFlag: opts.agent,
         session,

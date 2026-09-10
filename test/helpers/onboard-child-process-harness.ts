@@ -144,7 +144,7 @@ export function runOnboardProcessAsync(
           resolve({
             status: error ? (typeof error.code === "number" ? error.code : null) : 0,
             signal: child.signalCode,
-            error: error ?? undefined,
+            error: error && typeof error.code !== "number" ? error : undefined,
             stdout,
             stderr,
             output: `${stdout}\n${stderr}`,
