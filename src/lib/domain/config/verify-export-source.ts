@@ -3,6 +3,7 @@
 
 import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
 import { isDeepStrictEqual } from "node:util";
+import { validateExtraAgents, type NormalizedExtraAgent } from "../../extra-agents-validation";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
@@ -27,6 +28,7 @@ import {
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
   NemoClawAgentToolsConfigSchema,
+  NemoClawAdditionalAgentSchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
 } from "../../config/model";
@@ -91,6 +93,7 @@ const EXPORT_AGENT_PROFILE_PROJECTIONS: Record<
 
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
+  | "additionalAgents"
   | "agent"
   | "execution"
   | "gateway"
@@ -477,6 +480,7 @@ function classifyReasoningAgreement(
 function supportedAgentSettingsProfile(
   profile: ManagedStartupProfile,
   expected: ManagedStartupProfile,
+  additionalAgents?: VerifiedExportSource["additionalAgents"],
 ): ManagedStartupProfile | null {
   if (profile.agentConfig.agent === "hermes" && expected.agentConfig.agent === "hermes") {
     return expected;
@@ -502,13 +506,108 @@ function supportedAgentSettingsProfile(
       ...expected.agentConfig,
       agentTimeoutSeconds: profile.agentConfig.agentTimeoutSeconds,
       heartbeatEvery: profile.agentConfig.heartbeatEvery,
+      extraAgents: additionalAgents
+        ? profile.agentConfig.extraAgents
+        : expected.agentConfig.extraAgents,
     },
   };
+}
+
+function isSupportedAdditionalAgent(
+  secondary: NormalizedExtraAgent,
+  primaryModelRef: string | null,
+): boolean {
+  return (
+    secondary.subagents === undefined &&
+    secondary.description === undefined &&
+    (secondary.model === undefined || secondary.model === primaryModelRef)
+  );
+}
+
+function supportsAdditionalAgents(
+  entry: ObservedExportRegistry,
+  manifest: ReturnType<typeof validateExtraAgents>,
+): boolean {
+  return (
+    entry.openshellDriver === "docker" &&
+    entry.servingProfileProvenance === undefined &&
+    manifest.agents.length === 1 &&
+    Object.keys(manifest.defaults.subagents).length === 0 &&
+    Object.keys(manifest.main).length === 0
+  );
+}
+
+function projectAdditionalAgents(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile,
+): VerifiedExportSource["additionalAgents"] | null {
+  if (profile.agentConfig.agent !== "openclaw") return undefined;
+  try {
+    const manifest = validateExtraAgents(
+      profile.agentConfig.extraAgents,
+      profile.inference.routeProvider,
+    );
+    if (manifest.agents.length === 0) return undefined;
+    const [secondary] = manifest.agents;
+    if (!secondary || !supportsAdditionalAgents(entry, manifest)) return null;
+    const exported = { name: secondary.id, tools: secondary.tools };
+    if (
+      !isSupportedAdditionalAgent(secondary, profile.inference.primaryModelRef) ||
+      !Check(NemoClawAdditionalAgentSchema, exported)
+    )
+      return null;
+    return [exported];
+  } catch {
+    return null;
+  }
+}
+
+function classifyToolDisclosureAgreement(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile,
+  expected: ManagedStartupProfile,
+): ExportFinding[] {
+  if (entry.agent !== "openclaw" || profile.tools.disclosure === expected.tools.disclosure)
+    return [];
+  return [
+    finding(
+      "spec.sandboxes[].agents[0].tools.disclosure",
+      entry.toolDisclosure === undefined ? "missing-provenance" : "drifted",
+      "The retained tool disclosure and the registry selection do not agree.",
+    ),
+  ];
+}
+
+function classifyProfileEquality(
+  profile: ManagedStartupProfile,
+  expected: ManagedStartupProfile,
+): ExportFinding[] {
+  const findings: ExportFinding[] = [];
+  if (!hasEqualJsonStructure(profile.inference, expected.inference)) {
+    findings.push(
+      finding(
+        "spec.inferenceProviders",
+        "drifted",
+        "The managed startup profile and the registered inference selection differ.",
+      ),
+    );
+  }
+  if (!hasEqualJsonStructure({ ...profile, inference: expected.inference }, expected)) {
+    findings.push(
+      finding(
+        "source.workload.startupProfile",
+        "unsupported",
+        "The managed startup profile is not the canonical profile supported by v1 export.",
+      ),
+    );
+  }
+  return findings;
 }
 
 function classifyManagedStartupProfile(
   entry: ObservedExportRegistry,
   profile: ManagedStartupProfile,
+  additionalAgents?: VerifiedExportSource["additionalAgents"],
 ): ExportFinding[] {
   let expected: ManagedStartupProfile;
   try {
@@ -530,18 +629,12 @@ function classifyManagedStartupProfile(
       ),
     ];
   }
-  const findings = classifyReasoningAgreement(entry, profile);
-  if (entry.agent === "openclaw" && profile.tools.disclosure !== expected.tools.disclosure) {
-    findings.push(
-      finding(
-        "spec.sandboxes[].agents[0].tools.disclosure",
-        entry.toolDisclosure === undefined ? "missing-provenance" : "drifted",
-        "The retained tool disclosure and the registry selection do not agree.",
-      ),
-    );
-  }
+  const findings = [
+    ...classifyReasoningAgreement(entry, profile),
+    ...classifyToolDisclosureAgreement(entry, profile, expected),
+  ];
   if (entry.servingProfileProvenance?.preset.id !== EXPORTED_VLLM_PROFILE_ID) {
-    const supported = supportedAgentSettingsProfile(profile, expected);
+    const supported = supportedAgentSettingsProfile(profile, expected, additionalAgents);
     if (!supported) {
       return [
         ...findings,
@@ -554,25 +647,7 @@ function classifyManagedStartupProfile(
     }
     expected = supported;
   }
-  if (!hasEqualJsonStructure(profile.inference, expected.inference)) {
-    findings.push(
-      finding(
-        "spec.inferenceProviders",
-        "drifted",
-        "The managed startup profile and the registered inference selection differ.",
-      ),
-    );
-  }
-  if (!hasEqualJsonStructure({ ...profile, inference: expected.inference }, expected)) {
-    findings.push(
-      finding(
-        "source.workload.startupProfile",
-        "unsupported",
-        "The managed startup profile is not the canonical profile supported by v1 export.",
-      ),
-    );
-  }
-  return findings;
+  return [...findings, ...classifyProfileEquality(profile, expected)];
 }
 
 function endpointEvidenceMatchesRoute(inference: QualifiedExportSnapshot["inference"]): boolean {
@@ -992,11 +1067,26 @@ function validateAgreement(
 
 function inspectWorkload(entry: ObservedExportRegistry) {
   let authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null = null;
+  let additionalAgents: VerifiedExportSource["additionalAgents"];
   const findings: ExportFinding[] = [];
   if (entry.workload?.kind === "managed-image") {
     try {
       authority = readManagedWorkloadAuthority(entry);
-      if (authority) findings.push(...classifyManagedStartupProfile(entry, authority.profile));
+      if (authority) {
+        const projected = projectAdditionalAgents(entry, authority.profile);
+        if (projected === null) {
+          findings.push(
+            finding(
+              "spec.sandboxes[].agents",
+              "unsupported",
+              "The retained secondary-agent manifest cannot be represented by v1 export.",
+            ),
+          );
+        } else {
+          additionalAgents = projected;
+          findings.push(...classifyManagedStartupProfile(entry, authority.profile, projected));
+        }
+      }
     } catch {
       findings.push(
         finding(
@@ -1007,7 +1097,7 @@ function inspectWorkload(entry: ObservedExportRegistry) {
       );
     }
   }
-  return { authority, findings };
+  return { authority, additionalAgents, findings };
 }
 
 function projectVerifiedInference(
@@ -1030,11 +1120,27 @@ function projectVerifiedInference(
       };
 }
 
+function projectRuntimeOptions(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile | undefined,
+) {
+  const proxy = profile?.proxy;
+  return {
+    ...(entry.agent === "openclaw" && profile?.tools.disclosure === "direct"
+      ? { tools: { disclosure: profile.tools.disclosure } }
+      : {}),
+    ...(proxy && !hasEqualJsonStructure(proxy, expectedManagedStartupProfile(entry).proxy)
+      ? { proxy: { host: proxy.managedHost, port: proxy.managedPort } }
+      : {}),
+  };
+}
+
 function completeVerifiedSource(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
   authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
   policy: CanonicalExportPolicy,
+  additionalAgents?: VerifiedExportSource["additionalAgents"],
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
   const selected = normalizeInferenceSelection(entry);
@@ -1042,9 +1148,9 @@ function completeVerifiedSource(
     authority && snapshot.inference.topology !== "managed"
       ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
       : {};
-  const proxy = authority?.profile.proxy;
   const values = {
     sandboxName: requestedSandboxName,
+    ...(additionalAgents ? { additionalAgents } : {}),
     agent: entry.agent,
     ...(settings.execution ? { execution: settings.execution } : {}),
     ...(hasBraveSearch(entry)
@@ -1058,12 +1164,7 @@ function completeVerifiedSource(
       : {}),
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
-    ...(entry.agent === "openclaw" && authority?.profile.tools.disclosure === "direct"
-      ? { tools: { disclosure: authority.profile.tools.disclosure } }
-      : {}),
-    ...(proxy && !hasEqualJsonStructure(proxy, expectedManagedStartupProfile(entry).proxy)
-      ? { proxy: { host: proxy.managedHost, port: proxy.managedPort } }
-      : {}),
+    ...projectRuntimeOptions(entry, authority?.profile),
     inference: projectVerifiedInference(snapshot, selected, settings),
   };
   if (!Check(ExportSourceValuesSchema, values)) {
@@ -1087,7 +1188,7 @@ export function verifyExportSource(
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
   const findings = validateAgreement(requestedSandboxName, snapshot);
-  const { authority, findings: workloadFindings } = inspectWorkload(entry);
+  const { authority, additionalAgents, findings: workloadFindings } = inspectWorkload(entry);
   findings.push(...workloadFindings);
   const policy = snapshot.policy.kind === "verified" ? snapshot.policy.canonical : undefined;
   if (snapshot.policy.kind === "not-representable") {
@@ -1101,5 +1202,11 @@ export function verifyExportSource(
   }
   if (findings.length > 0 || !policy) return { kind: "rejected", findings: nonEmpty(findings) };
 
-  return completeVerifiedSource(requestedSandboxName, snapshot, authority, policy);
+  return completeVerifiedSource(
+    requestedSandboxName,
+    snapshot,
+    authority,
+    policy,
+    additionalAgents,
+  );
 }

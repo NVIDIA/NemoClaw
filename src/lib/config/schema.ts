@@ -15,8 +15,10 @@ import { cloneAndDeepFreeze } from "../core/immutable";
 import { isSandboxPolicyCredentialFree } from "../policy/sandbox-policy-validation";
 import {
   isCredentialEnvironmentReferenceName,
+  isValidNemoClawSecondaryAgentName,
   EXPORTED_VLLM_CONTEXT_WINDOW,
   NemoClawConfigSchema,
+  type NemoClawAgentConfig,
   type NemoClawConfig,
   type NemoClawInferenceProviderConfig,
   type NemoClawSandboxConfig,
@@ -67,7 +69,7 @@ function duplicateProblems(values: readonly string[], location: string): string[
 function sandboxProblems(
   sandbox: NemoClawSandboxConfig,
   sandboxIndex: number,
-  providers: ReadonlySet<string>,
+  providers: ReadonlyMap<string, NemoClawInferenceProviderConfig>,
 ): string[] {
   const problems: string[] = [];
   if (!isSandboxPolicyCredentialFree(YAML.stringify(sandbox.network.policy.explicit))) {
@@ -100,8 +102,60 @@ function sandboxProblems(
         );
     }
   }
-  problems.push(...webSearchProblems(sandbox, sandboxIndex));
+  problems.push(
+    ...webSearchProblems(sandbox, sandboxIndex),
+    ...additionalAgentProblems(sandbox, sandboxIndex, providers),
+  );
   return problems;
+}
+
+function hasReadOnlyTools(agent: NemoClawAgentConfig): boolean {
+  return agent.type === "openclaw" && agent.tools !== undefined && "allow" in agent.tools;
+}
+
+function isPrimarySecondaryPair(agents: readonly NemoClawAgentConfig[]): boolean {
+  const [primary, secondary] = agents;
+  return (
+    agents.length === 2 &&
+    primary?.name === "primary" &&
+    primary.type === "openclaw" &&
+    !hasReadOnlyTools(primary) &&
+    secondary !== undefined &&
+    hasReadOnlyTools(secondary) &&
+    isValidNemoClawSecondaryAgentName(secondary.name) &&
+    secondary.execution === undefined
+  );
+}
+
+function sharesPrimaryHostedRoute(
+  agents: readonly NemoClawAgentConfig[],
+  providers: ReadonlyMap<string, NemoClawInferenceProviderConfig>,
+): boolean {
+  const [primary, secondary] = agents;
+  const provider = providers.get(primary?.inference.routes[0]?.providerRef ?? "");
+  return (
+    primary?.inference.routes.length === 1 &&
+    isDeepStrictEqual(primary.inference.routes, secondary?.inference.routes) &&
+    provider !== undefined &&
+    !("serving" in provider)
+  );
+}
+
+function additionalAgentProblems(
+  sandbox: NemoClawSandboxConfig,
+  sandboxIndex: number,
+  providers: ReadonlyMap<string, NemoClawInferenceProviderConfig>,
+): string[] {
+  if (!sandbox.agents.some(hasReadOnlyTools)) return [];
+  const valid =
+    sandbox.runtime.provider === "docker" &&
+    isPrimarySecondaryPair(sandbox.agents) &&
+    sharesPrimaryHostedRoute(sandbox.agents, providers);
+  return valid
+    ? []
+    : [
+        `/spec/sandboxes/${sandboxIndex}/agents must pair primary with one read-only OpenClaw agent sharing its hosted route`,
+      ];
 }
 
 function webSearchProblems(sandbox: NemoClawSandboxConfig, sandboxIndex: number): string[] {
@@ -161,7 +215,9 @@ function semanticProblems(config: NemoClawConfig): string[] {
       "/spec/sandboxes",
     ),
   ];
-  const providers = new Set(config.spec.inferenceProviders.map(({ name }) => name));
+  const providers = new Map(
+    config.spec.inferenceProviders.map((provider) => [provider.name, provider]),
+  );
   for (const [providerIndex, provider] of config.spec.inferenceProviders.entries()) {
     if ("serving" in provider) {
       problems.push(...managedProviderProblems(config, provider, providerIndex));

@@ -10,7 +10,8 @@ import {
   InferenceEndpointSchema,
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
-  NemoClawAgentToolsConfigSchema,
+  NemoClawAgentToolDisclosureSchema,
+  NemoClawAdditionalAgentSchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
@@ -277,10 +278,15 @@ export const ExportSourceValuesSchema = Type.Refine(
     gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
     proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
     inference: ExportInferenceSchema,
-    tools: Type.Optional(NemoClawAgentToolsConfigSchema),
+    tools: Type.Optional(NemoClawAgentToolDisclosureSchema),
+    additionalAgents: Type.Optional(
+      Type.Array(NemoClawAdditionalAgentSchema, { minItems: 1, maxItems: 1 }),
+    ),
     webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
   }),
-  (value) => value.agent === "openclaw" || value.tools === undefined,
+  (value) =>
+    value.agent === "openclaw" ||
+    (value.tools === undefined && value.additionalAgents === undefined),
 );
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;

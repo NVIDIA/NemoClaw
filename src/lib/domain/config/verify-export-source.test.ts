@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { buildConfig as buildOpenClawConfig } from "../../../../scripts/generate-openclaw-config.mts";
 import YAML from "yaml";
 import { Check } from "typebox/value";
 import { ExportSourceValuesSchema } from "./export-evidence";
@@ -13,194 +14,29 @@ import {
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
+import { mapManagedStartupProfileToAgentEnvironment } from "../../onboard/managed-startup/agent-environment";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
-import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import {
   buildManagedStartupProfile,
   type ManagedStartupProfileBuilderInput,
 } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
-import type {
-  CanonicalExportPolicy,
-  ObservedExportSnapshot,
-  QualifiedExportSnapshot,
-} from "./export-evidence";
+import type { ObservedExportSnapshot, QualifiedExportSnapshot } from "./export-evidence";
 import { classifyExportRegistry, verifyExportSource } from "./verify-export-source";
-
-const sandboxId = "018f47e2-9d93-7d15-9c41-3ecf70b2550f";
-const fingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
-const endpoint = "https://api.openai.com/v1";
-const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
-const hermesImageRef = "ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:" + "c".repeat(64);
-const policy =
-  "version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\nnetwork_policies:\n  api:\n    name: api\n    endpoints: [{host: api.example.com, port: 443}]\n    binaries: [{path: /usr/bin/curl}]\nfilesystem_policy:\n  include_workdir: false\n  read_only: [/usr]\n  read_write: [/sandbox]\n";
-const canonicalPolicy = {
-  filesystem_policy: { include_workdir: false, read_only: ["/usr"], read_write: ["/sandbox"] },
-  network_policies: {
-    api: {
-      binaries: [{ path: "/usr/bin/curl" }],
-      endpoints: [{ host: "api.example.com", port: 443 }],
-      name: "api",
-    },
-  },
-  process: { run_as_group: "sandbox", run_as_user: "sandbox" },
-  version: 1,
-} as unknown as CanonicalExportPolicy;
-function profileInput(
-  overrides: Partial<ManagedStartupProfileBuilderInput> = {},
-): ManagedStartupProfileBuilderInput {
-  return {
-    agent: "openclaw",
-    inference: {
-      routeProvider: "openai",
-      upstreamProvider: "openai-api",
-      model: "gpt-5",
-      routedBaseUrl: "https://inference.local/v1",
-      upstreamEndpointUrl: null,
-      api: "openai-responses",
-      primaryModelRef: "openai/gpt-5",
-      compatibility: {},
-    },
-    dashboard: {
-      agent: "openclaw",
-      mode: "loopback",
-      url: "http://127.0.0.1:18789",
-      port: 18_789,
-      bindAddress: "127.0.0.1",
-      wslExposure: false,
-    },
-    webSearch: null,
-    toolDisclosure: "progressive",
-    hermesToolGateways: [],
-    messagingPlan: null,
-    dcodeAutoApprovalMode: null,
-    observabilityEnabled: null,
-    environment: {},
-    corporateCa: null,
-    ...overrides,
-  };
-}
-
-function hermesProfileInput(): ManagedStartupProfileBuilderInput {
-  return {
-    ...profileInput(),
-    agent: "hermes",
-    inference: {
-      ...profileInput().inference,
-      primaryModelRef: null,
-      compatibility: null,
-    },
-    dashboard: {
-      agent: "hermes",
-      mode: "disabled",
-      url: "http://127.0.0.1:18789",
-      browserUrl: "http://127.0.0.1:18789",
-      publicPort: null,
-      internalPort: null,
-      tuiEnabled: false,
-    },
-  };
-}
-
-function managedWorkload(
-  input = profileInput(),
-  reference = imageRef,
-): Extract<SandboxWorkloadReceipt, { kind: "managed-image" }> {
-  const built = buildManagedStartupProfile(input);
-  return {
-    schemaVersion: 1,
-    kind: "managed-image",
-    reference,
-    platform: "linux/amd64",
-    release: "v1.0.0",
-    sourceRevision: "b".repeat(40),
-    sourceCohort: "ghrun-1-1",
-    capabilityContractVersion: 1,
-    startupProfileContractVersion: 1,
-    encodedProfile: built.encodedProfile,
-    startupProfileSha256: built.startupProfileSha256,
-    credentialProxyReplayRequired: false,
-    shared: true,
-  };
-}
-
-function entry(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
-  return {
-    name: "alpha",
-    agent: "openclaw",
-    openshellDriver: "docker",
-    lifecycleGeneration: "generation-1",
-    lifecycleLiveIdentityFingerprint: fingerprint,
-    gatewayName: "nemoclaw",
-    gatewayPort: 8080,
-    provider: "openai-api",
-    model: "gpt-5",
-    preferredInferenceApi: "openai-responses",
-    endpointUrl: endpoint,
-    credentialEnv: "OPENAI_API_KEY",
-    imageTag: imageRef,
-    workload: managedWorkload(),
-    ...overrides,
-  };
-}
-
-function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): ObservedExportSnapshot {
-  return {
-    kind: "observed",
-    sandboxName: "alpha",
-    registry: entry(),
-    sandbox: {
-      sandboxId,
-      fingerprint,
-      resourceVersion: "7",
-      workspace: "default",
-      imageRef,
-      providerNames: [],
-      policyVersion: 3,
-    },
-    gateway: {
-      name: "nemoclaw",
-      port: 8080,
-      management: "nemoclaw",
-      stateRootOwned: true,
-    },
-    inference: {
-      topology: "hosted",
-      provider: "openai-api",
-      model: "gpt-5",
-      api: "openai-responses",
-      endpoint,
-      endpointEvidence: {
-        endpoint,
-        provider: {
-          gatewayName: "nemoclaw",
-          workspace: "default",
-          name: "openai-api",
-          id: "provider-id",
-          resourceVersion: "8",
-        },
-        source: { kind: "provider-config", key: "OPENAI_BASE_URL" },
-      },
-      credentialEnv: "OPENAI_API_KEY",
-    },
-    policy: {
-      sandboxId,
-      revision: "3",
-      document: policy,
-    },
-    configuration: {
-      sandboxId,
-      workspace: "default",
-      revision: 3,
-      policyHash: "a".repeat(64),
-      configRevision: "1",
-      providerEnvRevision: "2",
-      policySource: "sandbox",
-      globalPolicyVersion: 0,
-    },
-    ...overrides,
-  };
-}
+import {
+  sandboxId,
+  fingerprint,
+  endpoint,
+  imageRef,
+  hermesImageRef,
+  policy,
+  canonicalPolicy,
+  profileInput,
+  hermesProfileInput,
+  managedWorkload,
+  entry,
+  snapshot,
+} from "./export-source-test-fixture";
 
 function braveSnapshot(): ObservedExportSnapshot {
   const value = snapshot();
@@ -286,6 +122,31 @@ async function exportSnapshots(sequence: readonly ObservedExportSnapshot[]) {
     },
   );
   return { outcome, read, writeStdout, publish };
+}
+
+function additionalAgentSnapshot(manifest: unknown, environment: NodeJS.ProcessEnv = {}) {
+  return snapshot({
+    registry: entry({
+      workload: managedWorkload(
+        profileInput({
+          environment: { ...environment, NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify(manifest) },
+        }),
+      ),
+    }),
+  });
+}
+
+function generatedAdditionalAgentConfig(manifest: unknown) {
+  const { profile } = buildManagedStartupProfile(
+    profileInput({
+      environment: { ...tunedEnvironment, NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify(manifest) },
+    }),
+  );
+  const mapped = mapManagedStartupProfileToAgentEnvironment(profile);
+  return buildOpenClawConfig({
+    ...mapped.configurationEnvironment,
+    ...mapped.runtimeEnvironment,
+  });
 }
 
 function directToolsSnapshot(overrides: Partial<SandboxEntry> = {}) {
@@ -1487,5 +1348,132 @@ describe("config export source verification (#10938)", () => {
       expect.objectContaining({ category: "policy-not-representable" }),
     );
     expect(JSON.stringify(result)).not.toContain(canary);
+  });
+});
+
+describe("read-only secondary-agent export", () => {
+  it.each([
+    ["array", [{ id: "researcher", tools: { allow: ["read"] } }]],
+    ["object", { agents: [{ id: "researcher", tools: { allow: ["read"] } }] }],
+    [
+      "canonical paths and same model",
+      {
+        agents: [
+          {
+            id: "researcher",
+            tools: { allow: ["read"] },
+            model: "openai/gpt-5",
+            workspace: "/sandbox/.openclaw/./workspace-researcher",
+            agentDir: "/sandbox/.openclaw/agents/researcher",
+          },
+        ],
+        defaults: { subagents: {} },
+        main: {},
+      },
+    ],
+  ])(
+    "exports the %s manifest with the primary route and no filesystem paths (#11434)",
+    async (_case, manifest) => {
+      const generated = generatedAdditionalAgentConfig(manifest);
+      expect(generated.agents.list).toMatchObject([
+        { id: "main", default: true },
+        {
+          id: "researcher",
+          workspace: "/sandbox/.openclaw/workspace-researcher",
+          agentDir: "/sandbox/.openclaw/agents/researcher",
+          tools: { allow: ["read"] },
+        },
+      ]);
+      expect(
+        generated.agents.list.filter((agent: { default?: boolean }) => agent.default),
+      ).toHaveLength(1);
+      expect(generated.agents.defaults.model.primary).toBe("openai/gpt-5");
+      const observed = additionalAgentSnapshot(manifest, tunedEnvironment);
+      const result = await exportSnapshots([observed, observed]);
+      expect(result.outcome.ok).toBe(true);
+      const document = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
+      const [primary, secondary] = document.spec.sandboxes[0]!.agents;
+      expect(primary!.name).toBe("primary");
+      expect(secondary).toEqual({
+        name: "researcher",
+        type: "openclaw",
+        tools: { allow: ["read"] },
+        inference: primary!.inference,
+      });
+      expect(primary!.inference.routes[0]!.overrides).toMatchObject({
+        model: "gpt-5",
+        contextWindow: 65536,
+        maxTokens: 8192,
+      });
+      expect(document.spec.inferenceProviders).toHaveLength(1);
+      expect(JSON.stringify(document)).not.toContain("workspace-researcher");
+    },
+  );
+
+  it.each(
+    [
+      [{ id: "main", tools: { allow: ["read"] } }],
+      [{ id: "primary", tools: { allow: ["read"] } }],
+      [{ id: "with_underscore", tools: { allow: ["read"] } }],
+      [{ id: "researcher", tools: { allow: ["read"] }, default: true }],
+      [{ id: "researcher", tools: { allow: ["write"] } }],
+      [{ id: "researcher", tools: {} }],
+      [{ id: "researcher", tools: { allow: ["read"], deny: ["exec"] } }],
+      [{ id: "researcher", tools: { allow: ["read"] }, model: "openai/other" }],
+      [{ id: "researcher", tools: { allow: ["read"] }, model: "other/model" }],
+      [
+        {
+          id: "researcher",
+          tools: { allow: ["read"] },
+          workspace: "/sandbox/.openclaw/../../tmp/other",
+        },
+      ],
+      [
+        {
+          id: "researcher",
+          tools: { allow: ["read"] },
+          agentDir: "/sandbox/.openclaw/agents/other",
+        },
+      ],
+      [{ id: "researcher", tools: { allow: ["read"] }, subagents: { model: "openai/gpt-5" } }],
+      [{ id: "researcher", tools: { allow: ["read"] }, description: "unsupported" }],
+      [
+        { id: "researcher", tools: { allow: ["read"] } },
+        { id: "another", tools: { allow: ["read"] } },
+      ],
+    ].map((agents) => ({ agents })),
+  )(
+    "rejects an unsupported secondary manifest without publication (#11434)",
+    async ({ agents }) => {
+      const observed = additionalAgentSnapshot(agents);
+      const result = await exportSnapshots([observed, observed]);
+      expect(result.outcome.ok).toBe(false);
+      expect(result.writeStdout).not.toHaveBeenCalled();
+      expect(result.publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects changing secondary identity across both observation pairs (#11434)", async () => {
+    const first = additionalAgentSnapshot([{ id: "researcher", tools: { allow: ["read"] } }]);
+    const second = additionalAgentSnapshot([{ id: "reviewer", tools: { allow: ["read"] } }]);
+    const result = await exportSnapshots([first, second, first, second]);
+    expect(result.outcome).toMatchObject({ ok: false });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { defaults: { subagents: { maxSpawnDepth: 2 } } },
+    { main: { tools: { allow: ["read"] } } },
+    { main: { subagents: { model: "openai/gpt-5" } } },
+  ])("rejects primary and default overrides in a two-agent profile (#11434)", async (overrides) => {
+    const observed = additionalAgentSnapshot({
+      agents: [{ id: "researcher", tools: { allow: ["read"] } }],
+      ...overrides,
+    });
+    const result = await exportSnapshots([observed, observed]);
+    expect(result.outcome.ok).toBe(false);
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
   });
 });

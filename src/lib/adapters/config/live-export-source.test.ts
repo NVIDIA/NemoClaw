@@ -796,6 +796,40 @@ describe("live export snapshot reader", () => {
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
+  it("exports a secondary agent through SDK observations without copying provider credentials (#11434)", async () => {
+    const built = buildManagedStartupProfile({
+      ...startupInput,
+      environment: {
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
+          { id: "reviewer-2", tools: { allow: ["read"] } },
+        ]),
+      },
+    });
+    mockSupportedLiveSource(3, 3, {
+      ...entry,
+      workload: {
+        ...entry.workload,
+        encodedProfile: built.encodedProfile,
+        startupProfileSha256: built.startupProfileSha256,
+      },
+    });
+    const { result, writeStdout } = await exportLiveSource();
+    expect(result.ok).toBe(true);
+    const yaml = writeStdout.mock.calls[0]![0];
+    const config = validateNemoClawConfig(YAML.parse(yaml));
+    const [primary, secondary] = config.spec.sandboxes[0]!.agents;
+    expect(primary!.name).toBe("primary");
+    expect(secondary).toEqual({
+      name: "reviewer-2",
+      type: "openclaw",
+      tools: { allow: ["read"] },
+      inference: primary!.inference,
+    });
+    expect(config.spec.inferenceProviders).toHaveLength(1);
+    expect(yaml).not.toContain(readFailureCanary);
+    expect(raw.getSandboxConfig).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     {
       label: "endpoint",

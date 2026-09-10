@@ -388,23 +388,43 @@
                           "const": "openclaw"
                         },
                         "tools": {
-                          "type": "object",
-                          "required": ["disclosure"],
-                          "properties": {
-                            "disclosure": {
-                              "anyOf": [
-                                {
-                                  "type": "string",
-                                  "const": "progressive"
-                                },
-                                {
-                                  "type": "string",
-                                  "const": "direct"
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "required": ["disclosure"],
+                              "properties": {
+                                "disclosure": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "const": "progressive"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "direct"
+                                    }
+                                  ]
                                 }
-                              ]
+                              },
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "required": ["allow"],
+                              "properties": {
+                                "allow": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "const": "read"
+                                  },
+                                  "minItems": 1,
+                                  "maxItems": 1
+                                }
+                              },
+                              "additionalProperties": false
                             }
-                          },
-                          "additionalProperties": false
+                          ]
                         }
                       },
                       "additionalProperties": false
