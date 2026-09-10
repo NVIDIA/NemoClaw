@@ -337,10 +337,16 @@ if (!(forwardIndex >= 0 && args[forwardIndex + 1] === "service")) process.exit(0
 }
 
 function runRecover(fixture: Fixture, ownerProof: ForwardOwnerProof = "synthetic") {
+  // Exercise the command action from source; oclif discovery loads dist commands.
   const repoRoot = path.join(import.meta.dirname, "../../..");
   return spawnSync(
     process.execPath,
-    [path.join(repoRoot, "bin", "nemoclaw.js"), fixture.sandboxName, "recover"],
+    [
+      "-e",
+      `require(${JSON.stringify(path.join(repoRoot, "src/lib/actions/sandbox/runtime/hermes-cron-restore-recovery.ts"))})` +
+        ".recoverSandboxWithHermesCronRestore(process.argv[1]).catch((error) => { console.error(error); process.exitCode = 1; });",
+      fixture.sandboxName,
+    ],
     {
       cwd: repoRoot,
       encoding: "utf-8",
@@ -352,7 +358,7 @@ function runRecover(fixture: Fixture, ownerProof: ForwardOwnerProof = "synthetic
           process.env.NODE_OPTIONS,
           ownerProof,
         ),
-        PATH: "/usr/bin:/bin",
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
         NEMOCLAW_NO_CONNECT_HINT: "1",
         NEMOCLAW_FORWARD_RECOVERY_WAIT_MS: fixture.recoveryWaitMs,
       },
@@ -417,7 +423,7 @@ describe("nemoclaw <name> recover", () => {
       gatewayProbe: "RUNNING",
       forwardListStatus: "running",
     });
-    const result = runRecover(fixture);
+    const result = runRecover(fixture, "real");
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
     const combined = (result.stdout || "") + (result.stderr || "");

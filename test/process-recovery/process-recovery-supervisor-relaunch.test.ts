@@ -446,7 +446,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
-    vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
     vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
@@ -872,7 +871,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
-    vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
     vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
@@ -1156,7 +1154,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       );
       vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
       vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
-      vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
       vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
@@ -1235,7 +1232,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
-    vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
     vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,

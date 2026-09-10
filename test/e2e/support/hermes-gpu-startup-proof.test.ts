@@ -14,7 +14,7 @@ import {
 
 const HEALTHY_NEW_GATEWAY = [
   "Container runtime: docker",
-  "Starting OpenShell gateway...",
+  "  Starting OpenShell gateway...",
   "Docker-driver gateway is healthy",
 ].join("\n");
 const NON_FALLBACK_DISCLOSURE_CASES = [

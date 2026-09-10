@@ -275,21 +275,21 @@ describe("inference health", () => {
       expect(payload).toMatchObject({ max_tokens: 16, stream: true });
     });
 
-    it.each([
-      "deepseek-ai/deepseek-v4-pro",
-      "deepseek-ai/deepseek-v4-flash",
-    ])("reports the short status timeout as unverified for slow model %s", (model) => {
-      const result = probeRemoteProviderHealth("nvidia-prod", {
-        model,
-        getCredentialImpl: () => "nvapi-test",
-        runCurlProbeImpl: () => httpTimeout(),
-      });
+    it.each(["deepseek-ai/deepseek-v4-pro", "deepseek-ai/deepseek-v4-flash"])(
+      "reports the short status timeout as unverified for slow model %s",
+      (model) => {
+        const result = probeRemoteProviderHealth("nvidia-prod", {
+          model,
+          getCredentialImpl: () => "nvapi-test",
+          runCurlProbeImpl: () => httpTimeout(),
+        });
 
-      expect(result?.ok).toBe(true);
-      expect(result?.probed).toBe(false);
-      expect(result?.failureLabel).toBeUndefined();
-      expect(result?.detail).toContain("model health was not verified");
-    });
+        expect(result?.ok).toBe(true);
+        expect(result?.probed).toBe(false);
+        expect(result?.failureLabel).toBeUndefined();
+        expect(result?.detail).toContain("model health was not verified");
+      },
+    );
 
     it("reports a malformed HTTP 200 body as unhealthy", () => {
       const result = probeRemoteProviderHealth("openai-api", {
@@ -368,37 +368,40 @@ describe("inference health", () => {
     it.each([
       ["an empty tool call list", []],
       ["a null tool call list", null],
-    ])("reports a hosted response that carries %s as healthy (#9108)", (_description, toolCalls) => {
-      const result = probeRemoteProviderHealth("nvidia-prod", {
-        model: "nvidia/llama-3.3-nemotron-super-49b-v1",
-        getCredentialImpl: () => "nvapi-test",
-        runCurlProbeImpl: () =>
-          httpOk(
-            JSON.stringify({
-              object: "chat.completion",
-              model: "nvidia/llama-3.3-nemotron-super-49b-v1",
-              choices: [
-                {
-                  index: 0,
-                  message: {
-                    role: "assistant",
-                    reasoning_content: null,
-                    content: "OK",
-                    refusal: null,
-                    tool_calls: toolCalls,
+    ])(
+      "reports a hosted response that carries %s as healthy (#9108)",
+      (_description, toolCalls) => {
+        const result = probeRemoteProviderHealth("nvidia-prod", {
+          model: "nvidia/llama-3.3-nemotron-super-49b-v1",
+          getCredentialImpl: () => "nvapi-test",
+          runCurlProbeImpl: () =>
+            httpOk(
+              JSON.stringify({
+                object: "chat.completion",
+                model: "nvidia/llama-3.3-nemotron-super-49b-v1",
+                choices: [
+                  {
+                    index: 0,
+                    message: {
+                      role: "assistant",
+                      reasoning_content: null,
+                      content: "OK",
+                      refusal: null,
+                      tool_calls: toolCalls,
+                    },
+                    finish_reason: "stop",
                   },
-                  finish_reason: "stop",
-                },
-              ],
-            }),
-          ),
-      });
+                ],
+              }),
+            ),
+        });
 
-      expect(result?.ok).toBe(true);
-      expect(result?.probed).toBe(true);
-      expect(result?.failureLabel).toBeUndefined();
-      expect(result?.detail).toContain("succeeded");
-    });
+        expect(result?.ok).toBe(true);
+        expect(result?.probed).toBe(true);
+        expect(result?.failureLabel).toBeUndefined();
+        expect(result?.detail).toContain("succeeded");
+      },
+    );
 
     it("reports what an HTTP 200 body lacked and omits the connection advice (#9108)", () => {
       const result = probeRemoteProviderHealth("nvidia-prod", {

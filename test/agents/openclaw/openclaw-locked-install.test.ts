@@ -309,5 +309,4 @@ describe("locked OpenClaw production installation (#5896)", () => {
   it("allows npm to omit an incompatible optional package", () => {
     expect(verifyInstalledNpmLock(installedFixture({ omit: true, optional: true }))).toEqual([]);
   });
-
 });

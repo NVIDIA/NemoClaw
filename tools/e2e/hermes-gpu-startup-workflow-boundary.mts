@@ -127,8 +127,7 @@ export function validateHermesGpuStartupWorkflow(
     errors.push(`${JOB_NAME} job must run on the native RTX PRO 6000 GPU runner`);
   }
   if (
-    JSON.stringify(job.needs) !==
-      JSON.stringify(["base-image-publication", "generate-matrix"]) ||
+    JSON.stringify(job.needs) !== JSON.stringify(["base-image-publication", "generate-matrix"]) ||
     job.if !== EXPECTED_SELECTOR
   ) {
     errors.push(`${JOB_NAME} job must use the trusted execution plan behind generate-matrix`);

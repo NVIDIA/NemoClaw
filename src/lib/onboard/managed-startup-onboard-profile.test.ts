@@ -210,9 +210,9 @@ describe("buildManagedStartupOnboardProfile", () => {
   });
 
   it("rejects a Pi dashboard request (#7930)", () => {
-    expect(() =>
-      buildManagedStartupOnboardProfile(piInput({ manageDashboard: true })),
-    ).toThrow(/Pi must not enable a dashboard/);
+    expect(() => buildManagedStartupOnboardProfile(piInput({ manageDashboard: true }))).toThrow(
+      /Pi must not enable a dashboard/,
+    );
   });
 
   it("maps a remote OpenClaw dashboard and its complete agent-owned state", () => {
@@ -398,13 +398,16 @@ describe("buildManagedStartupOnboardProfile", () => {
   it.each([
     ["hermes", hermesInput, "text,image"],
     ["langchain-deepagents-code", dcodeInput, "text"],
-  ] as const)("rejects OpenClaw input modalities for %s before filtering ambient input", (agent, input, modalities) => {
-    expect(() =>
-      buildManagedStartupOnboardProfile(
-        input({ environment: { NEMOCLAW_INFERENCE_INPUTS: modalities } }),
-      ),
-    ).toThrow(new RegExp(`NEMOCLAW_INFERENCE_INPUTS is not supported by ${agent}`, "u"));
-  });
+  ] as const)(
+    "rejects OpenClaw input modalities for %s before filtering ambient input",
+    (agent, input, modalities) => {
+      expect(() =>
+        buildManagedStartupOnboardProfile(
+          input({ environment: { NEMOCLAW_INFERENCE_INPUTS: modalities } }),
+        ),
+      ).toThrow(new RegExp(`NEMOCLAW_INFERENCE_INPUTS is not supported by ${agent}`, "u"));
+    },
+  );
 
   it("rejects DCode messaging intent instead of silently discarding it", () => {
     expect(() =>

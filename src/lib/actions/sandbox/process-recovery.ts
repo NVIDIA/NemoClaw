@@ -66,6 +66,7 @@ import {
   type HermesPortableForwardRecoveryTimingEvidence,
   type HermesPortableForwardVerificationResult,
   type PreparedHermesPortableForwardRecovery,
+  type SandboxForwardListener,
 } from "./forward-recovery";
 import {
   classifyGatewayRestartFailure,
@@ -1660,6 +1661,42 @@ function isHermesAgent(
   return !!agent && agent.name === "hermes";
 }
 
+/** Recover a classified dashboard listener without signalling an unverified owner. */
+function recoverUnhealthyDashboardForward(
+  sandboxName: string,
+  listener: SandboxForwardListener,
+  {
+    quiet,
+    isWsl,
+    runtimeSelection,
+  }: { quiet: boolean; isWsl?: boolean; runtimeSelection?: OpenShellRuntimeSelection },
+): { recovered: boolean; failureDetail: string } {
+  if (!quiet) {
+    console.log("");
+    if (listener === "unverified") {
+      console.log(
+        `  Dashboard port forward to '${sandboxName}' is held by a listener NemoClaw does not own.`,
+      );
+    } else {
+      console.log(`  Dashboard port forward to '${sandboxName}' is missing or dead.`);
+      console.log("  Re-establishing...");
+    }
+  }
+  if (listener === "unverified") {
+    console.error(
+      unverifiedForwardListenerRefusal(sandboxName, resolveSandboxDashboardPort(sandboxName)),
+    );
+    return {
+      recovered: false,
+      failureDetail: `host port ${String(resolveSandboxDashboardPort(sandboxName))} is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward, so the dashboard forward was not restored`,
+    };
+  }
+  return {
+    recovered: ensureSandboxPortForward(sandboxName, { isWsl, runtimeSelection }),
+    failureDetail: "the primary dashboard/API host forward could not be re-established",
+  };
+}
+
 /**
  * Detect and recover from a sandbox that survived a gateway restart but
  * whose OpenClaw processes are not running. Also re-establishes the
@@ -1769,30 +1806,15 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     );
     const forwardHealthy = forwardListener === "owned";
     if (forwardHealthy === false) {
-      if (!quiet) {
-        console.log("");
-        if (forwardListener === "unverified") {
-          // Not dead: something else answers on the port. The refusal and
-          // remedy follow below; nothing is relaunched (#11149).
-          console.log(
-            `  Dashboard port forward to '${sandboxName}' is held by a listener NemoClaw does not own.`,
-          );
-        } else {
-          console.log(`  Dashboard port forward to '${sandboxName}' is missing or dead.`);
-          console.log("  Re-establishing...");
-        }
-      }
-      const forwardRecovered = measure("forward", () => {
-        if (forwardListener === "unverified") {
-          // Already classified above. The helper would only probe the port
-          // again and refuse the same way, so refuse here (#11149).
-          console.error(
-            unverifiedForwardListenerRefusal(sandboxName, resolveSandboxDashboardPort(sandboxName)),
-          );
-          return false;
-        }
-        return ensureSandboxPortForward(sandboxName, { isWsl: isWslOverride, runtimeSelection });
-      });
+      const { recovered: forwardRecovered, failureDetail: forwardRecoveryFailureDetail } = measure(
+        "forward",
+        () =>
+          recoverUnhealthyDashboardForward(sandboxName, forwardListener, {
+            quiet,
+            isWsl: isWslOverride,
+            runtimeSelection,
+          }),
+      );
       const dashboardForwardRecovered = measure("forward", () =>
         ensureHermesDashboardPortForwardIfEnabled(sandboxName, runtimeSelection),
       );
@@ -1830,10 +1852,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
           recovered: false,
           forwardRecovered: false,
           forwardRecoveryFailed: true,
-          forwardRecoveryFailureDetail:
-            forwardListener === "unverified"
-              ? `host port ${String(resolveSandboxDashboardPort(sandboxName))} is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward, so the dashboard forward was not restored`
-              : "the primary dashboard/API host forward could not be re-established",
+          forwardRecoveryFailureDetail,
         };
       }
       if (auxiliaryFailureDetail !== null) {

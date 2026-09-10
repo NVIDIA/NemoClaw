@@ -39,7 +39,7 @@ afterEach(() => {
 });
 
 function decodeSandboxExecShellPayload(payload: string): string {
-  const match = payload.match(/printf '%s' '([A-Za-z0-9+\/=]+)' \| base64 -d \| sh/);
+  const match = payload.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d \| sh/);
   return match ? Buffer.from(match[1], "base64").toString("utf8") : payload;
 }
 
@@ -653,7 +653,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
     vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
-    vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
     vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
@@ -707,7 +706,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
     vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
-    vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
     vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,

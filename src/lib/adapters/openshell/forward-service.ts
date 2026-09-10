@@ -245,13 +245,13 @@ function executableMatches(actualExecutable: string, expectedExecutable: string)
 
 function processExecutableMatches(
   pid: string,
-  executable: string,
+  target: ForwardServiceTarget,
   platform: NodeJS.Platform,
   procRoot: string,
   probe: ForwardServiceOwnerProbe,
 ): boolean {
   if (platform === "linux") {
-    return executableMatches(path.join(procRoot, pid, "exe"), executable);
+    return executableMatches(path.join(procRoot, pid, "exe"), target.executable);
   }
   if (platform !== "darwin") return false;
   const result = probe("lsof", ["-a", "-p", pid, "-d", "txt", "-Fn"]);
@@ -259,7 +259,7 @@ function processExecutableMatches(
   return result.stdout
     .split(/\r?\n/u)
     .filter((line) => line.startsWith("n/"))
-    .some((line) => executableMatches(line.slice(1), executable));
+    .some((line) => executableMatches(line.slice(1), target.executable));
 }
 
 /** PIDs listening on a local IPv4 port, found with the same probes the ownership proof uses. */
@@ -277,22 +277,6 @@ export function localListenerPids(
   );
 }
 
-/** Whether the process runs the given executable, by the same probes the ownership proof uses. */
-export function isListenerProcessExecutable(
-  pid: string,
-  executable: string,
-  options: ForwardServiceOwnerOptions = {},
-): boolean {
-  if (!/^[1-9]\d*$/u.test(pid)) return false;
-  return processExecutableMatches(
-    pid,
-    executable,
-    options.platform ?? process.platform,
-    options.procRoot ?? "/proc",
-    options.probe ?? captureProcess,
-  );
-}
-
 /** Prove that the current listener is the exact direct ForwardTcp command. */
 export function isForwardServiceListenerOwner(
   target: ForwardServiceTarget,
@@ -306,7 +290,7 @@ export function isForwardServiceListenerOwner(
   const before = listenerPids(target.localPort, platform, procRoot, procWorkLimit, probe);
   const [pid] = before;
   if (before.length !== 1 || pid === undefined || !/^[1-9]\d*$/u.test(pid)) return false;
-  if (!processExecutableMatches(pid, target.executable, platform, procRoot, probe)) return false;
+  if (!processExecutableMatches(pid, target, platform, procRoot, probe)) return false;
   const commandLine = probe("ps", ["-ww", "-p", pid, "-o", "args="]);
   if (commandLine.status !== 0) return false;
   const expected = [target.executable, ...buildForwardServiceArgs(target)].join(" ");
@@ -388,7 +372,7 @@ export function terminateForwardServiceProcessTree(
     throw new Error("OpenShell forward service child PID is unavailable");
   }
 
-  const signalProcess = dependencies.signalProcess ?? process.kill;
+  const signalProcess = dependencies.signalProcess ?? process.kill.bind(process);
   if ((dependencies.platform ?? process.platform) !== "win32") {
     try {
       signalProcess(-Number(pid), "SIGKILL");

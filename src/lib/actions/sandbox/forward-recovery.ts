@@ -8,15 +8,12 @@ import {
 import {
   createForwardServiceTarget,
   isForwardServiceListenerOwner,
-  isListenerProcessExecutable,
   launchForwardService,
   type ForwardServiceTarget,
   localListenerPids,
 } from "../../adapters/openshell/forward-service";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import {
-  legacySandboxForwardRow,
-} from "../../adapters/openshell/forward-service-migration";
+import { legacySandboxForwardRow } from "../../adapters/openshell/forward-service-migration";
 import {
   captureOpenshell,
   captureResolvedOpenshell,
@@ -345,7 +342,6 @@ export function ensureSandboxPortForward(
   });
 }
 
-/** Probe local reachability for a registered sandbox port without claiming process ownership. */
 /**
  * What answers on a sandbox's host forward port.
  *
@@ -426,19 +422,15 @@ export function describeSandboxPortForwardListener(
       ? legacySandboxForwardRow(listed.output, sandboxName, port)
       : undefined;
   if (legacyRow !== undefined) {
-    // A tracked legacy row proves nothing about who holds the port today. A
-    // stale row over a foreign listener would send `forward stop` and then
-    // wait on a port that never releases, so OpenShell must still report the
-    // forward as running, the row's PID must be the one listening, and that
-    // process must run the OpenShell executable; a dead or reused PID can
-    // already belong to another process (#11149).
+    // OpenShell 0.0.106 list_forwards validates SSH argv against the recorded
+    // sandbox ID and port before reporting "running". stop_forward repeats that
+    // proof before signalling. The listener runs as ssh; bind the validated
+    // row to the live socket here instead of requiring the openshell executable.
     const holders = localListenerPids(port);
     return legacyRow.status === "running" &&
       legacyRow.pid !== null &&
       holders.length === 1 &&
-      holders[0] === String(legacyRow.pid) &&
-      executable !== null &&
-      isListenerProcessExecutable(holders[0], executable)
+      holders[0] === String(legacyRow.pid)
       ? "legacy"
       : "unverified";
   }

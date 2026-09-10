@@ -54,7 +54,7 @@ export function parseSessionIndex(output: string): SessionIndexEntry[] | null {
 
 export function balancedJsonCandidates(text: string): string[] {
   const candidates: string[] = [];
-  const lineStartJson = /^(\s*)([\[{])/gm;
+  const lineStartJson = /^(\s*)([[{])/gm;
   let match: RegExpExecArray | null;
   while ((match = lineStartJson.exec(text)) !== null) {
     const candidate = balancedJsonFrom(text, match.index + match[1].length);

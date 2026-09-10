@@ -13,7 +13,6 @@ const mocks = vi.hoisted(() => ({
   isForwardServiceListenerOwner: vi.fn(() => true),
   launchForwardService: vi.fn(),
   localListenerPids: vi.fn(() => ["4242"]),
-  isListenerProcessExecutable: vi.fn(() => true),
 }));
 
 vi.mock("../../adapters/openshell/forward-service", async (importOriginal) => ({
@@ -21,7 +20,6 @@ vi.mock("../../adapters/openshell/forward-service", async (importOriginal) => ({
   isForwardServiceListenerOwner: mocks.isForwardServiceListenerOwner,
   launchForwardService: mocks.launchForwardService,
   localListenerPids: mocks.localListenerPids,
-  isListenerProcessExecutable: mocks.isListenerProcessExecutable,
 }));
 
 vi.mock("../../adapters/openshell/resolve", async (importOriginal) => ({
@@ -71,7 +69,6 @@ beforeEach(() => {
   mocks.isLocalForwardReachable.mockReturnValue(true);
   mocks.isForwardServiceListenerOwner.mockReturnValue(true);
   mocks.localListenerPids.mockReturnValue(["4242"]);
-  mocks.isListenerProcessExecutable.mockReturnValue(true);
   mocks.launchForwardService.mockImplementation(() => {
     mocks.isLocalForwardReachable.mockReturnValue(true);
   });
@@ -265,23 +262,6 @@ describe("a dashboard port held by a listener the sandbox does not own (#11149)"
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.captureOpenshell.mockReturnValue(forwardList(["box  127.0.0.1  18789  4242  running"]));
     mocks.localListenerPids.mockReturnValue(["9999"]);
-    const { describeSandboxForwardListener, ensureSandboxPortForward } =
-      await import("./forward-recovery");
-
-    expect(describeSandboxForwardListener("box", { isWsl: false })).toBe("unverified");
-    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
-
-    expect(mocks.runOpenshell).not.toHaveBeenCalled();
-    expect(mocks.launchForwardService).not.toHaveBeenCalled();
-    expect(error.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-      "Host port 18789 for 'box' is held by a listener",
-    );
-  });
-
-  it("treats a running legacy row whose PID runs another executable as unverified", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    mocks.captureOpenshell.mockReturnValue(forwardList(["box  127.0.0.1  18789  4242  running"]));
-    mocks.isListenerProcessExecutable.mockReturnValue(false);
     const { describeSandboxForwardListener, ensureSandboxPortForward } =
       await import("./forward-recovery");
 

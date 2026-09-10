@@ -196,5 +196,4 @@ describe("credential exposure in process arguments", () => {
       }
     }
   });
-
 });

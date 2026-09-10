@@ -127,12 +127,7 @@ describe("rebuild gateway drift preflight", () => {
     };
 
     expect(
-      checkRebuildGatewaySchemaPreflight(
-        "alpha",
-        makeSandboxEntry(),
-        bail,
-        runtimeSelection,
-      ),
+      checkRebuildGatewaySchemaPreflight("alpha", makeSandboxEntry(), bail, runtimeSelection),
     ).toBe(true);
     expect(gatewayDrift.detectOpenShellStateRpcPreflightIssue).toHaveBeenCalledWith({
       gatewayName: "nemoclaw",

@@ -51,6 +51,8 @@ Candidate image receipts bind each accepted platform to:
 - managed-image, startup-profile, and capability contract version 1.
 
 Final activation must publish both platform digests in the same complete cohort. A partial platform set cannot advertise Pi support.
+When protected Pi image inputs change, repository validation requires refreshed receipts for both platforms.
+Each receipt must match the protected inputs and an image digest in the candidate authority.
 
 ## Managed Inference and Credentials
 
