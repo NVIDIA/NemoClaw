@@ -46,34 +46,39 @@ afterEach(() => {
 });
 
 describe("Hermes provider OpenShell credential handoff", () => {
-  it("inspects exact OpenShell credential key bindings without exposing values", () => {
+  it("inspects exact OpenShell credential key bindings without exposing values", async () => {
     const auth = loadAuth();
-    const binding = auth.inspectHermesProviderBinding(() => ({
+    const binding = await auth.inspectHermesProviderBinding(() => ({
       status: 0,
-      stdout: "Provider:\n\n  Name: hermes-provider\n  Credential keys: NOUS_API_KEY\n",
+      stdout:
+        "Name: hermes-provider\nType: openai\nCredential keys: NOUS_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
       stderr: "",
     }));
     expect(binding).toEqual({ exists: true, credentialKeys: ["NOUS_API_KEY"] });
   });
 
-  it("fails closed when OpenShell provider details omit credential metadata", () => {
+  it("fails closed when OpenShell provider details omit credential metadata", async () => {
     const auth = loadAuth();
-    expect(
+    await expect(
       auth.inspectHermesProviderBinding(() => ({ status: 0, stdout: "Provider: exists" })),
-    ).toEqual({ exists: true, credentialKeys: null });
+    ).resolves.toEqual({ exists: true, credentialKeys: null });
   });
 
-  it("imports the OpenAI profile before Hermes credential registration (#10155)", () => {
+  it("imports the OpenAI profile before Hermes credential registration (#10155)", async () => {
     const auth = loadAuth();
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider profile not found" })
       .mockReturnValueOnce({ status: 0, stdout: "Imported", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: EXACT_OPENAI_PROFILE, stderr: "" })
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider not found" })
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: "provider 'hermes-provider' not found",
+      })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
 
-    auth.registerHermesInferenceProvider("nous-key", runOpenshell);
+    await auth.registerHermesInferenceProvider("nous-key", runOpenshell);
 
     expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
       ["provider", "profile", "export", "openai", "--output", "json"],
@@ -96,7 +101,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
     });
   });
 
-  it("rejects an incompatible OpenAI profile before Hermes credential mutation (#10155)", () => {
+  it("rejects an incompatible OpenAI profile before Hermes credential mutation (#10155)", async () => {
     const auth = loadAuth();
     const secret = "nous-incompatible-secret";
     const runOpenshell = vi.fn().mockReturnValueOnce({
@@ -113,7 +118,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
 
     let thrown: unknown;
     try {
-      auth.registerHermesInferenceProvider(secret, runOpenshell);
+      await auth.registerHermesInferenceProvider(secret, runOpenshell);
     } catch (error) {
       thrown = error;
     }
@@ -123,7 +128,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
     expect(runOpenshell).toHaveBeenCalledOnce();
   });
 
-  it("suppresses failed OpenAI profile import output before Hermes credential mutation (#10155)", () => {
+  it("suppresses failed OpenAI profile import output before Hermes credential mutation (#10155)", async () => {
     const auth = loadAuth();
     const secret = "profile-import-secret";
     const runOpenshell = vi
@@ -133,7 +138,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
 
     let thrown: unknown;
     try {
-      auth.registerHermesInferenceProvider("nous-key", runOpenshell);
+      await auth.registerHermesInferenceProvider("nous-key", runOpenshell);
     } catch (error) {
       thrown = error;
     }
@@ -158,7 +163,11 @@ describe("Hermes provider OpenShell credential handoff", () => {
           return args[1] === "profile"
             ? { status: 0, stdout: EXACT_OPENAI_PROFILE, stderr: "" }
             : args[1] === "get"
-              ? { status: 1, stdout: "", stderr: "" }
+              ? {
+                  status: 1,
+                  stdout: "",
+                  stderr: "provider 'hermes-provider' not found",
+                }
               : { status: 0, stdout: "", stderr: "" };
         },
       });
@@ -233,7 +242,11 @@ describe("Hermes provider OpenShell credential handoff", () => {
           return args[1] === "profile"
             ? { status: 0, stdout: EXACT_OPENAI_PROFILE, stderr: "" }
             : args[1] === "get"
-              ? { status: 1, stdout: "", stderr: "" }
+              ? {
+                  status: 1,
+                  stdout: "",
+                  stderr: "provider 'hermes-provider' not found",
+                }
               : { status: 0, stdout: "", stderr: "" };
         },
       });
@@ -317,7 +330,11 @@ describe("Hermes provider OpenShell credential handoff", () => {
           return args[1] === "profile"
             ? { status: 0, stdout: EXACT_OPENAI_PROFILE, stderr: "" }
             : args[1] === "get"
-              ? { status: 1, stdout: "", stderr: "" }
+              ? {
+                  status: 1,
+                  stdout: "",
+                  stderr: "provider 'hermes-provider' not found",
+                }
               : { status: 0, stdout: "", stderr: "" };
         },
         toolGatewayPresets: ["nous-web", "nous-audio"],

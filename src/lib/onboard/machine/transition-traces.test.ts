@@ -52,6 +52,15 @@ function createTracedRuntime(initialSession: Session = createSession()) {
     session = cloneSession(next);
     return cloneSession(session);
   };
+  const compareAndSwapSession = (
+    matches: (value: Session) => boolean,
+    mutator: (value: Session) => Session | void,
+  ): "updated" | "mismatch" => {
+    const current = cloneSession(session);
+    return matches(current)
+      ? ((session = cloneSession(mutator(current) ?? current)), "updated")
+      : "mismatch";
+  };
   const applySafeUpdates = (updates: SessionUpdates = {}): Session =>
     updateSession((current) => {
       Object.assign(current, filterSafeUpdates(updates));
@@ -82,7 +91,13 @@ function createTracedRuntime(initialSession: Session = createSession()) {
     emitEvent: (event) => events.push(event),
     now: () => NOW,
   };
-  return { runtime: new OnboardRuntime(deps), events, updateSession };
+  return {
+    runtime: new OnboardRuntime(deps),
+    events,
+    loadSession: () => cloneSession(session),
+    updateSession,
+    compareAndSwapSession,
+  };
 }
 
 function traceOf(events: readonly OnboardMachineEvent[]): string[] {
@@ -208,7 +223,8 @@ describe("onboard machine lifecycle traces (#6225)", () => {
       machine: machineAt("sandbox", 5),
       steps: { sandbox: completedStep() },
     });
-    const { runtime, events, updateSession } = createTracedRuntime(resumedSession);
+    const { runtime, events, loadSession, updateSession, compareAndSwapSession } =
+      createTracedRuntime(resumedSession);
     await runtime.start({ resumed: true });
     const session = await runtime.session();
     const journal = bindJournaledRecreate(session, "my-assistant", "openclaw", updateSession);
@@ -219,7 +235,9 @@ describe("onboard machine lifecycle traces (#6225)", () => {
       getSandboxReuseState: () => "not_ready",
       getSandboxRecreateObservation: journal.observe,
       createSandbox: journal.completeCreate,
+      loadSession,
       updateSession,
+      compareAndSwapSession,
       recordRepairEvent: (type, options) => runtime.emitRepairEvent(type, options),
       recordStepComplete: async (_stepName, updates) =>
         updateSession((current) => {

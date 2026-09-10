@@ -3,6 +3,7 @@
 
 import path from "node:path";
 
+import { testTimeout } from "../../helpers/timeouts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   base64,
@@ -24,7 +25,7 @@ import {
 } from "./phase6-messaging-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-tg-injection";
-const LIVE_TIMEOUT_MS = 35 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(35 * 60_000);
 
 function openshellStdinCommand(payload: string, remoteShell: string): string {
   return [

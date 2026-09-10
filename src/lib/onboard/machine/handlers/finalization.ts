@@ -30,8 +30,6 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   portableProfileSelected?: boolean;
   recreateJournalHandoff?: boolean;
   deps: {
-    ensureAgentDashboardForward(sandboxName: string, agent: Agent): Promise<number> | number;
-    persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
      * a cancel at the policy-preset step never leaves an unconfigured sandbox
@@ -43,7 +41,10 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     ): NonNullable<OnboardStateCompleteResult["updates"]>;
     removeLegacyCredentialsFile(): void;
     cleanupStaleHostFiles(): void;
-    checkAndRecoverSandboxProcesses(sandboxName: string, options: { quiet: boolean }): void;
+    checkAndRecoverSandboxProcesses(
+      sandboxName: string,
+      options: { quiet: boolean },
+    ): Promise<void>;
     settleOrdinaryOpenClawPairing(
       sandboxName: string,
     ): Promise<OrdinaryOpenClawPairingSettlementResult>;
@@ -83,7 +84,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
       sandboxName: string,
       agent: Agent,
       provider: WebSearchVerifyProvider,
-    ): boolean;
+    ): Promise<boolean>;
     printDashboard(
       sandboxName: string,
       model: string,
@@ -177,8 +178,6 @@ function logTerminalReadyBlock(
 export async function handleFinalizationState<Agent, VerifyChain, VerificationResult>({
   sandboxName,
   agent,
-  portableProfileSelected,
-  recreateJournalHandoff,
   stagedLegacyKeys,
   migratedLegacyKeys,
   deps,
@@ -188,16 +187,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   VerificationResult
 >): Promise<FinalizationStateResult> {
   const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
-  const portableAgent = portableAgentDisposition(
-    sandboxName,
-    agent,
-    portableProfileSelected,
-    deps.readRegistryAgent,
-  );
-  const ordinaryOpenClawPairingRequired =
-    portableAgent === "ordinary" &&
-    selectedAgentName(agent) === "openclaw" &&
-    recreateJournalHandoff !== true;
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).
   deps.setDefaultSandbox(sandboxName);
@@ -220,18 +209,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   deps.cleanupStaleHostFiles();
   if (manageDashboard) {
     // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
-    deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
-  }
-
-  if (manageDashboard && !ordinaryOpenClawPairingRequired) {
-    // Recheck the gateway and forward before verification, restarting only when needed.
-    deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
-    // Reconcile after the final recovery because any restart above can
-    // invalidate the forward created earlier in onboarding.
-    const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
-    if (dashboardPort > 0) {
-      deps.persistDashboardPort(sandboxName, dashboardPort);
-    }
+    await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
   }
 
   return {
@@ -327,11 +305,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     // The bounded warm-up can outlive a forward that was healthy after policy recovery.
     // Recheck the gateway and forward before deployment verification.
     if (manageDashboard) {
-      deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
-      const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
-      if (dashboardPort > 0) {
-        deps.persistDashboardPort(sandboxName, dashboardPort);
-      }
+      await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
     }
   }
   if (manageDashboard) {
@@ -342,7 +316,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     const webSearchCredentialBoundarySafe =
       !webSearchEnabled ||
       (webSearchProvider !== null &&
-        deps.verifyWebSearchInsideSandbox(sandboxName, agent, webSearchProvider));
+        (await deps.verifyWebSearchInsideSandbox(sandboxName, agent, webSearchProvider)));
     // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
     const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl(), sandboxName);
     const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);

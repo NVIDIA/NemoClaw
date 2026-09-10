@@ -7,7 +7,7 @@ export const NEMOCLAW_HERMES_LIGHT_SKIN_NAME = "nemoclaw-light";
 export const NEMOCLAW_HERMES_LIGHT_SKIN_REVIEWED_HERMES_VERSIONS = [
   "v2026.6.19",
   "v2026.7.1",
-  "v2026.7.20",
+  "v2026.8.27",
 ] as const;
 
 // Compatibility boundary: remove this NemoClaw-managed light skin once the

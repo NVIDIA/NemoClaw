@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
+import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import type { AgentConfigTarget } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
@@ -18,7 +20,6 @@ export const OPENCLAW_TARGET: AgentConfigTarget = {
   format: "json",
   configFile: "openclaw.json",
   sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
-  stateLockPlanInImage: true,
 };
 
 export const HERMES_TARGET: AgentConfigTarget = {
@@ -28,7 +29,6 @@ export const HERMES_TARGET: AgentConfigTarget = {
   format: "yaml",
   configFile: "config.yaml",
   sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
-  stateLockPlanInImage: true,
 };
 
 export const OPENAI_ENDPOINTLESS_PROFILE = JSON.stringify({
@@ -166,10 +166,10 @@ export function createDeps(options: {
   session?: Session | null;
   openshellStatus?: number;
   captureOpenshell?: InferenceSetDeps["captureOpenshell"];
+  providerAdapter?: OpenShellProviderAdapter;
   localValidation?: LocalValidationResult;
   localReachable?: boolean;
   contextWindow?: number | null;
-  shieldsMutable?: boolean;
   prepareRunOpenshell?: () => void;
   rewriteConfigUrlsWithDnsPinning?: (value: ConfigValue) => Promise<ConfigValue>;
   resolveCredentialValue?: InferenceSetDeps["resolveCredentialValue"];
@@ -246,7 +246,7 @@ export function createDeps(options: {
     ),
     resolveCredentialValue: vi.fn(
       options.resolveCredentialValue ??
-        ((credentialEnv: string) => process.env[credentialEnv] ?? ""),
+        ((credentialEnv: string) => process.env[credentialEnv] ?? "test-credential-value"),
     ),
     ensureHttpsPinRuntimeAdapter: vi.fn(
       options.ensureHttpsPinRuntimeAdapter ??
@@ -260,11 +260,11 @@ export function createDeps(options: {
     revokeHttpsPinRuntimeAdapterRoute: vi.fn(
       options.revokeHttpsPinRuntimeAdapterRoute ?? (async () => true),
     ),
-    probeSandboxRoute: vi.fn(options.probeSandboxRoute ?? (() => ({ ok: true }) as const)),
+    probeSandboxRoute: vi.fn(options.probeSandboxRoute ?? (async () => ({ ok: true }) as const)),
     sleep: vi.fn(async () => {}),
     restartSandboxGateway: vi.fn(
       options.restartSandboxGateway ??
-        ((): ReturnType<InferenceSetDeps["restartSandboxGateway"]> => ({
+        (async (): ReturnType<InferenceSetDeps["restartSandboxGateway"]> => ({
           ok: true,
           restarted: true,
           healthPassed: true,
@@ -278,6 +278,25 @@ export function createDeps(options: {
           await operation()),
     ),
   };
+  const providerAdapter =
+    options.providerAdapter ??
+    createCliOpenShellProviderAdapter({
+      run: (args, runOptions) => {
+        const result = calls.captureOpenshell(args, {
+          ...(runOptions.env ? { env: runOptions.env } : {}),
+          ignoreError: true,
+          includeStreams: true,
+          ...(runOptions.maxBuffer ? { maxBuffer: runOptions.maxBuffer } : {}),
+          timeout: runOptions.timeout,
+        });
+        return {
+          status: result.status,
+          stdout: result.stdout || result.stderr ? result.stdout : result.output,
+          stderr: result.stderr,
+          ...("error" in result && result.error ? { error: result.error } : {}),
+        };
+      },
+    });
   return {
     getDefaultSandbox: () => defaultSandbox,
     getSandbox: (name: string) => sandboxes[name] ?? null,
@@ -293,6 +312,7 @@ export function createDeps(options: {
     seedHermesDashboardConfig: calls.seedHermesDashboardConfig,
     prepareRunOpenshell: calls.prepareRunOpenshell,
     captureOpenshell: calls.captureOpenshell,
+    providerAdapter,
     appendAuditEntry: calls.appendAuditEntry,
     log: calls.log,
     isLocalInferenceProvider: (provider) =>
@@ -300,7 +320,6 @@ export function createDeps(options: {
     validateLocalProvider: calls.validateLocalProvider,
     ensureLocalProviderReachable: calls.ensureLocalProviderReachable,
     resolveContextWindowForModel: calls.resolveContextWindowForModel,
-    isSandboxConfigMutable: () => options.shieldsMutable ?? true,
     rewriteConfigUrlsWithDnsPinning: calls.rewriteConfigUrlsWithDnsPinning,
     resolveCredentialValue: calls.resolveCredentialValue,
     ensureHttpsPinRuntimeAdapter:

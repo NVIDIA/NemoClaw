@@ -67,6 +67,46 @@ describe("package-managed gateway version gate (#8094)", () => {
     );
   });
 
+  it("probes the package gateway with the selected OpenShell env (#10514)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    vi.stubEnv("OPENSHELL_DISABLE_TLS", "1");
+    vi.stubEnv("OPENSHELL_DISABLE_GATEWAY_AUTH", "1");
+    const selectedEnv: NodeJS.ProcessEnv = {
+      HOME: "/home/tester",
+      PATH: "/usr/bin",
+      OPENSHELL_GATEWAY: "nemoclaw",
+      OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+      OPENSHELL_WORKSPACE: "default",
+    };
+    let observedEnv: NodeJS.ProcessEnv | undefined;
+
+    try {
+      const verdict = checkUpstreamGatewayVersion(PACKAGE_BINARY, {
+        env: selectedEnv,
+        getUpstreamGatewayVersionBounds: () => BOUNDS,
+        platform: "linux",
+        spawnSyncImpl: (_command, _args, options) => {
+          observedEnv = options?.env;
+          return { status: 0, stdout: "openshell-gateway 0.0.85" };
+        },
+      });
+
+      expect(verdict.supported).toBe(true);
+      expect(observedEnv).toEqual(selectedEnv);
+      expect(observedEnv?.OPENSHELL_GATEWAY).toBe("nemoclaw");
+      expect(observedEnv?.OPENSHELL_WORKSPACE).toBe("default");
+      expect(observedEnv?.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
+      expect(observedEnv?.OPENSHELL_TOKEN).toBeUndefined();
+      expect(observedEnv?.OPENSHELL_DISABLE_TLS).toBeUndefined();
+      expect(observedEnv?.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("declines the package gateway when its version cannot be determined (#8926)", () => {
     const verdict = checkUpstreamGatewayVersion(
       PACKAGE_BINARY,

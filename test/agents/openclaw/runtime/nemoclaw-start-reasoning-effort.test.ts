@@ -7,7 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "scripts",
+  "nemoclaw-start.sh",
+);
 const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
 function extractShellFunction(name: string): string {
@@ -60,21 +66,15 @@ function runApplyModelOverride(
   fs.chmodSync(hashPath, 0o660);
 
   const helperFns = [
-    extractShellFunction("openclaw_config_dir_owner"),
-    extractShellFunction("prepare_openclaw_config_for_write"),
-    extractShellFunction("restore_openclaw_config_after_write"),
-  ]
-    .join("\n")
-    .replaceAll("/sandbox", root);
+    "normalize_mutable_config_perms() { :; }",
+    'run_openclaw_config_as_owner() { "$@"; }',
+    `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
+  ].join("\n");
   const fn = extractShellFunction("apply_model_override").replaceAll("/sandbox", root);
   const wrapper = [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
     "id() { echo 0; }",
-    "chown() { return 0; }",
-    `stat() { if [ "$1" = "-c" ] && [ "$2" = "%U" ] && [ "$3" = ${JSON.stringify(openclawDir)} ]; then echo sandbox; return 0; fi; command stat "$@"; }`,
-    'relax_config_for_write() { chmod 644 "$@"; }',
-    'lock_config_after_write() { chmod 444 "$@"; }',
     helperFns,
     fn,
     "apply_model_override",

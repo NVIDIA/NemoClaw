@@ -60,7 +60,6 @@ describe("private E2E controller files", () => {
         const read = spawnSync(
           process.execPath,
           [
-            "--experimental-strip-types",
             "--input-type=module",
             "--eval",
             `import { readPrivateRegularFile } from ${JSON.stringify(moduleUrl)}; readPrivateRegularFile(${JSON.stringify(fifo)}, { maxBytes: 64 });`,
@@ -70,7 +69,6 @@ describe("private E2E controller files", () => {
         const write = spawnSync(
           process.execPath,
           [
-            "--experimental-strip-types",
             "--input-type=module",
             "--eval",
             `import { writePrivateRegularFile } from ${JSON.stringify(moduleUrl)}; writePrivateRegularFile(${JSON.stringify(fifo)}, "replaced\\n");`,
@@ -87,7 +85,7 @@ describe("private E2E controller files", () => {
         expect(write.stderr).toContain(`open '${fifo}'`);
         const output = ({ read: read.stderr, write: write.stderr } as const)[scenario]!;
         expect(output).not.toMatch(
-          /ERR_(?:MODULE_NOT_FOUND|UNKNOWN_FILE_EXTENSION|UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING)|Cannot find module|Unknown file extension|bad option: --experimental-strip-types|SyntaxError/u,
+          /ERR_(?:MODULE_NOT_FOUND|UNKNOWN_FILE_EXTENSION|UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING)|Cannot find module|Unknown file extension|bad option:|SyntaxError/u,
         );
 
         expect(fs.lstatSync(fifo).isFIFO()).toBe(true);

@@ -302,7 +302,7 @@ describe("declarative llama.cpp server image", () => {
   it("compiles the fail-closed workflow inputs from YAML (#8231)", () => {
     const result = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", "--no-warnings", exporterPath],
+      ["--no-warnings", exporterPath],
       {
         cwd: repoRoot,
         encoding: "utf8",

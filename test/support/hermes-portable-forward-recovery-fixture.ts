@@ -1,11 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { vi } from "vitest";
+
 import type { HermesPortableForwardRecoveryInput } from "../../src/lib/actions/sandbox/probe/hermes-portable-forward-recovery";
-import type { ConnectHarness } from "./connect-flow-test-harness";
+import type { ForwardServiceTarget } from "../../src/lib/adapters/openshell/forward-service";
+import { type ConnectHarness, requireDist } from "./connect-flow-test-harness";
 
 type ForwardRecord = {
+  direct?: boolean;
   owner: string;
+  pid?: number;
   reachable: boolean;
   status: "active" | "dead" | "running" | "stopped";
 };
@@ -13,9 +18,12 @@ type ForwardRecord = {
 function forwardList(records: ReadonlyMap<number, ForwardRecord>): string {
   return [
     "SANDBOX BIND PORT PID STATUS",
-    ...[...records].map(
-      ([port, record]) => `${record.owner} 127.0.0.1 ${String(port)} 12345 ${record.status}`,
-    ),
+    ...[...records]
+      .filter(([, record]) => !record.direct)
+      .map(
+        ([port, record]) =>
+          `${record.owner} 127.0.0.1 ${String(port)} ${String(record.pid ?? 12_345)} ${record.status}`,
+      ),
   ].join("\n");
 }
 
@@ -29,10 +37,12 @@ export function createHermesPortableForwardRecoveryFixture({
   malformedList = false,
   listStatus = 0,
   startStatus = 0,
+  stopStatus = 0,
   startUpdatesState = true,
   driftCurrentAfterStart = false,
   dropStartedPort,
   listOutput,
+  stoppedListenerReleaseChecks,
 }: {
   ports?: readonly number[];
   active?: readonly number[];
@@ -43,10 +53,12 @@ export function createHermesPortableForwardRecoveryFixture({
   malformedList?: boolean;
   listStatus?: number;
   startStatus?: number;
+  stopStatus?: number;
   startUpdatesState?: boolean;
   driftCurrentAfterStart?: boolean;
   dropStartedPort?: number;
   listOutput?: string;
+  stoppedListenerReleaseChecks?: number | null;
 } = {}) {
   const records = new Map<number, ForwardRecord>();
   for (const port of active) {
@@ -68,11 +80,14 @@ export function createHermesPortableForwardRecoveryFixture({
   const rollbackCalls: string[][] = [];
   const currentCaptureCalls: string[][] = [];
   const currentMutationCalls: string[][] = [];
+  const forwardServiceLaunches: ForwardServiceTarget[] = [];
+  const forwardServiceOwnerChecks: ForwardServiceTarget[] = [];
   const rollbackCaptureCalls: string[][] = [];
-  const rollbackMutationCalls: string[][] = [];
   let currentAllowed = true;
   let rollbackAllowed = true;
   let now = 0;
+  let pendingStoppedListener: { checks: number; port: number; record: ForwardRecord } | undefined;
+  let stoppedListenerReleaseCheckCount = 0;
 
   const capture = (args: readonly string[], rollback: boolean) => {
     const calls = rollback ? rollbackCalls : currentCalls;
@@ -84,22 +99,18 @@ export function createHermesPortableForwardRecoveryFixture({
       output: listOutput ?? (malformedList ? "not a forward list" : forwardList(records)),
     };
   };
-  const mutate = (args: readonly string[], rollback: boolean) => {
-    const calls = rollback ? rollbackCalls : currentCalls;
-    calls.push([...args]);
-    (rollback ? rollbackMutationCalls : currentMutationCalls).push([...args]);
+  const mutate = (args: readonly string[]) => {
+    currentCalls.push([...args]);
+    currentMutationCalls.push([...args]);
     const port = Number(args[1] === "stop" ? args[2] : args[3]);
     if (args[1] === "stop") {
+      const record = records.get(port);
       records.delete(port);
-      return { status: 0, output: "" };
-    }
-    if (args[1] === "start") {
-      if (startUpdatesState) {
-        records.set(port, { owner: "alpha", reachable: true, status: "running" });
+      if (record?.reachable && stoppedListenerReleaseChecks !== undefined) {
+        records.set(port, record);
+        pendingStoppedListener = { checks: 0, port, record };
       }
-      if (port === dropStartedPort) records.delete(port);
-      if (driftCurrentAfterStart) currentAllowed = false;
-      return { status: startStatus, output: "" };
+      return { status: stopStatus, output: "" };
     }
     throw new Error("unexpected command");
   };
@@ -110,6 +121,11 @@ export function createHermesPortableForwardRecoveryFixture({
     operationTimeoutMs: 30_000,
     ports,
     probeTimeoutMs: 10_000,
+    forwardService: {
+      executablePath: "/usr/bin/openshell",
+      sourceEnvironment: { HOME: "/home/test" },
+      workspace: "default",
+    },
     deps: {
       assertCurrent: () => {
         if (!currentAllowed) throw new Error("current authority canary");
@@ -119,9 +135,42 @@ export function createHermesPortableForwardRecoveryFixture({
       },
       captureCurrentList: (args) => capture(args, false),
       captureRollbackList: (args) => capture(args, true),
-      runCurrentMutation: (args) => mutate(args, false),
-      runRollbackMutation: (args) => mutate(args, true),
-      isPortReachable: (port) => records.get(port)?.reachable === true,
+      runCurrentMutation: mutate,
+      isForwardServiceOwner: (target) => {
+        forwardServiceOwnerChecks.push(target);
+        const record = records.get(target.localPort);
+        return record?.direct === true && record.owner === "alpha" && record.reachable;
+      },
+      launchForwardService: (target) => {
+        forwardServiceLaunches.push(target);
+        if (startUpdatesState) {
+          records.set(target.localPort, {
+            direct: true,
+            owner: "alpha",
+            reachable: true,
+            status: "running",
+          });
+        }
+        if (target.localPort === dropStartedPort) records.delete(target.localPort);
+        if (driftCurrentAfterStart) currentAllowed = false;
+        if (startStatus !== 0) throw new Error("direct forward launch canary");
+      },
+      isPortReachable: (port) => {
+        if (pendingStoppedListener?.port === port) {
+          pendingStoppedListener.checks += 1;
+          stoppedListenerReleaseCheckCount += 1;
+          if (
+            typeof stoppedListenerReleaseChecks === "number" &&
+            pendingStoppedListener.checks >= stoppedListenerReleaseChecks
+          ) {
+            records.delete(port);
+            pendingStoppedListener = undefined;
+            return false;
+          }
+          return true;
+        }
+        return records.get(port)?.reachable === true;
+      },
       now: () => now,
       sleep: (milliseconds) => {
         now += milliseconds;
@@ -134,16 +183,18 @@ export function createHermesPortableForwardRecoveryFixture({
     currentMutationCalls,
     elapsedMs: () => now,
     input,
+    forwardServiceLaunches,
+    forwardServiceOwnerChecks,
     records,
     rollbackCalls,
     rollbackCaptureCalls,
-    rollbackMutationCalls,
     setCurrentAllowed(value: boolean) {
       currentAllowed = value;
     },
     setRollbackAllowed(value: boolean) {
       rollbackAllowed = value;
     },
+    stoppedListenerReleaseCheckCount: () => stoppedListenerReleaseCheckCount,
   };
 }
 
@@ -153,14 +204,20 @@ export function configureMissingHermesForwardCapture(
     readonly afterStart?: () => void;
     readonly initialStatus?: "dead" | "missing";
   } = {},
-): { readonly isRunning: () => boolean } {
+): {
+  readonly isRunning: () => boolean;
+  readonly launchSpy: ReturnType<typeof vi.spyOn>;
+  readonly ownerSpy: ReturnType<typeof vi.spyOn>;
+  readonly reachabilitySpy: ReturnType<typeof vi.spyOn>;
+} {
   let forwardStatus: "dead" | "missing" | "running" = options.initialStatus ?? "missing";
+  let directForwardRunning = false;
+  const forwardHealth = requireDist("../../src/lib/actions/sandbox/forward-health.js");
+  const reachabilitySpy = vi
+    .spyOn(forwardHealth, "isLocalForwardReachable")
+    .mockImplementation(() => forwardStatus === "running" || directForwardRunning);
   const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
   const runOpenshell = harness.runOpenshellSpy.getMockImplementation()!;
-  harness.spawnSyncSpy.mockImplementation(((command: unknown) => ({
-    status: String(command) === process.execPath && forwardStatus !== "running" ? 1 : 0,
-    signal: null,
-  })) as never);
   harness.captureResolvedOpenshellSpy.mockImplementation(((
     args: unknown,
     captureOptions: unknown,
@@ -171,7 +228,9 @@ export function configureMissingHermesForwardCapture(
         status: 0,
         output:
           forwardStatus === "missing"
-            ? "SANDBOX BIND PORT PID STATUS"
+            ? directForwardRunning
+              ? "No active forwards."
+              : "SANDBOX BIND PORT PID STATUS"
             : `SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 ${forwardStatus}`,
       };
     }
@@ -183,12 +242,18 @@ export function configureMissingHermesForwardCapture(
       forwardStatus = "missing";
       return { status: 0 };
     }
-    if (argv[0] === "forward" && argv[1] === "start") {
-      forwardStatus = "running";
-      options.afterStart?.();
-      return { status: 0 };
-    }
     return runOpenshell(args, runOptions);
   }) as never);
-  return { isRunning: () => forwardStatus === "running" };
+  const ownerSpy = harness.forwardServiceOwnerSpy.mockImplementation(() => directForwardRunning);
+  const launchSpy = harness.launchForwardServiceSpy.mockImplementation(() => {
+    forwardStatus = "missing";
+    directForwardRunning = true;
+    options.afterStart?.();
+  });
+  return {
+    isRunning: () => forwardStatus === "running" || directForwardRunning,
+    launchSpy,
+    ownerSpy,
+    reachabilitySpy,
+  };
 }

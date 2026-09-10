@@ -35,7 +35,6 @@ import {
 import {
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
-  RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
   type RuntimeProviderBundle,
 } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES, createCurrentRuntimeProviderBundles } from "./current";
@@ -109,18 +108,6 @@ function completeBundle(providerId: string): RuntimeProviderBundle {
   });
   return {
     ...base,
-    stateMutation: {
-      providerId,
-      supported: true,
-      contractVersion: RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
-      acquire: unreachable,
-      assertFenced: unreachable,
-      publish: unreachable,
-      rollback: unreachable,
-      activate: unreachable,
-      release: unreachable,
-      recover: unreachable,
-    },
     bootstrap: {
       providerId,
       supported: true,
@@ -153,6 +140,10 @@ function completeBundle(providerId: string): RuntimeProviderBundle {
         displayName: "Contract fixture",
       })),
       capture: () => ({ status: 0, stdout: "", stderr: "" }),
+      nvidiaContainer: {
+        capture: () => ({ status: 0, stdout: "", stderr: "" }),
+        cleanup: () => ({ status: "absent" }),
+      },
     },
   };
 }
@@ -192,17 +183,6 @@ function registration(
 }
 
 const INCOMPLETE_SURFACES = [
-  [
-    "stateMutation",
-    (bundle: RuntimeProviderBundle) => ({
-      ...bundle,
-      stateMutation: {
-        providerId: bundle.identity.id,
-        supported: false as const,
-        reason: "incomplete fixture",
-      },
-    }),
-  ],
   [
     "bootstrap",
     (bundle: RuntimeProviderBundle) => ({
@@ -362,9 +342,29 @@ describe("runtime provider activation catalog", () => {
 
       expect(() =>
         createRuntimeProviderActivationCatalog([registration(candidate, incomplete)]),
-      ).toThrow(`missing: ${operation}`);
+      ).toThrow(
+        operation === "host-local-inference"
+          ? "cannot expose NVIDIA container proof without host-local-inference authority"
+          : `missing: ${operation}`,
+      );
     },
   );
+
+  it("accepts a qualified provider without the optional NVIDIA container capability", () => {
+    const candidate = CANDIDATE_TOPOLOGIES[1];
+    const bundle = completeBundle(candidate.providerId);
+    const supported = bundle.containerEngine as Extract<
+      RuntimeProviderBundle["containerEngine"],
+      { readonly supported: true }
+    >;
+    const { nvidiaContainer: _capability, ...containerEngine } = supported;
+
+    expect(() =>
+      createRuntimeProviderActivationCatalog([
+        registration(candidate, { ...bundle, containerEngine }),
+      ]),
+    ).not.toThrow();
+  });
 
   it("rejects incomplete host-local inference authority", () => {
     const candidate = CANDIDATE_TOPOLOGIES[1];

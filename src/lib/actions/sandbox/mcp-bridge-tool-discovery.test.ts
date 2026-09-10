@@ -12,6 +12,7 @@ import type { McpBridgeEntry } from "../../state/registry";
 import {
   buildMcpToolDiscoveryCommand,
   classifyMcpToolDiscoveryResult,
+  MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,
   MCP_TOOL_DISCOVERY_RUNTIME_PATH,
   toolDiscoveryReadinessSkipDetail,
 } from "./mcp-bridge-tool-discovery";
@@ -107,7 +108,7 @@ describe("MCP tool discovery host boundary (#6901)", () => {
     expect(
       classifyMcpToolDiscoveryResult(
         framedResult({
-          protocol: 1,
+          protocol: MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,
           ok: true,
           count: 2,
           tools: ["alpha", "zeta"],
@@ -121,6 +122,7 @@ describe("MCP tool discovery host boundary (#6901)", () => {
       count: 2,
       tools: ["alpha", "zeta"],
       truncated: false,
+      commandStatus: 0,
     });
   });
 
@@ -133,7 +135,7 @@ describe("MCP tool discovery host boundary (#6901)", () => {
     expect(
       classifyMcpToolDiscoveryResult(
         framedResult({
-          protocol: 1,
+          protocol: MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,
           ok: true,
           count: tools.length,
           tools,
@@ -147,6 +149,7 @@ describe("MCP tool discovery host boundary (#6901)", () => {
       count: tools.length,
       tools,
       truncated: false,
+      commandStatus: 0,
     });
   });
 
@@ -166,55 +169,124 @@ describe("MCP tool discovery host boundary (#6901)", () => {
       count: 0,
       tools: [],
       truncated: false,
+      commandStatus: 0,
       detail: "tool discovery returned an oversized result",
+      failedStage: "runtime",
+      failureClass: "runtime",
+    });
+  });
+
+  it("preserves a structured authentication failure when the runtime exits zero (#10944)", () => {
+    expect(
+      classifyMcpToolDiscoveryResult(
+        framedResult({
+          protocol: MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,
+          ok: false,
+          count: 0,
+          tools: [],
+          truncated: false,
+          detail: "MCP endpoint rejected the request (HTTP 401)",
+          failedStage: "initialization",
+          failureClass: "authentication",
+        }),
+        entry,
+        marker,
+      ),
+    ).toEqual({
+      ok: false,
+      count: 0,
+      tools: [],
+      truncated: false,
+      commandStatus: 0,
+      detail: "MCP endpoint rejected the request (HTTP 401)",
+      failedStage: "initialization",
+      failureClass: "authentication",
+    });
+  });
+
+  it("preserves a structured missing-runtime failure when the wrapper exits zero (#10944)", () => {
+    expect(
+      classifyMcpToolDiscoveryResult(
+        framedResult({
+          protocol: MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,
+          ok: false,
+          count: 0,
+          tools: [],
+          truncated: false,
+          detail: "sandbox image does not include the MCP tool discovery runtime; rebuild the sandbox",
+          failedStage: "runtime",
+          failureClass: "runtime",
+        }),
+        entry,
+        marker,
+      ),
+    ).toEqual({
+      ok: false,
+      count: 0,
+      tools: [],
+      truncated: false,
+      commandStatus: 0,
+      detail: "sandbox image does not include the MCP tool discovery runtime; rebuild the sandbox",
+      failedStage: "runtime",
+      failureClass: "runtime",
     });
   });
 
   it.each([
-    framedResult({ protocol: 1, ok: true, count: 1, tools: ["bad\nname"], truncated: false }),
     framedResult({
-      protocol: 1,
+      protocol: MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,
+      ok: true,
+      count: 1,
+      tools: ["bad\nname"],
+      truncated: false,
+    }),
+    framedResult({
+      protocol: MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,
       ok: true,
       count: 1,
       tools: ["bad\ud800name"],
       truncated: false,
     }),
     framedResult({
-      protocol: 1,
+      protocol: MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,
       ok: true,
       count: 1,
       tools: ["safe\u202eevil"],
       truncated: false,
     }),
     framedResult({
-      protocol: 1,
+      protocol: MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,
       ok: true,
       count: 1,
       tools: ["safe\u2066evil"],
       truncated: false,
     }),
     framedResult({
-      protocol: 1,
+      protocol: MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,
       ok: true,
       count: 1,
       tools: ["safe\u2028evil"],
       truncated: false,
     }),
     framedResult({
-      protocol: 1,
+      protocol: MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,
       ok: true,
       count: 2,
       tools: ["same", "same"],
       truncated: false,
     }),
     framedResult({
-      protocol: 1,
+      protocol: MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,
       ok: true,
       count: 2,
       tools: ["zeta", "alpha"],
       truncated: false,
     }),
-    { status: 0, stdout: JSON.stringify({ protocol: 1 }), stderr: "" },
+    {
+      status: 0,
+      stdout: JSON.stringify({ protocol: MCP_TOOL_DISCOVERY_RESULT_PROTOCOL }),
+      stderr: "",
+    },
   ])("fails closed on malformed, duplicate, unsorted, or unframed results [case %#]", (result) => {
     expect(classifyMcpToolDiscoveryResult(result, entry, marker)).toMatchObject({
       ok: false,
@@ -237,6 +309,11 @@ describe("MCP tool discovery host boundary (#6901)", () => {
     expect(result.detail).toContain("rebuild the sandbox");
     expect(result.detail).toContain("exit 1");
     expect(result.detail).toContain("proxy startup refused");
+    expect(result).toMatchObject({
+      commandStatus: 1,
+      failedStage: "runtime",
+      failureClass: "runtime",
+    });
     expect(JSON.stringify(result)).not.toContain("should-not-leak");
   });
 

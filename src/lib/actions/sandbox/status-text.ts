@@ -13,7 +13,6 @@ import { getEffectiveReasoningEffort } from "../../inference/selection";
 import { buildSshForwardHintLines } from "../../onboard/ssh-forward-hint";
 import { getGatewayPresets } from "../../policy";
 import * as sandboxVersion from "../../sandbox/version";
-import * as shields from "../../shields";
 import type { SandboxEntry, SandboxGpuProofResult } from "../../state/registry";
 import {
   createSystemDeps as createSessionDeps,
@@ -32,17 +31,19 @@ import {
   type ServingProcessHealth,
 } from "./status-snapshot";
 
-export interface SandboxStatusTextContext extends Pick<
-  SandboxStatusSnapshot,
-  | "sb"
-  | "lookup"
-  | "currentModel"
-  | "currentProvider"
-  | "routeDrift"
-  | "inferenceHealth"
-  | "terminalRuntimeHealth"
-  | "servingProcessHealth"
-> {
+export interface SandboxStatusTextContext
+  extends Pick<
+    SandboxStatusSnapshot,
+    | "sb"
+    | "lookup"
+    | "currentModel"
+    | "currentProvider"
+    | "routeDrift"
+    | "llamaCpp"
+    | "inferenceHealth"
+    | "terminalRuntimeHealth"
+    | "servingProcessHealth"
+  > {
   sandboxName: string;
   statusAgent: SandboxStatusAgentInfo;
 }
@@ -225,16 +226,6 @@ function printActiveSessions(sandboxName: string): void {
   }
 }
 
-function printShieldsPosture(sandboxName: string): void {
-  const posture = shields.getShieldsPosture(sandboxName, false);
-  if (posture.mode === "locked") return;
-  const detail =
-    posture.mode === "mutable_default"
-      ? posture.detail
-      : `${posture.detail} (check \`shields status\` for details)`;
-  console.log(`    Permissions: ${detail}`);
-}
-
 function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEntry): void {
   try {
     const { lookup, sandboxName, statusAgent } = context;
@@ -321,6 +312,15 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
     console.log(`    Serving recipe:  ${provenance.recipe.id}`);
     console.log(`    Catalog digest:  ${provenance.catalogDigest}`);
   }
+  if (context.llamaCpp) {
+    console.log(`    Llama.cpp: ${context.llamaCpp.kind}`);
+    if (context.llamaCpp.kind === "attached") {
+      console.log(`    Endpoint: ${context.llamaCpp.endpointUrl}`);
+    } else if (context.llamaCpp.kind === "unavailable") {
+      console.log(`    Ownership: ${context.llamaCpp.diagnostic}`);
+      console.log(`    Recovery: ${context.llamaCpp.recovery}`);
+    }
+  }
   const reasoningEffort = getEffectiveReasoningEffort(sb);
   if (reasoningEffort) console.log(`    Reasoning effort: ${reasoningEffort}`);
   printInferenceRouteDrift(context.routeDrift, sb.name);
@@ -337,7 +337,6 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   );
   const agentExitCode = printAgentHarness(context);
   printActiveSessions(sandboxName);
-  printShieldsPosture(sandboxName);
   printAgentVersion(context, sb);
   return { exitCode: inferenceExitCode ?? agentExitCode };
 }

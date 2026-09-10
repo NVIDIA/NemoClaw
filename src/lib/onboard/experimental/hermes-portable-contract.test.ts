@@ -16,6 +16,8 @@ import {
 } from "./hermes-portable-contract";
 
 const SANDBOX = "alpha";
+const PRE_SKILLS_MANIFEST_SHA256 =
+  "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2";
 const temporaryDirectories: string[] = [];
 
 function startupArgv(...extra: string[]): string[] {
@@ -48,6 +50,21 @@ function setExpectedManifestVersion(
     mode: 0o644,
   });
   agent.expected_version = expectedVersion;
+}
+
+function removeReviewedSkillsMetadata(agent: AgentDefinition): void {
+  const source = fs.readFileSync(agent.manifestPath, "utf8");
+  const metadata = [
+    "# Static integration metadata only. Hermes remains the authority on which",
+    "# skills are visible or active.",
+    "skills:",
+    "  writable_root: /sandbox/.hermes/skills",
+    "  list_command: [skills, list]",
+    "",
+    "",
+  ].join("\n");
+  expect(source.split(metadata)).toHaveLength(2);
+  fs.writeFileSync(agent.manifestPath, source.replace(metadata, ""), { mode: 0o644 });
 }
 
 function expectStartupCandidatesRejected(
@@ -95,10 +112,10 @@ describe("Hermes portable startup contract", () => {
       devicePairing: false,
       configDir: "/sandbox/.hermes",
     });
-    expect(agent.expected_version).toBe("0.19.0");
+    expect(agent.expected_version).toBe("0.20.6");
   });
 
-  it.each([undefined, "", "0.19.1"])(
+  it.each([undefined, "", "0.19.0"])(
     "rejects Hermes manifest version %j outside the accepted portable matrix (#9203)",
     (expectedVersion) => {
       const agent = copyAgent();
@@ -121,7 +138,7 @@ describe("Hermes portable startup contract", () => {
       sandboxName: SANDBOX,
       startupArgv: startupArgv(),
     });
-    setExpectedManifestVersion(accepted, "0.19.1");
+    setExpectedManifestVersion(accepted, "0.19.0");
 
     expect(() =>
       assertCurrentHermesPortableStartupContract(contract, {
@@ -169,6 +186,63 @@ describe("Hermes portable startup contract", () => {
       startupArgv: startupArgv(),
     });
     expect(() => assertCurrentHermesPortableStoredStartupContract(contract, SANDBOX)).not.toThrow();
+  });
+
+  it("accepts the reviewed manifest metadata transition when startup authority is unchanged (#11248)", () => {
+    const installedAgent = copyAgent();
+    removeReviewedSkillsMetadata(installedAgent);
+    const installed = resolveHermesPortableStartupContract({
+      agent: installedAgent,
+      sandboxName: SANDBOX,
+      startupArgv: startupArgv(),
+    });
+    const input = {
+      agent: loadAgent("hermes"),
+      sandboxName: SANDBOX,
+      startupArgv: startupArgv(),
+    };
+    const current = resolveHermesPortableStartupContract(input);
+
+    expect(installed.manifestSha256).toBe(PRE_SKILLS_MANIFEST_SHA256);
+    expect(installed.startupDescriptorSha256).toBe(current.startupDescriptorSha256);
+    expect(() =>
+      assertCurrentHermesPortableStoredStartupContract(installed, SANDBOX),
+    ).not.toThrow();
+    expect(assertCurrentHermesPortableStartupContract(installed, input)).toEqual(current);
+  });
+
+  it("rejects unreviewed manifest transitions with an unchanged startup descriptor (#11248)", () => {
+    const current = resolveHermesPortableStartupContract({
+      agent: loadAgent("hermes"),
+      sandboxName: SANDBOX,
+      startupArgv: startupArgv(),
+    });
+
+    expect(() =>
+      assertCurrentHermesPortableStoredStartupContract(
+        { ...current, manifestSha256: "0".repeat(64) },
+        SANDBOX,
+      ),
+    ).toThrow("current startup authority disagrees");
+  });
+
+  it("rejects security authority drift during the reviewed manifest transition (#11248)", () => {
+    const current = resolveHermesPortableStartupContract({
+      agent: loadAgent("hermes"),
+      sandboxName: SANDBOX,
+      startupArgv: startupArgv(),
+    });
+
+    expect(() =>
+      assertCurrentHermesPortableStoredStartupContract(
+        {
+          ...current,
+          manifestSha256: PRE_SKILLS_MANIFEST_SHA256,
+          stateIdentitySha256: "0".repeat(64),
+        },
+        SANDBOX,
+      ),
+    ).toThrow("current startup authority disagrees");
   });
 
   it.each([
