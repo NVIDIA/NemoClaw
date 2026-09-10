@@ -2,10 +2,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
@@ -41,6 +42,7 @@ const JSON5_MODULE = path.join(
   "node_modules",
   "json5",
 );
+const execFileAsync = promisify(execFile);
 
 function commandPath(name: string): string {
   const result = spawnSync("/bin/sh", ["-c", `command -v ${name}`], { encoding: "utf-8" });
@@ -2317,15 +2319,28 @@ describe("Slack secrets-on-disk tripwire (#2085)", () => {
   });
 });
 
-describe("provider placeholder refresh (#4251)", () => {
+describe.concurrent("provider placeholder refresh (#4251)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-
-  function runRefresh(
+  const extraPlaceholderKeys = require(
+    path.join(
+      import.meta.dirname,
+      "../../../..",
+      "src",
+      "lib",
+      "onboard",
+      "extra-placeholder-keys.ts",
+    ),
+  );
+  const canonicalKeys: string[] = Array.from(
+    extraPlaceholderKeys.canonicalPlaceholderKeys(),
+  ).sort();
+  // Each canonical key becomes an independent concurrent fixture.
+  async function runRefresh(
     config: unknown,
     env: Record<string, string> = {},
     rootMode = false,
     runtimePlan: unknown = { credentialBindings: [] },
-  ): { config: any; handoffEnv: string; hash: string; result: ReturnType<typeof spawnSync> } {
+  ) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-placeholders-"));
     const openclawDir = path.join(tmpDir, ".openclaw");
     const configPath = path.join(openclawDir, "openclaw.json");
@@ -2358,7 +2373,7 @@ describe("provider placeholder refresh (#4251)", () => {
       ].join("\n"),
       { mode: 0o700 },
     );
-    const result = spawnSync("bash", [scriptPath], {
+    const { stdout, stderr } = await execFileAsync("bash", [scriptPath], {
       encoding: "utf-8",
       env: { PATH: process.env.PATH || "", ...env },
       timeout: 5000,
@@ -2369,7 +2384,7 @@ describe("provider placeholder refresh (#4251)", () => {
       ? fs.readFileSync(handoffEnvPath, "utf-8")
       : "";
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    return { config: updatedConfig, handoffEnv, hash, result };
+    return { config: updatedConfig, handoffEnv, hash, result: { status: 0, stderr, stdout } };
   }
 
   function placeholderPlan(envKeys: string[]): string {
@@ -2382,9 +2397,9 @@ describe("provider placeholder refresh (#4251)", () => {
     ).toString("base64");
   }
 
-  it("withholds raw provider values from the root-to-sandbox config handoff", () => {
+  it("withholds raw provider values from the root-to-sandbox config handoff", async () => {
     const rawToken = "SENTINEL_RAW_PROVIDER_VALUE";
-    const run = runRefresh(
+    const run = await runRefresh(
       {
         channels: {
           telegram: {
@@ -2410,9 +2425,9 @@ describe("provider placeholder refresh (#4251)", () => {
     expect(run.handoffEnv).not.toContain("TELEGRAM_BOT_TOKEN");
   });
 
-  it("rewrites Telegram canonical placeholders to OpenShell runtime-scoped placeholders", () => {
+  it("rewrites Telegram canonical placeholders to OpenShell runtime-scoped placeholders", async () => {
     const scoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
-    const run = runRefresh(
+    const run = await runRefresh(
       {
         channels: {
           telegram: {
@@ -2436,8 +2451,8 @@ describe("provider placeholder refresh (#4251)", () => {
     expect(run.result.stderr).not.toContain("v42_TELEGRAM_BOT_TOKEN");
   });
 
-  it("does not write raw provider credentials into openclaw.json", () => {
-    const run = runRefresh(
+  it("does not write raw provider credentials into openclaw.json", async () => {
+    const run = await runRefresh(
       {
         channels: {
           telegram: {
@@ -2460,8 +2475,8 @@ describe("provider placeholder refresh (#4251)", () => {
     expect(run.result.stderr).toContain("refusing to write raw credentials");
   });
 
-  it("warns when Telegram is configured but the runtime placeholder env is missing", () => {
-    const run = runRefresh({
+  it("warns when Telegram is configured but the runtime placeholder env is missing", async () => {
+    const run = await runRefresh({
       channels: {
         telegram: {
           accounts: {
@@ -2479,8 +2494,8 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("warns when the Slack config alias is present but SLACK_BOT_TOKEN is missing", () => {
-    const run = runRefresh({
+  it("warns when the Slack config alias is present but SLACK_BOT_TOKEN is missing", async () => {
+    const run = await runRefresh({
       channels: {
         slack: {
           accounts: {
@@ -2502,8 +2517,8 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("does not warn when the Slack config alias matches an OpenShell runtime placeholder", () => {
-    const run = runRefresh(
+  it("does not warn when the Slack config alias matches an OpenShell runtime placeholder", async () => {
+    const run = await runRefresh(
       {
         channels: {
           slack: {
@@ -2533,8 +2548,8 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("does not warn when the Slack runtime env holds a genuine xoxb-/xapp- token", () => {
-    const run = runRefresh(
+  it("does not warn when the Slack runtime env holds a genuine xoxb-/xapp- token", async () => {
+    const run = await runRefresh(
       {
         channels: {
           slack: {
@@ -2558,8 +2573,8 @@ describe("provider placeholder refresh (#4251)", () => {
     expect(JSON.stringify(run.config)).not.toContain("xoxb-1-real-bot-token");
   });
 
-  it("warns when the Slack runtime env holds neither a placeholder nor a Slack token", () => {
-    const run = runRefresh(
+  it("warns when the Slack runtime env holds neither a placeholder nor a Slack token", async () => {
+    const run = await runRefresh(
       {
         channels: {
           slack: {
@@ -2580,10 +2595,10 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("warns when the Slack runtime env resolves a different key than expected", () => {
+  it("warns when the Slack runtime env resolves a different key than expected", async () => {
     // A placeholder for the wrong key must not look healthy — Bolt would still
     // inherit a non-Slack placeholder and fail at startup.
-    const run = runRefresh(
+    const run = await runRefresh(
       {
         channels: {
           slack: {
@@ -2604,8 +2619,8 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("emits the accepted-extras signal from canonical keys in the default runtime plan (#10967)", () => {
-    const run = runRefresh(
+  it("emits the accepted-extras signal from canonical keys in the default runtime plan (#10967)", async () => {
+    const run = await runRefresh(
       {},
       {
         NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: "",
@@ -2619,8 +2634,8 @@ describe("provider placeholder refresh (#4251)", () => {
     expect(run.result.stderr).toMatch(/accepted 1 entry\(ies\): TELEGRAM_BOT_TOKEN_AGENT_A/u);
   });
 
-  it("does not emit the accepted-extras breadcrumb when NEMOCLAW_EXTRA_PLACEHOLDER_KEYS is unset", () => {
-    const run = runRefresh(
+  it("does not emit the accepted-extras breadcrumb when NEMOCLAW_EXTRA_PLACEHOLDER_KEYS is unset", async () => {
+    const run = await runRefresh(
       {
         channels: {
           telegram: {
@@ -2637,10 +2652,10 @@ describe("provider placeholder refresh (#4251)", () => {
     expect(run.result.stderr).not.toContain("[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted");
   });
 
-  it("splits NEMOCLAW_EXTRA_PLACEHOLDER_KEYS on commas the same way as whitespace", () => {
+  it("splits NEMOCLAW_EXTRA_PLACEHOLDER_KEYS on commas the same way as whitespace", async () => {
     const scopedA = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN_AGENT_A";
     const scopedB = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN_AGENT_B";
-    const run = runRefresh(
+    const run = await runRefresh(
       {
         channels: {
           telegram: {
@@ -2674,9 +2689,9 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("revision-collapses NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entries the same way as canonical keys", () => {
+  it("revision-collapses NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entries the same way as canonical keys", async () => {
     const scoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN_AGENT_A";
-    const run = runRefresh(
+    const run = await runRefresh(
       {
         channels: {
           telegram: {
@@ -2701,7 +2716,7 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("does not let canonical TELEGRAM_BOT_TOKEN rewrite the suffixed extra placeholder", () => {
+  it("does not let canonical TELEGRAM_BOT_TOKEN rewrite the suffixed extra placeholder", async () => {
     // Pre-fix bug: the python rewrite did `if old in value: value.replace(old, new)`,
     // so the canonical replacement for `openshell:resolve:env:TELEGRAM_BOT_TOKEN`
     // greedily rewrote the prefix of `openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A`,
@@ -2710,7 +2725,7 @@ describe("provider placeholder refresh (#4251)", () => {
     // matches each placeholder as an exact token only.
     const canonicalScoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
     const extraScoped = "openshell:resolve:env:v51_TELEGRAM_BOT_TOKEN_AGENT_A";
-    const run = runRefresh(
+    const run = await runRefresh(
       {
         channels: {
           telegram: {
@@ -2735,13 +2750,13 @@ describe("provider placeholder refresh (#4251)", () => {
     expect(run.config.channels.telegram.accounts.agentA.botToken).toBe(extraScoped);
   });
 
-  it("leaves the suffixed extra placeholder unchanged when only the canonical revision is set", () => {
+  it("leaves the suffixed extra placeholder unchanged when only the canonical revision is set", async () => {
     // Companion to the canonical-vs-extra collision test: when the operator
     // staged a revision for TELEGRAM_BOT_TOKEN but not for the extra key,
     // the extra placeholder must stay on its canonical form rather than be
     // partially rewritten by the prefix replacement.
     const canonicalScoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
-    const run = runRefresh(
+    const run = await runRefresh(
       {
         channels: {
           telegram: {
@@ -2767,8 +2782,8 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("rejects malformed and canonical-collision NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entries without faulting", () => {
-    const run = runRefresh(
+  it("rejects malformed and canonical-collision NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entries without faulting", async () => {
+    const run = await runRefresh(
       {
         channels: {
           telegram: {
@@ -2815,13 +2830,13 @@ describe("provider placeholder refresh (#4251)", () => {
     "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
   ])(
     "refuses arbitrary host secret names that do not extend a discovered provider envKey inside the sandbox [%s]",
-    (blocked) => {
+    async (blocked) => {
       // Defence-in-depth: even if an operator clobbers NEMOCLAW_EXTRA_PLACEHOLDER_KEYS
       // inside a running sandbox after the host-side parser already filtered it,
       // the container-side refresh helper must mirror the host's canonical-prefix
       // restriction so a noncanonical name such as GITHUB_TOKEN never reaches the
       // python placeholder walker.
-      const run = runRefresh(
+      const run = await runRefresh(
         {
           channels: {
             telegram: {
@@ -2870,30 +2885,15 @@ describe("provider placeholder refresh (#4251)", () => {
     },
   );
 
-  it("accepts every manifest credential envKey from the messaging plan as an extension prefix", () => {
-    // Behavioural parity guard: the in-container parser should not hardcode
-    // channel env keys. It consumes the messaging plan's credentialBindings,
-    // then accepts per-profile extensions for those discovered keys.
-    // For each TypeScript-derived canonical envKey, plant a `<KEY>_PARITY`
-    // extension and assert that the bash refresh accepts and revision-
-    // collapses it. Drift in either direction (new channel added but bash
-    // not updated, or bash list shrunk) breaks one of the two assertions.
-    const distPath = path.join(
-      import.meta.dirname,
-      "../../../..",
-      "src",
-      "lib",
-      "onboard",
-      "extra-placeholder-keys.ts",
-    );
-    const { canonicalPlaceholderKeys } = require(distPath);
-    const canonicalKeys: string[] = Array.from(canonicalPlaceholderKeys()).sort();
-    expect(canonicalKeys.length).toBeGreaterThan(0);
-
-    canonicalKeys.forEach((canonical) => {
+  it.each(canonicalKeys)(
+    "accepts manifest credential envKey %s as an extension prefix",
+    async (canonical) => {
+      // Behavioural parity guard: the in-container parser should not hardcode
+      // channel env keys. It consumes the messaging plan's credentialBindings,
+      // then accepts a per-profile extension for each discovered key.
       const extension = `${canonical}_PARITY`;
       const scoped = `openshell:resolve:env:v77_${extension}`;
-      const run = runRefresh(
+      const run = await runRefresh(
         {
           channels: {
             telegram: {
@@ -2916,10 +2916,10 @@ describe("provider placeholder refresh (#4251)", () => {
         `bash refresh refused manifest credential extension '${extension}'`,
       ).not.toContain(`[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '${extension}'`);
       expect(run.config.channels.telegram.accounts.parity.botToken).toBe(scoped);
-    });
-  });
+    },
+  );
 
-  it("caps NEMOCLAW_EXTRA_PLACEHOLDER_KEYS at 32 entries inside the sandbox", () => {
+  it("caps NEMOCLAW_EXTRA_PLACEHOLDER_KEYS at 32 entries inside the sandbox", async () => {
     // 33 fillers in the list, all extending TELEGRAM_BOT_TOKEN_, all valid
     // canonical extensions. The cap should accept the first 32 (indices
     // 0..31) and reject the 33rd entry (index 32, named ..._FILLER_32),
@@ -2941,7 +2941,7 @@ describe("provider placeholder refresh (#4251)", () => {
       // shorter canonical replacement bleed into beyondCap regardless of
       // the cap state.
     };
-    const run = runRefresh(
+    const run = await runRefresh(
       {
         channels: {
           telegram: {
