@@ -133,11 +133,8 @@ describe("local inference helpers", () => {
 
   it("bounds an unavailable WSL networking-mode probe and keeps the conservative route", () => {
     const stateRoot = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-wsl-mode-"));
-    const capture = vi.fn<NonNullable<Parameters<typeof findReachableOllamaHost>[0]>>(
-      (command) =>
-        command.includes("http://127.0.0.1:11434/api/tags")
-          ? JSON.stringify({ models: [] })
-          : "",
+    const capture = vi.fn<NonNullable<Parameters<typeof findReachableOllamaHost>[0]>>((command) =>
+      command.includes("http://127.0.0.1:11434/api/tags") ? JSON.stringify({ models: [] }) : "",
     );
 
     try {

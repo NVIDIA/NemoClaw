@@ -588,20 +588,23 @@ describe("registerCreatedSandbox", () => {
       },
       "generation-1",
     ],
-  ])("rejects a Portable OpenClaw %s receipt before registry mutation (#9207)", (_label, receipt, lifecycleGeneration) => {
-    const registerSandbox = vi.fn();
+  ])(
+    "rejects a Portable OpenClaw %s receipt before registry mutation (#9207)",
+    (_label, receipt, lifecycleGeneration) => {
+      const registerSandbox = vi.fn();
 
-    expect(() =>
-      registerCreatedSandbox({
-        ...createdRegistryEntryInput({ lifecycleGeneration }),
-        portableLifecycle: true,
-        environment: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-        classifyPortableLifecycleReceipt: () => receipt,
-        registerSandbox,
-      }),
-    ).toThrow(/requires a current lifecycle receipt that matches the registry generation/u);
-    expect(registerSandbox).not.toHaveBeenCalled();
-  });
+      expect(() =>
+        registerCreatedSandbox({
+          ...createdRegistryEntryInput({ lifecycleGeneration }),
+          portableLifecycle: true,
+          environment: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+          classifyPortableLifecycleReceipt: () => receipt,
+          registerSandbox,
+        }),
+      ).toThrow(/requires a current lifecycle receipt that matches the registry generation/u);
+      expect(registerSandbox).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps ordinary OpenClaw registration agent-neutral (#9207)", () => {
     const classifyPortableLifecycleReceipt = vi.fn();

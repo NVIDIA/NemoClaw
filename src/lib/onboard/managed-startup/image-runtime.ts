@@ -95,14 +95,12 @@ interface ManagedStartupApplyMessagingConstructionActionBase {
   readonly mode: "apply" | "clear";
 }
 
-export interface ManagedStartupApplyMessagingRuntimeConstructionAction
-  extends ManagedStartupApplyMessagingConstructionActionBase {
+export interface ManagedStartupApplyMessagingRuntimeConstructionAction extends ManagedStartupApplyMessagingConstructionActionBase {
   readonly phase: "runtime-setup";
   readonly runAs: "root";
 }
 
-export interface ManagedStartupApplyMessagingConfigConstructionAction
-  extends ManagedStartupApplyMessagingConstructionActionBase {
+export interface ManagedStartupApplyMessagingConfigConstructionAction extends ManagedStartupApplyMessagingConstructionActionBase {
   readonly phase: "post-agent-install";
   readonly runAs: "sandbox";
 }
@@ -520,25 +518,13 @@ function execute(
 function generatorCommand(agent: ManagedStartupAgent): readonly string[] {
   switch (agent) {
     case "openclaw":
-      return [
-        "/usr/local/bin/node",
-        "/scripts/generate-openclaw-config.mts",
-      ];
+      return ["/usr/local/bin/node", "/scripts/generate-openclaw-config.mts"];
     case "hermes":
-      return [
-        "/usr/local/bin/node",
-        "/opt/nemoclaw-hermes-config/generate-config.ts",
-      ];
+      return ["/usr/local/bin/node", "/opt/nemoclaw-hermes-config/generate-config.ts"];
     case "langchain-deepagents-code":
-      return [
-        "/usr/local/bin/node",
-        "/opt/nemoclaw-deepagents-code/generate-config.ts",
-      ];
+      return ["/usr/local/bin/node", "/opt/nemoclaw-deepagents-code/generate-config.ts"];
     case "pi":
-      return [
-        "/usr/local/bin/node",
-        "/opt/nemoclaw-pi/generate-config.ts",
-      ];
+      return ["/usr/local/bin/node", "/opt/nemoclaw-pi/generate-config.ts"];
   }
 }
 
@@ -1044,10 +1030,7 @@ function managedSystemCaAnchorNames(): readonly string[] {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     fail("could not inspect the managed system CA anchor directory");
   }
-  requireRootOwnedDirectory(
-    MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY,
-    ROOT_OWNED_DIRECTORY_MODE,
-  );
+  requireRootOwnedDirectory(MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY, ROOT_OWNED_DIRECTORY_MODE);
   try {
     return (fs.readdirSync(MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY) as string[])
       .filter((name) => MANAGED_STARTUP_SYSTEM_CA_ANCHOR_RE.test(name))

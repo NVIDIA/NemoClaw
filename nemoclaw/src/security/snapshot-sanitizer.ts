@@ -125,9 +125,9 @@ export function sanitizeOpenClawConfigFile(configPath: string): boolean {
     }
     if (root === null) return false;
     const scan = scanDescriptorSnapshot(root, CREDENTIAL_SENSITIVE_BASENAMES, targetName);
-    if (scan === null || scan.files.length !== 1) return false;
+    if (scan?.files.length !== 1) return false;
     const file = scan.files[0];
-    if (!file || file.path !== targetName) return false;
+    if (file?.path !== targetName) return false;
     const raw = decodeDescriptorSnapshotContent(file.content);
     if (raw === null) return false;
     const sanitized = sanitizedContents(targetName.toLowerCase(), raw);

@@ -354,18 +354,14 @@ describe("openclaw-config-guard", () => {
         expect(currentConfig.stat().ino).not.toBe(oldConfigInode);
         expect(currentHash.stat().ino).not.toBe(oldHashInode);
         expect(currentConfig.readBytes(1024 * 1024)).toEqual(replacement);
-        expect(currentHash.readUtf8(1024 * 1024)).toBe(
-          `${replacementDigest}  openclaw.json\n`,
-        );
+        expect(currentHash.readUtf8(1024 * 1024)).toBe(`${replacementDigest}  openclaw.json\n`);
 
         fs.writeSync(staleConfigFd, Buffer.from("STALE!!"), 0, 7, 0);
         fs.writeSync(staleHashFd, Buffer.from("STALE!!"), 0, 7, 0);
         fs.fsyncSync(staleConfigFd);
         fs.fsyncSync(staleHashFd);
         expect(currentConfig.readBytes(1024 * 1024)).toEqual(replacement);
-        expect(currentHash.readUtf8(1024 * 1024)).toBe(
-          `${replacementDigest}  openclaw.json\n`,
-        );
+        expect(currentHash.readUtf8(1024 * 1024)).toBe(`${replacementDigest}  openclaw.json\n`);
       } finally {
         currentConfig.close();
         currentHash.close();

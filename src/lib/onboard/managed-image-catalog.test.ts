@@ -523,22 +523,19 @@ describe("managed image GHCR catalog", () => {
     ).toEqual(SHIPPED_MANAGED_IMAGE_AGENTS.map(() => RELEASE));
   });
 
-  it.each(["", "0.0.97", "latest"])(
-    "rejects malformed image release label %j",
-    async (release) => {
-      const fixture = registryFixture("openclaw", {
-        labels: { "org.opencontainers.image.version": release },
-      });
+  it.each(["", "0.0.97", "latest"])("rejects malformed image release label %j", async (release) => {
+    const fixture = registryFixture("openclaw", {
+      labels: { "org.opencontainers.image.version": release },
+    });
 
-      await expect(
-        resolveManagedImageContractFromGhcr({
-          agent: "openclaw",
-          release: RELEASE,
-          fetchImpl: fixture.fetchImpl,
-        }),
-      ).rejects.toThrow(/image release is not a supported release version/);
-    },
-  );
+    await expect(
+      resolveManagedImageContractFromGhcr({
+        agent: "openclaw",
+        release: RELEASE,
+        fetchImpl: fixture.fetchImpl,
+      }),
+    ).rejects.toThrow(/image release is not a supported release version/);
+  });
 
   it("fails closed when a dependent cohort alias is torn or absent", async () => {
     const fixture = catalogFixture({ hermes: { missingRoot: true } });

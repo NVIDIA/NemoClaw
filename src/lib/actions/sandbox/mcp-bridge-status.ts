@@ -42,10 +42,7 @@ import {
   getSandboxAgent,
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
-import {
-  discoverMcpTools,
-  mcpToolDiscoveryPreconditionFailure,
-} from "./mcp-bridge-tool-discovery";
+import { discoverMcpTools, mcpToolDiscoveryPreconditionFailure } from "./mcp-bridge-tool-discovery";
 import {
   inspectMcpRecordedTargetPins,
   type McpBridgeRecordedPinStatus,

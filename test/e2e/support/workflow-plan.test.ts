@@ -626,6 +626,25 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it("selects Hermes GPU startup when its output proof changes", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/e2e/live/hermes-gpu-startup-proof.ts"] },
+    );
+
+    expect(selectedWorkflowJobs(plan)).toContain("hermes-gpu-startup");
+  });
+
+  it("selects both live consumers when their gateway-start matcher changes", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/helpers/openshell-gateway-start-output.ts"] },
+    );
+
+    expect(plan.catalogueMatrices.standard.map((row) => row.id)).toContain("onboard-resume");
+    expect(selectedWorkflowJobs(plan)).toContain("hermes-gpu-startup");
+  });
+
   it("selects only catalogue targets that own changed files", () => {
     const changedFile = "test/e2e/live/snapshot-commands.test.ts";
     const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
@@ -674,6 +693,14 @@ describe("E2E workflow plan", () => {
   it("selects the Hermes live lifecycle owner when its skill helper changes", () => {
     expect(
       catalogueTargetsForChangedFiles(["test/e2e/live/hermes-skill-lifecycle.ts"]).map(
+        (target) => target.id,
+      ),
+    ).toContain("security-posture-hermes");
+  });
+
+  it("selects the Hermes export owner when atomic publication changes (#11286)", () => {
+    expect(
+      catalogueTargetsForChangedFiles(["src/lib/adapters/fs/config-export-file.ts"]).map(
         (target) => target.id,
       ),
     ).toContain("security-posture-hermes");

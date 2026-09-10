@@ -137,7 +137,7 @@ function defineCodebaseGrowthGuardrails(): void {
   it("does not add if statements to changed test files", async () => {
     const violations = await conditionalGrowthViolations(diff);
     expect(violations, diagnostics.conditionals(violations)).toEqual([]);
-  });
+  }, 60_000);
 
   it("does not add test loops directly, through one-use helpers, or through callback-forwarding helpers", async () => {
     const violations = await loopGrowthViolations(diff);

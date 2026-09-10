@@ -51,7 +51,11 @@ import {
 } from "./manifest-readers";
 import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
 import { type AgentSkillIntegration, readAgentSkillIntegration } from "./skill-integration";
-import { readStateDirectories, stateDirectoryPaths, stateDirectoryPrefixes } from "./state-directory-contract";
+import {
+  readStateDirectories,
+  stateDirectoryPaths,
+  stateDirectoryPrefixes,
+} from "./state-directory-contract";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
 
 export type {
@@ -119,7 +123,9 @@ export function listAgents(env: NodeJS.ProcessEnv = process.env): string[] {
         .readdirSync(AGENTS_DIR, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .filter((entry) => entry.name !== "nemocua" || isCuaEnabled(env))
-        .filter((entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env))
+        .filter(
+          (entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env),
+        )
         .filter((entry) => fs.existsSync(path.join(AGENTS_DIR, entry.name, "manifest.yaml")))
         .map((entry) => entry.name)
     : [];
