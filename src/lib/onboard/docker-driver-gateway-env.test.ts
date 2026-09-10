@@ -51,13 +51,10 @@ describe("buildDockerDriverGatewayEnv", () => {
         resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
       });
 
-      configureDockerDriverGatewayExternalComponent(
-        env,
-        {
-          componentId: "policy-governance",
-          interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
-        },
-      );
+      configureDockerDriverGatewayExternalComponent(env, {
+        componentId: "policy-governance",
+        interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
+      });
 
       expect(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf8")).toContain(
         'name = "policy-governance"',

@@ -688,10 +688,9 @@ describe("live onboard FSM slice boundaries", () => {
   });
 
   it("rejects a registered component with providerless APF before effects (#11340)", () => {
-    assert.deepEqual(
-      runSliceProbe({ slice: "initial", mode: "providerless-external-component" }),
-      ["component-validated"],
-    );
+    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "providerless-external-component" }), [
+      "component-validated",
+    ]);
   });
 
   it("rechecks retained sandbox admission after acquiring the onboarding lock (#9833)", () => {
