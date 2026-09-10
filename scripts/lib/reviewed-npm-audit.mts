@@ -887,8 +887,7 @@ export function runReviewedNpmAudit(
   const audit = cached
     ? runNpmAuditWithRetry({ run: () => cached.result, wait: () => {}, warn: () => {} })
     : runNpmAuditWithRetry({
-        run: () =>
-          spawnSync("npm", NPM_AUDIT_ARGV, npmAuditProcessOptions(options.directory)),
+        run: () => spawnSync("npm", NPM_AUDIT_ARGV, npmAuditProcessOptions(options.directory)),
       });
   const finishedAt = new Date().toISOString();
   if (!cached && cacheFile && cacheInput && audit.report)

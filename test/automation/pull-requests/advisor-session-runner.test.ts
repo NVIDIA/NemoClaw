@@ -373,10 +373,7 @@ afterEach(() => {
 
 describe("advisor session runner", () => {
   it("uses one bounded, specialist-spread retry layer for transient failures", () => {
-    const behavior = advisorRetrySettings(
-      "azure/openai/gpt-5.6-terra",
-      "pr-review-behavior",
-    );
+    const behavior = advisorRetrySettings("azure/openai/gpt-5.6-terra", "pr-review-behavior");
     const dependencyUse = advisorRetrySettings(
       "openai/openai/gpt-5.6-terra",
       "pr-review-dependency-use",

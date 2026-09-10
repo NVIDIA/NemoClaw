@@ -9,6 +9,7 @@ import path from "node:path";
 import { sleepSeconds, waitUntilAsync } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
 import { envInt } from "./env";
+import type { GatewayRecoveryOutput } from "./gateway-recovery";
 import {
   createGatewayHealthWaitOptions,
   formatGatewayHealthWaitLimit,
@@ -130,6 +131,7 @@ export interface PackageManagedDockerDriverGatewayOptions {
   isDockerDriverGatewayReady?: () => Promise<boolean>;
   managedServiceLogCommand?: string;
   now?: () => number;
+  output?: Pick<GatewayRecoveryOutput, "error" | "log" | "warn">;
   prepareOpenShellGatewayUserServiceEnv?: () => void;
   preparePortForOpenShellGatewayUserServiceStart?: () => void;
   registerDockerDriverGatewayEndpoint: () => boolean;
@@ -1388,6 +1390,7 @@ export async function startPackageManagedDockerDriverGateway({
   isDockerDriverGatewayReady = isDockerDriverGatewayHttpReady,
   managedServiceLogCommand,
   now = Date.now,
+  output,
   prepareOpenShellGatewayUserServiceEnv,
   preparePortForOpenShellGatewayUserServiceStart,
   registerDockerDriverGatewayEndpoint,
@@ -1399,6 +1402,9 @@ export async function startPackageManagedDockerDriverGateway({
   validatePortOwnerForOpenShellGatewayUserServiceStart,
   verifySandboxBridgeGatewayReachableOrExit,
 }: PackageManagedDockerDriverGatewayOptions): Promise<boolean> {
+  const log = output?.log ?? console.log;
+  const warn = output?.warn ?? console.warn;
+  const printError = output?.error ?? console.error;
   const stopBeforeStandaloneFallback = () => {
     try {
       const stopped = stopService();
@@ -1414,7 +1420,7 @@ export async function startPackageManagedDockerDriverGateway({
       }
       if (stopped.attempted && !stopped.stopped) {
         const detail = stopped.reason ? ` (${stopped.reason})` : "";
-        console.warn(
+        warn(
           `  OpenShell gateway managed service could not be stopped${detail}; standalone startup will verify gateway port ownership.`,
         );
       }
@@ -1433,15 +1439,15 @@ export async function startPackageManagedDockerDriverGateway({
     if (!hasService()) return false;
   } catch (error) {
     if (error instanceof OpenShellGatewayServiceTrustError) throw error;
-    console.warn(
+    warn(
       `  OpenShell gateway managed service could not be inspected (${formatError(error)}); using standalone fallback.`,
     );
-    if (managedServiceLogCommand) console.warn(`  Logs: ${managedServiceLogCommand}`);
+    if (managedServiceLogCommand) warn(`  Logs: ${managedServiceLogCommand}`);
     stopBeforeStandaloneFallback();
     return false;
   }
 
-  console.log("  Starting OpenShell gateway via managed service...");
+  log("  Starting OpenShell gateway via managed service...");
   let serviceStart: OpenShellGatewayUserServiceStartResult;
   try {
     serviceStart = startService({
@@ -1456,26 +1462,26 @@ export async function startPackageManagedDockerDriverGateway({
     ) {
       throw error;
     }
-    console.warn(
+    warn(
       `  OpenShell gateway managed service startup failed (${formatError(error)}); using standalone fallback.`,
     );
-    if (managedServiceLogCommand) console.warn(`  Logs: ${managedServiceLogCommand}`);
+    if (managedServiceLogCommand) warn(`  Logs: ${managedServiceLogCommand}`);
     stopBeforeStandaloneFallback();
     return false;
   }
   const reportLogs = () => {
     const logCommand = serviceStart.logCommand ?? managedServiceLogCommand;
-    if (logCommand) console.warn(`  Logs: ${logCommand}`);
+    if (logCommand) warn(`  Logs: ${logCommand}`);
   };
   if (!serviceStart.started) {
     const detail = serviceStart.reason ? ` (${serviceStart.reason})` : "";
     if (serviceStart.standaloneFallbackBlocked || serviceStart.manager === "homebrew") {
       const message = `OpenShell gateway managed service failed to start${detail}.`;
-      console.error(`  ${message}`);
+      printError(`  ${message}`);
       if (exitOnFailure) process.exit(1);
       throw new Error(message);
     }
-    console.warn(
+    warn(
       `  OpenShell gateway managed service failed to start${detail}; using standalone fallback.`,
     );
     reportLogs();
@@ -1512,7 +1518,7 @@ export async function startPackageManagedDockerDriverGateway({
     await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
       skip: skipSandboxBridgeReachability,
     });
-    console.log("  ✓ OpenShell gateway managed service is healthy");
+    log("  ✓ OpenShell gateway managed service is healthy");
     return true;
   }
 
@@ -1520,8 +1526,8 @@ export async function startPackageManagedDockerDriverGateway({
     pollCount,
     pollInterval,
   )}; using standalone fallback.`;
-  console.warn(`  ${message}`);
-  console.warn(
+  warn(`  ${message}`);
+  warn(
     `  Last readiness check: endpoint registered=${lastReadiness.registered ? "yes" : "no"}, OpenShell CLI health=${lastReadiness.cliHealthy ? "yes" : "no"}, direct gRPC health=${lastReadiness.grpcHealthy ? "yes" : "no"}.`,
   );
   reportLogs();

@@ -69,21 +69,18 @@ describe("native Windows/MXC process_container host qualification", () => {
     });
   });
 
-  it.each([
-    "",
-    "10",
-    "10.0",
-    "10.0.build",
-    "6.6.87.2-microsoft-standard-WSL2",
-  ])("fails closed when release %j is not a Windows build form (#8178)", (release) => {
-    expect(
-      assessWindowsMxcProcessContainerCandidate({
-        platform: "win32",
-        nativeArchitecture: "x64",
-        release,
-      }),
-    ).toMatchObject({ candidate: false, reason: "unknown-windows-build" });
-  });
+  it.each(["", "10", "10.0", "10.0.build", "6.6.87.2-microsoft-standard-WSL2"])(
+    "fails closed when release %j is not a Windows build form (#8178)",
+    (release) => {
+      expect(
+        assessWindowsMxcProcessContainerCandidate({
+          platform: "win32",
+          nativeArchitecture: "x64",
+          release,
+        }),
+      ).toMatchObject({ candidate: false, reason: "unknown-windows-build" });
+    },
+  );
 });
 
 describe("Windows build parsing", () => {

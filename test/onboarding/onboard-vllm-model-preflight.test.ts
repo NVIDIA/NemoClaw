@@ -18,20 +18,23 @@ const ONBOARD_PREFLIGHT_TEST_TIMEOUT_MS = testTimeout(60_000);
 // installer (the [3/8] provider step), so the variable was effectively
 // validated late and other onboard paths ignored it — mirroring the gap the
 // connect command closed in #4567 with an up-front preflight.
-describe("onboard NEMOCLAW_VLLM_MODEL preflight (#5207)", {
-  timeout: ONBOARD_PREFLIGHT_TEST_TIMEOUT_MS,
-}, () => {
-  it("exits non-zero with the slug error before reaching the preflight step", () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-bad-slug-"));
-    const scriptPath = path.join(tmpDir, "onboard-bad-slug-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+describe(
+  "onboard NEMOCLAW_VLLM_MODEL preflight (#5207)",
+  {
+    timeout: ONBOARD_PREFLIGHT_TEST_TIMEOUT_MS,
+  },
+  () => {
+    it("exits non-zero with the slug error before reaching the preflight step", () => {
+      const repoRoot = path.join(import.meta.dirname, "../..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-bad-slug-"));
+      const scriptPath = path.join(tmpDir, "onboard-bad-slug-check.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+      );
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
-    const script = String.raw`
+      const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
@@ -59,30 +62,31 @@ const { onboard } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "install-vllm",
-        NEMOCLAW_VLLM_MODEL: "not-a-real-model",
-        NEMOCLAW_EXPERIMENTAL: "1",
-      },
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_PROVIDER: "install-vllm",
+          NEMOCLAW_VLLM_MODEL: "not-a-real-model",
+          NEMOCLAW_EXPERIMENTAL: "1",
+        },
+      });
+
+      const combined = `${result.stdout}\n${result.stderr}`;
+
+      // Fails with a non-zero exit code so CI / scripts detect the failure.
+      expect(result.status).toBe(1);
+      // Surfaces the actionable, slug-listing error from selectVllmModelFromEnv.
+      expect(result.stderr).toMatch(/NEMOCLAW_VLLM_MODEL/);
+      expect(result.stderr).toMatch(/not-a-real-model/);
+      // Fast-fail happens before any onboarding side effects: the preflight step
+      // ([1/8]) must never run for an invalid slug.
+      expect(combined).not.toContain("[1/8] Preflight checks");
     });
-
-    const combined = `${result.stdout}\n${result.stderr}`;
-
-    // Fails with a non-zero exit code so CI / scripts detect the failure.
-    expect(result.status).toBe(1);
-    // Surfaces the actionable, slug-listing error from selectVllmModelFromEnv.
-    expect(result.stderr).toMatch(/NEMOCLAW_VLLM_MODEL/);
-    expect(result.stderr).toMatch(/not-a-real-model/);
-    // Fast-fail happens before any onboarding side effects: the preflight step
-    // ([1/8]) must never run for an invalid slug.
-    expect(combined).not.toContain("[1/8] Preflight checks");
-  });
-});
+  },
+);
