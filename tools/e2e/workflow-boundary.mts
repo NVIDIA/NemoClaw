@@ -17,6 +17,7 @@ import {
   validateHermesDashboardWorkflow,
 } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateHermesGpuStartupWorkflow } from "./hermes-gpu-startup-workflow-boundary.mts";
+import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import {
   HERMES_TIMEOUT_CONTRACTS,
   HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
@@ -853,6 +854,7 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
   "src/lib/adapters/openshell/restore-gateway-pairing.ts",
 ]);
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
+  ...HERMES_ACP_E2E_OWNING_PATHS.map((file) => [file, ["hermes-e2e"]] as const),
   ["test/e2e/lib/fake-wechat-api.mts", ["messaging-providers"]],
   ["test/e2e/live/hermes-gpu-startup-proof.ts", ["hermes-gpu-startup"]],
   ["test/helpers/openshell-gateway-start-output.ts", ["hermes-gpu-startup"]],
@@ -1362,14 +1364,17 @@ function requireFullShaAction(
   }
 }
 
-function isReviewedLocalHermesPlatformAction(jobName: string, step: WorkflowStep): boolean {
+function isReviewedLocalAction(jobName: string, step: WorkflowStep): boolean {
   return (
     (jobName === "managed-image-multiarch-startup" &&
       step.name === "Resolve reviewed Hermes platform base image" &&
       step.uses === TRUSTED_MULTIARCH_HERMES_PLATFORM_ACTION) ||
     (jobName === "managed-image-protected-runtime" &&
       step.name === "Resolve reviewed Hermes runtime base image" &&
-      step.uses === REVIEWED_HERMES_PLATFORM_ACTION)
+      step.uses === REVIEWED_HERMES_PLATFORM_ACTION) ||
+    (jobName === "managed-image-protected-runtime" &&
+      step.name === "Reuse or refresh reviewed audit evidence before the offline build" &&
+      step.uses === "./.github/actions/ci-reviewed-npm-audit")
   );
 }
 
@@ -1479,7 +1484,7 @@ function validateFreeStandingInventoryBoundary(
     const steps = asSteps(job.steps);
     requireNoDispatchInputInterpolation(errors, steps);
     for (const step of steps) {
-      if (step.uses && !isReviewedLocalHermesPlatformAction(jobName, step)) {
+      if (step.uses && !isReviewedLocalAction(jobName, step)) {
         requireFullShaAction(errors, step, `${jobName} step '${step.name ?? step.uses}'`);
       }
       if (/\$\{\{\s*secrets\./.test(stringValue(step.run))) {
@@ -2045,8 +2050,7 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
   }
   const dispatch = namedStep(steps, "Dispatch exact commit to Jetson through operator backend");
   if (
-    dispatch?.run !==
-      "node --no-warnings tools/e2e/jetson-dispatch-client.mts" ||
+    dispatch?.run !== "node --no-warnings tools/e2e/jetson-dispatch-client.mts" ||
     !isDeepStrictEqual(asRecord(dispatch?.env), {
       E2E_ARTIFACT_DIR: "${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu",
       JETSON_DISPATCH_CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
@@ -2120,17 +2124,15 @@ function validateInferenceModeGeneration(
 function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
   const concurrency = asRecord(workflow.concurrency);
   const expectedGroup =
-    "e2e-${{ github.ref }}-${{ inputs.repair_validation && format('repair-{0}', inputs.repair_attempt_key) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
+    "e2e-${{ github.ref }}-${{ inputs.repair_validation && format('repair-{0}', inputs.repair_attempt_key) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
   if (concurrency.group !== expectedGroup) {
-    errors.push("workflow concurrency must isolate each full dispatch with github.run_id");
+    errors.push("workflow concurrency must isolate each Launchable dispatch with github.run_id");
   }
   if (
     concurrency["cancel-in-progress"] !==
     "${{ !inputs.repair_validation && inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
   ) {
-    errors.push(
-      "workflow concurrency must not cancel an active Jetson or Launchable dispatch",
-    );
+    errors.push("workflow concurrency must not cancel an active Jetson or Launchable dispatch");
   }
 }
 
@@ -2219,11 +2221,11 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
   const concurrency = asRecord(job.concurrency);
   if (
     concurrency.group !== "staging-brev-launchable-cpu" ||
-    Object.hasOwn(concurrency, "queue") ||
+    concurrency.queue !== "max" ||
     concurrency["cancel-in-progress"] !== false
   ) {
     errors.push(
-      "staging-brev-launchable concurrency must preserve its Launchable group without cancelling the running job or using unsupported queue keys",
+      "staging-brev-launchable concurrency must queue pending jobs in its Launchable group without cancelling the running job",
     );
   }
   const steps = asSteps(job.steps);
@@ -2328,10 +2330,12 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
   const concurrency = asRecord(job.concurrency);
   if (
     concurrency.group !== "staging-brev-launchable-cpu" ||
-    Object.hasOwn(concurrency, "queue") ||
+    concurrency.queue !== "max" ||
     concurrency["cancel-in-progress"] !== false
   ) {
-    errors.push(`${jobName} must share the non-cancelling Launchable concurrency group`);
+    errors.push(
+      `${jobName} must share the Launchable concurrency group with queue: max and no cancellation`,
+    );
   }
 
   const jobEnv = asRecord(job.env);
@@ -2763,11 +2767,7 @@ function validateTrustedE2ePlannerBoundary(
   generate: WorkflowRecord | undefined,
   candidateCheckout: WorkflowRecord | undefined,
 ): void {
-  const credentialAuthorization = requireStep(
-    errors,
-    generateSteps,
-    "Authorize E2E credentials",
-  );
+  const credentialAuthorization = requireStep(errors, generateSteps, "Authorize E2E credentials");
   requireRunContains(
     errors,
     credentialAuthorization,

@@ -677,16 +677,14 @@ describe("pull request and main workflow contracts", () => {
         NODE_AUTH_TOKEN: "${{ github.event_name == 'push' && github.token || '' }}",
       })),
     );
-    expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual(
-      [
-        'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
-        'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
-        'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" none',
-        'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
-        'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" production',
-        'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
-      ],
-    );
+    expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual([
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" none',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" production',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+    ]);
   });
 
   // source-shape-contract: security -- The trusted split must retain test-config coverage after compiling candidate production code
@@ -706,16 +704,10 @@ describe("pull request and main workflow contracts", () => {
     },
   );
   it.each([
-    [
-      "CLI shards",
-      requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools"),
-    ],
+    ["CLI shards", requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools")],
     [
       "Advisor runtime",
-      requiredWorkflowStep(
-        advisorWorkflow.jobs["build-advisor-runtime"],
-        "Install locked runtime",
-      ),
+      requiredWorkflowStep(advisorWorkflow.jobs["build-advisor-runtime"], "Install locked runtime"),
     ],
   ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
     const temp = mkdtempSync(join(tmpdir(), "nemoclaw-ubuntu-apt-sources-"));

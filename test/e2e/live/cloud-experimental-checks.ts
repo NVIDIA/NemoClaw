@@ -144,7 +144,9 @@ export async function runE2eCloudExperimentalChecks(
         timeoutMs: 30_000,
       },
     );
-    expect(result.exitCode, `Deep Agents Code runtime marker missing: ${resultText(result)}`).toBe(0);
+    expect(result.exitCode, `Deep Agents Code runtime marker missing: ${resultText(result)}`).toBe(
+      0,
+    );
   }
   for (const scriptPath of checkScripts) {
     const result = await context.host.command("bash", [path.join(REPO_ROOT, scriptPath)], {

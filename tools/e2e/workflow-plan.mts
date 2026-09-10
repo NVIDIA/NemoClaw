@@ -695,10 +695,7 @@ export function selectedWorkflowJobs(plan: E2eWorkflowPlan): string[] {
   return [...jobs].sort();
 }
 
-export function e2eEvidenceJobNames(
-  plan: E2eWorkflowPlan,
-  workflowPath?: string,
-): string[] {
+export function e2eEvidenceJobNames(plan: E2eWorkflowPlan, workflowPath?: string): string[] {
   const names = [
     ...plan.testMatrix.map((row) => `Shared E2E (${row.execution_id})`),
     ...Object.values(plan.catalogueMatrices).flatMap((rows) =>
@@ -720,10 +717,7 @@ export function e2eEvidenceJobNames(
 
 export function e2eEvidenceJobNamesForSelectors(requiredJobs: readonly string[]): string[] {
   return e2eEvidenceJobNames(
-    buildE2eWorkflowPlan(
-      { jobs: requiredJobs.join(",") },
-      { gatewayRuntimes: ["docker"] },
-    ),
+    buildE2eWorkflowPlan({ jobs: requiredJobs.join(",") }, { gatewayRuntimes: ["docker"] }),
   );
 }
 

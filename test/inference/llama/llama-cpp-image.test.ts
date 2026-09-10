@@ -300,15 +300,11 @@ describe("declarative llama.cpp server image", () => {
   });
 
   it("compiles the fail-closed workflow inputs from YAML (#8231)", () => {
-    const result = spawnSync(
-      process.execPath,
-      ["--no-warnings", exporterPath],
-      {
-        cwd: repoRoot,
-        encoding: "utf8",
-        env: { ...process.env, GITHUB_OUTPUT: "" },
-      },
-    );
+    const result = spawnSync(process.execPath, ["--no-warnings", exporterPath], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: { ...process.env, GITHUB_OUTPUT: "" },
+    });
     expect(result.status, result.stderr).toBe(0);
     const output = parseOutput(result.stdout);
     expect(output).toMatchObject({

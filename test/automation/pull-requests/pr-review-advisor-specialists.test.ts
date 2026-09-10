@@ -154,11 +154,11 @@ describe("PR review advisor specialist prompts", () => {
       recursive: true,
     });
 
-    const output = execFileSync(
-      process.execPath,
-      ["render-specialist-matrix.mts"],
-      { cwd: directory, encoding: "utf8", env: { PATH: process.env.PATH } },
-    );
+    const output = execFileSync(process.execPath, ["render-specialist-matrix.mts"], {
+      cwd: directory,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH },
+    });
     const matrix = JSON.parse(output) as Array<Record<string, unknown>>;
     const expected = ADVISOR_SPECIALISTS.map(({ interest, label }, index) => ({
       interest,

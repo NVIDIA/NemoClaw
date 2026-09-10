@@ -332,8 +332,7 @@ function createAgentBaseImageResolutionOptions(
     agent.name === "hermes"
       ? {
           validateImage: (imageRef: string) =>
-            hermesBaseImageSupportsMcp(imageRef) &&
-            sandboxBaseImageHasSecurityInventory(imageRef),
+            hermesBaseImageSupportsMcp(imageRef) && sandboxBaseImageHasSecurityInventory(imageRef),
           validationDescription:
             "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
         }

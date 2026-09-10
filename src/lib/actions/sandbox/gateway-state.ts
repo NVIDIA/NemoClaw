@@ -18,10 +18,6 @@ import {
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES } from "../../state/gateway";
 export { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES };
-import {
-  withMcpLifecycleLock,
-  withMcpLifecycleLockSync,
-} from "../../state/mcp-lifecycle-lock-acquisition";
 import { selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
@@ -143,9 +139,11 @@ export {
   requalifyPortableAgentSandboxAuthority,
   requireHermesPortableActiveLifecycleAuthority,
 };
-export const withSandboxLifecycleLock = withMcpLifecycleLock;
-export const withSandboxLifecycleLockSync = withMcpLifecycleLockSync;
-export const withConnectSandboxLifecycleLock = withMcpLifecycleLock;
+export {
+  withConnectSandboxLifecycleLock,
+  withSandboxLifecycleLock,
+  withSandboxLifecycleLockSync,
+} from "./lifecycle/lock";
 
 /** Capture one accepted-readiness observation through retained Hermes command authority. */
 export function captureHermesPortableAcceptedReadinessObservation(

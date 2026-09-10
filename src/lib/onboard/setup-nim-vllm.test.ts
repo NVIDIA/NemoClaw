@@ -835,7 +835,6 @@ describe("DGX Spark existing vLLM headroom warning", () => {
   });
 });
 
-
 describe("setupNim vLLM requested serving profile", () => {
   const profile = {
     presetId: "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4",

@@ -3,11 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  createRunnerFsStore,
-  inMemoryFsMethods,
-  throwOnCall,
-} from "./runner-mock-fixtures.js";
+import { createRunnerFsStore, inMemoryFsMethods, throwOnCall } from "./runner-mock-fixtures.js";
 import { sandboxIdentityResult, sequentialCommandResult } from "./runner-test-fixtures.js";
 
 describe("blueprint runner mock fixtures", () => {
