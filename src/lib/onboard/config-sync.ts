@@ -41,7 +41,9 @@ export function sandboxConfigSyncArgs(sandboxName: string): string[] {
   return ["sandbox", "exec", "-n", sandboxName, "--no-tty", "--", "/bin/bash", "-s"];
 }
 
-// Populate provider selection, including rebuilt config placeholders (#3999).
+// Write `~/.nemoclaw/config.json` and normalize OpenClaw config-dir perms
+// inside the sandbox. Also replaces the historical zero-byte config.json placeholder
+// that crashes the OpenClaw nemoclaw plugin's loadOnboardConfig. Fixes #3999.
 export function runSandboxConfigSync(sandboxName: string, deps: RunSandboxConfigSyncDeps): void {
   const selectionConfig = deps.getSelectionConfig();
   if (!selectionConfig) return;
