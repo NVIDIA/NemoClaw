@@ -45,13 +45,16 @@ export function fixture(
     createAppearsAfterRefresh?: number;
     createStatus?: number;
     deleteFails?: boolean;
+    diagnosticResolverMissing?: boolean;
     e2eDiagnosticTimesOut?: boolean;
     e2eFails?: boolean;
     gatewayChildJournal?: string;
     gatewayExecStart?: string;
     imageRepositorySha?: string;
     listenerOutput?: string;
+    gatewayEndpoint?: string;
     missingProvisionReceipt?: boolean;
+    omitCommandEvidence?: boolean;
     omitReceiptField?: "imageName" | "imageRepositorySha" | "project";
     platformDiagnosticFails?: boolean;
     provisionImageRepositorySha?: string;
@@ -89,6 +92,21 @@ export function fixture(
   fs.mkdirSync(bin);
   fs.mkdirSync(workDir);
   fs.writeFileSync(timeoutBlock, "block\n");
+  fs.writeFileSync(
+    path.join(root, "gateway.json"),
+    JSON.stringify({
+      version: 1,
+      mode: "externally-supervised",
+      endpoint: options.gatewayEndpoint ?? "https://127.0.0.1:18080",
+      stateDir: "/var/lib/brev/openshell-gateway",
+      supervisor: {
+        kind: "systemd-system",
+        serviceName: "openshell-gateway.service",
+        execPath: "/usr/local/bin/openshell-gateway",
+      },
+      requiredCapabilities: ["gateway.health", "sandbox.create", "sandbox.exec"],
+    }),
+  );
 
   executable(
     path.join(bin, "timeout"),
@@ -168,6 +186,7 @@ exec ${JSON.stringify(REAL_STAT)} "$@"
     path.join(bin, "ss"),
     `#!/usr/bin/env bash
 set -euo pipefail
+printf 'ss %s\n' "$*" >> "$FAKE_CALLS"
 printf '%s\n' "$FAKE_LISTENER_OUTPUT"
 `,
   );
@@ -454,7 +473,8 @@ case "$remote" in
     exit $? ;;
   *"ss -H -ltnp"*)
     probe_options_present "$@"
-    printf 'ssh full-e2e diagnostic port 8080 listener\n' >> "$FAKE_CALLS"
+    printf 'ssh full-e2e diagnostic declared gateway listener\n' >> "$FAKE_CALLS"
+    remote="\${remote/\\/opt\\/nemoclaw-image\\/NemoClaw/$FAKE_REPO_ROOT}"
     bash -c "$remote"
     exit $? ;;
   "bash -s") ;;
@@ -469,6 +489,10 @@ grep -q 'NEMOCLAW_SOURCE_PATH=/opt/nemoclaw-image/NemoClaw' <<<"$script"
 grep -q 'runtime-overrides.json' <<<"$script"
 printf 'ssh preinstalled full-e2e.test.ts\\n' >> "$FAKE_CALLS"
 printf 'remote output contains %s\\n' "$NVIDIA_INFERENCE_API_KEY"
+grep -q 'NEMOCLAW_E2E_COMMAND_EVIDENCE=1' <<<"$script"
+if [ "$FAKE_OMIT_COMMAND_EVIDENCE" != 1 ]; then
+printf 'NEMOCLAW_E2E_COMMAND {"schemaVersion":1,"command":["brev-quickstart","e2e-staging"],"startedAt":"2026-09-10T18:57:30.000Z","finishedAt":"2026-09-10T18:57:31.000Z","durationMs":1000,"exitCode":1,"signal":null,"timedOut":false}\\n'
+fi
 [ "$FAKE_E2E_FAILS" != 1 ] || exit 7
 printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
 `,
@@ -476,6 +500,9 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    NEMOCLAW_GATEWAY_MANAGEMENT: path.join(root, "gateway.json"),
+    FAKE_REPO_ROOT: options.diagnosticResolverMissing ? root : REPO_ROOT,
+    FAKE_OMIT_COMMAND_EVIDENCE: options.omitCommandEvidence ? "1" : "0",
     PATH: `${bin}:${process.env.PATH ?? ""}`,
     BREV_DELETE_TIMEOUT_SECONDS: "5",
     BREV_READY_TIMEOUT_SECONDS: "5",

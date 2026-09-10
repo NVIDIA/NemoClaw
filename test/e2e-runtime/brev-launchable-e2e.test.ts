@@ -29,6 +29,88 @@ function identitySmokeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 describe("focused staging Brev Launchable lane", () => {
+  it("reports missing command evidence from an older baked suite without changing its result (#9851)", () => {
+    const { env, workDir } = fixture({ omitCommandEvidence: true });
+    expect(run(env).status).toBe(0);
+    expect(fs.readFileSync(path.join(workDir, "full-e2e.log"), "utf8")).not.toContain(
+      "NEMOCLAW_E2E_COMMAND ",
+    );
+    expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
+      "Completed command metadata unavailable: the guest emitted no command records",
+    );
+  });
+
+  it("retains completed command timestamps when onboarding fails (#9851)", () => {
+    const { env, workDir } = fixture({ e2eFails: true });
+    expect(run(env).status).not.toBe(0);
+    const log = fs.readFileSync(path.join(workDir, "full-e2e.log"), "utf8");
+    const record = JSON.parse(
+      log
+        .split("\n")
+        .find((line) => line.startsWith("NEMOCLAW_E2E_COMMAND "))!
+        .slice("NEMOCLAW_E2E_COMMAND ".length),
+    );
+    expect(record).toMatchObject({
+      command: ["brev-quickstart", "e2e-staging"],
+      startedAt: "2026-09-10T18:57:30.000Z",
+      finishedAt: "2026-09-10T18:57:31.000Z",
+      durationMs: 1000,
+      exitCode: 1,
+    });
+    expect(log).not.toContain("nvapi-test-value");
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it.each([
+    ["https://127.0.0.1:18080", 18080],
+    ["https://127.0.0.1:19443", 19443],
+    ["http://127.0.0.1:18080", 18080],
+    ["https://[::1]:19443", 19443],
+  ])("diagnoses the declared gateway at %s (#9851)", (gatewayEndpoint, port) => {
+    const { env, workDir, calls } = fixture({
+      e2eFails: true,
+      gatewayEndpoint,
+    });
+    expect(run(env).status).not.toBe(0);
+    expect(fs.readFileSync(calls, "utf8")).toContain(`ss -H -ltnp sport = :${port}`);
+    expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
+      `declared gateway port: ${port}`,
+    );
+  });
+
+  it.each([
+    "https://untrusted.invalid:18080",
+    "https://127.0.0.1:99999",
+    "https://127.0.0.1",
+    "http://127.0.0.1",
+    "https://127.0.0.1:1023",
+    "$(touch /tmp/unsafe)",
+  ])(
+    "does not probe a substituted port when the declaration is invalid: %s (#9851)",
+    (gatewayEndpoint) => {
+      const { env, workDir, calls } = fixture({ e2eFails: true, gatewayEndpoint });
+      expect(run(env).status).not.toBe(0);
+      expect(fs.readFileSync(calls, "utf8")).not.toMatch(/^ss /m);
+      expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject(
+        { status: "ABSENT" },
+      );
+    },
+  );
+
+  it("still cleans up when the baked gateway resolver is unavailable (#9851)", () => {
+    const { env, workDir, calls } = fixture({ e2eFails: true, diagnosticResolverMissing: true });
+    expect(run(env).status).not.toBe(0);
+    expect(fs.readFileSync(calls, "utf8")).not.toMatch(/^ss /m);
+    expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
+      "Full E2E failure diagnostic declared gateway listener: status 1",
+    );
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
   it("keeps the staging SSH wrapper outside the full E2E deadline", () => {
     const source = fs.readFileSync(
       path.resolve(import.meta.dirname, "../../tools/e2e/brev-launchable-e2e.sh"),
@@ -687,7 +769,9 @@ describe("focused staging Brev Launchable lane", () => {
     expect(laneLog).toContain("[REDACTED PRIVATE KEY]");
     expect(laneLog).toContain("[REDACTED LONG LINE]");
     expect(laneLog).toContain("Full E2E failure diagnostic gateway lifecycle: status 0; output:");
-    expect(laneLog).toContain("Full E2E failure diagnostic port 8080 listener: status 0; output:");
+    expect(laneLog).toContain(
+      "Full E2E failure diagnostic declared gateway listener: status 0; output:",
+    );
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands.indexOf("ssh full-e2e diagnostic platform state")).toBeLessThan(
       commands.indexOf("ssh full-e2e diagnostic gateway lifecycle"),
@@ -783,7 +867,7 @@ describe("focused staging Brev Launchable lane", () => {
       ["listener presence: present", "listener owner: unavailable"],
     ],
   ])(
-    "classifies port 8080 listener evidence with %s (#6409)",
+    "classifies declared gateway listener evidence with %s (#6409)",
     (_name, listenerOutput, expectedEvidence) => {
       const { env, workDir } = fixture({
         e2eFails: true,
@@ -850,7 +934,7 @@ describe("focused staging Brev Launchable lane", () => {
       "Full E2E failure diagnostic platform state: not run; output: diagnostic budget exhausted",
     );
     expect(laneLog).toContain(
-      "Full E2E failure diagnostic port 8080 listener: not run; output: diagnostic budget exhausted",
+      "Full E2E failure diagnostic declared gateway listener: not run; output: diagnostic budget exhausted",
     );
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands).not.toContain("ssh full-e2e diagnostic platform state");
