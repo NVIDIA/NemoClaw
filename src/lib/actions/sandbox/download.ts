@@ -208,8 +208,10 @@ export async function downloadFromSandbox(
           destination: stagedArtifact,
         });
         const exitCode =
-          completion.outcome.kind === "completed" ? completion.outcome.exitCode : null;
-        if (exitCode !== 0 || completion.wasInterrupted()) {
+          completion.outcome.kind === "completed" && !completion.wasInterrupted()
+            ? completion.outcome.exitCode
+            : null;
+        if (exitCode !== 0) {
           throw new Error(
             `Failed to download '${sandboxPath}' from sandbox '${opts.sandboxName}' (exit ${exitCode}).`,
           );

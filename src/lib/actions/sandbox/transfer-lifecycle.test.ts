@@ -72,6 +72,25 @@ afterEach(() => {
 });
 
 describe("user transfer lifecycle", () => {
+  it.each([
+    ["upload", () => uploadToSandbox({ sandboxName: "alpha", hostPath: "./source" })],
+    [
+      "download",
+      () =>
+        downloadFromSandbox({
+          sandboxName: "alpha",
+          sandboxPath: "/sandbox/file",
+          hostDest: directory,
+        }),
+    ],
+  ] as const)("does not describe an interrupted %s as exit zero", async (_direction, action) => {
+    const release = vi.fn();
+    run.mockResolvedValue(completed(release, () => true));
+    await expect(action()).rejects.toThrow("exit null");
+    expect(release).toHaveBeenCalledOnce();
+    expect(fs.existsSync(getMcpLifecycleLockPath("alpha"))).toBe(false);
+  });
+
   it("keeps staging and the lock until transfer and revalidation settle", async () => {
     const started = deferred<void>();
     const transfer = deferred<OpenShellSandboxTransferCompletion>();

@@ -58,8 +58,11 @@ export async function uploadToSandbox(opts: SandboxUploadOptions): Promise<Sandb
         source: hostPath,
         destination: sandboxDest,
       });
-      const exitCode = completion.outcome.kind === "completed" ? completion.outcome.exitCode : null;
-      if (exitCode !== 0 || completion.wasInterrupted()) {
+      const exitCode =
+        completion.outcome.kind === "completed" && !completion.wasInterrupted()
+          ? completion.outcome.exitCode
+          : null;
+      if (exitCode !== 0) {
         throw new SandboxUploadTransferError(exitCode);
       }
 
