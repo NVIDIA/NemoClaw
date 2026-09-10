@@ -370,6 +370,15 @@ describe("Docker managed bootstrap adapter", () => {
       ],
       sharedState: "pending",
     });
+    fake.deps.runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockImplementationOnce(() => {
+        expect(fake.journal?.phase).toBe("bootstrap-complete");
+        expect(fake.original).not.toBeNull();
+        return { status: 0 };
+      })
+      .mockReturnValue({ status: 0 });
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
     const { handle, request: rootRequest, snapshot } = authority();
     const prepared = await adapter.prepareBootstrapReplacement({
@@ -461,6 +470,8 @@ describe("Docker managed bootstrap adapter", () => {
       ["sandbox", "stop"],
       ["sandbox", "start"],
       ["sandbox", "exec"],
+      ["sandbox", "start"],
+      ["sandbox", "exec"],
     ]);
 
     const eventCount = fake.events.length;
@@ -498,6 +509,63 @@ describe("Docker managed bootstrap adapter", () => {
     ).rejects.toBeInstanceOf(ManagedBootstrapDurableCommitCleanupPendingError);
     expect(fake.events).toHaveLength(eventCount);
     expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
+  });
+
+  it("keeps exact rollback authority when the OpenShell readiness handoff fails", async () => {
+    const fake = fixture();
+    fake.deps.runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 1, stderr: "injected readiness failure" })
+      .mockReturnValue({ status: 0 });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request, snapshot } = authority();
+    const prepared = await adapter.prepareBootstrapReplacement({
+      handle,
+      snapshot,
+      request,
+      replacementOptions: { values: {} },
+    });
+    const durable = durablePreparation(handle, snapshot, prepared);
+    const replacement = await adapter.activateBootstrapReplacement({
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: durable,
+    });
+
+    await expect(
+      adapter.awaitBootstrap({ handle, snapshot, replacement, timeoutSecs: 1 }),
+    ).rejects.toThrow(/OpenShell sandbox start.*injected readiness failure/);
+    expect(fake.journal?.phase).toBe("bootstrap-complete");
+    expect(fake.original).toMatchObject({
+      Id: OLD_ID,
+      State: { Running: false },
+    });
+    expect(fake.replacement).toMatchObject({
+      Id: NEW_ID,
+      State: { Running: true },
+    });
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        handle,
+        snapshot,
+        prepared,
+        durablePreparation: durable,
+        replacement,
+        completion: null,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
+    expect(fake.replacement).toBeNull();
+    expect(fake.original).toMatchObject({
+      Id: OLD_ID,
+      Name: "/openshell-alpha",
+      State: { Running: false },
+    });
+    expectEventBefore(fake.events, "journal:bootstrap-complete", "journal:rollback-authorized");
+    expectEventBefore(fake.events, "journal:rollback-authorized", `rm:${NEW_ID}`);
   });
 
   it("uses the Docker-GPU reconnect minimum instead of the shorter create timeout", async () => {
@@ -544,8 +612,10 @@ describe("Docker managed bootstrap adapter", () => {
     fake.deps.errorPhaseDebouncePolls = 1;
     fake.deps.runOpenshell = vi
       .fn()
-      .mockImplementationOnce(() => ({ status: 0 }))
-      .mockImplementationOnce(() => ({ status: 0 }))
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
       .mockImplementation(() => {
         assert(fake.replacement?.State);
         Object.assign(fake.replacement.State, {

@@ -285,6 +285,23 @@ function runRequiredOpenShellLifecycleCommand(
   }
 }
 
+async function waitForRequiredOpenShellSupervisorReconnect(
+  sandboxName: string,
+  timeoutSecs: number,
+  deps: ResolvedDeps,
+): Promise<boolean> {
+  const commandExecutor = deps.commandExecutor;
+  if (!commandExecutor) {
+    throw new Error("Docker managed bootstrap requires a buffered sandbox command executor.");
+  }
+  return waitForOpenShellSupervisorReconnect(sandboxName, timeoutSecs, {
+    commandExecutor,
+    runCaptureOpenshell: deps.runCaptureOpenshell,
+    sleep: deps.sleep,
+    errorPhaseDebouncePolls: deps.errorPhaseDebouncePolls,
+  });
+}
+
 function supervisorReconnectFailureDetail(runtimeId: string, deps: ResolvedDeps): string {
   const evidence = captureDockerContainerFailureEvidence(runtimeId, deps);
   const stateDetail = formatDockerContainerState(evidence.state).join(" ");
@@ -1451,7 +1468,10 @@ function restoreExactOriginalName(
   return restored;
 }
 
-function restoreOriginal(transaction: DockerBootstrapTransaction, deps: ResolvedDeps): void {
+async function restoreOriginal(
+  transaction: DockerBootstrapTransaction,
+  deps: ResolvedDeps,
+): Promise<void> {
   const options = {
     ignoreError: true,
     suppressOutput: true,
@@ -1514,11 +1534,11 @@ function restoreOriginal(transaction: DockerBootstrapTransaction, deps: Resolved
     timeoutSecs,
   );
   if (
-    !waitForOpenShellSupervisorReconnect(
+    !(await waitForRequiredOpenShellSupervisorReconnect(
       transaction.sandbox.sandboxName,
       timeoutSecs,
       deps,
-    )
+    ))
   ) {
     throw new Error(supervisorReconnectFailureDetail(transaction.originalRuntimeId, deps));
   }
@@ -2494,10 +2514,10 @@ export function createDockerManagedBootstrapAdapter(
     removeDockerBootstrapJournalDurably(journal, deps);
     return recoveredReceipt(journal, sourcePhase, finalization);
   };
-  const finishRecoveredCommit = (
+  const finishRecoveredCommit = async (
     journal: DockerBootstrapTransaction,
     sourcePhase: DockerBootstrapTransaction["phase"],
-  ): ManagedBootstrapRecoveryReceipt => {
+  ): Promise<ManagedBootstrapRecoveryReceipt> => {
     if (journal.phase !== "shared-state-committed" || journal.commitReceipt === null) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
         bootstrapIdentity: journal.bootstrapIdentity,
@@ -2591,11 +2611,11 @@ export function createDockerManagedBootstrapAdapter(
       supervisorReconnectTimeoutSecs,
     );
     if (
-      !waitForOpenShellSupervisorReconnect(
+      !(await waitForRequiredOpenShellSupervisorReconnect(
         journal.sandbox.sandboxName,
         supervisorReconnectTimeoutSecs,
         deps,
-      )
+      ))
     ) {
       throw new ManagedBootstrapDurableCommitCleanupPendingError({
         bootstrapIdentity: journal.bootstrapIdentity,
@@ -2636,10 +2656,10 @@ export function createDockerManagedBootstrapAdapter(
     removeDockerBootstrapJournalDurably(journal, deps);
     return recoveredReceipt(journal, sourcePhase, finalization);
   };
-  const finishRecoveredBootstrapComplete = (
+  const finishRecoveredBootstrapComplete = async (
     journal: DockerBootstrapTransaction,
     sourcePhase: DockerBootstrapTransaction["phase"],
-  ): ManagedBootstrapRecoveryReceipt => {
+  ): Promise<ManagedBootstrapRecoveryReceipt> => {
     if (journal.phase !== "bootstrap-complete" || journal.commitReceipt === null) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
         bootstrapIdentity: journal.bootstrapIdentity,
@@ -2731,7 +2751,7 @@ export function createDockerManagedBootstrapAdapter(
             "rollback-authorized",
             deps,
           );
-          return finishRecoveredRollbackPhase(rollbackJournal, sourcePhase);
+          return await finishRecoveredRollbackPhase(rollbackJournal, sourcePhase);
         } catch (rollbackError) {
           attachManagedBootstrapRollbackError(failure, rollbackError);
           throw failure;
@@ -2745,10 +2765,10 @@ export function createDockerManagedBootstrapAdapter(
     );
     return finishRecoveredCommit(committed, sourcePhase);
   };
-  const finishRecoveredRollbackPhase = (
+  const finishRecoveredRollbackPhase = async (
     journal: DockerBootstrapTransaction,
     sourcePhase: DockerBootstrapTransaction["phase"],
-  ): ManagedBootstrapRecoveryReceipt => {
+  ): Promise<ManagedBootstrapRecoveryReceipt> => {
     if (journal.phase === "owner-cleanup-required") {
       return finishRecoveredRollback(journal, sourcePhase);
     }
@@ -2830,7 +2850,7 @@ export function createDockerManagedBootstrapAdapter(
     } else if (journal.phase !== "rollback-authorized") {
       activeJournal = transitionDockerBootstrapJournalDurably(journal, "rollback-authorized", deps);
     }
-    restoreOriginal(activeJournal, deps);
+    await restoreOriginal(activeJournal, deps);
     const restored = inspectExact(activeJournal.originalRuntimeId, deps);
     if (
       !isStableRunning(restored) ||
@@ -2845,7 +2865,7 @@ export function createDockerManagedBootstrapAdapter(
     }
     return finishRecoveredRollback(activeJournal, sourcePhase);
   };
-  const rollbackBootstrapNow = ({
+  const rollbackBootstrapNow = async ({
     handle,
     snapshot,
     prepared,
@@ -2859,7 +2879,7 @@ export function createDockerManagedBootstrapAdapter(
     readonly durablePreparation: ManagedBootstrapDurablePreparationReceipt | null;
     readonly replacement: ManagedBootstrapReplacementHandle | null;
     readonly sharedStateAlreadyRolledBack?: boolean;
-  }): ManagedBootstrapFinalizationReceipt => {
+  }): Promise<ManagedBootstrapFinalizationReceipt> => {
     const finalized = priorRollback(handle);
     if (finalized) return finalized;
     const journal = deps.journalStore.load(handle.bootstrapIdentity);
@@ -3185,7 +3205,7 @@ export function createDockerManagedBootstrapAdapter(
         detail: "durable transaction authority changed before original restoration",
       });
     }
-    restoreOriginal(activeJournal, deps);
+    await restoreOriginal(activeJournal, deps);
     const restored = inspectExact(activeJournal.originalRuntimeId, deps);
     assertStableRunning(restored, "restored workload");
     if (
@@ -3196,7 +3216,7 @@ export function createDockerManagedBootstrapAdapter(
     }
     return completeRollbackTransaction(handle, activeJournal);
   };
-  const commitBootstrapNow = (
+  const commitBootstrapNow = async (
     handle: ManagedBootstrapHeldWorkloadHandle,
     receipt: ManagedBootstrapCompletionReceipt,
     transaction: DockerBootstrapTransaction,
@@ -3204,7 +3224,7 @@ export function createDockerManagedBootstrapAdapter(
       readonly sharedStateStatus: "committed" | "none";
       readonly sharedStateTransaction: ReturnType<typeof managedSharedStateTransaction>;
     },
-  ): ManagedBootstrapFinalizationReceipt => {
+  ): Promise<ManagedBootstrapFinalizationReceipt> => {
     if (
       transaction.phase !== "shared-state-committed" ||
       transaction.replacementRuntimeId !== receipt.runtimeId ||
@@ -3296,11 +3316,11 @@ export function createDockerManagedBootstrapAdapter(
       supervisorReconnectTimeoutSecs,
     );
     if (
-      !waitForOpenShellSupervisorReconnect(
+      !(await waitForRequiredOpenShellSupervisorReconnect(
         handle.sandbox.sandboxName,
         supervisorReconnectTimeoutSecs,
         deps,
-      )
+      ))
     ) {
       throw new ManagedBootstrapDurableCommitCleanupPendingError({
         bootstrapIdentity: receipt.bootstrapIdentity,
@@ -3536,14 +3556,17 @@ export function createDockerManagedBootstrapAdapter(
           }
           const sourcePhase = journal.phase;
           const finalized = compactRecoveredFinalization(journal, sourcePhase);
-          receipts.push(
-            finalized ??
-              (journal.phase === "shared-state-committed"
+          if (finalized) {
+            receipts.push(finalized);
+          } else {
+            receipts.push(
+              await (journal.phase === "shared-state-committed"
                 ? finishRecoveredCommit(journal, sourcePhase)
                 : journal.phase === "bootstrap-complete"
                   ? finishRecoveredBootstrapComplete(journal, sourcePhase)
                   : finishRecoveredRollbackPhase(journal, sourcePhase)),
-          );
+            );
+          }
         } catch (error) {
           try {
             journal = deps.journalStore.load(bootstrapIdentity) ?? journal;
@@ -4153,46 +4176,6 @@ export function createDockerManagedBootstrapAdapter(
       assertReplacementBoundary(before, handle, snapshot);
       const supervisorReconnectTimeoutSecs =
         getDockerGpuSupervisorReconnectTimeoutSecs(timeoutSecs);
-      if (
-        !deps.commandExecutor ||
-        !(await waitForOpenShellSupervisorReconnect(
-          handle.sandbox.sandboxName,
-          supervisorReconnectTimeoutSecs,
-          {
-            commandExecutor: deps.commandExecutor,
-            runCaptureOpenshell: deps.runCaptureOpenshell,
-            sleep: deps.sleep,
-            errorPhaseDebouncePolls: deps.errorPhaseDebouncePolls,
-          },
-        ))
-      ) {
-        throw new Error(supervisorReconnectFailureDetail(replacement.replacementRuntimeId, deps));
-      }
-      const afterWaitJournal = deps.journalStore.load(journal.bootstrapIdentity);
-      if (!afterWaitJournal || !sameDockerBootstrapJournal(afterWaitJournal, journal)) {
-        throw new ManagedBootstrapCommitStateIndeterminateError({
-          bootstrapIdentity: journal.bootstrapIdentity,
-          runtimeId: journal.replacementRuntimeId,
-          detail: "durable transaction authority changed while awaiting bootstrap",
-        });
-      }
-      assertCompletedCutoverRuntimeState(afterWaitJournal, deps);
-      const after = inspectExact(replacement.replacementRuntimeId, deps);
-      if (!isStableRunning(after)) {
-        throw replacementNotStableError(
-          replacement.replacementRuntimeId,
-          "completed replacement",
-          deps,
-        );
-      }
-      if (assertImage(after, replacement.image, deps) !== replacement.runtimeImageContentId) {
-        throw new Error("Managed bootstrap Docker completed image content changed.");
-      }
-      assertReplacementBoundary(after, handle, snapshot);
-      const normalized = normalizeDockerManagedBootstrapLaunchSpec(after);
-      if (normalized.hash !== replacement.replacementSpecHash) {
-        throw new Error("Managed bootstrap Docker replacement changed during bootstrap.");
-      }
       const imageCompletion = waitForProtectedImageCompletion(
         replacement.replacementRuntimeId,
         supervisorReconnectTimeoutSecs,
@@ -4279,6 +4262,32 @@ export function createDockerManagedBootstrapAdapter(
           "Managed bootstrap Docker completion receipt disappeared at the bootstrap-complete fence.",
         );
       }
+      runRequiredOpenShellLifecycleCommand(
+        deps,
+        ["sandbox", "start", handle.sandbox.sandboxName],
+        supervisorReconnectTimeoutSecs,
+      );
+      if (
+        !(await waitForRequiredOpenShellSupervisorReconnect(
+          handle.sandbox.sandboxName,
+          supervisorReconnectTimeoutSecs,
+          deps,
+        ))
+      ) {
+        throw new Error(supervisorReconnectFailureDetail(replacement.replacementRuntimeId, deps));
+      }
+      const afterHandoffJournal = deps.journalStore.load(journal.bootstrapIdentity);
+      if (
+        !afterHandoffJournal ||
+        !sameDockerBootstrapJournal(afterHandoffJournal, bootstrapCompleteJournal)
+      ) {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: journal.bootstrapIdentity,
+          runtimeId: journal.replacementRuntimeId,
+          detail: "durable transaction authority changed during the OpenShell readiness handoff",
+        });
+      }
+      assertCompletedCutoverRuntimeState(afterHandoffJournal, deps);
       return bootstrapCompleteJournal.commitReceipt;
     },
 

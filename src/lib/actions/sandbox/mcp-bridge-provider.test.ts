@@ -1060,7 +1060,7 @@ describe("OpenShell MCP provider state", () => {
 
   it("accepts a stable credential handle retained across provider updates", async () => {
     const stableHandle = `s${"a".repeat(64)}` as const;
-    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: stableHandle,
       stderr: "",
