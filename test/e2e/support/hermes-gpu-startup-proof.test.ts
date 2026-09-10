@@ -96,11 +96,7 @@ describe("Hermes GPU startup output contract", () => {
 
 describe("Hermes GPU managed-image authority proof", () => {
   it("reads the OpenShell 0.0.116 structured main-process command", () => {
-    const command = [
-      "env",
-      "CHAT_UI_URL=http://127.0.0.1:18789",
-      "/usr/local/bin/nemoclaw-start",
-    ];
+    const command = ["env", "CHAT_UI_URL=http://127.0.0.1:18789", "/usr/local/bin/nemoclaw-start"];
 
     expect(
       hermesRuntimeIntendedCommand({
@@ -115,11 +111,7 @@ describe("Hermes GPU managed-image authority proof", () => {
         OPENSHELL_SANDBOX_COMMAND:
           "env CHAT_UI_URL=http://127.0.0.1:18789 /usr/local/bin/nemoclaw-start",
       }),
-    ).toEqual([
-      "env",
-      "CHAT_UI_URL=http://127.0.0.1:18789",
-      "/usr/local/bin/nemoclaw-start",
-    ]);
+    ).toEqual(["env", "CHAT_UI_URL=http://127.0.0.1:18789", "/usr/local/bin/nemoclaw-start"]);
   });
 
   it("canonicalizes a Podman bare image content ID without changing canonical Docker IDs", () => {

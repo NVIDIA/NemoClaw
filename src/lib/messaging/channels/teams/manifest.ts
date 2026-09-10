@@ -208,8 +208,7 @@ export const teamsManifest = {
         {
           envKey: "MSTEAMS_APP_PASSWORD",
           targetEnvKey: "TEAMS_CLIENT_SECRET",
-          match:
-            "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_MSTEAMS_APP_PASSWORD$",
+          match: "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_MSTEAMS_APP_PASSWORD$",
           value: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
         },
       ],

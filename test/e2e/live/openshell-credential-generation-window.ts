@@ -39,21 +39,16 @@ export function credentialWindowSecret(generation: number): string {
 }
 
 export function credentialWindowSecrets(): string[] {
-  return Array.from(
-    { length: CREDENTIAL_WINDOW_REFRESH_COUNT + 3 },
-    (_, generation) => credentialWindowSecret(generation),
+  return Array.from({ length: CREDENTIAL_WINDOW_REFRESH_COUNT + 3 }, (_, generation) =>
+    credentialWindowSecret(generation),
   );
 }
 
-export function credentialWindowRequestId(
-  step: CredentialWindowRequestStep,
-): string {
+export function credentialWindowRequestId(step: CredentialWindowRequestStep): string {
   return `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:${step}`;
 }
 
-export function credentialWindowStableHandlePattern(
-  envName = CREDENTIAL_WINDOW_ENV_NAME,
-): RegExp {
+export function credentialWindowStableHandlePattern(envName = CREDENTIAL_WINDOW_ENV_NAME): RegExp {
   if (!/^[A-Z_][A-Z0-9_]{0,127}$/u.test(envName)) {
     throw new Error("credential window environment name is invalid");
   }
@@ -69,9 +64,7 @@ export function buildCredentialWindowProviderUpdateArgs(
     "update",
     providerName,
     "--credential",
-    removeCredential
-      ? `${CREDENTIAL_WINDOW_ENV_NAME}=`
-      : CREDENTIAL_WINDOW_ENV_NAME,
+    removeCredential ? `${CREDENTIAL_WINDOW_ENV_NAME}=` : CREDENTIAL_WINDOW_ENV_NAME,
   ];
 }
 
@@ -92,12 +85,9 @@ export interface CredentialWindowChildOptions {
  * is used solely as the Authorization header so the OpenShell proxy must resolve
  * it on each request.
  */
-export function buildCredentialWindowChildScript(
-  options: CredentialWindowChildOptions,
-): string {
+export function buildCredentialWindowChildScript(options: CredentialWindowChildOptions): string {
   const config = JSON.stringify({
-    acknowledgementPath: (options.paths ?? CREDENTIAL_WINDOW_PATHS)
-      .acknowledgement,
+    acknowledgementPath: (options.paths ?? CREDENTIAL_WINDOW_PATHS).acknowledgement,
     controlPath: (options.paths ?? CREDENTIAL_WINDOW_PATHS).control,
     envName: CREDENTIAL_WINDOW_ENV_NAME,
     maxRuntimeMs: options.maxRuntimeMs ?? 40 * 60_000,

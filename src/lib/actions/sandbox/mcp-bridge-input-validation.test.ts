@@ -224,7 +224,9 @@ describe("MCP CLI input validation", () => {
     expect(() =>
       parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
     ).toThrow(/reserved for OpenShell stable credential handles/);
-    expect(() => validateMcpCredentialEnvName(name)).toThrow(/would be skipped instead of attached/);
+    expect(() => validateMcpCredentialEnvName(name)).toThrow(
+      /would be skipped instead of attached/,
+    );
   });
 
   it.each(CHILD_VISIBLE_CREDENTIAL_CASES)(

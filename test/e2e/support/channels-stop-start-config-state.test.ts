@@ -181,18 +181,20 @@ describe("channels stop/start OpenClaw configuration state", () => {
 });
 
 describe("channels stop/start Hermes configuration state", () => {
-  it.each<
-    [channel: HermesStableCredentialChannel, targetEnvKey: string, credentialEnvKey: string]
-  >([
-    ["wechat", "WEIXIN_TOKEN", "WECHAT_BOT_TOKEN"],
-    ["teams", "TEAMS_CLIENT_SECRET", "MSTEAMS_APP_PASSWORD"],
-  ])(
+  it.each<[channel: HermesStableCredentialChannel, targetEnvKey: string, credentialEnvKey: string]>(
+    [
+      ["wechat", "WEIXIN_TOKEN", "WECHAT_BOT_TOKEN"],
+      ["teams", "TEAMS_CLIENT_SECRET", "MSTEAMS_APP_PASSWORD"],
+    ],
+  )(
     "accepts only a stable-handle %s credential placeholder (#10079)",
     (channel, targetEnvKey, credentialEnvKey) => {
       const pattern = new RegExp(hermesStableCredentialLinePattern(channel));
 
       expect(
-        pattern.test(`${targetEnvKey}=openshell:resolve:env:s${"a".repeat(64)}_${credentialEnvKey}`),
+        pattern.test(
+          `${targetEnvKey}=openshell:resolve:env:s${"a".repeat(64)}_${credentialEnvKey}`,
+        ),
       ).toBe(true);
       expect(pattern.test(`${targetEnvKey}=openshell:resolve:env:${credentialEnvKey}`)).toBe(false);
       expect(pattern.test(`${targetEnvKey}=raw-secret`)).toBe(false);

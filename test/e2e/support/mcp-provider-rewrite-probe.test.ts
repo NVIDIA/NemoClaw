@@ -22,9 +22,9 @@ describe("managed MCP provider rewrite probe", () => {
   ])(
     "uses only an exact generation-scoped OpenShell placeholder value [case %#]",
     (runtimeValue) => {
-      expect(
-        buildMcpProviderRewriteAuthorization("FAKE_MCP_SECRET", runtimeValue),
-      ).toBe(`Bearer ${runtimeValue}`);
+      expect(buildMcpProviderRewriteAuthorization("FAKE_MCP_SECRET", runtimeValue)).toBe(
+        `Bearer ${runtimeValue}`,
+      );
     },
   );
 
@@ -41,18 +41,12 @@ describe("managed MCP provider rewrite probe", () => {
     "openshell:resolve:env:vbad_FAKE_MCP_SECRET",
     `openshell:resolve:env:s${stableCredentialId}_FAKE_MCP_SECRET\nAuthorization: Bearer raw-secret`,
   ])("rejects an absent or unsafe runtime value [case %#]", (runtimeValue) => {
-    expect(
-      buildMcpProviderRewriteAuthorization("FAKE_MCP_SECRET", runtimeValue),
-    ).toBeNull();
+    expect(buildMcpProviderRewriteAuthorization("FAKE_MCP_SECRET", runtimeValue)).toBeNull();
   });
 
   it("embeds the reviewed helper and reads the fresh child environment", () => {
-    expect(
-      () => new vm.Script(MCP_PROVIDER_REWRITE_PROBE_SOURCE),
-    ).not.toThrow();
-    expect(MCP_PROVIDER_REWRITE_PROBE_SOURCE).toContain(
-      "process.env[credentialKey]",
-    );
+    expect(() => new vm.Script(MCP_PROVIDER_REWRITE_PROBE_SOURCE)).not.toThrow();
+    expect(MCP_PROVIDER_REWRITE_PROBE_SOURCE).toContain("process.env[credentialKey]");
     expect(MCP_PROVIDER_REWRITE_PROBE_SOURCE).not.toContain(
       '"Bearer openshell:resolve:env:" + credentialKey',
     );
@@ -63,17 +57,11 @@ describe("managed MCP provider rewrite probe", () => {
     "Bearer openshell:resolve:env:v1_FAKE_MCP_SECRET",
     "Bearer openshell:resolve:env:v14429878272859325890_FAKE_MCP_SECRET",
     `Bearer openshell:resolve:env:s${stableCredentialId}_FAKE_MCP_SECRET`,
-  ])(
-    "accepts only generation-scoped Deep Agents authorization [case %#]",
-    (value) => {
-      expect(value).toMatch(
-        new RegExp(
-          buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET"),
-          "u",
-        ),
-      );
-    },
-  );
+  ])("accepts only generation-scoped Deep Agents authorization [case %#]", (value) => {
+    expect(value).toMatch(
+      new RegExp(buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET"), "u"),
+    );
+  });
 
   it.each([
     "Bearer openshell:resolve:env:FAKE_MCP_SECRET",
@@ -87,10 +75,7 @@ describe("managed MCP provider rewrite probe", () => {
     "Bearer openshell:resolve:env:v144298782728593258901_FAKE_MCP_SECRET",
   ])("rejects unsafe Deep Agents authorization [case %#]", (value) => {
     expect(value).not.toMatch(
-      new RegExp(
-        buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET"),
-        "u",
-      ),
+      new RegExp(buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET"), "u"),
     );
   });
 });

@@ -271,5 +271,4 @@ describe("credentials oclif adapter source coverage", () => {
       mocks.runOpenshellProviderCommand.mock.invocationCallOrder[0],
     );
   });
-
 });

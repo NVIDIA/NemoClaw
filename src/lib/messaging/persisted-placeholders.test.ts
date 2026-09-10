@@ -79,7 +79,9 @@ function makeHermesDiscordPlan(
 describe("persisted messaging placeholders", () => {
   it("normalizes versioned Hermes credential placeholders from full persisted plans", () => {
     const parsed = parseSandboxMessagingPlan(makeHermesDiscordPlan());
-    const stableParsed = parseSandboxMessagingPlan(makeHermesDiscordPlan(STABLE_DISCORD_PLACEHOLDER));
+    const stableParsed = parseSandboxMessagingPlan(
+      makeHermesDiscordPlan(STABLE_DISCORD_PLACEHOLDER),
+    );
 
     expect(parsed?.credentialBindings[0]?.placeholder).toBe(CANONICAL_DISCORD_PLACEHOLDER);
     expect(parsed?.agentRender[0]).toMatchObject({

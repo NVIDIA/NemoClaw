@@ -22,10 +22,7 @@ import {
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts";
-import {
-  assertUnchangedStableMcpCredentialAuthorized,
-  statusMcpBridge,
-} from "./mcp-bridge-status";
+import { assertUnchangedStableMcpCredentialAuthorized, statusMcpBridge } from "./mcp-bridge-status";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import {
   applyGeneratedPolicy,

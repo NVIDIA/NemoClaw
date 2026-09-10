@@ -22,9 +22,7 @@ describe("OpenShell 0.0.116 stable credential-handle proof", () => {
     expect(secrets).toHaveLength(CREDENTIAL_WINDOW_REFRESH_COUNT + 3);
     expect(new Set(secrets).size).toBe(secrets.length);
     expect(
-      secrets.every((secret) =>
-        secret.startsWith(MCP_BRIDGE_TEST_CREDENTIALS.generationWindow),
-      ),
+      secrets.every((secret) => secret.startsWith(MCP_BRIDGE_TEST_CREDENTIALS.generationWindow)),
     ).toBe(true);
   });
 
@@ -48,9 +46,7 @@ describe("OpenShell 0.0.116 stable credential-handle proof", () => {
       "--credential",
       "FAKE_MCP_SECRET",
     ]);
-    expect(
-      buildCredentialWindowProviderUpdateArgs("owned-provider", true),
-    ).toEqual([
+    expect(buildCredentialWindowProviderUpdateArgs("owned-provider", true)).toEqual([
       "provider",
       "update",
       "owned-provider",
@@ -61,8 +57,8 @@ describe("OpenShell 0.0.116 stable credential-handle proof", () => {
 
   it("keeps credential-window requests independently identifiable", () => {
     expect(CREDENTIAL_WINDOW_ENV_NAME).toBe("FAKE_MCP_SECRET");
-    expect(
-      credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterReadd),
-    ).toBe("nemoclaw-credential-window:denied-after-readd");
+    expect(credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterReadd)).toBe(
+      "nemoclaw-credential-window:denied-after-readd",
+    );
   });
 });

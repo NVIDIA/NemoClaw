@@ -66,9 +66,6 @@ describe("OpenShell channel workflow boundary", () => {
   ])("rejects unsupported launchable OpenShell selection %#", ({ channel, explicit }) => {
     const result = resolveLaunchableVersion({ channel, explicit });
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toContain(
-      "requires exact stable OpenShell 0.0.116",
-    );
-
+    expect(`${result.stdout}${result.stderr}`).toContain("requires exact stable OpenShell 0.0.116");
   });
 });

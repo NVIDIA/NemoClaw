@@ -66,10 +66,7 @@ export function hermesRuntimeIntendedCommand(
   if (mainProcessSpec !== undefined) {
     return parseOpenShellMainProcessSpecEnvValue(mainProcessSpec).command;
   }
-  return (runtimeEnvironment.OPENSHELL_SANDBOX_COMMAND ?? "")
-    .trim()
-    .split(/\s+/u)
-    .filter(Boolean);
+  return (runtimeEnvironment.OPENSHELL_SANDBOX_COMMAND ?? "").trim().split(/\s+/u).filter(Boolean);
 }
 
 export function assertHermesGpuStartupOutputContract(

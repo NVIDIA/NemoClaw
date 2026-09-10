@@ -1239,9 +1239,7 @@ exit 0`,
     expect(result.stderr).toContain(
       "NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported.",
     );
-    expect(result.stdout).not.toContain(
-      "Installing OpenShell from release 'dev'",
-    );
+    expect(result.stdout).not.toContain("Installing OpenShell from release 'dev'");
   });
 
   it.each([
@@ -1262,9 +1260,7 @@ exit 0`,
   it("reconciles an installed development build to the exact stable release", () => {
     const result = runWithInstalledVersion("0.0.116-dev.8+g7bce1223d");
     expect(result.status).not.toBe(0);
-    expect(result.stdout).toContain(
-      "OpenShell development builds are unsupported",
-    );
+    expect(result.stdout).toContain("OpenShell development builds are unsupported");
     expect(result.stdout).toContain(
       `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
     );

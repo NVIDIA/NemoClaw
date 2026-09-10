@@ -65,8 +65,7 @@ function slackBotAlias() {
   return {
     channelId: "slack",
     envKey: "SLACK_BOT_TOKEN",
-    match:
-      "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_BOT_TOKEN$",
+    match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_BOT_TOKEN$",
     value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
     message:
       "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
@@ -845,8 +844,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
             {
               channelId: "slack",
               envKey: "SLACK_BOT_TOKEN",
-              match:
-                "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_BOT_TOKEN$",
+              match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_BOT_TOKEN$",
               value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
               message:
                 "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
@@ -854,8 +852,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
             {
               channelId: "slack",
               envKey: "SLACK_APP_TOKEN",
-              match:
-                "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_APP_TOKEN$",
+              match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_APP_TOKEN$",
               value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
               message:
                 "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",

@@ -8,9 +8,7 @@ const HERMES_STABLE_CREDENTIALS = {
 
 export type HermesStableCredentialChannel = keyof typeof HERMES_STABLE_CREDENTIALS;
 
-export function hermesStableCredentialLinePattern(
-  channel: HermesStableCredentialChannel,
-): string {
+export function hermesStableCredentialLinePattern(channel: HermesStableCredentialChannel): string {
   const [targetEnvKey, credentialEnvKey] = HERMES_STABLE_CREDENTIALS[channel];
   return `^${targetEnvKey}=openshell:resolve:env:s[a-f0-9]{64}_${credentialEnvKey}$`;
 }

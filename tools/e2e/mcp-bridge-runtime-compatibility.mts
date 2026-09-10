@@ -66,8 +66,7 @@ export function classifyMcpBridgeRuntimeCompatibility(
   assertRuntimeVersion: AssertRuntimeVersion = assertMcpCredentialBoundaryRuntimeVersion,
 ): McpBridgeRuntimeCompatibilityResult {
   try {
-    const actualVersion =
-      assertRuntimeVersion() ?? MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION;
+    const actualVersion = assertRuntimeVersion() ?? MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION;
     return {
       actualVersion,
       expectedVersion: MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION,

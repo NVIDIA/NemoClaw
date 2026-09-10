@@ -24,11 +24,7 @@ import {
 import { validateMcpCredentialEnvName } from "./mcp-bridge-validation";
 
 describe("shared MCP tool discovery runtime", () => {
-  it.each(
-    Array.from(["not-valid", "1TOKEN", `A${"a".repeat(128)}`], (value) => [
-      value,
-    ]),
-  )(
+  it.each(Array.from(["not-valid", "1TOKEN", `A${"a".repeat(128)}`], (value) => [value]))(
     "accepts canonical credential key names and rejects authorization values [case %#]",
     (credentialEnv) => {
       expect(() =>
@@ -39,25 +35,22 @@ describe("shared MCP tool discovery runtime", () => {
           "arbitrary-format-secret-that-the-server-would-echo",
         ]),
       ).toThrow("invalid arguments");
-      [
-        "EXAMPLE_MCP_TOKEN",
-        "lowercase_token",
-        "_TOKEN",
-        `A${"a".repeat(127)}`,
-      ].forEach((credentialEnv) => {
-        expect(() => validateMcpCredentialEnvName(credentialEnv)).not.toThrow();
-        expect(
-          parseMcpToolDiscoveryArguments([
-            "--url",
-            "https://example.test/mcp",
-            "--credential-env",
+      ["EXAMPLE_MCP_TOKEN", "lowercase_token", "_TOKEN", `A${"a".repeat(127)}`].forEach(
+        (credentialEnv) => {
+          expect(() => validateMcpCredentialEnvName(credentialEnv)).not.toThrow();
+          expect(
+            parseMcpToolDiscoveryArguments([
+              "--url",
+              "https://example.test/mcp",
+              "--credential-env",
+              credentialEnv,
+            ]),
+          ).toEqual({
+            url: new URL("https://example.test/mcp"),
             credentialEnv,
-          ]),
-        ).toEqual({
-          url: new URL("https://example.test/mcp"),
-          credentialEnv,
-        });
-      });
+          });
+        },
+      );
       expect(
         buildMcpToolDiscoveryAuthorizationPlaceholder(
           "EXAMPLE_MCP_TOKEN",
@@ -69,15 +62,10 @@ describe("shared MCP tool discovery runtime", () => {
           "EXAMPLE_MCP_TOKEN",
           "openshell:resolve:env:v14429878272859325890_EXAMPLE_MCP_TOKEN",
         ),
-      ).toBe(
-        "Bearer openshell:resolve:env:v14429878272859325890_EXAMPLE_MCP_TOKEN",
-      );
+      ).toBe("Bearer openshell:resolve:env:v14429878272859325890_EXAMPLE_MCP_TOKEN");
       const stableReference = `openshell:resolve:env:s${"a".repeat(64)}_EXAMPLE_MCP_TOKEN`;
       expect(
-        buildMcpToolDiscoveryAuthorizationPlaceholder(
-          "EXAMPLE_MCP_TOKEN",
-          stableReference,
-        ),
+        buildMcpToolDiscoveryAuthorizationPlaceholder("EXAMPLE_MCP_TOKEN", stableReference),
       ).toBe(`Bearer ${stableReference}`);
       expect(() => validateMcpCredentialEnvName(credentialEnv)).toThrow();
       expect(
@@ -110,10 +98,7 @@ describe("shared MCP tool discovery runtime", () => {
     "openshell:resolve:env:v42_EXAMPLE_MCP_TOKEN\nAuthorization: Bearer raw-secret",
   ])("rejects unsafe live credential values [case %#]", (runtimeValue) => {
     expect(
-      buildMcpToolDiscoveryAuthorizationPlaceholder(
-        "EXAMPLE_MCP_TOKEN",
-        runtimeValue,
-      ),
+      buildMcpToolDiscoveryAuthorizationPlaceholder("EXAMPLE_MCP_TOKEN", runtimeValue),
     ).toBeNull();
   });
 
@@ -152,9 +137,7 @@ describe("shared MCP tool discovery runtime", () => {
     ).rejects.toMatchObject({ code: "invalid-response" });
 
     await expect(
-      enumerateMcpToolNames(async () =>
-        normalizeMcpToolPage({ tools: [], nextCursor: "" }),
-      ),
+      enumerateMcpToolNames(async () => normalizeMcpToolPage({ tools: [], nextCursor: "" })),
     ).rejects.toMatchObject({ code: "invalid-response" });
     await expect(
       enumerateMcpToolNames(async () =>
@@ -178,15 +161,10 @@ describe("shared MCP tool discovery runtime", () => {
   );
 
   it("returns an explicit partial failure at tool and page safety limits", async () => {
-    const tools = Array.from(
-      { length: MCP_TOOL_DISCOVERY_LIMITS.maxTools + 1 },
-      (_, index) => ({
-        name: `tool-${String(index).padStart(3, "0")}`,
-      }),
-    );
-    await expect(
-      enumerateMcpToolNames(async () => ({ tools })),
-    ).resolves.toMatchObject({
+    const tools = Array.from({ length: MCP_TOOL_DISCOVERY_LIMITS.maxTools + 1 }, (_, index) => ({
+      name: `tool-${String(index).padStart(3, "0")}`,
+    }));
+    await expect(enumerateMcpToolNames(async () => ({ tools }))).resolves.toMatchObject({
       ok: false,
       count: MCP_TOOL_DISCOVERY_LIMITS.maxTools,
       truncated: true,
@@ -319,9 +297,7 @@ describe("shared MCP tool discovery runtime", () => {
         }),
       deadline,
     );
-    await expect(
-      redirectFetch("https://example.test/mcp"),
-    ).rejects.toMatchObject({
+    await expect(redirectFetch("https://example.test/mcp")).rejects.toMatchObject({
       code: "redirect",
     });
 
@@ -329,9 +305,7 @@ describe("shared MCP tool discovery runtime", () => {
       async () => new Response("untrusted auth failure", { status: 401 }),
       deadline,
     );
-    await expect(
-      rejectedFetch("https://example.test/mcp"),
-    ).rejects.toMatchObject({
+    await expect(rejectedFetch("https://example.test/mcp")).rejects.toMatchObject({
       code: "http-error",
       httpStatus: 401,
     });
@@ -348,16 +322,12 @@ describe("shared MCP tool discovery runtime", () => {
       async () =>
         new Response("small", {
           headers: {
-            "content-length": String(
-              MCP_TOOL_DISCOVERY_LIMITS.maxResponseBytes + 1,
-            ),
+            "content-length": String(MCP_TOOL_DISCOVERY_LIMITS.maxResponseBytes + 1),
           },
         }),
       deadline,
     );
-    await expect(
-      oversizedFetch("https://example.test/mcp"),
-    ).rejects.toMatchObject({
+    await expect(oversizedFetch("https://example.test/mcp")).rejects.toMatchObject({
       code: "response-too-large",
     });
   });
@@ -369,9 +339,7 @@ describe("shared MCP tool discovery runtime", () => {
       pull(controller) {
         chunk += 1;
         controller.enqueue(
-          new Uint8Array(
-            chunk === 1 ? MCP_TOOL_DISCOVERY_LIMITS.maxResponseBytes : 1,
-          ),
+          new Uint8Array(chunk === 1 ? MCP_TOOL_DISCOVERY_LIMITS.maxResponseBytes : 1),
         );
       },
       cancel: sourceCancel,
@@ -417,19 +385,11 @@ describe("shared MCP tool discovery runtime", () => {
             const signal = init?.signal;
             expect(signal).toBeDefined();
             const rejectAbort = () =>
-              reject(
-                new DOMException(
-                  "Bearer untrusted-timeout-detail",
-                  "AbortError",
-                ),
-              );
+              reject(new DOMException("Bearer untrusted-timeout-detail", "AbortError"));
             signal?.addEventListener("abort", rejectAbort, { once: true });
           }),
       );
-      const boundedFetch = createBoundedMcpFetch(
-        blockingFetch,
-        deadline.signal,
-      );
+      const boundedFetch = createBoundedMcpFetch(blockingFetch, deadline.signal);
       const pending = boundedFetch("https://example.test/mcp", {
         signal: request.signal,
       });
@@ -501,14 +461,8 @@ describe("shared MCP tool discovery runtime", () => {
   );
 
   it("keeps the host parser and image runtime on the same result limits", () => {
-    expect(MCP_TOOL_DISCOVERY_RESULT_PROTOCOL).toBe(
-      MCP_TOOL_DISCOVERY_PROTOCOL,
-    );
-    expect(MCP_TOOL_DISCOVERY_MAX_TOOLS).toBe(
-      MCP_TOOL_DISCOVERY_LIMITS.maxTools,
-    );
-    expect(MCP_TOOL_DISCOVERY_MAX_NAME_BYTES).toBe(
-      MCP_TOOL_DISCOVERY_LIMITS.maxToolNameBytes,
-    );
+    expect(MCP_TOOL_DISCOVERY_RESULT_PROTOCOL).toBe(MCP_TOOL_DISCOVERY_PROTOCOL);
+    expect(MCP_TOOL_DISCOVERY_MAX_TOOLS).toBe(MCP_TOOL_DISCOVERY_LIMITS.maxTools);
+    expect(MCP_TOOL_DISCOVERY_MAX_NAME_BYTES).toBe(MCP_TOOL_DISCOVERY_LIMITS.maxToolNameBytes);
   });
 });

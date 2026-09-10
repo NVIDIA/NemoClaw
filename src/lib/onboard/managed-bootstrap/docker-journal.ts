@@ -248,10 +248,7 @@ function exactPhase(value: unknown): DockerManagedBootstrapJournalPhase {
 
 function exactLegacyPhase(
   value: unknown,
-): Exclude<
-  DockerManagedBootstrapJournalPhase,
-  "owner-cleanup-required" | "bootstrap-complete"
-> {
+): Exclude<DockerManagedBootstrapJournalPhase, "owner-cleanup-required" | "bootstrap-complete"> {
   if (
     !["staged", "cutover", "rollback-authorized", "shared-state-committed"].includes(String(value))
   ) {

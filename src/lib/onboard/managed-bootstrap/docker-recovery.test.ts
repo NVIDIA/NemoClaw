@@ -420,9 +420,7 @@ describe("Docker managed bootstrap restart recovery", () => {
       status: args[1] === "start" ? 0 : 1,
       stderr: args[1] === "start" ? "" : "injected reconnect failure",
     }));
-    fake.deps.runCaptureOpenshell = vi.fn(
-      () => "alpha  2026-09-09 10:00:00  Error\n",
-    );
+    fake.deps.runCaptureOpenshell = vi.fn(() => "alpha  2026-09-09 10:00:00  Error\n");
     fake.deps.errorPhaseDebouncePolls = 1;
 
     const restarted = createDockerManagedBootstrapAdapter(fake.deps);

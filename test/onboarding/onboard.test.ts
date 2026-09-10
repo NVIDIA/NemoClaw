@@ -680,11 +680,10 @@ startGateway(null).catch((error) => {
       ),
     );
     assert.ok(
-      commandSequence.some(
-        (command) =>
-          /^inference set -g nemoclaw --no-verify --provider openai-api --model gpt-5\.4(?: |$)/.test(
-            command,
-          ),
+      commandSequence.some((command) =>
+        /^inference set -g nemoclaw --no-verify --provider openai-api --model gpt-5\.4(?: |$)/.test(
+          command,
+        ),
       ),
     );
     assert.ok(

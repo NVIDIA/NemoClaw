@@ -730,12 +730,7 @@ function waitForProtectedImageCompletion(
   const sleep =
     deps.sleep ??
     ((seconds: number) => {
-      Atomics.wait(
-        new Int32Array(new SharedArrayBuffer(4)),
-        0,
-        0,
-        Math.max(0, seconds) * 1000,
-      );
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);
     });
   const attempts = Math.max(1, Math.ceil(Math.max(1, timeoutSecs) / 2));
   let lastUnavailable: ManagedBootstrapImageCompletionUnavailableError | null = null;
@@ -2744,7 +2739,8 @@ export function createDockerManagedBootstrapAdapter(
         throw error;
       }
       if (!outcome.supervisorReady) {
-        const failure = outcome.failure ?? new Error("Managed bootstrap shared-state recovery failed.");
+        const failure =
+          outcome.failure ?? new Error("Managed bootstrap shared-state recovery failed.");
         try {
           const rollbackJournal = transitionDockerBootstrapJournalDurably(
             journal,

@@ -13,14 +13,9 @@ import {
 } from "./mcp-bridge-validation";
 import { executeSandboxExecCommand } from "./process-recovery";
 
-const MCP_CREDENTIAL_REVISION_OBSERVATION_RE =
-  /^(?:absent|canonical|v[0-9]{1,20}|s[a-f0-9]{64})$/;
+const MCP_CREDENTIAL_REVISION_OBSERVATION_RE = /^(?:absent|canonical|v[0-9]{1,20}|s[a-f0-9]{64})$/;
 
-export type McpCredentialRevisionObservation =
-  | "absent"
-  | "canonical"
-  | `v${number}`
-  | `s${string}`;
+export type McpCredentialRevisionObservation = "absent" | "canonical" | `v${number}` | `s${string}`;
 export type McpAttachedCredentialRevision = Exclude<
   McpCredentialRevisionObservation,
   "absent" | "canonical"
@@ -83,8 +78,8 @@ function mcpCredentialPlaceholderValidatorShell(envName: string): string[] {
     '  case "$generation" in',
     '    v*) revision="${generation#v}"; case "$revision" in ""|*[!0-9]*) return 1 ;; esac; [ "${#revision}" -le 20 ] || return 1 ;;',
     '    s*) handle="${generation#s}"; case "$handle" in *[!0-9a-f]*) return 1 ;; esac; [ "${#handle}" -eq 64 ] || return 1 ;;',
-    '    *) return 1 ;;',
-    '  esac',
+    "    *) return 1 ;;",
+    "  esac",
     "}",
   ];
 }

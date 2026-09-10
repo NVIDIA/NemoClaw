@@ -466,13 +466,15 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
     expect(fake.sharedState).toBe("none");
     expect(fake.replacement?.Id).toBe(NEW_ID);
-    expect(vi.mocked(fake.deps.runOpenshell!).mock.calls.map(([args]) => args.slice(0, 2))).toEqual([
-      ["sandbox", "stop"],
-      ["sandbox", "start"],
-      ["sandbox", "exec"],
-      ["sandbox", "start"],
-      ["sandbox", "exec"],
-    ]);
+    expect(vi.mocked(fake.deps.runOpenshell!).mock.calls.map(([args]) => args.slice(0, 2))).toEqual(
+      [
+        ["sandbox", "stop"],
+        ["sandbox", "start"],
+        ["sandbox", "exec"],
+        ["sandbox", "start"],
+        ["sandbox", "exec"],
+      ],
+    );
 
     const eventCount = fake.events.length;
     await expect(
@@ -598,9 +600,7 @@ describe("Docker managed bootstrap adapter", () => {
 
     const completionCopies = vi
       .mocked(fake.deps.dockerRun!)
-      .mock.calls.filter(
-        ([args]) => args[0] === "cp" && String(args[1]).startsWith(`${NEW_ID}:`),
-      );
+      .mock.calls.filter(([args]) => args[0] === "cp" && String(args[1]).startsWith(`${NEW_ID}:`));
     expect(completionCopies).toHaveLength(2);
     expect(fake.deps.sleep).toHaveBeenCalledWith(2);
     dateNow.mockRestore();

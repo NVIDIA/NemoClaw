@@ -8,9 +8,7 @@ import vm from "node:vm";
 import { SLACK_PAIRING_SCRIPT } from "../../live/openclaw-pairing-helpers.ts";
 
 export function createSlackSocketClient(proxyPort: number, targetPort: number) {
-  const sourceStart = SLACK_PAIRING_SCRIPT.indexOf(
-    "function parseFakeSlackPort",
-  );
+  const sourceStart = SLACK_PAIRING_SCRIPT.indexOf("function parseFakeSlackPort");
   const sourceEnd = SLACK_PAIRING_SCRIPT.indexOf("function postPairingReply");
   if (sourceStart < 0 || sourceEnd <= sourceStart) {
     throw new Error("Slack Socket Mode client source is missing");
@@ -22,8 +20,7 @@ export function createSlackSocketClient(proxyPort: number, targetPort: number) {
     clearTimeout,
     crypto,
     net: {
-      createConnection: () =>
-        net.createConnection({ host: "127.0.0.1", port: proxyPort }),
+      createConnection: () => net.createConnection({ host: "127.0.0.1", port: proxyPort }),
     },
     process: {
       env: {
@@ -43,11 +40,8 @@ function encodeServerText(payload: Record<string, unknown>): Buffer {
   return Buffer.concat([Buffer.from([0x81, body.length]), body]);
 }
 
-function decodeClientText(
-  buffer: Buffer,
-): { payload: string; totalLength: number } | null {
-  if (buffer.length < 6 || (buffer[0] & 0x0f) !== 1 || (buffer[1] & 0x80) === 0)
-    return null;
+function decodeClientText(buffer: Buffer): { payload: string; totalLength: number } | null {
+  if (buffer.length < 6 || (buffer[0] & 0x0f) !== 1 || (buffer[1] & 0x80) === 0) return null;
   let payloadLength = buffer[1] & 0x7f;
   let offset = 2;
   if (payloadLength === 126) {
@@ -66,8 +60,7 @@ function decodeClientText(
   if (buffer.length < totalLength) return null;
   const mask = buffer.subarray(offset, offset + 4);
   const body = Buffer.from(buffer.subarray(offset + 4, totalLength));
-  for (let index = 0; index < body.length; index += 1)
-    body[index] ^= mask[index % 4];
+  for (let index = 0; index < body.length; index += 1) body[index] ^= mask[index % 4];
   return { payload: body.toString("utf8"), totalLength };
 }
 
@@ -77,8 +70,7 @@ export async function listenOnLoopback(server: net.Server): Promise<number> {
     server.listen(0, "127.0.0.1", resolve);
   });
   const address = server.address();
-  if (!address || typeof address === "string")
-    throw new Error("test proxy has no TCP port");
+  if (!address || typeof address === "string") throw new Error("test proxy has no TCP port");
   return address.port;
 }
 
@@ -86,9 +78,7 @@ export async function closeServer(server: net.Server): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
-export function createSuccessfulSlackForwardProxy(
-  envelope: Record<string, unknown>,
-): {
+export function createSuccessfulSlackForwardProxy(envelope: Record<string, unknown>): {
   server: net.Server;
   requests: string[];
   websocketMessages: () => string[];
@@ -100,24 +90,17 @@ export function createSuccessfulSlackForwardProxy(
     let upgraded = false;
     socket.on("data", (chunk) => {
       if (upgraded) {
-        buffer = Buffer.concat([
-          buffer,
-          Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
-        ]);
+        buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
         while (buffer.length > 0) {
           const frame = decodeClientText(buffer);
           if (!frame) return;
           buffer = buffer.subarray(frame.totalLength);
           websocketMessages.push(frame.payload);
-          if (websocketMessages.length === 1)
-            socket.write(encodeServerText(envelope));
+          if (websocketMessages.length === 1) socket.write(encodeServerText(envelope));
         }
         return;
       }
-      buffer = Buffer.concat([
-        buffer,
-        Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
-      ]);
+      buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
       const end = buffer.indexOf("\r\n\r\n");
       if (end === -1) return;
       requests.push(buffer.slice(0, end).toString("latin1"));

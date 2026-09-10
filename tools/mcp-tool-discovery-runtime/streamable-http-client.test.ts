@@ -192,9 +192,7 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
       params?: { protocolVersion?: string };
     } = {};
     try {
-      payload = JSON.parse(
-        Buffer.concat(bodyChunks).toString("utf8"),
-      ) as typeof payload;
+      payload = JSON.parse(Buffer.concat(bodyChunks).toString("utf8")) as typeof payload;
     } catch {
       // GET and DELETE requests have no JSON body.
     }
@@ -203,9 +201,7 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
       httpMethod: request.method ?? "",
       ...(payload.method ? { rpcMethod: payload.method } : {}),
       ...(request.headers.accept ? { accept: request.headers.accept } : {}),
-      ...(request.headers.authorization
-        ? { authorization: request.headers.authorization }
-        : {}),
+      ...(request.headers.authorization ? { authorization: request.headers.authorization } : {}),
       ...(typeof request.headers["mcp-protocol-version"] === "string"
         ? { protocolVersion: request.headers["mcp-protocol-version"] }
         : {}),
@@ -242,9 +238,7 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
           };
     response.writeHead(200, {
       "Content-Type": "Text/Event-Stream; Charset=UTF-8",
-      ...(payload.method === "initialize"
-        ? { "Mcp-Session-Id": sessionId }
-        : {}),
+      ...(payload.method === "initialize" ? { "Mcp-Session-Id": sessionId } : {}),
     });
     response.end(
       `event: message\ndata: ${JSON.stringify({
@@ -257,9 +251,7 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
-  const deadlineSignal = AbortSignal.timeout(
-    MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs,
-  );
+  const deadlineSignal = AbortSignal.timeout(MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs);
   const authorization = buildMcpToolDiscoveryAuthorizationPlaceholder(
     "EXAMPLE_MCP_TOKEN",
     `openshell:resolve:env:s${"a".repeat(64)}_EXAMPLE_MCP_TOKEN`,
@@ -299,10 +291,7 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
       connect: () => client.connect(transport, requestOptions),
       loadPage: async (cursor) =>
         normalizeMcpToolPage(
-          await client.listTools(
-            cursor ? { cursor } : undefined,
-            requestOptions,
-          ),
+          await client.listTools(cursor ? { cursor } : undefined, requestOptions),
         ),
       hasSession: () => Boolean(transport.sessionId),
       terminateSession: () => transport.terminateSession(),
@@ -321,21 +310,15 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
     tools: ["sse_tool"],
     truncated: false,
   });
-  const initialize = observed.find(
-    (request) => request.rpcMethod === "initialize",
-  );
+  const initialize = observed.find((request) => request.rpcMethod === "initialize");
   assert.equal(initialize?.accept, "application/json, text/event-stream");
   assert.equal(
     initialize?.authorization,
     `Bearer openshell:resolve:env:s${"a".repeat(64)}_EXAMPLE_MCP_TOKEN`,
   );
-  const toolsList = observed.find(
-    (request) => request.rpcMethod === "tools/list",
-  );
+  const toolsList = observed.find((request) => request.rpcMethod === "tools/list");
   assert.equal(toolsList?.sessionId, sessionId);
-  const initialized = observed.find(
-    (request) => request.rpcMethod === "notifications/initialized",
-  );
+  const initialized = observed.find((request) => request.rpcMethod === "notifications/initialized");
   assert.ok(initialized?.protocolVersion);
   assert.equal(toolsList?.protocolVersion, initialized.protocolVersion);
   const deletion = observed.find((request) => request.httpMethod === "DELETE");
