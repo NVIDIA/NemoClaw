@@ -325,6 +325,7 @@ const { createSandbox } = require(${onboardPath});
           result.error?.message ||
           "onboarding subprocess returned an unexpected status",
       );
+      assert.equal(result.error, undefined, "a completed child exit is not a spawn error");
       const payload = trailingJsonPayload<{
         sandboxName: string | null;
         error?: string;
