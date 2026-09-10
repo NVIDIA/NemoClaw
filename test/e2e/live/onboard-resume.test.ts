@@ -67,7 +67,7 @@ process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
 interface SessionStateInterrupted {
   status: "failed";
-  lastCompletedStep: "openclaw";
+  lastCompletedStep: "openclaw" | "agent_setup";
   failure: { step: "policies" };
 }
 
@@ -456,7 +456,9 @@ test(
       interruptedSessionSummary(interrupted),
     );
     expect(interrupted.status).toBe("failed");
-    expect(interrupted.lastCompletedStep).toBe("openclaw");
+    expect(interrupted.lastCompletedStep).toBe(
+      firstRunEnv.NEMOCLAW_AGENT === "hermes" ? "agent_setup" : "openclaw",
+    );
     expect(interrupted.failure?.step).toBe("policies");
 
     await artifacts.writeJson("phase-2-fake-openai-compatible-requests.json", fake.requests());
@@ -532,7 +534,7 @@ test(
     });
 
     // Assertion: resume-inference-handled — first onboard completed through
-    // openclaw before failing at policies. Inference was already configured
+    // agent setup before failing at policies. Inference was already configured
     // during that run, so the resume path either re-runs it or detects
     // readiness and skips. Both are valid.
     progress.phase("validate resumed sandbox state and corporate trust");
