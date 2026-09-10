@@ -2217,7 +2217,6 @@ WhatsApp pairs entirely inside the sandbox. NemoClaw advertises WhatsApp for Ope
 `scripts/rcf_patch.py` is intentionally absent from current NemoClaw blueprints. Older QA plans used that helper for a Dockerfile "Patch-4" test that corrupted the build-time `replaceConfigFile` monkey-patch and expected `ERROR: Patch 4 (replaceConfigFile EACCES) not applied`. The old Patch-4 fail-closed test no longer applies because NemoClaw no longer patches OpenClaw's compiled `replaceConfigFile` source at image build time.
 
 Current sandboxes use a mutable config model instead.
-`/sandbox/.openclaw/openclaw.json` is group-writable by the sandbox and gateway users, so OpenClaw config mutations should write normally rather than requiring an EACCES swallow.
 Use the host-side NemoClaw config command when you need validation and managed metadata to change with the config.
 
 To validate this area now, use the config lifecycle tests instead of looking for `rcf_patch.py`:
