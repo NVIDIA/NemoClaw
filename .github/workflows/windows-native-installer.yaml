@@ -43,6 +43,7 @@ on:
           - python
           - runtime
           - host-prerequisites
+          - application
 
 permissions:
   actions: read
@@ -54,9 +55,76 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  windows-compiled-application:
+    name: Compile Windows application units (ARM64)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application' }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 30
+    steps:
+      - name: Check out Windows application packaging
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare the pinned native application compiler
+        shell: pwsh
+        run: |
+          & packaging/windows/app/prepare-app-node.ps1 `
+            -LockPath packaging/windows/hermes/official-runtime.lock.json `
+            -OutputDirectory "$env:RUNNER_TEMP\compiled-windows-app\node"
+      - name: Restore immutable application build inputs
+        shell: pwsh
+        run: |
+          python packaging/windows/app/materialize-openclaw-build.py `
+            --output "$env:RUNNER_TEMP\compiled-windows-app\inputs" `
+            --cache "$env:RUNNER_TEMP\compiled-windows-app\downloads"
+          if ($LASTEXITCODE -ne 0) { throw 'Application build inputs failed verification.' }
+      - name: Compile the OpenClaw application unit
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\compiled-windows-app\node\node.exe" `
+            --experimental-strip-types --max-old-space-size=8192 `
+            packaging/windows/app/build-openclaw-app.mts `
+            --source-root "$env:RUNNER_TEMP\compiled-windows-app\inputs\openclaw" `
+            --tool-root "$env:RUNNER_TEMP\compiled-windows-app\inputs\tools" `
+            --output "$env:RUNNER_TEMP\compiled-windows-app\build"
+          if ($LASTEXITCODE -ne 0) { throw 'The Windows application compilation failed.' }
+      - name: Execute the compiled application through its CLI and Worker API
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\compiled-windows-app\node\node.exe" `
+            --experimental-strip-types packaging/windows/app/test-compiled-openclaw.mts `
+            --app-root "$env:RUNNER_TEMP\compiled-windows-app\build\app" `
+            --output "$env:RUNNER_TEMP\compiled-windows-app\controls"
+          if ($LASTEXITCODE -ne 0) { throw 'The compiled Windows application controls failed.' }
+      - name: Preserve compiled application units
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compiled-windows-application-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/compiled-windows-app/build/app/
+            ${{ runner.temp }}/compiled-windows-app/build/build-receipt.json
+            ${{ runner.temp }}/compiled-windows-app/node/node.exe
+            ${{ runner.temp }}/compiled-windows-app/node/LICENSE
+            ${{ runner.temp }}/compiled-windows-app/node/node-input.json
+          if-no-files-found: error
+      - name: Preserve application build diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compiled-windows-application-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/compiled-windows-app/controls/
+            ${{ runner.temp }}/compiled-windows-app/build/diagnostics/
+            ${{ runner.temp }}/compiled-windows-app/build/build-receipt.json
+            ${{ runner.temp }}/compiled-windows-app/build/build-failure.json
+            ${{ runner.temp }}/compiled-windows-app/inputs/materialization-receipt.json
+            ${{ runner.temp }}/compiled-windows-app/node/node-input.json
+          if-no-files-found: error
+          retention-days: 14
+
   windows-host-prerequisite-proof:
     name: Isolated Windows directory permission proof (ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && (inputs.official_hermes_phase == 'python' || inputs.official_hermes_phase == 'host-prerequisites') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 10
     steps:
@@ -872,7 +940,7 @@ jobs:
 
   official-hermes-components:
     name: Official Hermes ${{ inputs.official_hermes_phase || 'components' }} probe (Windows ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && inputs.official_hermes_phase != 'application' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: ${{ inputs.official_hermes_phase == 'runtime' && 180 || 90 }}
     steps:
