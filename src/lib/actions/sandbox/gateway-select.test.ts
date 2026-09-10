@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as registry from "../../state/registry";
@@ -80,5 +84,39 @@ describe("selectSandboxOwningGateway", () => {
       outcome: "failed",
       gatewayName: "nemoclaw-8091",
     });
+  });
+
+  it("resolves the owning gateway from a sibling gateway-port registry root", () => {
+    // Regression: with two gateways on one host, the sandbox's recorded
+    // binding lives under ~/.nemoclaw/gateways/<its port>/ even when the
+    // process points at another gateway port.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-select-cross-"));
+    try {
+      vi.stubEnv("HOME", home);
+      const siblingDir = path.join(home, ".nemoclaw", "gateways", "8245");
+      fs.mkdirSync(siblingDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(siblingDir, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: null,
+          defaultSelectionRevision: 1,
+          sandboxes: { "owner-a": { name: "owner-a", gatewayPort: 8245 } },
+        }),
+      );
+      vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+      const run = vi.fn(() => ({ status: 0 }) as never);
+
+      expect(selectSandboxOwningGateway("owner-a", run)).toEqual({
+        outcome: "selected",
+        gatewayName: "nemoclaw-8245",
+      });
+      expect(run).toHaveBeenCalledWith(
+        ["gateway", "select", "nemoclaw-8245"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

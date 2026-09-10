@@ -1148,4 +1148,95 @@ describe("CLI dispatch", () => {
       { sandboxNames: ["alpha"] },
     );
   });
+
+  function withSiblingGatewayRegistry(
+    entries: Array<{ port: number; name: string }>,
+    runBody: () => Promise<void>,
+  ): Promise<void> {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dispatch-cross-port-"));
+    for (const { port, name } of entries) {
+      const dir = path.join(home, ".nemoclaw", "gateways", String(port));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: null,
+          defaultSelectionRevision: 1,
+          sandboxes: { [name]: { name, gatewayPort: port, agent: "openclaw" } },
+        }),
+      );
+    }
+    vi.stubEnv("HOME", home);
+    return runBody().finally(() => {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    });
+  }
+
+  it("dispatches a sandbox registered under a sibling gateway-port root without failing or mutating registries", async () => {
+    // The sandbox lives only in ~/.nemoclaw/gateways/8245; the in-memory
+    // registry stub stands in for the current gateway-port root, which knows
+    // only owner-b. The name-first grammar must route owner-a through its
+    // recorded binding instead of reporting it as missing.
+    await withSiblingGatewayRegistry([{ port: 8245, name: "owner-a" }], async () => {
+      await withDirectPublicDispatch(
+        async ({
+          dispatchCli,
+          recoverRegistryEntries,
+          runOclifArgv,
+          runOclifCommandById,
+          stderr,
+        }) => {
+          await dispatchCli(["owner-a", "exec", "--", "echo", "hi"]);
+
+          const output = stderr.join("\n");
+          expect(output).not.toContain("does not exist");
+          expect(recoverRegistryEntries).not.toHaveBeenCalled();
+          const oclifCalls = [
+            ...runOclifCommandById.mock.calls.map((call) => call.slice(0, 2)),
+            ...runOclifArgv.mock.calls.map((call) => ["nativeArgv", call[0]]),
+          ];
+          expect(oclifCalls.length).toBeGreaterThan(0);
+          expect(JSON.stringify(oclifCalls)).toContain("owner-a");
+        },
+        { sandboxNames: ["owner-b"] },
+      );
+    });
+  });
+
+  it("routes a status command for a sibling-port sandbox", async () => {
+    await withSiblingGatewayRegistry([{ port: 8245, name: "owner-a" }], async () => {
+      await withDirectPublicDispatch(
+        async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, stderr }) => {
+          await dispatchCli(["owner-a", "status"]);
+
+          const output = stderr.join("\n");
+          expect(output).not.toContain("does not exist");
+          expect(recoverRegistryEntries).not.toHaveBeenCalled();
+          expect(runOclifCommandById).toHaveBeenCalledWith(
+            "sandbox:status",
+            ["owner-a"],
+            expect.anything(),
+          );
+        },
+        { sandboxNames: ["owner-b"] },
+      );
+    });
+  });
+
+  it("lists sibling-port registrations in missing-sandbox diagnostics", async () => {
+    await withSiblingGatewayRegistry([{ port: 8245, name: "owner-a" }], async () => {
+      await withDirectPublicDispatch(
+        async ({ dispatchCli, exitSpy, stderr }) => {
+          await expect(dispatchCli(["ghost-x9", "status"])).rejects.toThrow("process.exit:1");
+
+          const output = stderr.join("\n");
+          expect(output).toContain("Sandbox 'ghost-x9' does not exist");
+          expect(output).toContain("Registered sandboxes: owner-b, owner-a");
+          expect(exitSpy).toHaveBeenCalledWith(1);
+        },
+        { sandboxNames: ["owner-b"] },
+      );
+    });
+  });
 });
