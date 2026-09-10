@@ -17,6 +17,7 @@ import {
   validateHermesDashboardWorkflow,
 } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateHermesGpuStartupWorkflow } from "./hermes-gpu-startup-workflow-boundary.mts";
+import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import {
   HERMES_TIMEOUT_CONTRACTS,
   HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
@@ -798,6 +799,7 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
   "src/lib/adapters/openshell/restore-gateway-pairing.ts",
 ]);
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
+  ...HERMES_ACP_E2E_OWNING_PATHS.map((file) => [file, ["hermes-e2e"]] as const),
   ["test/e2e/lib/fake-wechat-api.mts", ["messaging-providers"]],
   ["test/e2e/live/hermes-gpu-startup-proof.ts", ["hermes-gpu-startup"]],
   ["test/helpers/openshell-gateway-start-output.ts", ["hermes-gpu-startup"]],
