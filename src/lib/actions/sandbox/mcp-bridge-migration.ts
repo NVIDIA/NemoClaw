@@ -92,7 +92,7 @@ export async function validateMcpMigrationRebuildIntent(
   intent: McpMigrationRebuildIntent,
   runtimeSelection: McpMigrationRebuildIntent["runtimeSelection"],
 ): Promise<void> {
-  const { isRebuildMcpHandoff } = await import("../../state/sandbox");
+  const { isRebuildMcpHandoff } = await import("../../state/rebuild/mcp-handoff");
   const currentTarget = resolveMcpOperationTarget(sandboxName);
   if (
     intent.sandboxName !== sandboxName ||
