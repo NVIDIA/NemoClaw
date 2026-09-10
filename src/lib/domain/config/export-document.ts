@@ -4,9 +4,9 @@
 import { EXPORTED_VLLM_CONTEXT_WINDOW } from "../../config/model";
 import type {
   NemoClawConfig,
-  NemoClawAgentConfig,
   NemoClawConfigDocumentName,
   NemoClawConfigDocumentUid,
+  NemoClawAgentConfig,
   NemoClawInferenceProviderConfig,
 } from "../../config/model";
 import type { VerifiedExportSource } from "./export-evidence";
@@ -42,17 +42,13 @@ function inferenceProvider(
     : { ...provider, credential: { env: source.inference.credentialEnv } };
 }
 
-function exportAgent(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig {
+function primaryAgent(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig {
   return {
     name: "primary",
-    ...(source.agent === "openclaw"
-      ? {
-          type: "openclaw" as const,
-          ...(source.interfaces ? { interfaces: source.interfaces } : {}),
-          ...(source.observability ? { observability: source.observability } : {}),
-        }
-      : { type: "hermes" as const }),
-    ...(source.execution ? { execution: source.execution } : {}),
+    ...agentSettings(source),
+    ...(source.auth === undefined
+      ? {}
+      : { auth: { method: source.auth.method, providerRef: providerName } }),
     inference: {
       routes: [
         {
@@ -74,6 +70,19 @@ function exportAgent(source: VerifiedExportSource, providerName: string): NemoCl
 export interface ExportConfigBuildIdentity {
   readonly documentName: NemoClawConfigDocumentName;
   readonly documentUid: NemoClawConfigDocumentUid;
+}
+
+function agentSettings(source: VerifiedExportSource) {
+  return {
+    ...(source.agent === "openclaw"
+      ? {
+          type: "openclaw" as const,
+          ...(source.interfaces ? { interfaces: source.interfaces } : {}),
+          ...(source.observability ? { observability: source.observability } : {}),
+        }
+      : { type: "hermes" as const }),
+    ...(source.execution ? { execution: source.execution } : {}),
+  };
 }
 
 /** Map one verified export source to an unbound aggregate document. */
@@ -105,10 +114,8 @@ export function buildExportConfig(
             policy: { explicit: source.policy },
             ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
           },
-          ...(source.webSearch === undefined
-            ? {}
-            : { integrations: { webSearch: source.webSearch } }),
-          agents: [exportAgent(source, providerName)],
+          ...(source.webSearch ? { integrations: { webSearch: source.webSearch } } : {}),
+          agents: [primaryAgent(source, providerName)],
         },
       ],
     },

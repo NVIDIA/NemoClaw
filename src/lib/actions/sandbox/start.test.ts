@@ -32,7 +32,8 @@ const FAILED_RECOVERY = { ...SUCCESSFUL_RECOVERY, wasRunning: false } as const;
 const REDACTED_TOKEN = "opaque-token-8662";
 
 function harness(overrides: Partial<SandboxStartDeps> = {}) {
-  const getSandbox = vi.fn<NonNullable<SandboxStartDeps["getSandbox"]>>(() => sandbox());
+  let storedSandbox = sandbox({ stopped: true });
+  const getSandbox = vi.fn<NonNullable<SandboxStartDeps["getSandbox"]>>(() => storedSandbox);
   const isDockerRuntimeDown = vi.fn<DockerRuntimeProviderDependencies["isRuntimeDown"]>(
     () => false,
   );
@@ -73,6 +74,10 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     NonNullable<SandboxStartDeps["waitForManagedGatewaySupervisor"]>
   >(() => false);
   const log = vi.fn<(message: string) => void>();
+  const updateSandbox = vi.fn<NonNullable<SandboxStartDeps["updateSandbox"]>>((_name, updates) => {
+    storedSandbox = { ...storedSandbox, ...updates };
+    return true;
+  });
   const runtimeProviders = createRuntimeProviderBundleRegistry([
     [
       "docker",
@@ -94,6 +99,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     restoreStartupState,
     waitForManagedGatewaySupervisor,
     verifyGateway,
+    updateSandbox,
     log,
     withLifecycleLock: async (_sandboxName, operation) => operation(),
     ...overrides,
@@ -110,6 +116,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     recoverDockerDriverSandbox,
     recoverPortableSandbox,
     restoreStartupState,
+    updateSandbox,
     waitForManagedGatewaySupervisor,
     verifyGateway,
   };
@@ -242,6 +249,47 @@ describe("startSandbox", () => {
     expect(h.restoreStartupState.mock.invocationCallOrder[0]).toBeLessThan(
       h.verifyGateway.mock.invocationCallOrder[0],
     );
+  });
+
+  it("records stopped: false in the sandbox registry on successful start (#11025)", async () => {
+    const h = harness();
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+    expect(h.getSandbox("my-sandbox")?.stopped).toBe(false);
+  });
+
+  it("clears stop intent before startup-state recovery fails (#11025)", async () => {
+    const h = harness();
+    h.restoreStartupState.mockResolvedValue(FAILED_RECOVERY);
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("gateway did not recover");
+
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+    expect(h.getSandbox("my-sandbox")?.stopped).toBe(false);
+    expect(h.updateSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      h.restoreStartupState.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not require a registry write when no intentional stop is recorded (#11025)", async () => {
+    const h = harness();
+    h.getSandbox.mockReturnValue(sandbox());
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(h.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("reports a partial success when the running state cannot be recorded (#11025)", async () => {
+    const h = harness({ updateSandbox: vi.fn(() => false) });
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+      "started, but NemoClaw could not clear its intentional-stop record",
+    );
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
   });
 
   it(
@@ -476,7 +524,7 @@ describe("startSandbox", () => {
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
   });
 
-  it("repairs Hermes Portable forwards after lifecycle recovery (#11248)", async () => {
+  it("clears stop intent and repairs forwards after Hermes Portable recovery (#11025, #11248)", async () => {
     const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
@@ -486,6 +534,7 @@ describe("startSandbox", () => {
         lifecycleGeneration: "generation-alpha",
         lifecycleLiveIdentityFingerprint: "identity-alpha",
         openshellDriver: "docker",
+        stopped: true,
       }),
     );
     h.hasPortableLifecycleReceipt.mockReturnValue(true);
@@ -503,6 +552,10 @@ describe("startSandbox", () => {
       h.verifyGateway.mock.invocationCallOrder[0],
     );
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+    expect(h.recoverPortableSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      h.updateSandbox.mock.invocationCallOrder[0],
+    );
   });
 
   it("still probes when the container was already running (#6026)", async () => {
@@ -767,12 +820,13 @@ describe("startSandbox", () => {
     );
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
-      sandbox({ provider: "ollama-local", model: "nemotron-3-nano:30b" }),
+      sandbox({ stopped: true, provider: "ollama-local", model: "nemotron-3-nano:30b" }),
     );
 
     const result = await startSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(1);
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
     const output = h.log.mock.calls.map(([line]) => line).join("\n");
     expect(output).toContain("HTTP 401");
     expect(output).toContain("doctor");

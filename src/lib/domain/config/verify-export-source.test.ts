@@ -14,7 +14,6 @@ import {
   parseNemoClawConfigDocumentUid,
   type NemoClawConfig,
 } from "../../config/model";
-import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
@@ -31,48 +30,14 @@ import {
   managedWorkload,
   entry,
   snapshot,
+  braveSnapshot,
+  hermesSnapshot,
+  hermesManagedAuthSnapshot,
+  tunedEnvironment,
+  tunedSnapshot,
+  compatibleSnapshot,
+  proxySnapshot,
 } from "./export-source-test-fixture";
-
-function braveSnapshot(): ObservedExportSnapshot {
-  const value = snapshot();
-  return {
-    ...value,
-    registry: entry({
-      webSearchEnabled: true,
-      webSearchProvider: "brave",
-      workload: managedWorkload(
-        profileInput({ webSearch: { fetchEnabled: true, provider: "brave" } }),
-      ),
-    }),
-    sandbox: { ...value.sandbox, providerNames: ["alpha-brave-search"] },
-    webSearchProvider: {
-      gatewayName: "nemoclaw",
-      workspace: "default",
-      name: "alpha-brave-search",
-      id: "brave-provider-id",
-      resourceVersion: "4",
-      type: "brave",
-      profileWorkspace: "default",
-      profile: { id: "brave", source: "user", scope: "workspace", resourceVersion: "4" },
-      credentialKeys: ["BRAVE_API_KEY"],
-      configKeys: [],
-    },
-  };
-}
-
-function hermesSnapshot(registryOverrides: Partial<SandboxEntry> = {}): ObservedExportSnapshot {
-  const workload = managedWorkload(hermesProfileInput(), hermesImageRef);
-  return snapshot({
-    registry: entry({
-      agent: "hermes",
-      imageTag: hermesImageRef,
-      workload,
-      hermesApiPort: 8642,
-      ...registryOverrides,
-    }),
-    sandbox: { ...snapshot().sandbox, imageRef: hermesImageRef },
-  });
-}
 
 function findings(result: ReturnType<typeof verifyExportSource>) {
   return result.kind === "verified" ? [] : result.findings;
@@ -123,73 +88,6 @@ function primaryOpenClawAgent(config: NemoClawConfig) {
   const agent = config.spec.sandboxes[0]!.agents[0]!;
   expect(agent.type).toBe("openclaw");
   return agent as Extract<typeof agent, { type: "openclaw" }>;
-}
-
-const tunedEnvironment = {
-  NEMOCLAW_CONTEXT_WINDOW: "65536",
-  NEMOCLAW_MAX_TOKENS: "8192",
-  NEMOCLAW_REASONING: "true",
-  NEMOCLAW_REASONING_EFFORT: "high",
-  NEMOCLAW_AGENT_TIMEOUT: "900",
-  NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m",
-};
-
-function tunedSnapshot(environment: NodeJS.ProcessEnv = tunedEnvironment) {
-  return snapshot({
-    registry: entry({ workload: managedWorkload(profileInput({ environment })) }),
-  });
-}
-
-function compatibleSnapshot(
-  environment: NodeJS.ProcessEnv,
-  registryOverrides: Partial<SandboxEntry>,
-) {
-  const base = profileInput({ environment });
-  const route = resolveManagedStartupInferenceRoute(
-    "openclaw",
-    "compatible-endpoint",
-    "gpt-5",
-    "openai-completions",
-  );
-  const input = {
-    ...base,
-    inference: {
-      ...base.inference,
-      routeProvider: route.providerKey,
-      upstreamProvider: "compatible-endpoint",
-      api: "openai-completions" as const,
-      routedBaseUrl: route.inferenceBaseUrl,
-      primaryModelRef: route.primaryModelRef,
-      compatibility: route.inferenceCompat ?? {},
-    },
-  };
-  const observed = snapshot();
-  return snapshot({
-    registry: entry({
-      provider: "compatible-endpoint",
-      preferredInferenceApi: "openai-completions",
-      workload: managedWorkload(input),
-      ...registryOverrides,
-    }),
-    inference: {
-      ...observed.inference,
-      provider: "compatible-endpoint",
-      api: "openai-completions",
-      endpointEvidence: {
-        ...observed.inference.endpointEvidence!,
-        provider: { ...observed.inference.endpointEvidence!.provider, name: "compatible-endpoint" },
-      },
-    },
-  });
-}
-
-function proxySnapshot(
-  environment = { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
-) {
-  return {
-    ...snapshot(),
-    registry: { ...entry(), workload: managedWorkload(profileInput({ environment })) },
-  } satisfies ObservedExportSnapshot;
 }
 
 describe("config export source verification (#10938)", () => {
@@ -627,6 +525,23 @@ describe("config export source verification (#10938)", () => {
     expect(result.publish).not.toHaveBeenCalled();
   });
 
+  it("does not publish while retained Hermes auth provenance is changing (#11432)", async () => {
+    const accepted = hermesManagedAuthSnapshot();
+    const missing = hermesManagedAuthSnapshot({ hermesAuthMethod: null });
+    const result = await exportSnapshots([accepted, missing, accepted, missing]);
+
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: [expect.objectContaining({ category: "unstable-source" })],
+      },
+    });
+    expect(result.read).toHaveBeenCalledTimes(4);
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
   it.each([
     { managedHost: "user:secret-canary@proxy.internal" },
     { managedHost: "http://proxy.internal" },
@@ -717,6 +632,65 @@ describe("config export source verification (#10938)", () => {
     expect(Check(ExportSourceValuesSchema, verifiedSource(result))).toBe(true);
   });
 
+  it("exports explicit retained Hermes Nous API-key authentication (#11432)", async () => {
+    const observed = hermesManagedAuthSnapshot();
+    expect(verifiedSource(verify(observed)).auth).toEqual({ method: "api-key" });
+
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.read).toHaveBeenCalledTimes(2);
+    expect(result.publish).not.toHaveBeenCalled();
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.sandboxes[0]!.agents[0]!.auth).toEqual({
+      method: "api-key",
+      providerRef: "hosted-hermes-provider",
+    });
+    expect(document.spec.inferenceProviders[0]).toMatchObject({
+      name: "hosted-hermes-provider",
+      provider: "hermes-provider",
+      credential: { env: "NOUS_API_KEY" },
+    });
+  });
+
+  it.each([
+    ["OAuth", { hermesAuthMethod: "oauth" as const }, "unsupported", "api-key"],
+    ["missing auth provenance", { hermesAuthMethod: null }, "missing-provenance", "api-key"],
+    ["foreign auth provenance", { hermesAuthMethod: "api_key" as const }, "drifted", "generic"],
+    [
+      "API-key authentication with a foreign API",
+      { preferredInferenceApi: "anthropic-messages" },
+      "drifted",
+      "api-key",
+    ],
+    [
+      "API-key authentication with a foreign endpoint",
+      { endpointUrl: "https://api.example.com/v1" },
+      "drifted",
+      "api-key",
+    ],
+  ])("does not export Hermes %s (#11432)", async (_case, registryOverrides, category, source) => {
+    const observed =
+      source === "generic"
+        ? hermesSnapshot(registryOverrides)
+        : hermesManagedAuthSnapshot(registryOverrides);
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: expect.arrayContaining([
+          expect.objectContaining({
+            category,
+            field: "spec.sandboxes[].agents[0].auth",
+          }),
+        ]),
+      },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
   it.each([
     { sandboxName: "alpha--beta" },
     { runtime: { provider: "docker", imageRef: "registry/image:latest" } },
@@ -789,14 +763,9 @@ describe("config export source verification (#10938)", () => {
       "spec.sandboxes[].agents[0].dashboard",
     ],
     [
-      "Hermes authentication",
-      { hermesAuthMethod: "api_key" as const },
-      "spec.sandboxes[].agents[0].authentication",
-    ],
-    [
       "Hermes inference provider",
       { hermesInferenceProvider: "hermes-provider" },
-      "spec.sandboxes[].agents[0].authentication",
+      "spec.sandboxes[].agents[0].auth",
     ],
     ["non-default Hermes API port", { hermesApiPort: 8643 }, "spec.sandboxes[].agents[0].api"],
   ])("rejects excluded %s state (#11286)", (_case, registryOverrides, field) => {
