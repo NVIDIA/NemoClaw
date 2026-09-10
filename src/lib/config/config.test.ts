@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import YAML from "yaml";
+import Ajv from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { renderCanonicalNemoClawConfig, validateNemoClawConfig } from "./index";
 import {
@@ -19,6 +20,10 @@ import {
   type NemoClawConfigDocumentName,
   type NemoClawConfigDocumentUid,
 } from "./model";
+
+const validateAgentSchema = new Ajv({ strict: false }).compile(
+  NemoClawConfigSchema.properties.spec.properties.sandboxes.items.properties.agents.items,
+);
 
 function config(uid = "11111111-1111-4111-8111-111111111111") {
   return {
@@ -219,6 +224,7 @@ describe("NemoClawConfig v1", () => {
       reasoningEffort: "default",
     });
     Object.assign(agent, { execution: { timeoutSeconds: 1000000000, heartbeatEvery: "0m" } });
+    expect(validateAgentSchema(agent)).toBe(true);
     expect(validateNemoClawConfig(value)).toEqual(value);
   });
 
@@ -252,12 +258,13 @@ describe("NemoClawConfig v1", () => {
     expect(() => validateNemoClawConfig(value)).toThrow();
   });
 
-  it("rejects OpenClaw execution settings on a Hermes agent", () => {
+  it("rejects Hermes execution settings in the agent schema and runtime", () => {
     const value = config();
     Object.assign(value.spec.sandboxes[0]!.agents[0]!, {
       type: "hermes",
       execution: { timeoutSeconds: 900 },
     });
+    expect(validateAgentSchema(value.spec.sandboxes[0]!.agents[0])).toBe(false);
     expect(() => validateNemoClawConfig(value)).toThrow();
   });
 
@@ -852,7 +859,7 @@ describe("fixed managed serving public contract", () => {
 });
 
 describe("OpenClaw dashboard configuration", () => {
-  it("rejects dashboard interfaces on Hermes (#10904)", () => {
+  it("rejects OpenClaw dashboard fields on Hermes (#10904)", () => {
     const value = config();
     Object.assign(value.spec.sandboxes[0]!.agents[0]!, {
       type: "hermes",
@@ -891,5 +898,65 @@ describe("OpenClaw dashboard configuration", () => {
     const value = config();
     Object.assign(value.spec.sandboxes[0]!.agents[0]!, { interfaces: { dashboard } });
     expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
+  });
+});
+
+describe("Hermes interface configuration", () => {
+  const interfaces = (value: unknown) => {
+    const document = config();
+    Object.assign(document.spec.sandboxes[0]!.agents[0]!, { type: "hermes", interfaces: value });
+    return document;
+  };
+
+  it.each([
+    {
+      dashboard: { enabled: true, port: 19000, internalPort: 19120, tui: { enabled: true } },
+      api: { port: 8643 },
+    },
+    { dashboard: { enabled: true } },
+    { dashboard: { enabled: false } },
+    { dashboard: { enabled: true, tui: { enabled: false } } },
+    { api: { port: 8642 } },
+    { api: { port: 8652 } },
+  ])("round trips supported Hermes interfaces %j (#11433)", (value) => {
+    const document = interfaces(value);
+    expect(validateNemoClawConfig(YAML.parse(renderInput(document).yaml))).toEqual(document);
+  });
+
+  it.each([
+    {},
+    { dashboard: {} },
+    { api: {} },
+    { dashboard: { enabled: false, port: 19000 } },
+    { dashboard: { enabled: false, tui: { enabled: true } } },
+    { dashboard: { enabled: true, port: 19000, internalPort: 19000 } },
+    { dashboard: { enabled: true, port: 19119 } },
+    { dashboard: { enabled: true, internalPort: 18789 } },
+    { dashboard: { enabled: true, bind: "0.0.0.0" } },
+    { dashboard: { enabled: true, url: "https://dashboard.example.com" } },
+    { dashboard: { enabled: true, tui: { enabled: "true" } } },
+    { dashboard: { enabled: true, port: 8642 } },
+    { dashboard: { enabled: true, internalPort: 8652 } },
+    { dashboard: { enabled: true, port: 18642 } },
+    { dashboard: { enabled: true, internalPort: 18642 } },
+    { dashboard: { enabled: true, port: 1023 } },
+    { dashboard: { enabled: true, port: 65536 } },
+    { api: { port: 8641 } },
+    { api: { port: 8653 } },
+    { api: { port: "8643" } },
+    { api: { port: 8643, credential: "/sandbox/.hermes/.env" } },
+  ])("rejects unsupported Hermes interfaces %j (#11433)", (value) => {
+    expect(() => validateNemoClawConfig(interfaces(value))).toThrow("Invalid NemoClawConfig");
+  });
+
+  it.each([
+    { dashboard: { enabled: true } },
+    { dashboard: { internalPort: 19120 } },
+    { dashboard: { tui: { enabled: true } } },
+    { api: { port: 8643 } },
+  ])("rejects Hermes-only fields on OpenClaw %j (#11433)", (value) => {
+    const document = config();
+    Object.assign(document.spec.sandboxes[0]!.agents[0]!, { interfaces: value });
+    expect(() => validateNemoClawConfig(document)).toThrow("Invalid NemoClawConfig");
   });
 });
