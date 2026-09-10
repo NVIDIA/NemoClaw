@@ -863,10 +863,14 @@ jobs:
       - name: Check the canonical Python phase result contract
         if: ${{ inputs.official_hermes_phase == 'python' }}
         shell: powershell
+        env:
+          HERMES_COMPONENT_ROOT: ${{ steps.hermes-components.outputs.runtime_root }}
         run: |
           & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-python.ps1"
           & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-python-process.ps1"
           & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-msvc-tools.ps1"
+          & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-python-semantics.ps1" `
+            -OfficialInstallerPath "$env:HERMES_COMPONENT_ROOT\hermes-agent\scripts\install.ps1"
 
       - name: Set up pinned native Rust for canonical Hermes Python
         if: ${{ inputs.official_hermes_phase == 'python' }}

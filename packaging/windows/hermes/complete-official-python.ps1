@@ -69,12 +69,17 @@ Assert-PythonBuildSource
 if ($StageWorker) {
     # The official installer explicitly supports dot-sourcing. Invoke its real
     # stage and inspect the tier in that same process, without replacing helpers.
-    . $runtimeBuildInstaller -NonInteractive -SkipSetup -SkipComputerUse `
-        -Branch $runtimeBuildLock.upstream.tag -Commit $runtimeBuildLock.upstream.commit `
-        -HermesHome $runtimeBuildRoot -InstallDir $runtimeBuildSource -Json
     $runtimeBuildBefore = (Get-FileHash -LiteralPath (Join-Path $runtimeBuildSource 'package-lock.json') -Algorithm SHA256).Hash
-    $runtimeBuildStage = Get-InstallStage -Name 'dependencies'
-    Invoke-Stage -StageDef $runtimeBuildStage
+    try {
+        # Match the official standalone installer's variable semantics. Its
+        # cross-process resolver checks an initially unset script:UvCmd.
+        Set-StrictMode -Off
+        . $runtimeBuildInstaller -NonInteractive -SkipSetup -SkipComputerUse `
+            -Branch $runtimeBuildLock.upstream.tag -Commit $runtimeBuildLock.upstream.commit `
+            -HermesHome $runtimeBuildRoot -InstallDir $runtimeBuildSource -Json
+        $runtimeBuildStage = Get-InstallStage -Name 'dependencies'
+        Invoke-Stage -StageDef $runtimeBuildStage
+    } finally { Set-StrictMode -Version Latest }
     $runtimeBuildTier = Get-Variable -Name InstalledTier -Scope Script -ValueOnly -ErrorAction SilentlyContinue
     if ($runtimeBuildTier -cne 'hash-verified (uv.lock)') {
         throw 'The official dependency stage fell back from its hash-verified uv.lock tier.'
