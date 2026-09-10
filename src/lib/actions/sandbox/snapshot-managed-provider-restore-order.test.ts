@@ -80,8 +80,8 @@ vi.mock("./snapshot/dependencies", () => ({
     gatewayName: "nemoclaw",
     workspace: "default",
   })),
-  inspectSourceBridgeState: vi.fn((sandbox: { agent?: string | null }) => ({
-    bridges:
+  inspectAgentMcpSources: vi.fn((sandbox: { agent?: string | null }) => ({
+    native:
       sandbox.agent === "langchain-deepagents-code"
         ? {
             github: {
@@ -95,6 +95,7 @@ vi.mock("./snapshot/dependencies", () => ({
             },
           }
         : {},
+    legacy: {},
   })),
   prepareManagedSnapshotProfileRestore: providerRestore.prepareManagedSnapshotProfileRestore,
   prepareSandboxRuntimeRestore: providerRestore.prepareSandboxRuntimeRestore,

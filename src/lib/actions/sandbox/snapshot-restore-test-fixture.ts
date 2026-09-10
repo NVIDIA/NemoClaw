@@ -375,9 +375,9 @@ vi.mock("./mcp-bridge-provider-inspection", async (importOriginal) => ({
 }));
 
 vi.mock("./mcp-bridge-source", () => ({
-  inspectSourceBridgeState: (sandbox: SandboxRecord) => ({
-    bridges: sandbox.mcp?.bridges ?? {},
-    sources: { native: sandbox.mcp?.bridges ?? {}, legacy: {} },
+  inspectAgentMcpSources: (sandbox: SandboxRecord) => ({
+    native: sandbox.mcp?.bridges ?? {},
+    legacy: {},
   }),
 }));
 
