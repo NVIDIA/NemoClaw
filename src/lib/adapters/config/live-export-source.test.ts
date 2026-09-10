@@ -73,6 +73,8 @@ import {
   inventory,
   provider,
   configuration,
+  openAiProviderProfile,
+  nativeNvidiaProvider,
   ollamaSource,
   telemetryEntry,
   dashboardSource,
@@ -201,10 +203,6 @@ function expectExportRefusal(
   expect(exported.writeStdout).not.toHaveBeenCalled();
   expect(exported.publish).not.toHaveBeenCalled();
 }
-function nativeNvidiaProvider() {
-  return { ...provider().provider, type: "nvidia", profileWorkspace: "", config: {} };
-}
-
 function mockNativeNvidiaSource() {
   mockSupportedLiveSource();
   raw.getProvider.mockResolvedValue({ provider: nativeNvidiaProvider() });
@@ -973,7 +971,7 @@ function mockManagedVllmSource(
   });
   Object.assign(environment, environmentOverrides);
   const built = buildManagedStartupProfile({
-    agent: "openclaw",
+    ...startupInput,
     inference: {
       routeProvider: inference.providerKey,
       upstreamProvider: "vllm-local",
@@ -984,21 +982,8 @@ function mockManagedVllmSource(
       primaryModelRef: inference.primaryModelRef,
       compatibility: inference.inferenceCompat ?? {},
     },
-    dashboard: {
-      agent: "openclaw",
-      mode: "loopback",
-      url: "http://127.0.0.1:18789",
-      port: 18789,
-      bindAddress: "127.0.0.1",
-      wslExposure: false,
-    },
     webSearch,
     toolDisclosure,
-    hermesToolGateways: [],
-    messagingPlan: null,
-    dcodeAutoApprovalMode: null,
-    observabilityEnabled: null,
-    corporateCa: null,
     environment,
   });
   const source: SandboxEntry = {
@@ -1063,18 +1048,7 @@ function mockManagedVllmSource(
       config: { OPENAI_BASE_URL: source.endpointUrl },
     },
   });
-  raw.getProviderProfile.mockResolvedValue({
-    profile: {
-      id: "openai",
-      source: "user",
-      scope: "workspace",
-      resourceVersion: 4n,
-      credentials: [],
-      endpoints: [],
-      binaries: [],
-      inferenceCapable: true,
-    },
-  });
+  raw.getProviderProfile.mockResolvedValue(openAiProviderProfile());
   return { source, observed };
 }
 
@@ -1358,18 +1332,7 @@ function mockOllamaSource() {
     config: { OPENAI_BASE_URL: source.endpointUrl },
   };
   raw.getProvider.mockResolvedValue({ provider: localProvider });
-  raw.getProviderProfile.mockResolvedValue({
-    profile: {
-      id: "openai",
-      source: "user",
-      scope: "workspace",
-      resourceVersion: 4n,
-      credentials: [],
-      endpoints: [],
-      binaries: [],
-      inferenceCapable: true,
-    },
-  });
+  raw.getProviderProfile.mockResolvedValue(openAiProviderProfile());
   return { source, observed, probe, readCredential, localProvider };
 }
 
@@ -1496,5 +1459,41 @@ describe("dashboard export observation", () => {
     }));
     const exported = await exportLiveSource();
     expectExportRefusal(exported, { category: "unstable-source" });
+  });
+});
+
+describe("Hermes interface export observation", () => {
+  it("reads only retained interface fields and includes allocation changes in stability (#11433)", async () => {
+    mockSupportedLiveSource();
+    const first = {
+      ...entry,
+      hermesApiPort: 8643,
+      hermesDashboardEnabled: true,
+      hermesDashboardPort: 19000,
+      hermesDashboardInternalPort: 19120,
+      hermesDashboardTui: true,
+    };
+    vi.mocked(loadRegistry).mockReturnValue({ sandboxes: { alpha: first }, defaultSandbox: null });
+    const reader = createLiveExportSnapshotReader();
+    expect(await reader.read("alpha")).toMatchObject({
+      kind: "observed",
+      registry: {
+        hermesApiPort: 8643,
+        hermesDashboardEnabled: true,
+        hermesDashboardPort: 19000,
+        hermesDashboardInternalPort: 19120,
+        hermesDashboardTui: true,
+      },
+    });
+    let reads = 0;
+    vi.mocked(loadRegistry).mockImplementation(() => ({
+      sandboxes: { alpha: { ...first, hermesApiPort: reads++ % 2 === 0 ? 8643 : 8644 } },
+      defaultSandbox: null,
+    }));
+    expect(await observeStableExportSource("alpha", reader)).toMatchObject({
+      ok: false,
+      findings: [expect.objectContaining({ category: "unstable-source" })],
+    });
+    expect(reads).toBe(4);
   });
 });

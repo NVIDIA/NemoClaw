@@ -228,3 +228,22 @@ export function dashboardSource() {
     },
   };
 }
+
+export function openAiProviderProfile() {
+  return {
+    profile: {
+      id: "openai",
+      source: "user",
+      scope: "workspace",
+      resourceVersion: 4n,
+      credentials: [],
+      endpoints: [],
+      binaries: [],
+      inferenceCapable: true,
+    },
+  };
+}
+
+export function nativeNvidiaProvider() {
+  return { ...provider().provider, type: "nvidia", profileWorkspace: "", config: {} };
+}

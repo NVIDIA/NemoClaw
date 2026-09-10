@@ -17,6 +17,7 @@ import {
   isCredentialEnvironmentReferenceName,
   EXPORTED_VLLM_CONTEXT_WINDOW,
   NemoClawConfigSchema,
+  HERMES_INTERFACE_DEFAULTS,
   type NemoClawConfig,
   type NemoClawInferenceProviderConfig,
   type NemoClawSandboxConfig,
@@ -65,6 +66,17 @@ function duplicateProblems(values: readonly string[], location: string): string[
   return [...duplicate].sort().map(() => `${location} contains a duplicate name`);
 }
 
+function agentInterfaceProblems(
+  agent: NemoClawSandboxConfig["agents"][number],
+  location: string,
+): string[] {
+  const dashboard = agent.type === "hermes" ? agent.interfaces?.dashboard : undefined;
+  if (!dashboard?.enabled) return [];
+  const port = dashboard.port ?? HERMES_INTERFACE_DEFAULTS.dashboardPort;
+  const internalPort = dashboard.internalPort ?? HERMES_INTERFACE_DEFAULTS.dashboardInternalPort;
+  return port === internalPort ? [`${location}/interfaces/dashboard ports must differ`] : [];
+}
+
 function agentAuthProblems(
   agent: NemoClawSandboxConfig["agents"][number],
   location: string,
@@ -107,12 +119,8 @@ function sandboxProblems(
     ),
   );
   for (const [agentIndex, agent] of sandbox.agents.entries()) {
-    if (agent.type === "hermes" && "execution" in agent) {
-      problems.push(
-        `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}/execution is supported only for OpenClaw agents`,
-      );
-    }
     problems.push(
+      ...agentInterfaceProblems(agent, `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}`),
       ...duplicateProblems(
         agent.inference.routes.map(({ name }) => name),
         `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}/inference/routes`,
