@@ -1101,10 +1101,13 @@ These diagnostics report durations and counts for authority, container, health, 
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-  Portable lifecycle recovery also emits one credential-free `Portable lifecycle timing:` line. It
-  reports fixed authority, container, exec-readiness, Ollama, startup, and gateway stages with their
-  durations, selected actions, attempt counts, result, and failed stage when available. This
-  diagnostic does not change recovery behavior or the command exit status.
+  Portable lifecycle recovery attempts to emit at most one credential-free `Portable lifecycle timing:` line.
+  It reports fixed authority, container, exec-readiness, Ollama, startup, and gateway stages with their durations, selected actions, attempt counts, result, and failed stage when available.
+  It also attempts to emit at most one credential-free `Portable OpenClaw gateway startup timing:` line.
+  When accepted launch-readiness evidence lets `connect --probe-only`, `launch`, or `recover` skip additional lifecycle work, NemoClaw attempts to emit each receipt once.
+  The lifecycle receipt reports `0ms` for timing fields, `0` for attempt fields, `containerAction=reused`, `gatewayAction=reused`, `ollamaAction=not-applicable`, and `result=already-running`.
+  The gateway receipt reports `0ms` for timing fields, `firstReadyAttempt=0`, `lastFailure=none`, and `diagnosticReadOutcome=not-applicable`.
+  Receipt-output failures do not change recovery behavior or command exit status.
 </AgentOnly>
 
 Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.
