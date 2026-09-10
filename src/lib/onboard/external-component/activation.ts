@@ -35,7 +35,7 @@ export interface ExternalComponentActivationProof {
   readonly sandboxId: string;
   readonly sandboxIdentityFingerprint: string;
   readonly lifecycleGeneration: string;
-  readonly policySource: "sandbox" | "global";
+  readonly policySource: "sandbox";
   readonly policyHash: string;
   readonly policyActiveVersion: number;
   revalidate(operation: "before_handoff" | "after_activation"): void;

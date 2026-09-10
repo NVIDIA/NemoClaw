@@ -38,6 +38,7 @@ export interface GatewayStateOptions<Gpu> {
     resolveGatewayOwner(): GatewayOwner;
     probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe>;
     attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
+    assertExternalComponentFreshSandbox(requestedSandboxName: string | null): void;
     configureExternalComponentGateway(
       component: {
         readonly componentId: string;
@@ -149,6 +150,9 @@ async function handleGatewayStatePhase<Gpu>({
     );
   }
 
+  if (externalComponent) {
+    deps.assertExternalComponentFreshSandbox(requestedSandboxName);
+  }
   externalComponent?.revalidateBeforeGateway();
   if (deps.isLinuxDockerDriverGatewayEnabled()) {
     deps.configureExternalComponentGateway(

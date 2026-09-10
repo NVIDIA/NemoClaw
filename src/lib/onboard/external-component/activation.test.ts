@@ -11,20 +11,22 @@ import { EXTERNAL_COMPONENT_ACTIVATION_TIMEOUT_MS, type PreparedExternalComponen
 import {
   activateExternalComponent,
   parseExternalComponentHttpResponse,
-  sendExternalComponentActivation,
   type ExternalComponentActivationProof,
 } from "./activation";
 
 const policyHash = `sha256:${"a".repeat(64)}`;
 const identityFingerprint = `sha256:${"b".repeat(64)}`;
 
-function fixture(events: string[] = []) {
+function fixture(
+  events: string[] = [],
+  activationSocketPath = "/run/user/1000/component/activation.sock",
+) {
   const component: PreparedExternalComponent = {
     declaration: {
       schemaVersion: 1,
       componentId: "policy-governance",
       interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
-      activationSocketPath: "/run/user/1000/component/activation.sock",
+      activationSocketPath,
     },
     revalidateBeforeGateway: vi.fn(),
     revalidateBeforeActivation: vi.fn(() => events.push("socket")),
@@ -65,7 +67,7 @@ describe("external component activation", () => {
     expect(EXTERNAL_COMPONENT_ACTIVATION_TIMEOUT_MS).toBe(30_000);
   });
 
-  it("uses one HTTP request over the declared activation socket (#11340)", async () => {
+  it("activates through one HTTP request over the declared socket (#11340)", async () => {
     const root = fs.mkdtempSync(path.join("/tmp", "nc-component-http-"));
     const socketPath = path.join(root, "activation.sock");
     let resolveRequest!: (request: string) => void;
@@ -78,7 +80,8 @@ describe("external component activation", () => {
       socket.on("end", () => {
         const request = Buffer.concat(chunks).toString("utf-8");
         resolveRequest(request);
-        const responseBody = '{"result":"activated"}';
+        const bodyStart = request.indexOf("\r\n\r\n") + 4;
+        const responseBody = responseFor(request.slice(bodyStart));
         socket.end(
           `HTTP/1.1 200 OK\r\nContent-Length: ${String(Buffer.byteLength(responseBody))}\r\nConnection: close\r\n\r\n${responseBody}`,
         );
@@ -90,16 +93,73 @@ describe("external component activation", () => {
     });
 
     try {
-      const requestBody = '{"schemaVersion":1}';
-      await expect(sendExternalComponentActivation(socketPath, requestBody)).resolves.toBe(
-        '{"result":"activated"}',
-      );
+      const { component, proof } = fixture([], socketPath);
+      await expect(activateExternalComponent(component, proof)).resolves.toEqual({
+        kind: "activated",
+      });
       const request = await received;
       expect(request).toContain("POST /v1/activate HTTP/1.1\r\n");
       expect(request).toContain("Content-Type: application/json\r\n");
-      expect(request).toContain(`Content-Length: ${String(Buffer.byteLength(requestBody))}\r\n`);
-      expect(request.endsWith(`\r\n\r\n${requestBody}`)).toBe(true);
+      expect(request).toContain('"componentId":"policy-governance"');
+      expect(request).toContain('"source":"sandbox"');
     } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("closes a pending activation socket when the fixed deadline expires (#11340)", async () => {
+    const root = fs.mkdtempSync(path.join("/tmp", "nc-component-timeout-"));
+    const socketPath = path.join(root, "activation.sock");
+    let resolveAccepted!: () => void;
+    const accepted = new Promise<void>((resolve) => {
+      resolveAccepted = resolve;
+    });
+    const sockets: { client?: net.Socket; server?: net.Socket } = {};
+    const server = net.createServer({ allowHalfOpen: true }, (socket) => {
+      sockets.server = socket;
+      socket.once("error", () => undefined);
+      resolveAccepted();
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    let expireDeadline!: () => void;
+    const deadline = { unref: vi.fn() } as unknown as NodeJS.Timeout;
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+      callback: () => void,
+      delay?: number,
+    ) => {
+      expect(delay).toBe(EXTERNAL_COMPONENT_ACTIVATION_TIMEOUT_MS);
+      expireDeadline = callback;
+      return deadline;
+    }) as typeof setTimeout);
+    const clearTimeoutSpy = vi
+      .spyOn(globalThis, "clearTimeout")
+      .mockImplementation((handle) => expect(handle).toBe(deadline));
+    const createConnection = net.createConnection.bind(net);
+    const createConnectionSpy = vi.spyOn(net, "createConnection").mockImplementation(((options: {
+      path: string;
+    }) => {
+      const socket = createConnection(options);
+      sockets.client = socket;
+      return socket;
+    }) as typeof net.createConnection);
+
+    try {
+      const { component, proof } = fixture([], socketPath);
+      const activation = activateExternalComponent(component, proof);
+      await accepted;
+      expireDeadline();
+
+      await expect(activation).resolves.toMatchObject({ kind: "ambiguous", reason: "timeout" });
+      expect(sockets.client?.destroyed).toBe(true);
+    } finally {
+      createConnectionSpy.mockRestore();
+      clearTimeoutSpy.mockRestore();
+      setTimeoutSpy.mockRestore();
+      sockets.server?.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       fs.rmSync(root, { recursive: true, force: true });
     }

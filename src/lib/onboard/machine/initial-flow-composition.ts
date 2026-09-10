@@ -3,7 +3,7 @@
 
 import { destroyGatewayForReuse } from "../gateway-cleanup";
 import { verifyGatewayContainerRunning } from "../gateway-container-running";
-import type { initialFlowDeps as externalComponentInitialFlowDeps } from "../external-component/onboarding";
+import type { flowDeps as externalComponentFlowDeps } from "../external-component/onboarding";
 import {
   createInitialOnboardFlowPhases as createInitialFlowPhases,
   type InitialOnboardFlowContext,
@@ -23,8 +23,8 @@ const gatewayDeps = {
 
 type GatewayDeps = typeof gatewayDeps;
 type ExternalComponentGatewayDeps = Pick<
-  ReturnType<typeof externalComponentInitialFlowDeps>,
-  "configureExternalComponentGateway"
+  ReturnType<typeof externalComponentFlowDeps>,
+  "assertExternalComponentFreshSandbox" | "configureExternalComponentGateway"
 >;
 
 export type InitialOnboardFlowCompositionOptions<
@@ -39,11 +39,18 @@ export type InitialOnboardFlowCompositionOptions<
   "gatewayDeps"
 > &
   ExternalComponentGatewayDeps & {
-  gatewayDeps: Omit<
-    InitialOnboardFlowPhaseOptions<Context, Agent, Gpu, SandboxEntry, Host, Config>["gatewayDeps"],
-    keyof GatewayDeps | keyof ExternalComponentGatewayDeps
-  >;
-};
+    gatewayDeps: Omit<
+      InitialOnboardFlowPhaseOptions<
+        Context,
+        Agent,
+        Gpu,
+        SandboxEntry,
+        Host,
+        Config
+      >["gatewayDeps"],
+      keyof GatewayDeps | keyof ExternalComponentGatewayDeps
+    >;
+  };
 
 export function createInitialOnboardFlowPhases<
   Context extends InitialOnboardFlowContext<Agent, Gpu, Config>,
@@ -55,12 +62,17 @@ export function createInitialOnboardFlowPhases<
 >(
   options: InitialOnboardFlowCompositionOptions<Context, Agent, Gpu, SandboxEntry, Host, Config>,
 ): ReturnType<typeof createInitialFlowPhases<Context, Agent, Gpu, SandboxEntry, Host, Config>> {
-  const { configureExternalComponentGateway, ...phaseOptions } = options;
+  const {
+    assertExternalComponentFreshSandbox,
+    configureExternalComponentGateway,
+    ...phaseOptions
+  } = options;
   return createInitialFlowPhases<Context, Agent, Gpu, SandboxEntry, Host, Config>({
     ...phaseOptions,
     gatewayDeps: {
       ...phaseOptions.gatewayDeps,
       ...gatewayDeps,
+      assertExternalComponentFreshSandbox,
       configureExternalComponentGateway,
     },
   });

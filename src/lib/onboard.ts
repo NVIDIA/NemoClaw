@@ -1156,31 +1156,29 @@ const { gatewayClusterHealthcheckPassed, repairGatewayBootstrapSecrets } =
 // ── Step 1: Preflight ────────────────────────────────────────────
 
 type PreflightOptions = import("./onboard/fatal-runtime-preflight").FatalRuntimePreflightOptions;
-const onboardPreflightGatewayAuthority =
-  preflightGatewayAuthority.createOnboardPreflightGatewayAuthority({
-    gatewayName: () => GATEWAY_NAME,
-    gatewayPort: () => GATEWAY_PORT,
-    collectGatewayReadiness: (deps) =>
-      preflightGatewayAuthority.collectOnboardGatewayReadiness(deps),
-    getGatewayOwnerDeps: () => machineGatewayOwnerDeps,
-    isNonInteractive,
-    ensureOpenshellForOnboard,
-    updateSession: onboardSession.updateSession,
-    adoptPackagedGatewayAuthorityAfterTrustedInstall:
-      gatewayAuthorityCheckpoint.adoptPackagedGatewayAuthorityAfterTrustedInstall,
-    checkPortAvailable,
-    isDockerDriverGatewayPortListener,
-    getGatewayReuseSnapshot,
-    selectNamedGatewayForReuseIfNeeded,
-    refreshDockerDriverGatewayReuseState,
-  });
+const preflightGateway = preflightGatewayAuthority.createOnboardPreflightGatewayAuthority({
+  gatewayName: () => GATEWAY_NAME,
+  gatewayPort: () => GATEWAY_PORT,
+  collectGatewayReadiness: (deps) => preflightGatewayAuthority.collectOnboardGatewayReadiness(deps),
+  getGatewayOwnerDeps: () => machineGatewayOwnerDeps,
+  isNonInteractive,
+  ensureOpenshellForOnboard,
+  updateSession: onboardSession.updateSession,
+  adoptPackagedGatewayAuthorityAfterTrustedInstall:
+    gatewayAuthorityCheckpoint.adoptPackagedGatewayAuthorityAfterTrustedInstall,
+  checkPortAvailable,
+  isDockerDriverGatewayPortListener,
+  getGatewayReuseSnapshot,
+  selectNamedGatewayForReuseIfNeeded,
+  refreshDockerDriverGatewayReuseState,
+});
 
 async function preflight(
   preflightOpts: PreflightOptions = {},
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
   const { gpu, host, sandboxGpuConfig, gpuTrustGateRejection } =
-    await onboardPreflightGatewayAuthority.runRuntimePreflight(preflightOpts);
+    await preflightGateway.runRuntimePreflight(preflightOpts);
 
   await preflightUtils.checkContainerRuntimeResources(host, {
     ignored: process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1",
@@ -1192,7 +1190,7 @@ async function preflight(
     externallySupervised: gatewayExternallySupervised,
     gatewayReuseState: initialGatewayReuseState,
     managedGatewayObservationAuthoritative,
-  } = await onboardPreflightGatewayAuthority.prepareGatewayAuthority();
+  } = await preflightGateway.prepareGatewayAuthority();
   let reuseState = initialGatewayReuseState;
 
   // Docker-backed gateways use one legacy reuse and cleanup sequence because
@@ -2605,7 +2603,7 @@ async function preflightAuthoritativeRebuildTarget(
         resolveBaselinePolicy: resolveSandboxBaselinePolicy,
         bindGatewayAuthority: () => bindGatewayOwner(getGatewayOwner()),
         runFatalRuntimePreflight: async () =>
-          onboardPreflightGatewayAuthority.runRuntimePreflight(
+          preflightGateway.runRuntimePreflight(
             authoritativeRebuildTarget.authoritativeRebuildRuntimePreflightOptions(opts),
             (code) => fail(`onboard runtime preflight exited with code ${String(code)}`),
           ),
@@ -2613,7 +2611,7 @@ async function preflightAuthoritativeRebuildTarget(
           ensureOpenshellForOnboard((code) =>
             fail(`OpenShell component preflight exited with code ${String(code)}`),
           ),
-        assertGatewayReadiness: onboardPreflightGatewayAuthority.collectGatewayReadiness,
+        assertGatewayReadiness: preflightGateway.collectGatewayReadiness,
         inferenceRouteState: (p, m) => readInferenceRouteState(authoritativeGateway.name, p, m),
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
       },
@@ -2929,7 +2927,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
         getInitialGatewayReuseState: () =>
           selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot()).gatewayReuseState,
-        ...component.initialFlowDeps(onboardPreflightGatewayAuthority, getDockerDriverGatewayEnv),
+        ...component.flowDeps(preflightGateway, getDockerDriverGatewayEnv, inspectSandboxForCreate),
         gatewayName: GATEWAY_NAME,
         recreateSandbox: isRecreateSandbox,
         requiresBindMounts: effectiveHostMounts.length > 0,

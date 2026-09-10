@@ -184,6 +184,7 @@ describe("initial onboard flow phases", () => {
           listenerExecPath: null,
           listenerSupervisorMatch: null,
         }),
+        assertExternalComponentFreshSandbox: vi.fn(),
         configureExternalComponentGateway: vi.fn(),
         refreshDockerDriverGatewayReuseState: async (state) => state,
         gatewayCliSupportsLifecycleCommands: () => false,
@@ -454,6 +455,7 @@ describe("initial onboard flow phases", () => {
           listenerExecPath: null,
           listenerSupervisorMatch: null,
         }),
+        assertExternalComponentFreshSandbox: vi.fn(),
         configureExternalComponentGateway: vi.fn(),
         refreshDockerDriverGatewayReuseState: vi.fn(async (state) => {
           calls.push("refresh-gateway-reuse");

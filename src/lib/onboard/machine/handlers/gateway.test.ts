@@ -55,6 +55,7 @@ function preparedExternalComponent(revalidateBeforeGateway = vi.fn()): PreparedE
 
 function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
   const calls = {
+    assertExternalComponentFreshSandbox: vi.fn(),
     configureExternalComponentGateway: vi.fn(),
     refresh: vi.fn(async (state: GatewayReuseState) => state),
     lifecycle: vi.fn(() => false),
@@ -106,6 +107,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
       resolveGatewayOwner: calls.resolveOwner,
       attachGateway: calls.attachGateway,
       probeGatewayAttachment: calls.probeAttachment,
+      assertExternalComponentFreshSandbox: calls.assertExternalComponentFreshSandbox,
       configureExternalComponentGateway: calls.configureExternalComponentGateway,
       refreshDockerDriverGatewayReuseState: calls.refresh,
       gatewayCliSupportsLifecycleCommands: calls.lifecycle,
@@ -180,6 +182,30 @@ function gatewaySpans(artifact: TraceArtifact) {
 }
 
 describe("handleGatewayState", () => {
+  it("rejects an existing sandbox before gateway mutation (#11340)", async () => {
+    const component = preparedExternalComponent();
+    const { deps, calls } = createDeps({
+      assertExternalComponentFreshSandbox: vi.fn(() => {
+        throw new Error("sandbox exists");
+      }),
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+    });
+
+    await expect(
+      handleGatewayState({
+        ...baseOptions(deps, "missing"),
+        externalComponent: component,
+      }),
+    ).rejects.toThrow("sandbox exists");
+
+    expect(deps.assertExternalComponentFreshSandbox).toHaveBeenCalledWith("my-assistant");
+    expect(component.revalidateBeforeGateway).not.toHaveBeenCalled();
+    expect(calls.configureExternalComponentGateway).not.toHaveBeenCalled();
+    expect(calls.refresh).not.toHaveBeenCalled();
+    expect(calls.startStep).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+  });
+
   it("validates the component before gateway configuration or lifecycle effects (#11340)", async () => {
     const revalidateBeforeGateway = vi.fn(() => {
       throw new Error("declaration changed");
@@ -222,10 +248,7 @@ describe("handleGatewayState", () => {
     expect(component.revalidateBeforeGateway).toHaveBeenCalledOnce();
     expect(calls.configureExternalComponentGateway).toHaveBeenCalledWith(projection);
     expect(calls.refresh).toHaveBeenCalledWith("missing");
-    expect(calls.startGateway).toHaveBeenCalledWith(
-      { type: "nvidia" },
-      { gpuPassthrough: true },
-    );
+    expect(calls.startGateway).toHaveBeenCalledWith({ type: "nvidia" }, { gpuPassthrough: true });
     expect(revalidateBeforeGateway.mock.invocationCallOrder[0]).toBeLessThan(
       calls.configureExternalComponentGateway.mock.invocationCallOrder[0],
     );
@@ -274,10 +297,7 @@ describe("handleGatewayState", () => {
     const result = await handleGatewayState(baseOptions(deps, "missing"));
 
     expect(calls.startStep).toHaveBeenCalledWith("gateway");
-    expect(calls.startGateway).toHaveBeenCalledWith(
-      { type: "nvidia" },
-      { gpuPassthrough: true },
-    );
+    expect(calls.startGateway).toHaveBeenCalledWith({ type: "nvidia" }, { gpuPassthrough: true });
     expect(calls.configureExternalComponentGateway).not.toHaveBeenCalled();
     expect(calls.complete).toHaveBeenCalledWith("gateway");
     expect(result.gatewayReuseState).toBe("missing");
@@ -327,10 +347,7 @@ describe("handleGatewayState", () => {
     expect(calls.skipped).not.toHaveBeenCalled();
     expect(calls.recordSkip).not.toHaveBeenCalled();
     expect(calls.startStep).toHaveBeenCalledWith("gateway");
-    expect(calls.startGateway).toHaveBeenCalledWith(
-      { type: "nvidia" },
-      { gpuPassthrough: true },
-    );
+    expect(calls.startGateway).toHaveBeenCalledWith({ type: "nvidia" }, { gpuPassthrough: true });
     expect(calls.retireLegacy).not.toHaveBeenCalled();
     expect(result.gatewayReuseState).toBe("stale");
   });

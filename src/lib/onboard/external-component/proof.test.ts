@@ -30,7 +30,7 @@ function fixture() {
     current_policy_version: 3,
   };
   const inspection = {
-    policySource: "sandbox" as const,
+    policySource: "sandbox" as "sandbox" | "global",
     effectivePolicy: {
       version: 1,
       network_policies: {
@@ -103,6 +103,12 @@ describe("external component activation proof", () => {
       "a policy version mismatch",
       (value: ReturnType<typeof fixture>) => {
         value.inspection.policyIdentity.activeVersion = 4;
+      },
+    ],
+    [
+      "global policy authority",
+      (value: ReturnType<typeof fixture>) => {
+        value.inspection.policySource = "global";
       },
     ],
     [

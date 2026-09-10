@@ -44,7 +44,7 @@ interface ProofSnapshot {
   readonly lifecycleGeneration: string;
   readonly policyActiveVersion: number;
   readonly policyHash: string;
-  readonly policySource: "sandbox" | "global";
+  readonly policySource: "sandbox";
   readonly sandboxId: string;
   readonly sandboxIdentityFingerprint: string;
 }
@@ -83,6 +83,7 @@ function captureProofSnapshotUnchecked(
   );
   if (
     policy.gatewayName !== expectedGatewayName ||
+    policy.inspection.policySource !== "sandbox" ||
     row.current_policy_version !== policy.inspection.policyIdentity.activeVersion ||
     !/^sha256:[0-9a-f]{64}$/u.test(policy.inspection.policyIdentity.hash)
   ) {

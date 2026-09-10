@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { inspectPolicyMutationContext } from "../../policy";
+import type { ExternalComponentActivationIncomplete } from "../../state/onboard-session";
 import { configureDockerDriverGatewayExternalComponent } from "../docker-driver-gateway-env";
+import type { SandboxLifecycleHelpers } from "../sandbox-lifecycle";
 import {
   ExternalComponentContractError,
   loadExternalComponentDeclaration,
@@ -22,12 +24,28 @@ export function prepareExternalComponent(
   return loadExternalComponentDeclaration();
 }
 
-export function initialFlowDeps(
+export function assertExternalComponentFreshSandbox(
+  requestedSandboxName: string | null,
+  inspectSandboxForCreate: SandboxLifecycleHelpers["inspectSandboxForCreate"],
+): void {
+  if (!requestedSandboxName) {
+    throw new ExternalComponentContractError("lifecycle_unsupported");
+  }
+  const inspected = inspectSandboxForCreate(requestedSandboxName);
+  if (inspected.existingEntry || inspected.liveExists) {
+    throw new ExternalComponentContractError("lifecycle_unsupported");
+  }
+}
+
+export function flowDeps(
   readiness: { collectGatewayReadiness(): Promise<unknown> },
   getDockerDriverGatewayEnv: () => Record<string, string>,
+  inspectSandboxForCreate: SandboxLifecycleHelpers["inspectSandboxForCreate"],
 ) {
   return {
     assertGatewayReadiness: () => readiness.collectGatewayReadiness().then(() => undefined),
+    assertExternalComponentFreshSandbox: (requestedSandboxName: string | null) =>
+      assertExternalComponentFreshSandbox(requestedSandboxName, inspectSandboxForCreate),
     configureExternalComponentGateway: (
       externalComponent: {
         readonly componentId: string;
@@ -39,19 +57,10 @@ export function initialFlowDeps(
   };
 }
 
-type ExternalComponentActivationEvidence = {
-  readonly schemaVersion: 1;
-  readonly activationId: string;
-  readonly componentId: string;
-  readonly lifecycleGeneration: string;
-  readonly sandboxIdentityFingerprint: string;
-  readonly resultClass: "failed" | "ambiguous";
-};
-
 interface OnboardSessionAccess {
   updateSession(
     mutator: (session: {
-      externalComponentActivation: ExternalComponentActivationEvidence | null;
+      externalComponentActivation: ExternalComponentActivationIncomplete | null;
     }) => void,
   ): unknown;
 }
@@ -92,7 +101,7 @@ export function finalDeps(
       activationId: string,
     ) => activateExternalComponent(component, proof, undefined, activationId),
     setExternalComponentActivationEvidence: (
-      evidence: ExternalComponentActivationEvidence | null,
+      evidence: ExternalComponentActivationIncomplete | null,
     ) => {
       onboardSession.updateSession((session) => {
         session.externalComponentActivation = evidence;
