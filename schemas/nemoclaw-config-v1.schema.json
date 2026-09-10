@@ -168,83 +168,147 @@
               "agents": {
                 "type": "array",
                 "items": {
-                  "type": "object",
-                  "required": ["name", "type", "inference"],
-                  "properties": {
-                    "name": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 63,
-                      "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                    },
-                    "type": {
-                      "type": "string",
-                      "const": "openclaw"
-                    },
-                    "tools": {
+                  "anyOf": [
+                    {
                       "type": "object",
-                      "required": ["disclosure"],
+                      "required": ["name", "inference", "type"],
                       "properties": {
-                        "disclosure": {
-                          "anyOf": [
-                            {
-                              "type": "string",
-                              "const": "progressive"
-                            },
-                            {
-                              "type": "string",
-                              "const": "direct"
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 63,
+                          "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                        },
+                        "inference": {
+                          "type": "object",
+                          "required": ["routes"],
+                          "properties": {
+                            "routes": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "required": ["name", "providerRef", "overrides"],
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "providerRef": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "overrides": {
+                                    "type": "object",
+                                    "required": ["model"],
+                                    "properties": {
+                                      "model": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 512,
+                                        "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "minItems": 1
                             }
-                          ]
+                          },
+                          "additionalProperties": false
+                        },
+                        "type": {
+                          "type": "string",
+                          "const": "openclaw"
+                        },
+                        "tools": {
+                          "type": "object",
+                          "required": ["disclosure"],
+                          "properties": {
+                            "disclosure": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "const": "progressive"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "direct"
+                                }
+                              ]
+                            }
+                          },
+                          "additionalProperties": false
                         }
                       },
                       "additionalProperties": false
                     },
-                    "inference": {
+                    {
                       "type": "object",
-                      "required": ["routes"],
+                      "required": ["name", "inference", "type"],
                       "properties": {
-                        "routes": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "required": ["name", "providerRef", "overrides"],
-                            "properties": {
-                              "name": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 63,
-                                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                              },
-                              "providerRef": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 63,
-                                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                              },
-                              "overrides": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 63,
+                          "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                        },
+                        "inference": {
+                          "type": "object",
+                          "required": ["routes"],
+                          "properties": {
+                            "routes": {
+                              "type": "array",
+                              "items": {
                                 "type": "object",
-                                "required": ["model"],
+                                "required": ["name", "providerRef", "overrides"],
                                 "properties": {
-                                  "model": {
+                                  "name": {
                                     "type": "string",
                                     "minLength": 1,
-                                    "maxLength": 512,
-                                    "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "providerRef": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "overrides": {
+                                    "type": "object",
+                                    "required": ["model"],
+                                    "properties": {
+                                      "model": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 512,
+                                        "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                      }
+                                    },
+                                    "additionalProperties": false
                                   }
                                 },
                                 "additionalProperties": false
-                              }
-                            },
-                            "additionalProperties": false
+                              },
+                              "minItems": 1
+                            }
                           },
-                          "minItems": 1
+                          "additionalProperties": false
+                        },
+                        "type": {
+                          "type": "string",
+                          "const": "hermes"
                         }
                       },
                       "additionalProperties": false
                     }
-                  },
-                  "additionalProperties": false
+                  ]
                 },
                 "minItems": 1
               }

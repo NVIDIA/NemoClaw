@@ -26,3 +26,5 @@ the validated startup profile. Absent or explicit `progressive` selection keeps
 the canonical omission. Model compatibility can still downgrade runtime tool
 behavior. Preserve managed-image authority and full residual profile equality;
 admitting disclosure must not admit extra tool gateways or minimal-bootstrap settings.
+Hermes keeps its canonical export without `tools`; a retained direct selection or
+profile is unsupported even when those two sources agree.

@@ -68,8 +68,12 @@ export function buildExportConfig(
           agents: [
             {
               name: "primary",
-              type: "openclaw",
-              ...(source.tools === undefined ? {} : { tools: source.tools }),
+              ...(source.agent === "openclaw"
+                ? {
+                    type: source.agent,
+                    ...(source.tools === undefined ? {} : { tools: source.tools }),
+                  }
+                : { type: source.agent }),
               inference: {
                 routes: [
                   {

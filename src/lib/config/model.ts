@@ -195,6 +195,9 @@ export const NEMOCLAW_INFERENCE_APIS = [
 
 export const NemoClawInferenceApiSchema = Type.Enum(NEMOCLAW_INFERENCE_APIS);
 
+export const NEMOCLAW_CONFIG_AGENT_TYPES = ["openclaw", "hermes"] as const;
+export const NemoClawAgentTypeSchema = Type.Enum(NEMOCLAW_CONFIG_AGENT_TYPES);
+
 export function isSupportedInferenceApi(value: unknown): value is InferenceApi {
   return Check(NemoClawInferenceApiSchema, value);
 }
@@ -251,20 +254,28 @@ export const NemoClawAgentToolsConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
-const NemoClawAgentConfigSchema = Type.Object(
-  {
-    name: LocalResourceNameSchema,
-    type: Type.Literal("openclaw"),
-    tools: Type.Optional(NemoClawAgentToolsConfigSchema),
-    inference: Type.Object(
-      {
-        routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }),
-      },
-      { additionalProperties: false },
-    ),
-  },
-  { additionalProperties: false },
-);
+const nemoClawAgentFields = {
+  name: LocalResourceNameSchema,
+  inference: Type.Object(
+    { routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }) },
+    { additionalProperties: false },
+  ),
+};
+
+const NemoClawAgentConfigSchema = Type.Union([
+  Type.Object(
+    {
+      ...nemoClawAgentFields,
+      type: Type.Literal("openclaw"),
+      tools: Type.Optional(NemoClawAgentToolsConfigSchema),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { ...nemoClawAgentFields, type: Type.Literal("hermes") },
+    { additionalProperties: false },
+  ),
+]);
 
 const NemoClawManagedImageConfigSchema = Type.Object(
   { ref: ImmutableImageReferenceSchema },

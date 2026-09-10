@@ -105,6 +105,15 @@ describe("NemoClawConfig v1", () => {
     }
   });
 
+  it.each([{ disclosure: "progressive" }, { disclosure: "direct" }, {}])(
+    "rejects OpenClaw tool configuration on Hermes",
+    (tools) => {
+      const value = config();
+      Object.assign(value.spec.sandboxes[0]!.agents[0]!, { type: "hermes", tools });
+      expect(() => validateNemoClawConfig(value)).toThrow();
+    },
+  );
+
   it("validates one aggregate config with explicit effective policy (#10938)", () => {
     expect(validateNemoClawConfig(config())).toEqual(config());
   });
@@ -174,6 +183,13 @@ describe("NemoClawConfig v1", () => {
     );
   });
 
+  it("accepts Hermes as a v1 agent type (#11286)", () => {
+    const value = structuredClone(config()) as unknown as Record<string, any>;
+    value.spec.sandboxes[0].agents[0].type = "hermes";
+
+    expect(validateNemoClawConfig(value).spec.sandboxes[0]!.agents[0]!.type).toBe("hermes");
+  });
+
   it("keeps the exported authoritative schema deeply immutable", () => {
     expect(Object.isFrozen(NemoClawConfigSchema)).toBe(true);
     expect(Object.isFrozen(NemoClawConfigSchema.properties.spec)).toBe(true);
@@ -219,7 +235,7 @@ describe("NemoClawConfig v1", () => {
     );
   });
 
-  it.each(["hermes", "langchain-deepagents-code", "nemocua"])(
+  it.each(["langchain-deepagents-code", "nemocua"])(
     "rejects unsupported v1 agent type %s (#10938)",
     (type) => {
       const value = structuredClone(config()) as unknown as Record<string, any>;

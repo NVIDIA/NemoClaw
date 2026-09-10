@@ -698,6 +698,14 @@ describe("E2E workflow plan", () => {
     ).toContain("security-posture-hermes");
   });
 
+  it("selects the Hermes export owner when atomic publication changes (#11286)", () => {
+    expect(
+      catalogueTargetsForChangedFiles(["src/lib/adapters/fs/config-export-file.ts"]).map(
+        (target) => target.id,
+      ),
+    ).toContain("security-posture-hermes");
+  });
+
   it.each([
     "nemoclaw-blueprint/router/pool-config.yaml",
     "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
