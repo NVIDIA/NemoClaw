@@ -380,6 +380,12 @@ export function acquireRebuildOnboardLock(
     );
     return null;
   }
+  try {
+    onboardSession.selectRebuildSession(sandboxName);
+  } catch (error) {
+    onboardSession.releaseOnboardLock();
+    throw error;
+  }
   let released = false;
   const release = () => {
     if (released) return;

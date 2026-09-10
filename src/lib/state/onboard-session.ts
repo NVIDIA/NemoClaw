@@ -1191,30 +1191,35 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
 }
 
 export function loadSession(): Session | null {
+  return loadSessionFile(SESSION_FILE);
+}
+
+function loadSessionFile(filePath: string, strict = false): Session | null {
   const lockOwned = heldLockFd !== null;
+  const protectedRead = lockOwned || strict;
   let descriptor: number | null = null;
   try {
     if (lockOwned) assertOnboardLockOwned();
     let contents: string;
-    if (lockOwned) {
+    if (protectedRead) {
       try {
         descriptor = fs.openSync(
-          SESSION_FILE,
+          filePath,
           fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
         );
       } catch (error) {
         if (isErrnoException(error) && error.code === "ENOENT") {
-          assertOnboardLockOwned();
+          if (lockOwned) assertOnboardLockOwned();
           return null;
         }
         throw error;
       }
-      assertSessionFileIdentity(descriptor, SESSION_FILE);
+      assertSessionFileIdentity(descriptor, filePath);
       contents = String(fs.readFileSync(descriptor, "utf-8"));
-      assertSessionFileIdentity(descriptor, SESSION_FILE);
+      assertSessionFileIdentity(descriptor, filePath);
     } else {
-      if (!fs.existsSync(SESSION_FILE)) return null;
-      contents = fs.readFileSync(SESSION_FILE, "utf-8");
+      if (!fs.existsSync(filePath)) return null;
+      contents = fs.readFileSync(filePath, "utf-8");
     }
     const parsed = JSON.parse(contents);
     const normalized = normalizeSession(parsed);
@@ -1224,10 +1229,90 @@ export function loadSession(): Session | null {
     if (error instanceof InvalidPersistedApfInterceptorIntentError) {
       throw error;
     }
-    if (lockOwned) throw error;
+    if (protectedRead) throw error;
     return null;
   } finally {
     if (descriptor !== null) fs.closeSync(descriptor);
+  }
+}
+
+function rebuildSessionFile(sandboxName: string): string {
+  if (sandboxName.length > NAME_MAX_LENGTH || !NAME_VALID_PATTERN.test(sandboxName)) {
+    throw new Error("Cannot select rebuild recovery for an invalid sandbox name.");
+  }
+  return path.join(SESSION_DIR, `.onboard-rebuild-${sandboxName}.json`);
+}
+
+function loadRetainedRebuildSession(sandboxName: string): Session | null {
+  const filePath = rebuildSessionFile(sandboxName);
+  const retained = loadSessionFile(filePath, true);
+  if (
+    (!retained && fs.existsSync(filePath)) ||
+    (retained && retained.checkpoint?.sandboxRecreate?.sandboxName !== sandboxName)
+  ) {
+    throw new Error(`Retained rebuild recovery does not identify sandbox '${sandboxName}'.`);
+  }
+  return retained;
+}
+
+/** Read the target's recovery before preflight acquires the onboarding lock. */
+export function loadRebuildSession(sandboxName: string): Session | null {
+  const current = loadSession();
+  return current?.checkpoint?.sandboxRecreate?.sandboxName === sandboxName
+    ? current
+    : loadRetainedRebuildSession(sandboxName) ?? current;
+}
+
+function moveSessionFile(source: string, target: string): void {
+  assertOnboardLockOwned();
+  const descriptor = fs.openSync(source, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    assertSessionFileIdentity(descriptor, source);
+    fs.fchmodSync(descriptor, 0o600);
+    fs.fsyncSync(descriptor);
+    assertOnboardLockOwned();
+    fs.renameSync(source, target);
+    assertOnboardLockOwned();
+    assertSessionFileIdentity(descriptor, target);
+    fs.fsyncSync(heldLockDirectory!.descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+/** Select one rebuild's session without discarding another sandbox's recovery. */
+export function selectRebuildSession(sandboxName: string): void {
+  assertOnboardLockOwned();
+  const targetFile = rebuildSessionFile(sandboxName);
+  const current = loadSession();
+  if (!current && fs.existsSync(SESSION_FILE)) {
+    throw new Error("Cannot select rebuild recovery: the current onboarding session is invalid.");
+  }
+  const retained = loadRetainedRebuildSession(sandboxName);
+  const transaction = current?.checkpoint?.sandboxRecreate;
+  if (transaction?.sandboxName === sandboxName) {
+    if (retained) {
+      throw new Error(`Sandbox '${sandboxName}' has conflicting rebuild recovery sessions.`);
+    }
+    return;
+  }
+  if (transaction) {
+    const sourceFile = rebuildSessionFile(transaction.sandboxName);
+    // Refuse an existing destination, including a dangling symlink.
+    try {
+      fs.lstatSync(sourceFile);
+      throw new Error(`Sandbox '${transaction.sandboxName}' already has retained rebuild recovery.`);
+    } catch (error) {
+      if (!(isErrnoException(error) && error.code === "ENOENT")) throw error;
+    }
+    // Renaming leaves one owner. If the process stops before selection finishes,
+    // the next rebuild can recover this session from its sandbox's file.
+    moveSessionFile(SESSION_FILE, sourceFile);
+  }
+  if (retained) {
+    moveSessionFile(targetFile, SESSION_FILE);
+  } else if (transaction || !current) {
+    saveSession(createSession({ sandboxName }));
   }
 }
 
