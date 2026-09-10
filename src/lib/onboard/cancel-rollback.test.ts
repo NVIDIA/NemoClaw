@@ -282,7 +282,9 @@ describe("installSandboxCancelRollback", () => {
 
     const guidance = log.mock.calls.flat().join("\n");
     expect(guidance).toContain("identity fingerprint is unavailable");
-    expect(guidance).toContain("OpenShell administrator");
+    expect(guidance).toContain("can clear the recovery record only after OpenShell confirms");
+    expect(guidance).not.toContain("identify and remove");
+    expect(guidance).not.toContain("openshell sandbox delete");
   });
 });
 
@@ -309,7 +311,8 @@ describe("buildCancelRollbackMessage", () => {
     expect(message).toContain("preserved incomplete sandbox 'sb'");
     expect(message).toContain(SANDBOX_FINGERPRINT);
     expect(message).toContain(RECOVERY_CONTEXT.createAttemptNonce);
-    expect(message).toContain("identity-bound inspection, recovery, or removal");
+    expect(message).toContain("retained recovery evidence");
+    expect(message).toContain("does not authorize deletion by mutable name");
     expect(message).not.toContain("openshell sandbox delete");
     expect(message).not.toContain("cannot delete it by immutable identity");
   });

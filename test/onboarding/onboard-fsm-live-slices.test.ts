@@ -257,7 +257,17 @@ if (scenario.mode === "dashboard-port-composition") {
       ensureFinalizationAgentDashboardForward: nextDashboardForward,
     };
   };
-  require(${agentOnboardPath}).handleAgentSetup = async () => undefined;
+  require(${agentOnboardPath}).handleAgentSetup = async (
+    _sandboxName,
+    _model,
+    _provider,
+    _agent,
+    _resume,
+    _preparedSandbox,
+    context,
+  ) => {
+    called.push("agent-executor:" + typeof context.sandboxCommandExecutor?.runBuffered);
+  };
   require(${agentSelectionPath}).createOnboardAgentSelector = () => async () => ({
     name: "hermes",
     displayName: "Hermes Agent",
@@ -493,9 +503,9 @@ if (scenario.mode === "stale-recovery-admission") {
 }
 
 if (scenario.mode === "stale-session-decision") {
-  const resolveEntryOptions = onboardEntryOptions.resolveDefaultRunEntryOptionsFromState;
+  const resolveEntryOptions = onboardEntryOptions.readOptions;
   let optionReads = 0;
-  onboardEntryOptions.resolveDefaultRunEntryOptionsFromState = (...args) => {
+  onboardEntryOptions.readOptions = (...args) => {
     optionReads += 1;
     const resolved = resolveEntryOptions(...args);
     if (optionReads === 1) {
@@ -660,6 +670,7 @@ describe("live onboard FSM slice boundaries", () => {
     assert.deepEqual(runSliceProbe({ slice: "final", mode: "dashboard-port-composition" }), [
       "initial:init",
       "core",
+      "agent-executor:function",
       "forward-port:18791",
       "registry-port:18791",
       "dashboard-url:http://127.0.0.1:18791/",

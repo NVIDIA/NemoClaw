@@ -7,6 +7,10 @@ import { createRequire } from "node:module";
 import { type MockInstance, vi } from "vitest";
 import type { ManagedGatewayControlCompletion } from "../../src/lib/actions/sandbox/gateway-restart";
 import type { SecretBoundaryRefusalReason } from "../../src/lib/actions/sandbox/hermes-secret-boundary-recovery";
+import type {
+  OpenShellSandboxBufferedCommandCompletion,
+  OpenShellSandboxBufferedCommandRequest,
+} from "../../src/lib/adapters/openshell/sandbox-command";
 import type { WslDetectionOptions } from "../../src/lib/platform";
 import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
@@ -40,6 +44,8 @@ export type ConnectHarness = {
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
   findReachableOllamaHostSpy: MockInstance;
+  forwardServiceOwnerSpy: MockInstance;
+  launchForwardServiceSpy: MockInstance;
   ensureLiveSandboxSpy: MockInstance;
   getSandboxDockerRuntimeSpy: MockInstance;
   dockerStartSpy: MockInstance;
@@ -65,6 +71,7 @@ export type ConnectHarness = {
   resolveAgentConfigSpy: MockInstance;
   restoreSandboxStartupState: RestoreSandboxStartupState;
   runAutoPairSpy: MockInstance;
+  sandboxRunBufferedSpy: MockInstance;
   runSandboxExecChildSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   runSetupDnsProxySpy: MockInstance;
@@ -181,6 +188,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         } as never)) as never);
 
   const runtime = requireDist("../../src/lib/adapters/openshell/runtime.js");
+  const sandboxCommandCli = requireDist("../../src/lib/adapters/openshell/sandbox-command-cli.js");
   const resolve = requireDist("../../src/lib/adapters/openshell/resolve.js");
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const dns = requireDist("../../src/lib/actions/dns/index.js");
@@ -193,6 +201,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   );
   const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
   const forwardHealth = requireDist("../../src/lib/actions/sandbox/forward-health.js");
+  const forwardService = requireDist("../../src/lib/adapters/openshell/forward-service.js");
   const autoPairApproval = requireDist("../../src/lib/actions/sandbox/auto-pair-approval.js");
   const connectVllmPreflight = requireDist(
     "../../src/lib/actions/sandbox/connect-vllm-preflight.js",
@@ -322,8 +331,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     )) as never);
   const recoverHermesPortableOllamaInferenceSpy = vi
     .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
-    .mockImplementation(((input: {
-      verifyRoute: () => unknown;
+    .mockImplementation((async (input: {
+      verifyRoute: () => Promise<unknown>;
       prepareProbeDependency?: () => { release: () => void };
     }) => {
       if (options.hermesInferenceRecoveryPhase) {
@@ -340,7 +349,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
           "nested recovery diagnostic canary",
         );
       }
-      input.verifyRoute();
+      await input.verifyRoute();
       input.prepareProbeDependency?.().release();
       return "reused";
     }) as never);
@@ -403,6 +412,47 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   });
   const inferenceProbeResponses = [...(options.inferenceProbeResponses ?? [])];
   const listOutputs = [...(options.listOutputs ?? [])];
+  const sandboxRunBufferedSpy = vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+    if (!request.command.join(" ").includes("inference.local/v1/models")) {
+      return {
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: "",
+        stderr: "",
+      } satisfies OpenShellSandboxBufferedCommandCompletion;
+    }
+    const response = inferenceProbeResponses.shift() ?? "OK 200";
+    if (typeof response === "string") {
+      return {
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: response,
+        stderr: "",
+      } satisfies OpenShellSandboxBufferedCommandCompletion;
+    }
+    return {
+      outcome:
+        response.status === null
+          ? { kind: "failed", error: { kind: "capture", message: "capture failed" } }
+          : { kind: "completed", exitCode: response.status ?? 0 },
+      stdout: response.output ?? "",
+      stderr: response.stderr ?? "",
+    } satisfies OpenShellSandboxBufferedCommandCompletion;
+  });
+  vi.spyOn(sandboxCommandCli, "createCliOpenShellSandboxCommandExecutor").mockReturnValue({
+    runBuffered: sandboxRunBufferedSpy,
+  });
+  vi.spyOn(
+    sandboxCommandCli,
+    "createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor",
+  ).mockImplementation(((_dependencies: unknown, assertCurrent: () => void) => ({
+    runBuffered: async (request: OpenShellSandboxBufferedCommandRequest) => {
+      assertCurrent();
+      try {
+        return await sandboxRunBufferedSpy(request);
+      } finally {
+        assertCurrent();
+      }
+    },
+  })) as never);
   const captureOpenshellImplementation = (args: unknown) => {
     const argv = Array.isArray(args) ? args : [];
     if (argv[0] === "sandbox" && argv[1] === "list") {
@@ -472,6 +522,12 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
   vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+  const forwardServiceOwnerSpy = vi
+    .spyOn(forwardService, "isForwardServiceListenerOwner")
+    .mockReturnValue(false);
+  const launchForwardServiceSpy = vi
+    .spyOn(forwardService, "launchForwardService")
+    .mockImplementation(() => undefined);
   const verifyHermesPortableLaunchForwardsSpy = vi
     .spyOn(processRecovery, "verifyHermesPortableLaunchForwards")
     .mockReturnValue({ kind: "healthy" });
@@ -590,6 +646,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,
     findReachableOllamaHostSpy,
+    forwardServiceOwnerSpy,
+    launchForwardServiceSpy,
     ensureLiveSandboxSpy,
     getSandboxDockerRuntimeSpy,
     dockerStartSpy,
@@ -614,6 +672,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     resolveAgentConfigSpy,
     restoreSandboxStartupState: requireDist(connectModulePath).restoreSandboxStartupState,
     runAutoPairSpy,
+    sandboxRunBufferedSpy,
     runSandboxExecChildSpy,
     settlePortablePairingSpy,
     runOpenshellSpy,

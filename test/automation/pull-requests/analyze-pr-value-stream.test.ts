@@ -130,7 +130,6 @@ async function run(scenario: string, extra: string[] = []) {
   const result = await execa(
     process.execPath,
     [
-      "--experimental-strip-types",
       "--no-warnings",
       analyzer,
       "--workdir",
@@ -171,7 +170,7 @@ describe("pull request value-stream analysis", () => {
     const fake = await fakeGithub("complete");
     const result = await execa(
       process.execPath,
-      ["--experimental-strip-types", "--no-warnings", analyzer, "--number", "0"],
+      ["--no-warnings", analyzer, "--number", "0"],
       {
         env: {
           ...process.env,
@@ -432,7 +431,6 @@ describe("pull request value-stream analysis", () => {
     const processResult = execa(
       process.execPath,
       [
-        "--experimental-strip-types",
         "--no-warnings",
         analyzer,
         "--workdir",

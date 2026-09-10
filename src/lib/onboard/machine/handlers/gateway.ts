@@ -259,7 +259,7 @@ async function handleGatewayStatePhase<Gpu>({
       gatewayReuseState !== "missing" &&
       gatewayReuseState !== "foreign-active"
     ) {
-      deps.note("  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.");
+      deps.note("  Replacing legacy OpenShell gateway metadata.");
       deps.retireLegacyGatewayForDockerDriverUpgrade();
       gatewayReuseState = "missing";
     } else if (gatewayReuseState === "foreign-active") {

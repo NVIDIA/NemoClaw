@@ -37,7 +37,7 @@ function makeArgs(sandboxName: string | null) {
 
 function createHarness() {
   const runOpenshell = vi.fn(() => SUCCESS);
-  const upsertProvider = vi.fn(() => ({ ok: true }));
+  const upsertProvider = vi.fn(async () => ({ ok: true }));
   const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
   const readGatewayProviderMetadata = vi.fn(() => ({
     name: PROVIDER,
@@ -350,7 +350,7 @@ describe("OpenAI-compatible no-auth provider registration", () => {
       restore,
     });
     harness.deps.hydrateCredentialEnv.mockReturnValue("proxy-token");
-    harness.upsertProvider.mockReturnValue({ ok: false });
+    harness.upsertProvider.mockResolvedValue({ ok: false });
 
     await expect(setupRemoteProviderInference(args, harness.deps)).rejects.toThrow("EXIT_CALLED:1");
     expect(persist).not.toHaveBeenCalled();
@@ -394,7 +394,7 @@ describe("OpenAI-compatible no-auth provider registration", () => {
       restore,
     });
     harness.deps.hydrateCredentialEnv.mockReturnValue("proxy-token");
-    harness.upsertProvider.mockReturnValue({ ok: false });
+    harness.upsertProvider.mockResolvedValue({ ok: false });
     harness.deps.isNonInteractive.mockReturnValue(false);
     harness.deps.promptValidationRecovery.mockResolvedValue("selection");
 

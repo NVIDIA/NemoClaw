@@ -768,7 +768,7 @@ function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[])
     const activeLock = path.join(stateRoot, "onboard.lock");
     if (lstatNoFollow(home, activeLock)) {
       throw migrationError(
-        `onboarding lock ${activeLock} is present; finish or stop that run before migrating state`,
+        `onboarding lock ${activeLock} is present; confirm that no NemoClaw onboarding process in any environment sharing this state root is active, then remove only ${activeLock} and retry; migration will not remove it automatically`,
       );
     }
   }

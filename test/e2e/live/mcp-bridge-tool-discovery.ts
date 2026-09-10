@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+
 import { expect } from "vitest";
 
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { assertExitZero } from "../fixtures/clients/command.ts";
+import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { FakeMcpHttpsServer, FakeMcpRequest } from "./mcp-bridge-servers.ts";
 
@@ -16,19 +19,18 @@ export interface AuthenticatedMcpDiscoveryTarget {
   label: string;
 }
 
-const MCP_TOOL_DISCOVERY_TRANSPORT_FAILURE = "MCP tool discovery request failed";
 const MCP_TOOL_DISCOVERY_ATTEMPTS = 2;
 const MCP_TOOL_DISCOVERY_RETRY_DELAY_MS = 1_000;
 
 export function shouldRetryMcpToolDiscoveryTransportFailure(
-  toolDiscovery: { ok: boolean; detail?: string },
+  toolDiscovery: { ok: boolean; failureClass?: string },
   requestsSinceAttempt: readonly FakeMcpRequest[],
   attempt: number,
 ): boolean {
   return (
     attempt < MCP_TOOL_DISCOVERY_ATTEMPTS &&
     !toolDiscovery.ok &&
-    toolDiscovery.detail === MCP_TOOL_DISCOVERY_TRANSPORT_FAILURE &&
+    toolDiscovery.failureClass === "connection" &&
     requestsSinceAttempt.length === 0
   );
 }
@@ -67,9 +69,73 @@ type McpToolDiscoveryStatusJson = {
     count: number;
     tools: string[];
     truncated: boolean;
+    commandStatus: number | null;
     detail?: string;
+    failedStage?: string;
+    failureClass?: string;
   };
 };
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isBooleanOrNull(value: unknown): value is boolean | null {
+  return typeof value === "boolean" || value === null;
+}
+
+function isMcpToolDiscoveryStatusJson(value: unknown): value is McpToolDiscoveryStatusJson {
+  if (!isJsonRecord(value)) return false;
+  const { provider, policy, adapter, trustedPrivateTarget, toolDiscovery } = value;
+  return (
+    isJsonRecord(provider) &&
+    typeof provider.registryPresent === "boolean" &&
+    isBooleanOrNull(provider.gatewayPresent) &&
+    isBooleanOrNull(provider.attached) &&
+    isBooleanOrNull(provider.credentialReady) &&
+    isJsonRecord(policy) &&
+    typeof policy.registryPresent === "boolean" &&
+    isBooleanOrNull(policy.gatewayPresent) &&
+    isJsonRecord(adapter) &&
+    isBooleanOrNull(adapter.registered) &&
+    (trustedPrivateTarget === undefined ||
+      (isJsonRecord(trustedPrivateTarget) &&
+        (trustedPrivateTarget.state === "match" ||
+          trustedPrivateTarget.state === "drift" ||
+          trustedPrivateTarget.state === "unresolved"))) &&
+    isJsonRecord(toolDiscovery) &&
+    typeof toolDiscovery.ok === "boolean" &&
+    Number.isSafeInteger(toolDiscovery.count) &&
+    (toolDiscovery.count as number) >= 0 &&
+    Array.isArray(toolDiscovery.tools) &&
+    toolDiscovery.tools.length === toolDiscovery.count &&
+    toolDiscovery.tools.every((tool) => typeof tool === "string") &&
+    typeof toolDiscovery.truncated === "boolean" &&
+    (toolDiscovery.commandStatus === null || Number.isSafeInteger(toolDiscovery.commandStatus)) &&
+    (toolDiscovery.detail === undefined || typeof toolDiscovery.detail === "string") &&
+    (toolDiscovery.failedStage === undefined || typeof toolDiscovery.failedStage === "string") &&
+    (toolDiscovery.failureClass === undefined || typeof toolDiscovery.failureClass === "string")
+  );
+}
+
+function parseMcpToolDiscoveryStatusJson(stdout: string): McpToolDiscoveryStatusJson | undefined {
+  try {
+    const value: unknown = JSON.parse(stdout);
+    return isMcpToolDiscoveryStatusJson(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function requireMcpToolDiscoveryStatusJson(
+  status: McpToolDiscoveryStatusJson | undefined,
+  label: string,
+): McpToolDiscoveryStatusJson {
+  if (!status?.toolDiscovery) {
+    throw new Error(`${label} did not return valid MCP discovery JSON`);
+  }
+  return status;
+}
 
 function buildMcpToolDiscoveryDiagnostics(
   status: McpToolDiscoveryStatusJson,
@@ -103,7 +169,14 @@ function buildMcpToolDiscoveryDiagnostics(
       count: status.toolDiscovery.count,
       tools: [...status.toolDiscovery.tools],
       truncated: status.toolDiscovery.truncated,
+      commandStatus: status.toolDiscovery.commandStatus,
       ...(status.toolDiscovery.detail !== undefined ? { detail: status.toolDiscovery.detail } : {}),
+      ...(status.toolDiscovery.failedStage !== undefined
+        ? { failedStage: status.toolDiscovery.failedStage }
+        : {}),
+      ...(status.toolDiscovery.failureClass !== undefined
+        ? { failureClass: status.toolDiscovery.failureClass }
+        : {}),
     },
     requests: requests.map((request) => ({
       httpMethod: request.method,
@@ -412,6 +485,33 @@ export async function assertAuthenticatedMcpDiscoveryWithOneRestart(
   return throwTerminalFailure("failed-after-restart", retryAttempt.error);
 }
 
+export async function assertHermesInitialMcpDiscovery(
+  fakeMcp: FakeMcpHttpsServer,
+  options: {
+    artifacts: Pick<ArtifactSink, "writeJson">;
+    expectedSecret: string;
+    progress: Pick<TestProgress, "event">;
+    restart: () => Promise<void>;
+  },
+): Promise<void> {
+  const requestOffset = fakeMcp.requests.length;
+  const observationOffset = fakeMcp.observations.length;
+  await assertAuthenticatedMcpDiscoveryWithOneRestart(fakeMcp, {
+    requestOffset,
+    observationOffset,
+    expectedSecret: options.expectedSecret,
+    label: "Hermes initial MCP discovery",
+    artifacts: options.artifacts,
+    artifactName: "hermes-initial-mcp-discovery-retry-evidence.json",
+    restart: async () => {
+      options.progress.event(
+        "Hermes initial MCP discovery classified no-request-observed after the initial-discovery offset; restarting once",
+      );
+      await options.restart();
+    },
+  });
+}
+
 export async function runHermesInitialMcpReadiness(operations: {
   discover: () => Promise<void>;
   inspectToolStatus: () => Promise<void>;
@@ -424,6 +524,65 @@ export async function runHermesInitialMcpReadiness(operations: {
   await operations.runModelTurn();
 }
 
+export async function captureHermesMcpVerificationVersions(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  sandboxName: string,
+  artifacts: Pick<ArtifactSink, "writeJson">,
+): Promise<void> {
+  const containerRuntime = process.env.NEMOCLAW_GATEWAY_RUNTIME;
+  if (containerRuntime !== "docker" && containerRuntime !== "podman") {
+    throw new Error("MCP verification container runtime is unavailable");
+  }
+  const [nemoclawVersion, openshellVersion, hermesVersion, hostPlatform, sandboxPlatform] =
+    await Promise.all([
+      host.nemoclaw(["--version"], {
+        artifactName: "hermes-mcp-nemoclaw-version",
+        env: buildAvailabilityProbeEnv(),
+      }),
+      host.command(host.openshellCommandPath, ["--version"], {
+        artifactName: "hermes-mcp-openshell-version",
+        env: buildAvailabilityProbeEnv(),
+      }),
+      sandbox.execShell(sandboxName, trustedSandboxShellScript("hermes --version"), {
+        artifactName: "hermes-mcp-hermes-version",
+        env: buildAvailabilityProbeEnv(),
+      }),
+      host.command(
+        "bash",
+        [
+          "-lc",
+          'set -eu; . /etc/os-release; printf \'operating-system=%s\\n\' "$PRETTY_NAME"; uname -a; "$1" version',
+          "mcp-verification-platform",
+          containerRuntime,
+        ],
+        {
+          artifactName: "hermes-mcp-host-platform",
+          env: buildAvailabilityProbeEnv(),
+        },
+      ),
+      sandbox.execShell(sandboxName, trustedSandboxShellScript("cat /etc/os-release && uname -a"), {
+        artifactName: "hermes-mcp-sandbox-platform",
+        env: buildAvailabilityProbeEnv(),
+      }),
+    ]);
+  if (
+    [nemoclawVersion, openshellVersion, hermesVersion, hostPlatform, sandboxPlatform].some(
+      (result) => result.exitCode !== 0,
+    )
+  ) {
+    throw new Error("MCP verification version capture failed");
+  }
+  await artifacts.writeJson("hermes-mcp-verification-versions.json", {
+    sourceRevision: process.env.NEMOCLAW_E2E_EXPECTED_SHA,
+    nemoclaw: resultText(nemoclawVersion).trim(),
+    openshell: resultText(openshellVersion).trim(),
+    hermes: resultText(hermesVersion).trim(),
+    hostPlatform: resultText(hostPlatform).trim(),
+    sandboxPlatform: resultText(sandboxPlatform).trim(),
+  });
+}
+
 export async function assertAuthenticatedMcpToolDiscovery(
   host: HostCliClient,
   fakeMcp: FakeMcpHttpsServer,
@@ -432,11 +591,21 @@ export async function assertAuthenticatedMcpToolDiscovery(
     sandboxName: string;
     artifactPrefix: string;
     credentialKey?: string;
+    deniedSecret?: string;
     hostSecret: string;
     progress: Pick<TestProgress, "event">;
+    sandbox?: SandboxClient;
     serverName?: string;
   },
 ): Promise<void> {
+  if (options.sandbox) {
+    await captureHermesMcpVerificationVersions(
+      host,
+      options.sandbox,
+      options.sandboxName,
+      options.artifacts,
+    );
+  }
   const credentialKey = options.credentialKey ?? "FAKE_MCP_SECRET";
   const serverName = options.serverName ?? "fake";
   const requestOffset = fakeMcp.requests.length;
@@ -455,41 +624,48 @@ export async function assertAuthenticatedMcpToolDiscovery(
         timeoutMs: 60_000,
       },
     );
-    assertExitZero(status, `${options.artifactPrefix} mcp status --tools --json`);
-    statusJson = JSON.parse(status.stdout) as McpToolDiscoveryStatusJson;
-    if (
-      !shouldRetryMcpToolDiscoveryTransportFailure(
-        statusJson.toolDiscovery,
+    statusJson = parseMcpToolDiscoveryStatusJson(status.stdout);
+    const retryDiscovery = statusJson?.toolDiscovery;
+    const shouldRetry =
+      status.exitCode !== 0 &&
+      retryDiscovery !== undefined &&
+      shouldRetryMcpToolDiscoveryTransportFailure(
+        retryDiscovery,
         fakeMcp.requests.slice(requestOffset),
         attempt,
-      )
-    ) {
-      break;
-    }
+      );
+    if (!shouldRetry) break;
     options.progress.event(
       "MCP tool discovery transport failed before reaching the fixture; retrying once",
     );
     await new Promise((resolve) => setTimeout(resolve, MCP_TOOL_DISCOVERY_RETRY_DELAY_MS));
   }
-  if (!status || !statusJson) throw new Error("MCP tool discovery did not run");
+  const statusLabel = `${options.artifactPrefix} mcp status --tools --json`;
+  const completedStatus = status!;
+  assertExitZero(completedStatus, statusLabel);
+  statusJson = requireMcpToolDiscoveryStatusJson(statusJson, statusLabel);
   const discoveryRequests = fakeMcp.requests.slice(requestOffset);
   await options.artifacts.writeJson(
     `${options.artifactPrefix}-mcp-tool-discovery-diagnostics.json`,
     buildMcpToolDiscoveryDiagnostics(statusJson, discoveryRequests, options.hostSecret),
   );
-  expect(statusJson.provider.credentialResolution).toBeUndefined();
-  expect(statusJson.toolDiscovery).toMatchObject({
-    ok: true,
-    count: 2,
-    tools: ["fake_echo", "fake_status"],
-    truncated: false,
+  assert.deepStrictEqual({
+    toolDiscovery: statusJson.toolDiscovery,
+    hostSecretRedacted: !completedStatus.stdout.includes(options.hostSecret),
+  }, {
+    toolDiscovery: {
+      ok: true,
+      count: 2,
+      tools: ["fake_echo", "fake_status"],
+      truncated: false,
+      commandStatus: 0,
+    },
+    hostSecretRedacted: true,
   });
-  expect(status.stdout).not.toContain(options.hostSecret);
   const discoveryProtocolRequests = discoveryRequests.filter(
     (request) =>
       (request.method === "POST" || request.method === "DELETE") && request.path === "/mcp",
   );
-  expect(discoveryProtocolRequests.length).toBeGreaterThan(0);
   expect(
     discoveryProtocolRequests.every((request) => request.auth === `Bearer ${options.hostSecret}`),
   ).toBe(true);
@@ -570,4 +746,53 @@ export async function assertAuthenticatedMcpToolDiscovery(
   // DELETE, so SDK session termination is intentionally best effort at this
   // boundary. Unit coverage pins that cleanup attempt; protected E2E proves the
   // negotiated metadata on every post-initialize JSON-RPC request.
+  if (!options.deniedSecret) return;
+
+  const deniedRequestOffset = fakeMcp.requests.length;
+  fakeMcp.setSecret(options.deniedSecret);
+  try {
+    const result = await host.nemoclaw(
+      [options.sandboxName, "mcp", "status", serverName, "--tools", "--json"],
+      {
+        artifactName: `${options.artifactPrefix}-mcp-status-tools-denied-auth-json`,
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          [credentialKey]: options.hostSecret,
+        },
+        redactionValues: [options.hostSecret],
+        timeoutMs: 60_000,
+      },
+    );
+    expect(result.exitCode).not.toBe(0);
+    const deniedStatusJson = requireMcpToolDiscoveryStatusJson(
+      parseMcpToolDiscoveryStatusJson(result.stdout),
+      `${options.artifactPrefix} denied-authentication mcp status --tools --json`,
+    );
+    const deniedRequests = fakeMcp.requests.slice(deniedRequestOffset);
+    await options.artifacts.writeJson(
+      `${options.artifactPrefix}-mcp-tool-discovery-denied-auth.json`,
+      buildMcpToolDiscoveryDiagnostics(deniedStatusJson, deniedRequests, options.hostSecret),
+    );
+    assert.deepStrictEqual(deniedStatusJson.toolDiscovery, {
+      ok: false,
+      count: 0,
+      tools: [],
+      truncated: false,
+      commandStatus: 0,
+      detail: "MCP endpoint rejected the request (HTTP 401)",
+      failedStage: "initialization",
+      failureClass: "authentication",
+    });
+    expect(
+      deniedRequests.some(
+        (request) =>
+          request.method === "POST" &&
+          request.path === "/mcp" &&
+          request.rpcMethod === "initialize" &&
+          request.responseStatus === 401,
+      ),
+    ).toBe(true);
+  } finally {
+    fakeMcp.setSecret(options.hostSecret);
+  }
 }

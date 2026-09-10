@@ -8,8 +8,9 @@ import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 export default class SkillRemoveCliCommand extends NemoClawCommand {
   static id = "sandbox:skill:remove";
   static strict = true;
-  static summary = "Remove an installed skill from the sandbox";
-  static description = "Remove an installed SKILL.md agent skill from a running sandbox.";
+  static summary = "Remove a named skill through the selected agent integration";
+  static description =
+    "Use the selected agent's native remove command or delete only its canonical writable-root copy.";
   static usage = ["<name> <skill>"];
   static examples = ["<%= config.bin %> sandbox skill remove alpha my-skill"];
   static args = {

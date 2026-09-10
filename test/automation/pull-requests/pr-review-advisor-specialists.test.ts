@@ -137,7 +137,7 @@ describe("PR review advisor specialist prompts", () => {
 
     const output = execFileSync(
       process.execPath,
-      ["--experimental-strip-types", "render-specialist-matrix.mts"],
+      ["render-specialist-matrix.mts"],
       { cwd: directory, encoding: "utf8", env: { PATH: process.env.PATH } },
     );
     const matrix = JSON.parse(output) as Array<Record<string, unknown>>;

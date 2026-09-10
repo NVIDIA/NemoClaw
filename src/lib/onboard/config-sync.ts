@@ -2,55 +2,62 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ProviderSelectionConfig } from "../inference/config";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 
 export interface RunSandboxConfigSyncDeps {
   getSelectionConfig: () => ProviderSelectionConfig | null;
-  runConnectScript: (sandboxName: string, scriptContent: string) => void;
+  runConnectScript: (sandboxName: string, scriptContent: string) => Promise<void>;
 }
 
 export interface NemoClawConfigSyncDeps {
   getProviderSelectionConfig(provider: string, model: string): ProviderSelectionConfig | null;
-  run(argv: string[], options: Record<string, unknown>): unknown;
-  openshellArgv(args: string[]): string[];
+  sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor;
 }
 
 const skipSandboxIdentityRevalidation = (_operation: string): void => undefined;
 
 export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
-  return function syncNemoClawConfigInSandbox(
+  return async function syncNemoClawConfigInSandbox(
     sandboxName: string,
     provider: string,
     model: string,
     revalidateSandboxIdentity: (operation: string) => void = skipSandboxIdentityRevalidation,
-  ): void {
-    runSandboxConfigSync(sandboxName, {
+  ): Promise<void> {
+    await runSandboxConfigSync(sandboxName, {
       getSelectionConfig: () => deps.getProviderSelectionConfig(provider, model),
-      runConnectScript: (name, scriptContent) => {
+      runConnectScript: async (name, scriptContent) => {
         revalidateSandboxIdentity(`synchronize OpenClaw config in sandbox '${name}'`);
-        deps.run(deps.openshellArgv(sandboxConfigSyncArgs(name)), {
-          stdio: ["pipe", "ignore", "inherit"],
+        const result = await deps.sandboxCommandExecutor.runBuffered({
+          sandboxName: name,
+          target: selectedOpenShellGateway(),
+          command: ["/bin/bash", "-s"],
+          tty: false,
           input: scriptContent,
         });
+        if (result.stderr) process.stderr.write(result.stderr);
+        if (result.outcome.kind === "failed") throw new Error(result.outcome.error.message);
+        if (result.outcome.exitCode !== 0) {
+          throw new Error(`OpenShell command failed (exit ${String(result.outcome.exitCode)})`);
+        }
       },
     });
   };
-}
-
-/** Run config sync without allocating the interactive sandbox terminal transport. */
-export function sandboxConfigSyncArgs(sandboxName: string): string[] {
-  return ["sandbox", "exec", "-n", sandboxName, "--no-tty", "--", "/bin/bash", "-s"];
 }
 
 // Write `~/.nemoclaw/config.json` and normalize OpenClaw config-dir perms
 // inside the sandbox. Idempotent — safe to invoke from the rebuild resume
 // path where the Dockerfile leaves config.json as a zero-byte placeholder
 // that crashes the OpenClaw nemoclaw plugin's loadOnboardConfig. Fixes #3999.
-export function runSandboxConfigSync(sandboxName: string, deps: RunSandboxConfigSyncDeps): void {
+export async function runSandboxConfigSync(
+  sandboxName: string,
+  deps: RunSandboxConfigSyncDeps,
+): Promise<void> {
   const selectionConfig = deps.getSelectionConfig();
   if (!selectionConfig) return;
   const sandboxConfig = { ...selectionConfig, onboardedAt: new Date().toISOString() };
   const script = buildSandboxConfigSyncScript(sandboxConfig);
-  deps.runConnectScript(sandboxName, script);
+  await deps.runConnectScript(sandboxName, script);
 }
 
 export function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionConfig): string {

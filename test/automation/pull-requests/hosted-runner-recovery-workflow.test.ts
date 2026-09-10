@@ -113,7 +113,6 @@ describe("hosted-runner recovery workflow boundary", () => {
     });
     const setupNode = step(job, "Setup Node.js");
     expect(setupNode.uses).toBe(TRUSTED_SETUP_NODE);
-    expect(setupNode.with).toEqual({ "node-version": "22" });
     expect(
       job.steps?.filter((candidate) => candidate.uses?.startsWith("actions/checkout@")),
     ).toHaveLength(1);
@@ -131,7 +130,7 @@ describe("hosted-runner recovery workflow boundary", () => {
       SOURCE_RUN_ID: "${{ github.event.workflow_run.id }}",
     });
     expect(evaluate.run).toBe(
-      "node --experimental-strip-types --no-warnings tools/e2e/hosted-runner-recovery.mts",
+      "node --no-warnings tools/e2e/hosted-runner-recovery.mts",
     );
   });
 

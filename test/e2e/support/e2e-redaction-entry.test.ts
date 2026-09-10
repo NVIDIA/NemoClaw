@@ -317,7 +317,7 @@ describe("fixture redaction entry point", () => {
     expect(out).not.toContain(canonical);
   });
 
-  it.each([
+  it.concurrent.each([
     { scenario: "hosted inference key" },
     { scenario: "Docker token" },
     { scenario: "gateway token" },
