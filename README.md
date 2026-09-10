@@ -1,33 +1,23 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Native Windows ARM64 preview for PR #10799
+# Finished Windows ARM64 preview 0.1.1 for PR #10799
 
-[Download the setup EXE](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/22edec6f8f9a306b315a51b6844d2fb1335dae58/NemoClawSetup-0.1.0-windows-arm64.exe).
+[Download the setup EXE](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/NemoClawSetup-0.1.1-windows-arm64.exe) · [Download the MSI](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/NemoClaw-0.1.1-windows-arm64.msi)
 
-[Download the MSI](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/22edec6f8f9a306b315a51b6844d2fb1335dae58/NemoClaw-0.1.0-windows-arm64.msi).
+**Installed acceptance is pending independent review. This preview remains unqualified.** No complete native qualification passes are certified by this publication.
+This is a selected OpenClaw finished-application candidate, not a production release.
+It does not qualify other agents, physical hardware, live search or the installation-time target.
 
-This unsigned test installer was built from source commit `ed71ba30a6192544d48e373b5a73816ce2ab89b5`.
-The separately reviewed PR head at publication was `9d79f3b6e7e70e8b5303b76185828810bf9534fa`.
-All package and acceptance statements here apply to the built source above.
+Built source: `7ef5b2b1abc6379eeecbd2d23f002c39a345b971`. Separately reviewed PR head: `7ef5b2b1abc6379eeecbd2d23f002c39a345b971`.
+The [source workflow, attempt 1](https://github.com/NVIDIA/NemoClaw/actions/runs/34540071714/attempts/1)
+completed the package build and downloadable preview upload. This status is the staging-time snapshot; the workflow may have advanced.
+Its linked results remain authoritative for later acceptance progress.
 
-**Source workflow failed; installed acceptance is unqualified (0 of 2 required complete native passes).**
-Physical hardware acceptance and production support remain unqualified.
+The [publication receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/installer-receipt-0.1.1.json), [build receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/immutable-package-build-0.1.1.json) and
+[runtime identity](https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/runtime-identity-0.1.1.json) bind the two verified binaries to the exact source and sealed runtime.
+The complete original [Actions artifact](https://github.com/NVIDIA/NemoClaw/actions/runs/34540071714/artifacts/10177220002) was checked against GitHub's SHA256 digest.
+Git commit signatures do not certify Windows Authenticode signing or application qualification.
 
-The [source run, attempt 1](https://github.com/NVIDIA/NemoClaw/actions/runs/34471812081/attempts/1) passed its early process-audit, authentic Hermes ConPTY,
-native ownership, retained installer, package-build, and artifact-upload prerequisites.
-Those prerequisites do not establish complete installed-agent acceptance.
-
-This preview includes launch-stage diagnostics and the development-asset audit.
-It still uses the prior Hermes payload and session-copy launch path. The canonical
-Hermes runtime replacement and immutable-runtime activation are being qualified
-separately; this installer does not establish those changes as complete.
-
-The bundled OpenShell source is pinned to NVIDIA/OpenShell#2721 commit
-`bcd517bbe08cc80860c9be57699390cd32e8445f`, with the checked-in NemoClaw derivative.
-
-The [receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/22edec6f8f9a306b315a51b6844d2fb1335dae58/installer-receipt.json) records the source and verified package hashes.
-The [package manifest](https://raw.githubusercontent.com/NVIDIA/NemoClaw/22edec6f8f9a306b315a51b6844d2fb1335dae58/package-manifest.json) records the payload inventory.
-The original [source artifact 10153321775](https://github.com/NVIDIA/NemoClaw/actions/runs/34471812081/artifacts/10153321775) is retained by GitHub Actions.
-
-This artifact branch uses Git LFS. No GitHub Release is published.
+The previous 0.1.0 binaries and metadata are retained unchanged as historical failed-preview evidence;
+they are not the downloads linked above. This artifact branch uses Git LFS. No GitHub Release is published.
