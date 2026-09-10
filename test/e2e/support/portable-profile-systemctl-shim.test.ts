@@ -1139,7 +1139,7 @@ describe("portable profile systemctl fixture", () => {
         expect(await activateThroughSocket(scope.socketPath)).toBe("");
         await waitForPath(failureRecord);
         const processRecord = readFixtureProcessRecord(failureRecord);
-        expect(pidIsActive(processRecord.pid)).toBe(false);
+        await vi.waitFor(() => expect(pidIsActive(processRecord.pid)).toBe(false));
         expect(fs.existsSync(servicePidFile)).toBe(false);
         await waitForPath(backendSocketPath, false);
       } finally {
