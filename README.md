@@ -5,7 +5,7 @@
 
 [Download the setup EXE](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/de4c8aaac4b0fd2839b09c9b4e4b453a3414f160/NemoClawSetup-0.1.1-windows-arm64.exe) · [Download the MSI](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/de4c8aaac4b0fd2839b09c9b4e4b453a3414f160/NemoClaw-0.1.1-windows-arm64.msi)
 
-**Installed acceptance is pending independent review. This preview remains unqualified.** No complete native qualification passes are certified by this publication.
+**Installed acceptance failed. This preview remains unqualified.** The fresh Windows run installed successfully in 51.190 seconds, then failed before dashboard/model acceptance. Uninstall returned success in 16.634 seconds but the installation directory remained. No warm-start or model/tool success is claimed. The under-30-second installation target is not met.
 This is a selected OpenClaw finished-application candidate, not a production release.
 It does not qualify other agents, physical hardware, live search or the installation-time target.
 
