@@ -1114,6 +1114,7 @@ describe("socket-free MXC action contract", () => {
       });
       state.workloads.add(imageTag);
       const getSandbox = vi.fn(() => entry);
+      const updateSandbox = vi.fn(() => true);
       const stopSandboxChannels = vi.fn();
       const teardownSandboxDashboardForward = vi.fn();
       const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
@@ -1121,6 +1122,7 @@ describe("socket-free MXC action contract", () => {
       await expect(
         startSandbox(sandboxName, {
           getSandbox,
+          updateSandbox,
           runtimeProviders: providers,
           log: vi.fn(),
         }),
@@ -1128,6 +1130,7 @@ describe("socket-free MXC action contract", () => {
       expect(
         stopSandbox(sandboxName, {
           getSandbox,
+          updateSandbox,
           runtimeProviders: providers,
           stopSandboxChannels,
           teardownSandboxDashboardForward,
