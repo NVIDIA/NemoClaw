@@ -7,13 +7,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { command, errorDetail, fileIdentity, stopOwnedChild } from "./probe-component-workload.mts";
-
-export function componentSandboxName(nonce: string): string {
-  if (!/^[a-f0-9]{24}$/u.test(nonce)) throw new Error("Invalid component probe identity.");
-  // The pinned OpenShell API limits routable sandbox names to 19 characters.
-  return `hc-${nonce.slice(0, 12)}`;
-}
+import {
+  measuredCommand,
+  identity as fileIdentity,
+  stopOwned as stopOwnedChild,
+  readFixtureRecord,
+} from "./measurement.mts";
+const errorDetail = (error: unknown) => ({
+  message: error instanceof Error ? error.message : String(error),
+});
+const command = (
+  executable: string,
+  args: string[],
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+  timeoutMs: number,
+) => measuredCommand({ executable, args, environment, cwd, timeoutMs });
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -22,14 +31,32 @@ function argument(name: string): string {
   return path.resolve(value);
 }
 
+export function probeSandboxName(nonce: string) {
+  if (!/^[a-f0-9]{24}$/u.test(nonce)) throw new Error("The owned probe nonce is invalid.");
+  return `ro-${nonce.slice(0, 12)}`;
+}
+
 async function main(): Promise<void> {
-  if (process.platform !== "win32" || process.arch !== "arm64")
-    throw new Error("This component feasibility probe requires Windows ARM64.");
+  if (
+    process.platform !== "win32" ||
+    process.arch !== "arm64" ||
+    process.env.GITHUB_ACTIONS !== "true"
+  )
+    throw new Error("This installed read-only feasibility probe requires Windows ARM64.");
   const installRoot = fs.realpathSync(argument("--install-root"));
-  const runtimeRoot = fs.realpathSync(argument("--runtime-root"));
+  const sourceIndex = process.argv.indexOf("--source-revision");
+  const sourceRevision = sourceIndex >= 0 ? process.argv[sourceIndex + 1] : "";
+  if (!/^[a-f0-9]{40}$/u.test(sourceRevision ?? ""))
+    throw new Error("The verified installed source revision is required.");
+  const runtimeRoot = installRoot;
   const evidenceRoot = argument("--artifact-directory");
-  if (!/^[A-Za-z]:\\NemoClawHermesProbe-[a-f0-9]{12}$/u.test(runtimeRoot))
-    throw new Error("The official runtime must use its build-owned shallow root.");
+  const programFiles = process.env.ProgramFiles;
+  if (
+    !programFiles ||
+    installRoot.toLowerCase() !==
+      fs.realpathSync(path.join(programFiles, "NVIDIA", "NemoClaw")).toLowerCase()
+  )
+    throw new Error("The read-only probe must use the installed Program Files runtime.");
   if (fs.existsSync(evidenceRoot)) throw new Error("The probe evidence directory must be fresh.");
   fs.mkdirSync(evidenceRoot, { recursive: true });
   const helpers = await import(
@@ -47,21 +74,20 @@ async function main(): Promise<void> {
   const systemRoot = process.env.SystemRoot;
   if (!drive || !/^[A-Za-z]:$/u.test(drive) || !systemRoot)
     throw new Error("Windows system roots are missing.");
-  const runRoot = path.join(`${drive}\\`, `NemoClawComponentRun-${id}`);
-  const shareRoot = path.join(`${drive}\\`, `NemoClawComponentShare-${id}`);
-  const launcherRoot = path.join(`${drive}\\`, `NemoClawComponentNode-${id}`);
-  const ownedRoots = [runRoot, shareRoot, launcherRoot];
+  const runRoot = path.join(`${drive}\\`, `NemoClawReadOnlyRun-${id}`);
+  const shareRoot = path.join(`${drive}\\`, `NemoClawReadOnlyShare-${id}`);
+  const ownedRoots = [runRoot, shareRoot];
   for (const root of ownedRoots) {
     if (fs.existsSync(root)) throw new Error("A component probe root already exists.");
   }
   const createdRoots: string[] = [];
   const openshell = path.join(installRoot, "bin", "openshell.exe");
   const gatewayExecutable = path.join(installRoot, "bin", "openshell-gateway.exe");
-  const node = path.join(launcherRoot, "node.exe");
-  const worker = path.join(launcherRoot, "probe-component-workload.mts");
+  const node = path.join(installRoot, "bin", "node.exe");
+  const worker = path.join(runRoot, "readonly-workload.mts");
   const resultPath = path.join(shareRoot, "result.json");
-  const sandboxName = componentSandboxName(nonce);
-  const gatewayName = `hermes-component-gateway-${id}`;
+  const sandboxName = probeSandboxName(nonce);
+  const gatewayName = `readonly-gateway-${id}`;
   const cleanup = {
     sandboxDeleted: false,
     sandboxRegistryAbsent: false,
@@ -72,10 +98,18 @@ async function main(): Promise<void> {
   };
   const receipt: Record<string, unknown> = {
     schemaVersion: 1,
-    classification: "official-hermes-mxc-component-feasibility-only",
+    sourceRevision,
+    sourceBinding: "caller-verified installer identity plus recorded installed executable hashes",
+    classification: "installed-programfiles-readonly-mxc-feasibility",
+    runtimeTreeCopies: 0,
+    runtimeBytesCopied: 0,
+    runtimeReadOnlyRoots: [node, path.join(installRoot, "openclaw")],
+    instrumentation:
+      "feasibility only; Node compile cache disabled, isolated fixture HOME, no runtime copies",
+    performanceComparison: false,
     completeRuntime: false,
     installedAcceptance: false,
-    conptyTested: false,
+    fullAgentTurnTested: false,
     backend: "process_container",
     architecture: process.arch,
     baselineInstallRoot: installRoot,
@@ -93,28 +127,78 @@ async function main(): Promise<void> {
   const cleanupErrors: unknown[] = [];
   const logHandles: number[] = [];
   const checked = async (args: string[], label: string, timeout = 30_000) => {
-    console.log(`[Hermes components] ${label}`);
+    console.log(`[Installed read-only] ${label}`);
     const value = await command(openshell, args, environment, runRoot, timeout);
     if (
       value.exitCode !== 0 ||
-      value.error ||
+      value.spawnError ||
       value.timedOut ||
       value.outputExceeded ||
-      !value.childClosed
+      !value.closed
     )
       throw new Error(`${label}: ${JSON.stringify(value)}`);
     return value;
+  };
+  const aclPaths = [
+    ...new Set([
+      path.parse(installRoot).root,
+      programFiles,
+      path.dirname(installRoot),
+      installRoot,
+      path.join(installRoot, "bin"),
+      node,
+      path.join(installRoot, "openclaw"),
+      path.join(installRoot, "openclaw", "node_modules", "openclaw"),
+      path.join(installRoot, "openclaw", "node_modules", "openclaw", "openclaw.mjs"),
+    ]),
+  ];
+  const aclInput = path.join(evidenceRoot, "acl-paths.json");
+  fs.writeFileSync(aclInput, JSON.stringify(aclPaths) + "\n", { flag: "wx" });
+  const captureAcl = async (name: string) => {
+    const observed = await measuredCommand({
+      executable: path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+      args: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        fileURLToPath(new URL("./acl-snapshot.ps1", import.meta.url)),
+        "-InputPath",
+        aclInput,
+        "-OutputPath",
+        path.join(evidenceRoot, "acl-" + name + ".json"),
+      ],
+      environment: process.env,
+      cwd: evidenceRoot,
+      timeoutMs: 30_000,
+    });
+    if (observed.exitCode !== 0 || observed.timedOut || !observed.closed)
+      throw new Error("ACL snapshot failed: " + JSON.stringify(observed));
+  };
+  const assertAclEqual = (first: string, second: string) => {
+    const a = JSON.parse(
+      fs.readFileSync(path.join(evidenceRoot, "acl-" + first + ".json"), "utf8"),
+    );
+    const z = JSON.parse(
+      fs.readFileSync(path.join(evidenceRoot, "acl-" + second + ".json"), "utf8"),
+    );
+    if (JSON.stringify(a) !== JSON.stringify(z))
+      throw new Error("An inspected installed runtime ACL changed.");
   };
   try {
     for (const root of ownedRoots) {
       fs.mkdirSync(root);
       createdRoots.push(root);
     }
-    fs.copyFileSync(path.join(installRoot, "bin", "node.exe"), node);
-    fs.copyFileSync(
-      fileURLToPath(new URL("./probe-component-workload.mts", import.meta.url)),
-      worker,
+    for (const name of ["readonly-workload.mts", "measurement.mts"])
+      fs.copyFileSync(
+        fileURLToPath(new URL("./" + name, import.meta.url)),
+        path.join(runRoot, name),
+      );
+    const copiedProbeCode = ["readonly-workload.mts", "measurement.mts"].map((name) =>
+      fileIdentity(path.join(runRoot, name)),
     );
+    receipt.probeCodeFiles = copiedProbeCode;
+    receipt.probeCodeBytesCopied = copiedProbeCode.reduce((total, file) => total + file.bytes, 0);
     receipt.baselineFiles = [
       "bin/node.exe",
       "bin/openshell.exe",
@@ -124,17 +208,11 @@ async function main(): Promise<void> {
       "qualification/native-security.mts",
       "qualification/native-ui-lifecycle.mts",
     ].map((relative) => fileIdentity(path.join(installRoot, relative)));
-    receipt.componentFiles = [
-      "git/bin/bash.exe",
-      "git/usr/bin/bash.exe",
-      "git/usr/bin/msys-2.0.dll",
-      "git/usr/bin/cat.exe",
-      "git/usr/bin/printf.exe",
-      "git/cmd/git.exe",
-      "hermes-agent/venv/Scripts/python.exe",
-      "hermes-agent/venv/pyvenv.cfg",
-      "hermes-agent/.hermes-runtime/python/cpython-3.11.16-windows-aarch64-none/python.exe",
-    ].map((relative) => fileIdentity(path.join(runtimeRoot, relative)));
+    receipt.installedRuntimeFiles = [
+      "bin/node.exe",
+      "openclaw/node_modules/openclaw/openclaw.mjs",
+      "openclaw/node_modules/openclaw/package.json",
+    ].map((relative) => fileIdentity(path.join(installRoot, relative)));
     const home = path.join(shareRoot, "home");
     const temp = path.join(shareRoot, "temp");
     for (const directory of [home, temp, path.join(runRoot, "state"), path.join(runRoot, "config")])
@@ -148,17 +226,16 @@ async function main(): Promise<void> {
         "filesystem_policy:",
         "  include_workdir: false",
         "  read_only:",
-        ...[runtimeRoot, launcherRoot].map((root) => `    - ${helpers.quoteYamlPath(root)}`),
+        ...[node, path.join(installRoot, "openclaw"), runRoot].map(
+          (root) => `    - ${helpers.quoteYamlPath(root)}`,
+        ),
         "  read_write:",
         `    - ${helpers.quoteYamlPath(shareRoot)}`,
         "",
       ].join("\n"),
     );
     const ownedPath = [
-      path.join(runtimeRoot, "git", "cmd"),
-      path.join(runtimeRoot, "git", "bin"),
-      path.join(runtimeRoot, "git", "usr", "bin"),
-      path.join(runtimeRoot, "hermes-agent", "venv", "Scripts"),
+      path.join(installRoot, "bin"),
       path.join(systemRoot, "System32"),
       systemRoot,
     ].join(";");
@@ -189,7 +266,8 @@ async function main(): Promise<void> {
     gateway.once("error", (error) => {
       gatewayFailure.error = error;
     });
-    console.log("[Hermes components] Starting the installed baseline MXC gateway.");
+    await captureAcl("before");
+    console.log("[Installed read-only] Starting the installed baseline MXC gateway.");
     await helpers.waitForPort(gatewayPort, gateway);
     if (gatewayFailure.error) throw gatewayFailure.error;
     await checked(
@@ -202,7 +280,7 @@ async function main(): Promise<void> {
       LOCALAPPDATA: home,
       APPDATA: home,
       HOME: home,
-      HERMES_GIT_BASH_PATH: path.join(runtimeRoot, "git", "bin", "bash.exe"),
+
       OS: "Windows_NT",
       PATH: ownedPath,
       PATHEXT: ".COM;.EXE;.BAT;.CMD",
@@ -230,8 +308,8 @@ async function main(): Promise<void> {
             "--experimental-strip-types",
             "--no-warnings",
             worker,
-            runtimeRoot,
-            resultPath,
+            installRoot,
+            shareRoot,
             nonce,
           ],
           cwd: shareRoot,
@@ -245,7 +323,11 @@ async function main(): Promise<void> {
     const createFailure: { error: Error | null } = { error: null };
     for (const name of ["create.stdout.log", "create.stderr.log"])
       logHandles.push(fs.openSync(path.join(evidenceRoot, name), "wx"));
-    console.log("[Hermes components] Running exact PortableGit and managed Python inside MXC.");
+    console.log(
+      "[Installed read-only] Executing installed Node and OpenClaw directly from Program Files.",
+    );
+    receipt.sandboxCreateRequestedUtc = new Date().toISOString();
+    receipt.sandboxCreateRequestedHrtimeNs = process.hrtime.bigint().toString();
     created = true;
     create = spawn(openshell, args, {
       env: environment,
@@ -255,14 +337,67 @@ async function main(): Promise<void> {
     create.once("error", (error) => {
       createFailure.error = error;
     });
+    const activePath = path.join(shareRoot, "active.json");
+    await helpers.waitForNativeTurnResult(activePath, create, gateway, createFailure, 30_000);
+    const active = readFixtureRecord(activePath) as {
+      nonce: string;
+      schemaVersion: number;
+      node?: { path: string };
+      processId: number;
+    };
+    if (
+      active.nonce !== nonce ||
+      active.schemaVersion !== 1 ||
+      active.node?.path.toLowerCase() !== fs.realpathSync(node).toLowerCase()
+    )
+      throw new Error("The active direct-read process identity is invalid.");
+    receipt.active = active;
+    receipt.firstScriptReceiptObservedUtc = new Date().toISOString();
+    receipt.firstScriptReceiptObservedHrtimeNs = process.hrtime.bigint().toString();
+    const processStart = await measuredCommand({
+      executable: path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+      args: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        fileURLToPath(new URL("./process-start.ps1", import.meta.url)),
+        "-ProcessId",
+        String(active.processId),
+        "-ExpectedExecutable",
+        node,
+        "-OutputPath",
+        path.join(evidenceRoot, "contained-process-start.json"),
+      ],
+      environment: process.env,
+      cwd: evidenceRoot,
+      timeoutMs: 15_000,
+    });
+    if (processStart.exitCode !== 0 || processStart.timedOut)
+      throw new Error("The actual contained process start could not be observed.");
+    const observedStart = JSON.parse(
+      fs.readFileSync(path.join(evidenceRoot, "contained-process-start.json"), "utf8"),
+    );
+    if (observedStart.processId !== active.processId || observedStart.processAlive !== true)
+      throw new Error("The active ACL audit did not bind to the live contained process.");
+    receipt.containedProcessStart = observedStart;
+    await captureAcl("during");
+    assertAclEqual("before", "during");
+    fs.writeFileSync(path.join(shareRoot, "continue"), nonce + "\n", { flag: "wx" });
     await helpers.waitForNativeTurnResult(resultPath, create, gateway, createFailure, 120_000);
-    const result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+    const result = readFixtureRecord(resultPath) as {
+      nonce: string;
+      schemaVersion: number;
+      passed: boolean;
+      runtimeTreeCopies: number;
+      runtimeBytesCopied: number;
+    };
     receipt.workload = result;
     if (
       result.nonce !== nonce ||
       result.schemaVersion !== 1 ||
       result.passed !== true ||
-      result.components?.length !== 2
+      result.runtimeTreeCopies !== 0 ||
+      result.runtimeBytesCopied !== 0
     )
       throw new Error("The exact component workload did not pass; see per-executable diagnostics.");
     const completion = await lifecycle.waitForNativeMxcCompletion(
@@ -276,6 +411,9 @@ async function main(): Promise<void> {
     if (completion !== "AgentCompleted")
       throw new Error("MXC did not confirm successful component workload termination.");
     cleanup.workloadStopped = true;
+    await captureAcl("after");
+    assertAclEqual("before", "after");
+    receipt.inspectedRuntimeAclsUnchanged = true;
   } catch (error) {
     primaryError = error;
   } finally {
@@ -313,6 +451,15 @@ async function main(): Promise<void> {
         cleanupErrors.push({ action: "close diagnostic file", ...errorDetail(error) });
       }
     }
+    if (fs.existsSync(path.join(evidenceRoot, "acl-before.json"))) {
+      try {
+        await captureAcl("after-cleanup");
+        assertAclEqual("before", "after-cleanup");
+        receipt.inspectedRuntimeAclsRestoredAfterCleanup = true;
+      } catch (error) {
+        cleanupErrors.push({ action: "runtime ACL cleanup audit", ...errorDetail(error) });
+      }
+    }
     const removed = await Promise.all(
       createdRoots.map(async (root) => {
         try {
@@ -330,12 +477,12 @@ async function main(): Promise<void> {
       primaryError === null && cleanupErrors.length === 0 && Object.values(cleanup).every(Boolean);
     receipt.verdict = passed ? "pass" : "fail";
     fs.writeFileSync(
-      path.join(evidenceRoot, "mxc-components.json"),
+      path.join(evidenceRoot, "installed-readonly.json"),
       `${JSON.stringify(receipt, null, 2)}\n`,
       { flag: "wx" },
     );
     console.log(
-      `[Hermes components] ${passed ? "PASS" : "FAIL"}: ${path.join(evidenceRoot, "mxc-components.json")}`,
+      `[Installed read-only] ${passed ? "PASS" : "FAIL"}: ${path.join(evidenceRoot, "installed-readonly.json")}`,
     );
     if (!passed) process.exitCode = 1;
   }

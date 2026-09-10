@@ -17,7 +17,7 @@ on:
         default: ""
         type: string
       probe_official_hermes_components:
-        description: Probe pinned official Hermes Windows components inside MXC without publishing an installer
+        description: Probe official Hermes components and installed runtime access in MXC without publishing an installer
         required: false
         default: false
         type: boolean
@@ -809,21 +809,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install the immutable MXC baseline
-        shell: powershell
-        run: |
-          & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\component-probe-baseline.ps1" `
-            -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-baseline"
-
-      - name: Check bounded component process diagnostics on Windows
-        shell: powershell
-        run: |
-          $node = Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw\bin\node.exe'
-          & $node --experimental-strip-types --no-warnings --test `
-            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-components.test.mts" `
-            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\portable-git-arguments.test.mts"
-          if ($LASTEXITCODE -ne 0) { throw 'The component process diagnostic controls failed.' }
-
       - name: Provision pinned official Hermes components
         id: hermes-components
         shell: powershell
@@ -835,6 +820,24 @@ jobs:
           & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\prepare-official-components.ps1" `
             -RuntimeRoot $runtimeRoot `
             -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-components"
+
+      - name: Install the immutable MXC baseline
+        id: component-baseline
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\component-probe-baseline.ps1" `
+            -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-baseline"
+
+      - name: Check bounded component process diagnostics on Windows
+        id: component-controls
+        shell: powershell
+        run: |
+          $node = Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw\bin\node.exe'
+          & $node --experimental-strip-types --no-warnings --test `
+            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-components.test.mts" `
+            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\portable-git-arguments.test.mts" `
+            "$env:GITHUB_WORKSPACE\packaging\windows\performance\measurement.test.mts"
+          if ($LASTEXITCODE -ne 0) { throw 'The component process diagnostic controls failed.' }
 
       - name: Execute the official components inside MXC
         shell: powershell
@@ -851,6 +854,20 @@ jobs:
             --artifact-directory "$env:RUNNER_TEMP\official-hermes-mxc"
           if ($LASTEXITCODE -ne 0) { throw 'The official Hermes MXC component probe failed.' }
 
+      - name: Probe installed runtime access without tree copies
+        if: ${{ !cancelled() && steps.component-baseline.outcome == 'success' && steps.component-controls.outcome == 'success' }}
+        shell: powershell
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $installRoot = Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw'
+          & "$installRoot\bin\node.exe" --experimental-strip-types --no-warnings `
+            "$env:GITHUB_WORKSPACE\packaging\windows\performance\probe-installed-readonly.mts" `
+            --install-root $installRoot `
+            --source-revision f8a1d8c702c879d2984d76d2e0419641bb1ccd97 `
+            --artifact-directory "$env:RUNNER_TEMP\installed-runtime-readonly"
+          if ($LASTEXITCODE -ne 0) { throw 'The installed read-only runtime probe failed.' }
+
       - name: Upload failed component evidence before baseline cleanup
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -859,6 +876,7 @@ jobs:
           path: |
             ${{ runner.temp }}/official-hermes-components/
             ${{ runner.temp }}/official-hermes-mxc/
+            ${{ runner.temp }}/installed-runtime-readonly/
             !${{ runner.temp }}/official-hermes-components/downloads/
           if-no-files-found: warn
           retention-days: 14
@@ -879,6 +897,7 @@ jobs:
             ${{ runner.temp }}/official-hermes-baseline/
             ${{ runner.temp }}/official-hermes-components/
             ${{ runner.temp }}/official-hermes-mxc/
+            ${{ runner.temp }}/installed-runtime-readonly/
             !${{ runner.temp }}/official-hermes-baseline/baseline-setup.exe
             !${{ runner.temp }}/official-hermes-components/downloads/
           if-no-files-found: error

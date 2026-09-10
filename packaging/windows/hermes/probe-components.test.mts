@@ -9,6 +9,17 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { command, commandPassed, fileIdentity } from "./probe-component-workload.mts";
+import { componentSandboxName } from "./probe-official-components.mts";
+
+test("generated component names satisfy the installed OpenShell routable-name contract", () => {
+  const names = ["0123456789abcdef01234567", "fedcba9876543210fedcba98"].map(componentSandboxName);
+  for (const name of names) {
+    assert.ok(name.length <= 19, "OpenShell rejects names longer than 19 characters");
+    assert.match(name, /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u);
+  }
+  assert.notEqual(names[0], names[1]);
+  assert.throws(() => componentSandboxName("short"), /probe identity/);
+});
 
 for (const [machine, architecture] of [
   [0xaa64, "arm64"],
