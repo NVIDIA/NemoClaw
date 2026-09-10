@@ -246,6 +246,9 @@ They can use hosted external inference, the native NVIDIA hosted provider with i
 The managed vLLM export is limited to its fixed managed serving identity and complete live runtime evidence.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
+For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.
+It preserves nondefault agent timeout and heartbeat settings under `execution`.
+It omits settings that equal the managed defaults.
 Hermes export also requires the default API configuration, a disabled dashboard, no Hermes tool gateways, and no Hermes-specific authentication settings.
 Other profiles fail with a diagnostic instead of producing an incomplete document.
 
