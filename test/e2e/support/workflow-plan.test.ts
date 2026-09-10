@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import {
   credentialFreeTestCoverage,
@@ -41,6 +41,37 @@ import { expectedWorkflowPlanCiOutput } from "./workflow-plan-test-assertions.ts
 
 const PLANNER_CLI = path.join(REPO_ROOT, "tools", "e2e", "workflow-plan.mts");
 const PLANNER_CLI_PREFIX = ["--import", "tsx", PLANNER_CLI];
+const PLANNER_COMPILE_CACHE = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cache-"));
+
+// CLI cases own separate output files; keep their child-process overlap bounded.
+vi.setConfig({ maxConcurrency: 3 });
+afterAll(() => rmSync(PLANNER_COMPILE_CACHE, { force: true, recursive: true }));
+
+type PlannerCliResult = { status: number; stderr: string; stdout: string };
+
+function runPlannerCli(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<PlannerCliResult> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [...PLANNER_CLI_PREFIX, ...args],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: { ...env, NODE_COMPILE_CACHE: PLANNER_COMPILE_CACHE },
+        timeout: 30_000,
+      },
+      (error, stdout, stderr) => {
+        const exitCode = error?.code;
+        error && typeof exitCode !== "number"
+          ? reject(error)
+          : resolve({ status: typeof exitCode === "number" ? exitCode : 0, stderr, stdout });
+      },
+    );
+  });
+}
 
 function firstId<T extends { id: string }>(rows: readonly T[], label: string): string {
   expect(rows, `expected at least one ${label}`).not.toHaveLength(0);
@@ -893,26 +924,21 @@ describe("E2E workflow plan", () => {
     },
   );
 
-  it("maps launchable-smoke to bootstrap-install-smoke when checkout_sha is set", () => {
+  it.concurrent("maps launchable-smoke to bootstrap-install-smoke when checkout_sha is set", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
     const plan = buildE2eWorkflowPlan({ jobs: "bootstrap-install-smoke" });
     try {
-      const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          GITHUB_OUTPUT: output,
-          GITHUB_STEP_SUMMARY: summary,
-          INFERENCE_MODE: "mock",
-          JOBS: "launchable-smoke",
-          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
-          TARGETS: "",
-          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-        },
-        timeout: 30_000,
+      const result = await runPlannerCli(["--ci-output"], {
+        ...process.env,
+        GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: summary,
+        INFERENCE_MODE: "mock",
+        JOBS: "launchable-smoke",
+        NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
+        TARGETS: "",
+        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
       });
 
       expect(result.status, result.stderr).toBe(0);
@@ -925,27 +951,22 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("plans active jobs while checking retired controller selectors (#7616)", () => {
+  it.concurrent("plans active jobs while checking retired controller selectors (#7616)", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
     const activeJobs = "cloud-onboard,security-posture";
     const plan = buildE2eWorkflowPlan({ jobs: activeJobs });
     try {
-      const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          GITHUB_OUTPUT: output,
-          GITHUB_STEP_SUMMARY: summary,
-          INFERENCE_MODE: "mock",
-          JOBS: [activeJobs, ...retiredControllerSelectorIds()].join(","),
-          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
-          TARGETS: "",
-          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-        },
-        timeout: 30_000,
+      const result = await runPlannerCli(["--ci-output"], {
+        ...process.env,
+        GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: summary,
+        INFERENCE_MODE: "mock",
+        JOBS: [activeJobs, ...retiredControllerSelectorIds()].join(","),
+        NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
+        TARGETS: "",
+        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
       });
 
       expect(result.status, result.stderr).toBe(0);
@@ -958,9 +979,9 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it.each(RETIRED_CONTROLLER_SELECTOR_IDS)(
+  it.concurrent.each(RETIRED_CONTROLLER_SELECTOR_IDS)(
     "emits an empty live plan for retired controller job %s (#7616)",
-    (job) => {
+    async (job) => {
       const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
       const output = path.join(directory, "github-output");
       const summary = path.join(directory, "summary.md");
@@ -982,20 +1003,15 @@ describe("E2E workflow plan", () => {
         explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
       };
       try {
-        const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
-          cwd: REPO_ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            GITHUB_OUTPUT: output,
-            GITHUB_STEP_SUMMARY: summary,
-            INFERENCE_MODE: "mock",
-            JOBS: job,
-            TARGETS: "",
-            NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-            NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
-          },
-          timeout: 30_000,
+        const result = await runPlannerCli(["--ci-output"], {
+          ...process.env,
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+          JOBS: job,
+          TARGETS: "",
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
         });
 
         expect(result.status, result.stderr).toBe(0);
@@ -1030,7 +1046,7 @@ describe("E2E workflow plan", () => {
     },
   );
 
-  it("emits an empty matrix for retired free-standing rebuild selectors (#7615)", () => {
+  it.concurrent("emits an empty matrix for retired free-standing rebuild selectors (#7615)", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
@@ -1052,20 +1068,15 @@ describe("E2E workflow plan", () => {
       explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
     };
     try {
-      const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          GITHUB_OUTPUT: output,
-          GITHUB_STEP_SUMMARY: summary,
-          INFERENCE_MODE: "mock",
-          JOBS: "",
-          TARGETS: "sandbox-rebuild,upgrade-stale-sandbox",
-          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
-        },
-        timeout: 30_000,
+      const result = await runPlannerCli(["--ci-output"], {
+        ...process.env,
+        GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: summary,
+        INFERENCE_MODE: "mock",
+        JOBS: "",
+        TARGETS: "sandbox-rebuild,upgrade-stale-sandbox",
+        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
       });
 
       expect(result.status, result.stderr).toBe(0);
@@ -1076,22 +1087,17 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("rejects the retired bootstrap job outside a PR controller checkout", () => {
+  it.concurrent("rejects the retired bootstrap job outside a PR controller checkout", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     try {
-      const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          GITHUB_OUTPUT: path.join(directory, "github-output"),
-          GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
-          INFERENCE_MODE: "mock",
-          JOBS: "launchable-smoke",
-          TARGETS: "",
-          NEMOCLAW_E2E_EXPECTED_SHA: "",
-        },
-        timeout: 30_000,
+      const result = await runPlannerCli(["--ci-output"], {
+        ...process.env,
+        GITHUB_OUTPUT: path.join(directory, "github-output"),
+        GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
+        INFERENCE_MODE: "mock",
+        JOBS: "launchable-smoke",
+        TARGETS: "",
+        NEMOCLAW_E2E_EXPECTED_SHA: "",
       });
 
       expect(result.status).toBe(1);
@@ -1362,37 +1368,33 @@ describe("E2E workflow plan", () => {
     );
   });
 
-  it("reports CLI failures as workflow annotations", () => {
-    const result = spawnSync(
-      process.execPath,
-      [...PLANNER_CLI_PREFIX, "--jobs", "hermes-e2e", "--targets", "definitely-unknown-e2e-target"],
-      { cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000 },
-    );
+  it.concurrent("reports CLI failures as workflow annotations", async () => {
+    const result = await runPlannerCli([
+      "--jobs",
+      "hermes-e2e",
+      "--targets",
+      "definitely-unknown-e2e-target",
+    ]);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("::error::Unknown target 'definitely-unknown-e2e-target'");
   });
 
-  it("writes CI outputs from the selector environment through the CLI", () => {
+  it.concurrent("writes CI outputs from the selector environment through the CLI", async () => {
     const testId = firstId(discoverCredentialFreeTests(), "credential-free test");
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
     const plan = buildE2eWorkflowPlan({ jobs: testId });
     try {
-      const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          GITHUB_OUTPUT: output,
-          GITHUB_STEP_SUMMARY: summary,
-          INFERENCE_MODE: "mock",
-          JOBS: testId,
-          TARGETS: "",
-        },
-        timeout: 30_000,
+      const result = await runPlannerCli(["--ci-output"], {
+        ...process.env,
+        GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: summary,
+        INFERENCE_MODE: "mock",
+        JOBS: testId,
+        TARGETS: "",
       });
 
       expect(result.status, result.stderr).toBe(0);
@@ -1405,25 +1407,20 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("writes controller-selected jobs and targets through the CI-output path (#7031)", () => {
+  it.concurrent("writes controller-selected jobs and targets through the CI-output path (#7031)", async () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
     const target = "ubuntu-repo-cloud-langchain-deepagents-code";
     const plan = buildE2eWorkflowPlan({ jobs: "cloud-onboard", targets: target });
     try {
-      const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          GITHUB_OUTPUT: output,
-          GITHUB_STEP_SUMMARY: summary,
-          INFERENCE_MODE: "mock",
-          JOBS: "cloud-onboard",
-          TARGETS: target,
-        },
-        timeout: 30_000,
+      const result = await runPlannerCli(["--ci-output"], {
+        ...process.env,
+        GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: summary,
+        INFERENCE_MODE: "mock",
+        JOBS: "cloud-onboard",
+        TARGETS: target,
       });
 
       expect(result.status, result.stderr).toBe(0);
