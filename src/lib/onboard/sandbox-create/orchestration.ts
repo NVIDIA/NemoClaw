@@ -1176,6 +1176,14 @@ async function validatePortableManagedWorkloadSelection(input: {
   await input.prepareWorkload();
 }
 
+function transactionBoundHermesPortableInferenceProvider(
+  portableLifecycle: boolean,
+  inferenceProvider: string | null,
+): string | null {
+  if (!portableLifecycle || inferenceProvider !== "ollama-local") return null;
+  return inferenceProvider;
+}
+
 type ProviderPreparationInput = Parameters<
   typeof validateAttachedMessagingProvidersBeforeSandboxCreation
 >[0];
@@ -3101,6 +3109,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const providerPreparationInput = {
       openshellDriver: sandboxRuntimeFields.openshellDriver,
       inferenceProvider: resolvedCreateIntent.inferenceProvider,
+      transactionBoundInferenceProvider: transactionBoundHermesPortableInferenceProvider(
+        hermesPortableAuthority !== null,
+        resolvedCreateIntent.inferenceProvider,
+      ),
       messagingProviders,
       messagingProviderRequests: resolvedCreateIntent.messagingProviderRequests,
       extraProviders: resolvedCreateIntent.extraProviders,
@@ -3159,7 +3171,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           startupArgv: intendedSandboxStartupCommand,
         },
         inferenceRouteReservation,
-        withLifecycleLock: sandboxMutationLock.withMcpLifecycleLock,
+        withLifecycleLock: sandboxGpuCreateFlow.bindHermesPortableOnboardingLifecycleLock(
+          sandboxMutationLock.withMcpLifecycleLock,
+        ),
         childEnv: sandboxEnv,
         openshellArgv,
         createSandbox: (

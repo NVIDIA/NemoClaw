@@ -126,7 +126,7 @@ class ProbeOnlyConnectCommand extends NemoClawCommand {
   static id = "sandbox:connect";
   static args = { sandboxName: Args.string({ required: true }) };
   static flags = { "probe-only": Flags.boolean() };
-  static observed = { host: false, lifecycle: false };
+  static observed = { host: false, lifecycle: false, portableLifecycle: false };
   static operation: (sandboxName: string) => void = () => undefined;
 
   public async run(): Promise<void> {
@@ -137,8 +137,34 @@ class ProbeOnlyConnectCommand extends NemoClawCommand {
         portableHostAuthority.portableHostFencePath(process.env.HOME || os.homedir()),
       ),
       lifecycle: isMcpLifecycleLockHeld(sandboxName),
+      portableLifecycle: isMcpLifecycleLockHeld(
+        sandboxName,
+        path.join(portableHostAuthority.defaultPortableStateDir(process.env), "state"),
+      ),
     };
     ProbeOnlyConnectCommand.operation(sandboxName);
+  }
+}
+
+class PortableStartCommand extends NemoClawCommand {
+  static id = "sandbox:start";
+  static args = { sandboxName: Args.string({ required: true }) };
+  static flags = {};
+  static observed = { host: false, lifecycle: false, portableLifecycle: false };
+
+  public async run(): Promise<void> {
+    const { args } = await this.parse(PortableStartCommand);
+    const sandboxName = args.sandboxName!;
+    PortableStartCommand.observed = {
+      host: fs.existsSync(
+        portableHostAuthority.portableHostFencePath(process.env.HOME || os.homedir()),
+      ),
+      lifecycle: isMcpLifecycleLockHeld(sandboxName),
+      portableLifecycle: isMcpLifecycleLockHeld(
+        sandboxName,
+        path.join(portableHostAuthority.defaultPortableStateDir(process.env), "state"),
+      ),
+    };
   }
 }
 
@@ -187,6 +213,7 @@ describe("NemoClawCommand", () => {
     GlobalUnsupportedMutationCommand.ran = false;
     GlobalUseMutationCommand.ran = false;
     ProbeOnlyConnectCommand.operation = () => undefined;
+    PortableStartCommand.observed = { host: false, lifecycle: false, portableLifecycle: false };
   });
 
   it("records status-like command results without throwing", () => {
@@ -315,20 +342,46 @@ describe("NemoClawCommand", () => {
     useHermesPortableAuthority();
     await ProbeOnlyConnectCommand.run(["alpha", "--probe-only"], process.cwd());
 
-    expect(ProbeOnlyConnectCommand.observed).toEqual({ host: true, lifecycle: true });
+    expect(ProbeOnlyConnectCommand.observed).toEqual({
+      host: true,
+      lifecycle: false,
+      portableLifecycle: true,
+    });
     expect(
       fs.existsSync(portableHostAuthority.portableHostFencePath(process.env.HOME || os.homedir())),
     ).toBe(false);
   });
 
-  it("does not create the Portable host fence when a probe has no Hermes receipt candidate (#10423)", async () => {
+  it("holds the Portable host fence outside the start lifecycle fence", async () => {
+    useHermesPortableAuthority();
+
+    await PortableStartCommand.run(["alpha"], process.cwd());
+
+    expect(PortableStartCommand.observed).toEqual({
+      host: true,
+      lifecycle: false,
+      portableLifecycle: true,
+    });
+  });
+
+  it("does not create the Portable host fence when a lifecycle command has no Hermes receipt candidate", async () => {
     vi.stubEnv("HOME", stateDir);
     vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", stateDir);
     vi.spyOn(receiptAuthority, "hasHermesPortableReceiptCandidate").mockReturnValue(false);
 
     await ProbeOnlyConnectCommand.run(["alpha", "--probe-only"], process.cwd());
+    await PortableStartCommand.run(["alpha"], process.cwd());
 
-    expect(ProbeOnlyConnectCommand.observed).toEqual({ host: false, lifecycle: true });
+    expect(ProbeOnlyConnectCommand.observed).toEqual({
+      host: false,
+      lifecycle: true,
+      portableLifecycle: false,
+    });
+    expect(PortableStartCommand.observed).toEqual({
+      host: false,
+      lifecycle: true,
+      portableLifecycle: false,
+    });
   });
 
   it("routes interrupted successor recovery through the public probe fences (#10423)", async () => {
@@ -348,7 +401,12 @@ describe("NemoClawCommand", () => {
             portableHostAuthority.portableHostFencePath(process.env.HOME || os.homedir()),
           ),
         ).toBe(true);
-        expect(isMcpLifecycleLockHeld(sandboxName)).toBe(true);
+        expect(
+          isMcpLifecycleLockHeld(
+            sandboxName,
+            path.join(portableHostAuthority.defaultPortableStateDir(process.env), "state"),
+          ),
+        ).toBe(true);
         return { kind: "already-current", snapshot: {} as never, assertCurrent: vi.fn() };
       });
     ProbeOnlyConnectCommand.operation = (sandboxName) => {
