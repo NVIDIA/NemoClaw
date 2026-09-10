@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 
@@ -67,42 +68,73 @@ describe("external component activation", () => {
     expect(EXTERNAL_COMPONENT_ACTIVATION_TIMEOUT_MS).toBe(30_000);
   });
 
-  it("activates through one HTTP request over the declared socket (#11340)", async () => {
+  it("completes a delayed framed response before the component closes its socket (#11340)", async () => {
     const root = fs.mkdtempSync(path.join("/tmp", "nc-component-http-"));
     const socketPath = path.join(root, "activation.sock");
-    let resolveRequest!: (request: string) => void;
-    const received = new Promise<string>((resolve) => {
+    let serverSocket: net.Socket | undefined;
+    let clientSocket: net.Socket | undefined;
+    let resolveRequest!: (request: {
+      body: string;
+      contentType: string | undefined;
+      method: string | undefined;
+      url: string | undefined;
+    }) => void;
+    const received = new Promise<Parameters<typeof resolveRequest>[0]>((resolve) => {
       resolveRequest = resolve;
     });
-    const server = net.createServer({ allowHalfOpen: true }, (socket) => {
+    const server = http.createServer((request) => {
+      serverSocket = request.socket;
+      request.socket.once("error", () => undefined);
       const chunks: Buffer[] = [];
-      socket.on("data", (chunk: Buffer) => chunks.push(chunk));
-      socket.on("end", () => {
-        const request = Buffer.concat(chunks).toString("utf-8");
-        resolveRequest(request);
-        const bodyStart = request.indexOf("\r\n\r\n") + 4;
-        const responseBody = responseFor(request.slice(bodyStart));
-        socket.end(
-          `HTTP/1.1 200 OK\r\nContent-Length: ${String(Buffer.byteLength(responseBody))}\r\nConnection: close\r\n\r\n${responseBody}`,
-        );
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        const activationRequest = {
+          body: Buffer.concat(chunks).toString("utf-8"),
+          contentType: request.headers["content-type"],
+          method: request.method,
+          url: request.url,
+        };
+        resolveRequest(activationRequest);
+        setTimeout(() => {
+          const responseBody = responseFor(activationRequest.body);
+          request.socket.write(
+            `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${String(Buffer.byteLength(responseBody))}\r\nConnection: keep-alive\r\n\r\n${responseBody}`,
+          );
+        }, 25);
       });
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(socketPath, resolve);
     });
+    const createConnection = net.createConnection.bind(net);
+    const createConnectionSpy = vi.spyOn(net, "createConnection").mockImplementation(((options: {
+      path: string;
+    }) => {
+      const socket = createConnection(options);
+      clientSocket = socket;
+      return socket;
+    }) as typeof net.createConnection);
 
     try {
       const { component, proof } = fixture([], socketPath);
-      await expect(activateExternalComponent(component, proof)).resolves.toEqual({
+      const activation = activateExternalComponent(component, proof);
+      const request = await received;
+      await expect(activation).resolves.toEqual({
         kind: "activated",
       });
-      const request = await received;
-      expect(request).toContain("POST /v1/activate HTTP/1.1\r\n");
-      expect(request).toContain("Content-Type: application/json\r\n");
-      expect(request).toContain('"componentId":"policy-governance"');
-      expect(request).toContain('"source":"sandbox"');
+      expect(request).toMatchObject({
+        contentType: "application/json",
+        method: "POST",
+        url: "/v1/activate",
+      });
+      expect(request.body).toContain('"componentId":"policy-governance"');
+      expect(request.body).toContain('"source":"sandbox"');
+      expect(clientSocket?.destroyed).toBe(true);
+      expect(serverSocket?.writableEnded).toBe(false);
     } finally {
+      createConnectionSpy.mockRestore();
+      serverSocket?.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       fs.rmSync(root, { recursive: true, force: true });
     }

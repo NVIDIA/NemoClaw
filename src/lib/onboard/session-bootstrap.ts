@@ -28,6 +28,7 @@ import {
 import { recordCheckpointSandboxIdentity } from "./checkpoint-record";
 import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
 import { EXPERIMENTAL_PROFILE_ENV } from "./docker-driver-platform";
+import { assertNoIncompleteExternalComponentActivation } from "./external-component/onboarding";
 import type { PortableInferenceActivation } from "./experimental/portable-inference-descriptor";
 import { requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import type { ResumeConfigConflict } from "./resume-config";
@@ -633,6 +634,7 @@ function prepareFreshSession(
   if (input.apfInterceptorRequested === true && input.checkpointProfile === "portable") {
     reportUnsupportedApfLifecycle("portable", deps);
   }
+  assertNoIncompleteExternalComponentActivation(deps.loadSession());
   deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
     deps.clearSession();

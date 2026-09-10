@@ -308,7 +308,14 @@ function captureSafeParents(
         declaration ? "declaration_ambiguous" : "socket_parent_unsafe",
       );
     }
-    const captured = identity(stat, "directory");
+    let captured: FileIdentity;
+    try {
+      captured = identity(stat, "directory");
+    } catch {
+      throw new ExternalComponentContractError(
+        declaration ? "declaration_ambiguous" : "socket_parent_unsafe",
+      );
+    }
     const allowedOwner = declaration
       ? captured.uid === uid
       : captured.uid === uid || captured.uid === 0;

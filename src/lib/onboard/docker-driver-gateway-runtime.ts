@@ -9,6 +9,7 @@ import { isErrnoException } from "../core/errno";
 import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
   gatewayIdForStateDir,
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
 } from "./docker-driver-gateway-config";
 import {
@@ -357,7 +358,11 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       const actual = processEnv[key];
       const desired = desiredEnv[key];
       if (typeof desired !== "string") {
-        if (key === "NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS" && actual !== undefined) {
+        if (
+          actual !== undefined &&
+          (key === "NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS" ||
+            key === NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV)
+        ) {
           return { reason: `${key}=${actual} (expected <unset>)` };
         }
         continue;

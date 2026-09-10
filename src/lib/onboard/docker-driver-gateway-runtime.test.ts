@@ -583,6 +583,23 @@ describe("docker-driver gateway runtime helpers", () => {
     );
   });
 
+  it("marks a gateway stale when its external component identity is removed (#11340)", () => {
+    const { helpers } = makeHelpers();
+    expect(
+      helpers.getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: {
+          OPENSHELL_DRIVERS: "docker",
+          [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "prior-component",
+        },
+        processExe: "/usr/bin/openshell-gateway",
+        desiredEnv: { OPENSHELL_DRIVERS: "docker" },
+        gatewayBin: "/usr/bin/openshell-gateway",
+      })?.reason,
+    ).toBe(
+      `${NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV}=prior-component (expected <unset>)`,
+    );
+  });
+
   it("reuses a systemd-owned gateway without detached cleanup identity (#6903)", () => {
     const pid = 12_350;
     const gatewayBin = "/usr/bin/openshell-gateway";

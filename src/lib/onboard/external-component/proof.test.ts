@@ -95,6 +95,12 @@ describe("external component activation proof", () => {
       },
     ],
     [
+      "an unsafe lifecycle generation",
+      (value: ReturnType<typeof fixture>) => {
+        value.entry.lifecycleGeneration = "generation with spaces";
+      },
+    ],
+    [
       "ambiguous list rows",
       (value: ReturnType<typeof fixture>) =>
         value.deps.listSandboxes.mockReturnValue(JSON.stringify([value.row, value.row])),

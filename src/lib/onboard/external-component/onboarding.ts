@@ -16,12 +16,23 @@ import { createExternalComponentActivationProof } from "./proof";
 export function prepareExternalComponent(
   session: {
     externalComponentActivation?: unknown;
+    apfInterceptorRequested?: boolean | null;
   } | null,
 ): PreparedExternalComponent | null {
+  assertNoIncompleteExternalComponentActivation(session);
+  const externalComponent = loadExternalComponentDeclaration();
+  if (externalComponent && session?.apfInterceptorRequested === true) {
+    throw new ExternalComponentContractError("lifecycle_unsupported");
+  }
+  return externalComponent;
+}
+
+export function assertNoIncompleteExternalComponentActivation(
+  session: { externalComponentActivation?: unknown } | null,
+): void {
   if (session?.externalComponentActivation) {
     throw new ExternalComponentContractError("lifecycle_unsupported");
   }
-  return loadExternalComponentDeclaration();
 }
 
 export function assertExternalComponentFreshSandbox(

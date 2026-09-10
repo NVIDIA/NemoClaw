@@ -89,6 +89,7 @@ async function preparedFixture() {
     homeDirectory,
     interceptorServer,
     interceptorSocketPath,
+    root,
     runtimeDirectory,
   };
 }
@@ -261,6 +262,30 @@ describe("external component declaration", () => {
 
     fs.chmodSync(fixture.activationSocketPath, 0o600);
     fs.chmodSync(fixture.runtimeDirectory, 0o777);
+    expectReason(
+      () =>
+        loadExternalComponentDeclaration({
+          declarationPath: fixture.declarationPath,
+          homeDirectory: fixture.homeDirectory,
+          platform: "linux",
+        }),
+      "socket_parent_unsafe",
+    );
+  });
+
+  it("rejects a symbolic-link socket parent as unsafe (#11340)", async () => {
+    const fixture = await preparedFixture();
+    const linkedRuntimeDirectory = path.join(fixture.root, "runtime-link");
+    fs.symlinkSync(fixture.runtimeDirectory, linkedRuntimeDirectory);
+    fs.writeFileSync(
+      fixture.declarationPath,
+      validJson({
+        interceptorSocketPath: fixture.interceptorSocketPath,
+        activationSocketPath: path.join(linkedRuntimeDirectory, "activation.sock"),
+      }),
+      { mode: 0o600 },
+    );
+
     expectReason(
       () =>
         loadExternalComponentDeclaration({

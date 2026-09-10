@@ -142,6 +142,10 @@ export function createInitialOnboardFlowPhases<
   const preflightPhase: OnboardSequencePhase<Context> = {
     state: "preflight",
     async run(context) {
+      const externalComponent = options.prepareExternalComponent?.(context.session) ?? null;
+      if (externalComponent && (context.resume || options.recreateSandbox())) {
+        throw new ExternalComponentContractError("lifecycle_unsupported");
+      }
       const preflightResult = await handlePreflightState({
         resume: context.resume,
         session: context.session,
@@ -188,6 +192,7 @@ export function createInitialOnboardFlowPhases<
             preflightResult.deferredN1xManagedVllmPreviewAccepted,
           resumeHasResolvedGpuIntent: preflightResult.resumeHasResolvedGpuIntent,
           requestedGpuPassthrough: preflightResult.requestedGpuPassthrough,
+          externalComponent,
         },
         result: preflightResult.stateResult,
       };
@@ -197,10 +202,7 @@ export function createInitialOnboardFlowPhases<
   const gatewayPhase: OnboardSequencePhase<Context> = {
     state: "gateway",
     async run(context) {
-      const externalComponent = options.prepareExternalComponent?.(context.session) ?? null;
-      if (externalComponent && (context.resume || options.recreateSandbox())) {
-        throw new ExternalComponentContractError("lifecycle_unsupported");
-      }
+      const externalComponent = context.externalComponent ?? null;
       const owner = options.gatewayDeps.resolveGatewayOwner();
       await options.assertGatewayReadiness();
       const gatewayResult = await handleGatewayState({

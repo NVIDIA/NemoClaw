@@ -12,6 +12,7 @@ import {
   fingerprintOpenShellSandboxId,
   parseStrictOpenShellSandboxListJson,
 } from "../../adapters/openshell/sandbox-identity";
+import { validSafeEvidence } from "../../state/onboard-session/retained-sandbox-recovery";
 import type { ExternalComponentActivationProof } from "./activation";
 
 export class ExternalComponentProofError extends Error {
@@ -61,8 +62,7 @@ function captureProofSnapshotUnchecked(
     entry.gatewayName !== expectedGatewayName ||
     typeof entry.gatewayPort !== "number" ||
     !Number.isSafeInteger(entry.gatewayPort) ||
-    typeof entry.lifecycleGeneration !== "string" ||
-    entry.lifecycleGeneration.length === 0 ||
+    !validSafeEvidence(entry.lifecycleGeneration) ||
     typeof entry.lifecycleLiveIdentityFingerprint !== "string" ||
     !/^[0-9a-f]{64}$/u.test(entry.lifecycleLiveIdentityFingerprint)
   ) {

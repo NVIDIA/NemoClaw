@@ -93,9 +93,13 @@ function parseActivationResponse(source: string): ActivationResponse | null {
   return value as unknown as ActivationResponse;
 }
 
-export function parseExternalComponentHttpResponse(raw: Buffer): string {
+function externalComponentHttpResponseBytes(raw: Buffer): number | null {
   const headerEnd = raw.indexOf("\r\n\r\n");
-  if (headerEnd < 0 || headerEnd > RESPONSE_HEADER_MAX_BYTES) {
+  if (headerEnd < 0) {
+    if (raw.length > RESPONSE_HEADER_MAX_BYTES + 4) throw new Error("response_invalid");
+    return null;
+  }
+  if (headerEnd > RESPONSE_HEADER_MAX_BYTES) {
     throw new Error("response_invalid");
   }
   const headerText = raw.subarray(0, headerEnd).toString("ascii");
@@ -120,8 +124,15 @@ export function parseExternalComponentHttpResponse(raw: Buffer): string {
   if (!Number.isSafeInteger(length) || length > EXTERNAL_COMPONENT_MAX_RESPONSE_BYTES) {
     throw new Error("response_oversized");
   }
-  const bodyStart = headerEnd + 4;
-  if (raw.length !== bodyStart + length) throw new Error("response_invalid");
+  return headerEnd + 4 + length;
+}
+
+export function parseExternalComponentHttpResponse(raw: Buffer): string {
+  const responseBytes = externalComponentHttpResponseBytes(raw);
+  if (responseBytes === null || raw.length !== responseBytes) {
+    throw new Error("response_invalid");
+  }
+  const bodyStart = raw.indexOf("\r\n\r\n") + 4;
   return raw.subarray(bodyStart).toString("utf-8");
 }
 
@@ -131,6 +142,7 @@ export function sendExternalComponentActivation(socketPath: string, body: string
     const socket = net.createConnection({ path: socketPath });
     const chunks: Buffer[] = [];
     let received = 0;
+    let responseBytes: number | null = null;
     let settled = false;
     const finish = (error?: Error, response?: string): void => {
       if (settled) return;
@@ -146,7 +158,7 @@ export function sendExternalComponentActivation(socketPath: string, body: string
     );
     deadline.unref();
     socket.once("connect", () => {
-      socket.end(
+      socket.write(
         `POST /v1/activate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAccept: application/json\r\nContent-Length: ${String(request.length)}\r\nConnection: close\r\n\r\n${body}`,
       );
     });
@@ -157,14 +169,18 @@ export function sendExternalComponentActivation(socketPath: string, body: string
         return;
       }
       chunks.push(chunk);
-    });
-    socket.once("end", () => {
       try {
-        finish(undefined, parseExternalComponentHttpResponse(Buffer.concat(chunks)));
+        if (responseBytes === null) {
+          responseBytes = externalComponentHttpResponseBytes(Buffer.concat(chunks, received));
+        }
+        if (responseBytes === null || received < responseBytes) return;
+        const raw = Buffer.concat(chunks, received);
+        finish(undefined, parseExternalComponentHttpResponse(raw));
       } catch (error) {
         finish(error instanceof Error ? error : new Error("response_invalid"));
       }
     });
+    socket.once("end", () => finish(new Error("response_invalid")));
     socket.once("error", () => finish(new Error("connection")));
   });
 }

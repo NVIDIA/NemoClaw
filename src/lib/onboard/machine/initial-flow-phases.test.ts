@@ -125,11 +125,15 @@ describe("initial onboard flow phases", () => {
     expect(getManagedReuseState).not.toHaveBeenCalled();
   });
 
-  it("carries preflight GPU output into the gateway phase", async () => {
+  it("validates an external component before preflight gateway effects (#11340)", async () => {
     const notes: string[] = [];
     const gpu: Gpu = { type: "nvidia", platform: "linux" };
     let preflightFailure: Error | null = null;
     const commitSelectedAgentTransition = vi.fn(async () => createSession());
+    const prepareExternalComponent = vi.fn(() => null);
+    const runPreflight = vi.fn(async () =>
+      preflightFailure ? Promise.reject(preflightFailure) : gpu,
+    );
     const phases = createInitialOnboardFlowPhases({
       explicitSandboxGpuFlag: null,
       sandboxGpuDevice: null,
@@ -145,7 +149,7 @@ describe("initial onboard flow phases", () => {
         getResumeSandboxGpuOverrides: () => ({ flag: null, device: null }),
         detectGpuForReadiness: () => gpu,
         detectGpu: () => gpu,
-        runPreflight: async () => (preflightFailure ? Promise.reject(preflightFailure) : gpu),
+        runPreflight,
         assessHost: () => ({}),
         providerNameToOptionKey: vi.fn(() => null),
         assertOnboardHostReadiness: vi.fn(),
@@ -162,6 +166,7 @@ describe("initial onboard flow phases", () => {
       },
       getInitialGatewayReuseState: () => "healthy",
       assertGatewayReadiness: vi.fn(async () => undefined),
+      prepareExternalComponent,
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
       gatewayDeps: {
@@ -240,12 +245,23 @@ describe("initial onboard flow phases", () => {
     expect(notes).toContain(
       "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation.",
     );
+    expect(prepareExternalComponent).toHaveBeenCalledOnce();
     expect(commitSelectedAgentTransition).toHaveBeenCalledOnce();
 
     commitSelectedAgentTransition.mockClear();
     preflightFailure = new Error("readiness blocked");
     await expect(phases[0].run(context())).rejects.toThrow("readiness blocked");
     expect(commitSelectedAgentTransition).not.toHaveBeenCalled();
+
+    preflightFailure = null;
+    prepareExternalComponent.mockImplementation(() => {
+      throw new Error("invalid external component declaration");
+    });
+    runPreflight.mockClear();
+    await expect(phases[0].run(context())).rejects.toThrow(
+      "invalid external component declaration",
+    );
+    expect(runPreflight).not.toHaveBeenCalled();
   });
 
   it("repairs preflight before strict gateway entry", async () => {
