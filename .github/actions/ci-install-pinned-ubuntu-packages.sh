@@ -25,8 +25,14 @@ fi
 APT_SOURCE_OPTIONS=(
   -o "Dir::Etc::sourcelist=$UBUNTU_APT_SOURCES"
   -o "Dir::Etc::sourceparts=-"
-  -o "Dir::State::lists=$RUNNER_TEMP/nemoclaw-apt-lists"
 )
-sudo mkdir -p "$RUNNER_TEMP/nemoclaw-apt-lists/partial"
+# Hosted runners keep RUNNER_TEMP private to the runner user. Keep isolated
+# state under APT's traversable root so _apt can reuse mirror+file auxfiles.
+APT_LISTS_DIR="$(sudo mktemp -d /var/lib/apt/nemoclaw-lists.XXXXXXXX)"
+sudo chmod 0755 "$APT_LISTS_DIR"
+sudo install -d -o _apt -g root -m 0700 "$APT_LISTS_DIR/partial"
+APT_SOURCE_OPTIONS+=(
+  -o "Dir::State::lists=$APT_LISTS_DIR"
+)
 sudo apt-get "${APT_SOURCE_OPTIONS[@]}" update -qq
 sudo apt-get "${APT_SOURCE_OPTIONS[@]}" install -y --no-install-recommends "$@"

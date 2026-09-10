@@ -25,8 +25,8 @@ it("executes the Advisor runtime install with only the required Ubuntu source", 
   const fakeBin = join(directory, "bin");
   const advisorDirectory = join(directory, "advisor");
   const aptTrace = join(directory, "apt-trace");
+  const aptLists = join(directory, "apt-lists");
   const npmTrace = join(directory, "npm-trace");
-  const runnerTemp = join(directory, "runner");
   const ubuntuSources = join(directory, "ubuntu.sources");
   mkdirSync(fakeBin);
   mkdirSync(join(advisorDirectory, ".github/actions"), { recursive: true });
@@ -52,7 +52,11 @@ it("executes the Advisor runtime install with only the required Ubuntu source", 
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       'printf "%s\\n" "$*" >> "$APT_TRACE"',
-      'if [ "${FAIL_APT_INSTALL:-0}" = "1" ] && [[ " $* " == *" install "* ]]; then',
+      'if [ "${1:-}" = "mktemp" ]; then',
+      '  printf "%s\\n" "$APT_LISTS_DIR"',
+      "  exit 0",
+      "fi",
+      'if [ "${1:-}" = "apt-get" ] && [ "${FAIL_APT_INSTALL:-0}" = "1" ] && [[ " $* " == *" install "* ]]; then',
       "  exit 42",
       "fi",
     ].join("\n"),
@@ -92,12 +96,12 @@ it("executes the Advisor runtime install with only the required Ubuntu source", 
         encoding: "utf8",
         env: {
           ADVISOR_DIR: advisorDirectory,
+          APT_LISTS_DIR: aptLists,
           APT_TRACE: aptTrace,
           FD_FIND_VERSION: "9.0.0-1",
           NPM_TRACE: npmTrace,
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
           RIPGREP_VERSION: "14.1.0-1",
-          RUNNER_TEMP: runnerTemp,
           ...extraEnv,
         },
         killSignal: "SIGKILL",
@@ -108,9 +112,11 @@ it("executes the Advisor runtime install with only the required Ubuntu source", 
     const success = runInstall();
     expect(success.status, success.stderr).toBe(0);
     expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toEqual([
-      `mkdir -p ${runnerTemp}/nemoclaw-apt-lists/partial`,
-      `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${runnerTemp}/nemoclaw-apt-lists update -qq`,
-      `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${runnerTemp}/nemoclaw-apt-lists install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1`,
+      "mktemp -d /var/lib/apt/nemoclaw-lists.XXXXXXXX",
+      `chmod 0755 ${aptLists}`,
+      `install -d -o _apt -g root -m 0700 ${aptLists}/partial`,
+      `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${aptLists} update -qq`,
+      `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${aptLists} install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1`,
     ]);
     expect(readFileSync(npmTrace, "utf8").trim()).toBe("ci --ignore-scripts --no-audit --no-fund");
 
@@ -126,7 +132,7 @@ it("executes the Advisor runtime install with only the required Ubuntu source", 
     writeFileSync(ubuntuSources, "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\n");
     const unavailablePackage = runInstall({ FAIL_APT_INSTALL: "1" });
     expect(unavailablePackage.status).not.toBe(0);
-    expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toHaveLength(3);
+    expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toHaveLength(5);
     expect(existsSync(npmTrace)).toBe(false);
   } finally {
     rmSync(directory, { force: true, recursive: true });
