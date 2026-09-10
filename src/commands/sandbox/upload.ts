@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args } from "@oclif/core";
+import { isSandboxLifecycleDeferredExit } from "../../lib/core/process-exit";
 
-import { uploadToSandbox } from "../../lib/actions/sandbox/upload";
+import { uploadToSandbox, SandboxUploadTransferError } from "../../lib/actions/sandbox/upload";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../lib/sandbox/command-support";
 
@@ -41,7 +42,9 @@ export default class SandboxUploadCommand extends NemoClawCommand {
         sandboxDest: args.sandboxDest,
       });
     } catch (error) {
-      this.failWithLines([`  ${(error as Error).message}`], 1);
+      if (isSandboxLifecycleDeferredExit(error)) this.exit(error.exitCode);
+      const exitCode = error instanceof SandboxUploadTransferError ? error.exitCode : 1;
+      this.failWithLines([`  ${(error as Error).message}`], exitCode);
     }
   }
 }

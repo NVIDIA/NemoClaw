@@ -5,16 +5,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import {
-  captureOpenshell,
-  isCommandTimeout,
-  OPENSHELL_PROBE_TIMEOUT_MS,
-  runOpenshell,
-} from "../../adapters/openshell/runtime";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/runtime";
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
+import { createCliOpenShellSandboxTransferExecutor } from "../../adapters/openshell/sandbox-transfer-cli";
+import type {
+  OpenShellSandboxTransferCompletion,
+  OpenShellSandboxTransferRequest,
+} from "../../adapters/openshell/sandbox-transfer";
+
+import { deferSandboxLifecycleExit } from "../../core/process-exit";
 import { CLI_NAME } from "../../cli/branding";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
-import { ensureLiveSandboxOrExit } from "./gateway-state";
+import { ensureLiveSandboxOrExit, getKnownSandboxTargetGatewayName } from "./gateway-state";
 import { resolveHostPathFromCwd } from "./host-path";
 import {
   assertDownloadArtifactExists,
@@ -76,27 +80,25 @@ const SANDBOX_SOURCE_PROBE_SCRIPT = [
 // The path is passed as a positional argument ($1), never interpolated into
 // the script, so a crafted path cannot inject shell. Returns `undefined` when
 // the probe cannot determine a kind.
-function probeSandboxSourceKind(
+async function probeSandboxSourceKind(
+  executor: OpenShellSandboxBufferedCommandExecutor,
+  target: OpenShellSandboxTransferRequest["target"],
   sandboxName: string,
   sandboxPath: string,
-): SandboxSourceKind | "missing" | "unsupported" | "unsafe-member" | "timeout" | undefined {
-  const probe = captureOpenshell(
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--",
-      "sh",
-      "-c",
-      SANDBOX_SOURCE_PROBE_SCRIPT,
-      "sh",
-      sandboxPath,
-    ],
-    { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
-  );
-  if (probe && isCommandTimeout(probe)) return "timeout";
-  const kind = probe?.output?.trim();
+): Promise<
+  SandboxSourceKind | "missing" | "unsupported" | "unsafe-member" | "timeout" | undefined
+> {
+  const probe = await executor.runBuffered({
+    sandboxName,
+    target,
+    command: ["sh", "-c", SANDBOX_SOURCE_PROBE_SCRIPT, "sh", sandboxPath],
+    timeoutMilliseconds: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  if (probe.outcome.kind === "failed") {
+    return probe.outcome.error.kind === "timeout" ? "timeout" : undefined;
+  }
+  if (probe.outcome.exitCode !== 0) return undefined;
+  const kind = probe.stdout.trim();
   return kind === "file" ||
     kind === "dir" ||
     kind === "missing" ||
@@ -132,98 +134,122 @@ export class SandboxDownloadSourceMissingError extends Error {
 export async function downloadFromSandbox(
   opts: SandboxDownloadOptions,
 ): Promise<SandboxDownloadResult> {
-  return withMcpLifecycleLock(opts.sandboxName, () => {
-    assertHermesPortableCommandUnavailable(opts.sandboxName, "sandbox:download");
-    return downloadFromSandboxUnlocked(opts);
-  });
-}
-
-async function downloadFromSandboxUnlocked(
-  opts: SandboxDownloadOptions,
-): Promise<SandboxDownloadResult> {
-  const sandboxPath = (opts.sandboxPath ?? "").trim();
-  if (!sandboxPath) {
-    throw new Error(
-      `No sandbox path provided; usage: ${CLI_NAME} ${opts.sandboxName} download <sandbox-path> [host-dest]`,
-    );
-  }
-  const hostDest = resolveHostPathFromCwd((opts.hostDest ?? "").trim() || ".");
-
-  await ensureLiveSandboxOrExit(opts.sandboxName, {
-    allowNonReadyPhase: opts.allowNonReadyPhase ?? true,
-  });
-
-  // Resolve where a successful download should land *before* running it, so we
-  // can confirm the artifact actually appeared afterwards. `openshell sandbox
-  // download` can exit 0 without writing anything (e.g. a rejected
-  // out-of-workspace source; NVIDIA/OpenShell#2456), and this command
-  // otherwise trusts that exit code.
-  // Keep this verification after OpenShell fixes that issue: NemoClaw's
-  // wrapper independently requires a fresh artifact from this invocation
-  // before it publishes anything to the requested host destination.
-  const sourceKind = probeSandboxSourceKind(opts.sandboxName, sandboxPath);
-  if (sourceKind === "missing") {
-    throw new SandboxDownloadSourceMissingError(sandboxPath, opts.sandboxName);
-  }
-  if (sourceKind === "unsupported") {
-    throw new Error(
-      `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': source is not a regular file or directory.`,
-    );
-  }
-  if (sourceKind === "unsafe-member") {
-    throw new Error(
-      `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': the directory contains an entry that is not a regular file or directory. Symbolic links are not supported.`,
-    );
-  }
-  if (sourceKind === "timeout") {
-    throw new Error(
-      `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': source verification timed out.`,
-    );
-  }
-  if (sourceKind === undefined) {
-    throw new Error(
-      `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': could not verify whether the source is a file or directory.`,
-    );
-  }
-
-  const expectedArtifact = resolveDownloadArtifactPath(sandboxPath, hostDest, sourceKind);
-  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-"));
-  const stagedArtifact = path.join(stagingDir, "artifact");
-
+  let completion: OpenShellSandboxTransferCompletion | undefined;
   try {
-    const download = runOpenshell(
-      ["sandbox", "download", opts.sandboxName, sandboxPath, stagedArtifact],
-      {
-        ignoreError: true,
-        stdio: "inherit",
-      },
-    );
-    if (download.status !== 0) {
-      throw new Error(
-        `Failed to download '${sandboxPath}' from sandbox '${opts.sandboxName}' (exit ${download.status}).`,
-      );
-    }
+    const result = await withMcpLifecycleLock(opts.sandboxName, async () => {
+      assertHermesPortableCommandUnavailable(opts.sandboxName, "sandbox:download");
+      const sandboxPath = (opts.sandboxPath ?? "").trim();
+      if (!sandboxPath) {
+        throw new Error(
+          `No sandbox path provided; usage: ${CLI_NAME} ${opts.sandboxName} download <sandbox-path> [host-dest]`,
+        );
+      }
+      const hostDest = resolveHostPathFromCwd((opts.hostDest ?? "").trim() || ".");
 
-    const sourceKindAfterDownload = probeSandboxSourceKind(opts.sandboxName, sandboxPath);
-    if (sourceKindAfterDownload === "timeout") {
-      throw new Error(
-        `Cannot publish '${sandboxPath}' from sandbox '${opts.sandboxName}': source verification timed out after download.`,
-      );
-    }
-    if (sourceKindAfterDownload !== sourceKind) {
-      throw new Error(
-        `Cannot publish '${sandboxPath}' from sandbox '${opts.sandboxName}': source type changed or could not be revalidated after download.`,
-      );
-    }
+      await ensureLiveSandboxOrExit(opts.sandboxName, {
+        allowNonReadyPhase: opts.allowNonReadyPhase ?? true,
+        exit: deferSandboxLifecycleExit,
+      });
 
-    assertDownloadArtifactExists(stagedArtifact, {
-      remoteLabel: sandboxPath,
-      sandboxName: opts.sandboxName,
+      const gatewayName = getKnownSandboxTargetGatewayName(opts.sandboxName);
+      const target: OpenShellSandboxTransferRequest["target"] = gatewayName
+        ? { kind: "named", gatewayName }
+        : { kind: "selected" };
+      const executor = createCliOpenShellSandboxCommandExecutor();
+
+      // Resolve where a successful download should land *before* running it, so we
+      // can confirm the artifact actually appeared afterwards. `openshell sandbox
+      // download` can exit 0 without writing anything (e.g. a rejected
+      // out-of-workspace source; NVIDIA/OpenShell#2456), and this command
+      // otherwise trusts that exit code.
+      // Keep this verification after OpenShell fixes that issue: NemoClaw's
+      // wrapper independently requires a fresh artifact from this invocation
+      // before it publishes anything to the requested host destination.
+      const sourceKind = await probeSandboxSourceKind(
+        executor,
+        target,
+        opts.sandboxName,
+        sandboxPath,
+      );
+      if (sourceKind === "missing") {
+        throw new SandboxDownloadSourceMissingError(sandboxPath, opts.sandboxName);
+      }
+      if (sourceKind === "unsupported") {
+        throw new Error(
+          `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': source is not a regular file or directory.`,
+        );
+      }
+      if (sourceKind === "unsafe-member") {
+        throw new Error(
+          `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': the directory contains an entry that is not a regular file or directory. Symbolic links are not supported.`,
+        );
+      }
+      if (sourceKind === "timeout") {
+        throw new Error(
+          `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': source verification timed out.`,
+        );
+      }
+      if (sourceKind === undefined) {
+        throw new Error(
+          `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': could not verify whether the source is a file or directory.`,
+        );
+      }
+
+      const expectedArtifact = resolveDownloadArtifactPath(sandboxPath, hostDest, sourceKind);
+      const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-"));
+      const stagedArtifact = path.join(stagingDir, "artifact");
+
+      try {
+        completion = await createCliOpenShellSandboxTransferExecutor().run({
+          direction: "download",
+          sandboxName: opts.sandboxName,
+          target,
+          source: sandboxPath,
+          destination: stagedArtifact,
+        });
+        const exitCode =
+          completion.outcome.kind === "completed" ? completion.outcome.exitCode : null;
+        if (exitCode !== 0 || completion.wasInterrupted()) {
+          throw new Error(
+            `Failed to download '${sandboxPath}' from sandbox '${opts.sandboxName}' (exit ${exitCode}).`,
+          );
+        }
+
+        const sourceKindAfterDownload = await probeSandboxSourceKind(
+          executor,
+          target,
+          opts.sandboxName,
+          sandboxPath,
+        );
+        if (sourceKindAfterDownload === "timeout") {
+          throw new Error(
+            `Cannot publish '${sandboxPath}' from sandbox '${opts.sandboxName}': source verification timed out after download.`,
+          );
+        }
+        if (completion.wasInterrupted() || sourceKindAfterDownload !== sourceKind) {
+          throw new Error(
+            `Cannot publish '${sandboxPath}' from sandbox '${opts.sandboxName}': source type changed or could not be revalidated after download.`,
+          );
+        }
+
+        assertDownloadArtifactExists(stagedArtifact, {
+          remoteLabel: sandboxPath,
+          sandboxName: opts.sandboxName,
+        });
+        publishDownloadArtifact(stagedArtifact, expectedArtifact, sourceKind);
+      } finally {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+      }
+
+      return { sandboxPath, hostDest };
     });
-    publishDownloadArtifact(stagedArtifact, expectedArtifact, sourceKind);
+    if (completion?.wasInterrupted()) {
+      throw new Error(
+        `Failed to download '${result.sandboxPath}' from sandbox '${opts.sandboxName}' (exit null).`,
+      );
+    }
+    return result;
   } finally {
-    fs.rmSync(stagingDir, { recursive: true, force: true });
+    completion?.release();
   }
-
-  return { sandboxPath, hostDest };
 }
