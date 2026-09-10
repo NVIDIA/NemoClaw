@@ -1109,6 +1109,21 @@ async function reviewProviderConfiguration<Agent>(
   }
 }
 
+async function resolveSelectionSandboxName<Agent>(
+  sandboxName: string | null,
+  agent: Agent,
+  deps: Pick<
+    ProviderInferenceStateOptions<unknown, Agent, unknown>["deps"],
+    "isNonInteractive" | "promptValidatedSandboxName"
+  >,
+): Promise<string | null> {
+  if (sandboxName || !deps.isNonInteractive()) return sandboxName;
+  // Non-interactive selection must hold the sandbox identity before provider
+  // selection: managed runtimes such as llama.cpp refuse a selection without
+  // it, and the review stage can no longer prompt.
+  return deps.promptValidatedSandboxName(agent);
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
@@ -1432,6 +1447,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       // Station resume wrapper restores the exact provider/model as non-interactive env input,
       // so this re-runs the failed managed install without presenting selection prompts and
       // obtains a fresh checkpoint identity before the provider step is committed.
+      sandboxName = await resolveSelectionSandboxName(sandboxName, agent, deps);
       await deps.startRecordedStep("provider_selection");
       const recoverRecordedProvider = providerRecovery.shouldRecover();
       const selection = await withProviderSelectionTrace(

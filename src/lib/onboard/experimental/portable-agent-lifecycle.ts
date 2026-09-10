@@ -39,6 +39,18 @@ import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readines
 
 export { defaultPortableDemoStateDir };
 
+/** Resolve the shared lifecycle-lock root for a retained Hermes portable sandbox. */
+export function hermesPortableLifecycleLockOptions(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+  hasReceiptCandidate: typeof hasHermesPortableReceiptCandidate = hasHermesPortableReceiptCandidate,
+): { readonly stateDir: string } | undefined {
+  if (!hasReceiptCandidate(sandboxName, defaultPortableDemoStateDir(env))) {
+    return undefined;
+  }
+  return { stateDir: path.join(defaultPortableDemoStateDir(env), "state") };
+}
+
 export type PortableAgentLifecycleDeps = PortableDemoLifecycleDeps & HermesPortableLifecycleDeps;
 export type PortableAgentLifecycleStopResult = PortableDemoLifecycleStopResult & {
   readonly portableAgent?: "hermes";
