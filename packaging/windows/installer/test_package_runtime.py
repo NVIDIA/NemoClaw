@@ -172,7 +172,7 @@ class PackageComposition(unittest.TestCase):
         ns = {"w": package.NAMESPACE}
         files = tree.findall(".//w:File", ns)
         actual = {
-            Path(row.attrib["Source"]).relative_to(self.output).as_posix()
+            Path(row.attrib["Source"]).relative_to(self.output.resolve()).as_posix()
             for row in files
         }
         expected = {

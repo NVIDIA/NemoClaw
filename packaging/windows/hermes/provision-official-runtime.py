@@ -458,6 +458,7 @@ def clean_environment(runtime, evidence, build_paths):
         npm_config_cache=str(evidence / "npm-cache"),
         npm_config_logs_dir=str(evidence / "npm-cache" / "diagnostic-logs"),
         npm_config_logs_max="64",
+        npm_config_foreground_scripts="true",
         NODE_DEPS_TIMEOUT=str(NODE_DEPS_COMMAND_TIMEOUT_SECONDS),
         npm_config_userconfig=str(evidence / "npm-user.npmrc"),
         npm_config_globalconfig=str(evidence / "npm-global.npmrc"),
@@ -802,6 +803,21 @@ def main():
         (headers / "arm64").mkdir()
         shutil.copyfile(inputs["node-addon-library"], headers / "arm64/node.lib")
         environment["npm_config_nodedir"] = str(headers)
+        # Cache only the exact immutable archive inputs. The official installer
+        # still owns platform selection, extraction and all lifecycle scripts.
+        invoke(
+            runtime / "node/node.exe",
+            [
+                "--experimental-strip-types",
+                "--no-warnings",
+                scripts / "prefetch-official-npm.mts",
+                runtime / "node/node_modules/npm",
+                source / "package-lock.json",
+                evidence / "npm-cache",
+                evidence / "npm-input-cache.json",
+            ],
+            label="locked-npm-input-cache",
+        )
         mirror_inputs = {
             item["mirrorPath"]: inputs[item["id"]]
             for item in lock["artifacts"]

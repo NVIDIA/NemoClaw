@@ -67,6 +67,8 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 120
+    outputs:
+      preview_id: ${{ steps.preview.outputs.artifact-id }}
     steps:
       - name: Check out the finished Windows application source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -116,6 +118,11 @@ jobs:
         with:
           python-version: 3.13.13
           architecture: arm64
+      - name: Check exact helper-proof consumption controls
+        shell: pwsh
+        run: |
+          & python -m unittest discover -s "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer" -p 'test_verify_system_drive_proof.py' -v
+          if ($LASTEXITCODE -ne 0) { throw 'The helper-proof consumption controls failed.' }
       - name: Reuse only the exact reviewed OpenShell host binaries
         shell: pwsh
         run: |
@@ -141,6 +148,16 @@ jobs:
             --source-root "$env:GITHUB_WORKSPACE\candidate" --openshell-binaries "$work\openshell-binaries" `
             --node-root "$work\application\node" --output "$work\host" --cache "$work\downloads"
           if ($LASTEXITCODE -ne 0) { throw 'Native host input preparation failed.' }
+      - name: Build and prove the exact native system-drive prerequisite
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\finished-windows"
+          $owner = "$env:GITHUB_WORKSPACE\candidate\packaging\windows\host-preparation"
+          & "$owner\build-helper.ps1" -OutputDirectory "$work\system-drive-helper"
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -File "$owner\test-system-root-mxc.ps1" `
+            -HelperPath "$work\system-drive-helper\NemoClawHostPreparation.exe" -MxcDirectory "$work\host\mxc" `
+            -NodePath "$work\host\bin\node.exe" -ArtifactDirectory "$work\system-drive-proof"
+          if ($LASTEXITCODE -ne 0) { throw 'The exact helper did not pass actual system-root and contained Node proof.' }
       - name: Seal the finished application and selected OpenClaw resources
         shell: pwsh
         run: |
@@ -174,9 +191,12 @@ jobs:
             -SourceRoot "$env:GITHUB_WORKSPACE\candidate" -SourceRevision $env:GITHUB_SHA -ProductVersion $env:PRODUCT_VERSION `
             -HostPayloadRoot "$work\host" -RuntimeAssemblyRoot "$work\assembled" -OutputDirectory "$work\package" `
             -PythonPath (Get-Command python.exe -CommandType Application | Select-Object -First 1).Source `
-            -DotNetPath (Get-Command dotnet.exe -CommandType Application | Select-Object -First 1).Source -WixPath "$tools\wix.exe"
+            -DotNetPath (Get-Command dotnet.exe -CommandType Application | Select-Object -First 1).Source -WixPath "$tools\wix.exe" `
+            -SystemDrivePrepPath "$work\system-drive-helper\NemoClawHostPreparation.exe" `
+            -SystemDriveBuildReceipt "$work\system-drive-helper\build-receipt.json" -SystemDriveProofDirectory "$work\system-drive-proof"
           Pop-Location
       - name: Publish the downloadable preview before installed acceptance
+        id: preview
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: finished-windows-preview-${{ github.sha }}
@@ -186,6 +206,50 @@ jobs:
             ${{ runner.temp }}/finished-windows/package/*.json
             ${{ runner.temp }}/finished-windows/assembled/runtime-identity.json
           if-no-files-found: error
+      - name: Preserve finished build and helper proof evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: finished-windows-preview-evidence-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/finished-windows/host/runtime-payload-receipt.json
+            ${{ runner.temp }}/finished-windows/assembled/*.json
+            ${{ runner.temp }}/finished-windows/package/*.json
+            ${{ runner.temp }}/finished-windows/package/build/*.log
+            ${{ runner.temp }}/finished-windows/*.log
+            ${{ runner.temp }}/finished-windows/openshell-binaries/openshell-reuse.json
+            ${{ runner.temp }}/finished-windows/native-extract/*.log
+            ${{ runner.temp }}/finished-windows/system-drive-helper/build-receipt.json
+            ${{ runner.temp }}/finished-windows/system-drive-helper/build.log
+            ${{ runner.temp }}/finished-windows/system-drive-proof/
+          if-no-files-found: warn
+          retention-days: 14
+
+
+  windows-finished-installed-acceptance:
+    name: Fresh-runner finished Windows preview acceptance (ARM64)
+    needs: [windows-finished-installer, windows-compiled-application]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 60
+    steps:
+      - name: Check out only the installed acceptance controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: candidate
+          persist-credentials: false
+      - name: Download the exact same-run preview and runtime identity
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.windows-finished-installer.outputs.preview_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/finished-windows
+      - name: Download trusted CI Node and browser automation resources
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.windows-compiled-application.outputs.application_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/finished-windows/application
       - name: Exercise the installed preview, real inference and owned cleanup
         shell: pwsh
         env:
@@ -198,7 +262,18 @@ jobs:
           $installation = "$env:ProgramFiles\NVIDIA\NemoClaw"
           if (Test-Path -LiteralPath $installation) { throw 'Fresh preview acceptance requires no preexisting NemoClaw installation.' }
           $primary = $null
-          $timings = [ordered]@{}
+          $build = Get-Content -LiteralPath "$work\package\immutable-package-build.json" -Raw | ConvertFrom-Json
+          if ($build.sourceRevision -cne $env:GITHUB_SHA -or $build.status -cne 'candidate-built-for-installed-qualification') { throw 'The preview build receipt differs from this acceptance source.' }
+          foreach ($file in $build.files) {
+            $path = Join-Path "$work\package" $file.file
+            if ([IO.Path]::GetFileName([string]$file.file) -cne $file.file -or
+                (Get-Item -LiteralPath $path).Length -ne $file.bytes -or
+                (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $file.sha256) {
+              throw 'The downloaded preview executable/MSI differs from its build receipt.'
+            }
+          }
+          $timings = [ordered]@{ schemaVersion = 1; sourceRevision = $env:GITHUB_SHA; measurement = 'fresh-runner-installed-preview';
+            hostPreparationRunBeforeInstall = $false; upgradeMeasured = $false; compiledMsi = $build.compiledMsi; stages = [ordered]@{} }
           function Invoke-OwnedSetup([string]$Action, [string]$Log) {
             $info = [Diagnostics.ProcessStartInfo]::new()
             $info.FileName = $setup; $info.UseShellExecute = $false; $info.CreateNoWindow = $true
@@ -206,48 +281,68 @@ jobs:
             $clock = [Diagnostics.Stopwatch]::StartNew()
             $process = [Diagnostics.Process]::Start($info)
             try { $process.WaitForExit(); $code = $process.ExitCode } finally { $process.Dispose() }
-            $timings[$Action] = @{ elapsedMilliseconds = $clock.ElapsedMilliseconds; exitCode = $code }
+            $timings.stages[$Action] = @{ elapsedMilliseconds = $clock.ElapsedMilliseconds; exitCode = $code }
             if ($code -ne 0) { throw "Finished preview $Action failed with status $code." }
           }
           try {
             Invoke-OwnedSetup '-install' "$work\install.log"
+            $timings['startupComparisonAvailable'] = $false
+            foreach ($case in @(
+              @{ name = 'firstInstalledLaunch'; directory = 'installed-acceptance' },
+              @{ name = 'warmInstalledLaunch'; directory = 'installed-acceptance-warm' }
+            )) {
+              & "$work\application\node\node.exe" --experimental-strip-types `
+                "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\qualify-installed-openclaw.mts" `
+                --install-root $installation --runtime-identity "$work\assembled\runtime-identity.json" `
+                --output "$work\$($case.directory)" --browser-driver-root "$work\application\build\app\node_modules\playwright-core"
+              $code = $LASTEXITCODE
+              $timings[$case.name] = @{ exitCode = $code; receipt = "$($case.directory)/installed-openclaw-acceptance.json";
+                modelAndToolDurationsSeparate = $true; agentStateResetPerCase = $true }
+              if ($code -ne 0) { throw "The $($case.name) OpenClaw acceptance failed; no startup comparison is claimed." }
+              $accepted = Get-Content -LiteralPath "$work\$($case.directory)\installed-openclaw-acceptance.json" -Raw | ConvertFrom-Json
+              if ($accepted.verdict -cne 'pass' -or @($accepted.cleanupErrors).Count -ne 0) {
+                throw 'Ordinary launch did not finish its required model/tool checks and owned cleanup.'
+              }
+            }
+            $timings.startupComparisonAvailable = $true
             & "$work\application\node\node.exe" --experimental-strip-types `
               "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\qualify-finished-package.mts" `
               --install-root "$env:ProgramFiles\NVIDIA\NemoClaw" --runtime-identity "$work\assembled\runtime-identity.json" --output "$work\installed-smoke"
             if ($LASTEXITCODE -ne 0) { throw 'The installed compiled/contained smoke failed.' }
-            & "$work\application\node\node.exe" --experimental-strip-types `
-              "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\qualify-installed-openclaw.mts" `
-              --install-root $installation --runtime-identity "$work\assembled\runtime-identity.json" `
-              --output "$work\installed-acceptance" --browser-driver-root "$work\application\build\app\node_modules\playwright-core"
-            if ($LASTEXITCODE -ne 0) { throw 'The installed OpenClaw real-inference acceptance failed.' }
           } catch { $primary = $_ }
           finally {
+            # Enumerate only after launch samples, so counting does not warm startup paths.
+            try {
+              if (Test-Path -LiteralPath $installation) {
+                $installedFiles = @(Get-ChildItem -LiteralPath $installation -Recurse -File)
+                $timings['installedInventory'] = @{ fileCount = $installedFiles.Count;
+                  bytes = [long](($installedFiles | Measure-Object -Property Length -Sum).Sum);
+                  componentCount = $build.compiledMsi.componentCount; componentCountSource = 'compiled-msi-Component-table';
+                  observation = 'after-application-checks-before-uninstall'; contentHashesRead = $false }
+              }
+            } catch { if ($null -eq $primary) { $primary = $_ } else { Write-Warning 'The original failure is preserved; installed counts also failed.' } }
             try {
               Invoke-OwnedSetup '-uninstall' "$work\uninstall.log"
+              $timings['installationRootRemoved'] = -not (Test-Path -LiteralPath $installation)
             } catch { if ($null -eq $primary) { $primary = $_ } else { Write-Warning 'The original failure is preserved; preview cleanup also failed.' } }
           }
           try { [IO.File]::WriteAllText("$work\installed-stage-timings.json", ($timings | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false)) }
           catch { if ($null -eq $primary) { $primary = $_ } else { Write-Warning 'The original failure is preserved; timing evidence also could not be saved.' } }
           if ($null -ne $primary) { throw $primary }
-      - name: Preserve finished build and installed evidence
+      - name: Preserve fresh install, application and uninstall evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: finished-windows-preview-evidence-${{ github.sha }}
+          name: finished-windows-installed-evidence-${{ github.sha }}
           path: |
-            ${{ runner.temp }}/finished-windows/host/runtime-payload-receipt.json
-            ${{ runner.temp }}/finished-windows/assembled/*.json
-            ${{ runner.temp }}/finished-windows/package/*.json
-            ${{ runner.temp }}/finished-windows/package/build/*.log
             ${{ runner.temp }}/finished-windows/installed-smoke/
             ${{ runner.temp }}/finished-windows/installed-acceptance/
+            ${{ runner.temp }}/finished-windows/installed-acceptance-warm/
             ${{ runner.temp }}/finished-windows/installed-stage-timings.json
             ${{ runner.temp }}/finished-windows/*.log
-            ${{ runner.temp }}/finished-windows/openshell-binaries/openshell-reuse.json
-            ${{ runner.temp }}/finished-windows/native-extract/*.log
+            ${{ runner.temp }}/finished-windows/package/*.json
           if-no-files-found: warn
           retention-days: 14
-
 
   windows-compiled-application:
     name: Compile Windows application units (ARM64)
@@ -1279,8 +1374,8 @@ jobs:
             & python -m unittest discover -s "$env:GITHUB_WORKSPACE\packaging\windows\installer" -p 'test_*.py' -v 2>&1 | Tee-Object -FilePath $pythonLog
             $pythonResult = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }
-          if ($pythonResult -ne 0 -or (Get-Content -LiteralPath $pythonLog -Raw) -notmatch 'Ran 18 tests') {
-            throw 'The eighteen MSI build and metadata controls did not all pass.'
+          if ($pythonResult -ne 0 -or (Get-Content -LiteralPath $pythonLog -Raw) -notmatch 'Ran 51 tests') {
+            throw 'The fifty-one MSI build and metadata controls did not all pass.'
           }
           $log = Join-Path $output 'msi-helper-tests.log'
           try {

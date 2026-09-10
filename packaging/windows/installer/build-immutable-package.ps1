@@ -14,6 +14,9 @@ param(
     [Parameter(Mandatory)][string]$PythonPath,
     [Parameter(Mandatory)][string]$DotNetPath,
     [Parameter(Mandatory)][string]$WixPath,
+    [Parameter(Mandatory)][string]$SystemDrivePrepPath,
+    [Parameter(Mandatory)][string]$SystemDriveBuildReceipt,
+    [Parameter(Mandatory)][string]$SystemDriveProofDirectory,
     [string]$ReviewedAvailability = ''
 )
 Set-StrictMode -Version Latest
@@ -47,6 +50,38 @@ function Invoke-BuildTool {
     if ($code -ne 0) { throw "The owned $Label command failed with exit code $code; its output is retained." }
 }
 
+# Read only the two compiled tables; do not enumerate/hash customer runtime bytes.
+function Get-CompiledMsiCounts([string]$Path) {
+    $installer = $null; $database = $null
+    $result = [ordered]@{ fileCount = 0; componentCount = 0; fileBytes = [long]0 }
+    try {
+        $installer = New-Object -ComObject WindowsInstaller.Installer
+        $database = $installer.OpenDatabase($Path, 0)
+        foreach ($table in @('File', 'Component')) {
+            $view = $null; $record = $null; $count = 0
+            try {
+                $query = if ($table -ceq 'File') { 'SELECT `FileSize` FROM `File`' } else { 'SELECT `Component` FROM `Component`' }
+                $view = $database.OpenView($query); $view.Execute()
+                while ($null -ne ($record = $view.Fetch())) {
+                    try {
+                        $count++
+                        if ($count -gt 1000000) { throw 'The compiled MSI measurement exceeds its row bound.' }
+                        if ($table -ceq 'File') { $result.fileBytes += [long]$record.IntegerData(1) }
+                    } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($record); $record = $null }
+                }
+                if ($table -ceq 'File') { $result.fileCount = $count } else { $result.componentCount = $count }
+            } finally {
+                if ($null -ne $record) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($record) }
+                if ($null -ne $view) { try { $view.Close() } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view) } }
+            }
+        }
+        return $result
+    } finally {
+        if ($null -ne $database) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($database) }
+        if ($null -ne $installer) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($installer) }
+    }
+}
+
 try {
     $sourceHead = (& git -C $SourceRoot rev-parse HEAD | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $sourceHead -cne $SourceRevision) { throw 'The package source differs from the declared controller.' }
@@ -56,6 +91,15 @@ try {
     if ($LASTEXITCODE -ne 0 -or @($untracked | Where-Object { $_ -notmatch '/(?:bin|obj|\.local)/' }).Count -ne 0) {
         throw 'Uncommitted Windows source inputs cannot enter the package.'
     }
+    $systemDriveGatePath = Join-Path $OutputDirectory 'system-drive-build-gate.json'
+    Invoke-BuildTool $PythonPath @((Join-Path $owner 'verify-system-drive-proof.py'),
+        '--helper', $SystemDrivePrepPath, '--build-receipt', $SystemDriveBuildReceipt,
+        '--proof-directory', $SystemDriveProofDirectory, '--source-root', $SourceRoot,
+        '--source-revision', $SourceRevision, '--node-path', (Join-Path $HostPayloadRoot 'bin\node.exe'),
+        '--output', $systemDriveGatePath) 'system-drive-proof-verification'
+    $systemDriveGate = Get-Content -LiteralPath $systemDriveGatePath -Raw | ConvertFrom-Json
+    $systemDriveSha = [string]$systemDriveGate.helperSha256
+    $receipt['systemDrivePreparation'] = $systemDriveGate
     $assembly = Get-Content -LiteralPath (Join-Path $RuntimeAssemblyRoot 'assembly.json') -Raw | ConvertFrom-Json
     if ($assembly.runtime.sourceRevision -cne $SourceRevision -or $assembly.buildCompleteForSelectedAgents -ne $true) {
         throw 'The selected runtime assembly differs from the package source.'
@@ -125,10 +169,18 @@ try {
     # Same existing ICE60 exception as NemoClaw.wixproj; all other ICEs run.
     Invoke-BuildTool $WixPath @('msi', 'validate', '-sice', 'ICE60', '-wx', $msi) 'msi-validation'
     & (Join-Path $owner 'audit-runtime-msi.ps1') -MsiPath $msi -HelperSha256 $helperSha -ReceiptPath (Join-Path $OutputDirectory 'compiled-msi.json')
+    $receipt['compiledMsi'] = Get-CompiledMsiCounts $msi
+    $payloadFiles = @(Get-ChildItem -LiteralPath $payload -Recurse -File)
+    $receipt['payload'] = @{ fileCount = $payloadFiles.Count; bytes = [long](($payloadFiles | Measure-Object -Property Length -Sum).Sum) }
     $receipt.phase = 'native-burn-build'
+    # Consume the same executed binary; the package builder never rebuilds it.
+    if ((Get-FileHash -LiteralPath $SystemDrivePrepPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $systemDriveSha) {
+        throw 'The proven system-drive helper changed before Burn composition.'
+    }
     $setup = Join-Path $OutputDirectory "NemoClawSetup-$ProductVersion-windows-arm64.exe"
     Invoke-BuildTool $WixPath @('build', '-arch', 'arm64', '-d', "ProductVersion=$ProductVersion", '-d', "SourceRoot=$SourceRoot",
         '-d', "MsiPath=$msi", '-d', "WxcHostPrepPath=$(Join-Path $payload 'mxc\wxc-host-prep.exe')",
+        '-d', 'SystemDriveMetadataPreparation=true', '-d', "SystemDrivePrepPath=$SystemDrivePrepPath", '-d', "SystemDrivePrepSha256=$systemDriveSha",
         '-d', "BootstrapperPath=$(Join-Path $publish 'NemoClaw.Bootstrapper.exe')", '-d', "BootstrapperRoot=$publish",
         (Join-Path $windows 'Bundle.wxs'), $bootstrapperAuthoring, '-pdbtype', 'none', '-wx', '-sw1161', '-out', $setup) 'burn-build'
     $receipt['runtime'] = $assembly.runtime
