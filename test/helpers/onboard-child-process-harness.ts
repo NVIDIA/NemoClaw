@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFile, spawnSync } from "node:child_process";
+import { addAbortListener } from "node:events";
 import path from "node:path";
+import type { TestContext } from "vitest";
+import { ownChildProcess } from "./child-process-lifecycle";
 import {
   createHostProcessWorkspace,
   type HostProcessWorkspace,
@@ -115,34 +118,45 @@ export function runOnboardProcess(
   };
 }
 
-/** Runs `node <argv...>` asynchronously so isolated fixtures can run concurrently. */
+/** Runs a Node fixture asynchronously and waits for its pipes to close. */
 export function runOnboardProcessAsync(
   argv: readonly string[],
-  options: RunOnboardProcessOptions,
+  options: Pick<RunOnboardProcessOptions, "env" | "cwd"> & {
+    timeoutMs: number;
+    context: Pick<TestContext, "signal" | "onTestFinished">;
+  },
 ): Promise<OnboardProcessResult> {
   return new Promise((resolve) => {
+    options.context.signal.throwIfAborted();
     const child = execFile(
       process.execPath,
       [...argv],
       {
         cwd: options.cwd ?? testRepoRoot,
-        encoding: "utf-8",
         env: options.env,
-        ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
-        ...(options.killSignal === undefined ? {} : { killSignal: options.killSignal }),
+        encoding: "utf8",
+        timeout: options.timeoutMs,
+        killSignal: "SIGKILL",
       },
       (error, stdout, stderr) => {
-        resolve({
-          status: error ? (typeof error.code === "number" ? error.code : null) : 0,
-          signal: error?.signal ?? null,
-          error: error && typeof error.code !== "number" ? error : undefined,
-          stdout,
-          stderr,
-          output: `${stdout}\n${stderr}`,
-        });
+        // Launch errors can invoke this callback before the child closes.
+        void owner.closed.then(() =>
+          resolve({
+            status: error ? (typeof error.code === "number" ? error.code : null) : 0,
+            signal: child.signalCode,
+            error: error && typeof error.code !== "number" ? error : undefined,
+            stdout,
+            stderr,
+            output: `${stdout}\n${stderr}`,
+          }),
+        );
       },
     );
-    child.stdin?.end(options.input);
+    const owner = ownChildProcess(child);
+    options.context.onTestFinished(owner.terminate);
+    const abort = addAbortListener(options.context.signal, () => child.kill("SIGKILL"));
+    child.once("close", () => abort[Symbol.dispose]());
+    child.stdin?.end();
   });
 }
 
