@@ -45,8 +45,17 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
-    pattern: /(?:^|\/)(?:oxlint\.config\.ts|oxc\.ignore-patterns\.ts)$/,
-    testsToRun: runTests("test/automation/lint/config-export-complexity.test.ts"),
+    pattern:
+      /(?:^|\/)(?:oxlint(?:\.type-aware)?\.config\.ts|oxc\.ignore-patterns\.ts|tsconfig\.cli\.json|\.pre-commit-config\.yaml)$/,
+    testsToRun: runTests(
+      "test/automation/lint/config-export-complexity.test.ts",
+      "test/automation/lint/adapters.test.ts",
+    ),
+  },
+  {
+    pattern:
+      /(?:^|\/)(?:tools\/lint\/format-added-files\.sh|oxfmt\.config\.ts|oxc\.ignore-patterns\.ts)$/,
+    testsToRun: runTests("test/automation/lint/adapter-formatting.test.ts"),
   },
   {
     pattern: /(?:^|\/)scripts\/lib\/sandbox-init\.sh$/,
