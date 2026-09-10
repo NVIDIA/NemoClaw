@@ -18,7 +18,7 @@ export type InstallerExpressPtyFixture =
       timeoutSeconds?: number;
     };
 
-const DEFAULT_INSTALLER_EXPRESS_PTY_HARNESS_MODE: "installer" = "installer";
+const DEFAULT_INSTALLER_EXPRESS_PTY_HARNESS_MODE = "installer";
 
 export function runExpressPromptWithTty(
   answer: string,

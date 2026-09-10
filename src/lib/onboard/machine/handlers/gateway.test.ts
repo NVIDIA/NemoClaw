@@ -64,29 +64,26 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
     exit: vi.fn((code: number): never => {
       throw new Error(`exit ${code}`);
     }),
-    resolveOwner: vi.fn(
-      (): GatewayOwner =>
-        resolveGatewayOwner({
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-          declaration: null,
-          hasPackagedService: false,
-        }),
-    ),
-    attachGateway: vi.fn(async () => undefined),
-    probeAttachment: vi.fn(
-      async (): Promise<GatewayAttachmentProbe> => ({
+    resolveOwner: vi.fn((): GatewayOwner =>
+      resolveGatewayOwner({
+        gatewayName: "nemoclaw",
         gatewayPort: 8080,
-        httpReady: true,
-        portOccupied: true,
-        listenerPids: [4242],
-        listenerScanComplete: true,
-        listenerStartTime: "710024",
-        supervisorActive: true,
-        listenerExecPath: "/usr/local/bin/openshell-gateway",
-        listenerSupervisorMatch: true,
+        declaration: null,
+        hasPackagedService: false,
       }),
     ),
+    attachGateway: vi.fn(async () => undefined),
+    probeAttachment: vi.fn(async (): Promise<GatewayAttachmentProbe> => ({
+      gatewayPort: 8080,
+      httpReady: true,
+      portOccupied: true,
+      listenerPids: [4242],
+      listenerScanComplete: true,
+      listenerStartTime: "710024",
+      supervisorActive: true,
+      listenerExecPath: "/usr/local/bin/openshell-gateway",
+      listenerSupervisorMatch: true,
+    })),
   };
   return {
     calls,

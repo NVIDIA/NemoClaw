@@ -204,9 +204,7 @@ describe("ensureOllamaLoopbackSystemdOverride non-interactive sudo (#5716)", () 
       expect(error).toHaveBeenCalledWith(
         expect.stringContaining("cannot be restarted onto the newly installed binary"),
       );
-      expect(error).toHaveBeenCalledWith(
-        expect.stringContaining("keep serving the old version"),
-      );
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("keep serving the old version"));
     } finally {
       exit.mockRestore();
       error.mockRestore();

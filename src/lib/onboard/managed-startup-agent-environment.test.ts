@@ -461,10 +461,16 @@ describe("managed startup agent environment", () => {
         NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
       });
       const unsets = new Set(result.applicationRuntime.unsetEnvironment);
-      expect(MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS.every((obligation) =>
-          Object.is(unsets.has(obligation.input), !obligation.supportedFor.includes(agent)))).toBe(true);
-      expect(OPENCLAW_APPLICATION_RUNTIME_NAMES.every((name) =>
-          Object.is(unsets.has(name), agent !== "openclaw"))).toBe(true);
+      expect(
+        MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS.every((obligation) =>
+          Object.is(unsets.has(obligation.input), !obligation.supportedFor.includes(agent)),
+        ),
+      ).toBe(true);
+      expect(
+        OPENCLAW_APPLICATION_RUNTIME_NAMES.every((name) =>
+          Object.is(unsets.has(name), agent !== "openclaw"),
+        ),
+      ).toBe(true);
     },
   );
 
@@ -605,16 +611,11 @@ describe("managed startup agent environment", () => {
     delete expectedDcodeRuntime.NEMOCLAW_INFERENCE_BASE_URL;
     delete expectedDcodeRuntime.NEMOCLAW_REASONING_EFFORT;
     delete expectedDcodeRuntime.NEMOCLAW_UPSTREAM_PROVIDER;
-    [
-      "HTTP_PROXY",
-      "HTTPS_PROXY",
-      "NO_PROXY",
-      "http_proxy",
-      "https_proxy",
-      "no_proxy",
-    ].forEach((name) => {
-      delete expectedDcodeRuntime[name];
-    });
+    ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"].forEach(
+      (name) => {
+        delete expectedDcodeRuntime[name];
+      },
+    );
     expect(result.runtimeEnvironment).toEqual({
       ...expectedDcodeRuntime,
       NEMOCLAW_OBSERVABILITY: "1",
@@ -950,16 +951,11 @@ describe("managed startup agent environment", () => {
       expect(openclawResult.configurationEnvironment.NEMOCLAW_AGENT_HEARTBEAT_EVERY).toBe("");
       expect(openclawResult.configurationEnvironment.NEMOCLAW_DASHBOARD_BIND).toBe("");
       expect(openclawResult.runtimeEnvironment.NEMOCLAW_MINIMAL_BOOTSTRAP).toBe("0");
-      [
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "NO_PROXY",
-        "http_proxy",
-        "https_proxy",
-        "no_proxy",
-      ].forEach((name) => {
-        expect(openclawResult.runtimeEnvironment).not.toHaveProperty(name);
-      });
+      ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"].forEach(
+        (name) => {
+          expect(openclawResult.runtimeEnvironment).not.toHaveProperty(name);
+        },
+      );
       expect(openclawResult.configurationEnvironment).not.toHaveProperty(
         "NEMOCLAW_MESSAGING_PLAN_B64",
       );
@@ -1011,16 +1007,11 @@ describe("managed startup agent environment", () => {
         NEMOCLAW_HERMES_DASHBOARD_PORT: "",
         NEMOCLAW_HERMES_DASHBOARD_TUI: "0",
       });
-      [
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "NO_PROXY",
-        "http_proxy",
-        "https_proxy",
-        "no_proxy",
-      ].forEach((name) => {
-        expect(hermesResult.runtimeEnvironment).not.toHaveProperty(name);
-      });
+      ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"].forEach(
+        (name) => {
+          expect(hermesResult.runtimeEnvironment).not.toHaveProperty(name);
+        },
+      );
 
       const dcodeBase = dcodeProfile();
       const dcode: ManagedStartupProfile = {

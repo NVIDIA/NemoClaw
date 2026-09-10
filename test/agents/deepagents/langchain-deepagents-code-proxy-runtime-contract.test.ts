@@ -136,9 +136,7 @@ function validateLoginProxyContract(
 }
 
 describe("Deep Agents Code login-shell proxy contract", () => {
-  it.each(
-    ["symlink", "writable", "wrong-user", "wrong-owner", "root-user"] as const,
-  )(
+  it.each(["symlink", "writable", "wrong-user", "wrong-owner", "root-user"] as const)(
     "sources normalized proxy values and rejects runtime metadata drift [%s] (#6191)",
     (runtimeEnvMetadata) => {
       const managedProxy = "http://10.200.0.1:3128";
