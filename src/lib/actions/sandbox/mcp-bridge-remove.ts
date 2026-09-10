@@ -63,8 +63,8 @@ export async function removeMcpBridge(
       ? entry.adapter
       : getBridgeAdapter(getSandboxAgent(sandbox));
 
-    assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter, runtimeSelection);
-    const removal = unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
+    await assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter, runtimeSelection);
+    const removal = await unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
       force: options.force === true,
       envValues: resolvePersistedCredentialEnvForRedaction(entry.env),
       teardown: true,

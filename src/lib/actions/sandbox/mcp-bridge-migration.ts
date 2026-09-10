@@ -329,10 +329,10 @@ export async function migrateMcpBridges(
       const created: McpSourceEntry[] = [];
       let cleanupStarted = false;
       try {
-        let native = inspectAgentMcpSources(rebuilt, rebuiltRuntimeSelection).native;
+        let native = (await inspectAgentMcpSources(rebuilt, rebuiltRuntimeSelection)).native;
         for (const entry of entries) {
           if (!native[entry.server]) {
-            registerAgentAdapter(
+            await registerAgentAdapter(
               sandboxName,
               adapter,
               entry,
@@ -343,7 +343,7 @@ export async function migrateMcpBridges(
             created.push(entry);
           }
         }
-        native = inspectAgentMcpSources(rebuilt, rebuiltRuntimeSelection).native;
+        native = (await inspectAgentMcpSources(rebuilt, rebuiltRuntimeSelection)).native;
         const missing = entries.filter(
           (entry) => !native[entry.server] || !sameRegistration(native[entry.server], entry),
         );
@@ -355,13 +355,13 @@ export async function migrateMcpBridges(
         for (const entry of entries) {
           if (observed.sources.legacy[entry.server]) {
             cleanupStarted = true;
-            removeLegacyAgentMcpEntry(rebuilt, entry, rebuiltRuntimeSelection);
+            await removeLegacyAgentMcpEntry(rebuilt, entry, rebuiltRuntimeSelection);
           }
         }
       } catch (error) {
         for (const entry of cleanupStarted ? [] : created.reverse()) {
           try {
-            unregisterAgentAdapter(sandboxName, adapter, entry, rebuiltRuntimeSelection, {
+            await unregisterAgentAdapter(sandboxName, adapter, entry, rebuiltRuntimeSelection, {
               force: true,
               bestEffort: true,
             });
@@ -380,7 +380,7 @@ export async function migrateMcpBridges(
     try {
       for (const entry of entries) {
         if (!observed.sources.native[entry.server]) {
-          registerAgentAdapter(
+          await registerAgentAdapter(
             sandboxName,
             adapter,
             entry,
@@ -392,7 +392,9 @@ export async function migrateMcpBridges(
           );
           created.push(entry);
         }
-        const current = inspectAgentMcpSources(sandbox, runtimeSelection).native[entry.server];
+        const current = (await inspectAgentMcpSources(sandbox, runtimeSelection)).native[
+          entry.server
+        ];
         if (!current || !sameRegistration(current, entry)) {
           throw new McpBridgeError(
             `Native MCP verification failed after migrating '${entry.server}'.`,
@@ -403,7 +405,7 @@ export async function migrateMcpBridges(
       for (const entry of entries) {
         if (observed.sources.legacy[entry.server]) {
           cleanupStarted = true;
-          removeLegacyAgentMcpEntry(sandbox, entry, runtimeSelection);
+          await removeLegacyAgentMcpEntry(sandbox, entry, runtimeSelection);
         }
       }
       // Force a normal non-MCP registry serialization so legacy MCP fields are
@@ -414,7 +416,7 @@ export async function migrateMcpBridges(
       if (!cleanupStarted) {
         for (const entry of created.reverse()) {
           try {
-            unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
+            await unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
               force: true,
               bestEffort: true,
             });

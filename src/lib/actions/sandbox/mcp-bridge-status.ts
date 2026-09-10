@@ -87,14 +87,14 @@ function storedCredentialWarning(entry: McpSourceEntry): string | undefined {
   }
 }
 
-function getAdapterRegistration(
+async function getAdapterRegistration(
   sandboxName: string,
   adapter: AgentMcpAdapter | undefined,
   entry: McpSourceEntry | undefined,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
   credentialObservationDetail?: string,
-): McpBridgeStatus["adapter"] {
+): Promise<McpBridgeStatus["adapter"]> {
   if (!entry) return { registered: null };
   if (!adapter) return { registered: null, detail: "MCP adapter is not declared" };
   const credentialInspectionFailure = credentialObservationDetail
@@ -116,7 +116,7 @@ function getAdapterRegistration(
       : adapter === "hermes-config"
         ? buildHermesMcpStatusCommand(entry, credentialRevision)
         : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
-  const result = executeSandboxCommand(sandboxName, command, { runtimeSelection });
+  const result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
   if (!result)
     return credentialInspectionFailure ?? { registered: null, detail: "sandbox unreachable" };
   const unsafeProjection =
@@ -363,7 +363,7 @@ export async function statusMcpBridge(
         providerAttached: attached,
         providerCredentialReady,
       };
-      const adapterRegistration = getAdapterRegistration(
+      const adapterRegistration = await getAdapterRegistration(
         sandboxName,
         support.adapter,
         entry,

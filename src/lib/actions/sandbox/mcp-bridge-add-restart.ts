@@ -204,7 +204,7 @@ async function inspectMcpAddRecovery(
   target: McpBridgeTargetValidation,
   providerRuntimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
 ): Promise<McpAddRecovery> {
-  const adapterInspection = inspectAgentAdapterRegistration(
+  const adapterInspection = await inspectAgentAdapterRegistration(
     sandboxName,
     adapter,
     entry,
@@ -571,7 +571,7 @@ async function addMcpBridgeUnlocked(
   let adapterMutationAttempted = false;
   let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
   try {
-    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, providerRuntimeSelection);
+    await assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, providerRuntimeSelection);
     if (entry.providerId && !Object.hasOwn(adapterEnvValues, entry.env[0])) {
       // A process-boundary retry can reuse the exact live provider without
       // re-exporting its secret. Its immutable ID was re-derived above from
@@ -722,7 +722,7 @@ async function addMcpBridgeUnlocked(
       !!rollbackProviderInspection &&
       providerMatchesCredential(rollbackProviderInspection, entry.env[0], entry.providerId);
     if (adapterMutationAttempted && !recovery.adapterRegistered) {
-      unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {
+      await unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {
         force: false,
         bestEffort: true,
         envValues: adapterEnvValues,

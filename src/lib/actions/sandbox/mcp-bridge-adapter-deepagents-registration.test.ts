@@ -353,20 +353,20 @@ describe("Deep Agents MCP config adapter registration", () => {
     ).not.toThrow();
   });
 
-  it("repairs and verifies every registry-owned server through the sandbox command boundary (#10756)", () => {
+  it("repairs and verifies every registry-owned server through the sandbox command boundary (#10756)", async () => {
     const entries = [jiraEntry(), baseEntry];
     executeSandboxCommandMock
-      .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
-      .mockReturnValueOnce({
+      .mockResolvedValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockResolvedValueOnce({
         status: 0,
         stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3\n",
         stderr: "",
       })
-      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "registered\n", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "registered\n", stderr: "" });
 
-    restoreDeepAgentsNativeMcpConfig("alpha", entries, runtimeSelection);
+    await restoreDeepAgentsNativeMcpConfig("alpha", entries, runtimeSelection);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(5);
     expect(
@@ -387,59 +387,59 @@ describe("Deep Agents MCP config adapter registration", () => {
     );
   });
 
-  it("resets the native MCP configuration when the registry has no Deep Agents bridges (#10756)", () => {
+  it("resets the native MCP configuration when the registry has no Deep Agents bridges (#10756)", async () => {
     executeSandboxCommandMock
-      .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
-      .mockReturnValueOnce({
+      .mockResolvedValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockResolvedValueOnce({
         status: 0,
         stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3\n",
         stderr: "",
       })
-      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
 
-    restoreDeepAgentsNativeMcpConfig("alpha", [], runtimeSelection);
+    await restoreDeepAgentsNativeMcpConfig("alpha", [], runtimeSelection);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
     expect(executeSandboxCommandMock.mock.calls[2]?.[1]).toContain('\\"expectedServers\\":{}');
   });
 
-  it("stops after runtime detection returns an unknown kind (#10756)", () => {
-    executeSandboxCommandMock.mockReturnValueOnce({
+  it("stops after runtime detection returns an unknown kind (#10756)", async () => {
+    executeSandboxCommandMock.mockResolvedValueOnce({
       status: 0,
       stdout: "unknown\n",
       stderr: "",
     });
 
-    expect(() => restoreDeepAgentsNativeMcpConfig("alpha", [], runtimeSelection)).toThrow(
+    await expect(restoreDeepAgentsNativeMcpConfig("alpha", [], runtimeSelection)).rejects.toThrow(
       "Could not identify the managed Deep Agents MCP runtime.",
     );
     expect(executeSandboxCommandMock).toHaveBeenCalledOnce();
   });
 
-  it("leaves the native config unchanged for a legacy Deep Agents runtime (#10756)", () => {
-    executeSandboxCommandMock.mockReturnValueOnce({
+  it("leaves the native config unchanged for a legacy Deep Agents runtime (#10756)", async () => {
+    executeSandboxCommandMock.mockResolvedValueOnce({
       status: 0,
       stdout: "legacy\n",
       stderr: "",
     });
 
-    restoreDeepAgentsNativeMcpConfig("alpha", [baseEntry], runtimeSelection);
+    await restoreDeepAgentsNativeMcpConfig("alpha", [baseEntry], runtimeSelection);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledOnce();
   });
 
-  it("rejects a v2 runtime without the managed MCP mutation capability (#10756)", () => {
+  it("rejects a v2 runtime without the managed MCP mutation capability (#10756)", async () => {
     executeSandboxCommandMock
-      .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
-      .mockReturnValueOnce({
+      .mockResolvedValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockResolvedValueOnce({
         status: 0,
         stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=1\n",
         stderr: "",
       });
 
-    expect(() => restoreDeepAgentsNativeMcpConfig("alpha", [baseEntry], runtimeSelection)).toThrow(
-      "does not contain native MCP capability v3",
-    );
+    await expect(
+      restoreDeepAgentsNativeMcpConfig("alpha", [baseEntry], runtimeSelection),
+    ).rejects.toThrow("does not contain native MCP capability v3");
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(2);
     expect(executeSandboxCommandMock.mock.calls[1]?.[1]).toBe(
       "/usr/local/bin/deepagents-code --nemoclaw-mcp-capability",
@@ -463,37 +463,37 @@ describe("Deep Agents MCP config adapter registration", () => {
     expect(inspection.legacyConfig).toEqual(legacyConfig);
   });
 
-  it("fails when the native config mutation command fails (#10756)", () => {
+  it("fails when the native config mutation command fails (#10756)", async () => {
     executeSandboxCommandMock
-      .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
-      .mockReturnValueOnce({
+      .mockResolvedValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockResolvedValueOnce({
         status: 0,
         stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3\n",
         stderr: "",
       })
-      .mockReturnValueOnce({ status: 2, stdout: "", stderr: "native config is unsafe" });
+      .mockResolvedValueOnce({ status: 2, stdout: "", stderr: "native config is unsafe" });
 
-    expect(() =>
+    await expect(
       restoreDeepAgentsNativeMcpConfig("alpha", [baseEntry, jiraEntry()], runtimeSelection),
-    ).toThrow("native config is unsafe");
+    ).rejects.toThrow("native config is unsafe");
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
   });
 
-  it("fails when a repaired registry entry is not registered (#10756)", () => {
+  it("fails when a repaired registry entry is not registered (#10756)", async () => {
     executeSandboxCommandMock
-      .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
-      .mockReturnValueOnce({
+      .mockResolvedValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
+      .mockResolvedValueOnce({
         status: 0,
         stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3\n",
         stderr: "",
       })
-      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "mismatch\n", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "registered\n", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "mismatch\n", stderr: "" });
 
-    expect(() =>
+    await expect(
       restoreDeepAgentsNativeMcpConfig("alpha", [baseEntry, jiraEntry()], runtimeSelection),
-    ).toThrow("config verification failed after adding 'jira': mismatch");
+    ).rejects.toThrow("config verification failed after adding 'jira': mismatch");
   });
 
   it.each([
@@ -512,10 +512,10 @@ describe("Deep Agents MCP config adapter registration", () => {
       label: "another agent's entry",
       entry: { ...baseEntry, agent: "openclaw" },
     },
-  ])("rejects $label before running a sandbox command (#10756)", ({ entry }) => {
-    expect(() =>
+  ])("rejects $label before running a sandbox command (#10756)", async ({ entry }) => {
+    await expect(
       restoreDeepAgentsNativeMcpConfig("alpha", [entry as McpSourceEntry], runtimeSelection),
-    ).toThrow("requires Deep Agents source entries");
+    ).rejects.toThrow("requires Deep Agents source entries");
     expect(executeSandboxCommandMock).not.toHaveBeenCalled();
   });
 });

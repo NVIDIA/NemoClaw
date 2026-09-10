@@ -94,8 +94,7 @@ function defaultProbeLogs(sandboxName: string, gatewayName?: string): string {
 }
 
 function defaultProbePendingDevices(sandboxName: string, gatewayName?: string): string {
-  // Built inline rather than through buildOpenshellExecArgs so this optional
-  // probe does not create an emission -> exec import cycle.
+  // Keep this optional probe independent of the exec action to avoid an import cycle.
   const argv = ["sandbox", "exec", "--name", sandboxName];
   if (gatewayName) argv.push("-g", gatewayName);
   argv.push("--no-tty", "--", "openclaw", "devices", "list", "--json");

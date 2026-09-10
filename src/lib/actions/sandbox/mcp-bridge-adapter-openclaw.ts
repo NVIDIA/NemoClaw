@@ -152,11 +152,11 @@ export function buildOpenClawMcpRemoveCommand(
   ].join("\n");
 }
 
-export function inspectOpenClawAdapterRegistration(
+export async function inspectOpenClawAdapterRegistration(
   sandboxName: string,
   entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): AdapterRegistrationInspection {
+): Promise<AdapterRegistrationInspection> {
   const root = openClawConfigRootForEntry(entry);
   return inspectAdapterRegistrationCommand(
     sandboxName,
@@ -166,14 +166,14 @@ export function inspectOpenClawAdapterRegistration(
   );
 }
 
-export function registerOpenClawAdapter(
+export async function registerOpenClawAdapter(
   sandboxName: string,
   entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string> = {},
   replaceExisting = false,
   credentialRevision?: McpAttachedCredentialRevision,
-): void {
+): Promise<void> {
   const root = openClawConfigRootForEntry(entry);
   try {
     if (!waitForManagedGatewaySupervisor(sandboxName)) {
@@ -244,7 +244,7 @@ export function registerOpenClawAdapter(
   // Re-read the native definition before reporting success so a raced or
   // normalized write cannot commit an entry that differs from the URL and
   // opaque OpenShell placeholder NemoClaw intended.
-  const verification = executeSandboxCommand(
+  const verification = await executeSandboxCommand(
     sandboxName,
     buildStrictOpenClawMcpInspectCommand(entry, true, root, credentialRevision),
     { runtimeSelection },

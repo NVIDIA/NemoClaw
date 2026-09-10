@@ -35,7 +35,7 @@ export async function observeMcpStateForRebuild(
     gatewayName: resolveSandboxGatewayName(sandbox),
     workspace: OPENSHELL_DEFAULT_WORKSPACE,
   };
-  const sources = inspectAgentMcpSources(sandbox, sourceRuntime);
+  const sources = await inspectAgentMcpSources(sandbox, sourceRuntime);
   if (Object.keys(sources.native).length === 0) return { entries: [] };
   const selectedRuntime = runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
   const entries = Object.values(

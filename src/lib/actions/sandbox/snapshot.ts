@@ -57,7 +57,10 @@ import { streamSandboxCreate } from "../../sandbox/create-stream";
 import { repairMutableConfigPerms } from "../../sandbox/mutable-config-perms";
 import { isSandboxReady } from "../../state/gateway";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
-import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
+import {
+  withMcpLifecycleLock,
+  withMcpLifecycleLockSync,
+} from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
@@ -1484,7 +1487,7 @@ async function runSnapshotRestoreUnlocked(
       }
     }
   }
-  withMcpLifecycleLockSync(targetSandbox, () => {
+  await withMcpLifecycleLock(targetSandbox, async () => {
     const snapshotTarget = registry.getSandbox(targetSandbox);
     const repairsDeepAgentsNativeMcpConfig =
       snapshotTarget?.agent === "langchain-deepagents-code" && !snapshotTarget.fromDockerfile;
@@ -1493,9 +1496,11 @@ async function runSnapshotRestoreUnlocked(
       : null;
     const managedDeepAgentsEntries = sourceSandbox
       ? Object.values(
-          inspectAgentMcpSources(
-            sourceSandbox,
-            getMcpProviderInspectionRuntimeSelection(sourceSandbox),
+          (
+            await inspectAgentMcpSources(
+              sourceSandbox,
+              getMcpProviderInspectionRuntimeSelection(sourceSandbox),
+            )
           ).native,
         ).filter(
           (entry) =>
@@ -1571,7 +1576,11 @@ async function runSnapshotRestoreUnlocked(
           throw new Error(`target '${targetSandbox}' is no longer registered`);
         }
         const runtimeSelection = getMcpProviderInspectionRuntimeSelection(currentTarget);
-        restoreDeepAgentsNativeMcpConfig(targetSandbox, managedDeepAgentsEntries, runtimeSelection);
+        await restoreDeepAgentsNativeMcpConfig(
+          targetSandbox,
+          managedDeepAgentsEntries,
+          runtimeSelection,
+        );
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         const recoveryCommand = deepAgentsNativeMcpConfigRecoveryCommand(targetSandbox);

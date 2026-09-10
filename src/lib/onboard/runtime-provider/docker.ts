@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import { captureHostCommand } from "../../actions/sandbox/doctor-host-command";
 import { dockerCapture, dockerRun } from "../../adapters/docker/run";
 import {
@@ -31,6 +33,7 @@ import {
   stopPortableAgentSandboxLifecycle,
 } from "../experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
+import { defaultPortableStateDir } from "../../state/portable-uninstall-retirement";
 import { queryOpenShellDockerSandboxRuntimeSnapshot } from "../openshell-docker-sandbox-containers";
 import { validateSandboxGpuPreflight } from "../sandbox-gpu-preflight";
 import {
@@ -295,9 +298,24 @@ function startDockerSandbox(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleResult {
-  return deps.withLifecycleLockSync(input.sandboxName, () =>
-    startDockerSandboxUnlocked(input, deps),
+  return deps.withLifecycleLockSync(
+    input.sandboxName,
+    () => startDockerSandboxUnlocked(input, deps),
+    dockerLifecycleLockOptions(input, deps),
   );
+}
+
+function dockerLifecycleLockOptions(
+  input: RuntimeProviderLifecycleInput,
+  deps: DockerRuntimeProviderDependencies,
+): { readonly stateDir: string } | undefined {
+  if (
+    input.sandbox.agent !== "hermes" ||
+    !deps.hasPortableLifecycleReceipt(input.sandboxName, input.environment)
+  ) {
+    return undefined;
+  }
+  return { stateDir: path.join(defaultPortableStateDir(input.environment), "state") };
 }
 
 function startDockerSandboxUnlocked(
@@ -381,8 +399,10 @@ function stopDockerSandbox(
   hooks: RuntimeProviderLifecycleStopHooks,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleStopOutcome {
-  return deps.withLifecycleLockSync(input.sandboxName, () =>
-    stopDockerSandboxUnlocked(input, hooks, deps),
+  return deps.withLifecycleLockSync(
+    input.sandboxName,
+    () => stopDockerSandboxUnlocked(input, hooks, deps),
+    dockerLifecycleLockOptions(input, deps),
   );
 }
 

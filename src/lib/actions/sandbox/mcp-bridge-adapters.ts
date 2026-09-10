@@ -66,30 +66,30 @@ export {
   openClawConfigDir,
 } from "./mcp-bridge-adapter-status";
 
-export function inspectAgentAdapterRegistration(
+export async function inspectAgentAdapterRegistration(
   sandboxName: string,
   adapter: AgentMcpAdapter,
   entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): AdapterRegistrationInspection {
+): Promise<AdapterRegistrationInspection> {
   switch (adapter) {
     case "openclaw-config":
       return inspectOpenClawAdapterRegistration(sandboxName, entry, runtimeSelection);
     case "hermes-config":
-      return inspectHermesAdapterRegistration(sandboxName, entry, runtimeSelection);
+      return await inspectHermesAdapterRegistration(sandboxName, entry, runtimeSelection);
     case "deepagents-config":
-      return inspectDeepAgentsAdapterRegistration(sandboxName, entry, runtimeSelection);
+      return await inspectDeepAgentsAdapterRegistration(sandboxName, entry, runtimeSelection);
   }
 }
 
-export function assertAgentMcpMutationRuntimeCapability(
+export async function assertAgentMcpMutationRuntimeCapability(
   sandboxName: string,
   adapter: AgentMcpAdapter,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
+): Promise<void> {
   switch (adapter) {
     case "deepagents-config":
-      assertDeepAgentsMcpMutationRuntimeCapability(sandboxName, runtimeSelection);
+      await assertDeepAgentsMcpMutationRuntimeCapability(sandboxName, runtimeSelection);
       return;
     case "hermes-config":
       assertHermesMcpMutationRuntimeCapability(sandboxName, runtimeSelection);
@@ -106,13 +106,13 @@ export function assertAgentMcpMutationRuntimeCapability(
  * ownership-checked config scrub directly and must remain available to images
  * that predate the new launcher marker.
  */
-export function assertAgentMcpTeardownRuntimeCapability(
+export async function assertAgentMcpTeardownRuntimeCapability(
   sandboxName: string,
   adapter: AgentMcpAdapter,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
+): Promise<void> {
   if (adapter === "hermes-config") {
-    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, runtimeSelection);
+    await assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, runtimeSelection);
   }
 }
 
@@ -123,7 +123,7 @@ export async function reloadOpenClawGatewayAfterMcpMutation(
   if (adapters.includes("openclaw-config")) await reloadOpenClawGateway(sandboxName);
 }
 
-export function registerAgentAdapter(
+export async function registerAgentAdapter(
   sandboxName: string,
   adapter: AgentMcpAdapter,
   entry: McpSourceEntry,
@@ -134,10 +134,10 @@ export function registerAgentAdapter(
     teardownRollback?: boolean;
     credentialRevision?: McpAttachedCredentialRevision;
   } = {},
-): void {
+): Promise<void> {
   switch (adapter) {
     case "openclaw-config":
-      registerOpenClawAdapter(
+      await registerOpenClawAdapter(
         sandboxName,
         entry,
         runtimeSelection,
@@ -147,7 +147,7 @@ export function registerAgentAdapter(
       );
       return;
     case "hermes-config":
-      registerHermesAdapter(
+      await registerHermesAdapter(
         sandboxName,
         entry,
         runtimeSelection,
@@ -157,7 +157,7 @@ export function registerAgentAdapter(
       );
       return;
     case "deepagents-config":
-      registerDeepAgentsAdapter(
+      await registerDeepAgentsAdapter(
         sandboxName,
         entry,
         runtimeSelection,
@@ -191,7 +191,7 @@ export async function registerAgentAdapterAtCurrentCredentialRevision(
     registration <= MAX_CREDENTIAL_REVISION_REGISTRATIONS;
     registration += 1
   ) {
-    registerAgentAdapter(sandboxName, adapter, entry, runtimeSelection, envValues, {
+    await registerAgentAdapter(sandboxName, adapter, entry, runtimeSelection, envValues, {
       replaceExisting,
       teardownRollback: options.teardownRollback === true,
       credentialRevision,
@@ -239,13 +239,13 @@ export async function registerAgentAdapterAtCurrentCredentialRevision(
   throw mcpAdapterCredentialRevisionUnstableError(entry.server);
 }
 
-export function unregisterAgentAdapter(
+export async function unregisterAgentAdapter(
   sandboxName: string,
   adapter: AgentMcpAdapter,
   entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
-): AdapterRemovalOutcome {
+): Promise<AdapterRemovalOutcome> {
   switch (adapter) {
     case "openclaw-config":
       unregisterOpenClawAdapter(sandboxName, entry, runtimeSelection, options);
@@ -254,6 +254,6 @@ export function unregisterAgentAdapter(
       unregisterHermesAdapter(sandboxName, entry, runtimeSelection, options);
       return "removed";
     case "deepagents-config":
-      return unregisterDeepAgentsAdapter(sandboxName, entry, runtimeSelection, options);
+      return await unregisterDeepAgentsAdapter(sandboxName, entry, runtimeSelection, options);
   }
 }

@@ -97,7 +97,7 @@ export interface RebuildPostRestorePhaseInput {
   hermesOperatorConfigRestore?: HermesOperatorConfigRestoreReport;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
   preparedBackupRecovery: boolean;
-  versionCheck: ReturnType<typeof sandboxVersion.checkAgentVersion>;
+  versionCheck: sandboxVersion.VersionCheckResult;
   log: RebuildLog;
   bail: RebuildBail;
 }
@@ -258,7 +258,7 @@ export async function runRebuildPostRestorePhase(
 
     // #7102: clear stale per-session pinned models left over from an
     // `inference set` before this rebuild, while the gateway is still down.
-    reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
+    await reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
 
     try {
       await reapplyMessagingManifestAfterOpenClawDoctor(
@@ -333,10 +333,16 @@ export async function runRebuildPostRestorePhase(
   } else if (targetAgentName === "openclaw") {
     log("Refreshing mutable OpenClaw config hash after MCP restoration");
     if (
-      !refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log, mcpRuntimeSelection)
+      !(await refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
+        sandboxName,
+        log,
+        mcpRuntimeSelection,
+      ))
     ) {
       mutableConfigHashRefreshUnverified = true;
-    } else if (!verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection)) {
+    } else if (
+      !(await verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection))
+    ) {
       finalMutableConfigHashUnverified = true;
     }
   }
@@ -365,7 +371,7 @@ export async function runRebuildPostRestorePhase(
     // version. Clear create-time bookkeeping before the forced live probe so a
     // failed probe cannot leave the requested version recorded as observed.
     registry.updateSandbox(sandboxName, { agentVersion: null });
-    const rebuiltVersion = probeRebuiltAgentVersion(sandboxName);
+    const rebuiltVersion = await probeRebuiltAgentVersion(sandboxName);
     if (
       rebuiltVersion.verificationFailed ||
       rebuiltVersion.sandboxVersion !== versionCheck.expectedVersion
@@ -484,7 +490,7 @@ export async function runRebuildPostRestorePhase(
     targetAgentName === "openclaw" &&
     !mcpBridgeRestoreUnverified &&
     !mutableConfigHashRefreshUnverified &&
-    !verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection)
+    !(await verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection))
   ) {
     finalMutableConfigHashUnverified = true;
   }

@@ -255,24 +255,22 @@ function entryFromRecord(
   };
 }
 
-export function inspectAgentMcpSources(
+export async function inspectAgentMcpSources(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): AgentMcpSourceSnapshot {
+): Promise<AgentMcpSourceSnapshot> {
   if (sandbox.agent) {
     return inspectAgentMcpSourcesForAgent(sandbox, loadAgent(sandbox.agent), runtimeSelection);
   }
-  const candidates = ["openclaw", "hermes", "langchain-deepagents-code"]
-    .map((name) => loadAgent(name))
-    .filter((agent) => agent.mcpCapability.support === "bridge" && agent.mcpCapability.adapter)
-    .map((agent) => ({
-      agent,
-      sources: inspectAgentMcpSourcesForAgent(sandbox, agent, runtimeSelection),
-    }))
-    .filter(
-      ({ sources }) =>
-        Object.keys(sources.native).length > 0 || Object.keys(sources.legacy).length > 0,
-    );
+  const candidates = [];
+  for (const name of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+    const agent = loadAgent(name);
+    if (agent.mcpCapability.support !== "bridge" || !agent.mcpCapability.adapter) continue;
+    const sources = await inspectAgentMcpSourcesForAgent(sandbox, agent, runtimeSelection);
+    if (Object.keys(sources.native).length > 0 || Object.keys(sources.legacy).length > 0) {
+      candidates.push({ agent, sources });
+    }
+  }
   if (candidates.length > 1) {
     throw new McpBridgeError(
       `Sandbox '${sandbox.name}' exposes MCP configuration for multiple agents (${candidates.map(({ agent }) => agent.name).join(", ")}). Select or repair its agent identity before mutation.`,
@@ -284,14 +282,14 @@ export function inspectAgentMcpSources(
   return detected.sources;
 }
 
-function inspectAgentMcpSourcesForAgent(
+async function inspectAgentMcpSourcesForAgent(
   sandbox: SandboxEntry,
   agent: ReturnType<typeof loadAgent>,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): AgentMcpSourceSnapshot {
+): Promise<AgentMcpSourceSnapshot> {
   const adapter = agent.mcpCapability.adapter;
   if (agent.mcpCapability.support !== "bridge" || !adapter) return { native: {}, legacy: {} };
-  const result = executeSandboxCommand(
+  const result = await executeSandboxCommand(
     sandbox.name,
     sourceCommand(adapter, agent.configPaths.dir),
     {
@@ -498,7 +496,7 @@ export async function inspectSourceBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<{ bridges: Record<string, McpSourceEntry>; sources: AgentMcpSourceSnapshot }> {
-  const sources = inspectAgentMcpSources(sandbox, runtimeSelection);
+  const sources = await inspectAgentMcpSources(sandbox, runtimeSelection);
   const bridges = await joinMcpEntriesToOpenShell(sandbox, sources.native, runtimeSelection);
   return { bridges, sources };
 }
@@ -507,7 +505,7 @@ export async function inspectLegacyBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<{ bridges: Record<string, McpSourceEntry>; sources: AgentMcpSourceSnapshot }> {
-  const sources = inspectAgentMcpSources(sandbox, runtimeSelection);
+  const sources = await inspectAgentMcpSources(sandbox, runtimeSelection);
   const bridges = await joinMcpEntriesToOpenShell(
     sandbox,
     sources.legacy,
@@ -560,11 +558,11 @@ function deepAgentsLegacyRemovalCommand(configDir: string, server: string): stri
   ].join("\n");
 }
 
-export function removeLegacyAgentMcpEntry(
+export async function removeLegacyAgentMcpEntry(
   sandbox: SandboxEntry,
   entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
+): Promise<void> {
   const agent = loadAgent(sandbox.agent || "openclaw");
   const adapter = agent.mcpCapability.adapter;
   let command: string;
@@ -578,7 +576,7 @@ export function removeLegacyAgentMcpEntry(
   } else {
     return;
   }
-  const result = executeSandboxCommand(sandbox.name, command, { runtimeSelection });
+  const result = await executeSandboxCommand(sandbox.name, command, { runtimeSelection });
   if (!result || result.status !== 0) {
     throw new McpBridgeError(
       `Native MCP migration succeeded for '${entry.server}', but legacy source cleanup failed. Rerun migration after inspecting the legacy agent configuration.`,

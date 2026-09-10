@@ -423,6 +423,39 @@ describe.skipIf(process.platform !== "linux")("CI failure classifier process", (
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout).result).toBe("unclassified");
   });
+  function classifyNpmFailure(log: string, jobName: string) {
+    const item = fixture(log);
+    item.env.JOB_NAME = jobName;
+    const result = run(item.env);
+    expect(result.status, result.stderr).toBe(0);
+    return JSON.parse(result.stdout);
+  }
+
+  test.each([
+    ["unrelated mention", "Documentation checks", "The documentation mentions npm audit", false],
+    ["job name only", "PR npm audit", "The operation timed out", false],
+    ["threshold failure", "CLI tests", "npm audit threshold failed", true],
+    ["unused exception", "Dependency policy", "unused npm audit exceptions: GHSA-example", true],
+    ["unaccepted advisory", "Release policy", "1 unaccepted at or above high", true],
+  ])("classifies npm audit evidence for %s", (_caseName, jobName, log, expected) => {
+    expect(classifyNpmFailure(log, jobName).categories.includes("reviewed-npm-audit")).toBe(
+      expected,
+    );
+  });
+
+  test.each([
+    ["archive integrity", "ERROR: npm@12.0.2 archive integrity mismatch."],
+    ["archive version", "ERROR: npm archive version 12.0.1 does not match reviewed npm@12.0.2."],
+    ["archive metadata", "ERROR: npm@12.0.2 archive package/package.json is missing or invalid."],
+    ["invalid archive identity", "npm audit configuration has an invalid npmArchiveSha256"],
+  ])("classifies a reviewed npm bootstrap %s separately", (_caseName, log) => {
+    const value = classifyNpmFailure(log, "PR npm audit");
+    expect(value.categories).toContain("reviewed-npm-bootstrap");
+    expect(value.categories).not.toContain("reviewed-npm-audit");
+    expect(value.nextActions).toContain(
+      "Inspect the pinned npm identity and downloaded archive; do not change the advisory exception baseline.",
+    );
+  });
   test.each(REDACTION_CASES)(
     "redacts a standalone %s from returned process logs",
     (_name, secret, exposed) => {

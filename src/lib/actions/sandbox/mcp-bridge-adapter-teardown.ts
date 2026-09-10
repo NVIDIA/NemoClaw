@@ -45,7 +45,7 @@ export async function scrubManagedMcpAdapterOrThrow(
   }
   const credentialRevision: McpAttachedCredentialRevision = observation;
   const adapter = resolveManagedMcpAdapter(sandbox, entry);
-  const removal = unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
+  const removal = await unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
     envValues: {},
     teardown: true,
   });

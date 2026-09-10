@@ -97,7 +97,7 @@ network_policies:
     ["hermes", ".hermes", "config.yaml", "mcp_servers", "native"],
   ])(
     "reads %s from literal paths without sandbox Python packages (%s/%s)",
-    (agent, directory, file, serverMap, source) => {
+    async (agent, directory, file, serverMap, source) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-source-"quoted"-'));
       mocks.configRoot = root;
       try {
@@ -124,7 +124,7 @@ network_policies:
           });
           return { status: result.status, stdout: result.stdout, stderr: result.stderr };
         });
-        const observed = inspectAgentMcpSources({ ...sandbox, agent }, runtimeSelection);
+        const observed = await inspectAgentMcpSources({ ...sandbox, agent }, runtimeSelection);
         expect(observed[source as "native" | "legacy"].github).toMatchObject({
           server: "github",
           agent,

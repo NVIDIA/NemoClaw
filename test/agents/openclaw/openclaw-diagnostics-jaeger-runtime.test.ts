@@ -125,7 +125,7 @@ function reviewedDiagnosticsPackage(): ReviewedPackage {
   const reviewed = config.archivePackages.find(({ packageSpec }) =>
     packageSpec.startsWith("@openclaw/diagnostics-otel@"),
   );
-  assert.ok(reviewed, "reviewed npm audit config must include OpenClaw diagnostics");
+  assert.ok(reviewed, "npm audit config must include OpenClaw diagnostics");
   return reviewed;
 }
 

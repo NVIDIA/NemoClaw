@@ -23,14 +23,14 @@ function adaptersForEntries(
   );
 }
 
-export function assertMcpAdapterMutationRuntimeCapabilities(
+export async function assertMcpAdapterMutationRuntimeCapabilities(
   sandboxName: string,
   sandbox: SandboxEntry,
   entries: readonly McpSourceEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
+): Promise<void> {
   for (const adapter of adaptersForEntries(sandbox, entries)) {
-    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, runtimeSelection);
+    await assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, runtimeSelection);
   }
 }
 
@@ -40,13 +40,13 @@ export function assertMcpAdapterMutationRuntimeCapabilities(
  * NemoClaw release remain safe to scrub because their exact persisted adapter
  * definition is still ownership-checked by unregisterAgentAdapter.
  */
-export function assertMcpAdapterTeardownRuntimeCapabilities(
+export async function assertMcpAdapterTeardownRuntimeCapabilities(
   sandboxName: string,
   sandbox: SandboxEntry,
   entries: readonly McpSourceEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
+): Promise<void> {
   for (const adapter of adaptersForEntries(sandbox, entries)) {
-    assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter, runtimeSelection);
+    await assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter, runtimeSelection);
   }
 }

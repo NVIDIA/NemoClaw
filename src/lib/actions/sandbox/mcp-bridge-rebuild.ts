@@ -172,7 +172,7 @@ export async function prepareMcpBridgesForRebuild(
   await preflightMcpEntryTargets(entries);
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
-  assertMcpAdapterTeardownRuntimeCapabilities(
+  await assertMcpAdapterTeardownRuntimeCapabilities(
     sandboxName,
     sandbox,
     entries,
@@ -304,7 +304,7 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   const providerRuntimeSelection =
     runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
-  assertMcpAdapterTeardownRuntimeCapabilities(
+  await assertMcpAdapterTeardownRuntimeCapabilities(
     sandboxName,
     sandbox,
     [...entries, ...scrubbedAdapterEntries],

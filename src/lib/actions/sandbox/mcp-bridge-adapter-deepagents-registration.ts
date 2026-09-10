@@ -195,13 +195,13 @@ export function buildDeepAgentsMcpRegisterCommand(
   ].join("\n");
 }
 
-function verifyDeepAgentsAdapterRegistration(
+async function verifyDeepAgentsAdapterRegistration(
   sandboxName: string,
   entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
-): void {
-  const inspection = inspectDeepAgentsAdapterRegistration(
+): Promise<void> {
+  const inspection = await inspectDeepAgentsAdapterRegistration(
     sandboxName,
     entry,
     runtimeSelection,
@@ -214,7 +214,7 @@ function verifyDeepAgentsAdapterRegistration(
   );
 }
 
-export function registerDeepAgentsAdapter(
+export async function registerDeepAgentsAdapter(
   sandboxName: string,
   entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
@@ -222,8 +222,8 @@ export function registerDeepAgentsAdapter(
   replaceExisting = false,
   teardownRollback = false,
   credentialRevision?: McpAttachedCredentialRevision,
-): void {
-  const stdout = runDeepAgentsAdapterCommand(
+): Promise<void> {
+  const stdout = await runDeepAgentsAdapterCommand(
     sandboxName,
     entry,
     buildDeepAgentsMcpRegisterCommand(
@@ -244,15 +244,20 @@ export function registerDeepAgentsAdapter(
       );
     }
   } else {
-    verifyDeepAgentsAdapterRegistration(sandboxName, entry, runtimeSelection, credentialRevision);
+    await verifyDeepAgentsAdapterRegistration(
+      sandboxName,
+      entry,
+      runtimeSelection,
+      credentialRevision,
+    );
   }
 }
 
-export function restoreDeepAgentsNativeMcpConfig(
+export async function restoreDeepAgentsNativeMcpConfig(
   sandboxName: string,
   entries: readonly McpSourceEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
+): Promise<void> {
   const managedEntries = [...entries].sort((left, right) =>
     left.server.localeCompare(right.server),
   );
@@ -268,12 +273,14 @@ export function restoreDeepAgentsNativeMcpConfig(
   }
   const entry = managedEntries[0];
   const commandEntry: Pick<McpSourceEntry, "env"> = entry ?? { env: [] };
-  const runtimeKind = runDeepAgentsAdapterCommand(
-    sandboxName,
-    commandEntry,
-    buildDeepAgentsMcpRuntimeKindCommand(),
-    "Could not identify the managed Deep Agents MCP runtime.",
-    runtimeSelection,
+  const runtimeKind = (
+    await runDeepAgentsAdapterCommand(
+      sandboxName,
+      commandEntry,
+      buildDeepAgentsMcpRuntimeKindCommand(),
+      "Could not identify the managed Deep Agents MCP runtime.",
+      runtimeSelection,
+    )
   )
     .trim()
     .split(/\r?\n/u)
@@ -282,8 +289,8 @@ export function restoreDeepAgentsNativeMcpConfig(
   if (runtimeKind !== "v2") {
     throw new McpBridgeError("Could not identify the managed Deep Agents MCP runtime.");
   }
-  assertDeepAgentsMcpMutationRuntimeCapability(sandboxName, runtimeSelection);
-  runDeepAgentsAdapterCommand(
+  await assertDeepAgentsMcpMutationRuntimeCapability(sandboxName, runtimeSelection);
+  await runDeepAgentsAdapterCommand(
     sandboxName,
     commandEntry,
     buildDeepAgentsMcpRegisterCommand(entry, true, managedEntries, false, undefined, {
@@ -293,6 +300,6 @@ export function restoreDeepAgentsNativeMcpConfig(
     runtimeSelection,
   );
   for (const managedEntry of managedEntries) {
-    verifyDeepAgentsAdapterRegistration(sandboxName, managedEntry, runtimeSelection);
+    await verifyDeepAgentsAdapterRegistration(sandboxName, managedEntry, runtimeSelection);
   }
 }
