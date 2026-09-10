@@ -1611,6 +1611,8 @@ When the host Docker daemon is reachable but the per-sandbox container is stoppe
 If OpenShell already reports the registered Docker-driver sandbox as present and `Ready`, status verifies the OpenClaw gateway and host forward.
 It recovers either component when the verification reports it absent.
 </AgentOnly>
+When status finds a running sandbox but cannot clear its stale intentional-stop record, it exits non-zero and reports the `stop_intent_update_failed` state.
+Repair write access to NemoClaw's local state, then retry `$$nemoclaw <sandbox-name> status` before running another lifecycle command.
 When status finds the sandbox but cannot prove its agent delivery chain, it exits non-zero and reports the `sandbox_recovery_failed` state.
 Address the reported recovery layer, then run the displayed `$$nemoclaw <sandbox-name> recover` command.
 <AgentOnly variant="openclaw,hermes">
