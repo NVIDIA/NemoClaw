@@ -654,6 +654,9 @@ describe("launchSandbox", () => {
     const hermes = loadAgent("hermes");
     const entry = sandboxEntry("hermes");
     const writeLaunchTiming = vi.fn();
+    const withSandboxMutationLock = vi.fn(
+      async (_name: string, operation: () => Promise<unknown> | unknown) => await operation(),
+    );
     const now = vi.fn().mockReturnValueOnce(10).mockReturnValueOnce(37);
     mocks.inspectLaunchReadiness.mockResolvedValue({
       kind: "accepted",
@@ -666,7 +669,7 @@ describe("launchSandbox", () => {
     await launchSandbox("alpha", {
       getSandbox: () => entry,
       resolveSandboxGatewayName: () => "gateway-alpha",
-      withSandboxMutationLock: async (_name, operation) => await operation(),
+      withSandboxMutationLock,
       now,
       writeLaunchTiming,
     });
@@ -682,6 +685,9 @@ describe("launchSandbox", () => {
       "alpha",
       expect.objectContaining({ boundReadinessCapture: true }),
     );
+    expect(withSandboxMutationLock).toHaveBeenCalledTimes(2);
+    expect(withSandboxMutationLock).toHaveBeenNthCalledWith(1, "alpha", expect.any(Function));
+    expect(withSandboxMutationLock).toHaveBeenNthCalledWith(2, "alpha", expect.any(Function));
     expect(mocks.startSandboxSession).toHaveBeenCalledOnce();
     expect(writeLaunchTiming).toHaveBeenCalledWith(
       "  Launch timing: preExec=27ms readinessAction=accepted",

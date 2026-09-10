@@ -356,6 +356,9 @@ export interface RuntimeProviderLifecycleInput {
 export type RuntimeProviderLifecycleResult = {
   readonly exitCode: number;
   readonly message?: string;
+  /** Internal proof handoff for one GFN-gated Hermes start command. */
+  readonly hermesPortableRecoveryKind?: "already-running" | "recovered";
+  readonly hermesPortableVerified?: true;
 };
 
 export type RuntimeProviderLifecycleStopOutcome = RuntimeProviderLifecycleResult & {

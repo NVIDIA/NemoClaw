@@ -94,6 +94,37 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.rollbackCalls).toEqual([]);
   });
 
+  it("coalesces GFN read-only currentness while retaining before-and-after drift checks", () => {
+    const fixture = createRecoveryFixture({ ports: [18_789, 8_642], running: [18_789, 8_642] });
+    const assertCurrent = vi.fn();
+    Object.assign(fixture.input, { coalesceReadOnlyCurrentness: true });
+    Object.assign(fixture.input.deps, { assertCurrent });
+
+    expect(recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
+      kind: "verified",
+      restoredPorts: [],
+    });
+    expect(assertCurrent).toHaveBeenCalledTimes(3);
+
+    const drifting = createRecoveryFixture({ ports: [18_789, 8_642], running: [18_789, 8_642] });
+    const stableReachability = drifting.input.deps.isPortReachable!;
+    const assertDriftCurrent = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementation(() => {
+        throw new Error("currentness drift canary");
+      });
+    Object.assign(drifting.input, { coalesceReadOnlyCurrentness: true });
+    Object.assign(drifting.input.deps, {
+      assertCurrent: assertDriftCurrent,
+      isPortReachable: (port: number, timeoutMs?: number) => stableReachability(port, timeoutMs),
+    });
+
+    expect(() => recoverHermesPortableLaunchForwards(drifting.input)).toThrow(
+      expect.objectContaining({ failure: "authority-drift" }),
+    );
+  });
+
   it("accepts OpenShell 0.0.106's exact empty-list response", () => {
     const fixture = createRecoveryFixture({ listOutput: "No active forwards." });
 

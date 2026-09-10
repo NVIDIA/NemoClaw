@@ -30,6 +30,11 @@ import {
   requalifyPortableAgentSandboxAuthority,
   stopPortableAgentSandboxLifecycle,
 } from "../experimental/portable-agent-lifecycle";
+import type {
+  HermesPortableContainerInspectionRecoveryTiming,
+  HermesPortableCurrentnessTiming,
+  HermesPortableLifecycleRecoveryTiming,
+} from "../experimental/hermes-portable-lifecycle";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import { resolveHermesPortableLifecycleLockOptions } from "../experimental/portable-lifecycle-lock";
 import { queryOpenShellDockerSandboxRuntimeSnapshot } from "../openshell-docker-sandbox-containers";
@@ -339,13 +344,16 @@ function startDockerSandboxUnlocked(
         env: input.environment,
         log: input.log,
         readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+        ...hermesPortableStartTiming(input),
       },
     );
     if (portable.kind !== "not-installed") {
       return input.sandbox.agent === "hermes"
-        ? ({ exitCode: 0, hermesPortableVerified: true } as RuntimeProviderLifecycleResult & {
-            readonly hermesPortableVerified: true;
-          })
+        ? {
+            exitCode: 0,
+            hermesPortableRecoveryKind: portable.kind,
+            hermesPortableVerified: true,
+          }
         : { exitCode: 0 };
     }
   } catch (error) {
@@ -389,6 +397,37 @@ function startDockerSandboxUnlocked(
     input.log(`  Container '${recovery.containerName ?? input.sandboxName}' started.`);
   }
   return { exitCode: 0 };
+}
+
+function hermesPortableStartTiming(input: RuntimeProviderLifecycleInput): {
+  readonly recoveryTiming?: HermesPortableLifecycleRecoveryTiming;
+  readonly currentnessTiming?: HermesPortableCurrentnessTiming;
+  readonly inspectionTiming?: HermesPortableContainerInspectionRecoveryTiming;
+} {
+  if (
+    input.sandbox.agent !== "hermes" ||
+    input.environment.GFN_HERMES_TRUST_DURABLE_AUTHORITY !== "1"
+  ) {
+    return {};
+  }
+  const write = (label: string, evidence: object): void => {
+    try {
+      input.log(`  Hermes Portable start ${label} timing: ${JSON.stringify(evidence)}`);
+    } catch {
+      // Timing output is diagnostic and must never change lifecycle behavior.
+    }
+  };
+  return {
+    recoveryTiming: {
+      onComplete: (evidence) => write("lifecycle recovery", evidence),
+    },
+    currentnessTiming: {
+      onComplete: (evidence) => write("currentness", evidence),
+    },
+    inspectionTiming: {
+      onComplete: (evidence) => write("inspection", evidence),
+    },
+  };
 }
 
 function stopDockerSandbox(

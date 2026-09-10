@@ -419,6 +419,9 @@ function qualifyOperatingCommandAuthority(
           capturePodmanExecutableAuthority: captureHermesPortablePodmanExecutableFileAuthority,
         }
       : {},
+    {
+      trustDurableKnownEnvironmentAuthority: env.GFN_HERMES_TRUST_DURABLE_AUTHORITY === "1",
+    },
   );
   const commandAuthority = buildHermesPortableOpenShellCommandAuthority(
     operatingAuthority.receipt,

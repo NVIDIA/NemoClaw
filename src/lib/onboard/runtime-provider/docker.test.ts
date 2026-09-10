@@ -232,6 +232,7 @@ describe("Docker provider portable lifecycle dispatch", () => {
       lifecycle.start(lifecycleInput({ HOME: "/portable-home", NEMOCLAW_GATEWAY_PORT: "18080" })),
     ).toEqual({
       exitCode: 0,
+      hermesPortableRecoveryKind: "already-running",
       hermesPortableVerified: true,
     });
     expect(withLifecycleLockSync).toHaveBeenCalledWith("alpha", expect.any(Function), {

@@ -1005,6 +1005,24 @@ export function requalifyHermesPortableSandboxAuthority(
     fail(`receipt phase '${snapshot.receipt.phase}' is incomplete and cannot be requalified`);
   }
   assertCurrentPortableHostFenceHeld(snapshot.receipt.runtimeAuthority.homeDir);
+  if (
+    trustDurableGfnAuthority(deps.env ?? process.env) &&
+    snapshot.successor &&
+    snapshot.successorPublicationPending !== true
+  ) {
+    if (!contextMatches(snapshot.receipt, context)) {
+      fail("registry context disagrees with the active receipt");
+    }
+    assertCurrentHermesPortableStoredStartupContract(snapshot.receipt.startup, sandboxName);
+    const assertCurrent = retainRequalifiedOperatingAuthority(
+      sandboxName,
+      stateDir,
+      snapshot,
+      () => undefined,
+    );
+    assertCurrent();
+    return { kind: "already-current", snapshot, assertCurrent };
+  }
   const qualified = qualify(sandboxName, context, deps, snapshot, ["Ready", "Error", "Stopped"], {
     permitSchema5Requalification: true,
   });

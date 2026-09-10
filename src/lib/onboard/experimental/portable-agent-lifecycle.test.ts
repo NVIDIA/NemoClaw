@@ -281,6 +281,29 @@ describe("portable agent lifecycle dispatch", () => {
     expect(assertCurrent).toHaveBeenCalledTimes(2);
   });
 
+  it("uses durable operating authority only under the explicit GFN gate", () => {
+    const authority = {
+      kind: "hermes" as const,
+      snapshot: {
+        receipt: hermes("active").snapshot.receipt,
+        successor: { receipt: { schemaVersion: 6 } },
+      },
+    };
+    mocks.inspect.mockReturnValue(authority);
+
+    qualifyHermesPortableOperatingCommandAuthority(
+      "alpha",
+      { HOME: "/home/test", GFN_HERMES_TRUST_DURABLE_AUTHORITY: "1" },
+      "/state",
+    );
+
+    expect(mocks.qualifyOperatingAuthority).toHaveBeenCalledWith(
+      authority.snapshot,
+      {},
+      { trustDurableKnownEnvironmentAuthority: true },
+    );
+  });
+
   it("classifies active schema-5 readiness authority for bounded requalification (#10423)", () => {
     mocks.inspectClassification.mockReturnValue(hermes("active"));
 

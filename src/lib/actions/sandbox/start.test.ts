@@ -558,6 +558,31 @@ describe("startSandbox", () => {
     );
   });
 
+  it("hands a recovered Hermes lifecycle proof to GFN verification only", async () => {
+    const verifyGateway = vi.fn(async () => undefined);
+    const h = harness({
+      environment: { GFN_HERMES_TRUST_DURABLE_AUTHORITY: "1" },
+      verifyGateway,
+    });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "hermes",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-alpha",
+        lifecycleLiveIdentityFingerprint: "identity-alpha",
+        openshellDriver: "docker",
+      }),
+    );
+    h.hasPortableLifecycleReceipt.mockReturnValue(true);
+    h.recoverPortableSandbox.mockReturnValue({ kind: "recovered" });
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(verifyGateway).toHaveBeenCalledWith("my-sandbox", {
+      reuseHermesPortableStartRecovery: true,
+    });
+  });
+
   it("still probes when the container was already running (#6026)", async () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([

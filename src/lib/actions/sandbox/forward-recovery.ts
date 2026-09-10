@@ -71,6 +71,7 @@ export function createHermesPortableForwardRecoveryInput(input: {
   readonly assertCurrent: () => void;
   readonly assertRollbackCurrent: () => void;
   readonly commandAuthority: HermesPortableForwardCommandAuthority;
+  readonly coalesceReadOnlyCurrentness?: boolean;
   readonly gatewayName: string;
   readonly intent: "connect-probe-only";
   readonly onTiming: (evidence: HermesPortableForwardRecoveryTimingEvidence) => void;
@@ -90,6 +91,7 @@ export function createHermesPortableForwardRecoveryInput(input: {
       workspace: "default",
     },
     timing: { onComplete: input.onTiming },
+    ...(input.coalesceReadOnlyCurrentness === true ? { coalesceReadOnlyCurrentness: true } : {}),
     deps: {
       assertCurrent: input.assertCurrent,
       assertRollbackCurrent: input.assertRollbackCurrent,

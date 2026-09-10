@@ -230,6 +230,31 @@ describe("Hermes accepted launch-readiness probe", () => {
     );
   });
 
+  it("reuses a recovered lifecycle only for the explicit GFN same-command handoff", async () => {
+    vi.stubEnv("GFN_HERMES_TRUST_DURABLE_AUTHORITY", "1");
+    const harness = missingHermesHarness();
+
+    await expect(
+      harness.connectSandbox("alpha", {
+        probeOnly: true,
+        reuseHermesPortableStartRecovery: true,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ readLease: expect.any(Function) }),
+    );
+    const readinessDeps = harness.inspectLaunchReadinessSpy.mock.calls[0]?.[1] as {
+      readLease: () => unknown;
+    };
+    expect(readinessDeps.readLease()).toEqual({ kind: "missing" });
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
+    expect(harness.verifyHermesPortableLaunchForwardsSpy).toHaveBeenCalledOnce();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
+  });
+
   it("emits all lifecycle timing after stopped exact runtime recovery", async () => {
     const harness = missingHermesHarness("stopped");
     harness.recoverPortableDemoLifecycleSpy.mockImplementation((...args) => {

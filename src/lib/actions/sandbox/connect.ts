@@ -169,6 +169,8 @@ async function publishHermesLaunchReadinessWithSettlement(
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
   requireLaunchReadinessPublication?: boolean;
+  /** Internal same-command handoff from a successful GFN Hermes recovery. */
+  reuseHermesPortableStartRecovery?: boolean;
 };
 
 export type SandboxStartupRecoveryResult = Awaited<
@@ -718,7 +720,14 @@ function hermesPortableForwardInputForConnectProbe(
   input: HermesPortableForwardConnectRecoveryInput,
 ) {
   const expectedEntry = structuredClone(input.authority.entry);
+  const coalesceReadOnlyCurrentness = process.env.GFN_HERMES_TRUST_DURABLE_AUTHORITY === "1";
   const assertRegistryCurrent = () => {
+    if (coalesceReadOnlyCurrentness) {
+      if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), expectedEntry)) {
+        throw new Error("Hermes Portable registry authority changed during forward recovery.");
+      }
+      return;
+    }
     const current = requireHermesPortableActiveLifecycleAuthority(
       input.sandboxName,
       input.authority,
@@ -770,6 +779,7 @@ function hermesPortableForwardInputForConnectProbe(
     assertCurrent: assertProductCurrent,
     assertRollbackCurrent: assertCommandCurrent,
     commandAuthority,
+    coalesceReadOnlyCurrentness,
     gatewayName: input.authority.gatewayName,
     intent: input.intent,
     onTiming: writeHermesPortableForwardRecoveryTiming,
@@ -2360,10 +2370,16 @@ type PreparedConnectSession = {
 
 async function prepareConnectSandboxWithinLifecycleFence(
   sandboxName: string,
-  { probeOnly = false, requireLaunchReadinessPublication = true }: SandboxConnectOptions,
+  {
+    probeOnly = false,
+    requireLaunchReadinessPublication = true,
+    reuseHermesPortableStartRecovery = false,
+  }: SandboxConnectOptions,
   probeTiming?: ProbeTimingRecorder,
 ): Promise<PreparedConnectSession | null> {
   if (probeOnly) {
+    const reuseGfnStartRecovery =
+      reuseHermesPortableStartRecovery && process.env.GFN_HERMES_TRUST_DURABLE_AUTHORITY === "1";
     let portableAuthorityReady = false;
     let hermesMissingFastPathEligible = false;
     let hermesReadinessAuthority: {
@@ -2515,6 +2531,25 @@ async function prepareConnectSandboxWithinLifecycleFence(
             },
           };
         }
+        if (reuseGfnStartRecovery && !retainedHermesLifecycleRecovery) {
+          const retainedActive = active;
+          const retainedCommand = qualified.commandAuthority;
+          retainedHermesLifecycleRecovery = {
+            kind: "recovered",
+            assertCurrent: () => {
+              retainedCommand.assertCurrent();
+              const current = requireHermesPortableActiveLifecycleAuthority(
+                sandboxName,
+                retainedActive,
+                portableAgentLifecycleAuthorityDeps(),
+              );
+              if (!isDeepStrictEqual(current.entry, retainedActive.entry)) {
+                throw new Error("Hermes portable lifecycle authority changed after start");
+              }
+            },
+          };
+          hermesMissingFastPathEligible = true;
+        }
       } catch {
         probeTiming!.markFailureStage("authority");
         failHermesPortableReadinessAuthority(sandboxName);
@@ -2522,12 +2557,15 @@ async function prepareConnectSandboxWithinLifecycleFence(
     }
     let readiness: Awaited<ReturnType<typeof inspectLaunchReadiness>>;
     try {
+      const readinessDeps = hermesReadinessAuthority
+        ? hermesPortableLaunchReadinessDeps(hermesReadinessAuthority.command, probeTiming)
+        : ordinaryLaunchReadinessDeps(probeTiming);
       readiness = await probeTiming!.measureAsync("readiness", () =>
         inspectLaunchReadiness(
           sandboxName,
-          hermesReadinessAuthority
-            ? hermesPortableLaunchReadinessDeps(hermesReadinessAuthority.command, probeTiming)
-            : ordinaryLaunchReadinessDeps(probeTiming),
+          reuseGfnStartRecovery && hermesReadinessAuthority
+            ? { ...readinessDeps, readLease: () => ({ kind: "missing" as const }) }
+            : readinessDeps,
         ),
       );
       probeTiming!.recordReadinessDecision(readiness.category);

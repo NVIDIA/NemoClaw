@@ -21,11 +21,19 @@ import {
   type SandboxLifecycleResult,
 } from "./runtime/lifecycle-runtime";
 
-function verifyGateway(sandboxName: string): Promise<void> {
+type HermesPortableStartVerificationOptions = {
+  readonly reuseHermesPortableStartRecovery?: boolean;
+};
+
+function verifyGateway(
+  sandboxName: string,
+  options: HermesPortableStartVerificationOptions = {},
+): Promise<void> {
   const { connectSandbox } = require("./connect") as typeof import("./connect");
   return connectSandbox(sandboxName, {
     probeOnly: true,
     requireLaunchReadinessPublication: false,
+    ...options,
   });
 }
 
@@ -76,7 +84,10 @@ export interface SandboxStartDeps {
   runtimeProviders?: RuntimeProviderBundleRegistry;
   restoreStartupState?: (sandboxName: string) => Promise<SandboxStartupRecoveryResult>;
   waitForManagedGatewaySupervisor?: (sandboxName: string) => boolean;
-  verifyGateway?: (sandboxName: string) => Promise<void>;
+  verifyGateway?: (
+    sandboxName: string,
+    options?: HermesPortableStartVerificationOptions,
+  ) => Promise<void>;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
   withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
@@ -207,7 +218,16 @@ async function startSandboxWithinLifecycleFence(
   }
   if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
     log("  Checking gateway health and host forwards…");
-    await (deps.verifyGateway ?? verifyGateway)(sandboxName);
+    const reuseHermesPortableStartRecovery =
+      input.environment.GFN_HERMES_TRUST_DURABLE_AUTHORITY === "1" &&
+      result.hermesPortableRecoveryKind === "recovered";
+    if (reuseHermesPortableStartRecovery) {
+      await (deps.verifyGateway ?? verifyGateway)(sandboxName, {
+        reuseHermesPortableStartRecovery,
+      });
+    } else {
+      await (deps.verifyGateway ?? verifyGateway)(sandboxName);
+    }
     return { exitCode: 0 };
   }
 

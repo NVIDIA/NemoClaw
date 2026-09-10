@@ -110,6 +110,8 @@ export interface HermesPortableForwardRecoveryInput {
   };
   readonly deps: HermesPortableForwardRecoveryDeps;
   readonly timing?: HermesPortableForwardRecoveryTiming;
+  /** Coalesce read-only guards into one before/after snapshot transaction. */
+  readonly coalesceReadOnlyCurrentness?: boolean;
 }
 
 export type HermesPortableForwardRecoveryResult = {
@@ -335,7 +337,7 @@ function captureForwardEntries(
   deadline?: number,
   now: () => number = input.deps.now ?? Date.now,
 ): StrictForwardEntry[] {
-  requireCurrent(input, rollback);
+  if (input.coalesceReadOnlyCurrentness !== true) requireCurrent(input, rollback);
   let result: CommandResult;
   try {
     const capture = rollback ? input.deps.captureRollbackList : input.deps.captureCurrentList;
@@ -357,7 +359,7 @@ function captureForwardEntries(
       rollback ? undefined : { cause: "forward-list-failed" },
     );
   }
-  requireCurrent(input, rollback);
+  if (input.coalesceReadOnlyCurrentness !== true) requireCurrent(input, rollback);
   if (result.error || result.status !== 0) {
     failure(
       rollback ? "restoration-unproved" : "forward-state-unavailable",
@@ -381,72 +383,78 @@ function observeForwards(
   deadline?: number,
   now: () => number = input.deps.now ?? Date.now,
 ): ForwardObservation {
-  const listedEntries = captureForwardEntries(input, rollback, timing, deadline, now);
-  const entries = new Map<number, StrictForwardEntry>();
-  const states = new Map<number, ForwardState>();
-  const reachable = input.deps.isPortReachable ?? isLocalForwardReachable;
-  for (const port of input.ports) {
-    const portEntries = listedEntries.filter((entry) => entry.port === String(port));
-    if (portEntries.some((entry) => entry.sandboxName !== input.sandboxName)) {
-      states.set(port, "occupied");
-      continue;
-    }
-    if (portEntries.length > 1) {
-      failure(
-        rollback ? "restoration-unproved" : "forward-state-unavailable",
-        rollback ? undefined : { cause: "forward-list-invalid" },
-      );
-    }
-    const entry = portEntries[0];
-    if (entry) entries.set(port, entry);
-    requireCurrent(input, rollback);
-    let portReachable: boolean;
-    try {
-      portReachable = reachable(
-        port,
-        remainingBudget(
-          deadline,
-          now,
-          input.probeTimeoutMs,
-          rollback ? undefined : { cause: "forward-settlement-timed-out" },
-        ),
-      );
-    } catch (error) {
-      if (error instanceof HermesPortableForwardRecoveryError) throw error;
-      failure(
-        rollback ? "restoration-unproved" : "forward-state-unavailable",
-        rollback ? undefined : { cause: "forward-reachability-failed", port },
-      );
-    }
-    requireCurrent(input, rollback);
-    if (entry) {
-      states.set(
-        port,
-        ["active", "running"].includes(entry.status) && portReachable
-          ? "healthy"
-          : portReachable
-            ? "stale-reachable"
-            : "stale-unreachable",
-      );
-    } else {
-      if (!portReachable) {
-        states.set(port, "absent");
+  const coalesced = input.coalesceReadOnlyCurrentness === true;
+  if (coalesced) requireCurrent(input, rollback);
+  try {
+    const listedEntries = captureForwardEntries(input, rollback, timing, deadline, now);
+    const entries = new Map<number, StrictForwardEntry>();
+    const states = new Map<number, ForwardState>();
+    const reachable = input.deps.isPortReachable ?? isLocalForwardReachable;
+    for (const port of input.ports) {
+      const portEntries = listedEntries.filter((entry) => entry.port === String(port));
+      if (portEntries.some((entry) => entry.sandboxName !== input.sandboxName)) {
+        states.set(port, "occupied");
         continue;
       }
-      requireCurrent(input, rollback);
-      let exactOwner = false;
-      try {
-        exactOwner = (input.deps.isForwardServiceOwner ?? isForwardServiceListenerOwner)(
-          forwardServiceTarget(input, port),
+      if (portEntries.length > 1) {
+        failure(
+          rollback ? "restoration-unproved" : "forward-state-unavailable",
+          rollback ? undefined : { cause: "forward-list-invalid" },
         );
-      } catch {
-        exactOwner = false;
       }
-      requireCurrent(input, rollback);
-      states.set(port, exactOwner ? "healthy" : "occupied");
+      const entry = portEntries[0];
+      if (entry) entries.set(port, entry);
+      if (!coalesced) requireCurrent(input, rollback);
+      let portReachable: boolean;
+      try {
+        portReachable = reachable(
+          port,
+          remainingBudget(
+            deadline,
+            now,
+            input.probeTimeoutMs,
+            rollback ? undefined : { cause: "forward-settlement-timed-out" },
+          ),
+        );
+      } catch (error) {
+        if (error instanceof HermesPortableForwardRecoveryError) throw error;
+        failure(
+          rollback ? "restoration-unproved" : "forward-state-unavailable",
+          rollback ? undefined : { cause: "forward-reachability-failed", port },
+        );
+      }
+      if (!coalesced) requireCurrent(input, rollback);
+      if (entry) {
+        states.set(
+          port,
+          ["active", "running"].includes(entry.status) && portReachable
+            ? "healthy"
+            : portReachable
+              ? "stale-reachable"
+              : "stale-unreachable",
+        );
+      } else {
+        if (!portReachable) {
+          states.set(port, "absent");
+          continue;
+        }
+        if (!coalesced) requireCurrent(input, rollback);
+        let exactOwner = false;
+        try {
+          exactOwner = (input.deps.isForwardServiceOwner ?? isForwardServiceListenerOwner)(
+            forwardServiceTarget(input, port),
+          );
+        } catch {
+          exactOwner = false;
+        }
+        if (!coalesced) requireCurrent(input, rollback);
+        states.set(port, exactOwner ? "healthy" : "occupied");
+      }
     }
+    return { entries, states };
+  } finally {
+    if (coalesced) requireCurrent(input, rollback);
   }
-  return { entries, states };
 }
 
 function validatePorts(input: HermesPortableForwardRecoveryInput): void {
