@@ -89,13 +89,17 @@ function Assert-FixtureCurrent {
 }
 
 function Start-FixtureLease {
-    param([string]$Helper)
+    param([string]$Helper,[string]$Arguments = '--runtime-session openclaw')
     $start = [Diagnostics.ProcessStartInfo]::new()
-    $start.FileName = $Helper; $start.Arguments = '--runtime-session openclaw'
+    $start.FileName = $Helper; $start.Arguments = $Arguments
     $start.UseShellExecute = $false; $start.CreateNoWindow = $true
     $start.RedirectStandardInput = $true; $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
     $process = [Diagnostics.Process]::Start($start)
     if ($null -eq $process) { throw 'The owned lease helper did not start.' }
+    $stderr = $process.StandardError.ReadToEndAsync()
+    $evidence = [ordered]@{ pid = $process.Id; startedUtc = $process.StartTime.ToUniversalTime().ToString('o');
+        releaseRequested = $false; exitCode = $null; stderr = $null; stderrComplete = $false;
+        observations = [Collections.Generic.List[object]]::new() }
     try {
         $line = $process.StandardOutput.ReadLineAsync()
         if (-not $line.Wait(15000)) { throw 'The actual package lease did not report readiness.' }
@@ -103,7 +107,9 @@ function Start-FixtureLease {
         if ($ready.kind -cne 'native-runtime-session' -or $ready.leaseHeld -ne $true -or $process.HasExited) {
             throw 'The actual native helper did not retain its package lease.'
         }
-        return [pscustomobject]@{ process = $process; readiness = $ready }
+        $owned = [pscustomobject]@{ process = $process; readiness = $ready; stderr = $stderr; evidence = $evidence }
+        Add-FixtureLeaseObservation $owned 'ready'
+        return $owned
     } catch {
         $leaseError = $_
         try {
@@ -115,12 +121,26 @@ function Start-FixtureLease {
     }
 }
 
+function Add-FixtureLeaseObservation {
+    param([object]$OwnedLease,[string]$Label)
+    $process = $OwnedLease.process
+    $process.Refresh()
+    $exited = $process.HasExited
+    $exitCode = $null
+    if ($exited) { $exitCode = $process.ExitCode }
+    $OwnedLease.evidence.observations.Add([pscustomobject]@{ label = $Label;
+        observedUtc = [DateTime]::UtcNow.ToString('o'); hasExited = $exited; exitCode = $exitCode })
+}
+
 function Stop-FixtureLease {
     param([object]$OwnedLease)
     if ($null -eq $OwnedLease) { return }
     $process = $OwnedLease.process
+    $failure = $null
     try {
+        Add-FixtureLeaseObservation $OwnedLease 'before-release'
         if (-not $process.HasExited) {
+            $OwnedLease.evidence.releaseRequested = $true
             $bytes = [Text.Encoding]::UTF8.GetBytes("release`n")
             $process.StandardInput.BaseStream.Write($bytes,0,$bytes.Length)
             $process.StandardInput.BaseStream.Flush(); $process.StandardInput.Close()
@@ -130,7 +150,21 @@ function Stop-FixtureLease {
             throw 'The owned lease helper did not close after release.'
         }
         if ($process.ExitCode -ne 0) { throw 'The owned lease helper rejected its release.' }
-    } finally { $process.Dispose() }
+    } catch { $failure = $_ }
+    finally {
+        try {
+            Add-FixtureLeaseObservation $OwnedLease 'closed'
+            if ($process.HasExited) { $OwnedLease.evidence.exitCode = $process.ExitCode }
+            if (-not $OwnedLease.stderr.Wait(5000)) { throw 'The owned lease helper stderr did not close.' }
+            $text = $OwnedLease.stderr.GetAwaiter().GetResult()
+            $OwnedLease.evidence.stderr = $text.Substring(0,[Math]::Min(8192,$text.Length))
+            $OwnedLease.evidence.stderrComplete = $text.Length -le 8192
+        } catch {
+            if ($null -eq $failure) { $failure = $_ }
+            else { Write-Warning ('Lease failure evidence could not be completed: ' + $_.Exception.Message) }
+        } finally { $process.Dispose() }
+    }
+    if ($null -ne $failure) { throw $failure }
 }
 
 try {
@@ -177,13 +211,17 @@ try {
     $snapshot = Get-FixtureSnapshot
     $lease = Start-FixtureLease $helper
     $receipt.heldLease = $lease.readiness
+    $receipt.leaseProcess = $lease.evidence
     foreach ($case in @(
         @{ Action = '/fa'; Msi = $first.msi; Label = 'busy-direct-repair' },
         @{ Action = '/x'; Msi = $first.msi; Label = 'busy-direct-uninstall' },
         @{ Action = '/i'; Msi = $upgrade.msi; Label = 'busy-major-upgrade' }
     )) {
+        Add-FixtureLeaseObservation $lease ($case.Label + '-before')
+        if ($lease.process.HasExited) { throw 'The owned lease helper exited before busy maintenance.' }
         $result = Invoke-FixtureMsi $case.Action $case.Msi $case.Label; $results.Add($result)
-        if ($result.exitCode -ne 1603 -or (Get-FixtureSnapshot) -cne $snapshot) {
+        Add-FixtureLeaseObservation $lease ($case.Label + '-after')
+        if ($lease.process.HasExited -or $result.exitCode -ne 1603 -or (Get-FixtureSnapshot) -cne $snapshot) {
             throw 'Active-reader maintenance did not refuse before changing the installed tree or ACLs.'
         }
         Assert-FixtureCurrent $first

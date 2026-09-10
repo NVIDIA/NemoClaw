@@ -80,6 +80,11 @@ $receipt = [ordered]@{ schemaVersion = 1; classification = 'compiled-msi-transac
     helperSha256 = $HelperSha256; installedExecution = $false }
 $primary = $null
 try {
+    $restartPolicy = @([NativeRuntimeMsiAudit]::Rows($MsiPath, 'SELECT `Value` FROM `Property` WHERE `Property`=''MSIRESTARTMANAGERCONTROL''', 1))
+    if ($restartPolicy.Length -ne 1 -or $restartPolicy[0][0] -cne 'DisableShutdown') {
+        throw 'The compiled immutable MSI must preserve running file owners for the lease boundary.'
+    }
+    $receipt.restartManagerControl = $restartPolicy[0][0]
     $sequence = @{}
     foreach ($row in [NativeRuntimeMsiAudit]::Rows($MsiPath, 'SELECT `Action`,`Condition`,`Sequence` FROM `InstallExecuteSequence`', 3)) {
         if ($sequence.ContainsKey($row[0])) { throw 'The MSI contains a duplicate action sequence entry.' }

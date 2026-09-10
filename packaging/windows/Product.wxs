@@ -15,6 +15,8 @@
       Description="NemoClaw native Windows ARM64 preview"
       Manufacturer="NVIDIA Corporation" />
     <?if $(var.NativeRuntimeMsiPrototype) = "true" ?>
+    <!-- Preserve active owners so the lease boundary can refuse maintenance. -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="DisableShutdown" />
     <!-- The early InstallExecute in the generated transaction authoring runs
          retirement before the old MSI can remove shared application files. -->
     <MajorUpgrade

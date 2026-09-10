@@ -1303,6 +1303,9 @@ jobs:
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
+          & "$env:GITHUB_WORKSPACE\packaging\windows\installer\test-runtime-msi-process.ps1" `
+            -SourceRoot $env:GITHUB_WORKSPACE `
+            -ArtifactDirectory (Join-Path $env:RUNNER_TEMP 'windows-msi-lease-process')
           $tools = Join-Path $env:RUNNER_TEMP 'windows-msi-tools'
           [IO.Directory]::CreateDirectory($tools) | Out-Null
           $config = Join-Path $tools 'NuGet.Config'
@@ -1325,6 +1328,7 @@ jobs:
           name: windows-runtime-controls-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/windows-runtime-controls/
+            ${{ runner.temp }}/windows-msi-lease-process/*.json
             ${{ runner.temp }}/windows-msi-boundary-fixtures/*.json
             ${{ runner.temp }}/windows-msi-boundary-fixtures/*.log
             ${{ runner.temp }}/windows-msi-boundary-fixtures/fixtures/fixtures.json
