@@ -28,14 +28,15 @@ $commands = [Collections.Generic.List[object]]::new()
 $cleanupErrors = [Collections.Generic.List[string]]::new()
 $primary = $null; $mxcAttempted = $false; $mxcStopped = $true
 $receipt = [ordered]@{schemaVersion=1;classification='actual-system-root-and-mxc-proof';sourceRevision=$env:GITHUB_SHA
-    status='failed';systemDriveRoot=$root;commands=$commands;cleanupErrors=$cleanupErrors;admissionAllowed=$false}
+    status='failed';systemDriveRoot=$root;commands=$commands;cleanupErrors=$cleanupErrors;admissionAllowed=$false;
+    requestProfile='existing-personal-node-compatibility';stdio='explicit-pipes-with-closed-input';networkAccessTested=$false}
 
 function Invoke-ProofProcess {
     param([string]$Executable,[string[]]$Arguments,[string]$Label,[int]$Seconds=30)
     $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=$Executable
     $start.Arguments=($Arguments|ForEach-Object {'"'+$_+'"'}) -join ' '
     $start.UseShellExecute=$false;$start.CreateNoWindow=$true
-    $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    $start.RedirectStandardInput=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
     $start.EnvironmentVariables.Clear()
     foreach($name in @('SystemRoot','SystemDrive','WINDIR','COMSPEC','OS','TEMP','TMP','LOCALAPPDATA','APPDATA','USERPROFILE','PROCESSOR_ARCHITECTURE','PROCESSOR_ARCHITEW6432','RUNNER_TRACKING_ID')){
         $value=[Environment]::GetEnvironmentVariable($name);if($null  -ne  $value){$start.EnvironmentVariables[$name]=$value}
@@ -47,6 +48,7 @@ function Invoke-ProofProcess {
     $watch=[Diagnostics.Stopwatch]::StartNew()
     try{
         $process=[Diagnostics.Process]::Start($start);$row.pid=$process.Id
+        $process.StandardInput.Close()
         $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
         if( -not  $process.WaitForExit($Seconds*1000)){throw ('The bounded '+$Label+' process timed out.')}
         $row.exitCode=$process.ExitCode;$row.stopped=$true
@@ -116,12 +118,29 @@ if(!deniedRead)throw Error('Unlisted file read was not denied');
 fs.writeFileSync(result,JSON.stringify({schemaVersion:1,marker:'NEMOCLAW_SYSTEM_METADATA_MXC_OK',platform:process.platform,architecture:process.arch,node:process.versions.node,pid:process.pid,allowedRead:true,deniedRead:true,ownedWrite:true}));
 console.log('NEMOCLAW_SYSTEM_METADATA_MXC_OK');
 '@,[Text.UTF8Encoding]::new($false))
+    # Match the existing Personal Node request used by the OpenShell derivative.
+    # The stronger LPAC/Win32k-disabled b3ad observation remains separate evidence.
+    $guestHome=Join-Path $work 'home';$temp=Join-Path $work 'temp'
+    [IO.Directory]::CreateDirectory($guestHome)|Out-Null
+    [IO.Directory]::CreateDirectory($temp)|Out-Null
+    $windows=[Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)
+    $childEnvironment=[ordered]@{
+        NODE_DISABLE_COMPILE_CACHE='1';COMSPEC=(Join-Path $windows 'System32\cmd.exe')
+        LOCALAPPDATA=$guestHome;APPDATA=$guestHome;HOME=$guestHome;USERPROFILE=$guestHome
+        OS='Windows_NT';PATH=((Split-Path -Parent $NodePath)+';'+[Environment]::SystemDirectory+';'+$windows)
+        PATHEXT='.COM;.EXE;.BAT;.CMD';PROCESSOR_ARCHITECTURE='ARM64'
+        SYSTEMDRIVE=$root.TrimEnd('\');SYSTEMROOT=$windows;WINDIR=$windows;TEMP=$temp;TMP=$temp
+    }
+    $receipt.childEnvironmentKeys=@($childEnvironment.Keys)
     $policy=Join-Path $output 'policy.json'
     $request=[ordered]@{version='0.6.0-alpha';containerId=$container;containment='processcontainer'
-        process=@{commandLine='"'+$NodePath+'" "'+$worker+'" "'+$result+'" "'+$denied+'"';cwd=$work;timeout=30000;env=@('NODE_DISABLE_COMPILE_CACHE=1', ('SystemRoot=' + [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)), ('WINDIR=' + [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)))}
-        processContainer=@{leastPrivilege=$true;capabilities=@()};filesystem=@{readonlyPaths=@($NodePath);readwritePaths=@($work)}
+        process=@{commandLine='"'+$NodePath+'" "'+$worker+'" "'+$result+'" "'+$denied+'"';cwd=$work;timeout=30000;env=@($childEnvironment.GetEnumerator()|ForEach-Object {$_.Key+'='+$_.Value})}
+        processContainer=@{leastPrivilege=$false;capabilities=@('privateNetworkClientServer','internetClient')};ui=@{disable=$false}
+        network=@{defaultPolicy='allow';allowedHosts=@();blockedHosts=@();allowLocalNetwork=$true};filesystem=@{readonlyPaths=@($NodePath);readwritePaths=@($work)}
         lifecycle=@{destroyOnExit=$false;preservePolicy=$false}}
     [IO.File]::WriteAllText($policy,($request|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+    $receipt.policySha256=(Get-FileHash -LiteralPath $policy -Algorithm SHA256).Hash.ToLowerInvariant()
+    $receipt.requestPolicy=[ordered]@{leastPrivilege=$request.processContainer.leastPrivilege;capabilities=$request.processContainer.capabilities;win32kDisabled=$request.ui.disable;networkDefaultPolicy=$request.network.defaultPolicy;allowLocalNetwork=$request.network.allowLocalNetwork;childTimeoutMilliseconds=$request.process.timeout}
     $mxcAttempted=$true;$mxcStopped=$false
     $null=Invoke-ProofProcess $wxc @($policy,'--log-file',(Join-Path $output 'mxc-native.log')) 'mxc-execution' 40
     $mxcStopped=$commands[$commands.Count-1].stopped
@@ -129,6 +148,7 @@ console.log('NEMOCLAW_SYSTEM_METADATA_MXC_OK');
     if($guest.marker  -cne  'NEMOCLAW_SYSTEM_METADATA_MXC_OK'  -or  $guest.allowedRead  -ne  $true  -or  $guest.deniedRead  -ne  $true  -or  $guest.ownedWrite  -ne  $true){throw 'The actual MXC file-access controls failed.'}
     $mxcLog = [regex]::Replace((Get-Content -LiteralPath (Join-Path $output 'mxc-native.log') -Raw), '\[\d+\]\s*', '')
     if($mxcLog -notmatch '(?m)^selected isolation tier:\s*appcontainer-dacl\s*$'){throw 'The system-root-dependent AppContainer DACL tier was not exercised.'}
+    if($mxcLog -match 'Win32k mitigation applied to child process'){throw 'The existing Personal Node UI compatibility setting was not honored.'}
     $receipt.guest=$guest
     $receipt.nodeSddlAfter=(Get-Acl -LiteralPath $NodePath).Sddl
     $receipt.nodeAclRestored=$receipt.nodeSddlAfter  -ceq  $nodeAcl
