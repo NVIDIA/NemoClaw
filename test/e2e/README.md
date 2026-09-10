@@ -40,6 +40,7 @@ JSON output. Inline-message turns keep the parent stdin pipe open. File-message
 turns exercise an ordinary sandbox file, `/dev/stdin`, a sandbox symlink to stdin,
 and a relative symlink chain, and require the actual model answer from each input.
 The shared process fixture supplies finite input and EOF for stdin-backed files.
+An empty stdin-backed file must fail with the native empty-message error.
 These cases are selectable for both Docker and Podman through the existing runtime
 matrix. Host stdin is preserved for nonempty message-file arguments because only
 the sandbox can resolve their paths.

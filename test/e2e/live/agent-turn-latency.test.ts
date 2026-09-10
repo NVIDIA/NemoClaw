@@ -258,6 +258,15 @@ runAgentTurnLatencyTest(
       expect(completed.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
       turnTimes[turn.artifactName] = completed.elapsedMs;
     }
+    const emptyInput = await openclawTurn(host, inference, progress, {
+      artifactName: "openclaw-agent-empty-stdin-file",
+      args: ["--json", "--message-file", stdinLink],
+      stdin: { text: "" },
+    });
+    expect(emptyInput.result.exitCode, resultText(emptyInput.result)).not.toBe(0);
+    expect(resultText(emptyInput.result)).toContain("Message file is empty");
+    assertNoOpenClawTransportErrors(resultText(emptyInput.result));
+
     results.openclaw = {
       firstTurnElapsedMs: turnTimes["openclaw-agent-turn"],
       followUpTurnElapsedMs: turnTimes["openclaw-agent-follow-up-turn"],
