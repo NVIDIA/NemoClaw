@@ -11,11 +11,9 @@ import {
 
 export { destroyGatewayForReuse } from "../gateway-cleanup";
 export { verifyGatewayContainerRunning } from "../gateway-container-running";
+export * as externalComponent from "../external-component/onboarding";
 export { applyHealthyPortReuse } from "./gateway-stale-port-reuse";
-export {
-  type InitialOnboardFlowContext,
-  runInitialOnboardFlowSlice,
-} from "./initial-flow-phases";
+export { type InitialOnboardFlowContext, runInitialOnboardFlowSlice } from "./initial-flow-phases";
 
 const gatewayDeps = {
   destroyGatewayForReuse,

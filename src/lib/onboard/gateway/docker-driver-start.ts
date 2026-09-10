@@ -22,6 +22,7 @@ import * as dockerDriverGatewayRuntimeMarker from "../docker-driver-gateway-runt
 import * as gatewayStateLifecycleLock from "./state-lifecycle-lock";
 import { formatGatewayHealthWaitLimit } from "../gateway-health-wait";
 import { verifySandboxBridgeGatewayReachableOrExit } from "../gateway-sandbox-reachability";
+import type { ExternalComponentGatewayConfiguration } from "../docker-driver-gateway-config";
 
 type GatewayRuntimeHelpers = ReturnType<
   typeof import("../docker-driver-gateway-runtime").createDockerDriverGatewayRuntimeHelpers
@@ -73,6 +74,7 @@ export interface DockerDriverGatewayStartDeps {
 export interface DockerDriverGatewayStart {
   startDockerDriverGateway(options?: {
     exitOnFailure?: boolean;
+    externalComponent?: ExternalComponentGatewayConfiguration | null;
     runtimeSelection?: OpenShellRuntimeSelection;
     skipSandboxBridgeReachability?: boolean;
   }): Promise<void>;
@@ -90,10 +92,12 @@ export function createDockerDriverGatewayStart(
 ): DockerDriverGatewayStart {
   async function startDockerDriverGateway({
     exitOnFailure = true,
+    externalComponent,
     runtimeSelection,
     skipSandboxBridgeReachability = false,
   }: {
     exitOnFailure?: boolean;
+    externalComponent?: ExternalComponentGatewayConfiguration | null;
     runtimeSelection?: OpenShellRuntimeSelection;
     skipSandboxBridgeReachability?: boolean;
   } = {}): Promise<void> {
@@ -144,7 +148,11 @@ export function createDockerDriverGatewayStart(
       }
       const gatewayBin = deps.resolveOpenShellGatewayBinary();
       const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
-      const gatewayEnv = deps.getDockerDriverGatewayEnv(openshellVersionOutput);
+      const gatewayEnv = deps.getDockerDriverGatewayEnv(
+        openshellVersionOutput,
+        undefined,
+        externalComponent,
+      );
       const runtimeIdentity = gatewayBin
         ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
             gatewayBin,

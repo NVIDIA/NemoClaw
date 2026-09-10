@@ -7,7 +7,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as dockerDriverGatewayEnv from "./docker-driver-gateway-env";
-import { gatewayIdForStateDir } from "./docker-driver-gateway-config";
+import {
+  gatewayIdForStateDir,
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
+} from "./docker-driver-gateway-config";
 import {
   createDockerDriverGatewayRuntimeHelpers,
   type DockerDriverGatewayRuntimeDeps,
@@ -558,6 +561,43 @@ describe("docker-driver gateway runtime helpers", () => {
         gatewayBin: "/usr/bin/openshell-gateway",
       })?.reason,
     ).toBe("NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS=1 (expected <unset>)");
+  });
+
+  it("marks a gateway stale when its external component identity differs (#11340)", () => {
+    const { helpers } = makeHelpers();
+    expect(
+      helpers.getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: {
+          OPENSHELL_DRIVERS: "docker",
+          [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "prior-component",
+        },
+        processExe: "/usr/bin/openshell-gateway",
+        desiredEnv: {
+          OPENSHELL_DRIVERS: "docker",
+          [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "approved-component",
+        },
+        gatewayBin: "/usr/bin/openshell-gateway",
+      })?.reason,
+    ).toBe(
+      `${NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV}=prior-component (expected approved-component)`,
+    );
+  });
+
+  it("marks a gateway stale when its external component registration was removed (#11340)", () => {
+    const { helpers } = makeHelpers();
+    expect(
+      helpers.getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: {
+          OPENSHELL_DRIVERS: "docker",
+          [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "prior-component",
+        },
+        processExe: "/usr/bin/openshell-gateway",
+        desiredEnv: { OPENSHELL_DRIVERS: "docker" },
+        gatewayBin: "/usr/bin/openshell-gateway",
+      })?.reason,
+    ).toBe(
+      `${NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV}=prior-component (expected <unset>)`,
+    );
   });
 
   it("reuses a systemd-owned gateway without detached cleanup identity (#6903)", () => {

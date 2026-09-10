@@ -9,6 +9,7 @@ import type { GatewayReuseState } from "../../../state/gateway";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { flushTrace, resetTraceForTests, TRACE_FILE_ENV, type TraceArtifact } from "../../../trace";
 import type { GatewayContainerState } from "../../gateway-container-running";
+import type { PreparedExternalComponent } from "../../external-component";
 import {
   type GatewayAttachmentProbe,
   type GatewayOwner,
@@ -39,6 +40,19 @@ const EXTERNAL_OWNER: GatewayOwner = resolveGatewayOwner({
 
 type Gpu = { type: string } | null;
 
+function preparedExternalComponent(revalidateBeforeGateway = vi.fn()): PreparedExternalComponent {
+  return {
+    declaration: {
+      schemaVersion: 1,
+      componentId: "policy-governance",
+      interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
+      activationSocketPath: "/run/user/1000/component/activation.sock",
+    },
+    revalidateBeforeGateway,
+    revalidateBeforeActivation: vi.fn(),
+  };
+}
+
 function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
   const calls = {
     refresh: vi.fn(async (state: GatewayReuseState) => state),
@@ -64,29 +78,26 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
     exit: vi.fn((code: number): never => {
       throw new Error(`exit ${code}`);
     }),
-    resolveOwner: vi.fn(
-      (): GatewayOwner =>
-        resolveGatewayOwner({
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-          declaration: null,
-          hasPackagedService: false,
-        }),
-    ),
-    attachGateway: vi.fn(async () => undefined),
-    probeAttachment: vi.fn(
-      async (): Promise<GatewayAttachmentProbe> => ({
+    resolveOwner: vi.fn((): GatewayOwner =>
+      resolveGatewayOwner({
+        gatewayName: "nemoclaw",
         gatewayPort: 8080,
-        httpReady: true,
-        portOccupied: true,
-        listenerPids: [4242],
-        listenerScanComplete: true,
-        listenerStartTime: "710024",
-        supervisorActive: true,
-        listenerExecPath: "/usr/local/bin/openshell-gateway",
-        listenerSupervisorMatch: true,
+        declaration: null,
+        hasPackagedService: false,
       }),
     ),
+    attachGateway: vi.fn(async () => undefined),
+    probeAttachment: vi.fn(async (): Promise<GatewayAttachmentProbe> => ({
+      gatewayPort: 8080,
+      httpReady: true,
+      portOccupied: true,
+      listenerPids: [4242],
+      listenerScanComplete: true,
+      listenerStartTime: "710024",
+      supervisorActive: true,
+      listenerExecPath: "/usr/local/bin/openshell-gateway",
+      listenerSupervisorMatch: true,
+    })),
   };
   return {
     calls,
@@ -167,13 +178,77 @@ function gatewaySpans(artifact: TraceArtifact) {
 }
 
 describe("handleGatewayState", () => {
+  it("validates the component before gateway configuration or lifecycle effects (#11340)", async () => {
+    const revalidateBeforeGateway = vi.fn(() => {
+      throw new Error("declaration changed");
+    });
+    const { deps, calls } = createDeps({
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+    });
+
+    await expect(
+      handleGatewayState({
+        ...baseOptions(deps, "missing"),
+        externalComponent: preparedExternalComponent(revalidateBeforeGateway),
+      }),
+    ).rejects.toThrow("declaration changed");
+
+    expect(revalidateBeforeGateway).toHaveBeenCalledOnce();
+    expect(calls.refresh).not.toHaveBeenCalled();
+    expect(calls.startStep).not.toHaveBeenCalled();
+    expect(calls.retireLegacy).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+  });
+
+  it("passes only the validated component projection to the managed gateway (#11340)", async () => {
+    const component = preparedExternalComponent();
+    const { deps, calls } = createDeps({
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+    });
+
+    await handleGatewayState({
+      ...baseOptions(deps, "missing"),
+      externalComponent: component,
+    });
+
+    const projection = {
+      componentId: "policy-governance",
+      interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
+    };
+    expect(component.revalidateBeforeGateway).toHaveBeenCalledOnce();
+    expect(calls.refresh).toHaveBeenCalledWith("missing", projection);
+    expect(calls.startGateway).toHaveBeenCalledWith(
+      { type: "nvidia" },
+      { externalComponent: projection, gpuPassthrough: true },
+    );
+  });
+
+  it("rejects a registered component outside the supported Linux gateway path (#11340)", async () => {
+    const component = preparedExternalComponent();
+    const { deps, calls } = createDeps();
+
+    await expect(
+      handleGatewayState({
+        ...baseOptions(deps, "missing"),
+        externalComponent: component,
+      }),
+    ).rejects.toMatchObject({ code: "capability_unsupported" });
+
+    expect(component.revalidateBeforeGateway).not.toHaveBeenCalled();
+    expect(calls.refresh).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+  });
+
   it("starts the gateway when no reusable gateway exists", async () => {
     const { deps, calls } = createDeps();
 
     const result = await handleGatewayState(baseOptions(deps, "missing"));
 
     expect(calls.startStep).toHaveBeenCalledWith("gateway");
-    expect(calls.startGateway).toHaveBeenCalledWith({ type: "nvidia" }, { gpuPassthrough: true });
+    expect(calls.startGateway).toHaveBeenCalledWith(
+      { type: "nvidia" },
+      { externalComponent: null, gpuPassthrough: true },
+    );
     expect(calls.complete).toHaveBeenCalledWith("gateway");
     expect(result.gatewayReuseState).toBe("missing");
     expect(result.stateResult).toEqual({
@@ -222,7 +297,10 @@ describe("handleGatewayState", () => {
     expect(calls.skipped).not.toHaveBeenCalled();
     expect(calls.recordSkip).not.toHaveBeenCalled();
     expect(calls.startStep).toHaveBeenCalledWith("gateway");
-    expect(calls.startGateway).toHaveBeenCalledWith({ type: "nvidia" }, { gpuPassthrough: true });
+    expect(calls.startGateway).toHaveBeenCalledWith(
+      { type: "nvidia" },
+      { externalComponent: null, gpuPassthrough: true },
+    );
     expect(calls.retireLegacy).not.toHaveBeenCalled();
     expect(result.gatewayReuseState).toBe("stale");
   });
@@ -662,6 +740,21 @@ describe("externally supervised gateway lifecycle authority", () => {
     expect(result.stateResult).toMatchObject({
       metadata: { gatewayOwner: { mode: "externally-supervised", source: "declared" } },
     });
+  });
+
+  it("rejects a registered component before any supervised gateway effect (#11340)", async () => {
+    const { calls, deps } = externalDeps();
+
+    await expect(
+      handleGatewayState({
+        ...baseOptions(deps, "missing"),
+        externalComponent: preparedExternalComponent(),
+      }),
+    ).rejects.toMatchObject({ code: "capability_unsupported" });
+
+    expect(calls.probeAttachment).not.toHaveBeenCalled();
+    expect(calls.attachGateway).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
   });
 
   it("rejects host mounts before any externally supervised gateway effect", async () => {

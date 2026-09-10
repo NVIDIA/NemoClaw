@@ -5,6 +5,7 @@ import type { NvidiaPlatform } from "../../../inference/nim";
 import type { GatewayReuseState } from "../../../state/gateway";
 import type { Session } from "../../../state/onboard-session";
 import type { GatewayContainerState } from "../../gateway-container-running";
+import type { PreparedExternalComponent } from "../../external-component";
 import {
   describeGatewayOwner,
   evaluateGatewayAttachment,
@@ -27,6 +28,7 @@ export interface GatewayStateOptions<Gpu> {
   requestedSandboxName: string | null;
   recreateSandbox: boolean;
   requiresBindMounts?: boolean;
+  externalComponent?: PreparedExternalComponent | null;
   deps: {
     /**
      * The single declared lifecycle authority for this run (#6576). Resolved
@@ -36,7 +38,13 @@ export interface GatewayStateOptions<Gpu> {
     resolveGatewayOwner(): GatewayOwner;
     probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe>;
     attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
-    refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
+    refreshDockerDriverGatewayReuseState(
+      state: GatewayReuseState,
+      externalComponent?: {
+        readonly componentId: string;
+        readonly interceptorSocketPath: string;
+      } | null,
+    ): Promise<GatewayReuseState>;
     gatewayCliSupportsLifecycleCommands(): boolean;
     verifyGatewayContainerRunning(gatewayName: string): GatewayContainerState;
     waitForGatewayHttpReady(): Promise<boolean>;
@@ -76,7 +84,16 @@ export interface GatewayStateOptions<Gpu> {
     ): Promise<Session>;
     note(message: string): void;
     startRecordedStep(stepName: string): Promise<void>;
-    startGateway(gpu: Gpu, options: { gpuPassthrough: boolean }): Promise<void>;
+    startGateway(
+      gpu: Gpu,
+      options: {
+        externalComponent?: {
+          readonly componentId: string;
+          readonly interceptorSocketPath: string;
+        } | null;
+        gpuPassthrough: boolean;
+      },
+    ): Promise<void>;
     recordStepComplete(stepName: string): Promise<Session>;
     exitProcess(code: number): never;
   };
@@ -107,6 +124,7 @@ async function handleGatewayStatePhase<Gpu>({
   requestedSandboxName,
   recreateSandbox,
   requiresBindMounts = false,
+  externalComponent = null,
   deps,
 }: GatewayStateOptions<Gpu>): Promise<GatewayStateResult> {
   // Establish the lifecycle authority before anything in this phase can touch
@@ -115,6 +133,13 @@ async function handleGatewayStatePhase<Gpu>({
   // the port.
   const owner = deps.resolveGatewayOwner();
   if (isExternallySupervised(owner)) {
+    if (externalComponent) {
+      throw new GatewayOwnershipError(
+        "capability_unsupported",
+        "External component onboarding requires a NemoClaw-managed OpenShell gateway.",
+        owner,
+      );
+    }
     if (requiresBindMounts) {
       throw new GatewayOwnershipError(
         "capability_unsupported",
@@ -125,7 +150,25 @@ async function handleGatewayStatePhase<Gpu>({
     return attachToExternallySupervisedGateway(owner, deps);
   }
 
-  let gatewayReuseState = await deps.refreshDockerDriverGatewayReuseState(initialGatewayReuseState);
+  if (externalComponent && !deps.isLinuxDockerDriverGatewayEnabled()) {
+    throw new GatewayOwnershipError(
+      "capability_unsupported",
+      "External component onboarding requires the supported Linux Docker-driver gateway.",
+      owner,
+    );
+  }
+
+  externalComponent?.revalidateBeforeGateway();
+
+  let gatewayReuseState = await deps.refreshDockerDriverGatewayReuseState(
+    initialGatewayReuseState,
+    externalComponent
+      ? {
+          componentId: externalComponent.declaration.componentId,
+          interceptorSocketPath: externalComponent.declaration.interceptorSocketPath,
+        }
+      : null,
+  );
   const supportsLifecycleCommands = deps.gatewayCliSupportsLifecycleCommands();
 
   if (gatewayReuseState === "healthy" && supportsLifecycleCommands) {
@@ -265,7 +308,15 @@ async function handleGatewayStatePhase<Gpu>({
     } else if (gatewayReuseState === "foreign-active") {
       gatewayReuseState = "missing";
     }
-    await deps.startGateway(gpu, { gpuPassthrough });
+    await deps.startGateway(gpu, {
+      externalComponent: externalComponent
+        ? {
+            componentId: externalComponent.declaration.componentId,
+            interceptorSocketPath: externalComponent.declaration.interceptorSocketPath,
+          }
+        : null,
+      gpuPassthrough,
+    });
     session = await deps.recordStepComplete("gateway");
   }
 

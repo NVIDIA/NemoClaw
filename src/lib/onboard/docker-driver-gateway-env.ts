@@ -21,8 +21,10 @@ import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
   DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
+  type ExternalComponentGatewayConfiguration,
 } from "./docker-driver-gateway-config";
 import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-local-tls";
 import {
@@ -74,6 +76,7 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_VM_DRIVER_STATE_DIR",
   "OPENSHELL_DRIVER_DIR",
   "NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS",
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   "NETAVARK_FW",
 ] as const;
@@ -89,6 +92,7 @@ export interface BuildDockerDriverGatewayEnvOptions {
   getDockerSupervisorImage: () => string;
   resolveSandboxBin: () => string | null;
   enableBindMounts?: boolean;
+  externalComponent?: ExternalComponentGatewayConfiguration | null;
 }
 
 function preparePortableGatewayHostRuntime(
@@ -384,12 +388,7 @@ export function assertDockerDriverGatewayAuthConfigSafe(
   platform: NodeJS.Platform = process.platform,
   gatewayRuntime?: RuntimeProviderGatewayHostRuntime,
 ): void {
-  assertDockerDriverGatewayBindAddressSafe(
-    gatewayEnv,
-    environment,
-    platform,
-    gatewayRuntime,
-  );
+  assertDockerDriverGatewayBindAddressSafe(gatewayEnv, environment, platform, gatewayRuntime);
   const configPath = gatewayEnv.OPENSHELL_GATEWAY_CONFIG?.trim();
   if (!configPath) {
     throw new Error("OpenShell Docker-driver gateway requires OPENSHELL_GATEWAY_CONFIG");
@@ -434,6 +433,7 @@ export function buildDockerDriverGatewayEnv({
   getDockerSupervisorImage,
   resolveSandboxBin,
   enableBindMounts = false,
+  externalComponent,
 }: BuildDockerDriverGatewayEnvOptions): Record<string, string> {
   const portable = isPortableExperimentalProfile();
   const runtime =
@@ -490,6 +490,7 @@ export function buildDockerDriverGatewayEnv({
     allowOpenShell0044PreAuthDatabase:
       process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1",
     gatewayRuntime: runtime,
+    externalComponent,
   });
   return env;
 }

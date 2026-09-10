@@ -452,6 +452,7 @@ const {
   applyHealthyPortReuse,
   createInitialOnboardFlowPhases,
   destroyGatewayForReuse,
+  externalComponent: component,
   runInitialOnboardFlowSlice,
   verifyGatewayContainerRunning,
 }: typeof import("./onboard/machine/initial-flow-composition") = require("./onboard/machine/initial-flow-composition");
@@ -2928,8 +2929,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
         getInitialGatewayReuseState: () =>
           selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot()).gatewayReuseState,
-        assertGatewayReadiness: () =>
-          onboardPreflightGatewayAuthority.collectGatewayReadiness().then(() => undefined),
+        ...component.initialFlowDeps(onboardPreflightGatewayAuthority),
         gatewayName: GATEWAY_NAME,
         recreateSandbox: isRecreateSandbox,
         requiresBindMounts: effectiveHostMounts.length > 0,
@@ -3286,7 +3286,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           webSearchProvider: (config) => webSearchProviderForConfig(config),
         },
         finalizationDeps: {
-          setDefaultSandbox: registry.setDefault,
+          ...component.finalDeps(GATEWAY_NAME, onboardSession, registry, runCaptureOpenshell),
           verifyWebSearchInsideSandbox,
           toSessionUpdates,
           removeLegacyCredentialsFile,
