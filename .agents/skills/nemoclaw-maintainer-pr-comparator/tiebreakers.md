@@ -15,7 +15,8 @@ Use happy mode when one or more PRs pass Tier 0. Use degraded mode when none pas
 
 Eliminate any PR failing Tier 0. Among survivors:
 
-- Set `winner` only to a survivor and leave `closest_to_ready` null.
+- Set `winner` only to a survivor with passing canonical gate evidence and no unresolved correctness or security blocker.
+  Leave `closest_to_ready` null. Scores cannot override those prerequisites.
 
 1. Compute weighted score across Tiers 1-2.
 2. Build the **behavior-coverage matrix**. Use it as evidence for the weighted score and tiebreakers.
@@ -60,7 +61,7 @@ When no PR passes Tier 0, rank eligible PRs by the work needed before merge.
 
 ## Behavior-coverage matrix
 
-For each acceptance criterion (from issue body + comments), build a row showing which PRs cover it:
+For each accepted criterion established in Step 1, build a row showing which PRs cover it:
 
 ```text
 | Criterion                    | PR #A      | PR #B      |

@@ -42,19 +42,13 @@ Two paths without a migration plan can diverge and leave callers on obsolete beh
 
 ## 2.3 Public surface preservation
 
-For a content change to a public surface below, require a Notes section and update the related documentation:
+Identify changes to supported interfaces and their accepted scope.
+Check that the PR describes the changed behavior and preserves required compatibility and acceptance evidence.
+Follow current repository guidance for documentation ownership and permitted post-merge documentation work.
+Keep owning non-public repository guidance in the same change.
 
-- Flag definitions (`--name`, `Flags.<x>(`, oclif flag schemas)
-- Help/usage strings (`Usage:`, `description:`, `summary:`)
-- Error messages (`throw new Error(`, `console.error`)
-- Exit codes (`process.exit(`)
-
-A move with unchanged text does not require these updates.
-
-**Yellow if:** Content changes are present but no Notes section.
-**Fail if:** Content changes change user-facing behavior AND no Notes AND no docs update.
-
-A Notes section records a user-facing change that can otherwise be missed during review.
+Record a missing behavior explanation or required guidance with its user-facing effect.
+Do not require a heading named `Notes` or treat an unchanged move as a public-interface change.
 
 ## 2.4 Workaround-vs-root-cause
 

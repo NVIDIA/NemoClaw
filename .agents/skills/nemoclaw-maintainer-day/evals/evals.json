@@ -47,5 +47,78 @@
       "Does not attempt PR follow-up or require a latest PR commit for the issue-only item.",
       "Selects the security-item workflow and preserves its existing scope and decision gates."
     ]
+  },
+  {
+    "id": "positive-release-queue",
+    "question": "Run one NemoClaw maintainer pass for the release queue and select the next actionable item.",
+    "expected_skill": "nemoclaw-maintainer-day",
+    "ground_truth": "Explicit release-queue intent selects maintainer orchestration.",
+    "expected_behavior": [
+      "Selects one release item and follows its owning workflow.",
+      "Preserves scope, PR follow-up, and write-authorization prerequisites."
+    ]
+  },
+  {
+    "id": "negative-generic-implementation",
+    "question": "Make progress on NemoClaw issue #8365: implement the accepted fix and add its tests.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "Generic progress wording does not override explicit implementation intent.",
+    "expected_behavior": [
+      "Uses the implementation workflow, not maintainer-day.",
+      "Does not select release work, approve a PR, or push without publication authorization."
+    ]
+  },
+  {
+    "id": "negative-generic-planning",
+    "question": "Plan NemoClaw issue #8365 into independently valuable slices.",
+    "expected_skill": "nemoclaw-contributor-plan-issue",
+    "ground_truth": "An explicit issue-planning request belongs to planning, not maintainer orchestration.",
+    "expected_behavior": [
+      "Uses the planning workflow.",
+      "Does not select a release queue or perform source or GitHub writes."
+    ]
+  },
+  {
+    "id": "ambiguous-keep-going",
+    "question": "Keep going. What's next?",
+    "expected_skill": null,
+    "ground_truth": "Without an established task, generic continuation does not establish maintainer intent.",
+    "expected_behavior": [
+      "Asks which task to continue.",
+      "Does not infer maintainer write authority or select a release queue."
+    ]
+  },
+  {
+    "id": "clean-context-test-gap",
+    "question": "In a new conversation, run one NemoClaw maintainer pass. The selected accepted issue has no PR and needs CLI unit coverage.",
+    "expected_skill": "nemoclaw-maintainer-day",
+    "ground_truth": "Issue-only test repair delegates implementation and test placement to current owners without requiring a PR candidate.",
+    "expected_behavior": [
+      "Reads current issue and checkout evidence.",
+      "Routes local repair to the implementation workflow and derives test placement from owning guidance.",
+      "Does not require PR follow-up for the issue-only item or open a PR without authorization."
+    ]
+  },
+  {
+    "id": "positive-pr-test-gap-with-pending-review",
+    "question": "Run the maintainer pass. The selected PR lacks a denial-path test. One scheduled Advisor specialist is still running. Start through TEST-GAPS.md.",
+    "expected_skill": "nemoclaw-maintainer-day",
+    "ground_truth": "The test-gap entry cannot bypass PR follow-up before salvage.",
+    "expected_behavior": [
+      "Keeps the PR unchanged while review evidence is pending.",
+      "After successful collection, carries the complete scope and repair group into salvage.",
+      "Preserves the implementation workflow's validation and salvage's publication authority."
+    ]
+  },
+  {
+    "id": "positive-capability-sequencing",
+    "question": "Run the maintainer release pass. An accepted issue needs parsing, integration, and tests to deliver one observable fix. Sequence its work.",
+    "expected_skill": "nemoclaw-maintainer-day",
+    "ground_truth": "Maintainer sequencing delegates to capability planning instead of creating layer-only PRs.",
+    "expected_behavior": [
+      "Uses the planning workflow with the issue and release constraints.",
+      "Keeps implementation, tests, and owning guidance for one outcome together.",
+      "Does not require helper-only or test-only prerequisite PRs."
+    ]
   }
 ]

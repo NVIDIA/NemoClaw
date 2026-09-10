@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-day
-description: Run one NemoClaw daytime maintainer pass. Prioritize items for the release version. Select a merge, salvage, security, test, conflict, or sequencing workflow and report progress. Use during the workday to land PRs and close issues. Designed for /loop, for example /loop 10m /nemoclaw-maintainer-day. Trigger keywords - maintainer day, work on PRs, land PRs, make progress, what's next, keep going, maintainer loop.
+description: Run one NemoClaw maintainer pass when the user requests a maintainer loop or release-queue work. Select one actionable release item and report progress. Do not use for generic issue planning, implementation, or PR publication. Requests such as make progress or keep going continue the established workflow; without context, ask which task to continue.
 user_invocable: true
 ---
 
@@ -10,6 +10,9 @@ user_invocable: true
 # NemoClaw Maintainer Day
 
 Execute one pass of the maintainer loop, prioritizing version-targeted work.
+
+Route issue planning to `nemoclaw-contributor-plan-issue`, implementation to `nemoclaw-contributor-implement-issue`, and publication to `nemoclaw-contributor-create-pr`.
+If the request does not establish a lifecycle stage or maintainer-loop intent, ask before selecting this workflow.
 
 **Autonomy:** You may push small fixes after required CI and scheduled automated reviews settle for
 one unchanged latest PR commit. You may approve a PR when all gates pass.

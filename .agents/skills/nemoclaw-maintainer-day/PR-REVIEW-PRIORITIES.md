@@ -42,8 +42,8 @@ write a suggestion.
 1. **Narrow scope** — Each PR has one objective.
    Restore configuration, refactor, and tool-setting changes that do not support the objective.
 2. **Contributor intent preserved** — the fix must match what the contributor intended. Stop and ask when the diff would change semantics or when intent is unclear.
-3. **Small changes** — Extract a helper, test the existing behavior, and then apply the fix.
-   Process one file cluster in each pass. Use sequencing when the next step requires a redesign.
+3. **Complete changes** — Keep implementation, tests, and owning guidance together for one accepted outcome.
+   Use [Sequence Work](SEQUENCE-WORK.md) when the outcome needs independently valuable slices. Ask before a required redesign.
 
 ## Queue ranking signals (inform priority, not approval)
 

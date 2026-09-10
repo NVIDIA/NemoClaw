@@ -1,80 +1,20 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Test Gaps Workflow
+# Repair a Test Gap
 
-Add tests for the most important uncovered behavior. Do not rewrite the code.
+Select an uncovered behavior from a release item, PR, CI failure, or recent change.
+Identify the risk and the smallest acceptance evidence before selecting a repair.
 
-For risky code areas, see [RISKY-AREAS.md](RISKY-AREAS.md).
+For an existing PR, complete [PR follow-up](../_shared/pr-follow-up.md) for one unchanged latest PR commit before editing.
+Then use [Salvage a Pull Request](SALVAGE-PR.md) for scope, write authority, implementation, validation, and publication.
+Carry the original objective, accepted scope, deferred scope, and complete root-cause group into that workflow.
 
-## Step 1: Collect File Set
+For an accepted issue without a PR, use [Implement a GitHub Issue](../nemoclaw-contributor-implement-issue/SKILL.md) for local implementation and validation.
+Derive test placement and commands from current source, tests, and owning repository guidance through that workflow.
+Do not invent a PR candidate or require PR follow-up for issue-only work.
+Opening a PR still requires user authorization and the contributor publication workflow.
 
-Use changed PR files, CI failures, recent `main` changes, and the state-file hotspot list.
-If no file set is available, use the highest-ranked PR that can progress.
-
-## Step 2: Map to Existing Tests
-
-Repo conventions:
-
-- Root integration tests (`test/`): ESM imports
-- Plugin tests: co-located as `*.test.ts`
-- Shell logic: may need extraction into testable helper first
-
-For each risky file, find a test for the changed behavior.
-Check whether the test is indirect or unstable. Identify a small extraction when it improves testing.
-
-## Step 3: Select tests
-
-Prioritize regressions found during maintenance:
-
-- invalid/boundary env values, shell quoting, retry/timeout behavior
-- missing/malformed config, denied network/policy paths
-- duplicate workflow/hook behavior, version/tag/DCO edge cases
-- unauthorized or unsafe inputs
-
-For risky code, include a test that rejects invalid or unsafe input.
-
-## Step 4: Extract code when needed
-
-Make only the extraction needed for tests:
-
-- Move parsing into a pure helper.
-- Separate construction from execution.
-- Move hook logic into a function.
-- Replace related primitive values with a typed object.
-
-Do not use a test change to add a refactor that is not required.
-
-## Step 5: Add Tests
-
-- Put CLI tests in `test/`.
-- Put plugin tests in `nemoclaw/src/`.
-- Use TypeScript tests for TypeScript helpers.
-- Mock calls to external systems. Unit tests must not call external APIs.
-- For security paths, prove that the code denies the unsafe action.
-
-## Step 6: Validate
-
-```bash
-npm test                          # root tests
-cd nemoclaw && npm test           # plugin tests
-npm run typecheck:cli
-npm run check                     # broad repo-wide pre-commit and coverage baseline
-```
-
-Run only the commands needed to validate the change.
-
-## Step 7: Report remaining gaps
-
-Report each remaining risk. Possible causes include:
-
-- The code needs a larger refactor before it can be tested.
-- Shell state prevents isolation.
-- No fixture strategy exists.
-- An infrastructure dependency is unstable.
-
-## Notes
-
-- Tests for risky code are required for merge.
-- Prefer one regression test with a defined failure over many general integration tests.
-- If a credible fix needs a redesign, follow [SEQUENCE-WORK.md](SEQUENCE-WORK.md).
+If the gap requires a scope or design decision, stop and report it.
+Use [Sequence Work](SEQUENCE-WORK.md) when an accepted outcome needs division into deliverable slices.
+Report the selected behavior, validation evidence, and remaining risks to the maintainer pass.

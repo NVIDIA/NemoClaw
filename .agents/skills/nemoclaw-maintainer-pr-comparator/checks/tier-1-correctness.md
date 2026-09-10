@@ -18,10 +18,11 @@ Include file and line evidence for each judgment.
 
 ## 1.1 Test exercises bug path
 
-The PR's new/modified test must, when run on the pre-fix code, fail. A test that passes both before and after the fix proves nothing.
+For a bug fix, the regression test must fail on the pre-fix behavior and pass with the fix.
+For a behavior-preserving refactor, passing before and after is expected; verify that the test protects the affected contract.
 
 **How to evaluate:** Read each changed test and its assertions.
-Check whether each assertion fails on the code before the fix. If it passes, the test does not exercise the bug.
+Check whether the assertion distinguishes the reported defect or protects the behavior that the refactor must preserve.
 
 **Common false-positive patterns to flag as yellow:**
 
@@ -33,8 +34,8 @@ Check whether each assertion fails on the code before the fix. If it passes, the
 
 ## 1.2 Acceptance criteria from comments
 
-Read requirements in the issue body and comments.
-Convert each requirement into an acceptance criterion. Map each criterion to a change or test in the diff.
+Use the accepted requirements established in Step 1 of the comparison workflow.
+Map each criterion to behavior and acceptance evidence in the diff.
 
 **How to evaluate:** From the issue's parsed criteria checklist (Step 1 of the workflow), check each item against:
 
@@ -63,26 +64,22 @@ The fix must have tests for invalid and boundary inputs, not only the reported v
 
 ## 1.4 Coverage shape
 
-Test each code path added by the diff.
-Coverage percentage can stay unchanged when an unrelated test reaches a new branch.
+Apply the shared code-change and security considerations to changed success, failure, recovery, and bypass paths.
+Coverage percentage alone does not establish that assertions protect the changed behavior.
 
-**How to evaluate:** Find a test for each new `if`, `else`, `catch`, or `switch` arm.
-Mark an untested branch yellow.
+**How to evaluate:** Map each relevant outcome to its shortest stable test, including the enforcing boundary for a security control.
+Record missing evidence and its effect. Do not require a separate test for each syntax branch.
 
 ## 1.5 Refactor-vs-behavior scan
 
-If the PR's title or description claims `refactor` / `rename` / `extract` / `move`, the diff must be net-zero in:
+For a claimed refactor, compare observable behavior before and after the change.
+Inspect return values, errors, side effects, ordering, defaults, and security controls where the diff can affect them.
+Use current contracts and tests to establish preservation, including relevant negative paths.
 
-- Conditional adds (`if(`, `?`, `&&`, `||`)
-- New `throw new Error(`
-- Changed `process.exit(` codes
-- Changed return values
-
-**How to evaluate:** Count these tokens in added and removed lines.
-A refactor must not increase the total. An increase can show a behavior change.
-Mark it yellow or fail based on its effect.
-
-A behavior change in a refactor can miss the review required for that change.
+Token counts and the PR title cannot establish semantic equivalence.
+Equivalent control-flow rewrites need no penalty solely because syntax counts change.
+An undisclosed behavior change needs accepted scope and regression evidence, even when token counts stay equal.
+Record the affected contract and evidence before assigning yellow or fail.
 
 ## 1.6 Mock boundaries
 
