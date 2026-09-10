@@ -572,7 +572,11 @@ export function createDebugCommandTestEnv(
   fs.mkdirSync(localBin, { recursive: true });
   // Register the env-sourced sandbox plus any extra names supplied via the
   // --sandbox flag so the validation gate accepts them.
-  writeSandboxRegistry(home, sandboxName, options.gatewayPort ? { gatewayPort: options.gatewayPort } : {});
+  writeSandboxRegistry(
+    home,
+    sandboxName,
+    options.gatewayPort ? { gatewayPort: options.gatewayPort } : {},
+  );
   if (options.extraSandboxNames && options.extraSandboxNames.length > 0) {
     const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
     const current = JSON.parse(fs.readFileSync(registryPath, "utf-8")) as {

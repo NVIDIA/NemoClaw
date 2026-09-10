@@ -27,9 +27,7 @@ export async function uploadToSandbox(opts: SandboxUploadOptions): Promise<Sandb
   });
 }
 
-async function uploadToSandboxUnlocked(
-  opts: SandboxUploadOptions,
-): Promise<SandboxUploadResult> {
+async function uploadToSandboxUnlocked(opts: SandboxUploadOptions): Promise<SandboxUploadResult> {
   const trimmedHostPath = (opts.hostPath ?? "").trim();
   if (!trimmedHostPath) {
     throw new Error(

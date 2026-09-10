@@ -1936,8 +1936,7 @@ function readCurrentSandboxPolicy(
     return (
       parseCurrentPolicyOrEmpty(
         readLivePolicyDocument(sandboxName, selectedGateway, "base", undefined, runtimeSelection),
-      ) ||
-      null
+      ) || null
     );
   } catch {
     return null;
@@ -2834,11 +2833,7 @@ function getPresetContentGatewayState(
 ): "match" | "absent" | "drift" | null {
   return inspectPresetContentGatewayState({
     readPolicy: () =>
-      readCurrentSandboxPolicy(
-        sandboxName,
-        runtimeSelection?.gatewayName,
-        runtimeSelection,
-      ) ?? "",
+      readCurrentSandboxPolicy(sandboxName, runtimeSelection?.gatewayName, runtimeSelection) ?? "",
     parseCurrentPolicy: parseCurrentPolicyOrEmpty,
     extractPresetEntries,
     presetContent,

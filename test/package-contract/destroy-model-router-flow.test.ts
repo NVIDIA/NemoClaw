@@ -92,9 +92,7 @@ describe("destroySandbox model-router teardown (#9098)", () => {
       } as Session;
       const compareAndSwapSession = vi.fn(
         (matches: (current: Session) => boolean, mutator: (current: Session) => Session | void) => {
-          return matches(session)
-            ? (mutator(session), "updated" as const)
-            : ("mismatch" as const);
+          return matches(session) ? (mutator(session), "updated" as const) : ("mismatch" as const);
         },
       );
 

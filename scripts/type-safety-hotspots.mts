@@ -1560,14 +1560,12 @@ function buildNullableUnionReport(
         return left.type.localeCompare(right.type);
       }),
     byFile: [...byFile.entries()]
-      .map(
-        ([filePath, entry]): NullableUnionFileHotspot => ({
-          filePath,
-          count: entry.count,
-          fanIn: entry.fanIn,
-          topTypes: countByValue(entry.types).slice(0, 5),
-        }),
-      )
+      .map(([filePath, entry]): NullableUnionFileHotspot => ({
+        filePath,
+        count: entry.count,
+        fanIn: entry.fanIn,
+        topTypes: countByValue(entry.types).slice(0, 5),
+      }))
       .sort((left, right) => {
         if (right.count !== left.count) return right.count - left.count;
         if (right.fanIn !== left.fanIn) return right.fanIn - left.fanIn;

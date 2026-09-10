@@ -205,7 +205,7 @@ Start a new shell session to refresh the cached sandbox names after creating or 
 
 ### `$$nemoclaw config export <sandbox>`
 
-Export a supported registered OpenClaw sandbox as a secret-free `NemoClawConfig` document. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
+Export a supported registered OpenClaw or Hermes sandbox as a secret-free `NemoClawConfig` document. The same command is available as `$$nemohermes config export <sandbox>`. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
 For NVIDIA Endpoints, it verifies the gateway's built-in NVIDIA provider profile and default endpoint.
@@ -240,8 +240,9 @@ Before manual removal, use `stat` to verify both identities and confirm that the
 If either identity cannot be verified, do not remove files by name alone.
 Do not remove the requested output file to clean up a temporary link.
 
-Version 1 exports managed OpenClaw sandboxes in the default workspace.
+Version 1 exports managed OpenClaw sandboxes and canonical managed Hermes sandboxes in the default workspace.
 Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
+Hermes export also requires the default API configuration, a disabled dashboard, no Hermes tool gateways, and no Hermes-specific authentication settings.
 Other profiles fail with a diagnostic instead of producing an incomplete document.
 
 ### `$$nemoclaw resources`
@@ -1100,10 +1101,13 @@ These diagnostics report durations and counts for authority, container, health, 
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-  Portable lifecycle recovery also emits one credential-free `Portable lifecycle timing:` line. It
-  reports fixed authority, container, exec-readiness, Ollama, startup, and gateway stages with their
-  durations, selected actions, attempt counts, result, and failed stage when available. This
-  diagnostic does not change recovery behavior or the command exit status.
+  Portable lifecycle recovery attempts to emit at most one credential-free `Portable lifecycle timing:` line.
+  It reports fixed authority, container, exec-readiness, Ollama, startup, and gateway stages with their durations, selected actions, attempt counts, result, and failed stage when available.
+  It also attempts to emit at most one credential-free `Portable OpenClaw gateway startup timing:` line.
+  When accepted launch-readiness evidence lets `connect --probe-only`, `launch`, or `recover` skip additional lifecycle work, NemoClaw attempts to emit each receipt once.
+  The lifecycle receipt reports `0ms` for timing fields, `0` for attempt fields, `containerAction=reused`, `gatewayAction=reused`, `ollamaAction=not-applicable`, and `result=already-running`.
+  The gateway receipt reports `0ms` for timing fields, `firstReadyAttempt=0`, `lastFailure=none`, and `diagnosticReadOutcome=not-applicable`.
+  Receipt-output failures do not change recovery behavior or command exit status.
 </AgentOnly>
 
 Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.
@@ -1739,7 +1743,12 @@ For a sandbox that owns managed llama.cpp, `doctor` adds secret-free identity an
 
 <AgentOnly variant="openclaw">
 
-For OpenClaw sandboxes, `doctor` also checks the mutable config permission contract. If `openclaw doctor --fix` was run inside the sandbox, it can tighten `/sandbox/.openclaw` and `openclaw.json` to a single-user `700/600` layout, which stops the gateway from persisting config changes. `doctor` reports this as a `Config permissions` warning; pass `--fix` to restore the group-writable `2770/660` contract without rebuilding. Restarting the sandbox repairs the same drift automatically.
+For OpenClaw sandboxes, `doctor` also checks the mutable config permission contract.
+When the existing config guard verifies a same-user nonroot launch, `/sandbox/.openclaw` uses `0700` and `openclaw.json` uses `0600`.
+Separate gateway identities and unverified layouts retain `2770/0660` for shared access.
+If `openclaw doctor --fix` removes required group access, `doctor` reports a `Config permissions` warning.
+Pass `--fix` to restore the permissions selected by the existing guard without rebuilding.
+Restarting the sandbox repairs the same drift when the config tree passes its safety checks.
 
 ```bash
 $$nemoclaw my-assistant doctor [--json | --fix]
@@ -1748,7 +1757,7 @@ $$nemoclaw my-assistant doctor [--json | --fix]
 | Flag | Description |
 | --- | --- |
 | `--json` | Emit the report as JSON |
-| `--fix` | Restore the mutable OpenClaw config permission contract if it was tightened. Mutually exclusive with `--json` |
+| `--fix` | Restore the mutable OpenClaw config permission contract. Mutually exclusive with `--json` |
 
 </AgentOnly>
 <AgentOnly variant="hermes">

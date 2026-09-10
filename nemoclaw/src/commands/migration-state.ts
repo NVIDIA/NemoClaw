@@ -145,7 +145,8 @@ function parseConfigDocument(value: unknown, context: string): OpenClawConfigDoc
 }
 
 function resolveHostHome(env: NodeJS.ProcessEnv = process.env): string {
-  const fallbackHome = readTrimmedString(env.HOME) ?? readTrimmedString(env.USERPROFILE) ?? os.homedir();
+  const fallbackHome =
+    readTrimmedString(env.HOME) ?? readTrimmedString(env.USERPROFILE) ?? os.homedir();
   const explicitHome = env.OPENCLAW_HOME?.trim();
   if (explicitHome) {
     if (explicitHome === "~") {

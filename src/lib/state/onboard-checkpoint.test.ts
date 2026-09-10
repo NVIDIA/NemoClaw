@@ -403,15 +403,15 @@ describe("checkpoint schema inspection", () => {
     expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
   });
 
-  it.each([
-    "sourceLiveIdentityFingerprint",
-    "targetLiveIdentityFingerprint",
-  ])("rejects a malformed nullable recreate journal field: %s", (field) => {
-    const serialized = serializedRecreateCheckpoint();
-    (serialized.sandboxRecreate as Record<string, unknown>)[field] = 42;
+  it.each(["sourceLiveIdentityFingerprint", "targetLiveIdentityFingerprint"])(
+    "rejects a malformed nullable recreate journal field: %s",
+    (field) => {
+      const serialized = serializedRecreateCheckpoint();
+      (serialized.sandboxRecreate as Record<string, unknown>)[field] = 42;
 
-    expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
-  });
+      expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
+    },
+  );
 
   it("rejects a checkpoint whose external authority targets a different port", () => {
     const serialized = serializeCheckpoint(

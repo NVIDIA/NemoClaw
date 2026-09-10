@@ -53,11 +53,7 @@ export interface PromptHelperDeps {
   prompt(question: string): Promise<string>;
 }
 
-export type OnboardConfigurationReviewAction =
-  | "apply"
-  | "edit-inference"
-  | "edit-sandbox"
-  | "exit";
+export type OnboardConfigurationReviewAction = "apply" | "edit-inference" | "edit-sandbox" | "exit";
 
 export interface OnboardConfigurationReviewDeps {
   prompt(question: string): Promise<string>;

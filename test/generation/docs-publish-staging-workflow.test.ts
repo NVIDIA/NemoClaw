@@ -33,52 +33,56 @@ function requiredStep(steps: WorkflowStep[] | undefined, name: string): Workflow
 describe("staging docs preview cleanup", () => {
   const workflow = readYaml<Workflow>(".github/workflows/docs-publish-staging.yaml");
 
-  it.each(
-    deletionCases,
-  )("passes the complete preview URL to Fern for instance %s", (instance, expectedUrl) => {
-    const deleteStep = requiredStep(workflow.jobs["delete-preview"]?.steps, "Delete Fern previews");
-    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-fern-preview-cleanup-"));
-    const fakeBin = join(temp, "bin");
-    const commandLog = join(temp, "command.json");
-    mkdirSync(fakeBin);
-    writeFileSync(
-      join(fakeBin, "npx"),
-      [
-        "#!/usr/bin/env node",
-        'const fs = require("node:fs");',
-        "fs.writeFileSync(process.env.COMMAND_LOG, JSON.stringify(process.argv.slice(2)));",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+  it.each(deletionCases)(
+    "passes the complete preview URL to Fern for instance %s",
+    (instance, expectedUrl) => {
+      const deleteStep = requiredStep(
+        workflow.jobs["delete-preview"]?.steps,
+        "Delete Fern previews",
+      );
+      const temp = mkdtempSync(join(tmpdir(), "nemoclaw-fern-preview-cleanup-"));
+      const fakeBin = join(temp, "bin");
+      const commandLog = join(temp, "command.json");
+      mkdirSync(fakeBin);
+      writeFileSync(
+        join(fakeBin, "npx"),
+        [
+          "#!/usr/bin/env node",
+          'const fs = require("node:fs");',
+          "fs.writeFileSync(process.env.COMMAND_LOG, JSON.stringify(process.argv.slice(2)));",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
 
-    try {
-      const result = spawnSync("bash", ["-c", deleteStep.run ?? ""], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          COMMAND_LOG: commandLog,
-          FERN_STAGING_INSTANCE: instance,
-          FERN_TOKEN: "test-token",
-          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-          PREVIEW_IDS: "pr-123",
-        },
-      });
+      try {
+        const result = spawnSync("bash", ["-c", deleteStep.run ?? ""], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            COMMAND_LOG: commandLog,
+            FERN_STAGING_INSTANCE: instance,
+            FERN_TOKEN: "test-token",
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            PREVIEW_IDS: "pr-123",
+          },
+        });
 
-      expect(result.status, result.stderr).toBe(0);
-      const command = JSON.parse(readFileSync(commandLog, "utf8")) as string[];
-      expect(command).toEqual([
-        "--yes",
-        `fern-api@${fernConfig.version}`,
-        "docs",
-        "preview",
-        "delete",
-        expectedUrl,
-      ]);
-      expect(command).not.toContain("--id");
-    } finally {
-      rmSync(temp, { force: true, recursive: true });
-    }
-  });
+        expect(result.status, result.stderr).toBe(0);
+        const command = JSON.parse(readFileSync(commandLog, "utf8")) as string[];
+        expect(command).toEqual([
+          "--yes",
+          `fern-api@${fernConfig.version}`,
+          "docs",
+          "preview",
+          "delete",
+          expectedUrl,
+        ]);
+        expect(command).not.toContain("--id");
+      } finally {
+        rmSync(temp, { force: true, recursive: true });
+      }
+    },
+  );
 
   it.each([
     [0, "Domain not registered", "Fern preview pr-123 does not exist."],
