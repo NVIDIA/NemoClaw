@@ -254,10 +254,12 @@ It omits the default progressive disclosure setting.
 When OpenClaw conversation diagnostics are enabled, the export includes the fixed local OTLP endpoint, service name, and sample rate under agent observability.
 It never includes collector credentials.
 It omits settings that equal the managed defaults.
-Hermes export also requires the default API configuration, a disabled dashboard, and no Hermes tool gateways.
+Hermes export fails when Hermes tool gateways are enabled.
+It preserves an enabled Hermes dashboard, nondefault dashboard or internal ports, enabled browser terminal UI, and a nondefault allocated API port under `interfaces`.
+A disabled dashboard and default API port are omitted.
 It exports Hermes API-key authentication only when the retained authentication proof matches the managed Hermes provider, OpenAI-compatible API, endpoint, and `NOUS_API_KEY` credential reference.
 The exported agent binds its API-key authentication to that provider reference.
-OAuth authentication and other profiles fail with a diagnostic instead of producing an incomplete document.
+OAuth authentication and other unsupported profiles fail with a diagnostic instead of producing an incomplete document.
 
 <AgentOnly variant="hermes">
 

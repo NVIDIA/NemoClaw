@@ -583,6 +583,93 @@
                         "type": {
                           "type": "string",
                           "const": "hermes"
+                        },
+                        "interfaces": {
+                          "type": "object",
+                          "properties": {
+                            "dashboard": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "required": ["enabled"],
+                                  "properties": {
+                                    "enabled": {
+                                      "type": "boolean",
+                                      "const": false
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "required": ["enabled"],
+                                  "properties": {
+                                    "enabled": {
+                                      "type": "boolean",
+                                      "const": true
+                                    },
+                                    "port": {
+                                      "type": "integer",
+                                      "minimum": 1024,
+                                      "maximum": 65535,
+                                      "not": {
+                                        "anyOf": [
+                                          {
+                                            "minimum": 8642,
+                                            "maximum": 8652
+                                          },
+                                          {
+                                            "const": 18642
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "internalPort": {
+                                      "type": "integer",
+                                      "minimum": 1024,
+                                      "maximum": 65535,
+                                      "not": {
+                                        "anyOf": [
+                                          {
+                                            "minimum": 8642,
+                                            "maximum": 8652
+                                          },
+                                          {
+                                            "const": 18642
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "tui": {
+                                      "type": "object",
+                                      "required": ["enabled"],
+                                      "properties": {
+                                        "enabled": {
+                                          "type": "boolean"
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                }
+                              ]
+                            },
+                            "api": {
+                              "type": "object",
+                              "required": ["port"],
+                              "properties": {
+                                "port": {
+                                  "type": "integer",
+                                  "minimum": 8642,
+                                  "maximum": 8652
+                                }
+                              },
+                              "additionalProperties": false
+                            }
+                          },
+                          "additionalProperties": false,
+                          "minProperties": 1
                         }
                       },
                       "additionalProperties": false
