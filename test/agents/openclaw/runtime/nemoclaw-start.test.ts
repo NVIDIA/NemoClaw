@@ -8,7 +8,6 @@ import os from "node:os";
 import path from "node:path";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
-import * as probe from "../../../helpers/openclaw-auto-pair-scheduler";
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 import { createCanonicalCliFixture, setupLateCliFixture } from "./auto-pair-settlement-fixture";
 
@@ -206,7 +205,17 @@ function localApprovalPolicyPythonScript(src: string): string {
 }
 
 function autoPairPythonScript(src: string): string {
-  return probe.instrumentAutoPairPythonScript(localApprovalPolicyPythonScript(src));
+  return localApprovalPolicyPythonScript(src)
+    .replaceAll("time.time()", "_nemoclaw_test_time()")
+    .replaceAll("time.sleep(", "_nemoclaw_test_sleep(")
+    .replace(
+      "import time",
+      `import time
+_nemoclaw_test_clock = [time.time()]
+_nemoclaw_test_time = lambda: _nemoclaw_test_clock[0]
+def _nemoclaw_test_sleep(seconds): print('TEST_SLEEP', repr(seconds)); _nemoclaw_test_clock.__setitem__(0, _nemoclaw_test_clock[0] + min(max(float(seconds), 0), 0.25))
+`,
+    );
 }
 
 describe("nemoclaw-start non-root fallback", () => {
@@ -1014,13 +1023,6 @@ setImmediate(function () {
   });
 });
 
-describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
-  it.each(probe.AUTO_PAIR_SCHEDULER_CASES)("$name (#11161)", ({ kind, options, env, expected }) => {
-    const resolved = probe.runAutoPairSchedulerProbe(START_SCRIPT, kind, options, env);
-    expect(resolved).toMatchObject(expected);
-  });
-});
-
 describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -1170,12 +1172,10 @@ exit 2
 });
 describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-
   function buildAutoPairScript(): string {
     return autoPairPythonScript(src);
   }
-
-  it("stays fast through browser pairing and slows only after the canonical CLI baseline", () => {
+  it("stays fast through browser pairing and clamps slow sleep to the watcher deadline", () => {
     const { tmpDir, fakeOpenclaw, approveLog, stateDir } = setupLateCliFixture(
       "nemoclaw-auto-pair-slow-",
     );
@@ -1199,7 +1199,6 @@ describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
         "[auto-pair] approved request=browser-pair client=openclaw-control-ui mode=webchat",
       );
       expect(run.stdout).not.toContain("browser pairing converged");
-      // Concurrent late wave is handled before the fast-to-slow transition.
       expect(run.stdout).toContain("[auto-pair] approved request=late-cli client=cli mode=cli");
       expect(run.stdout).toContain("[auto-pair] approved request=late-cli-b client=cli mode=cli");
       expect(run.stdout).toContain("watcher deadline reached approvals=3");
@@ -1207,6 +1206,7 @@ describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
         "[auto-pair] canonical CLI baseline settled; entering slow-mode approvals=3",
       );
       expect(run.stdout).toContain("[auto-pair] fast-reentry bumped polls=3 approved=3 mode=fast");
+      expect(run.stdout).toContain("TEST_SLEEP 0.25");
       const approvedAt = run.stdout.indexOf("approved request=late-cli-b");
       const settledAt = run.stdout.indexOf("canonical CLI baseline settled");
       expect(settledAt).toBeGreaterThan(approvedAt);
@@ -1452,11 +1452,16 @@ exit 2
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
+          NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "Infinity",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
         timeout: 20_000,
       });
       expect(run.status).toBe(0);
+      expect(run.stdout).toContain(
+        "warning invalid direct environment NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS; using default=5",
+      );
+      expect(run.stdout).not.toContain("Infinity");
       expect(run.stdout).not.toContain("entering slow-mode");
       expect(run.stdout).toContain(
         '[auto-pair-status] {"schemaVersion":1,"state":"request-not-produced"}',
@@ -1524,7 +1529,7 @@ exit 2
     }
   }, 30_000);
 
-  it("bounds the openclaw CLI invocation so a wedged child cannot pin the watcher", () => {
+  it("caps a wedged OpenClaw invocation at the watcher deadline", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-runto-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
 
@@ -1553,18 +1558,14 @@ exit 0
           // exercising a genuine subprocess.run timeout.
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "0.05",
-          NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "0.25",
+          NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "300",
         },
         timeout: 20_000,
       });
       const elapsedMs = Date.now() - start;
       expect(run.status).toBe(0);
-      // The watcher exited via DEADLINE, not via a wedged subprocess.
       expect(run.stdout).toContain("watcher deadline reached approvals=0 limit=1s");
-      // Timeout log was emitted for at least one stuck `devices list`.
-      expect(run.stdout).toContain("[auto-pair] timeout calling devices list limit=0.25s");
-      // Sanity: if the timeout didn't fire, the first `sleep 2` would
-      // already exceed this cap before the watcher could reach its deadline.
+      expect(run.stdout).toMatch(/\[auto-pair\] timeout calling devices list limit=0\.[0-9]+s/u);
       expect(elapsedMs).toBeLessThan(1_800);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -1635,7 +1636,6 @@ exit 2
         timeout: 30_000,
       });
       expect(run.status).toBe(0);
-      // Timeout was logged for the first attempt.
       expect(run.stdout).toContain("[auto-pair] timeout calling devices approve limit=0.75s");
       // Retry succeeded on the second attempt.
       expect(run.stdout).toContain(

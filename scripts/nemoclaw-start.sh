@@ -2689,16 +2689,24 @@ _ENV_SECONDS_VALUE = re.compile(
 _ENV_POLLS_VALUE = re.compile(r'^\+?[0-9]+$')
 
 
+def _env_default(name, default):
+    print(f'[auto-pair] warning invalid direct environment {name}; using default={default}')
+    return default
+
+
 def _env_seconds(name, default, minimum, maximum):
-    raw = os.environ.get(name, '').strip()
-    if not raw or _ENV_SECONDS_VALUE.fullmatch(raw) is None:
+    configured = os.environ.get(name)
+    if configured is None or configured == '':
         return default
+    raw = configured.strip()
+    if not raw or _ENV_SECONDS_VALUE.fullmatch(raw) is None:
+        return _env_default(name, default)
     try:
         value = float(raw)
     except ValueError:
-        return default
+        return _env_default(name, default)
     if value < minimum or value > maximum:
-        return default
+        return _env_default(name, default)
     return value
 
 
@@ -2706,17 +2714,20 @@ def _env_polls(name, default):
     # Keep direct process-environment parsing on the same decimal-integer
     # grammar as the host renderer and entrypoint wrapper. Python otherwise
     # accepts forms such as 1e1 that the managed handoff rejects.
-    raw = os.environ.get(name, '').strip()
-    if not raw or _ENV_POLLS_VALUE.fullmatch(raw) is None:
+    configured = os.environ.get(name)
+    if configured is None or configured == '':
         return default
+    raw = configured.strip()
+    if not raw or _ENV_POLLS_VALUE.fullmatch(raw) is None:
+        return _env_default(name, default)
     significant_digits = raw.removeprefix('+').lstrip('0')
     if not significant_digits or len(significant_digits) > 16:
-        return default
+        return _env_default(name, default)
     try:
         value = int(raw, 10)
     except ValueError:
-        return default
-    return value if 0 < value <= _ENV_POLLS_MAX else default
+        return _env_default(name, default)
+    return value if 0 < value <= _ENV_POLLS_MAX else _env_default(name, default)
 
 
 # Total runtime cap. After convergence the watcher polls at a slow cadence,
