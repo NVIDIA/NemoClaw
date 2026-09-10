@@ -74,14 +74,16 @@
 //    - Removal condition: drop this guard when `openclaw agent` exits non-zero
 //      for a turn whose deadline fired.
 //
-// Regression tests: `passthrough-dispatch.test.ts` owns the classifier and the
-// supervised process lifecycle; `passthrough-help.test.ts` owns the diagnostic
-// text.
+// Regression tests: `passthrough-dispatch.test.ts` owns the classifier; the
+// CLI session and core capture tests own the process lifecycle.
+// `passthrough-help.test.ts` owns the diagnostic text.
 
-import { spawn, type StdioOptions } from "node:child_process";
-
-import { isStdinTty } from "../../../core/stdin";
-import { runSandboxExecChild, type SandboxExecChild, type SandboxExecSignalSource } from "../exec";
+import { createCliOpenShellSandboxSessionExecutor } from "../../../adapters/openshell/sandbox-command-cli";
+import type {
+  OpenShellSandboxSessionCompletion,
+  OpenShellSandboxSessionRequest,
+  OpenShellSandboxSessionExecutor,
+} from "../../../adapters/openshell/sandbox-session";
 
 /**
  * Exit code for a dispatch that reported success without delivering a turn.
@@ -89,154 +91,19 @@ import { runSandboxExecChild, type SandboxExecChild, type SandboxExecSignalSourc
  */
 export const SILENT_AGENT_DISPATCH_EXIT_CODE = 1;
 
-/** The subset of a child-process result the delivery classifier reads. */
-export type AgentDispatchOutcome = {
-  error?: Error;
-  status: number | null;
-  signal?: NodeJS.Signals | null;
-};
-
-export type AgentDispatchResult = AgentDispatchOutcome & {
-  stderr: string;
-  stdout: string;
-};
-
-type AgentDispatchReadable = {
-  on(event: "data", listener: (chunk: Buffer | string) => void): unknown;
-};
-
-type AgentDispatchCaptureBudget = {
-  bytes: number;
-  overflowed: boolean;
-};
-
-export type AgentDispatchChild = SandboxExecChild & {
-  stderr: AgentDispatchReadable | null;
-  stdout: AgentDispatchReadable | null;
-};
-
-export type AgentDispatchSpawner = (
-  binary: string,
-  args: readonly string[],
-  stdio: StdioOptions,
-) => AgentDispatchChild;
-
+export type AgentDispatchOutcome = Pick<OpenShellSandboxSessionCompletion, "outcome">;
+export type AgentDispatchResult = Omit<OpenShellSandboxSessionCompletion, "release">;
 export type AgentDispatchRunner = (
-  binary: string,
-  args: readonly string[],
-  options?: {
-    maxBufferBytes?: number;
-    stdinIsTty?: boolean;
-  },
+  request: OpenShellSandboxSessionRequest,
 ) => Promise<AgentDispatchResult>;
 
-export type AgentDispatchRunDeps = {
-  signalSource?: SandboxExecSignalSource;
-  spawnChild?: AgentDispatchSpawner;
-};
-
-const DEFAULT_AGENT_DISPATCH_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
-
-const defaultAgentDispatchSpawner: AgentDispatchSpawner = (binary, args, stdio) =>
-  spawn(binary, [...args], { stdio }) as unknown as AgentDispatchChild;
-
-function captureAgentDispatchStream(
-  stream: AgentDispatchReadable | null,
-  child: AgentDispatchChild,
-  chunks: Buffer[],
-  maxBufferBytes: number,
-  budget: AgentDispatchCaptureBudget,
-  setOverflowError: (error: Error) => void,
-): void {
-  stream?.on("data", (chunk) => {
-    if (budget.overflowed) return;
-    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    const nextSize = budget.bytes + data.byteLength;
-    if (nextSize > maxBufferBytes) {
-      budget.overflowed = true;
-      setOverflowError(
-        new Error(`agent output exceeded the ${maxBufferBytes}-byte combined capture limit`),
-      );
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
-      return;
-    }
-    budget.bytes = nextSize;
-    chunks.push(data);
-  });
-}
-
-/**
- * Capture one agent dispatch while the shared sandbox exec supervisor forwards
- * host termination signals to OpenShell and waits for the child to exit.
- */
 export async function runAgentDispatch(
-  binary: string,
-  args: readonly string[],
-  options: {
-    maxBufferBytes?: number;
-    stdinIsTty?: boolean;
-  } = {},
-  deps: AgentDispatchRunDeps = {},
+  request: OpenShellSandboxSessionRequest,
+  executor: OpenShellSandboxSessionExecutor = createCliOpenShellSandboxSessionExecutor(),
 ): Promise<AgentDispatchResult> {
-  const stderrChunks: Buffer[] = [];
-  const stdoutChunks: Buffer[] = [];
-  const captureBudget: AgentDispatchCaptureBudget = { bytes: 0, overflowed: false };
-  let overflowError: Error | undefined;
-  const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_AGENT_DISPATCH_MAX_BUFFER_BYTES;
-  const spawnChild = deps.spawnChild ?? defaultAgentDispatchSpawner;
-  const result = await runSandboxExecChild(
-    binary,
-    args,
-    { tty: false },
-    (runBinary, runArgs) => {
-      const child = spawnChild(
-        runBinary,
-        runArgs,
-        agentDispatchStdio(options.stdinIsTty ?? isStdinTty()),
-      );
-      const setOverflowError = (error: Error) => {
-        overflowError ??= error;
-      };
-      captureAgentDispatchStream(
-        child.stdout,
-        child,
-        stdoutChunks,
-        maxBufferBytes,
-        captureBudget,
-        setOverflowError,
-      );
-      captureAgentDispatchStream(
-        child.stderr,
-        child,
-        stderrChunks,
-        maxBufferBytes,
-        captureBudget,
-        setOverflowError,
-      );
-      return child;
-    },
-    deps.signalSource,
-  );
-  try {
-    return {
-      status: result.status,
-      signal: result.signal,
-      ...(result.error || overflowError ? { error: result.error ?? overflowError } : {}),
-      stderr: Buffer.concat(stderrChunks).toString("utf-8"),
-      stdout: Buffer.concat(stdoutChunks).toString("utf-8"),
-    };
-  } finally {
-    result.releaseSignals?.();
-  }
-}
-
-/**
- * Stdio for a non-interactive agent dispatch. An interactive terminal is
- * withheld from fd 0; a genuine pipe or redirect is still forwarded so
- * scripted stdin keeps working.
- */
-export function agentDispatchStdio(stdinIsTty: boolean = isStdinTty()): StdioOptions {
-  return [stdinIsTty ? "ignore" : "inherit", "pipe", "pipe"];
+  const result = await executor.start(request).completion;
+  result.release();
+  return { outcome: result.outcome, stdout: result.stdout, stderr: result.stderr };
 }
 
 /**
@@ -249,7 +116,12 @@ export function isSilentAgentDispatch(
   stdout: string,
   stderr: string,
 ): boolean {
-  return !result.error && result.status === 0 && stdout.length === 0 && stderr.length === 0;
+  return (
+    result.outcome.kind === "exited" &&
+    result.outcome.exitCode === 0 &&
+    stdout.length === 0 &&
+    stderr.length === 0
+  );
 }
 
 /**

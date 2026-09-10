@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import YAML from "yaml";
+import Ajv from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { renderCanonicalNemoClawConfig, validateNemoClawConfig } from "./index";
 import {
@@ -19,6 +20,10 @@ import {
   type NemoClawConfigDocumentName,
   type NemoClawConfigDocumentUid,
 } from "./model";
+
+const validateAgentSchema = new Ajv({ strict: false }).compile(
+  NemoClawConfigSchema.properties.spec.properties.sandboxes.items.properties.agents.items,
+);
 
 function config(uid = "11111111-1111-4111-8111-111111111111") {
   return {
@@ -81,6 +86,130 @@ function renderInput(value: unknown) {
 }
 
 describe("NemoClawConfig v1", () => {
+  it.each(["progressive", "direct"])("validates tool disclosure %s", (disclosure) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, { tools: { disclosure } });
+    expect(validateNemoClawConfig(value)).toEqual(value);
+  });
+
+  it.each([
+    {},
+    { disclosure: "unknown" },
+    { disclosure: "DIRECT" },
+    { disclosure: " direct " },
+    { disclosure: false },
+    { disclosure: "credential-canary" },
+    { disclosure: "direct", token: "credential-canary" },
+    { disclosure: "direct", enabledGateways: ["nous-web"] },
+  ])("rejects malformed or unsupported tool configuration", (tools) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, { tools });
+    expect(() => validateNemoClawConfig(value)).toThrow();
+    try {
+      validateNemoClawConfig(value);
+    } catch (error) {
+      expect(String(error)).not.toContain("credential-canary");
+    }
+  });
+
+  it.each([{ disclosure: "progressive" }, { disclosure: "direct" }, {}])(
+    "rejects OpenClaw tool configuration on Hermes",
+    (tools) => {
+      const value = config();
+      Object.assign(value.spec.sandboxes[0]!.agents[0]!, { type: "hermes", tools });
+      expect(() => validateNemoClawConfig(value)).toThrow();
+    },
+  );
+
+  it.each([0, 0.5, 1])("preserves local OTLP sample rate %s in canonical YAML", (sampleRate) => {
+    const value = config();
+    const observability = {
+      otlp: {
+        enabled: true,
+        endpoint: "http://host.openshell.internal:4318",
+        serviceName: "s".repeat(256),
+        sampleRate,
+      },
+    };
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, { observability });
+
+    const rendered = renderInput(value);
+    const roundTrip = validateNemoClawConfig(YAML.parse(rendered.yaml));
+
+    expect(roundTrip.spec.sandboxes[0]!.agents[0]!).toMatchObject({ observability });
+  });
+
+  it("rejects OpenClaw observability on a Hermes agent", () => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, {
+      type: "hermes",
+      observability: {
+        otlp: {
+          enabled: true,
+          endpoint: "http://host.openshell.internal:4318",
+          serviceName: "research-assistant",
+          sampleRate: 0.5,
+        },
+      },
+    });
+
+    expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
+  });
+
+  it.each([
+    { label: "disabled explicit profile", change: { enabled: false } },
+    { label: "remote collector", change: { endpoint: "https://collector.example/v1/traces" } },
+    {
+      label: "collector path",
+      change: { endpoint: "http://host.openshell.internal:4318/v1/traces" },
+    },
+    {
+      label: "collector credentials",
+      change: { endpoint: "http://user:OTEL_CANARY@host.openshell.internal:4318" },
+    },
+    {
+      label: "collector query",
+      change: { endpoint: "http://host.openshell.internal:4318?token=OTEL_CANARY" },
+    },
+    {
+      label: "collector fragment",
+      change: { endpoint: "http://host.openshell.internal:4318#OTEL_CANARY" },
+    },
+    { label: "collector headers", change: { headers: { authorization: "OTEL_CANARY" } } },
+    { label: "empty service", change: { serviceName: "" } },
+    { label: "leading service space", change: { serviceName: " research" } },
+    { label: "trailing service space", change: { serviceName: "research " } },
+    { label: "service newline", change: { serviceName: "research\n" } },
+    { label: "service carriage return", change: { serviceName: "research\r" } },
+    { label: "service control character", change: { serviceName: "research\u0000assistant" } },
+    { label: "Unicode service", change: { serviceName: "recherche-é" } },
+    { label: "oversized service", change: { serviceName: "s".repeat(257) } },
+    { label: "negative sample", change: { sampleRate: -0.1 } },
+    { label: "sample above one", change: { sampleRate: 1.1 } },
+    { label: "non-finite sample", change: { sampleRate: Infinity } },
+    { label: "NaN sample", change: { sampleRate: NaN } },
+  ])("rejects OTLP $label without echoing its value", ({ change }) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, {
+      observability: {
+        otlp: {
+          enabled: true,
+          endpoint: "http://host.openshell.internal:4318",
+          serviceName: "research-assistant",
+          sampleRate: 0.5,
+          ...change,
+        },
+      },
+    });
+
+    expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
+    try {
+      validateNemoClawConfig(value);
+    } catch (error) {
+      expect(String(error)).not.toContain("OTEL_CANARY");
+    }
+  });
+
   it("validates one aggregate config with explicit effective policy (#10938)", () => {
     expect(validateNemoClawConfig(config())).toEqual(config());
   });
@@ -95,6 +224,7 @@ describe("NemoClawConfig v1", () => {
       reasoningEffort: "default",
     });
     Object.assign(agent, { execution: { timeoutSeconds: 1000000000, heartbeatEvery: "0m" } });
+    expect(validateAgentSchema(agent)).toBe(true);
     expect(validateNemoClawConfig(value)).toEqual(value);
   });
 
@@ -128,12 +258,13 @@ describe("NemoClawConfig v1", () => {
     expect(() => validateNemoClawConfig(value)).toThrow();
   });
 
-  it("rejects OpenClaw execution settings on a Hermes agent", () => {
+  it("rejects Hermes execution settings in the agent schema and runtime", () => {
     const value = config();
     Object.assign(value.spec.sandboxes[0]!.agents[0]!, {
       type: "hermes",
       execution: { timeoutSeconds: 900 },
     });
+    expect(validateAgentSchema(value.spec.sandboxes[0]!.agents[0])).toBe(false);
     expect(() => validateNemoClawConfig(value)).toThrow();
   });
 
@@ -270,6 +401,92 @@ describe("NemoClawConfig v1", () => {
     expect(validateNemoClawConfig(value).spec.sandboxes[0]!.agents[0]!.type).toBe("hermes");
   });
 
+  it("round-trips Hermes API-key authentication bound to its inference route (#11432)", () => {
+    const value = structuredClone(config()) as unknown as Record<string, any>;
+    const provider = value.spec.inferenceProviders[0];
+    provider.name = "hosted-hermes-provider";
+    provider.provider = "hermes-provider";
+    provider.api = "openai-completions";
+    provider.endpoint = "https://inference-api.nousresearch.com/v1";
+    provider.credential.env = "NOUS_API_KEY";
+    const agent = value.spec.sandboxes[0].agents[0];
+    agent.type = "hermes";
+    agent.inference.routes[0].providerRef = provider.name;
+    agent.auth = { method: "api-key", providerRef: provider.name };
+
+    const rendered = renderInput(value);
+    expect(validateNemoClawConfig(YAML.parse(rendered.yaml))).toEqual(value);
+  });
+
+  it.each([
+    ["OpenClaw agent", { agentType: "openclaw" }],
+    ["unknown provider", { authProviderRef: "missing" }],
+    ["foreign provider", { provider: "openai" }],
+    ["foreign API", { api: "anthropic-messages" }],
+    ["foreign endpoint", { endpoint: "https://api.example.com/v1" }],
+    ["foreign credential", { credentialEnv: "OPENAI_API_KEY" }],
+  ])("rejects Hermes API-key authentication with an %s (#11432)", (_case, change) => {
+    const options = change as Partial<{
+      agentType: string;
+      api: string;
+      authProviderRef: string;
+      credentialEnv: string;
+      endpoint: string;
+      provider: string;
+      routeProviderRef: string;
+    }>;
+    const value = structuredClone(config()) as unknown as Record<string, any>;
+    const provider = value.spec.inferenceProviders[0];
+    provider.name = "hosted-hermes-provider";
+    provider.provider = options.provider ?? "hermes-provider";
+    provider.api = options.api ?? "openai-completions";
+    provider.endpoint = options.endpoint ?? "https://inference-api.nousresearch.com/v1";
+    provider.credential.env = options.credentialEnv ?? "NOUS_API_KEY";
+    const agent = value.spec.sandboxes[0].agents[0];
+    agent.type = options.agentType ?? "hermes";
+    agent.inference.routes[0].providerRef = options.routeProviderRef ?? provider.name;
+    agent.auth = {
+      method: "api-key",
+      providerRef: options.authProviderRef ?? provider.name,
+    };
+
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
+  it("rejects Hermes API-key authentication unrelated to its inference route", () => {
+    const value = structuredClone(config()) as unknown as Record<string, any>;
+    value.spec.inferenceProviders.push({
+      name: "hosted-hermes-provider",
+      provider: "hermes-provider",
+      api: "openai-completions",
+      endpoint: "https://inference-api.nousresearch.com/v1",
+      credential: { env: "NOUS_API_KEY" },
+    });
+    const agent = value.spec.sandboxes[0].agents[0];
+    agent.type = "hermes";
+    agent.auth = { method: "api-key", providerRef: "hosted-hermes-provider" };
+
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "must match an inference route for this agent",
+    );
+  });
+
+  it.each([
+    { method: "oauth", providerRef: "hosted-openai" },
+    { method: "api_key", providerRef: "hosted-openai" },
+    { method: "api-key", providerRef: "hosted-openai", token: "secret-canary" },
+  ])("rejects unsupported Hermes auth structure %j (#11432)", (auth) => {
+    const value = structuredClone(config()) as unknown as Record<string, any>;
+    value.spec.sandboxes[0].agents[0].type = "hermes";
+    value.spec.sandboxes[0].agents[0].auth = auth;
+    expect(() => validateNemoClawConfig(value)).toThrow();
+    try {
+      validateNemoClawConfig(value);
+    } catch (error) {
+      expect(String(error)).not.toContain("secret-canary");
+    }
+  });
+
   it("keeps the exported authoritative schema deeply immutable", () => {
     expect(Object.isFrozen(NemoClawConfigSchema)).toBe(true);
     expect(Object.isFrozen(NemoClawConfigSchema.properties.spec)).toBe(true);
@@ -320,9 +537,7 @@ describe("NemoClawConfig v1", () => {
     (type) => {
       const value = structuredClone(config()) as unknown as Record<string, any>;
       value.spec.sandboxes[0].agents[0].type = type;
-      expect(() => validateNemoClawConfig(value)).toThrow(
-        "must be equal to one of the allowed values",
-      );
+      expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
     },
   );
 
@@ -640,5 +855,108 @@ describe("fixed managed serving public contract", () => {
     const f = managedServingConfig();
     change(f);
     expect(() => validateNemoClawConfig(f.value)).toThrow();
+  });
+});
+
+describe("OpenClaw dashboard configuration", () => {
+  it("rejects OpenClaw dashboard fields on Hermes (#10904)", () => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, {
+      type: "hermes",
+      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+    });
+    expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
+  });
+
+  it.each([
+    { port: 19000, bind: "0.0.0.0" },
+    { port: 1024 },
+    { port: 65535 },
+    { port: 18789, bind: "127.0.0.1" },
+    { bind: "0.0.0.0" },
+  ])("round trips supported dashboard settings %j (#10904)", (dashboard) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, { interfaces: { dashboard } });
+    expect(validateNemoClawConfig(YAML.parse(renderInput(value).yaml))).toEqual(value);
+  });
+
+  it.each([
+    {},
+    { port: 0 },
+    { port: 1023 },
+    { port: 65536 },
+    { port: 19000.5 },
+    { port: "19000" },
+    { port: 8642 },
+    { port: 8652 },
+    { bind: "::" },
+    { bind: "192.0.2.1" },
+    { bind: "0.0.0.0\n" },
+    { port: 19000, url: "https://dashboard.example.com" },
+    { bind: "0.0.0.0", deviceAuth: { enabled: false } },
+  ])("rejects unsupported dashboard settings %j (#10904)", (dashboard) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, { interfaces: { dashboard } });
+    expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
+  });
+});
+
+describe("Hermes interface configuration", () => {
+  const interfaces = (value: unknown) => {
+    const document = config();
+    Object.assign(document.spec.sandboxes[0]!.agents[0]!, { type: "hermes", interfaces: value });
+    return document;
+  };
+
+  it.each([
+    {
+      dashboard: { enabled: true, port: 19000, internalPort: 19120, tui: { enabled: true } },
+      api: { port: 8643 },
+    },
+    { dashboard: { enabled: true } },
+    { dashboard: { enabled: false } },
+    { dashboard: { enabled: true, tui: { enabled: false } } },
+    { api: { port: 8642 } },
+    { api: { port: 8652 } },
+  ])("round trips supported Hermes interfaces %j (#11433)", (value) => {
+    const document = interfaces(value);
+    expect(validateNemoClawConfig(YAML.parse(renderInput(document).yaml))).toEqual(document);
+  });
+
+  it.each([
+    {},
+    { dashboard: {} },
+    { api: {} },
+    { dashboard: { enabled: false, port: 19000 } },
+    { dashboard: { enabled: false, tui: { enabled: true } } },
+    { dashboard: { enabled: true, port: 19000, internalPort: 19000 } },
+    { dashboard: { enabled: true, port: 19119 } },
+    { dashboard: { enabled: true, internalPort: 18789 } },
+    { dashboard: { enabled: true, bind: "0.0.0.0" } },
+    { dashboard: { enabled: true, url: "https://dashboard.example.com" } },
+    { dashboard: { enabled: true, tui: { enabled: "true" } } },
+    { dashboard: { enabled: true, port: 8642 } },
+    { dashboard: { enabled: true, internalPort: 8652 } },
+    { dashboard: { enabled: true, port: 18642 } },
+    { dashboard: { enabled: true, internalPort: 18642 } },
+    { dashboard: { enabled: true, port: 1023 } },
+    { dashboard: { enabled: true, port: 65536 } },
+    { api: { port: 8641 } },
+    { api: { port: 8653 } },
+    { api: { port: "8643" } },
+    { api: { port: 8643, credential: "/sandbox/.hermes/.env" } },
+  ])("rejects unsupported Hermes interfaces %j (#11433)", (value) => {
+    expect(() => validateNemoClawConfig(interfaces(value))).toThrow("Invalid NemoClawConfig");
+  });
+
+  it.each([
+    { dashboard: { enabled: true } },
+    { dashboard: { internalPort: 19120 } },
+    { dashboard: { tui: { enabled: true } } },
+    { api: { port: 8643 } },
+  ])("rejects Hermes-only fields on OpenClaw %j (#11433)", (value) => {
+    const document = config();
+    Object.assign(document.spec.sandboxes[0]!.agents[0]!, { interfaces: value });
+    expect(() => validateNemoClawConfig(document)).toThrow("Invalid NemoClawConfig");
   });
 });

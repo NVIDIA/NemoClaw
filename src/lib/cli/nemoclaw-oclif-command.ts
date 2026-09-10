@@ -6,10 +6,10 @@ import {
   assertHermesPortableCommandSupported,
   assertHermesPortableCommandUnavailable,
   classifyHermesPortableCommand,
+  hermesPortableLifecycleLockOptions,
   HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE,
   HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE,
 } from "../onboard/experimental/portable-agent-lifecycle";
-import { hasHermesPortableReceiptCandidate } from "../onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
 import {
@@ -142,13 +142,17 @@ export abstract class NemoClawCommand extends Command {
       }
       return super._run<T>();
     };
+    const portableLifecycleLockOptions = hermesPortableLifecycleLockOptions(
+      sandboxName,
+      process.env,
+    );
+    const usesHermesPortableHostAuthority =
+      (commandId === "sandbox:start" || this.isProbeOnlyConnect(commandId)) &&
+      portableLifecycleLockOptions !== undefined;
     const runWithLifecycleFence = async () => {
-      return await withMcpLifecycleLock(sandboxName, runLocked);
+      return await withMcpLifecycleLock(sandboxName, runLocked, portableLifecycleLockOptions);
     };
-    if (
-      this.isProbeOnlyConnect(commandId) &&
-      hasHermesPortableReceiptCandidate(sandboxName, defaultPortableDemoStateDir(process.env))
-    ) {
+    if (usesHermesPortableHostAuthority) {
       return await withCurrentPortableHostFence(runWithLifecycleFence);
     }
     return await runWithLifecycleFence();

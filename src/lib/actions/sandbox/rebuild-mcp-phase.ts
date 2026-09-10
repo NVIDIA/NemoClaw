@@ -53,7 +53,7 @@ async function canExecuteMcpPreparation(
   // inspection/mutation and OpenShell-mediated adapter/provider operations.
   // Prove both before any mutation. A direct Docker fallback would not prove
   // that the OpenShell transport itself can run.
-  const sshProbe = executeSandboxCommand(sandboxName, ":", { runtimeSelection });
+  const sshProbe = await executeSandboxCommand(sandboxName, ":", { runtimeSelection });
   const execProbe = await executeSandboxExecCommand(sandboxName, ":", undefined, {
     localDockerFallbackPolicy: "never",
     runtimeSelection,

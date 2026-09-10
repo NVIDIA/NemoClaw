@@ -29,8 +29,18 @@ export function parseDockerNetworkIpamEntries(
   for (const entry of parsed) {
     if (!entry || typeof entry !== "object") continue;
     const record = entry as Record<string, unknown>;
-    const subnet = typeof record.Subnet === "string" ? record.Subnet : undefined;
-    const gatewayIp = typeof record.Gateway === "string" ? record.Gateway : undefined;
+    const subnet =
+      typeof record.Subnet === "string"
+        ? record.Subnet
+        : typeof record.subnet === "string"
+          ? record.subnet
+          : undefined;
+    const gatewayIp =
+      typeof record.Gateway === "string"
+        ? record.Gateway
+        : typeof record.gateway === "string"
+          ? record.gateway
+          : undefined;
     if (subnet || gatewayIp) entries.push({ subnet, gatewayIp });
   }
   return entries.length > 0 ? entries : undefined;

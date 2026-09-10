@@ -4,6 +4,7 @@
 import { EXPORTED_VLLM_CONTEXT_WINDOW } from "../../config/model";
 import type {
   NemoClawConfig,
+  NemoClawAgentConfig,
   NemoClawConfigDocumentName,
   NemoClawConfigDocumentUid,
   NemoClawInferenceProviderConfig,
@@ -39,6 +40,48 @@ function inferenceProvider(
   return source.inference.credentialEnv === undefined
     ? provider
     : { ...provider, credential: { env: source.inference.credentialEnv } };
+}
+
+function agentSettings(source: VerifiedExportSource) {
+  return {
+    ...(source.agent === "openclaw"
+      ? {
+          type: "openclaw" as const,
+          ...(source.tools === undefined ? {} : { tools: source.tools }),
+          ...(source.interfaces ? { interfaces: source.interfaces } : {}),
+          ...(source.observability ? { observability: source.observability } : {}),
+        }
+      : {
+          type: "hermes" as const,
+          ...(source.interfaces ? { interfaces: source.interfaces } : {}),
+        }),
+    ...(source.execution ? { execution: source.execution } : {}),
+  };
+}
+
+function exportAgent(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig {
+  return {
+    name: "primary",
+    ...(source.auth === undefined
+      ? {}
+      : { auth: { method: source.auth.method, providerRef: providerName } }),
+    ...agentSettings(source),
+    inference: {
+      routes: [
+        {
+          name: "primary",
+          providerRef: providerName,
+          overrides: {
+            model: source.inference.model,
+            ...("serving" in source.inference
+              ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
+              : {}),
+            ...("overrides" in source.inference ? source.inference.overrides : {}),
+          },
+        },
+      ],
+    },
+  };
 }
 
 export interface ExportConfigBuildIdentity {
@@ -78,28 +121,7 @@ export function buildExportConfig(
           ...(source.webSearch === undefined
             ? {}
             : { integrations: { webSearch: source.webSearch } }),
-          agents: [
-            {
-              name: "primary",
-              type: source.agent,
-              ...(source.execution ? { execution: source.execution } : {}),
-              inference: {
-                routes: [
-                  {
-                    name: "primary",
-                    providerRef: providerName,
-                    overrides: {
-                      model: source.inference.model,
-                      ...("serving" in source.inference
-                        ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
-                        : {}),
-                      ...("overrides" in source.inference ? source.inference.overrides : {}),
-                    },
-                  },
-                ],
-              },
-            },
-          ],
+          agents: [exportAgent(source, providerName)],
         },
       ],
     },

@@ -26,6 +26,7 @@ import {
 } from "../experimental/docker-network-authority";
 import {
   hasPortableAgentSandboxLifecycleReceipt,
+  hermesPortableLifecycleLockOptions,
   recoverPortableAgentSandboxLifecycle,
   requalifyPortableAgentSandboxAuthority,
   stopPortableAgentSandboxLifecycle,
@@ -295,8 +296,23 @@ function startDockerSandbox(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleResult {
-  return deps.withLifecycleLockSync(input.sandboxName, () =>
-    startDockerSandboxUnlocked(input, deps),
+  return deps.withLifecycleLockSync(
+    input.sandboxName,
+    () => startDockerSandboxUnlocked(input, deps),
+    dockerLifecycleLockOptions(input, deps),
+  );
+}
+
+function dockerLifecycleLockOptions(
+  input: RuntimeProviderLifecycleInput,
+  deps: DockerRuntimeProviderDependencies,
+): { readonly stateDir: string } | undefined {
+  return hermesPortableLifecycleLockOptions(
+    input.sandboxName,
+    input.environment,
+    () =>
+      input.sandbox.agent === "hermes" &&
+      deps.hasPortableLifecycleReceipt(input.sandboxName, input.environment),
   );
 }
 
@@ -381,8 +397,10 @@ function stopDockerSandbox(
   hooks: RuntimeProviderLifecycleStopHooks,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleStopOutcome {
-  return deps.withLifecycleLockSync(input.sandboxName, () =>
-    stopDockerSandboxUnlocked(input, hooks, deps),
+  return deps.withLifecycleLockSync(
+    input.sandboxName,
+    () => stopDockerSandboxUnlocked(input, hooks, deps),
+    dockerLifecycleLockOptions(input, deps),
   );
 }
 
