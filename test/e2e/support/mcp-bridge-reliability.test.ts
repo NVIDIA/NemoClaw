@@ -100,7 +100,10 @@ const HERMES_RESTART_SETTLEMENT_FIELD_MISMATCHES: Array<
   ["warnings are not an array", (payload) => Object.assign(payload, { warnings: "warning" })],
   ["support is unavailable", (payload) => Object.assign(payload.support, { supported: false })],
   ["support mode differs", (payload) => Object.assign(payload.support, { mode: "direct" })],
-  ["support adapter differs", (payload) => Object.assign(payload.support, { adapter: "openclaw-config" })],
+  [
+    "support adapter differs",
+    (payload) => Object.assign(payload.support, { adapter: "openclaw-config" }),
+  ],
   ["environment names are empty", (payload) => Object.assign(payload.env, { names: [] })],
   ["environment name is not text", (payload) => Object.assign(payload.env, { names: [42] })],
   [
@@ -134,10 +137,7 @@ const HERMES_RESTART_SETTLEMENT_FIELD_MISMATCHES: Array<
       }),
   ],
   ["policy name is empty", (payload) => Object.assign(payload.policy, { name: "" })],
-  [
-    "policy source is incomplete",
-    (payload) => Object.assign(payload.policy, { present: false }),
-  ],
+  ["policy source is incomplete", (payload) => Object.assign(payload.policy, { present: false })],
   [
     "policy source is not configured",
     (payload) => Object.assign(payload.policy, { state: "conflict" }),
@@ -184,9 +184,9 @@ describe("MCP bridge transient classification", () => {
     expect(isHermesMcpAddPostProbeNotReady("hermes-config", HERMES_ADD_POST_PROBE_NOT_READY)).toBe(
       true,
     );
-    expect(isHermesMcpAddPostProbeNotReady("openclaw-config", HERMES_ADD_POST_PROBE_NOT_READY)).toBe(
-      false,
-    );
+    expect(
+      isHermesMcpAddPostProbeNotReady("openclaw-config", HERMES_ADD_POST_PROBE_NOT_READY),
+    ).toBe(false);
     expect(
       isHermesMcpAddPostProbeNotReady("hermes-config", {
         ...HERMES_ADD_POST_PROBE_NOT_READY,

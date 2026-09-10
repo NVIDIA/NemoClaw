@@ -185,10 +185,10 @@ describe("credentials oclif adapter source coverage", () => {
     vi.stubEnv("CUSTOM_TOKEN", "host-only-secret");
     mocks.recordExtraProvider.mockReturnValueOnce(true);
     mocks.runOpenshellProviderCommand.mockReturnValueOnce({
-        status: 1,
-        stdout: "",
-        stderr: "provider creation failed",
-      });
+      status: 1,
+      stdout: "",
+      stderr: "provider creation failed",
+    });
 
     const result = await runCredentialsAddAction({
       provider: "custom-provider",

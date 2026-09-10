@@ -88,11 +88,10 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       harness.preparedDcodeBuildContext,
     );
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
-      "alpha",
-      [mcpEntry],
-      { gatewayName: "nemoclaw", workspace: "default" },
-    );
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    });
   });
 
   it("retires removed Shields state after a complete DCode terminal-agent rebuild", async () => {

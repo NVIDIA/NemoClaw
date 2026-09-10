@@ -26,8 +26,8 @@ const rootDir = process.cwd();
 describe("sandbox MCP oclif command", () => {
   it("runs migration rebuild through the typed public command boundary", async () => {
     expect(mocks.moduleLoaded).not.toHaveBeenCalled();
-    mocks.dispatchMcpBridgeCommand.mockImplementationOnce(
-      async (name, _args, dependencies) => dependencies.rebuildForMigration?.(name),
+    mocks.dispatchMcpBridgeCommand.mockImplementationOnce(async (name, _args, dependencies) =>
+      dependencies.rebuildForMigration?.(name),
     );
 
     await SandboxMcpCommand.run(["alpha", "migrate", "--apply"], rootDir);

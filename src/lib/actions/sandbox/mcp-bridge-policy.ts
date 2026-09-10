@@ -173,7 +173,7 @@ export function getPolicyPresence(
     ) as { network_policies?: Record<string, unknown> } | null;
     return Boolean(
       document?.network_policies &&
-        Object.hasOwn(document.network_policies, buildMcpBridgePolicyKey(entry.server)),
+      Object.hasOwn(document.network_policies, buildMcpBridgePolicyKey(entry.server)),
     );
   } catch {
     return null;

@@ -72,10 +72,12 @@ describe("OpenClaw native MCP adapter", () => {
     const command = buildOpenClawMcpRegisterCommand(entry, false, "/sandbox/.openclaw", "v12");
     expect(command).toContain('\\"transport\\":\\"streamable-http\\"');
     expect(command).toContain("Bearer openshell:resolve:env:v12_GITHUB_TOKEN");
-    expect(openClawHeadersMatchExpected(
-      { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
-      entryHeaders(entry, "v12"),
-    )).toBe(true);
+    expect(
+      openClawHeadersMatchExpected(
+        { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+        entryHeaders(entry, "v12"),
+      ),
+    ).toBe(true);
   });
 
   it("refuses to remove a changed native entry unless force is explicit", () => {

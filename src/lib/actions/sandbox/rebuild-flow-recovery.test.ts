@@ -300,14 +300,15 @@ describe("rebuildSandbox flow: recovery", () => {
       { gatewayName: "nemoclaw", workspace: "default" },
       [mcpEntry],
     );
-    expect(restarted.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
-      "alpha",
-      [mcpEntry],
-      { gatewayName: "nemoclaw", workspace: "default" },
-    );
+    expect(restarted.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    });
     expect(fs.existsSync(handoffPath)).toBe(false);
     expect(
-      JSON.parse(fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8")),
+      JSON.parse(
+        fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8"),
+      ),
     ).not.toHaveProperty("rebuildMcpHandoff");
     expect(
       fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json")),
