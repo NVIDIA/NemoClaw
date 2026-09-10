@@ -405,7 +405,11 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     ],
   },
 }, async ({ artifacts, cleanup: cleanupRegistry, host, lifecycle, progress, sandbox, secrets, skip }) => {
-  const hosted = requireHostedInferenceConfig(secrets);
+  const hosted = requireHostedInferenceConfig(
+    secrets,
+    process.env,
+    USE_PREINSTALLED_LAUNCHABLE ? { provider: "build" } : {},
+  );
   const portableHostedDescriptor =
     PORTABLE_PROFILE && !USE_PREINSTALLED_LAUNCHABLE
       ? stagePortableHostedInferenceDescriptor(hosted)
