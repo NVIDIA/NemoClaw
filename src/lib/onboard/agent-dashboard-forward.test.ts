@@ -10,7 +10,7 @@ describe("ensureAgentDashboardForward", () => {
     delete process.env.CHAT_UI_URL;
   });
 
-  it("launches each declared host-forward port", async () => {
+  it.each([false, true])("forwards Hermes ports with reuse=%s", async (reuseExistingForward) => {
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "http://127.0.0.1:18789") => {
       const parsed = new URL(chatUiUrl);
       return Number(parsed.port);
@@ -25,14 +25,17 @@ describe("ensureAgentDashboardForward", () => {
         },
         ensureDashboardForward,
         hermesApiPort: 8642,
+        reuseExistingForward,
       }),
     ).toBe(18789);
 
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:18789", {
       allowPortReallocation: false,
+      ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
     });
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8642", {
       allowPortReallocation: false,
+      ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
     });
   });
 
@@ -220,5 +223,28 @@ describe("ensureAgentDashboardForward", () => {
       },
     );
     expect(process.env.CHAT_UI_URL).toBe("https://hermes.example.test:9120/ui");
+  });
+
+  it("fails reuse and restores the dashboard URL when the Hermes API forward fails", async () => {
+    process.env.CHAT_UI_URL = "http://127.0.0.1:18790";
+    const warn = vi.fn();
+    const ensureDashboardForward = vi
+      .fn()
+      .mockReturnValueOnce(18790)
+      .mockImplementationOnce(() => {
+        throw new Error("API forward ownership is unknown");
+      });
+    await expect(
+      ensureAgentDashboardForward({
+        sandboxName: "hm",
+        agent: { forwardPort: 18789, forward_ports: [18789, 8642] },
+        ensureDashboardForward,
+        hermesApiPort: 8643,
+        reuseExistingForward: true,
+        warn,
+      }),
+    ).rejects.toThrow("API forward ownership is unknown");
+    expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
+    expect(warn).not.toHaveBeenCalled();
   });
 });

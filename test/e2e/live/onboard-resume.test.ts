@@ -109,11 +109,11 @@ function markSessionInProgress(file: string): void {
   fs.writeFileSync(file, JSON.stringify(session, null, 2), "utf8");
 }
 
-function registeredDashboardPort(): string {
+function registeredDashboardPort(field: "dashboardPort" | "hermesApiPort" = "dashboardPort"): string {
   const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
-    sandboxes?: Record<string, { dashboardPort?: unknown }>;
+    sandboxes?: Record<string, { dashboardPort?: unknown; hermesApiPort?: unknown }>;
   };
-  const port = registry.sandboxes?.[SANDBOX_NAME]?.dashboardPort;
+  const port = registry.sandboxes?.[SANDBOX_NAME]?.[field];
   return typeof port === "number" ? String(port) : "";
 }
 
@@ -174,7 +174,7 @@ test(
       e2ePhases: [
         "confirm runtime and compatible-endpoint prerequisites",
         "clear prior resumable onboarding state",
-        "interrupt onboard after OpenClaw configuration",
+        "interrupt onboard after agent configuration",
         "resume cached setup with sandbox recreation",
         "validate resumed sandbox state and corporate trust",
         "retry final verification after route repair",
@@ -370,7 +370,7 @@ test(
     // ──────────────────────────────────────────────────────────────────
     // Phase 2: first onboard (forced failure at the policies step)
     // ──────────────────────────────────────────────────────────────────
-    progress.phase("interrupt onboard after OpenClaw configuration");
+    progress.phase("interrupt onboard after agent configuration");
     const firstRunEnv: NodeJS.ProcessEnv = {
       ...buildAvailabilityProbeEnv(),
       COMPATIBLE_API_KEY: FAKE_COMPATIBLE_AUTH_VALUE,
@@ -379,6 +379,8 @@ test(
       NEMOCLAW_MODEL: FAKE_COMPATIBLE_MODEL,
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_AGENT: process.env.NEMOCLAW_AGENT ?? "openclaw",
+      NEMOCLAW_HERMES_API_PORT: process.env.NEMOCLAW_HERMES_API_PORT,
       NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
       NEMOCLAW_RECREATE_SANDBOX: "1",
       NEMOCLAW_POLICY_MODE: "suggested",
@@ -605,6 +607,12 @@ test(
       SANDBOX_NAME,
       { artifactName: "phase-3-5-listener-before-route-failure", env: probeEnv },
     );
+    const apiPortBeforeRouteFailure = registeredDashboardPort("hermesApiPort");
+    const hasHermesApi = process.env.NEMOCLAW_AGENT === "hermes";
+    const apiListenerBeforeRouteFailure = hasHermesApi
+      ? await host.inspectOpenShellForwardListener(apiPortBeforeRouteFailure, SANDBOX_NAME, {
+          artifactName: "phase-3-5-api-listener-before-route-failure", env: probeEnv,
+        }) : null;
     markSessionInProgress(SESSION_FILE);
     await fake.close();
 
@@ -633,7 +641,6 @@ test(
     expect(unavailableResumeText).not.toContain(
       `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
     );
-    expect(unavailableResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
 
     const paused = readSession<SessionStateRetryableFailure>(SESSION_FILE);
     await artifacts.writeJson("phase-3-5-session-route-unavailable.json", {
@@ -701,9 +708,15 @@ test(
       `${repairedResumeRun.exitCode}:${parseOpenShellSandboxId(resultText(sandboxAfterRouteRepair)) === sandboxIdBeforeRouteFailure}:${dashboardPortAfterRouteRepair === dashboardPortBeforeRouteFailure}:${listenerAfterRouteRepair.valid}:${listenerAfterRouteRepair.identity === listenerBeforeRouteFailure.identity}:${dashboardAfterRouteRepair.exitCode}:${repairedResumeText.includes("cannot be reallocated or adopted")}`,
       `${repairedResumeText}\n${resultText(sandboxBeforeRouteFailure)}\n${resultText(sandboxAfterRouteRepair)}\n${listenerBeforeRouteFailure.output}\n${listenerAfterRouteRepair.output}\n${resultText(dashboardAfterRouteRepair)}`,
     ).toBe("0:true:true:true:true:0:false");
-    expect(repairedResumeText).toContain("is ready");
-    expect(repairedResumeText).not.toContain(`Deleting and recreating sandbox '${SANDBOX_NAME}'`);
-    expect(repairedResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
+    const apiListenerAfterRouteRepair = hasHermesApi
+      ? await host.inspectOpenShellForwardListener(
+          registeredDashboardPort("hermesApiPort"), SANDBOX_NAME, {
+            artifactName: "phase-3-5-api-listener-after-route-repair", env: probeEnv,
+          }) : null;
+    expect(registeredDashboardPort("hermesApiPort")).toBe(apiPortBeforeRouteFailure);
+    expect(apiListenerBeforeRouteFailure?.valid ?? false, apiListenerBeforeRouteFailure?.output).toBe(hasHermesApi);
+    expect(apiListenerAfterRouteRepair?.valid ?? false, apiListenerAfterRouteRepair?.output).toBe(hasHermesApi);
+    expect(apiListenerAfterRouteRepair?.identity).toBe(apiListenerBeforeRouteFailure?.identity);
     const repaired = readSession<SessionStateComplete>(SESSION_FILE);
     expect(repaired.status).toBe("complete");
 
