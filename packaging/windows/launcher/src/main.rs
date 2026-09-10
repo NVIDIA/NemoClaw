@@ -6,6 +6,8 @@
 mod state_session;
 mod inference_job;
 mod runtime_lease;
+#[cfg(all(windows, test))]
+mod runtime_host;
 mod native_ui_file_owner;
 
 #[cfg(not(target_os = "windows"))]

@@ -13,7 +13,7 @@ import importlib.abc
 import importlib.machinery
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import stat
 import sys
 import tempfile
@@ -27,6 +27,14 @@ _MODULES = {
     "hermes_cli.update_contract": "hermes_cli/update_contract.py",
 }
 _active_root: Path | None = None
+_get_attributes = None
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+
+    _get_attributes = ctypes.WinDLL("kernel32", use_last_error=True).GetFileAttributesW
+    _get_attributes.argtypes = [wintypes.LPCWSTR]
+    _get_attributes.restype = wintypes.DWORD
 
 
 class NativeStartupRefusal(SystemExit):
@@ -37,26 +45,92 @@ def _refuse(message: str) -> None:
     raise NativeStartupRefusal("NemoClaw Windows Hermes: " + message)
 
 
+def _absolute_path(path: Path) -> Path:
+    # This adapter runs inside MXC: GetFinalPathNameByHandle/realpath may be
+    # denied even for a readable file. The host validates and protects the
+    # installed runtime; here we validate its lexical identity and each path
+    # component without changing Python's global path-resolution behavior.
+    if (
+        not path.is_absolute()
+        or len(path.parts) > 64
+        or len(str(path)) > 32767
+        or "\x00" in str(path)
+        or ".." in path.parts
+    ):
+        _refuse("an installer-owned runtime path is not a bounded absolute path.")
+    if path.drive:
+        if (
+            len(path.drive) != 2
+            or not path.drive[0].isascii()
+            or not path.drive[0].isalpha()
+            or path.drive[1] != ":"
+            or any(
+                any(character in part for character in ':<>"|?*')
+                or part.endswith((".", " "))
+                or PureWindowsPath(part).is_reserved()
+                for part in path.parts[1:]
+            )
+        ):
+            _refuse("an installer-owned runtime path has an unsupported identity.")
+    return path
+
+
+def _path_kind(path: Path) -> str:
+    if _get_attributes is not None:
+        # Unlike realpath/lstat in Python 3.11, this query does not need an
+        # exclusive handle or final-path resolution. For a symbolic link it
+        # returns the link's attributes, so every component is checked below.
+        attributes = _get_attributes(str(path))
+        if attributes == 0xFFFFFFFF:
+            raise ctypes.WinError(ctypes.get_last_error())
+        if attributes & (0x400 | 0x40):  # REPARSE_POINT or DEVICE
+            _refuse(
+                "an installer-owned runtime path has an invalid filesystem identity."
+            )
+        return "directory" if attributes & 0x10 else "file"
+    info = path.lstat()
+    if getattr(info, "st_file_attributes", 0) & 0x400:
+        _refuse("an installer-owned runtime path contains a reparse point.")
+    if stat.S_ISDIR(info.st_mode):
+        return "directory"
+    if stat.S_ISREG(info.st_mode):
+        return "file"
+    _refuse("an installer-owned runtime path has an invalid filesystem identity.")
+
+
 def _regular_file(path: Path, root: Path) -> Path:
+    path = _absolute_path(path)
+    root = _absolute_path(root)
     try:
-        info = path.lstat()
-        resolved = path.resolve(strict=True)
-        resolved.relative_to(root)
+        path.relative_to(root)
+        # Check from the volume root downward so intermediate junctions and
+        # symlinks are rejected before querying anything beneath them.
+        # The installer-owned read-only tree prevents guest replacement races;
+        # these checks do not replace that host ownership/lease boundary.
+        for current in (*reversed(path.parents), path):
+            expected = "file" if current == path else "directory"
+            if _path_kind(current) != expected:
+                _refuse(
+                    "an installer-owned runtime path has an invalid filesystem identity."
+                )
     except (OSError, ValueError):
         _refuse(
             "an installer-owned runtime file is unavailable; repair this installation."
         )
-    if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
-        _refuse("an installer-owned runtime file has an invalid filesystem identity.")
-    return resolved
+    return path
 
 
 def _discover_root(module_path: Path) -> Path:
-    location = module_path.resolve(strict=True)
+    location = _absolute_path(module_path)
+    _regular_file(location, Path(location.anchor))
     for parent in list(location.parents)[:12]:
         marker = parent / MARKER
-        if not marker.exists():
+        try:
+            _path_kind(marker)
+        except FileNotFoundError:
             continue
+        except OSError:
+            _refuse("the native deployment marker is unavailable.")
         _regular_file(marker, parent)
         with marker.open("rb") as stream:
             encoded = stream.read(16 * 1024 + 1)
@@ -114,7 +188,7 @@ def _adapt_module(module: ModuleType, root: Path, bash: Path) -> None:
 
         def owned_bash():
             result = original()
-            if Path(result).resolve(strict=True) != _regular_file(bash, root):
+            if _regular_file(Path(result), root) != _regular_file(bash, root):
                 _refuse(
                     "the shell resolver selected a runtime outside this installation."
                 )
@@ -175,7 +249,7 @@ class _NativeFinder(importlib.abc.MetaPathFinder):
         expected = _regular_file(self.root / "hermes-agent" / relative, self.root)
         if spec is None or spec.loader is None or not spec.origin:
             _refuse("an official Hermes policy module could not be resolved.")
-        if Path(spec.origin).resolve(strict=True) != expected:
+        if _regular_file(Path(spec.origin), self.root) != expected:
             _refuse(
                 "an official Hermes policy module resolved outside this installation."
             )

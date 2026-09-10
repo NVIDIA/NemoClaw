@@ -51,7 +51,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-native-installer-${{ github.ref }}${{ inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || '' }}
+  group: windows-native-installer-${{ github.ref }}${{ inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -1133,6 +1133,28 @@ jobs:
           if ($result -ne 0) { throw 'The real native runtime ownership controls failed.' }
           if ((Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 16 passed; 0 failed; 0 ignored;') {
             throw 'The six portable and ten Windows ownership controls did not all execute.'
+          }
+
+      - name: Exercise owned child and grandchild lifetime
+        shell: powershell
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $output = Join-Path $env:RUNNER_TEMP 'windows-runtime-controls'
+          [IO.Directory]::CreateDirectory($output) | Out-Null
+          $log = Join-Path $output 'runtime-host-tests.log'
+          try {
+            $ErrorActionPreference = 'Continue'
+            & rustup run 1.95.0-aarch64-pc-windows-msvc cargo test --locked `
+              --manifest-path "$env:GITHUB_WORKSPACE\packaging\windows\launcher\Cargo.toml" `
+              --target aarch64-pc-windows-msvc runtime_host:: -- --nocapture --test-threads=1 2>&1 | Tee-Object -FilePath $log
+            $result = $LASTEXITCODE
+          } finally { $ErrorActionPreference = 'Stop' }
+          if ($result -ne 0) { throw 'The native runtime guardian controls failed.' }
+          if ((Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 9 passed; 0 failed; 0 ignored;') {
+            throw 'The eight guardian controls and their child-fixture entry did not all execute.'
           }
 
       - name: Upload runtime ownership control evidence

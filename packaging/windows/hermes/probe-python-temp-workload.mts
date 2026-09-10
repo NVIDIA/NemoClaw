@@ -11,7 +11,7 @@ import {
   type CommandResult,
 } from "./probe-component-workload.mts";
 
-const ADAPTER_SHA256 = "7caba44672450d3210d2bc980453035d354d9d8355b6fbc84c27d5306b0b0c82";
+const ADAPTER_SHA256 = "055f26bd95242d0fbe7e2f69034b19c1fed13ebb71c5e8b5323db374e399427e";
 
 export function tempControlPassed(result: CommandResult, control: string, nonce: string): boolean {
   if (control === "after") return commandPassed(result, `TEMP_PARENT_CHILD_OK_${nonce}`);

@@ -161,6 +161,9 @@ try {
     # A cleared Windows PowerShell environment otherwise becomes PATHEXT=.CPL,
     # which launches even absolute .exe paths as detached documents.
     $runtimeBuildStart.EnvironmentVariables['PATHEXT'] = '.COM;.EXE;.BAT;.CMD'
+    # The caller verified the native toolset and supplied PATH/INCLUDE/LIB.
+    # Setuptools must consume that environment instead of rediscovering VS.
+    $runtimeBuildStart.EnvironmentVariables['DISTUTILS_USE_SDK'] = '1'
     $runtimeBuildStart.EnvironmentVariables['UV_LINK_MODE'] = 'copy'
     $runtimeBuildStart.EnvironmentVariables['UV_CACHE_DIR'] = (Join-Path $runtimeBuildEvidence 'uv-cache')
     $runtimeBuildStart.EnvironmentVariables['UV_PYTHON_DOWNLOADS'] = 'never'
