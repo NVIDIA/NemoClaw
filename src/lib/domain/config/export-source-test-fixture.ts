@@ -183,3 +183,91 @@ export function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): Obser
     ...overrides,
   };
 }
+
+export const tunedEnvironment = {
+  NEMOCLAW_CONTEXT_WINDOW: "65536",
+  NEMOCLAW_MAX_TOKENS: "8192",
+  NEMOCLAW_REASONING: "true",
+  NEMOCLAW_REASONING_EFFORT: "high",
+  NEMOCLAW_AGENT_TIMEOUT: "900",
+  NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m",
+};
+
+export function hermesSnapshot(
+  registryOverrides: Partial<SandboxEntry> = {},
+): ObservedExportSnapshot {
+  const workload = managedWorkload(hermesProfileInput(), hermesImageRef);
+  return snapshot({
+    registry: entry({
+      agent: "hermes",
+      imageTag: hermesImageRef,
+      workload,
+      hermesApiPort: 8642,
+      ...registryOverrides,
+    }),
+    sandbox: { ...snapshot().sandbox, imageRef: hermesImageRef },
+  });
+}
+
+const nousEndpoint = "https://inference-api.nousresearch.com/v1";
+
+export function hermesManagedAuthSnapshot(
+  registryOverrides: Partial<SandboxEntry> = {},
+): ObservedExportSnapshot {
+  const model = "moonshotai/kimi-k2.6";
+  const api =
+    registryOverrides.preferredInferenceApi === "anthropic-messages"
+      ? "anthropic-messages"
+      : "openai-completions";
+  const endpointUrl = registryOverrides.endpointUrl ?? nousEndpoint;
+  const workload = managedWorkload(
+    {
+      ...hermesProfileInput(),
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "hermes-provider",
+        model,
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: null,
+        api,
+        primaryModelRef: null,
+        compatibility: null,
+      },
+    },
+    hermesImageRef,
+  );
+  return {
+    ...hermesSnapshot({
+      provider: "hermes-provider",
+      model,
+      preferredInferenceApi: api,
+      endpointUrl,
+      credentialEnv: "NOUS_API_KEY",
+      hermesAuthMethod: "api_key",
+      workload,
+      ...registryOverrides,
+    }),
+    inference: {
+      topology: "hosted",
+      provider: "hermes-provider",
+      model,
+      api,
+      endpoint: endpointUrl,
+      endpointEvidence: {
+        endpoint: endpointUrl,
+        provider: {
+          gatewayName: "nemoclaw",
+          workspace: "default",
+          name: "hermes-provider",
+          id: "hermes-provider-id",
+          resourceVersion: "9",
+        },
+        source: {
+          kind: "provider-config",
+          key: api === "anthropic-messages" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL",
+        },
+      },
+      credentialEnv: "NOUS_API_KEY",
+    },
+  };
+}

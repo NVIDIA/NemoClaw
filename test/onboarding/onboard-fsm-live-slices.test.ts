@@ -23,6 +23,7 @@ type ProbeMode =
   | "authoritative-core-gateway-policy-tier"
   | "dashboard-port-composition"
   | "ordinary-policy-tier"
+  | "providerless-external-component"
   | "providerless-staged-messaging"
   | "stale-recovery-admission"
   | "stale-session-decision"
@@ -218,6 +219,9 @@ function runSliceProbe(options: ProbeOptions) {
   const finalizationDepsPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "machine", "finalization-deps.ts"),
   );
+  const externalComponentPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "external-component", "index.ts"),
+  );
 
   fs.writeFileSync(
     scriptPath,
@@ -236,6 +240,13 @@ const registry = require(${registryPath});
 const called = [];
 const sentinel = new Error("slice-called");
 const staleAdmissionExit = new Error("stale recovery admission refused");
+
+if (scenario.mode === "providerless-external-component") {
+  require(${externalComponentPath}).loadExternalComponentDeclaration = () => {
+    called.push("component-validated");
+    return {};
+  };
+}
 
 if (scenario.mode === "dashboard-port-composition") {
   const finalizationHandlerDeps = require(${finalizationDepsPath}).finalizationHandlerDeps;
@@ -341,6 +352,21 @@ function baseContext(context, overrides = {}) {
 }
 
 preflightHandlers.handlePreflightState = async (options) => {
+  if (scenario.mode === "providerless-external-component") {
+    called.push("preflight-effect");
+    return {
+      gpu: null,
+      sandboxGpuConfig: { sandboxGpuEnabled: false, mode: "0" },
+      resumePreflight: false,
+      resumeHasResolvedGpuIntent: false,
+      requestedGpuPassthrough: false,
+      gpuPassthrough: false,
+      effectiveSandboxGpuFlag: "disable",
+      effectiveSandboxGpuDevice: null,
+      session: options.session,
+      stateResult: advanceTo("gateway", { metadata: { state: "preflight" } }),
+    };
+  }
   if (scenario.mode.includes("core-gateway")) {
     return {
       gpu: null,
@@ -359,6 +385,9 @@ preflightHandlers.handlePreflightState = async (options) => {
 };
 
 gatewayHandlers.handleGatewayState = async (options) => {
+  if (scenario.mode === "providerless-external-component") {
+    called.push("gateway-effect");
+  }
   if (!scenario.mode.includes("core-gateway")) {
     throw new Error("unexpected gateway compatibility handler");
   }
@@ -380,23 +409,29 @@ providerHandlers.handleProviderInferenceState = async (options) => {
   throw sentinel;
 };
 
-flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime }) => {
-  const initialSession = await runtime.session();
-  called.push("initial:" + initialSession.machine.state);
-  if (scenario.slice === "initial") throw sentinel;
-  if (initialSession.machine?.state === "init") {
-    await runtime.applyResult(advanceTo("preflight"));
-  }
-  await runtime.applyResult(advanceTo("gateway", { metadata: { state: "preflight" } }));
-  await runtime.applyResult(advanceTo("provider_selection", { metadata: { state: "gateway" } }));
-  if (scenario.mode === "ahead-core") {
-    await runtime.applyResult(advanceTo("inference", { metadata: { state: "provider_selection" } }));
-  }
-  const session = await runtime.session();
-  return { context: baseContext(context, { session }), session };
-};
+if (scenario.mode !== "providerless-external-component") {
+  flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime }) => {
+    const initialSession = await runtime.session();
+    called.push("initial:" + initialSession.machine.state);
+    if (scenario.slice === "initial") throw sentinel;
+    if (initialSession.machine?.state === "init") {
+      await runtime.applyResult(advanceTo("preflight"));
+    }
+    await runtime.applyResult(advanceTo("gateway", { metadata: { state: "preflight" } }));
+    await runtime.applyResult(advanceTo("provider_selection", { metadata: { state: "gateway" } }));
+    if (scenario.mode === "ahead-core") {
+      await runtime.applyResult(advanceTo("inference", { metadata: { state: "provider_selection" } }));
+    }
+    const session = await runtime.session();
+    return { context: baseContext(context, { session }), session };
+  };
+}
 
 flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime }) => {
+  if (scenario.mode === "providerless-external-component") {
+    called.push("sandbox-effect");
+    throw sentinel;
+  }
   called.push("core");
   if (scenario.mode === "ahead-core") {
     throw new Error("strict core runner should not run after an ahead-state handoff");
@@ -535,7 +570,9 @@ const { onboard } = require(${onboardPath});
       acceptThirdPartySoftware: true,
       noGpu: true,
       sandboxName: "fsm-sandbox",
-      apfInterceptorRequested: scenario.mode === "providerless-staged-messaging",
+      apfInterceptorRequested:
+        scenario.mode === "providerless-staged-messaging" ||
+        scenario.mode === "providerless-external-component",
       resume: scenario.mode === "resume-initial" || scenario.mode.includes("core-gateway"),
       ...(scenario.mode.startsWith("authoritative-")
         ? {
@@ -557,7 +594,9 @@ const { onboard } = require(${onboardPath});
       (scenario.mode === "endpoint-override" &&
         error?.name === "OpenShellGatewayEndpointOverrideError") ||
       (scenario.mode === "providerless-staged-messaging" &&
-        /supports providerless sandbox creation only/.test(String(error?.message)))
+        /supports providerless sandbox creation only/.test(String(error?.message))) ||
+      (scenario.mode === "providerless-external-component" &&
+        error?.code === "lifecycle_unsupported")
     ) {
       const payload = "__RESULT__" + JSON.stringify({ called });
       if (scenario.mode === "dashboard-port-composition") {
@@ -646,6 +685,12 @@ describe("live onboard FSM slice boundaries", () => {
       runSliceProbe({ slice: "initial", mode: "providerless-staged-messaging" }),
       [],
     );
+  });
+
+  it("rejects a registered component with providerless APF before effects (#11340)", () => {
+    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "providerless-external-component" }), [
+      "component-validated",
+    ]);
   });
 
   it("rechecks retained sandbox admission after acquiring the onboarding lock (#9833)", () => {

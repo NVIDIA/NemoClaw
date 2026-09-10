@@ -67,6 +67,7 @@ export type ConnectHarness = {
   requalifyPortableAgentAuthoritySpy: MockInstance;
   qualifyHermesPortableAcceptedReadinessAuthoritySpy: MockInstance;
   inspectPortableReceiptDispositionSpy: MockInstance;
+  registryUpdateSpy: MockInstance;
   registryEntries: SandboxEntry[];
   resolveAgentConfigSpy: MockInstance;
   restoreSandboxStartupState: RestoreSandboxStartupState;
@@ -600,6 +601,15 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     sandboxes: registryEntries,
     defaultSandbox: primaryRegistryEntry.name,
   });
+  const registryUpdateSpy = vi
+    .spyOn(registry, "updateSandbox")
+    .mockImplementation((...args: unknown[]) => {
+      const [name, updates] = args as [unknown, Partial<SandboxEntry>];
+      const entry = registryEntries.find((candidate) => candidate.name === String(name));
+      if (!entry) return false;
+      Object.assign(entry, updates);
+      return true;
+    });
   const hermesConfigTarget = {
     agentName: "hermes",
     configPath: "/sandbox/.hermes/config.yaml",
@@ -668,6 +678,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     requalifyPortableAgentAuthoritySpy,
     qualifyHermesPortableAcceptedReadinessAuthoritySpy,
     inspectPortableReceiptDispositionSpy,
+    registryUpdateSpy,
     registryEntries,
     resolveAgentConfigSpy,
     restoreSandboxStartupState: requireDist(connectModulePath).restoreSandboxStartupState,

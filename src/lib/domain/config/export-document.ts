@@ -4,9 +4,9 @@
 import { EXPORTED_VLLM_CONTEXT_WINDOW } from "../../config/model";
 import type {
   NemoClawConfig,
-  NemoClawAgentConfig,
   NemoClawConfigDocumentName,
   NemoClawConfigDocumentUid,
+  NemoClawAgentConfig,
   NemoClawInferenceProviderConfig,
 } from "../../config/model";
 import type { VerifiedExportSource } from "./export-evidence";
@@ -42,37 +42,40 @@ function inferenceProvider(
     : { ...provider, credential: { env: source.inference.credentialEnv } };
 }
 
-function exportAgents(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig[] {
-  const inference = {
-    routes: [
-      {
-        name: "primary",
-        providerRef: providerName,
-        overrides: {
-          model: source.inference.model,
-          ...("serving" in source.inference ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW } : {}),
-          ...("overrides" in source.inference ? source.inference.overrides : {}),
-        },
-      },
-    ],
-  };
-  const primary: NemoClawAgentConfig =
-    source.agent === "openclaw"
-      ? {
+function primaryAgent(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig {
+  return {
+    name: "primary",
+    ...agentSettings(source),
+    ...(source.auth === undefined
+      ? {}
+      : { auth: { method: source.auth.method, providerRef: providerName } }),
+    inference: {
+      routes: [
+        {
           name: "primary",
-          type: "openclaw",
-          inference,
-          ...(source.execution ? { execution: source.execution } : {}),
-          ...(source.tools ? { tools: source.tools } : {}),
-        }
-      : { name: "primary", type: "hermes", inference };
+          providerRef: providerName,
+          overrides: {
+            model: source.inference.model,
+            ...("serving" in source.inference
+              ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
+              : {}),
+            ...("overrides" in source.inference ? source.inference.overrides : {}),
+          },
+        },
+      ],
+    },
+  };
+}
+
+function exportAgents(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig[] {
+  const primary = primaryAgent(source, providerName);
   return [
     primary,
     ...(source.additionalAgents ?? []).map((agent) => ({
       name: agent.name,
       type: "openclaw" as const,
       tools: agent.tools,
-      inference,
+      inference: primary.inference,
     })),
   ];
 }
@@ -80,6 +83,19 @@ function exportAgents(source: VerifiedExportSource, providerName: string): NemoC
 export interface ExportConfigBuildIdentity {
   readonly documentName: NemoClawConfigDocumentName;
   readonly documentUid: NemoClawConfigDocumentUid;
+}
+
+function agentSettings(source: VerifiedExportSource) {
+  return {
+    ...(source.agent === "openclaw"
+      ? {
+          type: "openclaw" as const,
+          ...(source.tools === undefined ? {} : { tools: source.tools }),
+          ...(source.observability ? { observability: source.observability } : {}),
+        }
+      : { type: "hermes" as const }),
+    ...(source.execution ? { execution: source.execution } : {}),
+  };
 }
 
 /** Map one verified export source to an unbound aggregate document. */
@@ -111,7 +127,7 @@ export function buildExportConfig(
             policy: { explicit: source.policy },
             ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
           },
-          ...(source.webSearch && { integrations: { webSearch: source.webSearch } }),
+          ...(source.webSearch ? { integrations: { webSearch: source.webSearch } } : {}),
           agents: exportAgents(source, providerName),
         },
       ],

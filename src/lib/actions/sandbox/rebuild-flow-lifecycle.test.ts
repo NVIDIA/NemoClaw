@@ -205,6 +205,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         hermesAuthMethod: null,
       }),
     );
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { stopped: false });
     const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
       (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete -g nemoclaw alpha",
     );
@@ -251,6 +252,21 @@ describe("rebuildSandbox flow: lifecycle", () => {
     );
   });
 
+  it("reports failure and retains stop intent when the rebuilt sandbox cannot clear it", async () => {
+    const harness = createRebuildFlowHarness({ sandboxEntry: { stopped: true } });
+    const updateSandbox = harness.registryUpdateSpy.getMockImplementation();
+    harness.registryUpdateSpy.mockImplementation((name, updates) =>
+      updates?.stopped === false ? false : (updateSandbox?.(name, updates) ?? true),
+    );
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("could not clear its intentional-stop record");
+
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { stopped: false });
+    expect(harness.getSandboxEntry().stopped).toBe(true);
+  });
+
   it("retains removed immutability state when mutable config verification fails", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {},
@@ -291,7 +307,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
 
   it("retains removed Shields state when a Pi terminal-agent restore fails", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "pi" },
+      sandboxEntry: { agent: "pi", stopped: true },
       restoreSandboxState: () => ({
         success: false,
         restoredDirs: [],
@@ -310,6 +326,13 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ).rejects.toThrow(/State restore remained incomplete/u);
 
     expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
+    expect(harness.getSandboxEntry().stopped).toBe(false);
+    const stopIntentUpdateIndex = harness.registryUpdateSpy.mock.calls.findIndex(
+      ([, updates]) => updates?.stopped === false,
+    );
+    expect(harness.registryUpdateSpy.mock.invocationCallOrder[stopIntentUpdateIndex]).toBeLessThan(
+      harness.restoreSandboxStateSpy.mock.invocationCallOrder[0],
+    );
   });
 
   it("publishes the delete-edge policy recapture without a transient source file", async () => {

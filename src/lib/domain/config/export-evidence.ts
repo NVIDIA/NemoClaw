@@ -16,6 +16,7 @@ import {
   NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
   NemoClawAgentTypeSchema,
+  NemoClawOpenClawObservabilitySchema,
   NemoClawManagedProxyConfigSchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
@@ -271,6 +272,7 @@ export const ExportSourceValuesSchema = Type.Refine(
     sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
     agent: NemoClawAgentTypeSchema,
     execution: Type.Optional(NemoClawAgentExecutionSchema),
+    auth: Type.Optional(Type.Object({ method: Type.Literal("api-key") })),
     runtime: Type.Object({
       provider: RuntimeProviderSchema,
       imageRef: ImmutableImageReferenceSchema,
@@ -282,11 +284,14 @@ export const ExportSourceValuesSchema = Type.Refine(
     additionalAgents: Type.Optional(
       Type.Array(NemoClawAdditionalAgentSchema, { minItems: 1, maxItems: 1 }),
     ),
+    observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
     webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
   }),
   (value) =>
     value.agent === "openclaw" ||
-    (value.tools === undefined && value.additionalAgents === undefined),
+    (value.execution === undefined &&
+      value.tools === undefined &&
+      value.additionalAgents === undefined),
 );
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;

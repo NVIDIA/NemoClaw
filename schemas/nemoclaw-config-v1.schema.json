@@ -301,28 +301,28 @@
                       "type": "object",
                       "required": ["name", "inference", "type"],
                       "properties": {
-                        "execution": {
-                          "type": "object",
-                          "properties": {
-                            "timeoutSeconds": {
-                              "type": "integer",
-                              "minimum": 1,
-                              "maximum": 1000000000
-                            },
-                            "heartbeatEvery": {
-                              "type": "string",
-                              "maxLength": 256,
-                              "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
-                            }
-                          },
-                          "additionalProperties": false,
-                          "minProperties": 1
-                        },
                         "name": {
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 63,
                           "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                        },
+                        "auth": {
+                          "type": "object",
+                          "required": ["method", "providerRef"],
+                          "properties": {
+                            "method": {
+                              "type": "string",
+                              "const": "api-key"
+                            },
+                            "providerRef": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 63,
+                              "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                            }
+                          },
+                          "additionalProperties": false
                         },
                         "inference": {
                           "type": "object",
@@ -387,6 +387,23 @@
                           "type": "string",
                           "const": "openclaw"
                         },
+                        "execution": {
+                          "type": "object",
+                          "properties": {
+                            "timeoutSeconds": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1000000000
+                            },
+                            "heartbeatEvery": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "minProperties": 1
+                        },
                         "tools": {
                           "anyOf": [
                             {
@@ -425,6 +442,39 @@
                               "additionalProperties": false
                             }
                           ]
+                        },
+                        "observability": {
+                          "type": "object",
+                          "required": ["otlp"],
+                          "properties": {
+                            "otlp": {
+                              "type": "object",
+                              "required": ["enabled", "endpoint", "serviceName", "sampleRate"],
+                              "properties": {
+                                "enabled": {
+                                  "type": "boolean",
+                                  "const": true
+                                },
+                                "endpoint": {
+                                  "type": "string",
+                                  "const": "http://host.openshell.internal:4318"
+                                },
+                                "serviceName": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256,
+                                  "pattern": "^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])"
+                                },
+                                "sampleRate": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "additionalProperties": false
+                            }
+                          },
+                          "additionalProperties": false
                         }
                       },
                       "additionalProperties": false
@@ -433,28 +483,28 @@
                       "type": "object",
                       "required": ["name", "inference", "type"],
                       "properties": {
-                        "execution": {
-                          "type": "object",
-                          "properties": {
-                            "timeoutSeconds": {
-                              "type": "integer",
-                              "minimum": 1,
-                              "maximum": 1000000000
-                            },
-                            "heartbeatEvery": {
-                              "type": "string",
-                              "maxLength": 256,
-                              "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
-                            }
-                          },
-                          "additionalProperties": false,
-                          "minProperties": 1
-                        },
                         "name": {
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 63,
                           "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                        },
+                        "auth": {
+                          "type": "object",
+                          "required": ["method", "providerRef"],
+                          "properties": {
+                            "method": {
+                              "type": "string",
+                              "const": "api-key"
+                            },
+                            "providerRef": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 63,
+                              "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                            }
+                          },
+                          "additionalProperties": false
                         },
                         "inference": {
                           "type": "object",

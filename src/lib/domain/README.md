@@ -37,3 +37,8 @@ Canonical workspace paths stay implicit. Verify the whole retained manifest befo
 admitting that leaf in the residual profile comparison; other agent settings still
 need their own supported projection. Apply the new pair and route constraints only
 to documents using `tools.allow`, preserving existing v1 agent shapes.
+
+Config export projects supported settings from the validated managed startup receipt and keeps the full residual profile comparison.
+OpenClaw telemetry supports an enabled local OTLP/HTTP collector at `http://host.openshell.internal:4318`, a printable ASCII service name of 1–256 characters without edge spaces, and a sample rate from 0 to 1.
+Canonical disabled telemetry is omitted; other disabled settings, Unicode service names, remote collectors, headers and credentials remain unsupported.
+Export preserves the observed effective policy, including any local collector rules, without adding permissions or claiming collector health.

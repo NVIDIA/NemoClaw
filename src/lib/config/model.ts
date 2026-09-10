@@ -336,6 +336,35 @@ export const NemoClawAgentToolDisclosureSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const NemoClawAgentAuthConfigSchema = Type.Object(
+  {
+    method: Type.Literal("api-key"),
+    providerRef: LocalResourceNameSchema,
+  },
+  { additionalProperties: false },
+);
+
+/** First supported OTLP profile: local HTTP collector, without credentials or headers. */
+export const NemoClawOpenClawObservabilitySchema = Type.Object(
+  {
+    otlp: Type.Object(
+      {
+        enabled: Type.Literal(true),
+        endpoint: Type.Literal("http://host.openshell.internal:4318"),
+        // ASCII keeps the public character bound equal to the receipt's UTF-8 byte bound.
+        serviceName: Type.String({
+          minLength: 1,
+          maxLength: 256,
+          pattern: "^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])",
+        }),
+        sampleRate: Type.Number({ minimum: 0, maximum: 1 }),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+
 export const NemoClawReadOnlyAgentToolsSchema = Type.Object(
   { allow: Type.Array(Type.Literal("read"), { minItems: 1, maxItems: 1 }) },
   { additionalProperties: false },
@@ -363,8 +392,8 @@ export function isValidNemoClawSecondaryAgentName(value: unknown): value is stri
 }
 
 const nemoClawAgentFields = {
-  execution: Type.Optional(NemoClawAgentExecutionSchema),
   name: LocalResourceNameSchema,
+  auth: Type.Optional(NemoClawAgentAuthConfigSchema),
   inference: Type.Object(
     { routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }) },
     { additionalProperties: false },
@@ -376,7 +405,9 @@ const NemoClawAgentConfigSchema = Type.Union([
     {
       ...nemoClawAgentFields,
       type: Type.Literal("openclaw"),
+      execution: Type.Optional(NemoClawAgentExecutionSchema),
       tools: Type.Optional(NemoClawAgentToolsConfigSchema),
+      observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
     },
     { additionalProperties: false },
   ),
@@ -497,6 +528,9 @@ export type NemoClawRouteOverrides = DeepReadonly<
 >;
 export type NemoClawInferenceRouteConfig = DeepReadonly<
   TypeBoxModule.Type.Static<typeof NemoClawInferenceRouteConfigSchema>
+>;
+export type NemoClawAgentAuthConfig = DeepReadonly<
+  TypeBoxModule.Type.Static<typeof NemoClawAgentAuthConfigSchema>
 >;
 export type NemoClawAgentConfig = DeepReadonly<
   TypeBoxModule.Type.Static<typeof NemoClawAgentConfigSchema>
