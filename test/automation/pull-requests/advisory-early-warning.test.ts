@@ -224,7 +224,7 @@ describe("advisory early warning correlation", () => {
 });
 
 describe("advisory early warning inventory parsing", () => {
-  it("parses package specs from the reviewed npm audit config", () => {
+  it("parses package specs from the npm audit config", () => {
     const config = {
       archivePackages: [
         { packageSpec: "openclaw@2026.6.10" },
