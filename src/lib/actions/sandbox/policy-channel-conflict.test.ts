@@ -409,7 +409,7 @@ beforeEach(() => {
   // the exec path so the post-add verification never shells out and never trips
   // the exit spy unless a test explicitly overrides it.
   vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(null);
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
+  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
 
   process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
   process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";

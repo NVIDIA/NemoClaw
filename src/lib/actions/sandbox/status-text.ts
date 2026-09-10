@@ -229,7 +229,10 @@ function printActiveSessions(sandboxName: string): void {
   }
 }
 
-function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEntry): void {
+async function printAgentVersion(
+  context: SandboxStatusTextContext,
+  sandbox: SandboxEntry,
+): Promise<void> {
   try {
     const { lookup, sandboxName, statusAgent } = context;
     const shouldProbe = shouldProbeSandboxRuntimeVersion(
@@ -238,7 +241,7 @@ function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEn
       sandbox,
       statusAgent.agentRuntime,
     );
-    const versionCheck = sandboxVersion.checkAgentVersion(sandboxName, {
+    const versionCheck = await sandboxVersion.checkAgentVersion(sandboxName, {
       forceProbe: shouldProbe,
       skipProbe: !shouldProbe,
     });
@@ -347,7 +350,7 @@ export async function printSandboxDetails(
   );
   const agentExitCode = printAgentHarness(context);
   printActiveSessions(sandboxName);
-  printAgentVersion(context, sb);
+  await printAgentVersion(context, sb);
   return { exitCode: inferenceExitCode ?? agentExitCode };
 }
 

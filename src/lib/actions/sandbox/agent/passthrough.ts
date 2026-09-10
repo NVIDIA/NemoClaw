@@ -107,17 +107,13 @@
 //     loaded runners or NemoClaw manages and warms the daemon lifecycle.
 
 import { performance } from "node:perf_hooks";
+import { signalExitCode } from "../../../core/process-exit";
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
-import { isStdinTty } from "../../../core/stdin";
+import { createCliOpenShellSandboxSessionExecutor } from "../../../adapters/openshell/sandbox-command-cli";
 import { resolveSandboxHermesApiPort } from "../../../onboard/hermes-api-port";
 import * as registry from "../../../state/registry";
-import {
-  buildOpenshellExecArgs,
-  computeExitCode,
-  execSandbox,
-  wrapOpenClawAgentCommandWithRuntimeEnv,
-} from "../exec";
+import { execSandbox, wrapOpenClawAgentCommandWithRuntimeEnv } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
@@ -139,11 +135,7 @@ import {
   writeSilentAgentDispatchFailure,
   writeTimedOutAgentTurnFailure,
 } from "./passthrough-help";
-import {
-  type AgentJsonPassthroughProcess,
-  defaultGetOpenshellBinary,
-  runAgentJsonPassthrough,
-} from "./passthrough-json";
+import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
 import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
 
 export { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
@@ -170,19 +162,26 @@ export async function runAgentNonJsonPassthrough(
   proc: NonNullable<AgentPassthroughDeps["process"]>,
   deps: AgentNonJsonPassthroughDeps = {},
 ): Promise<never> {
-  const binary = (deps.getOpenshellBinary ?? defaultGetOpenshellBinary)();
-  const result = await (deps.runDispatch ?? runAgentDispatch)(
-    binary,
-    buildOpenshellExecArgs(
-      sandboxName,
-      wrapOpenClawAgentCommandWithRuntimeEnv(command),
-      { tty: false, timeoutSeconds: agentDispatchDeadlineSeconds(command) },
-      (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
-    ),
-    {
-      stdinIsTty: (deps.stdinIsTty ?? isStdinTty)(),
-    },
-  );
+  const gatewayName = (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName);
+  const runDispatch: AgentDispatchRunner =
+    deps.runDispatch ??
+    ((request) =>
+      runAgentDispatch(
+        request,
+        createCliOpenShellSandboxSessionExecutor({
+          resolveBinary: deps.getOpenshellBinary,
+          stdinIsTty: deps.stdinIsTty,
+        }),
+      ));
+  const result = await runDispatch({
+    kind: "command",
+    sandboxName,
+    target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
+    command: wrapOpenClawAgentCommandWithRuntimeEnv(command),
+    tty: false,
+    output: "capture",
+    timeoutSeconds: agentDispatchDeadlineSeconds(command),
+  });
   const { stderr, stdout } = result;
 
   if (isSilentAgentDispatch(result, stdout, stderr)) {
@@ -209,8 +208,9 @@ export async function runAgentNonJsonPassthrough(
 
   if (stdout) (proc.stdout ?? process.stdout).write(stdout);
   if (stderr) proc.stderr.write(stderr);
-  const { code, errorMessage } = computeExitCode(result);
-  if (errorMessage) {
+  const code = result.outcome.exitCode;
+  if (result.outcome.kind === "failed" && result.outcome.reason !== "transport") {
+    const errorMessage = result.outcome.message;
     proc.stderr.write(`  Failed to invoke openshell: ${errorMessage}\n`);
     proc.stderr.write("  Ensure 'openshell' is installed and on PATH.\n");
   }
@@ -594,7 +594,7 @@ export async function runAgentPassthrough(
         timeoutSeconds === null ? {} : { timeoutSeconds },
       );
       if (recoverySignal) {
-        return proc.exit(computeExitCode({ status: null, signal: recoverySignal }).code);
+        return proc.exit(signalExitCode(recoverySignal));
       }
     }
     dispatchCommand = commandWithRemainingDeadline(command, commandDeadline, now);

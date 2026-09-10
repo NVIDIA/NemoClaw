@@ -230,7 +230,7 @@ describe("rebuild resume snapshot repair", () => {
         detected: false,
         sessions: [],
       }),
-      vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
+      vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({
         expectedVersion: "0.1.0",
         sandboxVersion: "0.0.1",
       } as never),

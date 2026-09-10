@@ -24,10 +24,12 @@ import {
 
 export const POLICY_CONTEXT_SANDBOX_PATH = "/sandbox/.openclaw/workspace/POLICY.md";
 
+type SandboxExecResult = { status: number; stdout: string; stderr: string } | null;
+
 export type SandboxExec = (
   sandboxName: string,
   command: string,
-) => { status: number; stdout: string; stderr: string } | null;
+) => SandboxExecResult | Promise<SandboxExecResult>;
 
 export interface ExplainPolicyOptions {
   json?: boolean;
@@ -150,20 +152,6 @@ function buildWriteCommand(markdown: string, targetPath: string): string {
   ].join(" && ");
 }
 
-// The legacy SSH capture can exit on a spawn failure. Keep this best-effort
-// write isolated, and restore the process hook before any asynchronous work.
-function executeContextWrite(exec: SandboxExec, sandboxName: string, command: string) {
-  const savedExit = process.exit;
-  process.exit = ((code?: number): never => {
-    throw new Error(`policy-context write attempted process.exit(${String(code)})`);
-  }) as typeof process.exit;
-  try {
-    return exec(sandboxName, command);
-  } finally {
-    process.exit = savedExit;
-  }
-}
-
 export async function writePolicyContextToSandbox(
   sandboxName: string,
   deps: ExplainPolicyDeps = {},
@@ -192,7 +180,7 @@ export async function writePolicyContextToSandbox(
   const ctx = await build(sandboxName);
   const markdown = render(ctx);
   const command = buildWriteCommand(markdown, POLICY_CONTEXT_SANDBOX_PATH);
-  const result = executeContextWrite(exec, sandboxName, command);
+  const result = await exec(sandboxName, command);
   if (result === null) {
     return { written: false, reason: "sandbox unreachable", failure: "sandbox-unreachable" };
   }

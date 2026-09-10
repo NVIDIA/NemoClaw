@@ -254,10 +254,13 @@ describe("writePolicyContextToSandbox", () => {
   );
 });
 
-it("isolates write exits after asynchronous context preparation", async () => {
+it("awaits asynchronous context preparation and write failure without changing process.exit", async () => {
   const original = process.exit;
   let finishBuild!: (context: PolicyContext) => void;
-  const exec = vi.fn(() => process.exit(1));
+  const exec = vi.fn(async () => {
+    await Promise.resolve();
+    throw new Error("context write failed");
+  });
   const pending = writePolicyContextToSandbox("alpha", {
     build: () =>
       new Promise<PolicyContext>((resolve) => {
@@ -269,6 +272,6 @@ it("isolates write exits after asynchronous context preparation", async () => {
   expect(exec).not.toHaveBeenCalled();
   expect(process.exit).toBe(original);
   finishBuild(fakeContext("alpha"));
-  await expect(pending).rejects.toThrow("policy-context write attempted process.exit(1)");
+  await expect(pending).rejects.toThrow("context write failed");
   expect(process.exit).toBe(original);
 });

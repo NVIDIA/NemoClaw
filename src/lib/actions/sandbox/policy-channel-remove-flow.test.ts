@@ -33,7 +33,7 @@ describe("policy channel remove/enable flows", () => {
       stdout: "NEMOCLAW_CHANNEL_CLEAR_OK\n",
       stderr: "",
     });
-    vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
+    vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -185,7 +185,7 @@ describe("policy channel remove/enable flows", () => {
         stdout: execStatus === 0 ? "NEMOCLAW_CHANNEL_CLEAR_OK\n" : "",
         stderr: execStatus === 0 ? "" : "exec unavailable",
       });
-      vi.mocked(processRecovery.executeSandboxCommand).mockReturnValue({
+      vi.mocked(processRecovery.executeSandboxCommand).mockResolvedValue({
         status: 0,
         stdout: "NEMOCLAW_CHANNEL_CLEAR_OK\n",
         stderr: "",
@@ -219,7 +219,7 @@ describe("policy channel remove/enable flows", () => {
       stdout: "",
       stderr: "exec unavailable",
     });
-    vi.mocked(processRecovery.executeSandboxCommand).mockReturnValue({
+    vi.mocked(processRecovery.executeSandboxCommand).mockResolvedValue({
       status: 1,
       stdout: "",
       stderr: "ssh unavailable",
