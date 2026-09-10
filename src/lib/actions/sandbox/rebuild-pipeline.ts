@@ -792,7 +792,7 @@ async function rebuildSandboxUnlocked(
             };
           }
           const providerRegistration = providerReconfigure
-            ? inspectRebuildGatewayProviderRegistration(
+            ? await inspectRebuildGatewayProviderRegistration(
                 providerReconfigure.provider,
                 log,
                 "Delete-edge",

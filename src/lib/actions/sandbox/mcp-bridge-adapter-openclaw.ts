@@ -293,7 +293,10 @@ function scopedSupervisorRequest(control: McpOpenClawControl) {
     executeScopedGatewaySupervisorAction(name, action, timeout, control.config.privileged);
 }
 
-function reloadLiveOpenClawGateway(sandboxName: string, control: McpOpenClawControl): void {
+async function reloadLiveOpenClawGateway(
+  sandboxName: string,
+  control: McpOpenClawControl,
+): Promise<void> {
   const requestSupervisor = scopedSupervisorRequest(control);
   const result = requestSupervisor(sandboxName, "restart", 210_000);
   const managedProbe = () =>
@@ -304,13 +307,13 @@ function reloadLiveOpenClawGateway(sandboxName: string, control: McpOpenClawCont
     });
   if (
     !parseManagedGatewayControlCompletion(result) ||
-    !waitForRecoveredSandboxGateway(sandboxName, {
+    !(await waitForRecoveredSandboxGateway(sandboxName, {
       quiet: true,
       initialManagedHealthPassed: true,
       requireManagedProbe: true,
       managedProbeImpl: managedProbe,
       runtimeSelection: control.config.runtimeSelection,
-    })
+    }))
   ) {
     throw new McpBridgeError(
       "OpenClaw gateway did not activate the native MCP configuration on the pinned runtime.",
@@ -319,20 +322,20 @@ function reloadLiveOpenClawGateway(sandboxName: string, control: McpOpenClawCont
 }
 
 /** Make a verified config mutation visible to the long-lived OpenClaw gateway. */
-export function reloadOpenClawGatewayAfterMcpMutation(
+export async function reloadOpenClawGatewayAfterMcpMutation(
   sandboxName: string,
   operationTarget?: McpOperationTarget,
-): void {
+): Promise<void> {
   const control = openMcpOpenClawControl(operationTarget);
   if (control) {
     try {
-      reloadLiveOpenClawGateway(sandboxName, control);
+      await reloadLiveOpenClawGateway(sandboxName, control);
     } finally {
       control.close();
     }
     return;
   }
-  const result = restartSandboxGateway(sandboxName, { quiet: true });
+  const result = await restartSandboxGateway(sandboxName, { quiet: true });
   if (result.ok) return;
   throw new McpBridgeError(
     `OpenClaw gateway did not activate the native MCP configuration (${result.failureLayer}: ${result.detail}).`,

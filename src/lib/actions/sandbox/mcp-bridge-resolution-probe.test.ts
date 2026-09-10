@@ -294,8 +294,8 @@ describe("MCP credential-resolution probe execution gates", () => {
     [{ ...readyProbe, providerCredentialReady: false }, "does not match"],
   ] as const)(
     "fails closed before sandbox traffic unless policy and provider readiness are all true [case %#] (#6379)",
-    (readiness, expectedDetail) => {
-      const probe = probeCredentialResolution(
+    async (readiness, expectedDetail) => {
+      const probe = await probeCredentialResolution(
         "alpha",
         baseEntry,
         "openclaw-config",
@@ -308,8 +308,8 @@ describe("MCP credential-resolution probe execution gates", () => {
     },
   );
 
-  it("skips without contacting the sandbox when the adapter is not declared (#6379)", () => {
-    const probe = probeCredentialResolution(
+  it("skips without contacting the sandbox when the adapter is not declared (#6379)", async () => {
+    const probe = await probeCredentialResolution(
       "alpha",
       baseEntry,
       undefined,
@@ -320,8 +320,8 @@ describe("MCP credential-resolution probe execution gates", () => {
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
 
-  it("skips without contacting the sandbox when the stored URL is unsafe (#6379)", () => {
-    const probe = probeCredentialResolution(
+  it("skips without contacting the sandbox when the stored URL is unsafe (#6379)", async () => {
+    const probe = await probeCredentialResolution(
       "alpha",
       { ...baseEntry, url: "http://api.githubcopilot.com/mcp/" },
       "openclaw-config",
@@ -332,7 +332,7 @@ describe("MCP credential-resolution probe execution gates", () => {
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
 
-  it("executes the probe in the sandbox and classifies the outcome (#6379)", () => {
+  it("executes the probe in the sandbox and classifies the outcome (#6379)", async () => {
     mocks.executeSandboxCommand.mockImplementation((_sandboxName: string, command: string) => {
       const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
       return {
@@ -347,7 +347,7 @@ describe("MCP credential-resolution probe execution gates", () => {
         stderr: "",
       };
     });
-    const probe = probeCredentialResolution(
+    const probe = await probeCredentialResolution(
       "alpha",
       baseEntry,
       "openclaw-config",
@@ -363,7 +363,7 @@ describe("MCP credential-resolution probe execution gates", () => {
     expect(mocks.executeSandboxCommand.mock.calls[0]?.[2]).toEqual({ runtimeSelection });
   });
 
-  it("reuses a status observation instead of starting a second revision check (#10079)", () => {
+  it("reuses a status observation instead of starting a second revision check (#10079)", async () => {
     mocks.executeSandboxCommand.mockImplementation((_sandboxName: string, command: string) => {
       const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
       return {
@@ -379,7 +379,7 @@ describe("MCP credential-resolution probe execution gates", () => {
       };
     });
 
-    const probe = probeCredentialResolution(
+    const probe = await probeCredentialResolution(
       "alpha",
       baseEntry,
       "openclaw-config",
@@ -395,10 +395,10 @@ describe("MCP credential-resolution probe execution gates", () => {
     );
   });
 
-  it("does not probe with an identityless canonical placeholder (#10079)", () => {
+  it("does not probe with an identityless canonical placeholder (#10079)", async () => {
     mocks.observeMcpCredentialRevision.mockReturnValue("canonical");
 
-    const probe = probeCredentialResolution(
+    const probe = await probeCredentialResolution(
       "alpha",
       baseEntry,
       "openclaw-config",

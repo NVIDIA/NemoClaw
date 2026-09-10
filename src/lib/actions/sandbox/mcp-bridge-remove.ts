@@ -140,7 +140,7 @@ export async function removeMcpBridge(
             "A provider attachment still carries this MCP credential key. Inspect and detach that attachment explicitly before retrying removal.",
           );
         }
-        waitForDetachedMcpCredential(sandboxName, entry, runtimeSelection);
+        await waitForDetachedMcpCredential(sandboxName, entry, runtimeSelection);
       }
     } catch (error) {
       const detail = redactBridgeSecretsForDisplay(

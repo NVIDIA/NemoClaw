@@ -69,16 +69,18 @@ replace(base+"onboard/runtime-provider/docker-operation-authority.js", "captureD
 const target = {sandbox:{name:"alpha",agent:"openclaw",gatewayName:"nemoclaw-9090",gatewayPort:9090},runtimeSelection:{gatewayName:"nemoclaw-9090",workspace:"default",localTlsDir:"/owned/tls"},liveIdentity:{sandboxId:"sb-alpha",assertRuntimeResource(provider,id){const next=provider+":"+id;if(runtimeResource && runtimeResource !== next) throw new Error("runtime resource changed");runtimeResource=next;},assertCurrent(){checks++; if(failure === "live") throw new Error("live identity changed");}}};
 const entry = {server:"github",agent:"openclaw",adapter:"openclaw-config",url:"https://example.com/mcp",env:["MCP_TOKEN"],providerName:"alpha-mcp-github",policyName:"mcp-bridge-github"};
 if (failure === "no-pin") delete target.liveIdentity.assertRuntimeResource;
+(async () => {
 let error;
 try {
   const adapter = require(base+"actions/sandbox/mcp-bridge-adapter-openclaw.js");
   adapter.registerOpenClawAdapter("alpha",entry,target.runtimeSelection,{},false,"v1",target);
   adapter.registerOpenClawAdapter("alpha",entry,target.runtimeSelection,{},true,"v2",target);
-  adapter.reloadOpenClawGatewayAfterMcpMutation("alpha",target);
+  await adapter.reloadOpenClawGatewayAfterMcpMutation("alpha",target);
   adapter.unregisterOpenClawAdapter("alpha",entry,target.runtimeSelection,{operationTarget:target});
-  adapter.reloadOpenClawGatewayAfterMcpMutation("alpha",target);
+  await adapter.reloadOpenClawGatewayAfterMcpMutation("alpha",target);
 } catch (caught) { error = caught.message; }
 process.stdout.write(JSON.stringify({error,calls,writes,checks,closes,registryReads,configSelections,content:JSON.parse(content)}));
+})();
 `;
     const result = spawnSync(process.execPath, ["-e", source], {
       cwd: process.cwd(),

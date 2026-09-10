@@ -468,7 +468,7 @@ export async function migrateMcpBridges(
               entry,
               rebuiltRuntimeSelection,
             );
-            registerAgentAdapterAtCurrentCredentialRevision(
+            await registerAgentAdapterAtCurrentCredentialRevision(
               sandboxName,
               adapter,
               entry,
@@ -523,7 +523,7 @@ export async function migrateMcpBridges(
             entry,
             runtimeSelection,
           );
-          registerAgentAdapterAtCurrentCredentialRevision(
+          await registerAgentAdapterAtCurrentCredentialRevision(
             sandboxName,
             adapter,
             entry,
@@ -545,7 +545,7 @@ export async function migrateMcpBridges(
           );
         }
       }
-      reloadOpenClawGatewayAfterMcpMutation(
+      await reloadOpenClawGatewayAfterMcpMutation(
         sandboxName,
         [adapter],
         ...(operationTarget ? ([operationTarget] as const) : ([] as const)),

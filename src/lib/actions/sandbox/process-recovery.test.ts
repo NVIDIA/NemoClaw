@@ -3,6 +3,10 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type {
+  OpenShellSandboxBufferedCommandCompletion,
+  OpenShellSandboxBufferedCommandExecutor,
+} from "../../adapters/openshell/sandbox-command";
 import { parseManagedGatewayControlCompletion } from "./gateway-restart";
 // Import source directly so this test cannot pass against a stale build.
 import {
@@ -41,6 +45,36 @@ const OPENSHELL_RELAY_TARGET_REFUSED_STDERR = `Error:   × code: 'The service is
 const OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR =
   "Error: sandbox 'recreated-box' is not ready (phase: Error); wait for it to reach Ready state.\n";
 
+function completed(
+  exitCode: number,
+  stderr = "",
+  stdout = "",
+): OpenShellSandboxBufferedCommandCompletion {
+  return { outcome: { kind: "completed", exitCode }, stdout, stderr };
+}
+
+function timedOut(): OpenShellSandboxBufferedCommandCompletion {
+  return {
+    outcome: { kind: "failed", error: { kind: "timeout", message: "timed out" } },
+    stdout: "",
+    stderr: "",
+  };
+}
+
+function sequencedExecutor(
+  first: OpenShellSandboxBufferedCommandCompletion,
+  ...remaining: OpenShellSandboxBufferedCommandCompletion[]
+): OpenShellSandboxBufferedCommandExecutor & { runBuffered: ReturnType<typeof vi.fn> } {
+  const results = [first, ...remaining];
+  let index = 0;
+  const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => {
+    const result = results[Math.min(index, results.length - 1)] ?? first;
+    index += 1;
+    return result;
+  });
+  return { runBuffered };
+}
+
 describe("managed gateway control completion", () => {
   const nonce = "a".repeat(64);
 
@@ -49,15 +83,18 @@ describe("managed gateway control completion", () => {
     ["ok", 4242, 4242],
     ["already-running", 4242, 4242],
     ["already-running", 4242, 5252],
-  ] as const)("preserves the exact %s controller disposition (#7919)", (disposition, oldPid, newPid) => {
-    expect(
-      parseManagedGatewayControlCompletion({
-        status: 0,
-        stdout: `v1 ${nonce} complete ${disposition} ${oldPid} ${newPid}\nGATEWAY_PID=${newPid}`,
-        stderr: "",
-      }),
-    ).toEqual({ disposition, oldPid, newPid });
-  });
+  ] as const)(
+    "preserves the exact %s controller disposition (#7919)",
+    (disposition, oldPid, newPid) => {
+      expect(
+        parseManagedGatewayControlCompletion({
+          status: 0,
+          stdout: `v1 ${nonce} complete ${disposition} ${oldPid} ${newPid}\nGATEWAY_PID=${newPid}`,
+          stderr: "",
+        }),
+      ).toEqual({ disposition, oldPid, newPid });
+    },
+  );
 
   it.each([
     [`v1 ${nonce} complete already-running 4242 4242\nGATEWAY_PID=5252`, ""],
@@ -76,211 +113,162 @@ describe("recreated sandbox OpenShell readiness", () => {
     vi.unstubAllEnvs();
   });
 
-  it("retries the structured not-ready state until OpenShell accepts the sandbox", () => {
-    const notReady = {
-      status: 1,
-      output: OPENSHELL_SANDBOX_NOT_READY_STDERR.trim(),
-      stdout: "",
-      stderr: OPENSHELL_SANDBOX_NOT_READY_STDERR,
-    };
-    const captureOpenshellImpl = vi
-      .fn()
-      .mockReturnValueOnce(notReady)
-      .mockReturnValueOnce(notReady)
-      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+  it("retries the structured not-ready state until OpenShell accepts the sandbox", async () => {
+    const notReady = completed(1, OPENSHELL_SANDBOX_NOT_READY_STDERR);
+    const commandExecutor = sequencedExecutor(notReady, notReady, completed(0));
     const beforeProbe = vi.fn(() => true);
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe,
-        captureOpenshellImpl,
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 6,
       }),
     ).toBe(true);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
-    expect(captureOpenshellImpl).toHaveBeenCalledWith(
-      ["sandbox", "exec", "--name", "recreated-box", "--", "true"],
+    expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(3);
+    expect(commandExecutor.runBuffered).toHaveBeenCalledWith(
       expect.objectContaining({
-        ignoreError: true,
-        includeStderr: true,
-        includeStreams: true,
+        sandboxName: "recreated-box",
+        target: { kind: "selected" },
+        command: ["true"],
+        timeoutMilliseconds: expect.any(Number),
       }),
     );
     expect(beforeProbe).toHaveBeenCalledTimes(3);
     expect(sleeps).toEqual([3, 3]);
   });
 
-  it("retries the same-sandbox Error phase until OpenShell accepts the sandbox", () => {
-    const captureOpenshellImpl = vi
-      .fn()
-      .mockReturnValueOnce({
-        status: 1,
-        output: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR.trim(),
-        stdout: "",
-        stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
-      })
-      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+  it("retries the same-sandbox Error phase until OpenShell accepts the sandbox", async () => {
+    const commandExecutor = sequencedExecutor(
+      completed(1, OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR),
+      completed(0),
+    );
     const beforeProbe = vi.fn(() => true);
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe,
-        captureOpenshellImpl,
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 30,
       }),
     ).toBe(true);
     expect(beforeProbe).toHaveBeenCalledTimes(2);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
     expect(sleeps).toEqual([3]);
   });
 
-  it("retries the exact same-sandbox Error phase when OpenShell also emits informational stdout", () => {
-    const captureOpenshellImpl = vi
-      .fn()
-      .mockReturnValueOnce({
-        status: 1,
-        output:
-          `Waiting for sandbox registration\n${OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR}`.trim(),
-        stdout: "Waiting for sandbox registration\n",
-        stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
-      })
-      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+  it("retries the exact same-sandbox Error phase when OpenShell also emits informational stdout", async () => {
+    const commandExecutor = sequencedExecutor(
+      completed(1, OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR, "Waiting for sandbox registration\n"),
+      completed(0),
+    );
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe: () => true,
-        captureOpenshellImpl,
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 30,
       }),
     ).toBe(true);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
     expect(sleeps).toEqual([3]);
   });
 
-  it("keeps an empty read-only probe inconclusive after exact replacement re-registration", () => {
-    const captureOpenshellImpl = vi
-      .fn()
-      .mockReturnValueOnce({
-        status: 1,
-        output: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR.trim(),
-        stdout: "",
-        stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
-      })
-      .mockReturnValueOnce({ status: 1, output: "", stdout: "", stderr: "" })
-      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+  it("keeps an empty read-only probe inconclusive after exact replacement re-registration", async () => {
+    const commandExecutor = sequencedExecutor(
+      completed(1, OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR),
+      completed(1),
+      completed(0),
+    );
     const beforeProbe = vi.fn(() => true);
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe,
-        captureOpenshellImpl,
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 6,
       }),
     ).toBe(true);
     expect(beforeProbe).toHaveBeenCalledTimes(3);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
+    expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(3);
     expect(sleeps).toEqual([3, 3]);
   });
 
-  it("keeps an empty first OpenShell failure terminal", () => {
-    const captureOpenshellImpl = vi.fn(() => ({
-      status: 1,
-      output: "",
-      stdout: "",
-      stderr: "",
-    }));
+  it("keeps an empty first OpenShell failure terminal", async () => {
+    const commandExecutor = sequencedExecutor(completed(1));
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe: () => true,
-        captureOpenshellImpl,
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 30,
       }),
     ).toBe(false);
-    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
     expect(sleeps).toEqual([]);
   });
 
-  it("rides out a transient Error phase past the old 30s budget by default (#7227)", () => {
+  it("rides out a transient Error phase past the old 30s budget by default (#7227)", async () => {
     // No timeoutSeconds option and no env override: the default recovery budget
     // must be large enough (120s, aligned with connect's readiness wait) to keep
     // retrying a cold-start phase:Error settling window that exceeds the old
     // 30s / 11-attempt budget. The 12th probe (past the old 11-attempt cap) must
     // still be reached, so the primary dashboard/API forward is not abandoned.
     delete process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
-    const errorPhase = {
-      status: 1,
-      output: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR.trim(),
-      stdout: "",
-      stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
-    };
-    const captureOpenshellImpl = vi.fn();
-    for (let attempt = 0; attempt < 11; attempt += 1) {
-      captureOpenshellImpl.mockReturnValueOnce(errorPhase);
-    }
-    captureOpenshellImpl.mockReturnValueOnce({
-      status: 0,
-      output: "",
-      stdout: "",
-      stderr: "",
-    });
+    const errorPhase = completed(1, OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR);
+    const commandExecutor = sequencedExecutor(
+      errorPhase,
+      ...Array.from({ length: 10 }, () => errorPhase),
+      completed(0),
+    );
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe: () => true,
-        captureOpenshellImpl,
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: () => {},
         // no timeoutSeconds -> exercise the default budget; the old 30s default
         // capped at 11 attempts and would have given up before the 12th probe.
       }),
     ).toBe(true);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(12);
+    expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(12);
   });
 
-  it("retries the exact supervisor reconnect states exposed during direct recreation", () => {
+  it("retries the exact supervisor reconnect states exposed during direct recreation", async () => {
     const reconnecting = [
       OPENSHELL_SUPERVISOR_NOT_CONNECTED_STDERR,
       OPENSHELL_SUPERVISOR_DISCONNECTED_STDERR,
-    ].map((stderr) => ({
-      status: 1,
-      output: stderr.trim(),
-      stdout: "",
-      stderr,
-    }));
-    const captureOpenshellImpl = vi
-      .fn()
-      .mockReturnValueOnce(reconnecting[0])
-      .mockReturnValueOnce(reconnecting[1])
-      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    ].map((stderr) => completed(1, stderr));
+    const commandExecutor = sequencedExecutor(reconnecting[0], reconnecting[1], completed(0));
     const beforeProbe = vi.fn(() => true);
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe,
-        captureOpenshellImpl,
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 6,
       }),
     ).toBe(true);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
+    expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(3);
     expect(beforeProbe).toHaveBeenCalledTimes(3);
     expect(sleeps).toEqual([3, 3]);
   });
@@ -288,89 +276,71 @@ describe("recreated sandbox OpenShell readiness", () => {
   it.each([
     OPENSHELL_RELAY_OPEN_TIMED_OUT_STDERR,
     OPENSHELL_SUPERVISOR_RELAY_CHANNEL_TIMED_OUT_STDERR,
-  ])("retries when the connected supervisor misses OpenShell's relay deadline (#7227)", (stderr) => {
-    const captureOpenshellImpl = vi
-      .fn()
-      .mockReturnValueOnce({
-        status: 1,
-        output: stderr.trim(),
-        stdout: "",
-        stderr,
-      })
-      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+  ])(
+    "retries when the connected supervisor misses OpenShell's relay deadline (#7227)",
+    async (stderr) => {
+      const commandExecutor = sequencedExecutor(completed(1, stderr), completed(0));
+      const beforeProbe = vi.fn(() => true);
+      const sleeps: number[] = [];
+
+      expect(
+        await waitForRecreatedSandboxOpenShellReady("recreated-box", {
+          beforeProbe,
+          commandExecutor,
+          intervalSeconds: 3,
+          sleepImpl: (seconds) => sleeps.push(seconds),
+          timeoutSeconds: 30,
+        }),
+      ).toBe(true);
+      expect(beforeProbe).toHaveBeenCalledTimes(2);
+      expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
+      expect(sleeps).toEqual([3]);
+    },
+  );
+
+  it("retries when OpenShell drops the replacement supervisor's reverse relay", async () => {
+    const commandExecutor = sequencedExecutor(
+      completed(1, OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR),
+      completed(0),
+    );
     const beforeProbe = vi.fn(() => true);
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe,
-        captureOpenshellImpl,
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 30,
       }),
     ).toBe(true);
     expect(beforeProbe).toHaveBeenCalledTimes(2);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
     expect(sleeps).toEqual([3]);
   });
 
-  it("retries when OpenShell drops the replacement supervisor's reverse relay", () => {
-    const captureOpenshellImpl = vi
-      .fn()
-      .mockReturnValueOnce({
-        status: 1,
-        output: OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR.trim(),
-        stdout: "",
-        stderr: OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR,
-      })
-      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
-    const beforeProbe = vi.fn(() => true);
-    const sleeps: number[] = [];
+  it.each([OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR, OPENSHELL_RELAY_TARGET_REFUSED_STDERR])(
+    "retries while the replacement supervisor's local relay target starts (#7273)",
+    async (stderr) => {
+      const commandExecutor = sequencedExecutor(completed(1, stderr), completed(0));
+      const beforeProbe = vi.fn(() => true);
+      const sleeps: number[] = [];
 
-    expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
-        beforeProbe,
-        captureOpenshellImpl,
-        intervalSeconds: 3,
-        sleepImpl: (seconds) => sleeps.push(seconds),
-        timeoutSeconds: 30,
-      }),
-    ).toBe(true);
-    expect(beforeProbe).toHaveBeenCalledTimes(2);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
-    expect(sleeps).toEqual([3]);
-  });
-
-  it.each([
-    OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR,
-    OPENSHELL_RELAY_TARGET_REFUSED_STDERR,
-  ])("retries while the replacement supervisor's local relay target starts (#7273)", (stderr) => {
-    const captureOpenshellImpl = vi
-      .fn()
-      .mockReturnValueOnce({
-        status: 1,
-        output: stderr.trim(),
-        stdout: "",
-        stderr,
-      })
-      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
-    const beforeProbe = vi.fn(() => true);
-    const sleeps: number[] = [];
-
-    expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
-        beforeProbe,
-        captureOpenshellImpl,
-        intervalSeconds: 3,
-        sleepImpl: (seconds) => sleeps.push(seconds),
-        timeoutSeconds: 30,
-      }),
-    ).toBe(true);
-    expect(beforeProbe).toHaveBeenCalledTimes(2);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
-    expect(sleeps).toEqual([3]);
-  });
+      expect(
+        await waitForRecreatedSandboxOpenShellReady("recreated-box", {
+          beforeProbe,
+          commandExecutor,
+          intervalSeconds: 3,
+          sleepImpl: (seconds) => sleeps.push(seconds),
+          timeoutSeconds: 30,
+        }),
+      ).toBe(true);
+      expect(beforeProbe).toHaveBeenCalledTimes(2);
+      expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
+      expect(sleeps).toEqual([3]);
+    },
+  );
 
   it.each([
     `Error:   × status: DeadlineExceeded, message: "policy update timed out"`,
@@ -380,193 +350,148 @@ describe("recreated sandbox OpenShell readiness", () => {
     `Error:   × code: 'The service is currently unavailable', message: "permission denied"`,
     "Error: sandbox 'other-box' is not ready (phase: Error); wait for it to reach Ready state.",
     "Error: sandbox 'recreated-box' is not ready (phase: Failed); wait for it to reach Ready state.",
-  ])("does not retry an unrelated OpenShell error", (stderr) => {
-    const captureOpenshellImpl = vi.fn(() => ({
-      status: 1,
-      output: stderr,
-      stdout: "",
-      stderr,
-    }));
+  ])("does not retry an unrelated OpenShell error", async (stderr) => {
+    const commandExecutor = sequencedExecutor(completed(1, stderr));
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
-        captureOpenshellImpl,
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 30,
       }),
     ).toBe(false);
-    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
     expect(sleeps).toEqual([]);
   });
 
-  it("fails immediately on an unknown OpenShell error", () => {
-    const captureOpenshellImpl = vi.fn(() => ({
-      status: 1,
-      output: "permission denied",
-      stdout: "",
-      stderr: "permission denied",
-    }));
+  it("fails immediately on an unknown OpenShell error", async () => {
+    const commandExecutor = sequencedExecutor(completed(1, "permission denied"));
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
-        captureOpenshellImpl,
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 30,
       }),
     ).toBe(false);
-    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
     expect(sleeps).toEqual([]);
   });
 
-  it("retries the no-op OpenShell readiness probe after a command timeout (#7273)", () => {
-    const timeoutError = Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
-    const captureOpenshellImpl = vi
-      .fn()
-      .mockReturnValueOnce({
-        status: null,
-        output: "",
-        stdout: "",
-        stderr: "",
-        error: timeoutError,
-      })
-      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+  it("retries the no-op OpenShell readiness probe after a command timeout (#7273)", async () => {
+    const commandExecutor = sequencedExecutor(timedOut(), completed(0));
     const beforeProbe = vi.fn(() => true);
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe,
-        captureOpenshellImpl,
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 30,
       }),
     ).toBe(true);
     expect(beforeProbe).toHaveBeenCalledTimes(2);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
+    expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
     expect(sleeps).toEqual([3]);
   });
 
-  it("rechecks the pinned managed guard before every readiness retry", () => {
-    const captureOpenshellImpl = vi.fn(() => ({
-      status: 1,
-      output: OPENSHELL_SANDBOX_NOT_READY_STDERR.trim(),
-      stdout: "",
-      stderr: OPENSHELL_SANDBOX_NOT_READY_STDERR,
-    }));
+  it("rechecks the pinned managed guard before every readiness retry", async () => {
+    const commandExecutor = sequencedExecutor(completed(1, OPENSHELL_SANDBOX_NOT_READY_STDERR));
     const beforeProbe = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe,
-        captureOpenshellImpl,
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 6,
       }),
     ).toBe(false);
     expect(beforeProbe).toHaveBeenCalledTimes(2);
-    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
     expect(sleeps).toEqual([3]);
   });
 
-  it("retries an inconclusive managed guard within the readiness deadline", () => {
-    const captureOpenshellImpl = vi.fn(() => ({
-      status: 0,
-      output: "",
-      stdout: "",
-      stderr: "",
-    }));
+  it("retries an inconclusive managed guard within the readiness deadline", async () => {
+    const commandExecutor = sequencedExecutor(completed(0));
     const beforeProbe = vi.fn().mockReturnValueOnce(null).mockReturnValueOnce(true);
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe,
-        captureOpenshellImpl,
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 6,
       }),
     ).toBe(true);
     expect(beforeProbe).toHaveBeenCalledTimes(2);
-    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
     expect(sleeps).toEqual([3]);
   });
 
-  it("fails closed on a definitive managed guard failure without probing OpenShell", () => {
-    const captureOpenshellImpl = vi.fn(() => ({
-      status: 0,
-      output: "",
-      stdout: "",
-      stderr: "",
-    }));
+  it("fails closed on a definitive managed guard failure without probing OpenShell", async () => {
+    const commandExecutor = sequencedExecutor(completed(0));
     const beforeProbe = vi.fn(() => false);
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe,
-        captureOpenshellImpl,
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 6,
       }),
     ).toBe(false);
     expect(beforeProbe).toHaveBeenCalledOnce();
-    expect(captureOpenshellImpl).not.toHaveBeenCalled();
+    expect(commandExecutor.runBuffered).not.toHaveBeenCalled();
     expect(sleeps).toEqual([]);
   });
 
-  it("fails when the managed guard stays inconclusive until the deadline", () => {
-    const captureOpenshellImpl = vi.fn(() => ({
-      status: 0,
-      output: "",
-      stdout: "",
-      stderr: "",
-    }));
+  it("fails when the managed guard stays inconclusive until the deadline", async () => {
+    const commandExecutor = sequencedExecutor(completed(0));
     const beforeProbe = vi.fn(() => null);
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
         beforeProbe,
-        captureOpenshellImpl,
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: 6,
       }),
     ).toBe(false);
     expect(beforeProbe).toHaveBeenCalledTimes(3);
-    expect(captureOpenshellImpl).not.toHaveBeenCalled();
+    expect(commandExecutor.runBuffered).not.toHaveBeenCalled();
     expect(sleeps).toEqual([3, 3]);
   });
 
-  it("lets the recovery wait override replace an explicit readiness budget", () => {
+  it("lets the recovery wait override replace an explicit readiness budget", async () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "1");
     vi.stubEnv("NEMOCLAW_SANDBOX_READY_TIMEOUT", "6");
-    const captureOpenshellImpl = vi.fn(() => ({
-      status: 1,
-      output: OPENSHELL_SANDBOX_NOT_READY_STDERR.trim(),
-      stdout: "",
-      stderr: OPENSHELL_SANDBOX_NOT_READY_STDERR,
-    }));
+    const commandExecutor = sequencedExecutor(completed(1, OPENSHELL_SANDBOX_NOT_READY_STDERR));
     const sleeps: number[] = [];
 
     expect(
-      waitForRecreatedSandboxOpenShellReady("recreated-box", {
-        captureOpenshellImpl,
+      await waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        commandExecutor,
         intervalSeconds: 3,
         sleepImpl: (seconds) => sleeps.push(seconds),
         timeoutSeconds: Number(process.env.NEMOCLAW_SANDBOX_READY_TIMEOUT),
       }),
     ).toBe(false);
-    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
     expect(sleeps).toEqual([]);
   });
 });
@@ -696,29 +621,33 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
   // A probe whose answers play out in order; the last answer repeats.
   const makeProbe = (answers: Array<boolean | null>) => {
     const remaining = [...answers];
-    return () => (remaining.length > 1 ? remaining.shift() : remaining[0]) ?? null;
+    return async () => (remaining.length > 1 ? remaining.shift() : remaining[0]) ?? null;
   };
 
-  it("confirms the gateway is still serving after the settle window", () => {
+  it("confirms the gateway is still serving after the settle window", async () => {
     const sleeps: number[] = [];
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+    const ok = await waitForRecoveredSandboxGateway("my-sandbox", {
       probeImpl: makeProbe([true, true]),
-      sleepImpl: (seconds: number) => sleeps.push(seconds),
+      sleepImpl: async (seconds: number) => {
+        sleeps.push(seconds);
+      },
     });
     expect(ok).toBe(true);
     // Default settle window of 25s between the two probes.
     expect(sleeps).toEqual([25]);
   });
 
-  it("uses authenticated managed probes inside and at the settle deadline", () => {
+  it("uses authenticated managed probes inside and at the settle deadline", async () => {
     const sleeps: number[] = [];
-    const managedProbe = vi.fn(() => true);
-    const ordinaryProbe = vi.fn(() => false);
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+    const managedProbe = vi.fn(async () => true);
+    const ordinaryProbe = vi.fn(async () => false);
+    const ok = await waitForRecoveredSandboxGateway("my-sandbox", {
       initialManagedHealthPassed: true,
       probeImpl: ordinaryProbe,
       managedProbeImpl: managedProbe,
-      sleepImpl: (seconds: number) => sleeps.push(seconds),
+      sleepImpl: async (seconds: number) => {
+        sleeps.push(seconds);
+      },
     });
     expect(ok).toBe(true);
     expect(managedProbe).toHaveBeenCalledTimes(2);
@@ -726,45 +655,51 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     expect(sleeps).toEqual([22, 3]);
   });
 
-  it("retries one transient managed result without extending the settle window", () => {
+  it("retries one transient managed result without extending the settle window", async () => {
     process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "5";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "2";
     const sleeps: number[] = [];
     const managedProbe = vi.fn(makeProbe([null, true]));
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+    const ok = await waitForRecoveredSandboxGateway("my-sandbox", {
       initialManagedHealthPassed: true,
       managedProbeImpl: managedProbe,
-      sleepImpl: (seconds: number) => sleeps.push(seconds),
+      sleepImpl: async (seconds: number) => {
+        sleeps.push(seconds);
+      },
     });
     expect(ok).toBe(true);
     expect(managedProbe).toHaveBeenCalledTimes(2);
     expect(sleeps).toEqual([3, 2]);
   });
 
-  it("keeps a recent authenticated result when only the deadline probe is transient", () => {
+  it("keeps a recent authenticated result when only the deadline probe is transient", async () => {
     process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "5";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "2";
     const sleeps: number[] = [];
     const managedProbe = vi.fn(makeProbe([true, null]));
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+    const ok = await waitForRecoveredSandboxGateway("my-sandbox", {
       initialManagedHealthPassed: true,
       managedProbeImpl: managedProbe,
-      sleepImpl: (seconds: number) => sleeps.push(seconds),
+      sleepImpl: async (seconds: number) => {
+        sleeps.push(seconds);
+      },
     });
     expect(ok).toBe(true);
     expect(managedProbe).toHaveBeenCalledTimes(2);
     expect(sleeps).toEqual([3, 2]);
   });
 
-  it("does not let ordinary outer-namespace health override a managed probe failure", () => {
+  it("does not let ordinary outer-namespace health override a managed probe failure", async () => {
     const sleeps: number[] = [];
-    const managedProbe = vi.fn(() => false);
-    const ordinaryProbe = vi.fn(() => true);
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+    const managedProbe = vi.fn(async () => false);
+    const ordinaryProbe = vi.fn(async () => true);
+    const ok = await waitForRecoveredSandboxGateway("my-sandbox", {
       initialManagedHealthPassed: true,
       probeImpl: ordinaryProbe,
       managedProbeImpl: managedProbe,
-      sleepImpl: (seconds: number) => sleeps.push(seconds),
+      sleepImpl: async (seconds: number) => {
+        sleeps.push(seconds);
+      },
     });
     expect(ok).toBe(false);
     expect(managedProbe).toHaveBeenCalledOnce();
@@ -772,12 +707,12 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     expect(sleeps).toEqual([22]);
   });
 
-  it("accepts the initial managed proof without another probe when settling is disabled", () => {
+  it("accepts the initial managed proof without another probe when settling is disabled", async () => {
     process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
-    const managedProbe = vi.fn(() => false);
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+    const managedProbe = vi.fn(async () => false);
+    const ok = await waitForRecoveredSandboxGateway("my-sandbox", {
       initialManagedHealthPassed: true,
-      probeImpl: () => false,
+      probeImpl: async () => false,
       managedProbeImpl: managedProbe,
       sleepImpl: () => {},
     });
@@ -785,75 +720,87 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     expect(managedProbe).not.toHaveBeenCalled();
   });
 
-  it("uses the bounded recovery window for transient stopped probes", () => {
+  it("uses the bounded recovery window for transient stopped probes", async () => {
     process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "6";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "3";
     const sleeps: number[] = [];
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+    const ok = await waitForRecoveredSandboxGateway("my-sandbox", {
       probeImpl: makeProbe([true, false, false, true]),
-      sleepImpl: (seconds: number) => sleeps.push(seconds),
+      sleepImpl: async (seconds: number) => {
+        sleeps.push(seconds);
+      },
     });
     expect(ok).toBe(true);
     expect(sleeps).toEqual([25, 3, 3]);
   });
 
-  it("uses the bounded recovery window for inconclusive post-settle transport", () => {
+  it("uses the bounded recovery window for inconclusive post-settle transport", async () => {
     process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "6";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "3";
     const sleeps: number[] = [];
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+    const ok = await waitForRecoveredSandboxGateway("my-sandbox", {
       probeImpl: makeProbe([true, null, null, true]),
-      sleepImpl: (seconds: number) => sleeps.push(seconds),
+      sleepImpl: async (seconds: number) => {
+        sleeps.push(seconds);
+      },
     });
     expect(ok).toBe(true);
     expect(sleeps).toEqual([25, 3, 3]);
   });
 
-  it("fails closed when post-settle transport stays inconclusive for the bounded window", () => {
+  it("fails closed when post-settle transport stays inconclusive for the bounded window", async () => {
     process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "6";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "3";
     const sleeps: number[] = [];
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+    const ok = await waitForRecoveredSandboxGateway("my-sandbox", {
       probeImpl: makeProbe([true, null]),
-      sleepImpl: (seconds: number) => sleeps.push(seconds),
+      sleepImpl: async (seconds: number) => {
+        sleeps.push(seconds);
+      },
     });
     expect(ok).toBe(false);
     expect(sleeps).toEqual([25, 3, 3]);
   });
 
-  it("fails recovery when the gateway serves once and then drops its listener (wedge)", () => {
+  it("fails recovery when the gateway serves once and then drops its listener (wedge)", async () => {
     process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "6";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "3";
     const sleeps: number[] = [];
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+    const ok = await waitForRecoveredSandboxGateway("my-sandbox", {
       initialManagedHealthPassed: true,
       probeImpl: makeProbe([true]),
-      managedProbeImpl: () => false,
-      sleepImpl: (seconds: number) => sleeps.push(seconds),
+      managedProbeImpl: async () => false,
+      sleepImpl: async (seconds: number) => {
+        sleeps.push(seconds);
+      },
     });
     expect(ok).toBe(false);
     expect(sleeps).toEqual([22]);
   });
 
-  it("skips the settle confirm when NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS=0", () => {
+  it("skips the settle confirm when NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS=0", async () => {
     process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
     const sleeps: number[] = [];
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+    const ok = await waitForRecoveredSandboxGateway("my-sandbox", {
       // A second probe would report the wedge; with the settle disabled the
       // first success must win and no second probe may run.
       probeImpl: makeProbe([true, false]),
-      sleepImpl: (seconds: number) => sleeps.push(seconds),
+      sleepImpl: async (seconds: number) => {
+        sleeps.push(seconds);
+      },
     });
     expect(ok).toBe(true);
     expect(sleeps).toEqual([]);
   });
 
-  it("still polls through initial failures before reaching the settle confirm", () => {
+  it("still polls through initial failures before reaching the settle confirm", async () => {
     process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "5";
     const sleeps: number[] = [];
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+    const ok = await waitForRecoveredSandboxGateway("my-sandbox", {
       probeImpl: makeProbe([false, false, true, true]),
-      sleepImpl: (seconds: number) => sleeps.push(seconds),
+      sleepImpl: async (seconds: number) => {
+        sleeps.push(seconds);
+      },
     });
     expect(ok).toBe(true);
     // Two poll intervals (default 3s) before the first success, then the
@@ -861,22 +808,22 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     expect(sleeps).toEqual([3, 3, 5]);
   });
 
-  it("returns false when the gateway never serves within the wait budget", () => {
+  it("returns false when the gateway never serves within the wait budget", async () => {
     process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "0";
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+    const ok = await waitForRecoveredSandboxGateway("my-sandbox", {
       probeImpl: makeProbe([false]),
       sleepImpl: () => {},
     });
     expect(ok).toBe(false);
   });
 
-  it("uses the manifest health timeout threaded by the recovery caller", () => {
+  it("uses the manifest health timeout threaded by the recovery caller", async () => {
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "3";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
     let probes = 0;
 
-    const ok = waitForRecoveredSandboxGateway("hermes-box", {
-      probeImpl: () => {
+    const ok = await waitForRecoveredSandboxGateway("hermes-box", {
+      probeImpl: async () => {
         probes += 1;
         return false;
       },
@@ -888,14 +835,14 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     expect(probes).toBe(31);
   });
 
-  it("lets the recovery wait environment override take precedence over the manifest timeout", () => {
+  it("lets the recovery wait environment override take precedence over the manifest timeout", async () => {
     process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "6";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "3";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
     let probes = 0;
 
-    const ok = waitForRecoveredSandboxGateway("hermes-box", {
-      probeImpl: () => {
+    const ok = await waitForRecoveredSandboxGateway("hermes-box", {
+      probeImpl: async () => {
         probes += 1;
         return false;
       },

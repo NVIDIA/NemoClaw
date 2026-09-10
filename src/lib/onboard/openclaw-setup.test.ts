@@ -9,8 +9,12 @@ import {
 } from "./openclaw-setup";
 
 describe("OpenClaw sandbox setup", () => {
-  it("shares config sync before web-search reconciliation", async () => {
-    const syncNemoClawConfigInSandbox = vi.fn();
+  it("waits for config sync before web-search reconciliation", async () => {
+    let finishConfigSync!: () => void;
+    const configSync = new Promise<void>((resolve) => {
+      finishConfigSync = resolve;
+    });
+    const syncNemoClawConfigInSandbox = vi.fn(() => configSync);
     const reconcileWebSearch = vi.fn(async () => undefined);
     const revalidateSandboxIdentity = vi.fn();
     const configureOpenclawSandbox = createConfigureOpenclawSandbox({
@@ -18,7 +22,7 @@ describe("OpenClaw sandbox setup", () => {
       reconcileWebSearch,
     });
 
-    await configureOpenclawSandbox(
+    const configuring = configureOpenclawSandbox(
       "spark-box",
       "model",
       "provider",
@@ -32,14 +36,33 @@ describe("OpenClaw sandbox setup", () => {
       "model",
       revalidateSandboxIdentity,
     );
+    expect(reconcileWebSearch).not.toHaveBeenCalled();
+
+    finishConfigSync();
+    await configuring;
+
     expect(reconcileWebSearch).toHaveBeenCalledExactlyOnceWith(
       "spark-box",
       null,
       revalidateSandboxIdentity,
     );
-    expect(syncNemoClawConfigInSandbox.mock.invocationCallOrder[0]).toBeLessThan(
-      reconcileWebSearch.mock.invocationCallOrder[0]!,
-    );
+  });
+
+  it("propagates config sync failure before web-search reconciliation", async () => {
+    const syncNemoClawConfigInSandbox = vi.fn(async () => {
+      throw new Error("config sync failed");
+    });
+    const reconcileWebSearch = vi.fn(async () => undefined);
+    const configureOpenclawSandbox = createConfigureOpenclawSandbox({
+      syncNemoClawConfigInSandbox,
+      reconcileWebSearch,
+    });
+
+    await expect(
+      configureOpenclawSandbox("spark-box", "model", "provider", null),
+    ).rejects.toThrow("config sync failed");
+
+    expect(reconcileWebSearch).not.toHaveBeenCalled();
   });
 
   it("delegates fresh setup to shared OpenClaw configuration", async () => {

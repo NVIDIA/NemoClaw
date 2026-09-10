@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import {
+  namedOpenShellGateway,
+  selectedOpenShellGateway,
+} from "../adapters/openshell/sandbox-observer";
 import { shellQuote } from "../runner";
 import type { AgentDefinition } from "./defs";
-
-type RunCaptureOpenshell = (
-  args: string[],
-  opts?: { ignoreError?: boolean; includeStderr?: boolean },
-) => string | { status?: number | null; output?: string | null } | null;
 
 export type AgentBinaryAvailability =
   | { available: true }
@@ -26,12 +26,12 @@ function agentExecutableName(agent: AgentDefinition): string {
   return configuredPath.split("/").filter(Boolean).pop() || agent.name;
 }
 
-export function verifyAgentBinaryAvailable(
+export async function verifyAgentBinaryAvailable(
   sandboxName: string,
   agent: AgentDefinition,
-  runCaptureOpenshell: RunCaptureOpenshell,
+  executor: OpenShellSandboxBufferedCommandExecutor,
   gatewayName?: string,
-): AgentBinaryAvailability {
+): Promise<AgentBinaryAvailability> {
   const executable = agentExecutableName(agent);
   const binaryPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
   // Pi's fail-closed login profile verifies nproc as well as nofile. Ubuntu's
@@ -52,30 +52,33 @@ export function verifyAgentBinaryAvailable(
         `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
         `[ -n "$resolved" ] && [ -x "$resolved" ] && echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)} || echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}`,
       ].join("; ");
-  const result = runCaptureOpenshell(
-    [
-      "sandbox",
-      "exec",
-      "-n",
+  let result;
+  try {
+    result = await executor.runBuffered({
       sandboxName,
-      ...(gatewayName ? ["-g", gatewayName] : []),
-      "--no-tty",
-      "--",
-      shellPath,
-      "-lc",
-      script,
-    ],
-    { ignoreError: true, includeStderr: true },
-  );
-  if (typeof result !== "string" && result?.status !== 0) {
+      target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
+      command: [shellPath, "-lc", script],
+      tty: false,
+    });
+  } catch {
+    return { available: false, reason: "unobservable", binaryPath: binaryPath || undefined };
+  }
+  if (result.outcome.kind === "failed") {
     return {
       available: false,
       reason: "unobservable",
       binaryPath: binaryPath || undefined,
-      ...(result ? { transportStatus: result.status ?? null } : {}),
     };
   }
-  const status = (typeof result === "string" ? result : result?.output)?.trim() ?? "";
+  if (result.outcome.exitCode !== 0) {
+    return {
+      available: false,
+      reason: "unobservable",
+      binaryPath: binaryPath || undefined,
+      transportStatus: result.outcome.exitCode,
+    };
+  }
+  const status = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
   const marker = status
     .split(/\r?\n/)
     .map((line) => line.trim())

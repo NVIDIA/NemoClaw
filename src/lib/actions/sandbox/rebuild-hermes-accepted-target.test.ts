@@ -276,6 +276,7 @@ describe("Hermes accepted replacement recovery", () => {
       { name: "alpha" },
       undefined,
       true,
+      undefined,
     );
   });
 
@@ -298,6 +299,7 @@ describe("Hermes accepted replacement recovery", () => {
       { name: "alpha" },
       undefined,
       false,
+      undefined,
     );
   });
 

@@ -34,7 +34,7 @@ import {
   observeMcpCredentialRevision,
 } from "./mcp-bridge-provider-readiness";
 import { type McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
-import { waitForMcpBridgeCondition } from "./mcp-bridge/timing";
+import { waitForMcpBridgeConditionAsync } from "./mcp-bridge/timing";
 
 const STABLE_CREDENTIAL_REVISION_OBSERVATIONS = 3;
 const MAX_CREDENTIAL_REVISION_REGISTRATIONS = 2;
@@ -117,14 +117,14 @@ export function assertAgentMcpTeardownRuntimeCapability(
   }
 }
 
-export function reloadOpenClawGatewayAfterMcpMutation(
+export async function reloadOpenClawGatewayAfterMcpMutation(
   sandboxName: string,
   adapters: readonly AgentMcpAdapter[],
   operationTarget?: McpOperationTarget,
-): void {
+): Promise<void> {
   if (adapters.includes("openclaw-config")) {
-    if (operationTarget) reloadOpenClawGateway(sandboxName, operationTarget);
-    else reloadOpenClawGateway(sandboxName);
+    if (operationTarget) await reloadOpenClawGateway(sandboxName, operationTarget);
+    else await reloadOpenClawGateway(sandboxName);
   }
 }
 
@@ -196,7 +196,7 @@ export function registerAgentAdapter(
 }
 
 /** Register one adapter and converge it on the credential revision exposed by fresh execs. */
-export function registerAgentAdapterAtCurrentCredentialRevision(
+export async function registerAgentAdapterAtCurrentCredentialRevision(
   sandboxName: string,
   adapter: AgentMcpAdapter,
   entry: McpSourceEntry,
@@ -208,7 +208,7 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
     teardownRollback?: boolean;
     operationTarget?: McpOperationTarget;
   } = {},
-): McpAttachedCredentialRevision {
+): Promise<McpAttachedCredentialRevision> {
   const timeoutSeconds = Number.parseInt(
     process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
     10,
@@ -229,9 +229,13 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
     let candidateRevision: McpAttachedCredentialRevision | undefined;
     let stableObservations = 0;
     let observedRevision: McpAttachedCredentialRevision | undefined;
-    const stable = waitForMcpBridgeCondition(
-      () => {
-        const observation = observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
+    const stable = await waitForMcpBridgeConditionAsync(
+      async () => {
+        const observation = await observeMcpCredentialRevision(
+          sandboxName,
+          entry,
+          runtimeSelection,
+        );
         if (observation === "absent" || observation === "canonical") {
           throw mcpAdapterCredentialRevisionUnavailableError(entry.server);
         }

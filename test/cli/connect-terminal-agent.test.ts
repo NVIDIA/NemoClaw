@@ -50,7 +50,7 @@ describe("CLI dispatch for terminal agents", () => {
         "  echo '  Phase: Ready'",
         "  exit 0",
         "fi",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "-n" ] && [ "$4" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && { [ "$3" = "-n" ] || [ "$3" = "--name" ]; } && [ "$4" = "alpha" ]; then',
         // The smoke command is always the final argument. Read it from the end
         // so the stub does not depend on how many flags precede it (#8624).
         '  cmd="${*: -1}"',

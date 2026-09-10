@@ -189,9 +189,35 @@ describe("explicit MCP migration", () => {
   });
 
   it("materializes native config, verifies it, then retires legacy state", async () => {
-    await expect(migrateMcpBridges("alpha", { apply: true })).resolves.toMatchObject({
-      applied: true,
-    });
+    let finishRegistration!: () => void;
+    let finishReload!: () => void;
+    mocks.register.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishRegistration = resolve;
+      }),
+    );
+    mocks.reloadOpenClaw.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishReload = resolve;
+      }),
+    );
+    const migration = migrateMcpBridges("alpha", { apply: true });
+    try {
+      await vi.waitFor(() => expect(mocks.register).toHaveBeenCalledOnce());
+      expect(mocks.inspectSources).not.toHaveBeenCalled();
+      expect(mocks.reloadOpenClaw).not.toHaveBeenCalled();
+      expect(mocks.removeLegacy).not.toHaveBeenCalled();
+      finishRegistration();
+      await vi.waitFor(() => expect(mocks.reloadOpenClaw).toHaveBeenCalledOnce());
+      expect(mocks.discoverTools).not.toHaveBeenCalled();
+      expect(mocks.removeLegacy).not.toHaveBeenCalled();
+      finishReload();
+      await expect(migration).resolves.toMatchObject({ applied: true });
+    } finally {
+      finishRegistration();
+      finishReload();
+      await migration.catch(() => undefined);
+    }
     expect(mocks.register).toHaveBeenCalledOnce();
     expect(mocks.register).toHaveBeenCalledWith(
       "alpha",
@@ -228,10 +254,29 @@ describe("explicit MCP migration", () => {
 
   it("retains legacy configuration when live policy changes after native activation", async () => {
     mocks.getPolicyState.mockReturnValueOnce("match").mockReturnValue("drift");
-
-    await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toThrow(
-      /does not match the current restrictive OpenShell policy/,
+    let finishRegistration!: () => void;
+    mocks.register.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishRegistration = resolve;
+      }),
     );
+    const migration = migrateMcpBridges("alpha", { apply: true });
+    const outcome = migration.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    try {
+      await vi.waitFor(() => expect(mocks.register).toHaveBeenCalledOnce());
+      expect(mocks.unregister).not.toHaveBeenCalled();
+      expect(mocks.removeLegacy).not.toHaveBeenCalled();
+      finishRegistration();
+      expect(await outcome).toMatchObject({
+        message: expect.stringMatching(/does not match the current restrictive OpenShell policy/),
+      });
+    } finally {
+      finishRegistration();
+      await outcome;
+    }
     expect(mocks.reloadOpenClaw).toHaveBeenCalledOnce();
     expect(mocks.discoverTools).not.toHaveBeenCalled();
     expect(mocks.removeLegacy).not.toHaveBeenCalled();
@@ -329,9 +374,24 @@ describe("explicit MCP migration", () => {
       });
     const rebuildSandbox = vi.fn().mockResolvedValue(undefined);
 
-    await expect(
-      migrateMcpBridges("alpha", { apply: true, rebuildSandbox }),
-    ).resolves.toMatchObject({ applied: true });
+    let finishRegistration!: () => void;
+    mocks.register.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishRegistration = resolve;
+      }),
+    );
+    const migration = migrateMcpBridges("alpha", { apply: true, rebuildSandbox });
+    try {
+      await vi.waitFor(() => expect(mocks.register).toHaveBeenCalledOnce());
+      expect(mocks.inspectSources).toHaveBeenCalledOnce();
+      expect(mocks.discoverTools).not.toHaveBeenCalled();
+      expect(mocks.removeLegacy).not.toHaveBeenCalled();
+      finishRegistration();
+      await expect(migration).resolves.toMatchObject({ applied: true });
+    } finally {
+      finishRegistration();
+      await migration.catch(() => undefined);
+    }
     expect(rebuildSandbox).toHaveBeenCalledWith("alpha", {
       sandboxName: "alpha",
       entries: [deepEntry],

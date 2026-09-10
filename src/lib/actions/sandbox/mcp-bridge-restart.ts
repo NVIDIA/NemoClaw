@@ -62,15 +62,15 @@ function resolvedTargetPins(
   return target;
 }
 
-function reloadAttemptedOpenClawMutation(
+async function reloadAttemptedOpenClawMutation(
   sandboxName: string,
   adapters: readonly AgentMcpAdapter[],
   failure: unknown,
   operationTarget?: McpOperationTarget,
-): void {
+): Promise<void> {
   if (!adapters.includes("openclaw-config")) return;
   try {
-    reloadOpenClawGatewayAfterMcpMutation(
+    await reloadOpenClawGatewayAfterMcpMutation(
       sandboxName,
       adapters,
       ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
@@ -152,7 +152,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
           `MCP server '${name}' is not ready in the current agent and OpenShell sources (policy=${String(status?.policy.state ?? "unavailable")}, provider=${String(status?.provider.state ?? "unavailable")}). Restart does not reconstruct missing source state.`,
         );
       }
-      const credentialObservation = observeMcpCredentialRevision(
+      const credentialObservation = await observeMcpCredentialRevision(
         sandboxName,
         entry,
         providerRuntimeSelection,
@@ -168,7 +168,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       }
       const entryAdapter = entry.adapter ?? adapter;
       attemptedAdapters.push(entryAdapter);
-      registerAgentAdapterAtCurrentCredentialRevision(
+      await registerAgentAdapterAtCurrentCredentialRevision(
         sandboxName,
         entryAdapter,
         entry,
@@ -180,7 +180,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       console.log(`  Reloaded MCP server '${name}' from current agent configuration.`);
     }
   } catch (error) {
-    reloadAttemptedOpenClawMutation(
+    await reloadAttemptedOpenClawMutation(
       sandboxName,
       attemptedAdapters,
       error,
@@ -188,7 +188,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     );
     throw error;
   }
-  reloadOpenClawGatewayAfterMcpMutation(
+  await reloadOpenClawGatewayAfterMcpMutation(
     sandboxName,
     attemptedAdapters,
     ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
@@ -288,7 +288,7 @@ export async function restoreExistingMcpBridgeRuntime(
         providerRuntimeSelection,
       );
       attemptedAdapters.push(adapter);
-      registerAgentAdapterAtCurrentCredentialRevision(
+      await registerAgentAdapterAtCurrentCredentialRevision(
         sandboxName,
         adapter,
         entry,
@@ -303,7 +303,7 @@ export async function restoreExistingMcpBridgeRuntime(
       );
     }
   } catch (error) {
-    reloadAttemptedOpenClawMutation(
+    await reloadAttemptedOpenClawMutation(
       sandboxName,
       attemptedAdapters,
       error,
@@ -311,7 +311,7 @@ export async function restoreExistingMcpBridgeRuntime(
     );
     throw error;
   }
-  reloadOpenClawGatewayAfterMcpMutation(
+  await reloadOpenClawGatewayAfterMcpMutation(
     sandboxName,
     attemptedAdapters,
     ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
