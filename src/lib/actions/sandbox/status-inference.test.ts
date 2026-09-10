@@ -7,12 +7,16 @@ import {
   collectSandboxStatusSnapshot,
   getSandboxStatusInferenceHealth,
   getSandboxStatusReport,
+  type SandboxStatusPreflightResult,
 } from "./status";
 
 describe("sandbox status inference.local route health (#6192)", () => {
   function snapshotDeps(options: {
     agent?: string;
+    confirmedStopped?: boolean;
+    stopped?: boolean;
     lookupState?: "present" | "missing";
+    lookupPhase?: "Ready" | "Running";
     provider?: string;
     liveProvider?: string;
     liveModel?: string;
@@ -29,25 +33,44 @@ describe("sandbox status inference.local route health (#6192)", () => {
   }) {
     const provider = options.provider ?? "nvidia-prod";
     const reportInferenceProbeError = vi.fn();
-    const sandbox = {
+    let sandbox = {
       name: "alpha",
       agent: options.agent ?? "openclaw",
       model: "nvidia/nemotron",
       provider,
       preferredInferenceApi: options.preferredInferenceApi,
+      ...(options.stopped !== undefined ? { stopped: options.stopped } : {}),
     };
     return {
       getSandbox: () => sandbox,
       listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: "alpha" }),
-      reconcile: async () =>
+      updateSandbox: vi.fn((_name: string, updates: { stopped?: boolean }) => {
+        sandbox = { ...sandbox, ...updates };
+        return true;
+      }),
+      reconcile: vi.fn(async () =>
         options.lookupState === "missing"
           ? { state: "missing" as const, output: "sandbox alpha not found" }
-          : { state: "present" as const, output: "Name: alpha\nPhase: Ready\n" },
-      captureOpenshellForStatusImpl: async () =>
-        ({
-          status: 0,
-          output: `Gateway inference:\n  Provider: ${options.liveProvider ?? provider}\n  Model: ${options.liveModel ?? "nvidia/nemotron"}\n`,
-        }) as never,
+          : {
+              state: "present" as const,
+              phase: options.lookupPhase ?? "Ready",
+              output: `Name: alpha\nPhase: ${options.lookupPhase ?? "Ready"}\n`,
+            },
+      ),
+      captureOpenshellForStatusImpl: vi.fn(
+        async () =>
+          ({
+            status: 0,
+            output: `Gateway inference:\n  Provider: ${options.liveProvider ?? provider}\n  Model: ${options.liveModel ?? "nvidia/nemotron"}\n`,
+          }) as never,
+      ),
+      getSandboxStatusPreflightImpl: vi.fn(async (): Promise<SandboxStatusPreflightResult> => ({
+        failure: null,
+        failureLayer: null,
+        intentionalStopConfirmed: options.confirmedStopped === true,
+        suppressInferenceProbe: options.confirmedStopped === true,
+        exitCode: 0,
+      })),
       probeProviderHealthImpl: vi.fn(
         options.providerProbeThrows
           ? () => {
@@ -121,6 +144,92 @@ describe("sandbox status inference.local route health (#6192)", () => {
 
     const report = await getSandboxStatusReport("alpha", deps);
     expect(report.servingProcessHealth).toBeNull();
+  });
+
+  it("does not probe terminal runtime health when the sandbox is stopped (#11025)", async () => {
+    const deps = snapshotDeps({
+      agent: "langchain-deepagents-code",
+      confirmedStopped: true,
+      stopped: true,
+      routeHealth: {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 200,
+        detail: "route reachable",
+      },
+    });
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
+
+    expect(snapshot.terminalRuntimeHealth).toBeNull();
+    expect(deps.probeTerminalRuntimeHealth).not.toHaveBeenCalled();
+    expect(deps.probeProviderHealthImpl).not.toHaveBeenCalled();
+    expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
+  });
+
+  it("reports a missing provider-confirmed intentional stop as Stopped (#11025)", async () => {
+    const deps = snapshotDeps({
+      confirmedStopped: true,
+      stopped: true,
+      lookupState: "missing",
+      routeHealth: null,
+    });
+
+    const report = await getSandboxStatusReport("alpha", deps);
+
+    expect(report.phase).toBe("Stopped");
+    expect(report.failureLayer).toBeNull();
+    expect(report.inferenceHealth).toBeNull();
+    expect(deps.captureOpenshellForStatusImpl).not.toHaveBeenCalled();
+    expect(deps.probeProviderHealthImpl).not.toHaveBeenCalled();
+    expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
+  });
+
+  it("revokes a stale stop marker observed Running before a later unexpected stop (#11025)", async () => {
+    const deps = snapshotDeps({
+      stopped: true,
+      lookupPhase: "Running",
+      routeHealth: {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 200,
+        detail: "route reachable",
+      },
+    });
+
+    const running = await getSandboxStatusReport("alpha", deps);
+
+    expect(running.phase).toBe("Running");
+    expect(deps.updateSandbox).toHaveBeenCalledWith("alpha", { stopped: false });
+    expect(deps.probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalled();
+
+    deps.getSandboxStatusPreflightImpl.mockResolvedValue({
+      failure: { layer: "sandbox_container_stopped", dockerUnreachable: false },
+      failureLayer: "sandbox_container_stopped",
+      intentionalStopConfirmed: false,
+      suppressInferenceProbe: true,
+      exitCode: 1,
+    });
+    deps.reconcile.mockResolvedValue({ state: "missing", output: "sandbox alpha not found" });
+
+    const stopped = await getSandboxStatusReport("alpha", deps);
+
+    expect(stopped.failureLayer).toBe("sandbox_container_stopped");
+    expect(stopped.gatewayState).toBe("missing");
+    expect(stopped.inferenceHealth).toBeNull();
+  });
+
+  it("reports a running sandbox whose stale stop marker cannot be revoked (#11025)", async () => {
+    const deps = snapshotDeps({
+      stopped: true,
+      routeHealth: null,
+    });
+    deps.updateSandbox.mockReturnValue(false);
+
+    const report = await getSandboxStatusReport("alpha", deps);
+
+    expect(report.gatewayState).toBe("stop_intent_update_failed");
+    expect(report.inferenceHealth).toBeNull();
   });
 
   it("does not invent serving-process health when the gateway is unavailable (#7003)", async () => {

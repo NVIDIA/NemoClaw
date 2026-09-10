@@ -237,6 +237,7 @@ export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
 export interface SandboxStopDeps {
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
+  updateSandbox?: typeof registry.updateSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
@@ -311,6 +312,13 @@ function stopSandboxWithinLifecycleFence(
   if (outcome.exitCode !== 0) return outcome;
   const hermesPortableVerified =
     "hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true;
+  const stopIntentRecorded =
+    hermesPortableVerified ||
+    registry.recordSandboxStopIntent(
+      sandboxName,
+      true,
+      deps.updateSandbox ?? registry.updateSandbox,
+    );
   const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);
   if (!hermesPortableVerified) {
     teardownDashboardForwardBestEffort(
@@ -318,6 +326,14 @@ function stopSandboxWithinLifecycleFence(
       deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
       warn,
     );
+  }
+  if (!stopIntentRecorded) {
+    return {
+      exitCode: 1,
+      message:
+        `Sandbox '${sandboxName}' stopped, but NemoClaw could not record the intentional stop. ` +
+        `Retry '${CLI_NAME} ${sandboxName} stop'.`,
+    };
   }
   if (!ollamaRelease.ok) return { exitCode: 1, message: ollamaRelease.message };
   if (hermesPortableVerified) {
