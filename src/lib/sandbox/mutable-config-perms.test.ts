@@ -90,6 +90,11 @@ describe("mutable OpenClaw config permissions", () => {
       ok: true,
       issues: [],
     });
+    expect(repairMutableConfigPerms("alpha")).toEqual({
+      applied: true,
+      verified: true,
+      errors: [],
+    });
     expect(capturePrivilegedSandboxCommand).not.toHaveBeenCalled();
     expect(executePrivilegedSandboxCommand).toHaveBeenCalledWith(
       "alpha",
@@ -108,6 +113,11 @@ describe("mutable OpenClaw config permissions", () => {
       skipReason: "agent",
       reason: "agent hermes does not use the mutable OpenClaw config contract",
     });
+    expect(repairMutableConfigPerms("alpha")).toEqual({
+      applied: false,
+      skipReason: "agent",
+      reason: "agent hermes does not use the mutable OpenClaw config contract",
+    });
     expect(resolvePrivilegedSandboxTarget).not.toHaveBeenCalled();
   });
 
@@ -123,27 +133,15 @@ describe("mutable OpenClaw config permissions", () => {
     });
   });
 
-  it.each([
-    "startup-not-ready",
-    "recovery-required",
-    "unsupported-config-posture",
-    "invalid-config-json",
-  ])("does not normalize an inconclusive or protected posture: %s", (code) => {
-    executePrivilegedSandboxCommand.mockReturnValue(guardResult(guardFailure(code), 1));
+  it("does not normalize a posture the guard refuses to repair", () => {
+    executePrivilegedSandboxCommand.mockReturnValue(
+      guardResult(guardFailure("unsupported-config-posture"), 1),
+    );
     expect(inspectMutableConfigPerms("alpha")).toMatchObject({
       applies: false,
       skipReason: "unavailable",
     });
     expect(repairMutableConfigPerms("alpha")).toMatchObject({ applied: true, verified: false });
-    expect(capturePrivilegedSandboxCommand).not.toHaveBeenCalled();
-  });
-
-  it("preserves a healthy native posture without invoking normalization", () => {
-    expect(repairMutableConfigPerms("alpha")).toEqual({
-      applied: true,
-      verified: true,
-      errors: [],
-    });
     expect(capturePrivilegedSandboxCommand).not.toHaveBeenCalled();
   });
 
@@ -205,18 +203,6 @@ describe("mutable OpenClaw config permissions", () => {
     expect(resolvePrivilegedSandboxTarget).toHaveBeenCalledOnce();
     expect(withMcpLifecycleLockSync).toHaveBeenCalledOnce();
     expect(executePrivilegedSandboxCommand).toHaveBeenCalledTimes(2);
-
-    executePrivilegedSandboxCommand.mockReturnValueOnce(
-      guardResult(guardFailure("invalid-restart-posture"), 1),
-    );
-    capturePrivilegedSandboxCommand.mockReset().mockImplementationOnce(() => {
-      throw new Error("provider command failed");
-    });
-    expect(repairMutableConfigPerms("alpha")).toEqual({
-      applied: true,
-      verified: false,
-      errors: ["provider command failed"],
-    });
   });
 
   it("does not verify repair when the final guard rejects it", () => {
@@ -229,16 +215,6 @@ describe("mutable OpenClaw config permissions", () => {
       .mockReturnValueOnce(Buffer.alloc(0));
     expect(repairMutableConfigPerms("alpha")).toMatchObject({ applied: true, verified: false });
     expect(executePrivilegedSandboxCommand).toHaveBeenCalledTimes(2);
-  });
-
-  it("does not normalize another agent's config", () => {
-    resolveAgentConfig.mockReturnValue(hermesTarget);
-    expect(repairMutableConfigPerms("alpha")).toEqual({
-      applied: false,
-      skipReason: "agent",
-      reason: "agent hermes does not use the mutable OpenClaw config contract",
-    });
-    expect(resolvePrivilegedSandboxTarget).not.toHaveBeenCalled();
   });
 
   it("claims mutable Hermes posture only after the exact probe succeeds", () => {

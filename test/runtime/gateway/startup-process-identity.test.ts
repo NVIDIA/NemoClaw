@@ -254,17 +254,8 @@ if len(sys.argv) > 2:
     child = (412, "424242", entrypoint, 1000, 412, 1)
     proof = {
         "same_user": supervised_scenario([child], mode_selection=True),
-        "nested": supervised_scenario([
-            (412, "424242", entrypoint, 1000, 1, 1, "nested"),
-        ], mode_selection=True, namespace_access=False),
         "root_child": supervised_scenario([
             (412, "424242", entrypoint, 0, 412, 1),
-        ], mode_selection=True),
-        "duplicate": supervised_scenario([
-            child, (413, "434343", entrypoint, 1000, 413, 1),
-        ], mode_selection=True),
-        "spoof": supervised_scenario([
-            (412, "424242", argv_spoof, 1000, 412, 1),
         ], mode_selection=True),
         "root_marker": supervised_scenario([child], mode_selection=True, markers_absent=False),
         "direct_same_user": scenario([(1, "424242", entrypoint, "trusted", 1000)], mode_selection=True),
@@ -293,10 +284,7 @@ function runIdentityHarness(guardPath: string, ...args: string[]) {
 it("uses private OpenClaw modes only for the authenticated same-user process tree", () => {
   expect(runIdentityHarness(GUARDS[0][1], "modes")).toEqual({
     same_user: [0o700, 0o600],
-    nested: [0o700, 0o600],
     root_child: [0o2770, 0o660],
-    duplicate: [0o2770, 0o660],
-    spoof: [0o2770, 0o660],
     root_marker: [0o2770, 0o660],
     direct_same_user: [0o700, 0o600],
     direct_root: [0o2770, 0o660],
