@@ -66,6 +66,8 @@ export type ConnectHarness = {
   readSandboxConfigSpy: MockInstance;
   recoverPortableDemoLifecycleSpy: MockInstance;
   requalifyPortableAgentAuthoritySpy: MockInstance;
+  qualifyPortableAgentLifecycleAuthoritySpy: MockInstance;
+  requireHermesPortableActiveLifecycleAuthoritySpy: MockInstance;
   qualifyHermesPortableAcceptedReadinessAuthoritySpy: MockInstance;
   inspectPortableReceiptDispositionSpy: MockInstance;
   registryUpdateSpy: MockInstance;
@@ -321,18 +323,20 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     readRegistry: (sandboxName: string) =>
       registryEntries.find((candidate) => candidate.name === sandboxName) ?? null,
   });
-  vi.spyOn(gatewayState, "qualifyPortableAgentLifecycleAuthority").mockImplementation(((
-    sandboxName: string,
-  ) => qualifyPortableAgentLifecycleAuthority(sandboxName, portableAuthorityDeps())) as never);
-  vi.spyOn(gatewayState, "requireHermesPortableActiveLifecycleAuthority").mockImplementation(((
-    sandboxName: string,
-    expected: unknown,
-  ) =>
-    requireHermesPortableActiveLifecycleAuthority(
-      sandboxName,
-      expected,
-      portableAuthorityDeps(),
-    )) as never);
+  const qualifyPortableAgentLifecycleAuthoritySpy = vi
+    .spyOn(gatewayState, "qualifyPortableAgentLifecycleAuthority")
+    .mockImplementation(((sandboxName: string, deps: object) =>
+      qualifyPortableAgentLifecycleAuthority(sandboxName, {
+        ...deps,
+        ...portableAuthorityDeps(),
+      })) as never);
+  const requireHermesPortableActiveLifecycleAuthoritySpy = vi
+    .spyOn(gatewayState, "requireHermesPortableActiveLifecycleAuthority")
+    .mockImplementation(((sandboxName: string, expected: unknown, deps: object) =>
+      requireHermesPortableActiveLifecycleAuthority(sandboxName, expected, {
+        ...deps,
+        ...portableAuthorityDeps(),
+      })) as never);
   const recoverHermesPortableOllamaInferenceSpy = vi
     .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
     .mockImplementation((async (input: {
@@ -687,6 +691,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     readSandboxConfigSpy,
     recoverPortableDemoLifecycleSpy,
     requalifyPortableAgentAuthoritySpy,
+    qualifyPortableAgentLifecycleAuthoritySpy,
+    requireHermesPortableActiveLifecycleAuthoritySpy,
     qualifyHermesPortableAcceptedReadinessAuthoritySpy,
     inspectPortableReceiptDispositionSpy,
     registryUpdateSpy,

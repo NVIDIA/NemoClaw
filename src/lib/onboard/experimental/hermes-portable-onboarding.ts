@@ -44,6 +44,7 @@ import {
 } from "../../openshell-gateway-endpoint-guard";
 import { isPortableExperimentalProfile } from "./portable-profile";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
+import { portableLifecycleLockOptions } from "./portable-lifecycle-lock";
 export { defaultPortableDemoStateDir as defaultHermesPortableStateDir };
 
 type McpLifecycleLock = <R>(
@@ -57,9 +58,8 @@ export function bindHermesPortableOnboardingLifecycleLock(
   withMcpLifecycleLock: McpLifecycleLock,
   env: NodeJS.ProcessEnv = process.env,
 ): <R>(sandboxName: string, operation: () => Promise<R>) => Promise<R> {
-  const stateDir = path.join(defaultPortableDemoStateDir(env), "state");
   return async <R>(sandboxName: string, operation: () => Promise<R>): Promise<R> =>
-    await withMcpLifecycleLock(sandboxName, operation, { stateDir });
+    await withMcpLifecycleLock(sandboxName, operation, portableLifecycleLockOptions(env));
 }
 import {
   assertCurrentHermesPortableContainer,

@@ -144,6 +144,35 @@ describe("Hermes accepted launch-readiness probe", () => {
     );
   });
 
+  it("reads Portable receipt authority from host state on a non-default gateway port", async () => {
+    vi.stubEnv("HOME", "/home/test");
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
+    const harness = acceptedHermesHarness("ollama-local", "qwen3-vl:4b");
+    configureHealthyForward(harness);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.qualifyPortableAgentLifecycleAuthoritySpy).toHaveBeenCalled();
+    expect(harness.requireHermesPortableActiveLifecycleAuthoritySpy).toHaveBeenCalled();
+    expect(harness.requireHermesPortableActiveLifecycleAuthoritySpy.mock.calls).toEqual(
+      expect.arrayContaining([
+        ["alpha", undefined, expect.objectContaining({ stateDir: "/home/test/.nemoclaw" })],
+      ]),
+    );
+    expect(harness.requireHermesPortableActiveLifecycleAuthoritySpy.mock.calls).not.toEqual(
+      expect.arrayContaining([
+        [
+          "alpha",
+          undefined,
+          expect.objectContaining({ stateDir: "/home/test/.nemoclaw/gateways/18080" }),
+        ],
+      ]),
+    );
+    expect(harness.qualifyPortableAgentLifecycleAuthoritySpy.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ stateDir: "/home/test/.nemoclaw" }),
+    );
+  });
+
   it("publishes missing readiness for one running exact runtime without recovery", async () => {
     vi.stubEnv("PATH", "/hostile/ambient/bin");
     const harness = missingHermesHarness();
