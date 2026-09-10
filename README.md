@@ -9,7 +9,11 @@
 
 This unsigned test installer was built from source commit `b9c89e0500e6e5e472054727cd33a404bf14845b`.
 
-**Installed acceptance is pending: 0 of 2 required complete native qualification passes.**
+**Installed acceptance failed: 0 of 2 required complete native qualification passes.**
+
+Installation and the runtime checks passed, but the first installed native MXC
+turn failed before Hermes interactive or dashboard acceptance. Its launch/cleanup
+diagnostics are under investigation; this preview is not qualified.
 Physical N1X acceptance and production support remain unqualified.
 
 The [source run, attempt 1](https://github.com/NVIDIA/NemoClaw/actions/runs/34423257671/attempts/1) passed its early process-audit, authentic Hermes ConPTY,
@@ -19,8 +23,12 @@ Those prerequisites do not establish complete installed-agent acceptance.
 The bundled OpenShell source is pinned to NVIDIA/OpenShell#2721 commit
 `bcd517bbe08cc80860c9be57699390cd32e8445f`, with the checked-in NemoClaw derivative.
 
-The [receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/60b7e38c5629cff5ec09892a41bb7072c7ffeb00/installer-receipt.json) records the source and verified package hashes.
+The [receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/installer-receipt.json) records the source and verified package hashes.
 The [package manifest](https://raw.githubusercontent.com/NVIDIA/NemoClaw/60b7e38c5629cff5ec09892a41bb7072c7ffeb00/package-manifest.json) records the payload inventory.
 The original [source artifact 10133010607](https://github.com/NVIDIA/NemoClaw/actions/runs/34423257671/artifacts/10133010607) is retained by GitHub Actions.
 
 This artifact branch uses Git LFS. No GitHub Release is published.
+
+Known CI blocker for this source: its CLI uses smol-toml 1.7.0, affected by
+[GHSA-7w5x-hrqm-74c2](https://github.com/advisories/GHSA-7w5x-hrqm-74c2), a malformed-TOML denial of service.
+The minimal 1.7.1 dependency update is prepared for a follow-up candidate.
