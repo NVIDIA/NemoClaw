@@ -22,12 +22,12 @@ import {
 } from "../messaging/applier";
 import { createBuiltInChannelManifestRegistry } from "../messaging/channels/built-ins";
 import {
-  createBuiltInMessagingHookRegistry,
   isMessagingHookConflictError,
   runMessagingHook,
   type MessagingHookRegistry,
 } from "../messaging/hooks";
 import type { MessagingChannelId, SandboxMessagingPlan } from "../messaging/manifest";
+import { createMessagingHostForwardPreEnableHookRegistry } from "./messaging-host-forward";
 
 export interface MessagingConflictGuardDeps {
   readonly sandboxName: string;
@@ -167,7 +167,8 @@ async function enforceMessagingPreEnableHooks(
   const requests = MessagingSetupApplier.listPreEnableChecks(currentPlan);
   if (requests.length === 0) return;
 
-  const hookRegistry = deps.preEnableHookRegistry ?? createBuiltInMessagingHookRegistry();
+  const hookRegistry =
+    deps.preEnableHookRegistry ?? createMessagingHostForwardPreEnableHookRegistry();
   let registryEntries: ConflictRegistryEntry[];
   try {
     registryEntries = deps.registry.listSandboxes().sandboxes;

@@ -2432,7 +2432,7 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
     readMessagingPlanFromEnv: messagingChannelSetup.readMessagingPlanFromEnv,
     resolveDisabledChannels: channelState.resolveDisabledChannels,
     gatewayName: () => GATEWAY_NAME,
-    registry, preEnableHookRegistry: messagingChannelSetup.createMessagingHostForwardPreEnableHookRegistry({ resolveExecutable: getOpenshellBinary, checkPortAvailable }),
+    registry,
     providerExistsInGateway,
     providerMatchesGatewayCredential,
     isNonInteractive,

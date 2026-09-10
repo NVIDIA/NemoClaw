@@ -28,7 +28,6 @@ import {
   detectInvalidMessagingChannelConfigEnvValues,
   resolveMessagingChannelConfigEnvValue,
 } from "../messaging-channel-config";
-export { createMessagingHostForwardPreEnableHookRegistry } from "./messaging-host-forward";
 import {
   type MessagingSelectorInput,
   type MessagingSelectorOutput,
