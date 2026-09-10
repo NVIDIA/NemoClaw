@@ -944,11 +944,9 @@ print_done() {
   # #6520: same when recovery exited 0 but recorded sandboxes were not found
   # on their own recorded gateway — they were not recovered, so the install is
   # not clean either.
-  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
-    warn "=== Installation completed with warnings ==="
-  elif [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
-    warn "=== Installation completed with warnings ==="
-  elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ||
+    "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ||
+    "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
     warn "=== Installation completed with warnings ==="
   else
     info "=== Installation complete ==="
@@ -966,6 +964,7 @@ print_done() {
     if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
       printf "  ${C_YELLOW}The recovery command succeeded, but NemoClaw could not inspect its output.${C_RESET}\n"
       printf "  ${C_DIM}Run '%s upgrade-sandboxes --check' to inspect the registered sandbox upgrade state.${C_RESET}\n" "$_CLI_BIN"
+      printf "  ${C_DIM}Generic onboarding was skipped because recovery verification is incomplete.${C_RESET}\n"
     elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
       # #6520: recovery exited 0 but recorded sandboxes were not found on
       # their own recorded gateway; do not report them as recovered, and give
@@ -975,14 +974,9 @@ print_done() {
       printf "  ${C_DIM}Check the recorded gateway with '%s <name> status', then retry '%s <name> destroy'.${C_RESET}\n" "$_CLI_BIN" "$_CLI_BIN"
       printf "  ${C_DIM}If the gateway is unavailable, '%s <name> destroy --force' removes only the local record.${C_RESET}\n" "$_CLI_BIN"
       printf "  ${C_DIM}Before running '%s onboard', verify or remove any remaining OpenShell sandbox if the gateway returns.${C_RESET}\n" "$_CLI_BIN"
-    else
-      printf "  ${C_GREEN}Existing sandboxes were recovered and upgraded.${C_RESET}\n"
-    fi
-    if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
-      printf "  ${C_DIM}Generic onboarding was skipped because recovery verification is incomplete.${C_RESET}\n"
-    elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
       printf "  ${C_DIM}Generic onboarding was skipped because recorded sandboxes exist.${C_RESET}\n"
     else
+      printf "  ${C_GREEN}Existing sandboxes were recovered and upgraded.${C_RESET}\n"
       printf "  ${C_DIM}No new sandbox onboarding was needed.${C_RESET}\n"
     fi
   elif [[ "$ONBOARD_RAN" == true ]]; then

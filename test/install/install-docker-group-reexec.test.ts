@@ -15,6 +15,7 @@ const INSTALLER_SOURCE = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
 const STATION_REVISION = "a".repeat(40);
 const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
 
+/** Isolate Docker setup from top-level installer state for older macOS Bash versions. */
 function extractShellFunctionBefore(name: string, nextName: string): string {
   const start = INSTALLER_SOURCE.indexOf(`${name}() {`);
   const end = INSTALLER_SOURCE.indexOf(`\n${nextName}() {`, start);
@@ -35,6 +36,7 @@ type EnsureDockerOutcome = {
   sgProvider: string | null;
 };
 
+/** Model Docker-group activation with controlled host commands and a recording sg stub. */
 function runEnsureDocker(
   env: Record<string, string>,
   installerArgs: string[],

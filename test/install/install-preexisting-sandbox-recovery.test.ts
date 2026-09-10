@@ -12,6 +12,7 @@ import {
 } from "../helpers/installer-run-fixture";
 import { INSTALLER_PAYLOAD } from "../helpers/installer-sourced-env";
 
+/** Represent a completed Station session whose receipt retirement still requires reconciliation. */
 function writePendingStationReceiptRetirement(tmp: string): void {
   fs.writeFileSync(
     path.join(tmp, ".nemoclaw", "onboard-session.json"),
