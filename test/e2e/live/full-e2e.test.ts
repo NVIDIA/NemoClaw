@@ -144,6 +144,35 @@ async function waitForSandboxStatus(host: HostCliClient): Promise<ShellProbeResu
   return status.value;
 }
 
+async function inspectNativeNetwork(sandbox: SandboxClient, artifactName: string) {
+  return sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "/usr/bin/env",
+      "-u",
+      "NODE_OPTIONS",
+      "-u",
+      "NODE_PATH",
+      "/usr/local/bin/node",
+      "-e",
+      `
+const fs = require("node:fs");
+console.log(JSON.stringify({
+  interfaces: require("node:os").networkInterfaces(),
+  nodeOptions: process.env.NODE_OPTIONS ?? null,
+  nodePath: process.env.NODE_PATH ?? null,
+  guardPresent: [
+    "/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js",
+    "/tmp/nemoclaw-ciao-network-guard.js",
+  ].some(file => fs.lstatSync(file, { throwIfNoEntry: false })),
+  guardRequired: fs.readFileSync("/tmp/nemoclaw-proxy-env.sh", "utf8").includes("ciao-network-guard"),
+  interfaceError: fs.readFileSync("/tmp/gateway.log", "utf8").includes("uv_interface_addresses"),
+}));`,
+    ],
+    { artifactName, env: env(), timeoutMs: 30_000 },
+  );
+}
+
 async function runOpenClawLaunchTurnAfterRecovery(input: {
   host: HostCliClient;
   redactionValues: string[];
@@ -226,6 +255,11 @@ ${GATEWAY_STOP_SCRIPT}`),
     sandboxName: SANDBOX_NAME,
   });
 
+  const nativeNetwork = await inspectNativeNetwork(
+    input.sandbox,
+    "phase-4-native-network-after-recovery",
+  );
+  const network = nativeNetwork.exitCode === 0 ? JSON.parse(nativeNetwork.stdout) : null;
   const permissions = await input.sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
@@ -248,8 +282,18 @@ ${GATEWAY_STOP_SCRIPT}`),
   expect(
     !permissions.timedOut &&
       permissions.exitCode === 0 &&
+      nativeNetwork.exitCode === 0 &&
+      !nativeNetwork.timedOut &&
+      network.nodeOptions === null &&
+      network.nodePath === null &&
+      !network.guardPresent &&
+      !network.guardRequired &&
+      !network.interfaceError &&
+      Object.values(network.interfaces)
+        .flat()
+        .some((entry) => (entry as os.NetworkInterfaceInfo).internal) &&
       (!afterRecovery || nativeStateDoctorReportIsValid(afterRecovery)),
-    [permissions, afterRecovery]
+    [permissions, nativeNetwork, afterRecovery]
       .filter((result) => result !== null)
       .map(resultText)
       .join("\n"),
@@ -614,6 +658,8 @@ test(
       : Promise.resolve());
 
     progress.phase("validate CLI sandbox and policy state");
+    const nativeNetwork = await inspectNativeNetwork(sandbox, "phase-2-first-native-network");
+    const network = nativeNetwork.exitCode === 0 ? JSON.parse(nativeNetwork.stdout) : null;
     const nativeDoctor = await sandbox.exec(
       SANDBOX_NAME,
       ["/usr/local/bin/openclaw", "doctor", "--lint", "--json"],
@@ -633,7 +679,17 @@ test(
     const doctorReports = parseOpenClawJsonDocuments(nativeDoctor.stdout);
     const doctorReport = doctorReports[0] as Record<string, unknown> | undefined;
     expect(
-      doctorReports.length === 1 &&
+      nativeNetwork.exitCode === 0 &&
+        !nativeNetwork.timedOut &&
+        network.nodeOptions === null &&
+        network.nodePath === null &&
+        !network.guardPresent &&
+        !network.guardRequired &&
+        !network.interfaceError &&
+        Object.values(network.interfaces)
+          .flat()
+          .some((entry) => (entry as os.NetworkInterfaceInfo).internal) &&
+        doctorReports.length === 1 &&
         !nativeDoctor.timedOut &&
         (nativeDoctor.exitCode === 0 || nativeDoctor.exitCode === 1) &&
         doctorReport?.ok === (nativeDoctor.exitCode === 0) &&
@@ -642,7 +698,7 @@ test(
         Array.isArray(doctorReport?.findings) &&
         (!nativeStateDoctor || nativeStateDoctorReportIsValid(nativeStateDoctor)) &&
         (!identities || nativeStateProcessIdentitiesAreValid(identities)),
-      [nativeDoctor, nativeStateDoctor, identities]
+      [nativeNetwork, nativeDoctor, nativeStateDoctor, identities]
         .filter((result) => result !== null)
         .map(resultText)
         .join("\n"),

@@ -11,6 +11,7 @@ import { validateNemoClawConfig } from "../../config/schema";
 import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
+  type NemoClawConfig,
 } from "../../config/model";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
@@ -30,6 +31,7 @@ import { classifyExportRegistry, verifyExportSource } from "./verify-export-sour
 const sandboxId = "018f47e2-9d93-7d15-9c41-3ecf70b2550f";
 const fingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
 const endpoint = "https://api.openai.com/v1";
+const nousEndpoint = "https://inference-api.nousresearch.com/v1";
 const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
 const hermesImageRef = "ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:" + "c".repeat(64);
 const policy =
@@ -243,6 +245,68 @@ function hermesSnapshot(registryOverrides: Partial<SandboxEntry> = {}): Observed
   });
 }
 
+function hermesManagedAuthSnapshot(
+  registryOverrides: Partial<SandboxEntry> = {},
+): ObservedExportSnapshot {
+  const model = "moonshotai/kimi-k2.6";
+  const api =
+    registryOverrides.preferredInferenceApi === "anthropic-messages"
+      ? "anthropic-messages"
+      : "openai-completions";
+  const endpointUrl = registryOverrides.endpointUrl ?? nousEndpoint;
+  const workload = managedWorkload(
+    {
+      ...hermesProfileInput(),
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "hermes-provider",
+        model,
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: null,
+        api,
+        primaryModelRef: null,
+        compatibility: null,
+      },
+    },
+    hermesImageRef,
+  );
+  const value = hermesSnapshot({
+    provider: "hermes-provider",
+    model,
+    preferredInferenceApi: api,
+    endpointUrl,
+    credentialEnv: "NOUS_API_KEY",
+    hermesAuthMethod: "api_key",
+    workload,
+    ...registryOverrides,
+  });
+  return {
+    ...value,
+    inference: {
+      topology: "hosted",
+      provider: "hermes-provider",
+      model,
+      api,
+      endpoint: endpointUrl,
+      endpointEvidence: {
+        endpoint: endpointUrl,
+        provider: {
+          gatewayName: "nemoclaw",
+          workspace: "default",
+          name: "hermes-provider",
+          id: "hermes-provider-id",
+          resourceVersion: "9",
+        },
+        source: {
+          kind: "provider-config",
+          key: api === "anthropic-messages" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL",
+        },
+      },
+      credentialEnv: "NOUS_API_KEY",
+    },
+  };
+}
+
 function findings(result: ReturnType<typeof verifyExportSource>) {
   return result.kind === "verified" ? [] : result.findings;
 }
@@ -286,6 +350,12 @@ async function exportSnapshots(sequence: readonly ObservedExportSnapshot[]) {
     },
   );
   return { outcome, read, writeStdout, publish };
+}
+
+function primaryOpenClawAgent(config: NemoClawConfig) {
+  const agent = config.spec.sandboxes[0]!.agents[0]!;
+  expect(agent.type).toBe("openclaw");
+  return agent as Extract<typeof agent, { type: "openclaw" }>;
 }
 
 const tunedEnvironment = {
@@ -356,6 +426,43 @@ function proxySnapshot(
 }
 
 describe("config export source verification (#10938)", () => {
+  it.each([
+    { label: "default proxy", environment: {}, expected: {} },
+    {
+      label: "managed proxy",
+      environment: { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
+      expected: { proxy: { host: "proxy.internal", port: 3129 } },
+    },
+  ])("exports retained OpenClaw telemetry with $label", ({ environment, expected }) => {
+    const value = snapshot({
+      registry: entry({
+        workload: managedWorkload(
+          profileInput({
+            environment: {
+              NEMOCLAW_OPENCLAW_OTEL: "1",
+              NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
+              NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: "research-assistant",
+              NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: "0.5",
+              ...environment,
+            },
+          }),
+        ),
+      }),
+    });
+
+    expect(verifiedSource(verify(value))).toMatchObject({
+      ...expected,
+      observability: {
+        otlp: {
+          enabled: true,
+          endpoint: "http://host.openshell.internal:4318",
+          serviceName: "research-assistant",
+          sampleRate: 0.5,
+        },
+      },
+    });
+  });
+
   it.each([false, true])(
     "verifies Brave with optional inference attachment %s (#10904)",
     (attached) => {
@@ -461,35 +568,58 @@ describe("config export source verification (#10938)", () => {
     });
   });
 
-  it("exports retained tuning and execution settings through the complete action", async () => {
-    const observed = tunedSnapshot();
-    const result = await exportSnapshots([observed]);
-    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-    expect(result.read).toHaveBeenCalledTimes(2);
-    const [yaml] = result.writeStdout.mock.calls[0]!;
-    const config = validateNemoClawConfig(YAML.parse(yaml));
-    const agent = config.spec.sandboxes[0]!.agents[0]!;
-    expect(agent.inference.routes[0]!.overrides).toEqual({
-      model: "gpt-5",
-      contextWindow: 65536,
-      maxTokens: 8192,
-      reasoning: true,
-      reasoningEffort: "high",
-    });
-    expect(agent.execution).toEqual({ timeoutSeconds: 900, heartbeatEvery: "30m" });
-    expect(config.spec.sandboxes[0]!.network.policy.explicit).toEqual(canonicalPolicy);
-    expect(config.spec.inferenceProviders[0]).toEqual(
-      expect.objectContaining({ credential: { env: "OPENAI_API_KEY" } }),
-    );
-    const verifiedInference = verifiedSource(verify(observed)).inference;
-    expect("overrides" in verifiedInference).toBe(true);
-    const hostedInference = verifiedInference as Extract<
-      typeof verifiedInference,
-      { readonly endpoint: string }
-    >;
-    expect(Object.isFrozen(hostedInference.overrides)).toBe(true);
-    expect(result.publish).not.toHaveBeenCalled();
-  });
+  it.each([
+    { telemetry: false, expected: {} },
+    {
+      telemetry: true,
+      expected: {
+        observability: {
+          otlp: {
+            enabled: true,
+            endpoint: "http://host.openshell.internal:4318",
+            serviceName: "openclaw-gateway",
+            sampleRate: 1,
+          },
+        },
+      },
+    },
+  ])(
+    "exports retained tuning and execution with telemetry $telemetry",
+    async ({ telemetry, expected }) => {
+      const observed = tunedSnapshot({
+        ...tunedEnvironment,
+        ...(telemetry ? { NEMOCLAW_OPENCLAW_OTEL: "1" } : {}),
+      });
+      const result = await exportSnapshots([observed]);
+      expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+      expect(result.read).toHaveBeenCalledTimes(2);
+      const [yaml] = result.writeStdout.mock.calls[0]!;
+      const config = validateNemoClawConfig(YAML.parse(yaml));
+      const agent = primaryOpenClawAgent(config);
+      expect(agent.inference.routes[0]!.overrides).toEqual({
+        model: "gpt-5",
+        contextWindow: 65536,
+        maxTokens: 8192,
+        reasoning: true,
+        reasoningEffort: "high",
+      });
+      expect(agent.execution).toEqual({ timeoutSeconds: 900, heartbeatEvery: "30m" });
+      expect(agent).toMatchObject(expected);
+      expect(Object.hasOwn(agent, "observability")).toBe(telemetry);
+      expect(config.spec.sandboxes[0]!.network.policy.explicit).toEqual(canonicalPolicy);
+      expect(config.spec.inferenceProviders[0]).toEqual(
+        expect.objectContaining({ credential: { env: "OPENAI_API_KEY" } }),
+      );
+      const verifiedInference = verifiedSource(verify(observed)).inference;
+      expect("overrides" in verifiedInference).toBe(true);
+      const hostedInference = verifiedInference as Extract<
+        typeof verifiedInference,
+        { readonly endpoint: string }
+      >;
+      expect(Object.isFrozen(hostedInference.overrides)).toBe(true);
+      expect(result.publish).not.toHaveBeenCalled();
+    },
+  );
 
   it("preserves canonical output when all six settings use their defaults", async () => {
     const baseline = await exportSnapshots([snapshot()]);
@@ -515,7 +645,7 @@ describe("config export source verification (#10938)", () => {
     const result = await exportSnapshots([tunedSnapshot({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" })]);
     expect(result.outcome.ok).toBe(true);
     const config = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
-    expect(config.spec.sandboxes[0]!.agents[0]!.execution).toEqual({ heartbeatEvery: "0m" });
+    expect(primaryOpenClawAgent(config).execution).toEqual({ heartbeatEvery: "0m" });
   });
 
   it.each(Object.entries(tunedEnvironment))(
@@ -538,10 +668,8 @@ describe("config export source verification (#10938)", () => {
     const result = await exportSnapshots([snapshot(), changed, changed, changed]);
     expect(result.outcome.ok).toBe(true);
     expect(result.read).toHaveBeenCalledTimes(4);
-    expect(
-      validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])).spec.sandboxes[0]!
-        .agents[0]!.execution?.timeoutSeconds,
-    ).toBe(900);
+    const config = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
+    expect(primaryOpenClawAgent(config).execution?.timeoutSeconds).toBe(900);
   });
 
   it.each([
@@ -618,7 +746,7 @@ describe("config export source verification (#10938)", () => {
       {
         otel: {
           enabled: true,
-          endpointUrl: "http://host.openshell.internal:4318",
+          endpointUrl: "https://unsupported-collector.example",
           serviceName: "openclaw-gateway",
           sampleRate: 1,
         },
@@ -732,6 +860,23 @@ describe("config export source verification (#10938)", () => {
     expect(result.publish).not.toHaveBeenCalled();
   });
 
+  it("does not publish while retained Hermes auth provenance is changing (#11432)", async () => {
+    const accepted = hermesManagedAuthSnapshot();
+    const missing = hermesManagedAuthSnapshot({ hermesAuthMethod: null });
+    const result = await exportSnapshots([accepted, missing, accepted, missing]);
+
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: [expect.objectContaining({ category: "unstable-source" })],
+      },
+    });
+    expect(result.read).toHaveBeenCalledTimes(4);
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
   it.each([
     { managedHost: "user:secret-canary@proxy.internal" },
     { managedHost: "http://proxy.internal" },
@@ -822,6 +967,65 @@ describe("config export source verification (#10938)", () => {
     expect(Check(ExportSourceValuesSchema, verifiedSource(result))).toBe(true);
   });
 
+  it("exports explicit retained Hermes Nous API-key authentication (#11432)", async () => {
+    const observed = hermesManagedAuthSnapshot();
+    expect(verifiedSource(verify(observed)).auth).toEqual({ method: "api-key" });
+
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.read).toHaveBeenCalledTimes(2);
+    expect(result.publish).not.toHaveBeenCalled();
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.sandboxes[0]!.agents[0]!.auth).toEqual({
+      method: "api-key",
+      providerRef: "hosted-hermes-provider",
+    });
+    expect(document.spec.inferenceProviders[0]).toMatchObject({
+      name: "hosted-hermes-provider",
+      provider: "hermes-provider",
+      credential: { env: "NOUS_API_KEY" },
+    });
+  });
+
+  it.each([
+    ["OAuth", { hermesAuthMethod: "oauth" as const }, "unsupported", "api-key"],
+    ["missing auth provenance", { hermesAuthMethod: null }, "missing-provenance", "api-key"],
+    ["foreign auth provenance", { hermesAuthMethod: "api_key" as const }, "drifted", "generic"],
+    [
+      "API-key authentication with a foreign API",
+      { preferredInferenceApi: "anthropic-messages" },
+      "drifted",
+      "api-key",
+    ],
+    [
+      "API-key authentication with a foreign endpoint",
+      { endpointUrl: "https://api.example.com/v1" },
+      "drifted",
+      "api-key",
+    ],
+  ])("does not export Hermes %s (#11432)", async (_case, registryOverrides, category, source) => {
+    const observed =
+      source === "generic"
+        ? hermesSnapshot(registryOverrides)
+        : hermesManagedAuthSnapshot(registryOverrides);
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: expect.arrayContaining([
+          expect.objectContaining({
+            category,
+            field: "spec.sandboxes[].agents[0].auth",
+          }),
+        ]),
+      },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
   it.each([
     { sandboxName: "alpha--beta" },
     { runtime: { provider: "docker", imageRef: "registry/image:latest" } },
@@ -894,14 +1098,9 @@ describe("config export source verification (#10938)", () => {
       "spec.sandboxes[].agents[0].dashboard",
     ],
     [
-      "Hermes authentication",
-      { hermesAuthMethod: "api_key" as const },
-      "spec.sandboxes[].agents[0].authentication",
-    ],
-    [
       "Hermes inference provider",
       { hermesInferenceProvider: "hermes-provider" },
-      "spec.sandboxes[].agents[0].authentication",
+      "spec.sandboxes[].agents[0].auth",
     ],
     ["non-default Hermes API port", { hermesApiPort: 8643 }, "spec.sandboxes[].agents[0].api"],
   ])("rejects excluded %s state (#11286)", (_case, registryOverrides, field) => {

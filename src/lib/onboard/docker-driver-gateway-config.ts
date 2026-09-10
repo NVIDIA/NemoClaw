@@ -11,6 +11,7 @@ import {
 } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { parse as parseToml } from "smol-toml";
 import { type OpenRegularFile, openRegularFileNoFollow } from "../adapters/fs/regular-file";
 import {
@@ -18,6 +19,7 @@ import {
   ensureDockerDriverGatewayJwtBundle,
 } from "./docker-driver-gateway-jwt-bundle";
 import { parseDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
+import type { ExternalComponentDeclaration } from "./external-component";
 import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
 import {
   resolveConfiguredRuntimeProvider,
@@ -33,6 +35,9 @@ export const DOCKER_DRIVER_GATEWAY_CONFIG_NAME = "openshell-gateway.toml";
 export const DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 0;
 const LEGACY_DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 3600;
 const PRE_AUTH_DOCKER_DRIVER_GATEWAY_VERSION = "0.0.44";
+export const NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV =
+  "NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY";
+export const NO_EXTERNAL_COMPONENT_GATEWAY_IDENTITY = "none";
 export const NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV = "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE";
 
 interface FileIdentity {
@@ -103,6 +108,7 @@ function alternateGatewayRuntimeProjection(
 
 interface LegacyGatewayIdentity {
   configProof: ExistingConfigProof;
+  externalComponent: ExternalComponentGatewayConfiguration | null;
   gatewayId: string;
   jwtProof: LegacyJwtBundleProof;
   kind: "legacy";
@@ -113,10 +119,24 @@ type DockerDriverGatewayIdentity =
   | LegacyGatewayIdentity
   | {
       configProof: ExistingConfigProof | null;
+      externalComponent: ExternalComponentGatewayConfiguration | null;
       kind: "scoped";
       gatewayId: string;
       sandboxNamespace: string;
     };
+
+export type ExternalComponentGatewayConfiguration = Pick<
+  ExternalComponentDeclaration,
+  "componentId" | "interceptorSocketPath"
+>;
+
+function externalComponentGatewayIdentity(
+  component: ExternalComponentGatewayConfiguration,
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify([component.componentId, component.interceptorSocketPath]))
+    .digest("hex");
+}
 
 function fileIdentity(stats: fs.Stats): FileIdentity {
   return { dev: stats.dev, ino: stats.ino, mode: stats.mode & 0o777, uid: stats.uid };
@@ -419,6 +439,66 @@ function asTomlTable(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function parseExternalComponentGatewayConfiguration(
+  value: unknown,
+): ExternalComponentGatewayConfiguration | null {
+  if (value === undefined) return null;
+  if (!Array.isArray(value) || value.length !== 1) {
+    throw new Error("the interceptor configuration is invalid");
+  }
+  const interceptor = asTomlTable(value[0]);
+  const bindings = Array.isArray(interceptor?.bindings) ? interceptor.bindings : null;
+  const create = asTomlTable(bindings?.[0]);
+  const update = asTomlTable(bindings?.[1]);
+  if (
+    !interceptor ||
+    Object.keys(interceptor).sort().join(",") !==
+      [
+        "binding_policy",
+        "bindings",
+        "failure_policy",
+        "grpc_endpoint",
+        "max_patches",
+        "max_response_bytes",
+        "name",
+        "order",
+        "timeout",
+      ]
+        .sort()
+        .join(",") ||
+    typeof interceptor.name !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(interceptor.name) ||
+    typeof interceptor.grpc_endpoint !== "string" ||
+    !interceptor.grpc_endpoint.startsWith("unix:///") ||
+    interceptor.order !== 10 ||
+    interceptor.failure_policy !== "fail_closed" ||
+    interceptor.binding_policy !== "exact" ||
+    interceptor.timeout !== "500ms" ||
+    interceptor.max_response_bytes !== 1_048_576 ||
+    interceptor.max_patches !== 32 ||
+    bindings?.length !== 2 ||
+    !create ||
+    create.rpc !== "openshell.v1.OpenShell/CreateSandbox" ||
+    !isDeepStrictEqual(create.phases, ["modify_operation", "validate"]) ||
+    !update ||
+    update.rpc !== "openshell.v1.OpenShell/UpdateConfig" ||
+    !isDeepStrictEqual(update.phases, ["validate"])
+  ) {
+    throw new Error("the interceptor configuration is invalid");
+  }
+  const interceptorSocketPath = interceptor.grpc_endpoint.slice("unix://".length);
+  if (
+    interceptorSocketPath.length === 0 ||
+    interceptorSocketPath.length > 4096 ||
+    interceptorSocketPath.includes("\0") ||
+    !path.isAbsolute(interceptorSocketPath) ||
+    path.normalize(interceptorSocketPath) !== interceptorSocketPath
+  ) {
+    throw new Error("the interceptor configuration is invalid");
+  }
+  return { componentId: interceptor.name, interceptorSocketPath };
+}
+
 function assignStringEnv(env: Record<string, string>, key: string, value: unknown): void {
   if (typeof value === "string") env[key] = value;
 }
@@ -535,6 +615,12 @@ function existingGatewayIdentityFromConfig(
     const gatewayJwt = asTomlTable(gateway?.gateway_jwt);
     const drivers = asTomlTable(openshell?.drivers);
     const driverConfig = asTomlTable(drivers?.[driver]);
+    let externalComponent: ExternalComponentGatewayConfiguration | null;
+    try {
+      externalComponent = parseExternalComponentGatewayConfiguration(gateway?.interceptors);
+    } catch {
+      throw ambiguousGatewayConfig(configPath, "the interceptor configuration is invalid");
+    }
     if (!driverConfig && parsed && openshell && gateway && gatewayJwt && drivers) {
       const configuredDriver = Object.entries(drivers).find(
         ([candidate, config]) => candidate !== driver && asTomlTable(config) !== null,
@@ -632,6 +718,7 @@ function existingGatewayIdentityFromConfig(
       typeof namespace === "string" ? namespace : null,
       canonicalGatewayJwtTtl,
       configuredRuntime,
+      externalComponent,
     );
     if (originalToml !== canonicalToml) {
       throw ambiguousGatewayConfig(
@@ -643,6 +730,7 @@ function existingGatewayIdentityFromConfig(
     if (isLegacy) {
       const identity: LegacyGatewayIdentity = {
         configProof,
+        externalComponent,
         gatewayId: legacyGatewayId,
         jwtProof: openOwnedLegacyJwtBundle(stateDir, state.uid),
         kind: "legacy",
@@ -655,6 +743,7 @@ function existingGatewayIdentityFromConfig(
     if (isScoped) {
       const identity: DockerDriverGatewayIdentity = {
         configProof,
+        externalComponent,
         gatewayId: scopedGatewayId,
         kind: "scoped",
         sandboxNamespace: scopedGatewayId,
@@ -683,7 +772,13 @@ function resolveDockerDriverGatewayIdentity(
   );
   if (existing) return existing;
   const gatewayId = gatewayIdForStateDir(stateDir);
-  return { configProof: null, kind: "scoped", gatewayId, sandboxNamespace: gatewayId };
+  return {
+    configProof: null,
+    externalComponent: null,
+    kind: "scoped",
+    gatewayId,
+    sandboxNamespace: gatewayId,
+  };
 }
 
 /** Prove that a NemoClaw-owned Docker gateway config uses its state-scoped namespace. */
@@ -717,6 +812,7 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
   sandboxNamespace: string | null = gatewayId,
   gatewayJwtTtlSecs = DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
   projectedRuntime?: RuntimeProviderGatewayHostRuntime,
+  externalComponent?: ExternalComponentGatewayConfiguration | null,
 ): string {
   const runtime = resolveGatewayRuntimeProjection(gatewayEnv, projectedRuntime);
   const driver = runtime.openShellDriver;
@@ -791,6 +887,29 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
     );
   }
 
+  if (externalComponent) {
+    sections.push(
+      "[[openshell.gateway.interceptors]]",
+      `name = ${tomlString(externalComponent.componentId)}`,
+      `grpc_endpoint = ${tomlString(`unix://${externalComponent.interceptorSocketPath}`)}`,
+      "order = 10",
+      'failure_policy = "fail_closed"',
+      'binding_policy = "exact"',
+      'timeout = "500ms"',
+      "max_response_bytes = 1048576",
+      "max_patches = 32",
+      "",
+      "[[openshell.gateway.interceptors.bindings]]",
+      'rpc = "openshell.v1.OpenShell/CreateSandbox"',
+      'phases = ["modify_operation", "validate"]',
+      "",
+      "[[openshell.gateway.interceptors.bindings]]",
+      'rpc = "openshell.v1.OpenShell/UpdateConfig"',
+      'phases = ["validate"]',
+      "",
+    );
+  }
+
   sections.push(`[openshell.drivers.${driver}]`);
   if (dockerConfig) sections.push(dockerConfig);
   sections.push("");
@@ -804,6 +923,7 @@ export function buildDockerDriverGatewayConfigToml(
   jwtBundle?: DockerDriverGatewayJwtBundle | null,
   gatewayId = "nemoclaw",
   runtime?: RuntimeProviderGatewayHostRuntime,
+  externalComponent?: ExternalComponentGatewayConfiguration | null,
 ): string {
   return buildDockerDriverGatewayConfigTomlForIdentity(
     gatewayEnv,
@@ -813,6 +933,7 @@ export function buildDockerDriverGatewayConfigToml(
     gatewayId,
     DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
     runtime,
+    externalComponent,
   );
 }
 
@@ -822,8 +943,13 @@ function writeDockerDriverGatewayConfigWithIdentity(
   sandboxBin: string | null | undefined,
   identity: DockerDriverGatewayIdentity,
   runtime: RuntimeProviderGatewayHostRuntime,
+  requestedExternalComponent?: ExternalComponentGatewayConfiguration | null,
 ): string {
   const configPath = path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME);
+  const externalComponent =
+    requestedExternalComponent === undefined
+      ? identity.externalComponent
+      : requestedExternalComponent;
   if (identity.kind === "legacy") {
     try {
       assertExistingConfigProof(identity.configProof);
@@ -838,6 +964,7 @@ function writeDockerDriverGatewayConfigWithIdentity(
           identity.sandboxNamespace,
           DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
           runtime,
+          externalComponent,
         ),
         0o600,
         () => {
@@ -864,6 +991,7 @@ function writeDockerDriverGatewayConfigWithIdentity(
         jwtBundle,
         identity.gatewayId,
         runtime,
+        externalComponent,
       ),
       0o600,
       identity.configProof ? () => assertExistingConfigProof(identity.configProof!) : undefined,
@@ -879,6 +1007,7 @@ export function writeDockerDriverGatewayConfig(
   gatewayEnv: Record<string, string>,
   sandboxBin?: string | null,
   projectedRuntime?: RuntimeProviderGatewayHostRuntime,
+  externalComponent?: ExternalComponentGatewayConfiguration | null,
 ): string {
   const runtime = resolveGatewayRuntimeProjection(gatewayEnv, projectedRuntime);
   return writeDockerDriverGatewayConfigWithIdentity(
@@ -887,6 +1016,7 @@ export function writeDockerDriverGatewayConfig(
     sandboxBin,
     resolveDockerDriverGatewayIdentity(stateDir, gatewayEnv, runtime),
     runtime,
+    externalComponent,
   );
 }
 
@@ -897,6 +1027,7 @@ export function prepareDockerDriverGatewayConfigEnv(
   options: {
     allowOpenShell0044PreAuthDatabase?: boolean;
     gatewayRuntime?: RuntimeProviderGatewayHostRuntime;
+    externalComponent?: ExternalComponentGatewayConfiguration | null;
   } = {},
 ): Record<string, string> {
   const runtime = resolveGatewayRuntimeProjection(gatewayEnv, options.gatewayRuntime);
@@ -918,13 +1049,22 @@ export function prepareDockerDriverGatewayConfigEnv(
     }
     throw error;
   }
+  const externalComponent =
+    options.externalComponent === undefined
+      ? identity.externalComponent
+      : options.externalComponent;
   gatewayEnv.OPENSHELL_GATEWAY_CONFIG = writeDockerDriverGatewayConfigWithIdentity(
     stateDir,
     gatewayEnv,
     sandboxBin,
     identity,
     runtime,
+    externalComponent,
   );
+  // An explicit absence lets the existing runtime comparison detect removal.
+  gatewayEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV] = externalComponent
+    ? externalComponentGatewayIdentity(externalComponent)
+    : NO_EXTERNAL_COMPONENT_GATEWAY_IDENTITY;
   if (runtime.gatewayConfig.sandboxNamespace === "omitted") {
     delete gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
   } else {
