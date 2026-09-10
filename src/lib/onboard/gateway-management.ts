@@ -26,6 +26,7 @@ import {
   type GatewayCapability,
   SUPPORTED_GATEWAY_CAPABILITIES,
 } from "../core/gateway-capabilities";
+import { noteOnboardResumeHintShown } from "./resume-hint";
 
 export {
   type GatewayCapability,
@@ -87,6 +88,20 @@ export type GatewayManagementParseResult =
  * contract-validation failures.
  */
 export class GatewayManagementDeclarationError extends Error {}
+
+export class GatewayStateConflictError extends Error {
+  readonly hasRecoveryGuidance: boolean;
+
+  constructor(message: string, options: { hasRecoveryGuidance?: boolean } = {}) {
+    super(message);
+    this.name = "GatewayStateConflictError";
+    this.hasRecoveryGuidance = options.hasRecoveryGuidance === true;
+  }
+
+  markReported(): void {
+    if (this.hasRecoveryGuidance) noteOnboardResumeHintShown();
+  }
+}
 
 const GATEWAY_MANAGEMENT_ERROR_CONTROL_RE =
   /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu;
