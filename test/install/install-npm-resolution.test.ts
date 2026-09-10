@@ -80,9 +80,11 @@ function createPackagedCliTree(prefix: string): {
     path.join(fakeBin, "npm"),
     `#!/usr/bin/env bash
 if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
+  [ -z "$NPM_CALL_LOG" ] || printf '%s\n' "$*" >> "$NPM_CALL_LOG"
   echo "$ACTIVE_NPM_PREFIX"
   exit 0
 fi
+[ -z "$NPM_CALL_LOG" ] || printf '%s\n' "$*" >> "$NPM_CALL_LOG"
 exit 99
 `,
   );
@@ -304,23 +306,27 @@ echo "${cliBin} v0.1.0"
     expect(`${result.stdout}${result.stderr}`).toContain("NemoClaw left it unchanged");
   });
 
-  it("rejects a foreign nemoclaw-acp executable before npm can link into the same path (#10947)", () => {
+  it("stops installation before npm links over a foreign nemoclaw-acp executable (#10947)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-prefix-collision-"));
     const { fakeBin } = createPackagedCliTree(tmp);
     const npmPrefix = path.join(tmp, ".local");
     const shimPath = path.join(npmPrefix, "bin", "nemoclaw-acp");
+    const npmCallLog = path.join(tmp, "npm-calls.log");
     const foreignContents = Buffer.from("#!/usr/bin/env bash\nprintf 'user-owned\\n'\n");
     fs.mkdirSync(path.dirname(shimPath), { recursive: true });
     fs.writeFileSync(shimPath, foreignContents, { mode: 0o755 });
 
-    const result = runInstallerFunction("preflight_nemoclaw_acp_shim", fakeBin, {
+    const result = runInstallerFunction("install_nemoclaw", fakeBin, {
       ACTIVE_NPM_PREFIX: npmPrefix,
       HOME: tmp,
+      NPM_CALL_LOG: npmCallLog,
       NO_COLOR: "1",
     });
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
     expect(fs.readFileSync(shimPath)).toEqual(foreignContents);
+    expect(fs.readFileSync(npmCallLog, "utf-8")).not.toContain("link --ignore-scripts");
+    expect(fs.existsSync(path.join(tmp, ".local", "bin", "nemoclaw"))).toBe(false);
     expect(`${result.stdout}${result.stderr}`).toContain(
       `${shimPath} already exists and is not a NemoClaw-managed shim`,
     );
@@ -373,23 +379,57 @@ echo "${cliBin} v0.1.0"
     },
   );
 
-  it("replaces an older installer-managed nemoclaw-acp shim (#10947)", () => {
+  it("rejects an unverified three-line nemoclaw-acp wrapper (#10947)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-ambiguous-shim-"));
+    const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
+    const shimPath = path.join(tmp, ".local", "bin", "nemoclaw-acp");
+    const foreignBin = path.join(tmp, "foreign", "bin");
+    const foreignCli = path.join(foreignBin, "nemoclaw-acp");
+    fs.mkdirSync(path.dirname(shimPath), { recursive: true });
+    fs.mkdirSync(foreignBin, { recursive: true });
+    writeExecutable(foreignCli, "#!/usr/bin/env bash\nprintf 'user-owned\\n'\n");
+    writeExecutable(
+      shimPath,
+      [
+        "#!/usr/bin/env bash",
+        '[[ "$(command -v node 2>/dev/null)" == "/old/node/bin/node" ]] || export PATH="/old/node/bin:$PATH"',
+        `exec "${foreignCli}" "$@"`,
+        "",
+      ].join("\n"),
+    );
+    const originalContents = fs.readFileSync(shimPath);
+
+    const result = runInstallerFunction("_CLI_BIN=nemoclaw; ensure_nemoclaw_shim", fakeBin, {
+      ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
+      HOME: tmp,
+      NO_COLOR: "1",
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+    expect(fs.readFileSync(shimPath)).toEqual(originalContents);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      `${shimPath} already exists and is not a NemoClaw-managed shim`,
+    );
+  });
+
+  it("replaces a three-line nemoclaw-acp wrapper that targets the packaged executable (#10947)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-managed-shim-"));
     const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
     const shimPath = path.join(tmp, ".local", "bin", "nemoclaw-acp");
+    const packagedCli = path.join(prefixBin, "nemoclaw-acp");
     fs.mkdirSync(path.dirname(shimPath), { recursive: true });
     writeExecutable(
       shimPath,
       [
         "#!/usr/bin/env bash",
         '[[ "$(command -v node 2>/dev/null)" == "/old/node/bin/node" ]] || export PATH="/old/node/bin:$PATH"',
-        'exec "/old/prefix/bin/nemoclaw-acp" "$@"',
+        `exec "${packagedCli}" "$@"`,
         "",
       ].join("\n"),
     );
 
     const result = runInstallerFunction(
-      '_CLI_BIN=nemoclaw; ensure_nemoclaw_shim; "$NEMOCLAW_SHIM_DIR/nemoclaw-acp" --version',
+      'ensure_cli_shim "nemoclaw-acp"; "$NEMOCLAW_SHIM_DIR/nemoclaw-acp" --version',
       fakeBin,
       {
         ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
@@ -400,12 +440,88 @@ echo "${cliBin} v0.1.0"
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     const installedContents = normalizeShellPathForAssert(fs.readFileSync(shimPath, "utf-8"));
-    expect(installedContents).toContain(
-      normalizeShellPathForAssert(path.join(prefixBin, "nemoclaw-acp")),
-    );
+    expect(installedContents).toContain(normalizeShellPathForAssert(packagedCli));
     expect(installedContents).not.toContain("/old/");
     expect(result.stdout).toContain("nemoclaw-acp v0.1.0");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "keeps a packaged nemoclaw-acp executable reached through a symlinked directory (#10947)",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-same-file-"));
+      const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
+      const shimDir = path.join(tmp, ".local", "bin");
+      const packagedCli = path.join(prefixBin, "nemoclaw-acp");
+      const originalContents = fs.readFileSync(packagedCli);
+      fs.mkdirSync(path.dirname(shimDir), { recursive: true });
+      fs.symlinkSync(prefixBin, shimDir, "dir");
+
+      const result = runInstallerFunction('ensure_cli_shim "nemoclaw-acp"', fakeBin, {
+        ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
+        HOME: tmp,
+        NO_COLOR: "1",
+      });
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(fs.readFileSync(packagedCli)).toEqual(originalContents);
+      expect(fs.realpathSync(path.join(shimDir, "nemoclaw-acp"))).toBe(
+        fs.realpathSync(packagedCli),
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "stops when nemoclaw-acp changes after validation and preserves the replacement target (#10947)",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-swap-"));
+      const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
+      const shimPath = path.join(tmp, ".local", "bin", "nemoclaw-acp");
+      const packagedCli = path.join(prefixBin, "nemoclaw-acp");
+      const targetPath = path.join(tmp, "user-command");
+      const foreignContents = Buffer.from("#!/usr/bin/env bash\nprintf 'user-owned\\n'\n");
+      fs.mkdirSync(path.dirname(shimPath), { recursive: true });
+      fs.writeFileSync(targetPath, foreignContents, { mode: 0o755 });
+      writeExecutable(
+        shimPath,
+        [
+          "#!/usr/bin/env bash",
+          `[[ "$(command -v node 2>/dev/null)" == "${path.join(fakeBin, "node")}" ]] || export PATH="${fakeBin}:$PATH"`,
+          `exec "${packagedCli}" "$@"`,
+          "",
+        ].join("\n"),
+      );
+
+      const result = runInstallerFunction(
+        `shim_path=${JSON.stringify(shimPath)}
+swap_target=${JSON.stringify(targetPath)}
+mktemp() {
+  local created
+  created="$(command mktemp "$@")" || return 1
+  rm -f "$shim_path"
+  ln -s "$swap_target" "$shim_path"
+  printf '%s\\n' "$created"
+}
+ensure_cli_shim "nemoclaw-acp"`,
+        fakeBin,
+        {
+          ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
+          HOME: tmp,
+          NO_COLOR: "1",
+        },
+      );
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(fs.lstatSync(shimPath).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(shimPath)).toBe(targetPath);
+      expect(fs.readFileSync(targetPath)).toEqual(foreignContents);
+      expect(
+        fs.readdirSync(path.dirname(shimPath)).filter((name) => name.includes(".tmp.")).length,
+      ).toBe(0);
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        `${shimPath} changed while NemoClaw prepared its shim`,
+      );
+    },
+  );
 
   it("keeps PATH stable only when the generated shim resolves its selected Node", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-stable-shim-path-"));

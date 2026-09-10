@@ -816,7 +816,11 @@ test(
       env: commandEnv(),
       timeoutMs: 30_000,
     });
-    expect(resultText(stoppedGatewayStatus)).not.toMatch(/Status:\s*Connected/iu);
+    expect(
+      stoppedGatewayStatus.exitCode === 0 &&
+        /^Status:[ \t]*Disconnected[ \t]*\r?$/imu.test(stoppedGatewayStatus.stdout),
+      resultText(stoppedGatewayStatus),
+    ).toBe(true);
     const gatewayRecoveryPassed = await runAcpScenario("gateway-recovery");
     await lifecycle.waitForGatewayConnected();
     const exchangePassed = await runAcpScenario("exchange");

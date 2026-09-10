@@ -2220,12 +2220,13 @@ maybe_install_openshell_during_install() {
 }
 
 is_installer_managed_cli_shim() {
-  local shim_path="${1:-}" cli_bin="${2:-}"
-  local line path_line node_dir path_dir
+  local shim_path="${1:-}" cli_bin="${2:-}" canonical_cli_path="${3:-}"
+  local line path_line node_dir path_dir exec_line shim_cli_path
   local path_prefix path_middle path_suffix exec_prefix exec_suffix
   local -a lines=()
 
-  [[ -n "$shim_path" && -n "$cli_bin" && -f "$shim_path" && ! -L "$shim_path" ]] || return 1
+  [[ -n "$shim_path" && -n "$cli_bin" && -n "$canonical_cli_path" ]] || return 1
+  [[ -f "$shim_path" && ! -L "$shim_path" && -e "$canonical_cli_path" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
     lines[${#lines[@]}]="$line"
     [[ "${#lines[@]}" -le 3 ]] || return 1
@@ -2253,8 +2254,13 @@ is_installer_managed_cli_shim() {
   fi
 
   exec_prefix='exec "'
-  exec_suffix="/${cli_bin}\" \"\$@\""
-  [[ "${lines[2]}" == "$exec_prefix"*"$exec_suffix" ]]
+  exec_suffix='" "$@"'
+  exec_line="${lines[2]}"
+  [[ "$exec_line" == "$exec_prefix"*"$exec_suffix" ]] || return 1
+  shim_cli_path="${exec_line#"$exec_prefix"}"
+  shim_cli_path="${shim_cli_path%"$exec_suffix"}"
+  [[ "$shim_cli_path" == */"$cli_bin" && -e "$shim_cli_path" ]] || return 1
+  [[ "$shim_cli_path" -ef "$canonical_cli_path" ]]
 }
 
 is_npm_managed_nemoclaw_acp_link() {
@@ -2265,28 +2271,78 @@ is_npm_managed_nemoclaw_acp_link() {
 }
 
 assert_nemoclaw_acp_shim_replaceable() {
-  local cli_bin="${1:-}" cli_path="${2:-}" shim_path
+  local cli_bin="${1:-}" cli_path="${2:-}" shim_path before_identity after_identity
+  _NEMOCLAW_ACP_SHIM_REPLACE_IDENTITY=""
   [[ "$cli_bin" == "nemoclaw-acp" ]] || return 0
   shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
 
-  [[ -e "$shim_path" || -L "$shim_path" ]] || return 0
-  [[ "$cli_path" == "$shim_path" ]] && return 0
-  is_installer_managed_cli_shim "$shim_path" "$cli_bin" && return 0
+  if [[ ! -e "$shim_path" && ! -L "$shim_path" ]]; then
+    _NEMOCLAW_ACP_SHIM_REPLACE_IDENTITY="absent"
+    return 0
+  fi
+  before_identity="$(cli_shim_entry_identity "$shim_path")" \
+    || error "Installation stopped because NemoClaw could not inspect $shim_path without following symbolic links. NemoClaw left it unchanged."
+  if ! is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" \
+    && ! is_npm_managed_nemoclaw_acp_link "$shim_path"; then
+    error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
+  fi
+  after_identity="$(cli_shim_entry_identity "$shim_path")" \
+    || error "Installation stopped because NemoClaw could not recheck $shim_path. NemoClaw left it unchanged."
+  [[ "$before_identity" == "$after_identity" ]] \
+    || error "Installation stopped because $shim_path changed while NemoClaw checked it. NemoClaw left the current path unchanged. Rerun the installer."
+  _NEMOCLAW_ACP_SHIM_REPLACE_IDENTITY="$before_identity"
+}
 
-  error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
+cli_shim_entry_identity() {
+  local shim_path="${1:-}" identity
+  [[ -n "$shim_path" ]] || return 1
+  if [[ ! -e "$shim_path" && ! -L "$shim_path" ]]; then
+    printf 'absent'
+    return 0
+  fi
+  if identity="$(stat -c '%F:%d:%i' -- "$shim_path" 2>/dev/null)"; then
+    :
+  elif identity="$(stat -f '%HT:%d:%i' "$shim_path" 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+  printf '%s' "$identity"
+}
+
+assert_nemoclaw_acp_shim_unchanged() {
+  local cli_bin="${1:-}" cli_path="${2:-}" expected_identity="${3:-}" shim_path current_identity
+  [[ "$cli_bin" == "nemoclaw-acp" ]] || return 0
+  shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
+  current_identity="$(cli_shim_entry_identity "$shim_path")" \
+    || error "Installation stopped because NemoClaw could not recheck $shim_path. NemoClaw left it unchanged."
+  [[ -n "$expected_identity" && "$current_identity" == "$expected_identity" ]] \
+    || error "Installation stopped because $shim_path changed while NemoClaw prepared its shim. NemoClaw left the current path unchanged. Rerun the installer."
+  if [[ "$expected_identity" != "absent" ]]; then
+    is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" \
+      || is_npm_managed_nemoclaw_acp_link "$shim_path" \
+      || error "Installation stopped because $shim_path is no longer a NemoClaw-managed shim. NemoClaw left it unchanged. Rerun the installer."
+  fi
 }
 
 preflight_nemoclaw_acp_shim() {
-  local shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw-acp"
+  local shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw-acp" npm_bin="" cli_path=""
   [[ -e "$shim_path" || -L "$shim_path" ]] || return 0
-  is_installer_managed_cli_shim "$shim_path" "nemoclaw-acp" && return 0
+  npm_bin="$(resolve_npm_bin)" || true
+  cli_path="${npm_bin:+${npm_bin}/nemoclaw-acp}"
+  if [[ -n "$cli_path" && "$cli_path" != "$shim_path" && -e "$cli_path" &&
+    "$cli_path" -ef "$shim_path" ]]; then
+    return 0
+  fi
+  is_installer_managed_cli_shim "$shim_path" "nemoclaw-acp" "$cli_path" && return 0
   is_npm_managed_nemoclaw_acp_link "$shim_path" && return 0
   error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
 }
 
 ensure_cli_shim() {
   local cli_bin="${1:-$_CLI_BIN}"
-  local npm_bin shim_path node_path node_dir cli_path expected_shim
+  local npm_bin shim_path node_path node_dir cli_path expected_shim temp_shim=""
+  local replace_identity=""
   npm_bin="$(resolve_npm_bin)" || true
   shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
 
@@ -2305,12 +2361,18 @@ ensure_cli_shim() {
   fi
   node_dir="$(dirname "$node_path")"
 
-  assert_nemoclaw_acp_shim_replaceable "$cli_bin" "$cli_path"
-
   # If npm placed the binary at the same path as the shim target (e.g. when
   # npm_config_prefix=$HOME/.local), writing a shim would overwrite the real
   # binary with a script that exec's itself — an infinite loop.  In that case
   # the binary is already where it needs to be; skip shim creation.
+  if [[ "$cli_path" != "$shim_path" && -e "$shim_path" && "$cli_path" -ef "$shim_path" ]]; then
+    refresh_path
+    ensure_local_bin_in_profile
+    return 0
+  fi
+
+  assert_nemoclaw_acp_shim_replaceable "$cli_bin" "$cli_path"
+  replace_identity="${_NEMOCLAW_ACP_SHIM_REPLACE_IDENTITY:-}"
   if [[ "$cli_path" == "$shim_path" ]]; then
     refresh_path
     ensure_local_bin_in_profile
@@ -2325,15 +2387,26 @@ exec "$cli_path" "\$@"
 EOF
   )"
 
-  if [[ -x "$shim_path" ]] && cmp -s "$shim_path" <(printf '%s\n' "$expected_shim"); then
+  if [[ "$cli_bin" != "nemoclaw-acp" && -x "$shim_path" ]] \
+    && cmp -s "$shim_path" <(printf '%s\n' "$expected_shim"); then
     refresh_path
     ensure_local_bin_in_profile
     return 0
   fi
 
   mkdir -p "$NEMOCLAW_SHIM_DIR"
-  printf '%s\n' "$expected_shim" >"$shim_path"
-  chmod +x "$shim_path"
+  temp_shim="$(mktemp "${shim_path}.tmp.XXXXXX")" \
+    || error "Could not create a temporary shim beside $shim_path."
+  _cleanup_files+=("$temp_shim")
+  if ! printf '%s\n' "$expected_shim" >"$temp_shim" || ! chmod 755 "$temp_shim"; then
+    rm -f "$temp_shim"
+    error "Could not prepare the user-local shim for $cli_bin."
+  fi
+  assert_nemoclaw_acp_shim_unchanged "$cli_bin" "$cli_path" "$replace_identity"
+  if ! mv -f -- "$temp_shim" "$shim_path"; then
+    rm -f "$temp_shim"
+    error "Could not publish the user-local shim at $shim_path."
+  fi
   refresh_path
   ensure_local_bin_in_profile
   info "Created user-local shim at $shim_path"
@@ -2801,6 +2874,7 @@ install_nemoclaw() {
   local repo_root package_json
   repo_root="$(resolve_repo_root)"
   package_json="${repo_root}/package.json"
+  preflight_nemoclaw_acp_shim
   # Tell prepare not to run npm link — the installer handles linking explicitly.
   export NEMOCLAW_INSTALLING=1
 
