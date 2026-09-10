@@ -1368,6 +1368,14 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: [
       ...SKILL_LIFECYCLE_OWNING_PATHS,
       "agents/hermes/manifest.yaml",
+      "schemas/nemoclaw-config-v1.schema.json",
+      "src/commands/config/export.ts",
+      "src/lib/actions/config/",
+      "src/lib/adapters/config/",
+      "src/lib/adapters/fs/config-export-file.ts",
+      "src/lib/config/",
+      "src/lib/domain/config/",
+      "test/e2e/fixtures/hermes-config-export-live.ts",
       "test/e2e/live/hermes-skill-lifecycle.ts",
     ],
     environment: {

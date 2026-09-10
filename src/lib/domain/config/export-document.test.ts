@@ -32,6 +32,7 @@ const policy = {
 };
 const source = {
   sandboxName: "alpha",
+  agent: "openclaw",
   runtime: {
     provider: "docker",
     imageRef: `nvcr.io/nvidia/nemoclaw@${digest}`,
@@ -116,6 +117,19 @@ describe("export config builder", () => {
     expect(second.spec.sandboxes[0]?.agents[0]?.inference.routes[0]?.providerRef).toBe(
       "hosted-openai-api",
     );
+  });
+
+  it("preserves the verified Hermes agent type (#11286)", () => {
+    const result = buildExportConfig(
+      { ...source, agent: "hermes" },
+      {
+        documentName: alphaDocumentName,
+        documentUid: firstUid,
+      },
+    );
+
+    expect(result.spec.sandboxes[0]?.agents[0]?.type).toBe("hermes");
+    expect(result.spec.sandboxes[0]?.agents[0]).not.toHaveProperty("observability");
   });
 
   it("omits an absent hosted credential reference (#10938)", () => {

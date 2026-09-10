@@ -621,12 +621,15 @@ describe("live export snapshot reader", () => {
       expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
       const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
       const document = validateNemoClawConfig(YAML.parse(yaml));
-      expect(document.spec.sandboxes[0]?.agents[0]?.observability).toEqual({
-        otlp: {
-          enabled: true,
-          endpoint: "http://host.openshell.internal:4318",
-          serviceName,
-          sampleRate,
+      expect(document.spec.sandboxes[0]?.agents[0]).toMatchObject({
+        type: "openclaw",
+        observability: {
+          otlp: {
+            enabled: true,
+            endpoint: "http://host.openshell.internal:4318",
+            serviceName,
+            sampleRate,
+          },
         },
       });
       expect(document.spec.sandboxes[0]?.network.policy.explicit).toEqual(policy);

@@ -168,45 +168,93 @@
               "agents": {
                 "type": "array",
                 "items": {
-                  "type": "object",
-                  "required": ["name", "type", "inference"],
-                  "properties": {
-                    "name": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 63,
-                      "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                    },
-                    "type": {
-                      "type": "string",
-                      "const": "openclaw"
-                    },
-                    "observability": {
+                  "anyOf": [
+                    {
                       "type": "object",
-                      "required": ["otlp"],
+                      "required": ["name", "inference", "type"],
                       "properties": {
-                        "otlp": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 63,
+                          "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                        },
+                        "inference": {
                           "type": "object",
-                          "required": ["enabled", "endpoint", "serviceName", "sampleRate"],
+                          "required": ["routes"],
                           "properties": {
-                            "enabled": {
-                              "type": "boolean",
-                              "const": true
-                            },
-                            "endpoint": {
-                              "type": "string",
-                              "const": "http://host.openshell.internal:4318"
-                            },
-                            "serviceName": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 256,
-                              "pattern": "^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])"
-                            },
-                            "sampleRate": {
-                              "type": "number",
-                              "minimum": 0,
-                              "maximum": 1
+                            "routes": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "required": ["name", "providerRef", "overrides"],
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "providerRef": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "overrides": {
+                                    "type": "object",
+                                    "required": ["model"],
+                                    "properties": {
+                                      "model": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 512,
+                                        "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "minItems": 1
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "type": {
+                          "type": "string",
+                          "const": "openclaw"
+                        },
+                        "observability": {
+                          "type": "object",
+                          "required": ["otlp"],
+                          "properties": {
+                            "otlp": {
+                              "type": "object",
+                              "required": ["enabled", "endpoint", "serviceName", "sampleRate"],
+                              "properties": {
+                                "enabled": {
+                                  "type": "boolean",
+                                  "const": true
+                                },
+                                "endpoint": {
+                                  "type": "string",
+                                  "const": "http://host.openshell.internal:4318"
+                                },
+                                "serviceName": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256,
+                                  "pattern": "^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])"
+                                },
+                                "sampleRate": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "additionalProperties": false
                             }
                           },
                           "additionalProperties": false
@@ -214,51 +262,67 @@
                       },
                       "additionalProperties": false
                     },
-                    "inference": {
+                    {
                       "type": "object",
-                      "required": ["routes"],
+                      "required": ["name", "inference", "type"],
                       "properties": {
-                        "routes": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "required": ["name", "providerRef", "overrides"],
-                            "properties": {
-                              "name": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 63,
-                                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                              },
-                              "providerRef": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 63,
-                                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                              },
-                              "overrides": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 63,
+                          "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                        },
+                        "inference": {
+                          "type": "object",
+                          "required": ["routes"],
+                          "properties": {
+                            "routes": {
+                              "type": "array",
+                              "items": {
                                 "type": "object",
-                                "required": ["model"],
+                                "required": ["name", "providerRef", "overrides"],
                                 "properties": {
-                                  "model": {
+                                  "name": {
                                     "type": "string",
                                     "minLength": 1,
-                                    "maxLength": 512,
-                                    "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "providerRef": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "overrides": {
+                                    "type": "object",
+                                    "required": ["model"],
+                                    "properties": {
+                                      "model": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 512,
+                                        "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                      }
+                                    },
+                                    "additionalProperties": false
                                   }
                                 },
                                 "additionalProperties": false
-                              }
-                            },
-                            "additionalProperties": false
+                              },
+                              "minItems": 1
+                            }
                           },
-                          "minItems": 1
+                          "additionalProperties": false
+                        },
+                        "type": {
+                          "type": "string",
+                          "const": "hermes"
                         }
                       },
                       "additionalProperties": false
                     }
-                  },
-                  "additionalProperties": false
+                  ]
                 },
                 "minItems": 1
               }
