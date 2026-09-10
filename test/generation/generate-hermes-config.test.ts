@@ -472,23 +472,18 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("API_SERVER_KEY=");
   });
 
-  it.each(["openshell:resolve:env:v17_TAVILY_API_KEY", "openshell:resolve:env:v29_TAVILY_API_KEY"])(
-    "preserves the issued Tavily reference %s through generated dotenv loading",
-    (placeholder) => {
-      const { config, envFile } = runConfigScript({
-        NEMOCLAW_WEB_SEARCH_ENABLED: "1",
-        NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
-        TAVILY_API_KEY: "build-only-test-credential",
-      });
-      const loadedEnv = { TAVILY_API_KEY: placeholder, ...parseEnv(envFile) };
+  it("omits the Tavily credential from the generated dotenv when web search is enabled", () => {
+    const { config, envFile } = runConfigScript({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
+      TAVILY_API_KEY: "build-only-test-credential",
+    });
 
-      expect(config.web).toEqual({ backend: "tavily" });
-      expect(loadedEnv.TAVILY_API_KEY).toBe(placeholder);
-      expect(envFile).not.toContain("TAVILY_API_KEY=");
-      expect(envFile).not.toContain("build-only-test-credential");
-      expect(findRawSecretEnvEntries(envFile)).toEqual([]);
-    },
-  );
+    expect(config.web).toEqual({ backend: "tavily" });
+    expect(parseEnv(envFile).TAVILY_API_KEY).toBeUndefined();
+    expect(envFile).not.toContain("build-only-test-credential");
+    expect(findRawSecretEnvEntries(envFile)).toEqual([]);
+  });
 
   it("does not configure Tavily when web search is disabled", () => {
     const { config, envFile } = runConfigScript({
