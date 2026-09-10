@@ -712,7 +712,7 @@ export function createCliOpenShellProviderAdapter(
     if (
       error?.kind === "command" &&
       error.reason === "not_found" &&
-      !/provider[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i.test(output)
+      !reportsExactProviderNotFound(output, request.providerName, PROVIDER_GET_DIAGNOSTIC_LIMIT)
     ) {
       return failure({ ...error, reason: "failed" });
     }

@@ -18,18 +18,18 @@ import {
   createStaleAnthropicProviderRunner,
 } from "../support/setup-inference-test-harness.js";
 
-const testHome = vi.hoisted(() => {
-  const fs = require("node:fs") as typeof import("node:fs");
-  const os = require("node:os") as typeof import("node:os");
-  const path = require("node:path") as typeof import("node:path");
+const testHome = await vi.hoisted(async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-provider-"));
   // The production registry captures its path when the harness imports onboarding.
   vi.stubEnv("HOME", home);
   return home;
 });
 
-const onboard = require("../../src/lib/onboard") as {
-  createSetupInference: (overrides?: Partial<SetupInferenceDeps>) => SetupInference;
+const { default: onboard } = (await import("../../src/lib/onboard")) as unknown as {
+  default: { createSetupInference: (overrides?: Partial<SetupInferenceDeps>) => SetupInference };
 };
 const createDirectSetupInferenceHarness = createDirectSetupInferenceHarnessFactory(
   onboard.createSetupInference,

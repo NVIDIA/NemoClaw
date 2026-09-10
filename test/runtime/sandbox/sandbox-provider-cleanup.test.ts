@@ -107,7 +107,7 @@ describe("detachSandboxProviders", () => {
         "sandbox provider detach alpha alpha-telegram-bridge",
         {
           status: 1,
-          stderr: "Error: status: NotFound, provider 'alpha-telegram-bridge' not found",
+          stderr: "Error: provider 'alpha-telegram-bridge' not found",
         },
       ],
       [
@@ -384,6 +384,30 @@ describe("recoverAttachedProvider", () => {
 });
 
 describe("deleteProviderWithRecovery", () => {
+  it("does not retry deletion when detach reports a different provider as missing", async () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stderr: "provider 'owned-provider' is attached to sandbox(es): mine",
+      })
+      .mockReturnValueOnce({ status: 1, stderr: "provider 'other-provider' not found" });
+
+    const result = await deleteProviderWithRecovery("owned-provider", {
+      runOpenshell,
+      allowedSandboxes: ["mine"],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.recoveryFailures).toEqual([
+      { sandbox: "mine", output: "provider 'other-provider' not found" },
+    ]);
+    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "delete", "owned-provider"],
+      ["sandbox", "provider", "detach", "mine", "owned-provider"],
+    ]);
+  });
+
   it("waits for every typed detach before retrying an attached provider deletion", async () => {
     const events: string[] = [];
     let releaseDetach!: () => void;

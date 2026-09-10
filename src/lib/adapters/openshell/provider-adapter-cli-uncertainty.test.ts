@@ -54,7 +54,9 @@ describe("CLI OpenShell provider adapter uncertain mutations", () => {
   it.each([
     ["sandbox 'alpha' not found", "sandbox_not_found"],
     ["provider 'search-prod' not found", "not_found"],
-    ["provider 'sandbox-telegram' not found", "not_found"],
+    ["provider 'sandbox-telegram' not found", "failed"],
+    ["provider 'other-provider' not found", "failed"],
+    ["provider search-prod not found", "failed"],
     ["NotFound", "failed"],
   ])("distinguishes the missing detach resource: %s (#9806)", async (stderr, reason) => {
     const adapter = createCliOpenShellProviderAdapter({ run: () => captured(1, stderr) });
@@ -65,6 +67,19 @@ describe("CLI OpenShell provider adapter uncertain mutations", () => {
         sandboxName: "alpha",
       }),
     ).resolves.toMatchObject({ ok: false, error: { kind: "command", reason } });
+  });
+
+  it("recognizes the requested sandbox-prefixed provider as missing", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(1, "provider 'sandbox-telegram' not found"),
+    });
+    await expect(
+      adapter.detachProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "sandbox-telegram",
+        sandboxName: "alpha",
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { kind: "command", reason: "not_found" } });
   });
 
   it.each([
