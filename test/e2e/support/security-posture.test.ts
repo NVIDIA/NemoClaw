@@ -985,7 +985,7 @@ describe("security posture fixture", () => {
       expect(summary).toEqual({
         configureGuard: true,
         hostNonRoot: true,
-        rcFilesLocked: true,
+        rcFilesMutable: true,
         runtimeProxyEnvLocked: true,
         splitProcess: {
           childSupervisor: directChildSupervisor,

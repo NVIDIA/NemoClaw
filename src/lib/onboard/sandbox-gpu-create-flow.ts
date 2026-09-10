@@ -3,6 +3,7 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
@@ -219,6 +220,8 @@ export interface SandboxGpuCreateFlowInput {
     readonly route: SelectedDockerGpuRoute;
     readonly liveIdentityFingerprint: string;
     readonly createAttemptNonce?: string;
+    readonly finalHandoffCommitStarted?: true;
+    readonly finalHandoffRuntimeId?: string;
   };
   /** Reject every initial or fallback create attempt that carries a caller policy. */
   requirePolicylessCreate?: true;
@@ -275,12 +278,16 @@ export interface SandboxGpuCreateFlowInput {
   verifyCreatedSandboxBeforeEffects?: (identity: CreatedSandboxIdentity) => void | Promise<void>;
   /** Re-read the exact pending create identity before each post-create effect. */
   revalidateVerifiedSandboxBeforeEffect?: (operation: string) => void;
+  /** Persist the commit fence before the exact final handoff starts. */
+  persistFinalHandoffCommitStarted?: (replacementRuntimeId: string | null) => void;
+  /** Persist acknowledgement after resume reconfirms exact identity and Ready. */
+  persistResumedFinalHandoffAcknowledgement?: () => void;
 }
 
 export interface CreatedSandboxIdentity {
   readonly sandboxId: string;
   readonly liveIdentityFingerprint: string;
-  readonly createAttemptNonce: string;
+  readonly createAttemptNonce?: string;
   readonly route: SelectedDockerGpuRoute;
 }
 
@@ -296,12 +303,19 @@ export function refuseApfMutableNameFallbackCleanup(sandboxName: string) {
 }
 
 export interface SandboxGpuCreateFlowDeps {
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   runOpenshell: RunOpenshell;
   runCaptureOpenshell: RunCaptureOpenshell;
   sandboxObserver: OpenShellSandboxObserver;
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
+  /** Test seam for the exact Docker runtime proof used only during handoff resume. */
+  verifyExactFinalHandoffRuntime?: (
+    sandboxName: string,
+    replacementRuntimeId: string,
+    requireRunning: boolean,
+  ) => boolean;
   printCreateFailureDiagnostics?: (
     sandboxName: string,
     options: { readonly backupPath?: string | null },
@@ -416,130 +430,132 @@ export async function runSandboxGpuCreateFlow(
       : deps,
     () => verifySelectedSandboxBridgeReachability(input),
   );
-  const gpuCreateOutcome = await (input.resumeVerifiedCreate
-    ? attemptRunner.runAttempt(input.resumeVerifiedCreate.route)
-    : sandboxGpuCreateAttempt.executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
-      runAttempt: attemptRunner.runAttempt,
-      captureNativeFailure: (failure) => {
-        const routeAdapter = adaptDockerGpuRouteForPatch(failure.route);
-        const diagnostics = collectDockerGpuPatchDiagnostics(
-          input.sandboxName,
-          {
-            error: failure.error,
-            additionalSummaryLines: routeAdapter.additionalSummaryLines,
+  const gpuCreateOutcome = await (
+    input.resumeVerifiedCreate
+      ? attemptRunner.runAttempt(input.resumeVerifiedCreate.route)
+      : sandboxGpuCreateAttempt.executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
+          runAttempt: attemptRunner.runAttempt,
+          captureNativeFailure: (failure) => {
+            const routeAdapter = adaptDockerGpuRouteForPatch(failure.route);
+            const diagnostics = collectDockerGpuPatchDiagnostics(
+              input.sandboxName,
+              {
+                error: failure.error,
+                additionalSummaryLines: routeAdapter.additionalSummaryLines,
+              },
+              { runCaptureOpenshell: deps.runCaptureOpenshell },
+            );
+            if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
           },
-          { runCaptureOpenshell: deps.runCaptureOpenshell },
-        );
-        if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
-      },
-      cleanupNativeFailure: (failure) => {
-        if (input.requirePolicylessCreate) {
-          return refuseApfMutableNameFallbackCleanup(input.sandboxName);
-        }
-        return sandboxGpuCreateAttempt.cleanupNativeGpuFailureForFallback(
-          input.sandboxName,
-          failure,
-          {
-            runOpenshell: deps.runOpenshell,
-            sleep: deps.sleep,
+          cleanupNativeFailure: (failure) => {
+            if (input.requirePolicylessCreate) {
+              return refuseApfMutableNameFallbackCleanup(input.sandboxName);
+            }
+            return sandboxGpuCreateAttempt.cleanupNativeGpuFailureForFallback(
+              input.sandboxName,
+              failure,
+              {
+                runOpenshell: deps.runOpenshell,
+                sleep: deps.sleep,
+              },
+            );
           },
-        );
-      },
-      prepareCompatibilityAttempt: async () => {
-        if (!input.compatibilityPolicyPath) {
-          throw new Error("Compatibility retry policy was not materialized.");
-        }
-        const nativeRuntimeSnapshot = attemptRunner.state.nativeRuntimeSnapshot;
-        if (attemptRunner.managedRouting) {
-          const managedBootstrap = input.managedBootstrap;
-          if (!managedBootstrap) {
-            throw new Error("Managed compatibility routing is missing bootstrap authority.");
-          }
-          const bootstrapIdentity = createManagedBootstrapIdentity();
-          const heldWorkloadArgv = [
-            ...renderManagedBootstrapHeldCommand(
-              managedBootstrap.request,
-              bootstrapIdentity,
-              managedBootstrap.intendedWorkloadArgv,
-            ),
-          ];
-          const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
-            createArgs: managedBootstrapCreateArgs(input.prebuild.createArgs, bootstrapIdentity),
-            currentRegistryImageRef: registryImageRef,
-            managedImageReference: `${managedBootstrap.image.repository}@${managedBootstrap.image.manifestDigest}`,
-            prebuildImageId: input.prebuild.imageId,
-            allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
-            compatibilityPolicyPath: input.compatibilityPolicyPath,
-            startupCommand: heldWorkloadArgv,
-            runtimeSnapshot: nativeRuntimeSnapshot,
-          });
-          attemptRunner.state.compatibilityArgv = [...prepared.createArgv];
-          attemptRunner.state.compatibilityBootstrapIdentity = bootstrapIdentity;
-          attemptRunner.state.compatibilityHeldWorkloadArgv = heldWorkloadArgv;
-          registryImageRef = prepared.registryImageRef;
-        } else {
-          const prebuildImageId = input.prebuild.imageId;
-          const imageId =
-            nativeRuntimeSnapshot?.imageId ??
-            (prebuildImageId && isImmutableDockerImageId(prebuildImageId)
-              ? prebuildImageId.toLowerCase()
-              : null);
-          if (
-            !registryImageRef &&
-            nativeRuntimeSnapshot?.bookkeepingImageRef &&
-            !isImmutableDockerImageId(nativeRuntimeSnapshot.bookkeepingImageRef)
-          ) {
-            registryImageRef = nativeRuntimeSnapshot.bookkeepingImageRef;
-          }
-          const compatibilityArgs = renderCompatibilityFallbackCreateArgs(
-            input.prebuild.createArgs,
-            {
-              imageRef: imageId,
-              allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
-              compatibilityPolicyPath: input.compatibilityPolicyPath,
-            },
-          );
-          attemptRunner.state.compatibilityArgv = deps.openshellArgv([
-            "sandbox",
-            "create",
-            ...compatibilityArgs,
-            "--",
-            ...input.sandboxStartupCommand,
-          ]);
-        }
-        if (attemptRunner.state.compatibilityArgv.length === 0) {
-          throw new Error("Compatibility sandbox create executable is missing.");
-        }
-      },
-      activateCompatibilityAttempt: async () => {
-        if (!input.managedBootstrap) {
-          await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
-            input.provider,
-            input.sandboxGpuConfig,
-            {
-              dockerDriverGateway: input.dockerDriverGateway,
-              selectedRoute: "compatibility",
-              gatewayPort: input.gatewayPort,
-              log: console.log,
-              reverifyBridgeReachability: () => verifySelectedSandboxBridgeReachability(input),
-            },
-          );
-        }
-        input.sandboxGpuConfig.sandboxGpuProof = null;
-      },
-      traceEvent: addTraceEvent,
-      }))
-    .catch((error: unknown) => {
-      if (error instanceof ManagedBootstrapRecoveryBlockedError) {
-        exitForManagedBootstrapRecovery(error);
-      }
-      throw error;
-    });
+          prepareCompatibilityAttempt: async () => {
+            if (!input.compatibilityPolicyPath) {
+              throw new Error("Compatibility retry policy was not materialized.");
+            }
+            const nativeRuntimeSnapshot = attemptRunner.state.nativeRuntimeSnapshot;
+            if (attemptRunner.managedRouting) {
+              const managedBootstrap = input.managedBootstrap;
+              if (!managedBootstrap) {
+                throw new Error("Managed compatibility routing is missing bootstrap authority.");
+              }
+              const bootstrapIdentity = createManagedBootstrapIdentity();
+              const heldWorkloadArgv = [
+                ...renderManagedBootstrapHeldCommand(
+                  managedBootstrap.request,
+                  bootstrapIdentity,
+                  managedBootstrap.intendedWorkloadArgv,
+                ),
+              ];
+              const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
+                createArgs: managedBootstrapCreateArgs(
+                  input.prebuild.createArgs,
+                  bootstrapIdentity,
+                ),
+                currentRegistryImageRef: registryImageRef,
+                managedImageReference: `${managedBootstrap.image.repository}@${managedBootstrap.image.manifestDigest}`,
+                prebuildImageId: input.prebuild.imageId,
+                allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
+                compatibilityPolicyPath: input.compatibilityPolicyPath,
+                startupCommand: heldWorkloadArgv,
+                runtimeSnapshot: nativeRuntimeSnapshot,
+              });
+              attemptRunner.state.compatibilityArgv = [...prepared.createArgv];
+              attemptRunner.state.compatibilityBootstrapIdentity = bootstrapIdentity;
+              attemptRunner.state.compatibilityHeldWorkloadArgv = heldWorkloadArgv;
+              registryImageRef = prepared.registryImageRef;
+            } else {
+              const prebuildImageId = input.prebuild.imageId;
+              const imageId =
+                nativeRuntimeSnapshot?.imageId ??
+                (prebuildImageId && isImmutableDockerImageId(prebuildImageId)
+                  ? prebuildImageId.toLowerCase()
+                  : null);
+              if (
+                !registryImageRef &&
+                nativeRuntimeSnapshot?.bookkeepingImageRef &&
+                !isImmutableDockerImageId(nativeRuntimeSnapshot.bookkeepingImageRef)
+              ) {
+                registryImageRef = nativeRuntimeSnapshot.bookkeepingImageRef;
+              }
+              const compatibilityArgs = renderCompatibilityFallbackCreateArgs(
+                input.prebuild.createArgs,
+                {
+                  imageRef: imageId,
+                  allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
+                  compatibilityPolicyPath: input.compatibilityPolicyPath,
+                },
+              );
+              attemptRunner.state.compatibilityArgv = deps.openshellArgv([
+                "sandbox",
+                "create",
+                ...compatibilityArgs,
+                "--",
+                ...input.sandboxStartupCommand,
+              ]);
+            }
+            if (attemptRunner.state.compatibilityArgv.length === 0) {
+              throw new Error("Compatibility sandbox create executable is missing.");
+            }
+          },
+          activateCompatibilityAttempt: async () => {
+            if (!input.managedBootstrap) {
+              await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
+                input.provider,
+                input.sandboxGpuConfig,
+                {
+                  dockerDriverGateway: input.dockerDriverGateway,
+                  selectedRoute: "compatibility",
+                  gatewayPort: input.gatewayPort,
+                  log: console.log,
+                  reverifyBridgeReachability: () => verifySelectedSandboxBridgeReachability(input),
+                },
+              );
+            }
+            input.sandboxGpuConfig.sandboxGpuProof = null;
+          },
+          traceEvent: addTraceEvent,
+        })
+  ).catch((error: unknown) => {
+    if (error instanceof ManagedBootstrapRecoveryBlockedError) {
+      exitForManagedBootstrapRecovery(error);
+    }
+    throw error;
+  });
   if (!gpuCreateOutcome.ok) {
     const preparationRefused =
-      "preparationRefused" in gpuCreateOutcome
-        ? gpuCreateOutcome.preparationRefused
-        : undefined;
+      "preparationRefused" in gpuCreateOutcome ? gpuCreateOutcome.preparationRefused : undefined;
     const cleanupRefused =
       "cleanupRefused" in gpuCreateOutcome ? gpuCreateOutcome.cleanupRefused : undefined;
     const nativeCleanupHandoff =
@@ -559,7 +575,7 @@ export async function runSandboxGpuCreateFlow(
         ? `  Managed bootstrap retained exact owner-cleanup authority for sandbox '${input.sandboxName}'. Do not delete a runtime by mutable sandbox name; preserve it for identity-bound recovery.`
         : hermesPortableLifecycle
           ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
-          : `  Sandbox '${input.sandboxName}' may still exist. Verify its durable identity before manual cleanup; do not act by mutable name alone.`,
+          : `  Sandbox '${input.sandboxName}' may still exist. Recovery remains blocked while it exists; do not delete it by mutable name. Run 'nemoclaw ${input.sandboxName} destroy' to check for authoritative absence.`,
     );
     if (input.requirePolicylessCreate) {
       const persistRetainedSandboxRecovery = input.persistRetainedSandboxRecovery;
@@ -574,13 +590,13 @@ export async function runSandboxGpuCreateFlow(
       } else {
         const identityGuidance = evidence.liveIdentityFingerprint
           ? "Use that fingerprint only to compare the surviving sandbox with this create attempt."
-          : "OpenShell did not return one exact durable sandbox identity for this create attempt. Recovery is blocked until an OpenShell administrator resolves the create-attempt label to one sandbox.";
+          : "OpenShell did not return one exact durable sandbox identity for this create attempt.";
         const message =
           `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${evidence.createAttemptNonce}. ` +
           `${evidence.liveIdentityFingerprint ? `Durable sandbox identity fingerprint: ${evidence.liveIdentityFingerprint}. ` : ""}` +
           `APF sandbox '${input.sandboxName}' may have been retained after native GPU fallback stopped. ` +
           `Gateway '${input.gatewayName}'. ${identityGuidance} ` +
-          "Do not delete a sandbox by mutable name; use an identity-bound administrator recovery procedure.";
+          `Do not delete the sandbox by mutable name. Run 'nemoclaw ${input.sandboxName} destroy'; it can clear retained recovery only after OpenShell confirms absence.`;
         let persisted = false;
         try {
           persisted = evidence.liveIdentityFingerprint
@@ -596,7 +612,7 @@ export async function runSandboxGpuCreateFlow(
         console.error(`  ${message}`);
         if (!persisted) {
           console.error(
-            "  APF recovery is blocked because NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
+            "  APF recovery is blocked because NemoClaw could not save this create-attempt evidence. Preserve the registry entry and terminal output; do not delete the sandbox by mutable name.",
           );
         }
       }

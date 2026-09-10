@@ -114,7 +114,7 @@ function writeGatewayControlDockerStub(
 function expectGatewayControlRecovery(callsFile: string): void {
   const calls = fs.readFileSync(callsFile, "utf8");
   expect(calls).toContain(
-    "ps --no-trunc --filter label=openshell.ai/managed-by=openshell " +
+    "ps --all --no-trunc --filter label=openshell.ai/managed-by=openshell " +
       "--filter label=openshell.ai/sandbox-name=alpha --format {{.ID}}\t{{.Names}}",
   );
   const recoveryCall = calls
@@ -290,6 +290,7 @@ describe("CLI connect recovery process contracts", () => {
         expect(calls.some((call) => call.startsWith("sandbox exec --name alpha -- sh -c"))).toBe(
           true,
         );
+        expect(calls.some((call) => call.includes("inference.local/v1/models"))).toBe(true);
         expect(calls).not.toContain("sandbox ssh-config alpha");
         expect(calls).not.toContain("sandbox connect alpha");
         expect(fs.existsSync(sshMarkerFile)).toBe(false);

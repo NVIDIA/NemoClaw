@@ -221,8 +221,8 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   for (const entry of entries) {
     assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
   }
-  for (const entry of entries) assertMcpProviderRecoverable(entry, providerRuntimeSelection);
-  assertNoRegisteredProviderCredentialCollisions(entries, {
+  for (const entry of entries) await assertMcpProviderRecoverable(entry, providerRuntimeSelection);
+  await assertNoRegisteredProviderCredentialCollisions(entries, {
     runtimeSelection: providerRuntimeSelection,
   });
   return {
@@ -261,8 +261,8 @@ export async function prepareMcpBridgesForRebuild(
     entries,
     providerRuntimeSelection,
   );
-  for (const entry of entries) assertMcpProviderRecoverable(entry, providerRuntimeSelection);
-  assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
+  for (const entry of entries) await assertMcpProviderRecoverable(entry, providerRuntimeSelection);
+  await assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
   // This is the bounded replacement handoff, not a durable NemoClaw policy
   // record. Capture OpenShell immediately before the internal teardown
   // mutations so the replacement receives the complete operator-owned
@@ -294,7 +294,7 @@ export async function prepareMcpBridgesForRebuild(
       // Hermes/agent cannot boot with a stale placeholder while its provider
       // is intentionally detached during recreate.
       scrubbedAdapters.push(
-        scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry, providerRuntimeSelection),
+        await scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry, providerRuntimeSelection),
       );
     }
     for (const entry of entries) {
@@ -309,11 +309,11 @@ export async function prepareMcpBridgesForRebuild(
     for (const entry of entries) {
       // Keep the provider and its host-only credentials for the replacement
       // sandbox, but detach it before OpenShell deletes the old attachment.
-      inspectExactMcpDestroyProvider(entry, {
+      await inspectExactMcpDestroyProvider(entry, {
         allowMissing: false,
         runtimeSelection: providerRuntimeSelection,
       });
-      const detachOutcome = detachProvider(sandboxName, entry, {
+      const detachOutcome = await detachProvider(sandboxName, entry, {
         runtimeSelection: providerRuntimeSelection,
       });
       if (detachOutcome === "unknown") {
@@ -321,7 +321,7 @@ export async function prepareMcpBridgesForRebuild(
           `Could not prove provider detach for MCP server '${entry.server}'.`,
         );
       }
-      waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+      await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
       // A binding already absent on retry was still detached by this rebuild
       // transaction (possibly before a prior process died), so it must be
       // reattached if sandbox deletion later aborts.
@@ -346,12 +346,12 @@ export async function prepareMcpBridgesForRebuild(
     }
     if (!runtimeRestored) {
       rollbackFailures.push(
-        ...rollbackScrubbedMcpAdapters(
+        ...(await rollbackScrubbedMcpAdapters(
           sandboxName,
           sandbox,
           scrubbedAdapters,
           providerRuntimeSelection,
-        ),
+        )),
       );
     }
     const detail = error instanceof Error ? error.message : String(error);
@@ -410,12 +410,12 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   }
   if (!runtimeRestored) {
     failures.push(
-      ...rollbackScrubbedMcpAdapters(
+      ...(await rollbackScrubbedMcpAdapters(
         sandboxName,
         sandbox,
         scrubbedAdapterEntries,
         providerRuntimeSelection,
-      ),
+      )),
     );
   }
   if (failures.length > 0) {

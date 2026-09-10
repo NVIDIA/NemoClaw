@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   assertMcpDestroyNotPending: vi.fn(),
   bridgeState: vi.fn(),
   discardSafeIncompleteMcpAdds: vi.fn(),
+  detachProvider: vi.fn(),
   ensureSandboxGatewaySelected: vi.fn(),
   getMcpProviderInspectionRuntimeSelection: vi.fn(() => ({
     gatewayName: "nemoclaw-8091",
@@ -49,7 +50,7 @@ vi.mock("./mcp-bridge-provider", () => ({
   assertMcpProviderRecoverable: vi.fn(),
   assertNoProviderCredentialCollisions: vi.fn(),
   assertNoRegisteredProviderCredentialCollisions: vi.fn(),
-  detachProvider: vi.fn(),
+  detachProvider: mocks.detachProvider,
   getMcpProviderInspectionRuntimeSelection: mocks.getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider: mocks.inspectMcpProvider,
   preflightMcpEntryTargets: mocks.preflightMcpEntryTargets,
@@ -131,6 +132,7 @@ describe("MCP adapter teardown rollback", () => {
     });
     mocks.bridgeState.mockReset().mockReturnValue({ github: entry });
     mocks.discardSafeIncompleteMcpAdds.mockReset().mockResolvedValue(sandbox);
+    mocks.detachProvider.mockReset().mockResolvedValue("detached");
     mocks.ensureSandboxGatewaySelected.mockReset().mockResolvedValue(undefined);
     mocks.getMcpProviderInspectionRuntimeSelection.mockReset().mockReturnValue(runtimeSelection);
     mocks.getBridgeAdapter.mockReset().mockReturnValue("hermes-config");
@@ -147,14 +149,14 @@ describe("MCP adapter teardown rollback", () => {
       type: "nemoclaw-mcp-v1",
     });
     mocks.inspectMcpProvider.mockReset().mockReturnValue({ exists: false });
-    mocks.observeMcpCredentialRevision.mockReset().mockReturnValue("v12");
+    mocks.observeMcpCredentialRevision.mockReset().mockResolvedValue("v12");
     mocks.preflightMcpEntryTargets
       .mockReset()
       .mockResolvedValue(new Map([[entry.server, { addresses: ["8.8.8.8"] }]]));
     mocks.removeGeneratedPolicy.mockReset().mockImplementation(() => {
       throw new Error("forced lifecycle failure after adapter scrub");
     });
-    mocks.registerAgentAdapterAtCurrentCredentialRevision.mockReset();
+    mocks.registerAgentAdapterAtCurrentCredentialRevision.mockReset().mockResolvedValue("v12");
     mocks.restoreExistingMcpBridgeRuntime.mockReset();
     mocks.setBridgeState.mockReset();
     mocks.unregisterAgentAdapter.mockReset().mockReturnValue("removed");
@@ -168,9 +170,9 @@ describe("MCP adapter teardown rollback", () => {
     async (_lifecycle, prepare) => {
       mocks.observeMcpCredentialRevision
         .mockReset()
-        .mockReturnValueOnce("v12")
-        .mockReturnValueOnce("v13")
-        .mockReturnValue("v13");
+        .mockResolvedValueOnce("v12")
+        .mockResolvedValueOnce("v13")
+        .mockResolvedValue("v13");
 
       await expect(prepare("alpha")).rejects.toThrow(
         "forced lifecycle failure after adapter scrub",
@@ -192,8 +194,8 @@ describe("MCP adapter teardown rollback", () => {
     },
   );
 
-  it("does not derive a Hermes credential revision from an exact provider resource version", () => {
-    mocks.observeMcpCredentialRevision.mockReturnValue("absent");
+  it("does not derive a Hermes credential revision from an exact provider resource version", async () => {
+    mocks.observeMcpCredentialRevision.mockResolvedValue("absent");
     mocks.inspectMcpProvider.mockReturnValue({
       credentialKeys: ["GITHUB_TOKEN"],
       exists: true,
@@ -202,7 +204,9 @@ describe("MCP adapter teardown rollback", () => {
       type: "nemoclaw-mcp-v1",
     });
 
-    expect(() => scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry, runtimeSelection)).toThrow(
+    await expect(
+      scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry, runtimeSelection),
+    ).rejects.toThrow(
       "Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server 'github'.",
     );
     expect(mocks.inspectMcpProvider).not.toHaveBeenCalled();
@@ -231,6 +235,22 @@ describe("MCP adapter teardown rollback", () => {
     );
     expect(events.slice(0, 2)).toEqual(["gateway-selected", "provider-inspected"]);
   });
+
+  it.each([
+    ["rebuild", prepareMcpBridgesForRebuild],
+    ["destroy", prepareMcpBridgesForDestroy],
+  ] as const)(
+    "awaits %s provider inspection before any later provider mutation (#9806)",
+    async (_lifecycle, prepare) => {
+      mocks.removeGeneratedPolicy.mockReset();
+      mocks.inspectExactMcpDestroyProvider.mockRejectedValueOnce(
+        new Error("provider inspection failed"),
+      );
+
+      await expect(prepare("alpha")).rejects.toThrow("provider inspection failed");
+      expect(mocks.detachProvider).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["live", prepareMcpBridgesForRebuild],
@@ -299,16 +319,19 @@ describe("MCP adapter teardown rollback", () => {
       { ...entry, allowedIps: undefined },
       /legacy public registration without recorded address pins.*mcp restart github/,
     ],
-  ] as const)("rejects exec-unavailable rebuild for %s (#11115)", async (_case, candidate, error) => {
-    mocks.bridgeState.mockReturnValue({ github: candidate });
-    mocks.getSandboxAgent.mockReturnValue({ name: "hermes" });
-    mocks.getBridgeAdapter.mockReturnValue("hermes-config");
+  ] as const)(
+    "rejects exec-unavailable rebuild for %s (#11115)",
+    async (_case, candidate, error) => {
+      mocks.bridgeState.mockReturnValue({ github: candidate });
+      mocks.getSandboxAgent.mockReturnValue({ name: "hermes" });
+      mocks.getBridgeAdapter.mockReturnValue("hermes-config");
 
-    await expect(prepareMcpBridgesForExecUnavailableRebuild("alpha")).rejects.toThrow(error);
+      await expect(prepareMcpBridgesForExecUnavailableRebuild("alpha")).rejects.toThrow(error);
 
-    expect(mocks.ensureSandboxGatewaySelected).not.toHaveBeenCalled();
-    expect(mocks.preflightMcpEntryTargets).not.toHaveBeenCalled();
-  });
+      expect(mocks.ensureSandboxGatewaySelected).not.toHaveBeenCalled();
+      expect(mocks.preflightMcpEntryTargets).not.toHaveBeenCalled();
+    },
+  );
 
   const expectLegacyPublicPinsPersisted = async (
     prepare: (sandboxName: string) => Promise<{ entries: McpBridgeEntry[] }>,

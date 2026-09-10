@@ -26,7 +26,12 @@ import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
 
-export { clearRebuildPolicyHandoff, writeRebuildPolicyHandoff } from "../../state/sandbox";
+export {
+  clearHermesOperatorConfigHandoff,
+  clearRebuildPolicyHandoff,
+  writeHermesOperatorConfigHandoff,
+  writeRebuildPolicyHandoff,
+} from "../../state/sandbox";
 
 export type RebuildBackupManifest = Exclude<
   Awaited<ReturnType<typeof backupSandboxStateForRebuild>>,
@@ -143,11 +148,7 @@ export async function runRebuildBackupPhase(
   const capturedPolicy =
     input.staleRecovery || preparedRetainedPolicy
       ? null
-      : captureRebuildPolicyDocument(
-          input.sandboxName,
-          input.gatewayName,
-          input.runtimeSelection,
-        );
+      : captureRebuildPolicyDocument(input.sandboxName, input.gatewayName, input.runtimeSelection);
   let backupManifest =
     preparedRecoveryManifest ??
     (await backupStateForRebuild(

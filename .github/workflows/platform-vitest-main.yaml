@@ -89,7 +89,8 @@ jobs:
       matrix:
         include:
           - shard: 1
-            timeout_minutes: 60
+            # The live E2E has a 70m timeout; every other step shares the remaining job time.
+            timeout_minutes: 150
           - shard: 2
             timeout_minutes: 30
           - shard: 3
@@ -192,9 +193,7 @@ jobs:
           NEMOCLAW_SANDBOX_NAME: "e2e-macos"
           NEMOCLAW_RUN_LIVE_E2E: "1"
         run: >-
-          npx vitest run --project e2e-live
-          test/e2e/live/full-e2e.test.ts
-          --silent=false --reporter=default
+          npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
 
       - name: Explain skipped macOS live E2E
         if: ${{ matrix.shard == 1 && (steps.macos_docker.outputs.docker_ok != 'true' || github.ref != 'refs/heads/main') }}

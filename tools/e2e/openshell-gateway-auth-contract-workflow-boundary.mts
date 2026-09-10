@@ -23,7 +23,7 @@ const ARTIFACT_SAFETY_GATED_UPLOAD =
   "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}";
 const APPROVED_ARTIFACT_PATH = "${{ steps.artifact_safety.outputs.approved_path }}";
 const ARTIFACT_SAFETY_COMMAND =
-  'node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"';
+  'node --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"';
 
 type WorkflowStep = {
   env?: Record<string, unknown>;
@@ -110,9 +110,7 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   }
   const pinVersion = env.NEMOCLAW_OPENSHELL_PIN_VERSION;
   if (pinVersion !== OPENSHELL_RELEASE_VERSION) {
-    errors.push(
-      `${JOB_NAME} must set NEMOCLAW_OPENSHELL_PIN_VERSION=${OPENSHELL_RELEASE_VERSION}`,
-    );
+    errors.push(`${JOB_NAME} must set NEMOCLAW_OPENSHELL_PIN_VERSION=${OPENSHELL_RELEASE_VERSION}`);
   }
   for (const secret of [
     "DOCKERHUB_USERNAME",

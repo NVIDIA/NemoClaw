@@ -8,6 +8,11 @@ export const N1X_FASTOS_RELEASE_MAX_BYTES = 4096;
 // Bound discovery so malformed sysfs state cannot create unbounded work.
 const N1X_PCI_SCAN_MAX_DEVICES = 256;
 const N1X_PCI_FIELD_MAX_BYTES = 64;
+const N1X_WSL_GPU_NAME_MAX_BYTES = 256;
+const N1X_WSL_GPU_NAMES = new Set([
+  "NVIDIA RTX Spark N1X",
+  "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)",
+]);
 
 export interface N1xIdentityEvidence {
   candidate: boolean;
@@ -33,6 +38,17 @@ export interface N1xIdentityOptions {
   closeFileDescriptor?: (fileDescriptor: number) => void;
   fastOsReleasePath?: string;
   pciDevicesPath?: string;
+}
+
+/** Match the bounded NVIDIA GPU identity reported by N1x WSL hosts. */
+export function isN1xWslGpuName(value: string): boolean {
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(value)) return false;
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  return (
+    normalized.length > 0 &&
+    Buffer.byteLength(normalized, "utf8") <= N1X_WSL_GPU_NAME_MAX_BYTES &&
+    N1X_WSL_GPU_NAMES.has(normalized)
+  );
 }
 
 export function isTrustedN1xFastOsMarker(metadata: {

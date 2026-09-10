@@ -102,7 +102,7 @@ export async function discardSafeIncompleteMcpAdds(
     if (entry.addState === "prepared") continue;
     if (entry.addState === "preflighted" && !entry.providerId) {
       assertAuthenticatedBridgeEntry(entry);
-      const inspection = inspectMcpProvider(entry.providerName, providerRuntimeSelection!);
+      const inspection = await inspectMcpProvider(entry.providerName, providerRuntimeSelection!);
       if (inspection.exists === false) {
         providerlessPreflighted.push(entry);
         continue;
@@ -147,21 +147,21 @@ export function assertMcpDestroySnapshotCurrent(
   return sandbox;
 }
 
-export function inspectExactMcpDestroyProvider(
+export async function inspectExactMcpDestroyProvider(
   entry: McpBridgeEntry,
   options: {
     allowMissing: boolean;
     force?: boolean;
     runtimeSelection: McpProviderInspectionRuntimeSelection;
   },
-): McpProviderInspection {
+): Promise<McpProviderInspection> {
   assertAuthenticatedBridgeEntry(entry);
   if (!entry.providerId) {
     throw new McpBridgeError(
       `MCP server '${entry.server}' has no stable OpenShell provider ID. Refusing destructive cleanup of same-name provider '${entry.providerName}'. Remove the legacy bridge with --force only after independently cleaning that provider.`,
     );
   }
-  const inspection = inspectMcpProvider(entry.providerName, options.runtimeSelection);
+  const inspection = await inspectMcpProvider(entry.providerName, options.runtimeSelection);
   if (inspection.exists === null) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect OpenShell provider '${entry.providerName}'.`,
@@ -216,7 +216,7 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
     providerRuntimeSelection ??= getMcpProviderInspectionRuntimeSelection(sandbox);
   }
   for (const entry of entries) {
-    inspectExactMcpDestroyProvider(entry, {
+    await inspectExactMcpDestroyProvider(entry, {
       allowMissing: true,
       force: options.force,
       runtimeSelection: providerRuntimeSelection!,

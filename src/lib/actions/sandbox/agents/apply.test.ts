@@ -237,6 +237,70 @@ describe("validateAgentsManifestForApply", () => {
 });
 
 describe("runAgentsApply", () => {
+  const getSandboxAgent = () => "openclaw";
+
+  it("uses typed buffered commands for list, delete, and add", async () => {
+    const manifestPath = manifestFile(
+      "typed-roster.yaml",
+      ["agents:", "  - id: alpha", ""].join("\n"),
+    );
+    const runBuffered = vi
+      .fn()
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: '[{"id":"main"},{"id":"obsolete"}]',
+        stderr: "",
+      })
+      .mockResolvedValue({
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: "",
+        stderr: "",
+      });
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    try {
+      await runAgentsApply(
+        { sandboxName: "my-assistant", manifestPath, yes: true },
+        {
+          ensureLive: async () => undefined,
+          getSandboxAgent,
+          commandExecutor: { runBuffered },
+          log: () => {},
+        },
+      );
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+
+    expect(runBuffered.mock.calls.map(([request]) => request)).toEqual([
+      {
+        sandboxName: "my-assistant",
+        target: { kind: "selected" },
+        command: ["openclaw", "agents", "list", "--json"],
+      },
+      {
+        sandboxName: "my-assistant",
+        target: { kind: "selected" },
+        command: ["openclaw", "agents", "delete", "obsolete", "--force"],
+      },
+      {
+        sandboxName: "my-assistant",
+        target: { kind: "selected" },
+        command: [
+          "openclaw",
+          "agents",
+          "add",
+          "alpha",
+          "--non-interactive",
+          "--workspace",
+          "/sandbox/.openclaw/workspace-alpha",
+        ],
+      },
+    ]);
+  });
+
   it("invokes add for missing manifest agents and delete for orphans", async () => {
     const manifestPath = manifestFile(
       "roster.yaml",
@@ -253,12 +317,12 @@ describe("runAgentsApply", () => {
     );
     const log = vi.fn();
     const ensureLive = vi.fn(async () => undefined);
-    const listAgents = vi.fn(() => [{ id: "main" }, { id: "obsolete" }]);
-    const addAgent = vi.fn();
-    const deleteAgent = vi.fn();
+    const listAgents = vi.fn(async () => [{ id: "main" }, { id: "obsolete" }]);
+    const addAgent = vi.fn(async (_sandboxName: string, _id: string) => undefined);
+    const deleteAgent = vi.fn(async () => undefined);
     await runAgentsApply(
       { sandboxName: "my-assistant", manifestPath, yes: true },
-      { ensureLive, listAgents, addAgent, deleteAgent, log },
+      { ensureLive, getSandboxAgent, listAgents, addAgent, deleteAgent, log },
     );
     expect(ensureLive).toHaveBeenCalledWith("my-assistant", { allowNonReadyPhase: false });
     expect(deleteAgent.mock.calls).toEqual([["my-assistant", "obsolete"]]);
@@ -281,13 +345,14 @@ describe("runAgentsApply", () => {
       ].join("\n"),
     );
     const messages: string[] = [];
-    const addAgent = vi.fn();
-    const deleteAgent = vi.fn();
+    const addAgent = vi.fn(async (_sandboxName: string, _id: string) => undefined);
+    const deleteAgent = vi.fn(async () => undefined);
     await runAgentsApply(
       { sandboxName: "my-assistant", manifestPath, yes: true },
       {
         ensureLive: async () => undefined,
-        listAgents: () => [{ id: "main" }, { id: "alpha" }],
+        getSandboxAgent,
+        listAgents: async () => [{ id: "main" }, { id: "alpha" }],
         addAgent,
         deleteAgent,
         log: (message) => messages.push(message),
@@ -308,15 +373,16 @@ describe("runAgentsApply", () => {
     const exit = vi.fn((code: number) => {
       throw new Error(`exit:${code}`);
     });
-    const addAgent = vi.fn();
+    const addAgent = vi.fn(async (_sandboxName: string, _id: string) => undefined);
     await expect(
       runAgentsApply(
         { sandboxName: "my-assistant", manifestPath, nonInteractive: true },
         {
           ensureLive: async () => undefined,
-          listAgents: () => [{ id: "main" }],
+          getSandboxAgent,
+          listAgents: async () => [{ id: "main" }],
           addAgent,
-          deleteAgent: vi.fn(),
+          deleteAgent: vi.fn(async () => undefined),
           log: () => {},
           exit: exit as unknown as (code: number) => never,
         },
@@ -333,13 +399,14 @@ describe("runAgentsApply", () => {
       ),
     );
     const messages: string[] = [];
-    const addAgent = vi.fn();
-    const deleteAgent = vi.fn();
+    const addAgent = vi.fn(async (_sandboxName: string, _id: string) => undefined);
+    const deleteAgent = vi.fn(async () => undefined);
     await runAgentsApply(
       { sandboxName: "my-assistant", manifestPath, yes: true },
       {
         ensureLive: async () => undefined,
-        listAgents: () => [{ id: "main" }],
+        getSandboxAgent,
+        listAgents: async () => [{ id: "main" }],
         addAgent,
         deleteAgent,
         log: (message) => messages.push(message),
@@ -373,14 +440,15 @@ describe("runAgentsApply", () => {
       throw new Error(`exit:${code}`);
     });
     const messages: string[] = [];
-    const addAgent = vi.fn();
-    const deleteAgent = vi.fn();
+    const addAgent = vi.fn(async () => undefined);
+    const deleteAgent = vi.fn(async () => undefined);
     await expect(
       runAgentsApply(
         { sandboxName: "my-assistant", manifestPath, yes: true },
         {
           ensureLive: async () => undefined,
-          listAgents: () => [{ id: "main" }],
+          getSandboxAgent,
+          listAgents: async () => [{ id: "main" }],
           addAgent,
           deleteAgent,
           log: (message) => messages.push(message),
@@ -402,9 +470,9 @@ describe("runAgentsApply", () => {
       throw new Error(`exit:${code}`);
     });
     const messages: string[] = [];
-    const addAgent = vi.fn();
-    const deleteAgent = vi.fn();
-    const listAgents = vi.fn();
+    const addAgent = vi.fn(async () => undefined);
+    const deleteAgent = vi.fn(async () => undefined);
+    const listAgents = vi.fn(async () => []);
     await expect(
       runAgentsApply(
         { sandboxName: "hermes-sandbox", manifestPath, yes: true },
@@ -431,13 +499,14 @@ describe("runAgentsApply", () => {
       ["agents:", "  - id: alpha", "    tools:", "      allow: [read]", ""].join("\n"),
     );
     const messages: string[] = [];
-    const addAgent = vi.fn();
-    const deleteAgent = vi.fn();
+    const addAgent = vi.fn(async () => undefined);
+    const deleteAgent = vi.fn(async () => undefined);
     await runAgentsApply(
       { sandboxName: "my-assistant", manifestPath },
       {
         ensureLive: async () => undefined,
-        listAgents: () => [{ id: "main" }, { id: "alpha" }],
+        getSandboxAgent,
+        listAgents: async () => [{ id: "main" }, { id: "alpha" }],
         addAgent,
         deleteAgent,
         log: (message) => messages.push(message),

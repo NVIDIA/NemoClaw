@@ -6,9 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  baseImageInputsChanged,
   collectPaginated,
   expandBaseImagePushPaths,
   type FirstParentHistory,
@@ -163,6 +164,18 @@ function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string,
 }
 
 describe("base-image publication evidence", () => {
+  it("publishes after a root package manifest changes", () => {
+    const workflowSource = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
+      "utf8",
+    );
+    const reviewedPaths = parseBaseImagePushPaths(workflowSource);
+
+    expect(reviewedPaths).toEqual(expect.arrayContaining(["package.json", "package-lock.json"]));
+    expect(baseImageInputsChanged(["package.json"], reviewedPaths)).toBe(true);
+    expect(baseImageInputsChanged(["package-lock.json"], reviewedPaths)).toBe(true);
+  });
+
   it.each(["push", "workflow_dispatch"])("accepts %s publication preflight events", (eventName) => {
     expect(isBaseImagePublicationEvent(eventName)).toBe(true);
   });
@@ -1100,30 +1113,46 @@ describe("base-image publication evidence", () => {
   });
 
   it("aborts an in-flight GitHub request at the caller's request budget", async () => {
+    const controller = new AbortController();
+    const timeoutSignal = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    let currentTime = 0;
     let observedAbort = false;
 
-    await expect(
-      githubRequest("/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml", "token", {
-        attempts: 1,
-        budgetMs: 100,
-        timeoutMs: 5_000,
-        fetchImpl: async (_input, init) => {
-          const signal = required(init.signal ?? undefined, "request signal is required");
-          await new Promise<void>((_resolve, reject) => {
-            signal.addEventListener(
-              "abort",
-              () => {
-                observedAbort = true;
-                reject(signal.reason);
-              },
-              { once: true },
-            );
-          });
-          throw new Error("aborted request unexpectedly resumed");
+    try {
+      const request = githubRequest(
+        "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+        "token",
+        {
+          attempts: 1,
+          budgetMs: 100,
+          timeoutMs: 5_000,
+          now: () => currentTime,
+          fetchImpl: async (_input, init) => {
+            const signal = required(init.signal ?? undefined, "request signal is required");
+            await new Promise<void>((_resolve, reject) => {
+              signal.addEventListener(
+                "abort",
+                () => {
+                  observedAbort = true;
+                  reject(signal.reason);
+                },
+                { once: true },
+              );
+            });
+            throw new Error("aborted request unexpectedly resumed");
+          },
         },
-      }),
-    ).rejects.toThrow(/time budget/u);
-    expect(observedAbort).toBe(true);
+      );
+      const rejection = expect(request).rejects.toThrow(/time budget/u);
+
+      currentTime = 100;
+      controller.abort();
+      await rejection;
+      expect(timeoutSignal).toHaveBeenCalledWith(100);
+      expect(observedAbort).toBe(true);
+    } finally {
+      timeoutSignal.mockRestore();
+    }
   }, 2_000);
 
   it("fails permanent and malformed GitHub responses without retrying (#7372)", async () => {
@@ -1170,12 +1199,7 @@ describe("base-image publication evidence", () => {
     expect(() =>
       execFileSync(
         process.execPath,
-        [
-          "--experimental-strip-types",
-          "--no-warnings",
-          "--eval",
-          `import(${JSON.stringify(modulePath)})`,
-        ],
+        ["--no-warnings", "--eval", `import(${JSON.stringify(modulePath)})`],
         { encoding: "utf8" },
       ),
     ).not.toThrow();

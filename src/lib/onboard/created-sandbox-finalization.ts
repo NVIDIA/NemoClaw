@@ -5,6 +5,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/sandbox/snapshot/restore-authority";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import * as buildContext from "../build-context";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
 import type {
@@ -22,6 +23,7 @@ import {
   type RecreatedSandboxRestoreOptions,
   type RestoreResult,
 } from "../state/sandbox";
+import { cliName } from "./branding";
 import { createDcodeSelectionDriftReader } from "./dcode-selection-drift";
 import { restoreDefaultAfterRecreate } from "./default-preservation";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
@@ -82,7 +84,7 @@ export type CreatedSandboxFinalizationDeps = {
     model: string,
     preferredInferenceApi: string | null,
     endpointUrl: string | null,
-  ): SelectionDrift;
+  ): Promise<SelectionDrift>;
   prepareRegistration?(
     openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
   ): SandboxEntry;
@@ -138,6 +140,10 @@ export interface CreatedSandboxCompletionOptions {
         typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
       >[2]["runCaptureOpenshell"]
     >;
+    readonly persistFinalHandoffAcknowledgement: (
+      runtimePatch: SandboxGpuCreateFlowResult["runtimePatch"],
+    ) => void;
+    readonly persistFinalHandoffCommitStarted: (replacementRuntimeId: string | null) => void;
   };
   readonly dashboard: {
     readonly chatUiUrl: string;
@@ -241,7 +247,7 @@ export function createOnboardCreatedSandboxRegistration(input: {
 }
 
 /** Finish ordinary post-registration actions after portable onboarding has returned. */
-export function completeOrdinaryOnboardSandboxCreation(
+export async function completeOrdinaryOnboardSandboxCreation(
   input: {
     readonly sandboxName: string;
     readonly sandboxWasLiveDefault: boolean;
@@ -256,7 +262,7 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly runFile: (command: string, args: string[], options: { ignoreError: true }) => unknown;
     readonly scriptsDir: string;
     readonly gatewayName: string;
-    readonly providerExistsInGateway: (providerName: string) => boolean;
+    readonly providerExistsInGateway: (providerName: string) => boolean | Promise<boolean>;
     readonly armCancelRollback: (sandboxName: string, sandboxIdentityFingerprint: string) => void;
     readonly markCancellationRecovery: (sandboxName: string) => unknown;
     readonly dockerInfoFormat: Parameters<typeof warnIfLandlockUnsupported>[0]["dockerInfoFormat"];
@@ -264,7 +270,7 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly revalidateSandboxIdentity: (operation: string) => void;
     readonly applyVmDnsMonkeypatch?: typeof applyOnboardVmDnsMonkeypatch;
   },
-): string {
+): Promise<string> {
   deps.revalidateSandboxIdentity(`completing sandbox '${input.sandboxName}'`);
   restoreDefaultAfterRecreate(deps.setDefault, input.sandboxName, input.sandboxWasLiveDefault);
   deps.revalidateSandboxIdentity(`starting DNS setup for sandbox '${input.sandboxName}'`);
@@ -283,7 +289,7 @@ export function completeOrdinaryOnboardSandboxCreation(
     { revalidateSandboxIdentity: deps.revalidateSandboxIdentity },
   );
   for (const provider of input.messagingProviders) {
-    if (!deps.providerExistsInGateway(provider)) printMessagingProviderMissing(provider);
+    if (!(await deps.providerExistsInGateway(provider))) printMessagingProviderMissing(provider);
   }
   deps.revalidateSandboxIdentity(`reporting sandbox '${input.sandboxName}' creation success`);
   console.log(`  ✓ Sandbox '${input.sandboxName}' created`);
@@ -300,8 +306,8 @@ export function completeOrdinaryOnboardSandboxCreation(
         `  Sandbox '${input.sandboxName}' was created on gateway '${deps.gatewayName}', but NemoClaw could not verify its durable identity.`,
         "  The sandbox registry entry and onboarding session were preserved for recovery.",
         "  Do not delete the sandbox by mutable sandbox name.",
-        "  Ask an OpenShell administrator to establish the exact live durable identity before removal.",
-        "  After confirmed identity-bound removal, rerun the original onboarding command with the same required inputs, add --fresh, and use a new sandbox name.",
+        `  Run '${cliName()} ${input.sandboxName} destroy'. It can clear retained recovery only after OpenShell confirms the sandbox absent.`,
+        "  Until recovery completes, use a different explicit sandbox name for new onboarding.",
       ]) {
         console.error(line);
       }
@@ -374,6 +380,8 @@ export function createCreatedSandboxCompletionActions(
         deps.revalidateSandboxIdentity?.(
           `committing GPU capability for sandbox '${options.finalization.sandboxName}'`,
         ),
+      options.gpu.persistFinalHandoffCommitStarted,
+      () => options.gpu.persistFinalHandoffAcknowledgement(created.runtimePatch),
     );
   }
   function recordHermesGpuProof(): void {
@@ -539,9 +547,13 @@ function assertVerifiedCreateMatchesCreateBoundary(
   boundary: VerifiedSandboxCreateBoundary,
   verifiedCreate: NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>,
 ): void {
-  if (
-    !isDeepStrictEqual(verifiedCreate.checkpoint, pendingSandboxCreateIdentityForBoundary(boundary))
-  ) {
+  const {
+    exactFinalHandoffCommitStarted: _commitStarted,
+    exactFinalHandoffRuntimeId: _runtimeId,
+    exactFinalHandoffAcknowledged: _acknowledged,
+    ...identity
+  } = verifiedCreate.checkpoint;
+  if (!isDeepStrictEqual(identity, pendingSandboxCreateIdentityForBoundary(boundary))) {
     throw new Error("Pending sandbox create identity does not match the final create boundary.");
   }
 }
@@ -616,6 +628,10 @@ type OnboardPreparedPolicy = Pick<
     CreatedSandboxRegistrationInput["verifiedCreate"]
   >;
   readonly revalidateSandboxIdentity: (operation: string) => void;
+  readonly persistFinalHandoffAcknowledgement: (
+    runtimePatch: SandboxGpuCreateFlowResult["runtimePatch"],
+  ) => void;
+  readonly persistFinalHandoffCommitStarted: (replacementRuntimeId: string | null) => void;
 };
 
 type CurrentRestoreSnapshotDependencies = {
@@ -688,6 +704,7 @@ export function createOnboardCreatedSandboxCompletion(
   workloadRuntime: WorkloadResolutionInput["runtime"],
   workload: WorkloadResolutionInput["workload"],
   note: (message: string) => void,
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor,
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
@@ -761,6 +778,8 @@ export function createOnboardCreatedSandboxCompletion(
         dockerDriverGateway,
         verifyDirectSandboxGpu,
         runCaptureOpenshell,
+        persistFinalHandoffAcknowledgement: preparedPolicy.persistFinalHandoffAcknowledgement,
+        persistFinalHandoffCommitStarted: preparedPolicy.persistFinalHandoffCommitStarted,
       },
       dashboard: {
         chatUiUrl,
@@ -788,7 +807,7 @@ export function createOnboardCreatedSandboxCompletion(
       restoreRecreatedSandboxState: (name, backupPath, restoreOptions, resolveTarget) =>
         restoreSelectedOnboardSnapshot(name, backupPath, restoreOptions, resolveTarget),
       getDcodeSelectionDrift: createDcodeSelectionDriftReader(
-        runCaptureOpenshell,
+        commandExecutor,
         () => gateway.gatewayName,
       ),
       note,
@@ -800,15 +819,17 @@ export function createOnboardCreatedSandboxCompletion(
 }
 
 /** Restore state and validate the live managed DCode route before registry publication. */
-export function finalizeCreatedSandbox(
+export async function finalizeCreatedSandbox(
   options: CreatedSandboxFinalizationOptions,
   deps: CreatedSandboxFinalizationDeps,
-): SandboxEntry | void {
+): Promise<SandboxEntry | void> {
   const reportUnregisteredSandboxRecovery = (): void => {
     deps.error(
       `  NemoClaw left unregistered sandbox '${options.sandboxName}' in place because OpenShell can delete it only by mutable name.`,
     );
-    deps.error("  Verify its durable identity before manual cleanup; do not act by name alone.");
+    deps.error(
+      `  Recovery remains blocked while this sandbox exists. Do not delete it by mutable name; run '${cliName()} ${options.sandboxName} destroy' to check for authoritative absence.`,
+    );
   };
   let freshOpenClawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined;
   if (options.discoverOpenClawImagePluginInstalls === true) {
@@ -919,7 +940,7 @@ export function finalizeCreatedSandbox(
   }
 
   if (options.validateManagedDcode) {
-    const finalSelection = deps.getDcodeSelectionDrift(
+    const finalSelection = await deps.getDcodeSelectionDrift(
       options.sandboxName,
       options.provider,
       options.model,

@@ -175,21 +175,18 @@ describe("connect-shell sandbox label for host-side hints (#7795)", () => {
 
   // With no usable name from either source, keep the placeholder used before
   // #7795.
-  it.each([
-    "1",
-    "true",
-    "0",
-    "false",
-    "",
-  ])("falls back to <name> for the unusable injected value %j", (containerValue) => {
-    withTmpDir((tmpDir) => {
-      const envFile = generateConnectEnv(tmpDir, containerValue);
-      expect(envFile).toContain("unset _NEMOCLAW_SANDBOX_LABEL");
-      expect(envFile).not.toContain("export _NEMOCLAW_SANDBOX_LABEL");
-      const { output } = inConnectShell(tmpDir, "_nemoclaw_policy_denial_hint_text");
-      expect(output).toContain("nemoclaw <name> logs --tail 50");
-    });
-  });
+  it.each(["1", "true", "0", "false", ""])(
+    "falls back to <name> for the unusable injected value %j",
+    (containerValue) => {
+      withTmpDir((tmpDir) => {
+        const envFile = generateConnectEnv(tmpDir, containerValue);
+        expect(envFile).toContain("unset _NEMOCLAW_SANDBOX_LABEL");
+        expect(envFile).not.toContain("export _NEMOCLAW_SANDBOX_LABEL");
+        const { output } = inConnectShell(tmpDir, "_nemoclaw_policy_denial_hint_text");
+        expect(output).toContain("nemoclaw <name> logs --tail 50");
+      });
+    },
+  );
 
   it("falls back to <name> when the host injected no sandbox name", () => {
     withTmpDir((tmpDir) => {
@@ -212,18 +209,21 @@ describe("connect-shell sandbox label for host-side hints (#7795)", () => {
     ["underscore", "qa_7795"],
     ["trailing hyphen", "qa-7795-"],
     ["consecutive hyphens", "qa--7795"],
-  ])("rejects an invalid injected sandbox name (%s) instead of interpolating it", (_label, value) => {
-    withTmpDir((tmpDir) => {
-      const envFile = generateConnectEnv(tmpDir, value);
-      expect(envFile).toContain("unset _NEMOCLAW_SANDBOX_LABEL");
-      expect(envFile).not.toContain("export _NEMOCLAW_SANDBOX_LABEL");
-      const { output } = inConnectShell(tmpDir, "openclaw channels add discord");
-      expect(output).toContain("Run 'nemoclaw <name> channels add discord' on the host.");
-      expect(output).not.toContain("\u001b");
-      expect(output).not.toContain("INJECTED");
-      expect(output).not.toContain("rm -rf");
-    });
-  });
+  ])(
+    "rejects an invalid injected sandbox name (%s) instead of interpolating it",
+    (_label, value) => {
+      withTmpDir((tmpDir) => {
+        const envFile = generateConnectEnv(tmpDir, value);
+        expect(envFile).toContain("unset _NEMOCLAW_SANDBOX_LABEL");
+        expect(envFile).not.toContain("export _NEMOCLAW_SANDBOX_LABEL");
+        const { output } = inConnectShell(tmpDir, "openclaw channels add discord");
+        expect(output).toContain("Run 'nemoclaw <name> channels add discord' on the host.");
+        expect(output).not.toContain("\u001b");
+        expect(output).not.toContain("INJECTED");
+        expect(output).not.toContain("rm -rf");
+      });
+    },
+  );
 
   it("rejects an injected name longer than the sandbox name limit", () => {
     withTmpDir((tmpDir) => {
@@ -267,17 +267,14 @@ describe("connect-shell sandbox label for host-side hints (#7795)", () => {
   // a name the CLI accepts is a name the hint renders.
   // A fresh tmp dir per name: the generator chmods its output 444, so the same
   // directory cannot be regenerated into.
-  it.each([
-    "a",
-    "qa-7795",
-    "my-assistant",
-    "a1",
-    "x".repeat(NAME_MAX_LENGTH),
-  ])("agrees with NAME_VALID_PATTERN for %j, a name the CLI accepts", (name) => {
-    expect(NAME_VALID_PATTERN.test(name), `${name} should be a valid sandbox name`).toBe(true);
-    withTmpDir((tmpDir) => {
-      const envFile = generateConnectEnv(tmpDir, name);
-      expect(envFile).toContain(`export _NEMOCLAW_SANDBOX_LABEL='${name}'`);
-    });
-  });
+  it.each(["a", "qa-7795", "my-assistant", "a1", "x".repeat(NAME_MAX_LENGTH)])(
+    "agrees with NAME_VALID_PATTERN for %j, a name the CLI accepts",
+    (name) => {
+      expect(NAME_VALID_PATTERN.test(name), `${name} should be a valid sandbox name`).toBe(true);
+      withTmpDir((tmpDir) => {
+        const envFile = generateConnectEnv(tmpDir, name);
+        expect(envFile).toContain(`export _NEMOCLAW_SANDBOX_LABEL='${name}'`);
+      });
+    },
+  );
 });

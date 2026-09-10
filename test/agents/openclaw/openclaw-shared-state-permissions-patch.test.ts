@@ -325,7 +325,7 @@ function makeFixture(
 }
 
 function runPatch(dist: string) {
-  return spawnSync(process.execPath, ["--experimental-strip-types", PATCH_SCRIPT, dist], {
+  return spawnSync(process.execPath, [PATCH_SCRIPT, dist], {
     encoding: "utf8",
     timeout: 10_000,
   });
@@ -620,9 +620,11 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
           mode: 0o600,
           privateMode: false,
         });
-        expect(
-          store({ rootDir, private: true, dirMode: 0o750, mode: 0o640 }),
-        ).toMatchObject({ dirMode: 0o750, mode: 0o640, privateMode: true });
+        expect(store({ rootDir, private: true, dirMode: 0o750, mode: 0o640 })).toMatchObject({
+          dirMode: 0o750,
+          mode: 0o640,
+          privateMode: true,
+        });
       } finally {
         restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousMarker);
         fs.rmSync(fixture.root, { recursive: true, force: true });

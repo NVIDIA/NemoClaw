@@ -498,9 +498,9 @@ function isNodeModuleObjectExpression(
         ts.isIdentifier(declaration.name) &&
         Boolean(
           declaration.initializer &&
-            ts.isVariableDeclarationList(declaration.parent) &&
-            (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
-            isNodeModuleObjectExpression(ts, declaration.initializer, checker, nextSeen),
+          ts.isVariableDeclarationList(declaration.parent) &&
+          (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+          isNodeModuleObjectExpression(ts, declaration.initializer, checker, nextSeen),
         )
       );
     });

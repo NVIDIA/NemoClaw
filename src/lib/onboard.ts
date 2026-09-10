@@ -130,6 +130,7 @@ const {
 }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
 const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
 const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
+const sandboxCommandCli: typeof import("./adapters/openshell/sandbox-command-cli") = require("./adapters/openshell/sandbox-command-cli");
 const messagingChannelSetup: typeof import("./onboard/messaging-channel-setup") = require("./onboard/messaging-channel-setup");
 const { applySessionRecovery } =
   require("./onboard/session-recovery") as typeof import("./onboard/session-recovery");
@@ -227,7 +228,7 @@ const {
 } = require("./inference/ollama/proxy");
 const {
   installOllamaOnWindowsHost,
-  awaitWindowsOllamaReady,
+  printWindowsOllamaSnapshotDiagnostics,
   setupWindowsOllamaLoopbackBinding,
   printWindowsOllamaTimeoutDiagnostics,
 } = require("./inference/ollama/windows");
@@ -696,8 +697,8 @@ const {
   getGatewayPort: () => GATEWAY_PORT,
   getDockerDriverGatewayEndpoint,
 });
+const sandboxExec = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
 
-// Gateway state functions — delegated to src/lib/state/gateway.ts
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
 const waitForSandboxReady = sandboxReadinessTracing.createCliSandboxReadyWaiter({
   isLinuxDockerDriverGatewayEnabled,
@@ -812,9 +813,6 @@ const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
   exitOnboardFromPrompt,
 });
 
-// Provider CRUD — thin wrappers that inject runOpenshell to avoid circular deps.
-const { buildProviderArgs } = onboardProviders;
-
 // Snapshot of legacy {env-key → value} pairs that stageLegacyCredentialsToEnv()
 // imported from ~/.nemoclaw/credentials.json at the start of this run.
 // Captured by the onboard() entry point; consulted by the upsertProvider /
@@ -917,13 +915,14 @@ const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawRea
     isAffirmativeAnswer,
   });
 
+const webSearchDeps = { prompt, note, isNonInteractive, cliName, commandExecutor: sandboxExec };
 const {
   ensureValidatedWebSearchCredential,
   ensureValidatedBraveSearchCredential,
   configureWebSearch,
   verifyWebSearchInsideSandbox,
   webSearchProviderForConfig,
-} = createWebSearchFlowHelpers({ prompt, note, isNonInteractive, cliName, runCaptureOpenshell });
+} = createWebSearchFlowHelpers(webSearchDeps);
 
 const {
   hasResponsesToolCall,
@@ -987,7 +986,7 @@ const {
   getLocalProviderBaseUrl,
   selectAndValidateOllamaModel,
   installOllamaOnWindowsHost,
-  awaitWindowsOllamaReady,
+  printWindowsOllamaSnapshotDiagnostics,
   setupWindowsOllamaLoopbackBinding,
   printWindowsOllamaTimeoutDiagnostics,
   resetOllamaHostCache,
@@ -1191,20 +1190,19 @@ async function preflight(
   const {
     externallySupervised: gatewayExternallySupervised,
     gatewayReuseState: initialGatewayReuseState,
+    managedGatewayObservationAuthoritative,
   } = await onboardPreflightGatewayAuthority.prepareGatewayAuthority();
   let reuseState = initialGatewayReuseState;
 
-  // Verify the legacy gateway container is actually running — openshell CLI
-  // metadata can be stale after a manual `docker rm`. See #2020. Newer
-  // package-managed OpenShell gateways do not have an openshell-cluster-*
-  // Docker container, so the live CLI health check is the source of truth.
-  // The reuse/cleanup/orphan stages run as one composed sequence so external
-  // supervision is enforced across the whole path, not per stage (#6576).
+  // Docker-backed gateways use one legacy reuse and cleanup sequence because
+  // OpenShell metadata can outlive a manually removed container (#2020).
+  // External and provider-owned gateways bypass those Docker effects (#6576).
   reuseState = await runPreflightGatewaySequence({
     gatewayReuseState: reuseState,
     externallySupervised: gatewayExternallySupervised,
     supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
+    managedGatewayObservationAuthoritative,
     gatewayName: GATEWAY_NAME,
     cliDisplayName: cliDisplayName(),
     verifyGatewayContainerRunning,
@@ -1258,6 +1256,7 @@ async function preflight(
         gatewayName: GATEWAY_NAME,
         gatewayReuseState: reuseState,
         externallySupervised: gatewayExternallySupervised,
+        managedGatewayObservationAuthoritative,
         portCheckOptions,
         supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
         destroyGateway,
@@ -1514,7 +1513,7 @@ const sandboxCreateOrchestrationRuntime = {
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
-  readDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell, () => GATEWAY_NAME),
+  readDcodeSelectionDrift: createDcodeSelectionDriftReader(sandboxExec, () => GATEWAY_NAME),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
   getHermesToolGatewayBroker,
@@ -1558,6 +1557,7 @@ const sandboxCreateOrchestrationRuntime = {
   runSandboxProviderPreDeleteCleanup,
   sandboxAgent,
   sandboxBuildPatchConfig,
+  sandboxCommandExecutor: sandboxExec,
   get sandboxCancelRollback() {
     return sandboxCancelRollback;
   },
@@ -1618,6 +1618,7 @@ type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRouteHandoff;
 
 const {
+  providerSelectionReaders,
   readRecordedProvider,
   readRecordedNimContainer,
   readRecordedModel,
@@ -1673,7 +1674,7 @@ async function selectAndValidateOllamaModel(
             "non-interactive mode cannot prompt for confirmation. " +
             "Re-run with --yes / -y (or NEMOCLAW_YES=1) to authorise the download.",
         );
-        process.exit(1);
+        ollamaFlow.deferOllamaProcessExit();
       } else {
         const proceed = await promptYesNoOrDefault(
           `  Download Ollama model '${selectedModel}' (${sizeLabel})?`,
@@ -1704,7 +1705,7 @@ async function selectAndValidateOllamaModel(
     const allowToolsIncompatible = probe.allowToolsIncompatible === true;
     const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
     if (!validationBaseUrl)
-      abortNonInteractive("Local Ollama validation URL could not be determined.");
+      ollamaFlow.deferAbort("Local Ollama validation URL could not be determined.");
     const validation = await validateOpenAiLikeSelection(
       "Local Ollama",
       validationBaseUrl!,
@@ -1716,7 +1717,7 @@ async function selectAndValidateOllamaModel(
     );
     if (validation.retry === "selection") return { outcome: "back-to-selection" };
     if (!validation.ok) {
-      if (isNonInteractive()) abortNonInteractive(`model '${selectedModel}' failed validation.`);
+      if (isNonInteractive()) ollamaFlow.deferAbort(`model '${selectedModel}' failed validation.`);
       continue;
     }
     // Ollama's /v1/responses endpoint does not produce correctly formatted
@@ -2038,15 +2039,15 @@ async function handleRemoteProviderSelection(
     providerKeyBridge.stageBuildProviderKeyBridge();
     let apiKeyNavigation: unknown = null;
     if (isNonInteractive()) {
-      const reuseGatewayCredential = buildCredentialReuse.resolveNonInteractiveBuildCredential({
-        provider: state.provider,
-        helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
-        recoveredFromSandbox,
-        providerExistsInGateway: (name) =>
-          providerExistsInGateway(name, args.gatewayName ?? GATEWAY_NAME),
-      });
-      state.skipHostInferenceSmoke = reuseGatewayCredential;
-      state.reuseGatewayCredentialWithoutLocalKey = reuseGatewayCredential;
+      state.skipHostInferenceSmoke =
+        await buildCredentialReuse.resolveNonInteractiveBuildCredential({
+          provider: state.provider,
+          helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
+          recoveredFromSandbox,
+          providerExistsInGateway: (name) =>
+            providerExistsInGateway(name, args.gatewayName ?? GATEWAY_NAME),
+        });
+      state.reuseGatewayCredentialWithoutLocalKey = state.skipHostInferenceSmoke;
     } else {
       assertSelectionMutationAuthority(state, "register the NVIDIA provider credential");
       apiKeyNavigation = await ensureApiKey();
@@ -2297,6 +2298,7 @@ function getSetupNimDeps(): SetupNimDeps {
     vllmPort: VLLM_PORT,
     getGatewayPort: () => GATEWAY_PORT,
     getRuntimeProvider: () => setupNimFlow.resolveCurrentRuntimeProviderBundle(),
+    checkpointManagedLlamaCppSelection: onboardSession.checkpointManagedLlamaCppSelection,
     step,
     isNonInteractive,
     getNonInteractiveProvider,
@@ -2305,9 +2307,7 @@ function getSetupNimDeps(): SetupNimDeps {
     detectInferenceProviderHostState,
     getAgentInferenceProviderOptions,
     loadRoutedProfile: () => loadBlueprintProfile("routed"),
-    readRecordedProvider,
-    readRecordedNimContainer,
-    readRecordedModel,
+    ...providerSelectionReaders,
     prompt,
     selectFromNumberedMenu: selectFromNumberedMenuOrExit,
     note,
@@ -2469,11 +2469,11 @@ const stageSandboxCredentialProviders = (
     sandboxCreateIntentResolver.prepareCredentialProviders,
   );
 
-function getRecordedMessagingChannelsForResume(
+async function getRecordedMessagingChannelsForResume(
   resume: boolean,
   session: Session | null,
   sandboxName: string | null,
-): string[] | null {
+): Promise<string[] | null> {
   return getRecordedMessagingChannelsForResumeFromState({
     resume,
     sessionMessagingChannels: getChannelsFromPlan(session?.messagingPlan),
@@ -2492,12 +2492,8 @@ const setupMessagingChannels = messagingChannelSetup.createSetupMessagingChannel
   prompt,
 });
 
-// ── Step 7: OpenClaw ─────────────────────────────────────────────
-const syncNemoClawConfigInSandbox = createNemoClawConfigSync({
-  getProviderSelectionConfig,
-  run,
-  openshellArgv,
-});
+const configSyncDeps = { getProviderSelectionConfig, sandboxCommandExecutor: sandboxExec };
+const syncNemoClawConfigInSandbox = createNemoClawConfigSync(configSyncDeps);
 
 const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({
   syncNemoClawConfigInSandbox,
@@ -2631,7 +2627,6 @@ async function preflightAuthoritativeRebuildTarget(
   }
 }
 
-// ── Main ─────────────────────────────────────────────────────────
 const wrappedOnboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 const onboard = onboardSessionBootstrap.wrapOnboardDeferredExit(wrappedOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
@@ -2679,9 +2674,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     collector: null,
     span: null,
   };
-  let completed = false,
-    preserveDeferredExitSession = false,
-    preserveIncompleteSession = false;
+  let completed = false;
+  let preserveIncompleteSession = false;
+  registerIncompleteOnboardExitHandlerForSession(
+    { ...onboardSession, releaseOnboardLock: portableRetirementEntry.release },
+    () => completed || preserveIncompleteSession,
+  );
+  let preserveDeferredExitSession = false;
   try {
     await portableRetirementEntry.run(async () => {
       const entryOptions = resolveEntryOptions();
@@ -2803,10 +2802,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         );
         process.exit(1);
       }
-      registerIncompleteOnboardExitHandlerForSession(
-        onboardSession,
-        () => completed || preserveIncompleteSession,
-      );
       const agent = await selectOnboardAgent({
         agentFlag: opts.agent,
         session,
@@ -2902,6 +2897,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         gpuRequested: opts.gpu === true,
         noGpu: opts.noGpu === true,
         allowDeferredN1xManagedVllm: opts.allowDeferredN1xManagedVllm,
+        allowLegacyDgxStationQualification: opts.allowLegacyDgxStationQualification,
         env: process.env,
         recordedGpuPassthroughBeforePreflight,
         commitSelectedAgentTransition: selectedAgentTransition.commit,
@@ -3055,6 +3051,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             resolveHostLocalInferenceStartupSelection:
               setupNimFlow.createHermesPortableOllamaInferenceResolver({
                 runtimeContext: lockedRuntime.portableRuntimeContext,
+                gatewayName: GATEWAY_NAME,
                 credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
                 getReservationSessionId: () => session?.sessionId,
                 runGatewayOpenshell: runCoreGatewayOpenshell,
@@ -3230,10 +3227,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         preserveRebuildLivePolicy: opts.rebuildPolicySourcePath !== undefined,
         agentSetupDeps: {
           handleAgentSetup: agentOnboard.handleAgentSetup,
-          agentSetupContext: () => ({
-            ...{ step, runCaptureOpenshell, captureOpenshell },
-            openshellShellCommand,
-            openshellBinary: getOpenshellBinary(),
+          agentSetupContext: (): import("./agent/onboard").OnboardContext => ({
+            step,
+            sandboxCommandExecutor: sandboxExec,
             gatewayName: GATEWAY_NAME,
             startRecordedStep,
             recordStepComplete,
@@ -3270,6 +3266,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             verifyCompatibleEndpointSandboxSmoke({
               ...options,
               runOpenshell: runCoreGatewayOpenshell,
+              sandboxCommandExecutor: sandboxExec,
               redact,
             }),
           preparePolicyPresetResumeSelection,
@@ -3303,7 +3300,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               chain,
               {
                 executeSandboxCommand: (sandbox: string, script: string) =>
-                  executeSandboxCommandForVerification(sandbox, script),
+                  executeSandboxCommandForVerification(sandbox, script, sandboxExec),
                 probeHostPort: (port: number, probePath: string) => {
                   const result = runCapture(
                     [
@@ -3385,10 +3382,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   }
   preserveIncompleteSession = true;
 }
-
 module.exports = {
   buildOrphanedSandboxRollbackMessage,
-  buildProviderArgs,
   buildGatewayBootstrapSecretsScript,
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,

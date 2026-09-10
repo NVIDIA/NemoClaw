@@ -39,7 +39,6 @@ import {
   type E2eCatalogueTarget,
   type E2eExecutionProfile,
   type E2eOptionalCredential,
-  isPrCandidateCatalogueTarget,
   pathMatches,
 } from "./target-catalogue.mts";
 import {
@@ -1057,27 +1056,6 @@ function expectedHermesSelection(
   return (selected.length === 0 && !retiredSelectorSelected) || selected.includes(HERMES_JOB_ID);
 }
 
-export function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2eWorkflowPlan {
-  const eligibleRows = (rows: E2eCatalogueMatrixRow[]) =>
-    rows.filter((row) => isPrCandidateCatalogueTarget(catalogueTarget(row.id)));
-  const catalogueMatrices = Object.fromEntries(
-    E2E_EXECUTION_PROFILES.map((profile) => [
-      profile,
-      eligibleRows(plan.catalogueMatrices[profile]),
-    ]),
-  ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
-  const eligibleCatalogueIds = new Set(
-    E2E_EXECUTION_PROFILES.flatMap((profile) => catalogueMatrices[profile].map((row) => row.id)),
-  );
-  return {
-    ...plan,
-    catalogueMatrices,
-    coverageMatrix: plan.coverageMatrix.filter(
-      (row) => row.source !== "catalogue" || eligibleCatalogueIds.has(row.id),
-    ),
-  };
-}
-
 export function withoutUnavailableOptionalCredentialTargets(
   plan: E2eWorkflowPlan,
   availableCredentials: ReadonlySet<E2eOptionalCredential>,
@@ -1095,26 +1073,6 @@ export function withoutUnavailableOptionalCredentialTargets(
   const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = plan;
   return withCoverageMatrix(
     { ...planWithoutCoverage, catalogueMatrices },
-    readFreeStandingJobsInventory(),
-  );
-}
-
-function restrictUnauthorizedCandidatePlan(
-  plan: E2eWorkflowPlan,
-  hasPlannerSelectors: boolean,
-): E2eWorkflowPlan {
-  const candidatePlan = withoutCredentialedCatalogueProfiles(plan);
-  const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = candidatePlan;
-  const selectedJobs = hasPlannerSelectors ? plan.selectedJobs : [];
-  return withCoverageMatrix(
-    {
-      ...planWithoutCoverage,
-      selectedJobs,
-      runtimeProvidersByJob: Object.fromEntries(
-        selectedJobs.map((job) => [job, plan.runtimeProvidersByJob[job]]),
-      ),
-      hermesSelected: hasPlannerSelectors && plan.hermesSelected,
-    },
     readFreeStandingJobsInventory(),
   );
 }
@@ -1279,6 +1237,12 @@ export function writeE2eWorkflowPlanCiOutput(
   if (!INFERENCE_MODES.has(inferenceMode)) {
     throw new Error(`Invalid inference_mode: ${inferenceMode}`);
   }
+  if (
+    COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "") &&
+    environment.NEMOCLAW_E2E_CREDENTIALS_ALLOWED !== "true"
+  ) {
+    throw new Error("Manual PR E2E requires an authorized source branch in NVIDIA/NemoClaw");
+  }
   const controllerMap = mapTrustedControllerJobs(selectors, environment);
   const plannerSelectors = controllerMap.selectors;
   const gatewayRuntimes = e2eGatewayRuntimes(
@@ -1298,17 +1262,11 @@ export function writeE2eWorkflowPlanCiOutput(
   const availabilityScopedPlan = hasPlannerSelectors
     ? planned
     : withoutUnavailableOptionalCredentialTargets(planned, availableOptionalCredentials);
-  const candidateRevision = COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "");
-  const credentialsAllowed = environment.NEMOCLAW_E2E_CREDENTIALS_ALLOWED === "true";
-  const plan = validateE2eWorkflowPlan(
-    candidateRevision && !credentialsAllowed
-      ? restrictUnauthorizedCandidatePlan(availabilityScopedPlan, hasPlannerSelectors)
-      : availabilityScopedPlan,
+  const plan = validateE2eWorkflowPlan(availabilityScopedPlan);
+  const expectedHermes = expectedHermesSelection(
+    plannerSelectors,
+    controllerMap.retiredSelectorSelected,
   );
-  const expectedHermes =
-    candidateRevision && !credentialsAllowed && !hasPlannerSelectors
-      ? false
-      : expectedHermesSelection(plannerSelectors, controllerMap.retiredSelectorSelected);
   if (!changedFiles && plan.hermesSelected !== expectedHermes) {
     throw new Error("E2E planner changed the trusted Hermes selection");
   }
