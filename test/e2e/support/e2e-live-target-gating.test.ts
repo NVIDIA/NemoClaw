@@ -1,16 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFile } from "node:child_process";
-import { addAbortListener } from "node:events";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, type TestContext, vi } from "vitest";
 
-import { ownChildProcess } from "../../helpers/child-process-lifecycle.ts";
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { LIVE_E2E_ROOT, REPO_ROOT } from "../fixtures/paths.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
+import { redactString } from "../fixtures/redaction.ts";
+import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 import { listTargets } from "../registry/registry.ts";
 import { liveTargetSupport } from "../registry/runtime-support.ts";
 
@@ -39,7 +41,25 @@ type LiveTestListOptions = {
 };
 
 function liveTestLister(context: Pick<TestContext, "signal" | "onTestFinished">) {
-  return (options: LiveTestListOptions) => {
+  const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-test-list-"));
+  const progress = startTestProgress("nested live E2E collection", [
+    "collect live tests",
+    "clean collector artifacts",
+  ]);
+  const probe = new ShellProbe({
+    artifacts: new ArtifactSink(artifactRoot),
+    progress,
+    redact: redactString,
+    signal: context.signal,
+  });
+  let collectorOrdinal = 0;
+  context.onTestFinished(() => {
+    progress.phase("clean collector artifacts");
+    progress.stop();
+    fs.rmSync(artifactRoot, { force: true, recursive: true });
+  });
+
+  return async (options: LiveTestListOptions) => {
     const args = [
       "list",
       "--project",
@@ -48,49 +68,34 @@ function liveTestLister(context: Pick<TestContext, "signal" | "onTestFinished">)
       ...(options.filesOnly ? ["--filesOnly"] : []),
       "--passWithNoTests",
     ];
-
-    return new Promise<{
-      status: number | null;
-      stdout: string;
-      stderr: string;
-      lines: string[];
-    }>((resolve) => {
-      context.signal.throwIfAborted();
-      const child = execFile(
-        process.execPath,
-        [VITEST, ...args],
-        {
-          cwd: REPO_ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            NEMOCLAW_RUN_LIVE_E2E: options.enabled ? "1" : undefined,
-            NEMOCLAW_E2E_USE_HOSTED_INFERENCE: undefined,
-            NEMOCLAW_PROVIDER: "nvidia",
-            ...Object.fromEntries(SPECIAL_GATE_ENV.map((name) => [name, undefined])),
-            ...options.env,
-          },
-          timeout: 30_000,
-          killSignal: "SIGKILL",
+    collectorOrdinal += 1;
+    const result = await probe.run(
+      trustedShellCommand({
+        command: process.execPath,
+        args: [VITEST, ...args],
+        reason: "collect the live E2E tests selected by the registry gates",
+      }),
+      {
+        artifactName: `live-test-list-${collectorOrdinal}`,
+        cwd: REPO_ROOT,
+        env: {
+          ...process.env,
+          NEMOCLAW_RUN_LIVE_E2E: options.enabled ? "1" : undefined,
+          NEMOCLAW_E2E_USE_HOSTED_INFERENCE: undefined,
+          NEMOCLAW_PROVIDER: "nvidia",
+          ...Object.fromEntries(SPECIAL_GATE_ENV.map((name) => [name, undefined])),
+          ...options.env,
         },
-        (error, stdout, stderr) => {
-          void owner.closed.then(() => {
-            const status = error && typeof error.code === "number" ? error.code : child.exitCode;
-            resolve({
-              status,
-              stdout,
-              stderr,
-              lines: stdout.split(/\r?\n/).filter((line) => line.startsWith("[e2e-live] ")),
-            });
-          });
-        },
-      );
-      const owner = ownChildProcess(child);
-      context.onTestFinished(owner.terminate);
-      const abort = addAbortListener(context.signal, () => child.kill("SIGKILL"));
-      child.once("close", () => abort[Symbol.dispose]());
-      child.stdin?.end();
-    });
+        killGraceMs: 0,
+        timeoutMs: 30_000,
+      },
+    );
+    return {
+      status: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      lines: result.stdout.split(/\r?\n/).filter((line) => line.startsWith("[e2e-live] ")),
+    };
   };
 }
 
