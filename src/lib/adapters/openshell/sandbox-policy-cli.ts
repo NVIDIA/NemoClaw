@@ -35,7 +35,6 @@ import type {
   OpenShellSandboxPolicyRead,
   OpenShellSandboxPolicyReader,
   OpenShellSandboxPolicyRevisionRead,
-  OpenShellSandboxPolicySetOutcome,
   OpenShellSandboxPolicySetSubmission,
   OpenShellSandboxPolicyWriter,
   ReadOpenShellSandboxPolicyRequest,
@@ -306,18 +305,12 @@ export function createSyncCliOpenShellSandboxPolicyReader(
   return {
     readSandboxPolicy: (request) =>
       parsePolicyRead(
-        deps.capture(
-          policyReadArgs(request),
-          captureOptions(request, deps.defaultTimeoutMs),
-        ),
+        deps.capture(policyReadArgs(request), captureOptions(request, deps.defaultTimeoutMs)),
       ),
     inspectSandboxPolicy: (request) =>
       parsePolicyInspection(
         request,
-        deps.capture(
-          policyInspectionArgs(request),
-          captureOptions(request, deps.defaultTimeoutMs),
-        ),
+        deps.capture(policyInspectionArgs(request), captureOptions(request, deps.defaultTimeoutMs)),
       ),
     readSandboxPolicyRevision: (request) =>
       !Number.isSafeInteger(request.revision) || request.revision < 1
@@ -339,10 +332,7 @@ export function createCliOpenShellSandboxPolicyWriter(
     setSandboxPolicy: async (request) => {
       assertPolicyRequest(request);
       return parsePolicySet(
-        await deps.capture(
-          policySetArgs(request),
-          captureOptions(request, deps.defaultTimeoutMs),
-        ),
+        await deps.capture(policySetArgs(request), captureOptions(request, deps.defaultTimeoutMs)),
       );
     },
   };
@@ -355,10 +345,7 @@ export function createSyncCliOpenShellSandboxPolicyWriter(
     setSandboxPolicy: (request) => {
       assertPolicyRequest(request);
       return parsePolicySet(
-        deps.capture(
-          policySetArgs(request),
-          captureOptions(request, deps.defaultTimeoutMs),
-        ),
+        deps.capture(policySetArgs(request), captureOptions(request, deps.defaultTimeoutMs)),
       );
     },
   };

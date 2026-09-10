@@ -392,7 +392,7 @@ describe("OpenShell sandbox export evidence", () => {
         policySource,
         globalPolicyVersion: policySource === 2 ? 4 : 0,
       });
-      const result = await createSandboxConfig(connect).get(input);
+      const result = await createSandboxConfig(connect, async () => "version: 1\n").get(input);
       expect(result).toMatchObject({
         sandboxId: "verified-id",
         workspace: "default",
@@ -400,6 +400,7 @@ describe("OpenShell sandbox export evidence", () => {
         configRevision: "18446744073709551615",
         providerEnvRevision: "9007199254740993",
         policySource: policySource === 1 ? "sandbox" : "global",
+        policy: { document: "version: 1\n", appliedRevision: policySource === 1 ? 3 : 4 },
       });
       expect(raw.getSandboxConfig).toHaveBeenCalledWith(
         { sandboxId: "verified-id" },
@@ -408,6 +409,25 @@ describe("OpenShell sandbox export evidence", () => {
       expect(JSON.stringify(result)).not.toContain(canary);
     },
   );
+
+  it("does not serialize a configuration response that arrives after abort", async () => {
+    const { connect, raw } = fixture();
+    const response = await raw.getSandboxConfig();
+    const controller = new AbortController();
+    raw.getSandboxConfig.mockImplementation(async () => {
+      controller.abort();
+      return response;
+    });
+    const serialize = vi.fn(async () => "version: 1\n");
+    await expect(
+      createSandboxConfig(connect, serialize).get({
+        ...request(),
+        sandboxId: "verified-id",
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ kind: "timeout" });
+    expect(serialize).not.toHaveBeenCalled();
+  });
 
   it.each([
     { workspace: "other" },
