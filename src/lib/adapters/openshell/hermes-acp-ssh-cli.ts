@@ -477,11 +477,11 @@ function captureConfig(
 }
 
 function parseExactVersion(output: string): string | null {
-  const matches = [...output.matchAll(/(?:^|[^0-9.])(\d+\.\d+\.\d+)(?![0-9.])/gu)].map(
-    (match) => match[1]!,
-  );
+  const matches = [...output.matchAll(/(?:^|[^0-9.])(\d+\.\d+\.\d+)(?![0-9.])/gu)]
+    .map((match) => match[1])
+    .filter((version): version is string => version !== undefined);
   const versions = [...new Set(matches)];
-  return versions.length === 1 ? versions[0]! : null;
+  return versions.length === 1 ? (versions[0] ?? null) : null;
 }
 
 function captureOpenShell(
