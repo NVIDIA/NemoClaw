@@ -43,6 +43,18 @@ it.each([
   },
   { name: "legacy limits", file: "src/lib/legacy.ts", source: nesting, rules: [] },
   {
+    name: "measured onboarding complexity ceiling",
+    file: "src/lib/onboard.ts",
+    source: `export function read(flags: boolean[]) { ${"if (flags[0]) return 1;".repeat(119)} return 0; }`,
+    rules: [],
+  },
+  {
+    name: "growth above the measured onboarding complexity ceiling",
+    file: "src/lib/onboard.ts",
+    source: `export function read(flags: boolean[]) { ${"if (flags[0]) return 1;".repeat(120)} return 0; }`,
+    rules: ["sonarjs(cognitive-complexity)"],
+  },
+  {
     name: "maintained source inside build directories",
     file: "src/lib/messaging/applier/build/example.mts",
     source: "export const value = undeclaredValue;",

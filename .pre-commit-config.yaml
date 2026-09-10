@@ -127,6 +127,7 @@ repos:
         entry: npx oxlint --fix --no-error-on-unmatched-pattern
         language: system
         files: \.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$
+        exclude: ^(src/lib/adapters/|nemoclaw/src/)
         pass_filenames: true
         priority: 6
 
@@ -162,17 +163,17 @@ repos:
     hooks:
       - id: oxlint-type-aware
         name: Oxlint type-aware rules
-        entry: npx oxlint --type-aware --no-error-on-unmatched-pattern
+        entry: npx oxlint --fix --type-aware --no-error-on-unmatched-pattern
         language: system
-        files: ^nemoclaw/src/.*\.ts$
+        files: ^nemoclaw/src/.*\.(cts|mts|ts|tsx)$
         pass_filenames: true
         priority: 10
 
       - id: oxlint-adapters-type-aware
         name: Oxlint adapter type-aware rules
-        entry: npx oxlint --type-aware --no-error-on-unmatched-pattern
+        entry: npx oxlint --fix --type-aware --no-error-on-unmatched-pattern
         language: system
-        files: ^src/lib/adapters/.*\.ts$
+        files: ^src/lib/adapters/.*\.(cts|mts|ts|tsx)$
         pass_filenames: true
         priority: 10
 

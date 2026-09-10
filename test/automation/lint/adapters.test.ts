@@ -28,7 +28,7 @@ it.each([
     name: "value exports used only as types",
     source: "type Result = string; export { Result };",
     rule: "typescript(consistent-type-exports)",
-    typed: true,
+    fixes: true,
   },
   {
     name: "loose equality",
@@ -54,44 +54,37 @@ it.each([
     name: "promises from imported source",
     source: 'import { readRemote } from "./dependency"; export function read() { readRemote(); }',
     rule: "typescript(no-floating-promises)",
-    typed: true,
   },
   {
     name: "promises from Node declarations",
     source:
       'import { readFile } from "node:fs/promises"; export function read() { readFile("example"); }',
     rule: "typescript(no-floating-promises)",
-    typed: true,
   },
   {
     name: "floating promises",
     source: "export function read() { Promise.resolve(); }",
     rule: "typescript(no-floating-promises)",
-    typed: true,
   },
   {
     name: "promise conditions",
     source: "export function read() { if (Promise.resolve(false)) return 1; return 0; }",
     rule: "typescript(no-misused-promises)",
-    typed: true,
   },
   {
     name: "await on synchronous values",
     source: "export async function read() { return await 1; }",
     rule: "typescript(await-thenable)",
-    typed: true,
   },
   {
     name: "missing union cases",
     source: 'export function read(kind: "one" | "two") { switch (kind) { case "one": return 1; } }',
     rule: "typescript(switch-exhaustiveness-check)",
-    typed: true,
   },
   {
     name: "handled promises",
     source: "export async function read() { return await Promise.resolve(1); }",
     rule: "",
-    typed: true,
   },
   {
     name: "test assertion allowance",
@@ -99,7 +92,7 @@ it.each([
     rule: "",
     test: true,
   },
-])("checks adapter $name through the commit hook", ({ source, rule, typed, test, fixes }) => {
+])("checks adapter $name through the commit hook", ({ source, rule, test, fixes }) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-adapter-lint-"));
   try {
     const file = `src/lib/adapters/example/read${test ? ".test" : ""}.ts`;
@@ -124,7 +117,7 @@ it.each([
     expect(add.status, add.stderr).toBe(0);
     const result = spawnSync(
       path.resolve("node_modules/.bin/prek"),
-      ["run", typed ? "oxlint-adapters-type-aware" : "oxlint-fix", "--files", file],
+      ["run", "oxlint-adapters-type-aware", "--files", file],
       { cwd: root, encoding: "utf8" },
     );
     expect(result.status, result.stdout + result.stderr).toBe(rule ? 1 : 0);
