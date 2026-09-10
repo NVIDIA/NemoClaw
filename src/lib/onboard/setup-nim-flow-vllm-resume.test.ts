@@ -31,12 +31,16 @@ describe("createSetupNim vLLM resume", () => {
     const setupNim = createSetupNim(
       makeDeps({
         getNonInteractiveProvider: () => "install-vllm",
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [],
+          resolution: { kind: "rejected", reason: "The vLLM test does not select llama.cpp." },
+        }),
         selectFromNumberedMenu: () => unexpected("provider menu"),
         detectInferenceProviderHostState: () =>
           makeHostState({
             vllmProfile: profile,
             vllmEntries: [{ key: "install-vllm", label: "Install vLLM (N1x)" }],
-        }),
+          }),
         installVllm,
         exitProcess,
         abortNonInteractive,
@@ -66,6 +70,10 @@ describe("createSetupNim vLLM resume", () => {
     const setupNim = createSetupNim(
       makeDeps({
         getNonInteractiveProvider: () => "install-vllm",
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [],
+          resolution: { kind: "rejected", reason: "The vLLM test does not select llama.cpp." },
+        }),
         selectFromNumberedMenu: () => unexpected("provider menu"),
         detectInferenceProviderHostState: () =>
           makeHostState({

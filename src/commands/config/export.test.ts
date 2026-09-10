@@ -131,12 +131,17 @@ describe("config export command", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     mocks.observeStableExportSource.mockResolvedValue({
       ok: false,
-      findings: [{ field: "source.registry", category: "not-found", diagnostic: "Sandbox missing." }],
+      findings: [
+        { field: "source.registry", category: "not-found", diagnostic: "Sandbox missing." },
+      ],
       attempts: 1,
     });
     process.exitCode = undefined;
 
-    await ConfigExportCommand.run(["alpha", "--output", "/tmp/alpha.yaml", "--json"], process.cwd());
+    await ConfigExportCommand.run(
+      ["alpha", "--output", "/tmp/alpha.yaml", "--json"],
+      process.cwd(),
+    );
 
     expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({
       error: { message: "Config export failed (not-found).\nSandbox missing." },

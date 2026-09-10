@@ -24,8 +24,7 @@ export interface DockerDriverGatewayPortListenerScan extends GatewayPortListener
   unverifiedPids: number[];
 }
 
-export interface DockerDriverGatewayServicePortOwnershipOptions
-  extends DockerDriverGatewayPortListenerOptions {
+export interface DockerDriverGatewayServicePortOwnershipOptions extends DockerDriverGatewayPortListenerOptions {
   exitOnFailure: boolean;
   logError?: (message: string) => void;
   preparePort: (pids: number[]) => void;

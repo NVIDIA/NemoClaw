@@ -15,7 +15,13 @@ import {
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "..", "Dockerfile");
 const DOCKERFILE_BASE = path.join(import.meta.dirname, "..", "..", "Dockerfile.base");
-const BLUEPRINT = path.join(import.meta.dirname, "..", "..", "nemoclaw-blueprint", "blueprint.yaml");
+const BLUEPRINT = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "nemoclaw-blueprint",
+  "blueprint.yaml",
+);
 const REVIEWED_NPM_AUDIT_HELPER = path.join(
   import.meta.dirname,
   "..",

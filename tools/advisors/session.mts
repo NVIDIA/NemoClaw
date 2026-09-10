@@ -211,22 +211,14 @@ export function openAiAdvisorProviderConfig(
     api: "openai-completions",
     baseUrl,
     models: [
-      advisorModel(
-        modelId,
-        "GPT-5.6 Terra",
-        256000,
-        32768,
-        false,
-        ["text", "image"],
-        {
-          supportsDeveloperRole: false,
-          supportsReasoningEffort: false,
-          supportsStore: false,
-          supportsStrictMode: false,
-          supportsUsageInStreaming: false,
-          maxTokensField: "max_tokens",
-        },
-      ),
+      advisorModel(modelId, "GPT-5.6 Terra", 256000, 32768, false, ["text", "image"], {
+        supportsDeveloperRole: false,
+        supportsReasoningEffort: false,
+        supportsStore: false,
+        supportsStrictMode: false,
+        supportsUsageInStreaming: false,
+        maxTokensField: "max_tokens",
+      }),
     ],
     ["api" + "Key"]: credentialEnv,
   } as AdvisorProviderConfig;

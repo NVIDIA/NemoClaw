@@ -44,7 +44,6 @@ describe("Hermes inference switch command shape", () => {
     );
   }
 
-
   it("preserves the requested frontend for other Hermes upstreams (#6289)", () => {
     expect(resolveAgentInferenceApi("hermes", "nvidia-prod", "openai-completions")).toBe(
       "openai-completions",

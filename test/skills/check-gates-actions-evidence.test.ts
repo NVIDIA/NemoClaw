@@ -149,40 +149,35 @@ describe("maintainer merge-gate contributor compliance", () => {
       runConclusion: "success",
       event: "workflow_run",
     },
-  ])("keeps an authenticated $state PR Review Advisor lane advisory", ({
-    name,
-    runId,
-    status,
-    conclusion,
-    runStatus,
-    runConclusion,
-    event,
-  }) => {
-    const jobId = runId + 100;
-    const result = runGate({
-      body: "Signed-off-by: Example User <user@example.com>",
-      verified: true,
-      statusChecks: [
-        ...successfulRequiredChecks(),
-        advisorCheck(runId, jobId, { name, status, conclusion }),
-      ],
-      actionRunAttempts: {
-        [String(runId)]: advisorRun(jobId, {
-          jobName: name,
-          status: runStatus,
-          conclusion: runConclusion,
-          jobStatus: runStatus,
-          jobConclusion: runConclusion,
-          event,
-        }),
-      },
-    });
+  ])(
+    "keeps an authenticated $state PR Review Advisor lane advisory",
+    ({ name, runId, status, conclusion, runStatus, runConclusion, event }) => {
+      const jobId = runId + 100;
+      const result = runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [
+          ...successfulRequiredChecks(),
+          advisorCheck(runId, jobId, { name, status, conclusion }),
+        ],
+        actionRunAttempts: {
+          [String(runId)]: advisorRun(jobId, {
+            jobName: name,
+            status: runStatus,
+            conclusion: runConclusion,
+            jobStatus: runStatus,
+            jobConclusion: runConclusion,
+            event,
+          }),
+        },
+      });
 
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      allPass: true,
-      gates: { ci: { pass: true } },
-    });
-  });
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        allPass: true,
+        gates: { ci: { pass: true } },
+      });
+    },
+  );
 
   it.each([
     {
@@ -206,42 +201,40 @@ describe("maintainer merge-gate contributor compliance", () => {
       runStatus: "completed",
       runConclusion: "success",
     },
-  ])("keeps a current fork $state Advisor lane advisory without a REST PR association", ({
-    status,
-    conclusion,
-    runStatus,
-    runConclusion,
-  }) => {
-    const runId = 9003;
-    const jobId = 9103;
-    const forkRepository = "contributor/NemoClaw";
-    const result = runGate({
-      body: "Signed-off-by: Example User <user@example.com>",
-      verified: true,
-      headRepository: forkRepository,
-      statusChecks: [
-        ...successfulRequiredChecks(),
-        advisorCheck(runId, jobId, { status, conclusion }),
-      ],
-      actionRunAttempts: {
-        [String(runId)]: advisorRun(jobId, {
-          headSha: HEAD_SHA,
-          headBranch: "feature-branch",
-          headRepository: forkRepository,
-          pullRequests: [],
-          status: runStatus,
-          conclusion: runConclusion,
-          jobStatus: runStatus,
-          jobConclusion: runConclusion,
-        }),
-      },
-    });
+  ])(
+    "keeps a current fork $state Advisor lane advisory without a REST PR association",
+    ({ status, conclusion, runStatus, runConclusion }) => {
+      const runId = 9003;
+      const jobId = 9103;
+      const forkRepository = "contributor/NemoClaw";
+      const result = runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        headRepository: forkRepository,
+        statusChecks: [
+          ...successfulRequiredChecks(),
+          advisorCheck(runId, jobId, { status, conclusion }),
+        ],
+        actionRunAttempts: {
+          [String(runId)]: advisorRun(jobId, {
+            headSha: HEAD_SHA,
+            headBranch: "feature-branch",
+            headRepository: forkRepository,
+            pullRequests: [],
+            status: runStatus,
+            conclusion: runConclusion,
+            jobStatus: runStatus,
+            jobConclusion: runConclusion,
+          }),
+        },
+      });
 
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      allPass: true,
-      gates: { ci: { pass: true } },
-    });
-  });
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        allPass: true,
+        gates: { ci: { pass: true } },
+      });
+    },
+  );
 
   it.each([
     {
@@ -352,7 +345,10 @@ describe("maintainer merge-gate contributor compliance", () => {
       },
     },
     { evidence: "the workflow name is missing", check: { workflowName: undefined } },
-    { evidence: "the workflow name differs", check: { workflowName: "Automation / PR Review Advisor 2" } },
+    {
+      evidence: "the workflow name differs",
+      check: { workflowName: "Automation / PR Review Advisor 2" },
+    },
     {
       evidence: "the run URL has no job",
       check: { detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/9010" },
@@ -410,43 +406,43 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.gates.ci.failingChecks).toContain("checks: latest attempt evidence incomplete");
   });
 
-  it.each([
-    "push",
-    "dynamic",
-  ])("accepts an optional %s check tied to the current head SHA", (event) => {
-    const result = runGate({
-      body: "Signed-off-by: Example User <user@example.com>",
-      verified: true,
-      statusChecks: [
-        ...successfulRequiredChecks(),
-        {
-          __typename: "CheckRun",
-          name: "optional-check",
-          workflowName: "CI / Optional",
-          detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/446/job/41",
-          startedAt: "2026-01-01T00:00:00Z",
-          status: "COMPLETED",
-          conclusion: "SUCCESS",
+  it.each(["push", "dynamic"])(
+    "accepts an optional %s check tied to the current head SHA",
+    (event) => {
+      const result = runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [
+          ...successfulRequiredChecks(),
+          {
+            __typename: "CheckRun",
+            name: "optional-check",
+            workflowName: "CI / Optional",
+            detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/446/job/41",
+            startedAt: "2026-01-01T00:00:00Z",
+            status: "COMPLETED",
+            conclusion: "SUCCESS",
+          },
+        ],
+        actionRunAttempts: {
+          "446": {
+            attempt: 1,
+            headSha: HEAD_SHA,
+            event,
+            path: ".github/workflows/optional.yaml",
+            status: "completed",
+            conclusion: "success",
+            jobs: [{ id: 41, name: "optional-check" }],
+          },
         },
-      ],
-      actionRunAttempts: {
-        "446": {
-          attempt: 1,
-          headSha: HEAD_SHA,
-          event,
-          path: ".github/workflows/optional.yaml",
-          status: "completed",
-          conclusion: "success",
-          jobs: [{ id: 41, name: "optional-check" }],
-        },
-      },
-    });
+      });
 
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      allPass: true,
-      gates: { ci: { pass: true } },
-    });
-  });
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        allPass: true,
+        gates: { ci: { pass: true } },
+      });
+    },
+  );
 
   it("accepts duplicate optional runs with exact-PR and current-head identities", () => {
     const optionalCheck = (runId: number, jobId: number, startedAt: string) => ({

@@ -49,9 +49,12 @@ describe("detectSandboxFallbackDns", () => {
     ["direct resolver", ["nameserver 192.168.1.1\n"]],
     ["missing resolver", [null]],
     ["missing systemd upstream", [LOOPBACK_STUB, null]],
-  ])("returns null without a loopback-only resolver and usable systemd upstream: %s", (_case, responses) => {
-    expect(detectSandboxFallbackDns({ readFile: readSequence(...responses) })).toBeNull();
-  });
+  ])(
+    "returns null without a loopback-only resolver and usable systemd upstream: %s",
+    (_case, responses) => {
+      expect(detectSandboxFallbackDns({ readFile: readSequence(...responses) })).toBeNull();
+    },
+  );
 
   it.each([
     ["direct", "nameserver 192.168.1.1\n"],
