@@ -195,6 +195,9 @@ export const NEMOCLAW_INFERENCE_APIS = [
 
 export const NemoClawInferenceApiSchema = Type.Enum(NEMOCLAW_INFERENCE_APIS);
 
+export const NEMOCLAW_CONFIG_AGENT_TYPES = ["openclaw", "hermes"] as const;
+export const NemoClawAgentTypeSchema = Type.Enum(NEMOCLAW_CONFIG_AGENT_TYPES);
+
 export function isSupportedInferenceApi(value: unknown): value is InferenceApi {
   return Check(NemoClawInferenceApiSchema, value);
 }
@@ -249,7 +252,7 @@ const NemoClawInferenceRouteConfigSchema = Type.Object(
 const NemoClawAgentConfigSchema = Type.Object(
   {
     name: LocalResourceNameSchema,
-    type: Type.Literal("openclaw"),
+    type: NemoClawAgentTypeSchema,
     inference: Type.Object(
       {
         routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }),

@@ -8,7 +8,10 @@ import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/rou
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
 import type { ManagedStartupProfile } from "../../onboard/managed-startup/profile";
-import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
+import {
+  buildManagedStartupProfile,
+  type ManagedStartupProfileBuilderInput,
+} from "../../onboard/managed-startup/profile-builder";
 import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
 import { sortCanonicalMappings } from "../../config/canonical-mapping";
 import {
@@ -36,10 +39,53 @@ import type {
 } from "./export-evidence";
 
 const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
+const DEFAULT_DASHBOARD_URL = "http://127.0.0.1:18789";
+// V1 intentionally recognizes only the accepted single-sandbox Hermes binding.
+// A future onboarding-default change must make a new export fidelity decision.
+const DEFAULT_HERMES_API_PORT = 8642;
+
+type SupportedExportAgent = "hermes" | "openclaw";
+type ManagedStartupInferenceRoute = ReturnType<typeof resolveManagedStartupInferenceRoute>;
+interface ExportAgentProfileProjection {
+  readonly compatibility: Readonly<Record<string, unknown>> | null;
+  readonly dashboard: ManagedStartupProfileBuilderInput["dashboard"];
+  readonly primaryModelRef: string | null;
+}
+
+const EXPORT_AGENT_PROFILE_PROJECTIONS: Record<
+  SupportedExportAgent,
+  (route: ManagedStartupInferenceRoute) => ExportAgentProfileProjection
+> = {
+  openclaw: (route) => ({
+    primaryModelRef: route.primaryModelRef,
+    compatibility: route.inferenceCompat ?? {},
+    dashboard: {
+      agent: "openclaw",
+      mode: "loopback",
+      url: DEFAULT_DASHBOARD_URL,
+      port: 18_789,
+      bindAddress: "127.0.0.1",
+      wslExposure: false,
+    },
+  }),
+  hermes: (_route) => ({
+    primaryModelRef: null,
+    compatibility: null,
+    dashboard: {
+      agent: "hermes",
+      mode: "disabled",
+      url: DEFAULT_DASHBOARD_URL,
+      browserUrl: DEFAULT_DASHBOARD_URL,
+      publicPort: null,
+      internalPort: null,
+      tuiEnabled: false,
+    },
+  }),
+};
 
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
-  "gateway" | "inference" | "policy" | "proxy" | "runtime" | "sandboxName"
+  "agent" | "gateway" | "inference" | "policy" | "proxy" | "runtime" | "sandboxName"
 >;
 
 function verifiedExportSource(data: VerifiedExportSourceData): VerifiedExportSource {
@@ -70,6 +116,42 @@ function hasEntries(value: unknown): boolean {
   return Array.isArray(value)
     ? value.length > 0
     : value !== undefined && value !== null && value !== false;
+}
+
+function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
+  const excluded: Array<[string, unknown, string]> = [
+    ["spec.sandboxes[].agents[0].tools", entry.hermesToolGateways, "enabled Hermes tool gateways"],
+    [
+      "spec.sandboxes[].agents[0].dashboard",
+      [
+        entry.hermesDashboardEnabled,
+        entry.hermesDashboardPort,
+        entry.hermesDashboardInternalPort,
+        entry.hermesDashboardTui,
+      ].some(hasEntries),
+      "a non-default Hermes dashboard",
+    ],
+    [
+      "spec.sandboxes[].agents[0].authentication",
+      entry.hermesAuthMethod || entry.hermesInferenceProvider,
+      "Hermes-specific authentication",
+    ],
+  ];
+  const present = excluded.filter(([, value]) => hasEntries(value));
+  if (entry.agent !== "hermes") {
+    return present.length > 0
+      ? [
+          finding(
+            "source.registry",
+            "unsupported",
+            "V1 export does not support stale agent-specific registry state.",
+          ),
+        ]
+      : [];
+  }
+  return present.map(([field, , capability]) =>
+    finding(field, "unsupported", "V1 export does not support " + capability + "."),
+  );
 }
 
 function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
@@ -119,7 +201,25 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
     .map(([field, , capability]) =>
       finding(field, "unsupported", "V1 export does not support " + capability + "."),
     );
-  return findings;
+  return [...findings, ...classifyHermesExcludedCapabilities(entry)];
+}
+
+function classifyHermesApiConfiguration(entry: ObservedExportRegistry): ExportFinding[] {
+  if (
+    entry.agent !== "hermes" ||
+    entry.hermesApiPort === undefined ||
+    entry.hermesApiPort === null ||
+    entry.hermesApiPort === DEFAULT_HERMES_API_PORT
+  ) {
+    return [];
+  }
+  return [
+    finding(
+      "spec.sandboxes[].agents[0].api",
+      "unsupported",
+      "V1 export requires the default Hermes API configuration.",
+    ),
+  ];
 }
 
 function classifyRegistryProvenance(entry: ObservedExportRegistry): ExportFinding[] {
@@ -217,10 +317,15 @@ function classifyWorkload(entry: ObservedExportRegistry): ExportFinding[] {
 /** Report every v1-excluded capability represented by the registry row. */
 export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFinding[] {
   const findings = classifyExcludedCapabilities(entry);
-  if (entry.agent !== "openclaw")
+  if (entry.agent !== "openclaw" && entry.agent !== "hermes")
     findings.push(
-      finding("spec.sandboxes[].agents[0].type", "unsupported", "V1 export requires OpenClaw."),
+      finding(
+        "spec.sandboxes[].agents[0].type",
+        "unsupported",
+        "V1 export requires OpenClaw or Hermes.",
+      ),
     );
+  findings.push(...classifyHermesApiConfiguration(entry));
   if (entry.pendingRouteReservation === true)
     findings.push(
       finding(
@@ -242,6 +347,10 @@ export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFin
 }
 
 function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedStartupProfile {
+  if (entry.agent !== "openclaw" && entry.agent !== "hermes") {
+    throw new Error("The agent is unsupported.");
+  }
+  const agent = entry.agent;
   const selected = normalizeInferenceSelection(entry);
   if (
     !selected.provider ||
@@ -252,13 +361,14 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     throw new Error("The inference selection is incomplete.");
   }
   const inference = resolveManagedStartupInferenceRoute(
-    "openclaw",
+    agent,
     selected.provider,
     selected.model,
     selected.preferredInferenceApi,
   );
+  const projection = EXPORT_AGENT_PROFILE_PROJECTIONS[agent](inference);
   return buildManagedStartupProfile({
-    agent: "openclaw",
+    agent,
     inference: {
       routeProvider: inference.providerKey,
       upstreamProvider: selected.provider,
@@ -266,17 +376,10 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
       routedBaseUrl: inference.inferenceBaseUrl,
       upstreamEndpointUrl: null,
       api: selected.preferredInferenceApi,
-      primaryModelRef: inference.primaryModelRef,
-      compatibility: inference.inferenceCompat ?? {},
+      primaryModelRef: projection.primaryModelRef,
+      compatibility: projection.compatibility,
     },
-    dashboard: {
-      agent: "openclaw",
-      mode: "loopback",
-      url: "http://127.0.0.1:18789",
-      port: 18_789,
-      bindAddress: "127.0.0.1",
-      wslExposure: false,
-    },
+    dashboard: projection.dashboard,
     webSearch: null,
     toolDisclosure: "progressive",
     hermesToolGateways: [],
@@ -690,6 +793,7 @@ function completeVerifiedSource(
   const proxy = authority?.profile.proxy;
   const values = {
     sandboxName: requestedSandboxName,
+    agent: entry.agent,
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
     ...(proxy && !hasEqualJsonStructure(proxy, expectedManagedStartupProfile(entry).proxy)
