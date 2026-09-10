@@ -462,15 +462,12 @@ COPY agents/hermes/runtime-boundaries.patch /tmp/hermes-runtime-boundaries.patch
 COPY agents/hermes/secure-dir-skip-chmod.patch /tmp/hermes-secure-dir-skip-chmod.patch
 COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
 COPY scripts/checks/download-hermes-source-archive.sh /tmp/nemoclaw-download-hermes-source-archive.sh
-# Reviewed v2026.8.27 config with only the documentation search key redacted.
-COPY agents/hermes/website/docusaurus.config.ts.redacted /tmp/hermes-docs-config.ts
 # hadolint ignore=DL4006
 RUN mkdir -p /opt/hermes \
     && bash /tmp/nemoclaw-download-hermes-source-archive.sh "${HERMES_VERSION}" /tmp/hermes.tar.gz \
     && printf '%s  /tmp/hermes.tar.gz\n' "${HERMES_TARBALL_SHA256}" > /tmp/hermes.tar.gz.sha256 \
     && sha256sum -c /tmp/hermes.tar.gz.sha256 \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
-    && mv /tmp/hermes-docs-config.ts /opt/hermes/website/docusaurus.config.ts \
     && rm -rf /opt/hermes/tests \
     && printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /tmp/hermes-runtime-boundaries.patch \

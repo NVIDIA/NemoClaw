@@ -10,6 +10,12 @@
 # so unrelated managed-runtime processes cannot hold a completed query open.
 # Keep the cron tick lock in writable runtime state while Shields keeps cron
 # definitions sealed read-only.
+diff --git a/website/docusaurus.config.ts b/website/docusaurus.config.ts
+index 7d0aa0d66b97038ec79fb5101598ee5e2c95a071..2cb0e7f121ba94c7618dab5285190607b5e19cc4 100644
+GIT binary patch
+delta 21
+ccmeyV`%rho4{nYiR~JX;5LcJY5<CyN0Aoo9?f?J)
+
 diff --git a/plugins/memory/hindsight/plugin.yaml b/plugins/memory/hindsight/plugin.yaml
 --- a/plugins/memory/hindsight/plugin.yaml
 +++ b/plugins/memory/hindsight/plugin.yaml
