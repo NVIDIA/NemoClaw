@@ -168,6 +168,28 @@ class PortableStartCommand extends NemoClawCommand {
   }
 }
 
+class PortableStopCommand extends NemoClawCommand {
+  static id = "sandbox:stop";
+  static args = { sandboxName: Args.string({ required: true }) };
+  static flags = {};
+  static observed = { host: false, lifecycle: false, portableLifecycle: false };
+
+  public async run(): Promise<void> {
+    const { args } = await this.parse(PortableStopCommand);
+    const sandboxName = args.sandboxName!;
+    PortableStopCommand.observed = {
+      host: fs.existsSync(
+        portableHostAuthority.portableHostFencePath(process.env.HOME || os.homedir()),
+      ),
+      lifecycle: isMcpLifecycleLockHeld(sandboxName),
+      portableLifecycle: isMcpLifecycleLockHeld(
+        sandboxName,
+        path.join(portableHostAuthority.defaultPortableStateDir(process.env), "state"),
+      ),
+    };
+  }
+}
+
 function useHermesPortableAuthority(): void {
   vi.spyOn(receiptAuthority, "hasHermesPortableReceiptCandidate").mockReturnValue(true);
   vi.spyOn(
@@ -214,6 +236,7 @@ describe("NemoClawCommand", () => {
     GlobalUseMutationCommand.ran = false;
     ProbeOnlyConnectCommand.operation = () => undefined;
     PortableStartCommand.observed = { host: false, lifecycle: false, portableLifecycle: false };
+    PortableStopCommand.observed = { host: false, lifecycle: false, portableLifecycle: false };
   });
 
   it("records status-like command results without throwing", () => {
@@ -359,6 +382,19 @@ describe("NemoClawCommand", () => {
 
     expect(PortableStartCommand.observed).toEqual({
       host: true,
+      lifecycle: false,
+      portableLifecycle: true,
+    });
+  });
+
+  it("uses the Portable lifecycle lock for stop without broadening the host fence", async () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
+    useHermesPortableAuthority();
+
+    await PortableStopCommand.run(["alpha"], process.cwd());
+
+    expect(PortableStopCommand.observed).toEqual({
+      host: false,
       lifecycle: false,
       portableLifecycle: true,
     });

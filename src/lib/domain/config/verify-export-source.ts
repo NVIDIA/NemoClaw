@@ -35,6 +35,7 @@ import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
 import { validateManagedServing } from "./verify-managed-serving";
+import { inspectAgentInterfaces } from "./verify-agent-interfaces";
 import type {
   CanonicalExportPolicy,
   ExportFinding,
@@ -49,9 +50,6 @@ import type {
 const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 const DEFAULT_DASHBOARD_URL = "http://127.0.0.1:18789";
 const HERMES_API_KEY_ENDPOINT = "https://inference-api.nousresearch.com/v1";
-// V1 intentionally recognizes only the accepted single-sandbox Hermes binding.
-// A future onboarding-default change must make a new export fidelity decision.
-const DEFAULT_HERMES_API_PORT = 8642;
 
 type SupportedExportAgent = "hermes" | "openclaw";
 type ManagedStartupInferenceRoute = ReturnType<typeof resolveManagedStartupInferenceRoute>;
@@ -153,12 +151,14 @@ function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): Expo
     ["spec.sandboxes[].agents[0].tools", entry.hermesToolGateways, "enabled Hermes tool gateways"],
     [
       "spec.sandboxes[].agents[0].dashboard",
-      [
-        entry.hermesDashboardEnabled,
-        entry.hermesDashboardPort,
-        entry.hermesDashboardInternalPort,
-        entry.hermesDashboardTui,
-      ].some(hasEntries),
+      entry.agent !== "hermes" &&
+        [
+          entry.hermesApiPort,
+          entry.hermesDashboardEnabled,
+          entry.hermesDashboardPort,
+          entry.hermesDashboardInternalPort,
+          entry.hermesDashboardTui,
+        ].some(hasEntries),
       "a non-default Hermes dashboard",
     ],
     ["spec.sandboxes[].agents[0].auth", entry.hermesInferenceProvider, "Hermes clone inference"],
@@ -275,24 +275,6 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
   return [...findings, ...classifyHermesExcludedCapabilities(entry)];
 }
 
-function classifyHermesApiConfiguration(entry: ObservedExportRegistry): ExportFinding[] {
-  if (
-    entry.agent !== "hermes" ||
-    entry.hermesApiPort === undefined ||
-    entry.hermesApiPort === null ||
-    entry.hermesApiPort === DEFAULT_HERMES_API_PORT
-  ) {
-    return [];
-  }
-  return [
-    finding(
-      "spec.sandboxes[].agents[0].api",
-      "unsupported",
-      "V1 export requires the default Hermes API configuration.",
-    ),
-  ];
-}
-
 function classifyRegistryProvenance(entry: ObservedExportRegistry): ExportFinding[] {
   const findings: ExportFinding[] = [];
   if (
@@ -407,7 +389,6 @@ export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFin
         "V1 export requires OpenClaw or Hermes.",
       ),
     );
-  findings.push(...classifyHermesApiConfiguration(entry));
   if (entry.pendingRouteReservation === true)
     findings.push(
       finding(
@@ -480,48 +461,6 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
         : {},
     corporateCa: null,
   }).profile;
-}
-
-function projectDashboard(profile: ManagedStartupProfile): VerifiedExportSource["interfaces"] {
-  if (profile.dashboard.agent !== "openclaw") return undefined;
-  const dashboard = {
-    ...(profile.dashboard.port === 18_789 ? {} : { port: profile.dashboard.port }),
-    ...(profile.dashboard.bindAddress === "127.0.0.1"
-      ? {}
-      : { bind: profile.dashboard.bindAddress }),
-  };
-  return Object.keys(dashboard).length === 0 ? undefined : { dashboard };
-}
-
-function classifyDashboard(
-  entry: ObservedExportRegistry,
-  profile: ManagedStartupProfile,
-): ExportFinding[] {
-  const dashboard = profile.dashboard;
-  if (dashboard.agent !== "openclaw") return [];
-  const remote = dashboard.bindAddress === "0.0.0.0";
-  const legacyDefault = entry.dashboardPort === undefined && dashboard.port === 18_789 && !remote;
-  if (entry.dashboardPort !== dashboard.port && !legacyDefault) {
-    return [
-      finding(
-        "spec.sandboxes[].agents[].interfaces.dashboard.port",
-        entry.dashboardPort === undefined ? "missing-provenance" : "drifted",
-        "The persisted dashboard port must match the managed startup profile.",
-      ),
-    ];
-  }
-  const prepared = entry.dashboardRemoteBindPrepared;
-  const preparationMatches = remote ? prepared === true : [undefined, false].includes(prepared);
-  if (!preparationMatches) {
-    return [
-      finding(
-        "spec.sandboxes[].agents[].interfaces.dashboard.bind",
-        remote ? "missing-provenance" : "drifted",
-        "Dashboard remote-bind preparation must match the managed startup profile.",
-      ),
-    ];
-  }
-  return [];
 }
 
 function exportedObservability(
@@ -636,25 +575,12 @@ function supportedHostProfile(
   profile: ManagedStartupProfile,
   expected: ManagedStartupProfile,
 ): ManagedStartupProfile {
-  const projected = {
+  return {
     ...expected,
     proxy: {
       ...expected.proxy,
       managedHost: profile.proxy.managedHost,
       managedPort: profile.proxy.managedPort,
-    },
-  };
-  if (profile.dashboard.agent !== "openclaw") return projected;
-  const { port, bindAddress } = profile.dashboard;
-  return {
-    ...projected,
-    dashboard: {
-      agent: "openclaw",
-      mode: bindAddress === "0.0.0.0" ? "remote" : "loopback",
-      url: `http://127.0.0.1:${port}`,
-      port,
-      bindAddress,
-      wslExposure: false,
     },
   };
 }
@@ -698,8 +624,10 @@ function classifyManagedStartupProfile(
     ];
   }
   expected = supportedObservabilityProfile(profile, expected);
+  const interfaces = inspectAgentInterfaces(entry, profile);
+  if (interfaces.dashboard) expected = { ...expected, dashboard: interfaces.dashboard };
   const findings = [
-    ...classifyDashboard(entry, profile),
+    ...interfaces.findings,
     ...classifyReasoningAgreement(entry, profile),
     ...classifyToolDisclosureAgreement(entry, profile, expected),
   ];
@@ -1228,7 +1156,7 @@ function projectHostSettings(
   authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
 ) {
   if (!authority) return {};
-  const interfaces = projectDashboard(authority.profile);
+  const interfaces = inspectAgentInterfaces(entry, authority.profile).interfaces;
   const proxy = authority.profile.proxy;
   return {
     ...(interfaces ? { interfaces } : {}),

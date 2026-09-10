@@ -243,9 +243,27 @@ describe("E2E fixture clients", () => {
 
       await expect(host.inspectOpenShellForwardListener("18789", "alpha")).resolves.toMatchObject({
         valid: expected,
+        ...(expected ? { pid: 4321 } : {}),
       });
     },
   );
+
+  it("rejects a wrapper as the owner of a canonical OpenShell listener", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout: "4321\n" });
+    runner.enqueue({ stdout: "/tmp/openshell-wrapper\n" });
+    runner.enqueue({ stdout: "/opt/openshell\n" });
+    runner.enqueue({ stdout: "/tmp/openshell-wrapper\n" });
+    runner.enqueue({
+      stdout:
+        "/tmp/openshell-wrapper --gateway nemoclaw --workspace default forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
+    });
+    runner.enqueue({ stdout: "4321\n" });
+
+    await expect(
+      new HostCliClient(runner).inspectOpenShellForwardListener("18789", "alpha"),
+    ).resolves.toMatchObject({ valid: false });
+  });
 
   it("composes installation, OpenShell resolution, and launch in authority order", async () => {
     const runner = new FakeRunner();

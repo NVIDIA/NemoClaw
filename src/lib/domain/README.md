@@ -37,6 +37,19 @@ Legacy registry entries may omit the port only for the canonical loopback/defaul
 Custom URLs, WSL exposure and device-auth changes remain unsupported. Export does not establish
 that a dashboard listener is currently running.
 
+`config/verify-agent-interfaces.ts` owns retained dashboard and API checks for both agents.
+Each agent has a closed `interfaces` schema; Hermes adds dashboard enablement, internal port,
+browser TUI and API port. Enabled Hermes dashboards require matching registry settings and an
+allocated API port. The existing registry row publishes that allocation with the lifecycle
+generation and sandbox fingerprint, which the export verifier checks against live identity.
+Pending reservations and mismatched or changing evidence cannot authorize export.
+
+Hermes omits disabled dashboards, false TUI, public port 18789, internal port 19119 and API port
+8642 from canonical output. Legacy disabled profiles may omit the API allocation; enabling the
+dashboard requires an explicit allocation. Dashboard ports retain the onboarding parser's
+restrictions, including API ports 8642–8652, port 18642 and equal public/internal ports. Export
+describes retained intent and does not inspect current processes or require a running host forward.
+
 OpenClaw telemetry supports an enabled local OTLP/HTTP collector at
 `http://host.openshell.internal:4318`, a printable ASCII service name of 1–256 characters without
 edge spaces, and a sample rate from 0 to 1. Canonical disabled telemetry is omitted. Other disabled
