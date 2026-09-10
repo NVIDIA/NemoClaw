@@ -56,14 +56,24 @@ describe("connectSandbox lifecycle lock", () => {
     const childStarting = new Promise<void>((resolve) => {
       childStarted = resolve;
     });
-    let completeChild!: (result: { status: number; signal: null }) => void;
-    const childCompletion = new Promise<{ status: number; signal: null }>((resolve) => {
+    let completeChild!: (result: {
+      outcome: { kind: "exited"; exitCode: number };
+      stdout: string;
+      stderr: string;
+      release: () => void;
+    }) => void;
+    const childCompletion = new Promise<{
+      outcome: { kind: "exited"; exitCode: number };
+      stdout: string;
+      stderr: string;
+      release: () => void;
+    }>((resolve) => {
       completeChild = resolve;
     });
-    harness.runSandboxExecChildSpy.mockImplementation(() => {
+    harness.startSandboxSessionSpy.mockImplementation(() => {
       expect(lockDepth).toBeGreaterThan(0);
       childStarted();
-      return childCompletion;
+      return { completion: childCompletion, cancel: vi.fn() };
     });
 
     const connect = harness.connectSandbox("alpha");
@@ -78,7 +88,12 @@ describe("connectSandbox lifecycle lock", () => {
       expect(lockDepth).toBe(1);
     });
     expect(contenderEntered).toBe(true);
-    completeChild({ status: 0, signal: null });
+    completeChild({
+      outcome: { kind: "exited", exitCode: 0 },
+      stdout: "",
+      stderr: "",
+      release: vi.fn(),
+    });
     await expect(connect).rejects.toThrow("process.exit(0)");
   });
 });
