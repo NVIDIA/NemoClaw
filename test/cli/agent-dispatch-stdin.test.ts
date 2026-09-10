@@ -9,6 +9,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 
 import { runAgentDispatch } from "../../src/lib/actions/sandbox/agent/passthrough-dispatch";
+import { createCliOpenShellSandboxSessionExecutor } from "../../src/lib/adapters/openshell/sandbox-command-cli";
 import { runAgentNonJsonPassthrough } from "../../src/lib/actions/sandbox/agent/passthrough";
 import { runAgentJsonPassthrough } from "../../src/lib/actions/sandbox/agent/passthrough-json";
 import { withMcpLifecycleLock } from "../../src/lib/state/mcp-lifecycle-lock-acquisition";
@@ -138,34 +139,39 @@ describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
             getOpenshellBinary: () => process.execPath,
             getGatewayName: () => "nemoclaw-8081",
             stdinIsTty: () => false,
-            runDispatch: (binary, args, options) =>
-              runAgentDispatch(binary, args, options, {
-                spawnChild: (_binary, args, stdio) => {
-                  const child = spawn(
-                    process.execPath,
-                    [
-                      "-e",
-                      `
+            runDispatch: (request) =>
+              runAgentDispatch(
+                request,
+                createCliOpenShellSandboxSessionExecutor({
+                  resolveBinary: () => process.execPath,
+                  stdinIsTty: () => false,
+                  spawnChild: (_binary, args, { stdio }) => {
+                    const child = spawn(
+                      process.execPath,
+                      [
+                        "-e",
+                        `
               const input = require('node:fs').readFileSync(process.argv[1], 'utf8');
               console.log(JSON.stringify({payloads: [{text: JSON.stringify({input, args: process.argv.slice(2)})}]}));
             `,
-                      "--",
-                      messageFile ?? "/dev/stdin",
-                      ...args,
-                    ],
-                    {
-                      stdio: [
-                        Array.isArray(stdio) && stdio[0] === "inherit" ? inputFd : "ignore",
-                        "pipe",
-                        "pipe",
+                        "--",
+                        messageFile ?? "/dev/stdin",
+                        ...args,
                       ],
-                    },
-                  );
-                  const deadline = setTimeout(() => child.kill("SIGKILL"), 2_000);
-                  child.once("close", () => clearTimeout(deadline));
-                  return child;
-                },
-              }),
+                      {
+                        stdio: [
+                          Array.isArray(stdio) && stdio[0] === "inherit" ? inputFd : "ignore",
+                          "pipe",
+                          "pipe",
+                        ],
+                      },
+                    );
+                    const deadline = setTimeout(() => child.kill("SIGKILL"), 2_000);
+                    child.once("close", () => clearTimeout(deadline));
+                    return child;
+                  },
+                }),
+              ),
           }),
         ).rejects.toThrow("exit:0");
         const received = JSON.parse(JSON.parse(stdout.join("")).payloads[0].text);
@@ -219,39 +225,44 @@ describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
               getOpenshellBinary: () => process.execPath,
               getGatewayName: () => "nemoclaw-8081",
               stdinIsTty: () => false,
-              runDispatch: (binary, args, dispatchOptions) =>
-                runAgentDispatch(binary, args, dispatchOptions, {
-                  signalSource: {
-                    add: (signal, listener) => signalEvents.on(signal, listener),
-                    remove: (signal, listener) => signalEvents.off(signal, listener),
-                  },
-                  spawnChild: (_binary, args, stdio) => {
-                    const child = spawn(
-                      process.execPath,
-                      [
-                        "-e",
-                        "const fs = require('node:fs'); fs.writeSync(1, 'started'); fs.readFileSync(0); setInterval(()=>{},1000);",
-                      ],
-                      {
-                        stdio: [
-                          Array.isArray(stdio) && stdio[0] === "inherit" ? inputFd : "ignore",
-                          "pipe",
-                          "pipe",
+              runDispatch: (request) =>
+                runAgentDispatch(
+                  request,
+                  createCliOpenShellSandboxSessionExecutor({
+                    resolveBinary: () => process.execPath,
+                    stdinIsTty: () => false,
+                    signalSource: {
+                      add: (signal, listener) => signalEvents.on(signal, listener),
+                      remove: (signal, listener) => signalEvents.off(signal, listener),
+                    },
+                    spawnChild: (_binary, _args, { stdio }) => {
+                      const child = spawn(
+                        process.execPath,
+                        [
+                          "-e",
+                          "const fs = require('node:fs'); fs.writeSync(1, 'started'); fs.readFileSync(0); setInterval(()=>{},1000);",
                         ],
-                      },
-                    );
-                    stopChild = () => {
-                      child.kill("SIGKILL");
-                    };
-                    child.stdout?.once("data", childStarted);
-                    const deadline = setTimeout(stopChild, 3_000);
-                    child.once("close", () => {
-                      clearTimeout(deadline);
-                      childStarted();
-                    });
-                    return child;
-                  },
-                }),
+                        {
+                          stdio: [
+                            Array.isArray(stdio) && stdio[0] === "inherit" ? inputFd : "ignore",
+                            "pipe",
+                            "pipe",
+                          ],
+                        },
+                      );
+                      stopChild = () => {
+                        child.kill("SIGKILL");
+                      };
+                      child.stdout?.once("data", childStarted);
+                      const deadline = setTimeout(stopChild, 3_000);
+                      child.once("close", () => {
+                        clearTimeout(deadline);
+                        childStarted();
+                      });
+                      return child;
+                    },
+                  }),
+                ),
             },
           );
         },

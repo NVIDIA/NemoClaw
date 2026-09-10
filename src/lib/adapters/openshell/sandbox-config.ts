@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import YAML from "yaml";
+import { importOpenShellRawSdk } from "./sdk-import.mjs";
 import { sortCanonicalMappings } from "../../config/canonical-mapping";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import type { SandboxConfiguration } from "../../domain/sandbox/configuration";
@@ -202,10 +203,9 @@ const MAX_POLICY_BYTES = 1024 * 1024;
 export async function serializeSdkPolicy(policy: unknown, signal?: AbortSignal): Promise<string> {
   try {
     signal?.throwIfAborted();
-    const sdkPackage = "@nvidia/openshell-sdk/raw";
     const protobufPackage = "@bufbuild/protobuf";
     const [{ SandboxPolicySchema }, { isMessage, toBinary, toJson }] = await Promise.all([
-      import(sdkPackage),
+      importOpenShellRawSdk(),
       import(protobufPackage),
     ]);
     signal?.throwIfAborted();

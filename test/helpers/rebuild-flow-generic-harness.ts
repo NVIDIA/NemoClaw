@@ -572,7 +572,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     detected: false,
     sessions: [],
   });
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockImplementation((...args: unknown[]) => {
+  vi.spyOn(sandboxVersion, "checkAgentVersion").mockImplementation(async (...args: unknown[]) => {
     const options = args[1] as { forceProbe?: boolean } | undefined;
     if (options?.forceProbe) {
       const expectedVersion = overrides.versionCheck?.expectedVersion ?? "0.2.0";

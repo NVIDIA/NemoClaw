@@ -107,11 +107,12 @@
 //     loaded runners or NemoClaw manages and warms the daemon lifecycle.
 
 import { performance } from "node:perf_hooks";
+import { signalExitCode } from "../../../core/process-exit";
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
 import { resolveSandboxHermesApiPort } from "../../../onboard/hermes-api-port";
 import * as registry from "../../../state/registry";
-import { computeExitCode, execSandbox } from "../exec";
+import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import {
   isSilentAgentDispatch,
@@ -189,8 +190,9 @@ export async function runAgentNonJsonPassthrough(
 
   if (stdout) (proc.stdout ?? process.stdout).write(stdout);
   if (stderr) proc.stderr.write(stderr);
-  const { code, errorMessage } = computeExitCode(result);
-  if (errorMessage) {
+  const code = result.outcome.exitCode;
+  if (result.outcome.kind === "failed" && result.outcome.reason !== "transport") {
+    const errorMessage = result.outcome.message;
     proc.stderr.write(`  Failed to invoke openshell: ${errorMessage}\n`);
     proc.stderr.write("  Ensure 'openshell' is installed and on PATH.\n");
   }
@@ -520,7 +522,7 @@ export async function runAgentPassthrough(
         timeoutSeconds === null ? {} : { timeoutSeconds },
       );
       if (recoverySignal) {
-        return proc.exit(computeExitCode({ status: null, signal: recoverySignal }).code);
+        return proc.exit(signalExitCode(recoverySignal));
       }
     }
     dispatchCommand = commandWithRemainingDeadline(command, commandDeadline, now);

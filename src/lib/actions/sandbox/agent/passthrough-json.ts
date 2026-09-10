@@ -6,12 +6,8 @@ import {
   type OpenClawIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
 } from "../../../openclaw/agent-json-provenance";
-import {
-  buildOpenshellExecArgs,
-  computeExitCode,
-  wrapOpenClawAgentCommandWithRuntimeEnv,
-} from "../exec";
-import { isStdinTty } from "../../../core/stdin";
+import { wrapOpenClawAgentCommandWithRuntimeEnv } from "../exec";
+import { createCliOpenShellSandboxSessionExecutor } from "../../../adapters/openshell/sandbox-command-cli";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
   agentDispatchDeadlineSeconds,
@@ -43,24 +39,27 @@ export function runOpenClawAgentDispatch(
   command: readonly string[],
   deps: OpenClawAgentDispatchDeps = {},
 ): Promise<AgentDispatchResult> {
-  const binary = deps.getOpenshellBinary
-    ? deps.getOpenshellBinary()
-    : (
-        require("../../../adapters/openshell/runtime") as typeof import("../../../adapters/openshell/runtime")
-      ).getOpenshellBinary();
-  return (deps.runDispatch ?? runAgentDispatch)(
-    binary,
-    buildOpenshellExecArgs(
-      sandboxName,
-      wrapOpenClawAgentCommandWithRuntimeEnv(command),
-      { tty: false, timeoutSeconds: agentDispatchDeadlineSeconds(command) },
-      (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
-    ),
-    {
-      stdinIsTty: (deps.stdinIsTty ?? isStdinTty)(),
-      ...(canCloseAgentStdin(command) ? { stdin: false } : {}),
-    },
-  );
+  const gatewayName = (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName);
+  const runDispatch: AgentDispatchRunner =
+    deps.runDispatch ??
+    ((request) =>
+      runAgentDispatch(
+        request,
+        createCliOpenShellSandboxSessionExecutor({
+          resolveBinary: deps.getOpenshellBinary,
+          stdinIsTty: deps.stdinIsTty,
+        }),
+      ));
+  return runDispatch({
+    kind: "command",
+    sandboxName,
+    target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
+    command: wrapOpenClawAgentCommandWithRuntimeEnv(command),
+    tty: false,
+    output: "capture",
+    timeoutSeconds: agentDispatchDeadlineSeconds(command),
+    ...(canCloseAgentStdin(command) ? { stdin: false } : {}),
+  });
 }
 
 /** Exit code for a turn the payload itself marks incomplete or abandoned. */
@@ -117,8 +116,9 @@ export async function runAgentJsonPassthrough(
     ]);
   }
 
-  const { code, errorMessage } = computeExitCode(result);
-  if (errorMessage) {
+  const code = result.outcome.exitCode;
+  if (result.outcome.kind === "failed" && result.outcome.reason !== "transport") {
+    const errorMessage = result.outcome.message;
     proc.stderr.write(`  Failed to invoke openshell: ${errorMessage}\n`);
     proc.stderr.write("  Ensure 'openshell' is installed and on PATH.\n");
   }
