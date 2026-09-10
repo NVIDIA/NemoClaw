@@ -1,43 +1,43 @@
 {
   "schemaVersion": 1,
-  "classification": "unsigned-native-windows-arm64-preview-qualification-failed",
-  "candidateSha": "0cfdb712f6db87e831829f5ab5a2fde9e143807d",
+  "classification": "unsigned-native-windows-arm64-preview-qualification-pending",
+  "candidateSha": "b9c89e0500e6e5e472054727cd33a404bf14845b",
   "sourceRepository": "https://github.com/NVIDIA/NemoClaw",
   "sourcePullRequest": 10799,
-  "sourceWorkflowRun": 34404680432,
+  "sourceWorkflowRun": 34423257671,
   "sourceWorkflowAttempts": [
     1
   ],
-  "sourceArtifactId": 10127637925,
-  "packageManifestSha256": "9c89409caafac7db5465392f4ab32a5aacaf819e2821f697251e44006cd98ff4",
+  "sourceArtifactId": 10133010607,
+  "packageManifestSha256": "9f538d50ebd89b300903e9e419a8e90d2de5c2a5aeee60541aeb801d37026689",
   "openshell": {
     "repository": "https://github.com/NVIDIA/OpenShell",
     "pullRequest": 2721,
     "revision": "bcd517bbe08cc80860c9be57699390cd32e8445f",
-    "derivativePatchSha256": "197297b5fe147cd95ecb45e44c6713e987e1222ea028e3168d234b223c073cf9"
+    "derivativePatchSha256": "9229f70e50ed0d654ce3d06ef6964facefdd651d634921d49db9aa7fd7258937"
   },
   "files": [
     {
       "name": "NemoClaw-0.1.0-windows-arm64.msi",
-      "size": 260809676,
-      "sha256": "4a72eab1e52b949391156850c3aece140328d85f9743e43a718ac9fc58f38f0c"
+      "size": 260846540,
+      "sha256": "44987bf9dbf9ed6d4bddf5ac99e82749cd5bac416b967d15acb51f4cddf0211d"
     },
     {
       "name": "NemoClawSetup-0.1.0-windows-arm64.exe",
-      "size": 304704841,
-      "sha256": "5a7702197b57786ab51f54d375e06af158bf26726868eee810a3f781151c0ffb"
+      "size": 304785247,
+      "sha256": "2a0f0c17709e6a3e2fdd76d63d08245bce3bdb1fc1260b9a1be561120740bfb4"
     }
   ],
   "qualification": {
     "architecture": "arm64",
     "retainedReferenceInstallerChecks": "passed",
     "earlyAndRepeatedProcessAudit": "passed",
-    "installedAcceptance": "failed: source workflow did not complete acceptance",
+    "installedAcceptance": "pending",
     "requiredCompleteNativePasses": 2,
     "completeNativePasses": 0,
     "physicalN1x": "not-qualified",
     "productionSupport": false
   },
-  "criticalSourcePayloadHashesMatched": 26,
+  "criticalSourcePayloadHashesMatched": 28,
   "payloadFiles": 83245
 }
