@@ -284,9 +284,9 @@ echo "${cliBin} v0.1.0"
     const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
     const shimPath = path.join(tmp, ".local", "bin", "nemoclaw-acp");
     const foreignContents = Buffer.from("#!/usr/bin/env bash\nprintf 'user-owned\\n'\n");
+    const foreignMode = 0o755;
     fs.mkdirSync(path.dirname(shimPath), { recursive: true });
-    fs.writeFileSync(shimPath, foreignContents, { mode: 0o755 });
-    const beforeMode = fs.statSync(shimPath).mode;
+    fs.writeFileSync(shimPath, foreignContents, { mode: foreignMode });
 
     const result = runInstallerFunction("_CLI_BIN=nemoclaw; ensure_nemoclaw_shim", fakeBin, {
       ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
@@ -296,7 +296,7 @@ echo "${cliBin} v0.1.0"
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
     expect(fs.readFileSync(shimPath)).toEqual(foreignContents);
-    expect(fs.statSync(shimPath).mode).toBe(beforeMode);
+    expect(fs.statSync(shimPath).mode & 0o777).toBe(foreignMode);
     expect(fs.existsSync(path.join(tmp, ".local", "bin", "nemoclaw"))).toBe(false);
     expect(`${result.stdout}${result.stderr}`).toContain(
       `${shimPath} already exists and is not a NemoClaw-managed shim`,
