@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   bail: vi.fn(),
+  ensureRebuildTargetGatewaySelected: vi.fn(async () => true),
   preflightAuthoritativeOnboardRuntime: vi.fn(async (..._args: unknown[]) => false),
   prepareManagedWorkloadRebuildHandoff: vi.fn(),
   prepareSandboxWorkloadSourceFromRebuildHandoff: vi.fn(),
@@ -13,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   resolveContextWindowForModel: vi.fn(() => 131_072),
   resolveManagedStartupInferenceRoute: vi.fn(),
   stageManagedWorkloadRebuildProfile: vi.fn(),
+}));
+
+vi.mock("./rebuild-flow-helpers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-flow-helpers")>()),
+  ensureRebuildTargetGatewaySelected: mocks.ensureRebuildTargetGatewaySelected,
 }));
 
 vi.mock("../../onboard/workload/rebuild", async (importOriginal) => ({
