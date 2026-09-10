@@ -52,7 +52,6 @@ function liveTestLister(context: Pick<TestContext, "signal" | "onTestFinished">)
     redact: redactString,
     signal: context.signal,
   });
-  let collectorOrdinal = 0;
   context.onTestFinished(() => {
     progress.phase("clean collector artifacts");
     progress.stop();
@@ -68,7 +67,6 @@ function liveTestLister(context: Pick<TestContext, "signal" | "onTestFinished">)
       ...(options.filesOnly ? ["--filesOnly"] : []),
       "--passWithNoTests",
     ];
-    collectorOrdinal += 1;
     const result = await probe.run(
       trustedShellCommand({
         command: process.execPath,
@@ -76,7 +74,7 @@ function liveTestLister(context: Pick<TestContext, "signal" | "onTestFinished">)
         reason: "collect the live E2E tests selected by the registry gates",
       }),
       {
-        artifactName: `live-test-list-${collectorOrdinal}`,
+        captureLimitBytes: 1024 * 1024,
         cwd: REPO_ROOT,
         env: {
           ...process.env,
@@ -87,6 +85,7 @@ function liveTestLister(context: Pick<TestContext, "signal" | "onTestFinished">)
           ...options.env,
         },
         killGraceMs: 0,
+        persistArtifacts: false,
         timeoutMs: 30_000,
       },
     );
