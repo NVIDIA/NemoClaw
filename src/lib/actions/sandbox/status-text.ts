@@ -31,19 +31,18 @@ import {
   type ServingProcessHealth,
 } from "./status-snapshot";
 
-export interface SandboxStatusTextContext
-  extends Pick<
-    SandboxStatusSnapshot,
-    | "sb"
-    | "lookup"
-    | "currentModel"
-    | "currentProvider"
-    | "routeDrift"
-    | "llamaCpp"
-    | "inferenceHealth"
-    | "terminalRuntimeHealth"
-    | "servingProcessHealth"
-  > {
+export interface SandboxStatusTextContext extends Pick<
+  SandboxStatusSnapshot,
+  | "sb"
+  | "lookup"
+  | "currentModel"
+  | "currentProvider"
+  | "routeDrift"
+  | "llamaCpp"
+  | "inferenceHealth"
+  | "terminalRuntimeHealth"
+  | "servingProcessHealth"
+> {
   sandboxName: string;
   statusAgent: SandboxStatusAgentInfo;
 }
@@ -348,10 +347,11 @@ function printDashboardRemoteAccessHint(context: SandboxStatusTextContext): void
   const { sandboxName, sb } = context;
   const dashboardPort = sb?.dashboardPort;
   if (!dashboardPort) return;
-  // The recorded bind is the only durable answer: CHAT_UI_URL decided it at
-  // onboard time and later commands rarely carry it, so reading the live
-  // environment reports a loopback bind for a sandbox exposed on every
-  // interface (#10861). `dashboardRemoteBindPrepared` describes the
+  // The recorded bind is the only durable answer: NEMOCLAW_DASHBOARD_BIND and
+  // WSL selected it when the forward last started, and later commands rarely
+  // carry that environment, so reading the live environment would report a
+  // loopback bind for a sandbox exposed on every interface (#10861).
+  // `dashboardRemoteBindPrepared` describes the
   // sandbox's generated configuration, not a host listener, so it does not
   // stand in for a missing record: `dashboard-url` and `list` say the bind
   // is not recorded, and the guidance stays until a forward launch records

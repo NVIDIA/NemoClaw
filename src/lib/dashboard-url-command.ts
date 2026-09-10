@@ -61,10 +61,11 @@ function dashboardUrlFail(lines: string | readonly string[], exitCode = 1): neve
 }
 
 /**
- * The bind recorded when this sandbox's dashboard forward was started, or null
- * for rows written before it was recorded. `CHAT_UI_URL` decides the bind at
- * onboard time and is rarely set for later commands, so recomputing it here
- * reports loopback for a dashboard listening on every interface (#10861).
+ * The bind recorded when this sandbox's dashboard forward last started, or
+ * null for rows written before it was recorded. `NEMOCLAW_DASHBOARD_BIND` and
+ * WSL select the bind; `CHAT_UI_URL` selects only the browser URL and port.
+ * Later commands rarely carry that environment, so recomputing the bind here
+ * would misreport a dashboard listening on every interface (#10861).
  */
 function recordedBindAddress(
   sandbox: Pick<SandboxEntry, "dashboardBindAddress"> | null,
