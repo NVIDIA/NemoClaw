@@ -44,8 +44,9 @@ results before it succeeds:
 - `NEMOCLAW_IMAGE_DISPATCH_TOKEN` is exposed as `GH_TOKEN` only to the trusted host script. It
   grants Actions read/write access to `brevdev/nemoclaw-image` for workflow dispatch, run inspection,
   and artifact download.
-- `NVIDIA_INFERENCE_API_KEY` is exported into the Brev guest for the full E2E process. Code in the
-  baked candidate checkout can read and use it.
+- `NVIDIA_API_KEY` supplies the public NVIDIA endpoint credential. The workflow exports it as
+  `NVIDIA_INFERENCE_API_KEY` into the Brev guest for full E2E. Code in the baked candidate checkout
+  can read and use it.
 
 `brev login` writes `BREV_API_KEY` and `BREV_ORG_ID` to `$HOME/.brev/credentials.json` on the
 GitHub-hosted runner. Later trusted steps and processes in that job can read the file. The workflow
