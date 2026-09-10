@@ -331,11 +331,20 @@ const NemoClawInferenceRouteConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const NemoClawAgentAuthConfigSchema = Type.Object(
+  {
+    method: Type.Literal("api-key"),
+    providerRef: LocalResourceNameSchema,
+  },
+  { additionalProperties: false },
+);
+
 const NemoClawAgentConfigSchema = Type.Object(
   {
     name: LocalResourceNameSchema,
     type: NemoClawAgentTypeSchema,
     execution: Type.Optional(NemoClawAgentExecutionSchema),
+    auth: Type.Optional(NemoClawAgentAuthConfigSchema),
     inference: Type.Object(
       {
         routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }),
@@ -457,6 +466,9 @@ export type NemoClawRouteOverrides = DeepReadonly<
 >;
 export type NemoClawInferenceRouteConfig = DeepReadonly<
   TypeBoxModule.Type.Static<typeof NemoClawInferenceRouteConfigSchema>
+>;
+export type NemoClawAgentAuthConfig = DeepReadonly<
+  TypeBoxModule.Type.Static<typeof NemoClawAgentAuthConfigSchema>
 >;
 export type NemoClawAgentConfig = DeepReadonly<
   TypeBoxModule.Type.Static<typeof NemoClawAgentConfigSchema>
