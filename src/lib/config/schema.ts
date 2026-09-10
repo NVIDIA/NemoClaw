@@ -82,6 +82,11 @@ function sandboxProblems(
     ),
   );
   for (const [agentIndex, agent] of sandbox.agents.entries()) {
+    if (agent.type === "hermes" && agent.execution !== undefined) {
+      problems.push(
+        `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}/execution is supported only for OpenClaw agents`,
+      );
+    }
     problems.push(
       ...duplicateProblems(
         agent.inference.routes.map(({ name }) => name),

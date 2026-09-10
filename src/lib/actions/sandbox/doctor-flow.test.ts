@@ -221,12 +221,6 @@ function createDoctorHarness(
     .mockReturnValue({
       applies: true,
       ok: true,
-      dirMode: "2770",
-      dirOwner: "sandbox:sandbox",
-      fileMode: "660",
-      fileOwner: "sandbox:sandbox",
-      configDir: "/sandbox/.openclaw",
-      configFile: "openclaw.json",
       issues: [],
     });
   const repairMutableConfigPermsSpy = vi
@@ -852,13 +846,7 @@ describe("runSandboxDoctor flow", () => {
     harness.inspectMutableConfigPermsSpy.mockReturnValue({
       applies: true,
       ok: false,
-      dirMode: "700",
-      dirOwner: "sandbox:sandbox",
-      fileMode: "600",
-      fileOwner: "sandbox:sandbox",
-      configDir: "/sandbox/.openclaw",
-      configFile: "openclaw.json",
-      issues: ["directory mode is 700"],
+      issues: ["directory mode differs from runtime contract"],
     });
     const inferenceRouteHealth = requireDist("./inference-route-health.js");
     vi.mocked(inferenceRouteHealth.probeSandboxInferenceGatewayHealth).mockResolvedValue({

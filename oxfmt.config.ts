@@ -7,6 +7,4 @@ import { oxcIgnorePatterns } from "./oxc.ignore-patterns.ts";
 
 export default defineConfig({
   ignorePatterns: oxcIgnorePatterns,
-  proseWrap: "never",
-  sortPackageJson: false,
 });
