@@ -107,14 +107,18 @@ describe("onboard command options", () => {
       resolve(
         { profile: "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b" },
         {
-          env: { NEMOCLAW_PROVIDER: "ollama" },
+          env: {
+            NEMOCLAW_PROVIDER: "ollama",
+            NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.muse-glimmer-30b.spark-single.v1",
+          },
           listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
           error: (message = "") => errors.push(message),
         },
       ),
     ).toThrow("exit:1");
-    expect(errors.join("\n")).toContain("cannot be combined with inference overrides");
-    expect(errors.join("\n")).toContain("NEMOCLAW_PROVIDER");
+    expect(errors.join("\n")).toContain(
+      "cannot be combined with inference overrides: NEMOCLAW_PROVIDER, NEMOCLAW_LLAMACPP_RECIPE",
+    );
 
     errors.length = 0;
     expect(() =>

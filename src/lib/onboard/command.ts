@@ -10,6 +10,7 @@ import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { NEMOCLAW_SERVING_PRESET_ENV } from "../inference/serving/managed-cluster-discovery";
 import {
   resolveServingProfileSelection,
+  servingBackendProviderKey,
   type ServingProfileListEntry,
   ServingProfileSelectionError,
 } from "../inference/serving/profile-list";
@@ -284,6 +285,7 @@ const PROFILE_CONFLICT_ENV = [
   "NEMOCLAW_MODEL",
   "NEMOCLAW_VLLM_MODEL",
   VLLM_EXTRA_ARGS_ENV,
+  "NEMOCLAW_LLAMACPP_RECIPE",
   "NEMOCLAW_MANAGED_CLUSTER_PEERS",
 ] as const;
 
@@ -398,16 +400,7 @@ function activeServingProfileId(provenance: ServingProfileProvenance | null): st
  * provider wired up, which the caller reports rather than silently ignoring.
  */
 export function servingProfileProviderKey(provenance: ServingProfileProvenance): string | null {
-  switch (provenance.recipe.backend) {
-    // Kept as literals so this module does not take a dependency on the
-    // provider menu; `command.test.ts` asserts they match its exported keys.
-    case "vllm":
-      return "install-vllm";
-    case "install-llama-cpp":
-      return "install-llama-cpp";
-    default:
-      return null;
-  }
+  return servingBackendProviderKey(provenance.recipe.backend);
 }
 
 function resolveResumedServingProfile(
