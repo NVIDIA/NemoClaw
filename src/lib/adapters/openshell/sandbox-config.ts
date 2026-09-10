@@ -91,16 +91,18 @@ function matchers(value: PolicyMatcherJson["params"]): Record<string, ParameterM
 
 function nestedParams(flat: Record<string, ParameterMatcher>): ParameterTree {
   const root: ParameterTree = Object.create(null);
-  const branches = new Map<string, ParameterTree>();
+  const branches = new WeakMap<ParameterTree, Map<string, ParameterTree>>();
   for (const key of Object.keys(flat).sort()) {
     const parts = key.split(".");
     let parent = root;
     for (let index = 0; index < parts.length - 1; index++) {
-      const prefix = parts.slice(0, index + 1).join(".");
-      if (Object.hasOwn(flat, prefix)) return flat;
-      const child: ParameterTree = branches.get(prefix) ?? Object.create(null);
-      parent[parts[index]] = child;
-      branches.set(prefix, child);
+      const part = parts[index];
+      const siblings = branches.get(parent) ?? new Map<string, ParameterTree>();
+      if (Object.hasOwn(parent, part) && !siblings.has(part)) return flat;
+      const child: ParameterTree = siblings.get(part) ?? Object.create(null);
+      parent[part] = child;
+      siblings.set(part, child);
+      branches.set(parent, siblings);
       parent = child;
     }
     parent[parts[parts.length - 1]] = flat[key];

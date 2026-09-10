@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import { createProviders } from "../../src/lib/adapters/openshell/providers";
@@ -192,6 +193,50 @@ describe.skipIf(!hasSdkArtifact())("released OpenShell policy wire safety", () =
     } finally {
       stringify.mockRestore();
     }
+  });
+
+  it.runIf(process.platform !== "win32")("rejects deep MCP paths within a bounded heap", () => {
+    const source = `
+      (async () => {
+        const [{ create }, { SandboxPolicySchema }] = await Promise.all([
+          import("@bufbuild/protobuf"), import("@nvidia/openshell-sdk/raw"),
+        ]);
+        const { serializeSdkPolicy } = require("./src/lib/adapters/openshell/sandbox-config.ts");
+        const params = { ["a.".repeat(16000) + "leaf"]: { glob: "safe" } };
+        const policy = create(SandboxPolicySchema, {
+          version: 1,
+          networkPolicies: { api: {
+            name: "api", endpoints: [{ host: "api.example", port: 443, protocol: "mcp", rules: [{ allow: { params } }] }],
+          } },
+        });
+        await serializeSdkPolicy(policy).then(
+          () => process.exit(2),
+          (error) => { process.stdout.write(error.kind); process.exit(error.kind === "schema" ? 0 : 2); },
+        );
+      })();
+    `;
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        'ulimit -c 0; exec "$@"',
+        "bounded-policy",
+        process.execPath,
+        "--max-old-space-size=256",
+        "--import",
+        "tsx",
+        "--eval",
+        source,
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        timeout: 10_000,
+        env: { PATH: process.env.PATH },
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("schema");
   });
 
   it("rejects YAML expansion beyond the policy read limit", async () => {
