@@ -164,10 +164,29 @@ describe("current Podman runtime provider", () => {
         expect.objectContaining({ operation: "gateway-inspection", engineId: "podman" }),
         expect.objectContaining({ operation: "host-local-inference", engineId: "podman" }),
         expect.objectContaining({ operation: "sandbox-lifecycle", engineId: "podman" }),
-        expect.objectContaining({ operation: "state-mutation", engineId: "podman" }),
         expect.objectContaining({ operation: "workload-cleanup", engineId: "podman" }),
       ]),
     });
+  });
+
+  it("observes gateway topology without preparing host state (#10984)", () => {
+    const environment = {
+      HOME: "/nonexistent/nemoclaw-podman-home",
+      PATH: "/nonexistent/nemoclaw-podman-bin",
+      OPENSHELL_PODMAN_SOCKET: "/nonexistent/run/podman/podman.sock",
+    };
+    const bundle = createCurrentPodmanRuntimeProviderBundle(environment);
+    const input = { environment, platform: "linux" as const };
+
+    expect(bundle.gateway.observeHostRuntime(input)).toMatchObject({
+      providerId: "podman",
+      openShellDriver: "podman",
+      portCheckHost: "0.0.0.0",
+      socketPath: environment.OPENSHELL_PODMAN_SOCKET,
+    });
+    expect(() => bundle.gateway.prepareHostRuntime(input)).toThrow(
+      /Inspecting the native Podman gateway address failed.*ENOENT/u,
+    );
   });
 
   it("projects managed workspace preparation through the lazy production engine", () => {

@@ -325,7 +325,7 @@ function makeFixture(
 }
 
 function runPatch(dist: string) {
-  return spawnSync(process.execPath, ["--experimental-strip-types", PATCH_SCRIPT, dist], {
+  return spawnSync(process.execPath, [PATCH_SCRIPT, dist], {
     encoding: "utf8",
     timeout: 10_000,
   });

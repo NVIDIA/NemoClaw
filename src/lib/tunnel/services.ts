@@ -25,7 +25,6 @@ import {
   type OllamaUnloadResult,
 } from "../inference/ollama/proxy";
 import { buildSubprocessEnv } from "../subprocess-env";
-import * as agentForwardStop from "./agent-forward-stop";
 import { registerTunnelOrigin } from "./allowed-origins";
 import * as gatewayStop from "./gateway-stop";
 import * as sandboxGatewayStop from "./sandbox-gateway-stop";
@@ -584,7 +583,6 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   let gatewayOutcome: gatewayStop.GatewayStopOutcome | undefined;
   if (opts.releaseGatewayPort) {
     if (sandboxName) {
-      agentForwardStop.stopAgentForwardPortsForStop(sandboxName, { info, warn });
       gatewayOutcome = gatewayStop.releaseGatewayPortForStop(sandboxName, { info, warn });
     } else if (!rawSandboxName) {
       // #8952: no registry name — release only when NEMOCLAW_GATEWAY_PORT is
@@ -714,7 +712,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     const sandboxName = resolveTunnelOriginSandboxName(opts);
     if (sandboxName) {
       try {
-        registerTunnelOrigin(sandboxName, tunnelUrl, { info, warn });
+        await registerTunnelOrigin(sandboxName, tunnelUrl, { info, warn });
       } catch (err) {
         warn(`Could not register tunnel origin (${err instanceof Error ? err.message : err}).`);
       }

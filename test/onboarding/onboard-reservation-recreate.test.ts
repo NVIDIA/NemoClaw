@@ -4,10 +4,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { describe, it, onTestFinished } from "vitest";
+import { describe, it, vi } from "vitest";
 import {
   createOnboardProcessWorkspace,
-  runOnboardProcess,
+  runOnboardProcessAsync,
   trailingJsonPayload,
   workspaceEnv,
 } from "../helpers/onboard-child-process-harness";
@@ -17,9 +17,18 @@ const repoRoot = path.join(import.meta.dirname, "../..");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
+const sandboxCommandCliPath = JSON.stringify(
+  path.join(repoRoot, "src", "lib", "adapters", "openshell", "sandbox-command-cli.ts"),
+);
+const managedWorkloadOnboardPath = JSON.stringify(
+  path.join(repoRoot, "src", "lib", "onboard", "managed-workload", "onboard-orchestration.ts"),
+);
+
+// Each case loads CLI source in a child process; limit overlap to bound memory.
+vi.setConfig({ maxConcurrency: 2 });
 
 describe("onboard sandbox recreate reservation safety", () => {
-  it.each([
+  it.concurrent.for([
     {
       name: "preserves a current-session pending route reservation across a not-ready recreate",
       reservationSessionId: "session-owner",
@@ -62,14 +71,12 @@ describe("onboard sandbox recreate reservation safety", () => {
   ] as const)(
     "$name (#6562)",
     { timeout: 60_000 },
-    async ({
-      reservationSessionId,
-      expectedRemoval,
-      replaceBeforeCleanup,
-      expectedRetainedReservation,
-    }) => {
+    async (
+      { reservationSessionId, expectedRemoval, replaceBeforeCleanup, expectedRetainedReservation },
+      context,
+    ) => {
       const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-reservation-survives-");
-      onTestFinished(() => workspace.remove());
+      context.onTestFinished(() => workspace.remove());
       const scriptPath = workspace.path("reservation-survives.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
@@ -98,13 +105,15 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   lifecycleState: "created",
   phase: "NotReady",
 });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
-  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete")) {
     createdSandbox.delete();
+    forwardService.release();
     return { status: 0 };
   }
   const sandboxResult = createdSandbox.run(command);
@@ -114,7 +123,7 @@ runner.runCapture = (command) => {
   const cmd = _n(command);
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -123,6 +132,56 @@ runner.runCapture = (command) => {
   }
   return "";
 };
+const sandboxCommandCli = require(${sandboxCommandCliPath});
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const stdout = runner.runCapture([
+        "openshell", "sandbox", "exec", "--name", request.sandboxName,
+        ...gatewayArgs, "--", ...request.command,
+      ]);
+      return { outcome: { kind: "completed", exitCode: 0 }, stdout: String(stdout || ""), stderr: "" };
+    },
+  };
+};
+const managedWorkloadOnboard = require(${managedWorkloadOnboardPath});
+const createManagedStateVolumeLifecycle =
+  managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle;
+const managedVolumes = new Map();
+managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = (input, deps = {}) =>
+  createManagedStateVolumeLifecycle(input, {
+    ...deps,
+    runContainerEngine: (args) => {
+      const name = String(args.at(-1));
+      if (args[0] === "inspect") {
+        const volume = managedVolumes.get(name);
+        return volume
+          ? { status: 0, stdout: JSON.stringify(volume), stderr: "" }
+          : { status: 1, stdout: "", stderr: "no such volume" };
+      }
+      if (args[0] === "create") {
+        const labels = {};
+        for (let index = 1; index < args.length - 1; index += 1) {
+          if (args[index] !== "--label") continue;
+          const label = String(args[index + 1]);
+          const separator = label.indexOf("=");
+          labels[label.slice(0, separator)] = label.slice(separator + 1);
+          index += 1;
+        }
+        managedVolumes.set(name, { Name: name, Labels: labels });
+        return { status: 0, stdout: name, stderr: "" };
+      }
+      if (args[0] === "rm") {
+        managedVolumes.delete(name);
+        return { status: 0, stdout: name, stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "unexpected volume command" };
+    },
+  });
 require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 
 onboardSession.saveSession(onboardSession.createSession({
@@ -182,7 +241,8 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-  if (command.includes("sandbox create")) {
+  const forwardSpawn = forwardService.recordSpawn(args);
+  if (!forwardSpawn && command.includes("sandbox create")) {
     createdSandbox.recreate(args.flat());
     createdSandbox.setPhase("Ready");
   }
@@ -248,13 +308,14 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = runOnboardProcess([scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         env: workspaceEnv(workspace, {
           NEMOCLAW_NON_INTERACTIVE: "1",
           NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
           NEMOCLAW_SANDBOX_PREBUILD: "1",
         }),
         timeoutMs: 30_000,
+        context,
       });
 
       assert.equal(
@@ -264,6 +325,7 @@ const { createSandbox } = require(${onboardPath});
           result.error?.message ||
           "onboarding subprocess returned an unexpected status",
       );
+      assert.equal(result.error, undefined, "a completed child exit is not a spawn error");
       const payload = trailingJsonPayload<{
         sandboxName: string | null;
         error?: string;
@@ -304,16 +366,16 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
-  it.each([
+  it.concurrent.for([
     { scenario: "same-session", resumes: true },
     { scenario: "foreign-reservation", resumes: false },
     { scenario: "changed-checkpoint", resumes: false },
   ] as const)(
     "recovers a verified create in a new process for $scenario authority (#9833)",
     { timeout: 90_000 },
-    async ({ scenario, resumes }) => {
+    async ({ scenario, resumes }, context) => {
       const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-verified-create-resume-");
-      onTestFinished(() => workspace.remove());
+      context.onTestFinished(() => workspace.remove());
       const scriptPath = workspace.path("verified-create-resume.js");
       const createCountPath = workspace.path("sandbox-create-count.txt");
       const effectCountPath = workspace.path("deferred-effect-count.txt");
@@ -447,6 +509,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxId: "sbx-resumable-create",
   lifecycleState: mode === "resume" ? "created" : "absent",
 });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 let createChild = null;
 runner.run = (command) => {
   const cmd = normalize(command);
@@ -470,10 +533,60 @@ runner.runCapture = (command) => {
   }
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   const mocked = fixtureMocks.mockOnboardRunCapture(command, { defaultCurlOutput: "ok" });
   return mocked === null ? "" : mocked;
 };
+const sandboxCommandCli = require(${sandboxCommandCliPath});
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const stdout = runner.runCapture([
+        "openshell", "sandbox", "exec", "--name", request.sandboxName,
+        ...gatewayArgs, "--", ...request.command,
+      ]);
+      return { outcome: { kind: "completed", exitCode: 0 }, stdout: String(stdout || ""), stderr: "" };
+    },
+  };
+};
+const managedWorkloadOnboard = require(${managedWorkloadOnboardPath});
+const createManagedStateVolumeLifecycle =
+  managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle;
+const managedVolumes = new Map();
+managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = (input, deps = {}) =>
+  createManagedStateVolumeLifecycle(input, {
+    ...deps,
+    runContainerEngine: (args) => {
+      const name = String(args.at(-1));
+      if (args[0] === "inspect") {
+        const volume = managedVolumes.get(name);
+        return volume
+          ? { status: 0, stdout: JSON.stringify(volume), stderr: "" }
+          : { status: 1, stdout: "", stderr: "no such volume" };
+      }
+      if (args[0] === "create") {
+        const labels = {};
+        for (let index = 1; index < args.length - 1; index += 1) {
+          if (args[index] !== "--label") continue;
+          const label = String(args[index + 1]);
+          const separator = label.indexOf("=");
+          labels[label.slice(0, separator)] = label.slice(separator + 1);
+          index += 1;
+        }
+        managedVolumes.set(name, { Name: name, Labels: labels });
+        return { status: 0, stdout: name, stderr: "" };
+      }
+      if (args[0] === "rm") {
+        managedVolumes.delete(name);
+        return { status: 0, stdout: name, stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "unexpected volume command" };
+    },
+  });
 
 const realProcessKill = process.kill.bind(process);
 process.kill = (pid, signal) => {
@@ -485,7 +598,8 @@ process.kill = (pid, signal) => {
 };
 childProcess.spawn = (...args) => {
   const command = normalize([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-  if (command.includes("sandbox create")) {
+  const forwardSpawn = forwardService.recordSpawn(args);
+  if (!forwardSpawn && command.includes("sandbox create")) {
     fs.appendFileSync(createCountPath, "create\n");
     createdSandbox.create(args.flat());
   }
@@ -561,9 +675,10 @@ createArgs[16] = async () => {
         NEMOCLAW_SANDBOX_PREBUILD: "1",
       });
 
-      const first = runOnboardProcess([scriptPath, "seed", scenario], {
+      const first = await runOnboardProcessAsync([scriptPath, "seed", scenario], {
         env,
         timeoutMs: 40_000,
+        context,
       });
       assert.equal(first.status, 0, first.stderr || first.error?.message);
       const retained = trailingJsonPayload<{
@@ -588,9 +703,10 @@ createArgs[16] = async () => {
         retained.registryEntry.lifecycleLiveIdentityFingerprint,
       );
 
-      const second = runOnboardProcess([scriptPath, "resume", scenario], {
+      const second = await runOnboardProcessAsync([scriptPath, "resume", scenario], {
         env,
         timeoutMs: 40_000,
+        context,
       });
       assert.equal(second.status, 0, second.stderr || second.error?.message);
       const recovered = trailingJsonPayload<{

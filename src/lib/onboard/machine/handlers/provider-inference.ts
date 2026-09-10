@@ -104,6 +104,7 @@ export interface ProviderSelectionResult {
   compatibleEndpointReasoning: string | null;
   compatibleEndpointReasoningEffort: string | null;
   nimContainer: string | null;
+  servingProfileProvenance?: ServingProfileProvenance | null;
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
@@ -183,10 +184,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       ) => GatewayRouteDiscoveryConstraints,
       canProbeRoute?: (provider: string) => boolean,
       recoverySessionId?: string | null,
-      revalidateSandboxIdentity?: (
-        route: ProviderInferenceProbeRoute,
-        operation: string,
-      ) => void,
+      revalidateSandboxIdentity?: (route: ProviderInferenceProbeRoute, operation: string) => void,
     ): Promise<ProviderSelectionResult>;
     setupInference(
       sandboxName: string | null,
@@ -261,7 +259,9 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string,
       endpointUrl: string | null,
       credentialEnv: string | null,
-    ): { ok: boolean; endpointUrl: string; message?: string; status?: number };
+    ):
+      | { ok: boolean; endpointUrl: string; message?: string; status?: number }
+      | Promise<{ ok: boolean; endpointUrl: string; message?: string; status?: number }>;
     reserveSandboxInferenceRoute(
       sandboxName: string,
       route: {
@@ -618,7 +618,9 @@ function hostLocalInferenceSetupOptions(
         : selected.request.service === "ollama"
           ? input.allowPublishedResume
             ? hasPublishedResume && !hasInterruptedRecovery
-            : !hasPublishedResume && !hasInterruptedRecovery
+            : !hasPublishedResume &&
+              (!hasInterruptedRecovery ||
+                (application === "hermes" && selected.runtimeProviderId === "podman"))
           : input.allowPublishedResume
             ? !(hasPublishedResume && hasInterruptedRecovery)
             : !hasPublishedResume && !hasInterruptedRecovery;
@@ -1158,6 +1160,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let compatibleEndpointReasoning = initial.compatibleEndpointReasoning;
   let compatibleEndpointReasoningEffort = initial.compatibleEndpointReasoningEffort;
   let nimContainer = initial.nimContainer;
+  let servingProfileProvenance = session?.servingProfileProvenance ?? null;
   const webSearchConfig = initial.webSearchConfig;
   let forceProviderSelection = initialForceProviderSelection;
   let allowToolsIncompatible = false;
@@ -1339,11 +1342,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         sandboxName,
         deps.ensureManagedLlamaCppResumeReady,
       );
-      const recovery = await deps.ensureResumeProviderReady(
-        gatewayName,
-        provider,
-        credentialEnv,
-      );
+      const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
@@ -1486,6 +1485,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       compatibleEndpointReasoning = selection.compatibleEndpointReasoning;
       compatibleEndpointReasoningEffort = selection.compatibleEndpointReasoningEffort;
       nimContainer = selection.nimContainer;
+      servingProfileProvenance = selection.servingProfileProvenance ?? null;
       allowToolsIncompatible = selection.allowToolsIncompatible === true;
       skipHostInferenceSmoke = selection.skipHostInferenceSmoke === true;
       reuseGatewayCredentialWithoutLocalKey =
@@ -1566,6 +1566,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           compatibleEndpointReasoning,
           compatibleEndpointReasoningEffort,
           nimContainer,
+          servingProfileProvenance,
           stationExpressModelIdentity: vllmModelIdentity,
         }),
       );
@@ -1705,6 +1706,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             compatibleEndpointReasoning,
             compatibleEndpointReasoningEffort,
             nimContainer,
+            servingProfileProvenance,
             hermesToolGateways,
           }),
         );
@@ -1743,7 +1745,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               );
               deps.exitProcess(1);
             }
-            const reupserted = deps.reupsertRoutedProvider(
+            const reupserted = await deps.reupsertRoutedProvider(
               gatewayName,
               selectedProvider,
               endpointUrl,
@@ -1826,6 +1828,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           compatibleEndpointReasoning,
           compatibleEndpointReasoningEffort,
           nimContainer,
+          servingProfileProvenance,
           hermesToolGateways,
         }),
       );
@@ -1898,6 +1901,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             compatibleEndpointReasoning,
             compatibleEndpointReasoningEffort,
             nimContainer,
+            servingProfileProvenance,
             stationExpressModelIdentity: vllmModelIdentity,
           }),
         );
@@ -1990,6 +1994,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           compatibleEndpointReasoning,
           compatibleEndpointReasoningEffort,
           nimContainer,
+          servingProfileProvenance,
           stationExpressModelIdentity: vllmModelIdentity,
         }),
       );
@@ -2003,6 +2008,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         compatibleEndpointReasoning,
         compatibleEndpointReasoningEffort,
         nimContainer,
+        servingProfileProvenance,
         hermesToolGateways,
         ...hostLocalInferenceSessionRoute(hostLocalInferenceRouteOnly, endpointUrl, endpointSource),
         // The forced #6294/#6289 heal succeeded: the gateway registration now

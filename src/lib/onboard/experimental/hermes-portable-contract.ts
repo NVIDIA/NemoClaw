@@ -10,16 +10,14 @@ import type { AgentDefinition, ManifestRecord } from "../../agent/definition-typ
 import {
   parseManifestRecord,
   readBoolean,
-  readConfigShieldsFiles,
   readHealthProbe,
   readObject,
   readStateFiles,
-  readStateLockPlanInImage,
   readString,
   readUserManagedFiles,
 } from "../../agent/manifest-readers";
 import { readAgentRuntime } from "../../agent/runtime-manifest";
-import { buildStateLockPlan, readStateDirectories } from "../../agent/state-directory-contract";
+import { readStateDirectories } from "../../agent/state-directory-contract";
 import { readWebAuth } from "../../agent/web-auth";
 import {
   buildCurrentHermesPortableRuntimeEnvArgs,
@@ -47,6 +45,11 @@ const ALLOWED_ENV = new Set([
   "NEMOCLAW_SANDBOX_NAME",
   "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
 ]);
+// One-way compatibility bridge for the exact additive skills metadata change in #11248.
+const REVIEWED_MANIFEST_TRANSITION = Object.freeze({
+  installed: "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2",
+  current: "e78822837d5530f61a26ea1d554d7f9b21be13e3e223e294f0999187dc0fa71e",
+});
 
 export interface ResolveHermesPortableStartupContractInput {
   readonly agent: AgentDefinition;
@@ -146,7 +149,6 @@ function manifestConfigPaths(config: ManifestRecord | undefined) {
     configFile: readString(config ?? {}, "config_file") ?? "openclaw.json",
     envFile: readString(config ?? {}, "env_file") ?? null,
     format: readString(config ?? {}, "format") ?? "json",
-    shieldsFiles: readConfigShieldsFiles(config),
   };
 }
 
@@ -164,8 +166,6 @@ function manifestProjection(record: ManifestRecord) {
     configPaths: manifestConfigPaths(config),
     stateDirectories,
     stateFiles: readStateFiles(record) ?? [],
-    stateLockPlan: buildStateLockPlan(stateDirectories),
-    stateLockPlanInImage: readStateLockPlanInImage(record),
     userManagedFiles: readUserManagedFiles(record) ?? [],
   };
 }
@@ -182,8 +182,6 @@ function agentProjection(agent: AgentDefinition): ReturnType<typeof manifestProj
     configPaths: agent.configPaths,
     stateDirectories: agent.stateDirectories,
     stateFiles: agent.stateFiles,
-    stateLockPlan: agent.stateLockPlan,
-    stateLockPlanInImage: agent.stateLockPlanInImage,
     userManagedFiles: agent.userManagedFiles,
   };
 }
@@ -310,12 +308,26 @@ function stateIdentity(projection: ReturnType<typeof manifestProjection>): strin
         configPaths: projection.configPaths,
         stateDirectories: projection.stateDirectories,
         stateFiles: projection.stateFiles,
-        stateLockPlan: projection.stateLockPlan,
-        stateLockPlanInImage: projection.stateLockPlanInImage,
         userManagedFiles: projection.userManagedFiles,
       }),
     ),
   );
+}
+
+function startupAuthorityMatches(
+  current: HermesPortableStartupContract,
+  installed: HermesPortableStartupContract,
+): boolean {
+  if (isDeepStrictEqual(current, installed)) return true;
+  if (
+    installed.manifestSha256 !== REVIEWED_MANIFEST_TRANSITION.installed ||
+    current.manifestSha256 !== REVIEWED_MANIFEST_TRANSITION.current
+  ) {
+    return false;
+  }
+  const { manifestSha256: _currentManifest, ...currentAuthority } = current;
+  const { manifestSha256: _installedManifest, ...installedAuthority } = installed;
+  return isDeepStrictEqual(currentAuthority, installedAuthority);
 }
 
 /** Derive the complete lifecycle descriptor from current manifest and launch inputs. */
@@ -330,7 +342,7 @@ export function resolveHermesPortableStartupContract(
   }
   if (
     manifest.name !== "hermes" ||
-    manifest.expectedVersion !== "0.19.0" ||
+    manifest.expectedVersion !== "0.20.6" ||
     manifest.gatewayCommand !== "hermes gateway run" ||
     manifest.runtime.interactive_command !== "hermes" ||
     manifest.healthProbe?.url !== "http://localhost:8642/health" ||
@@ -388,7 +400,7 @@ export function assertCurrentHermesPortableStoredStartupContract(
     sandboxName,
     startupArgv: currentArgv,
   });
-  if (!isDeepStrictEqual(current, actual)) fail("current startup authority disagrees");
+  if (!startupAuthorityMatches(current, actual)) fail("current startup authority disagrees");
 }
 
 /** Re-render from current manifest, profile, and launch inputs before lifecycle mutation. */
@@ -397,6 +409,6 @@ export function assertCurrentHermesPortableStartupContract(
   input: ResolveHermesPortableStartupContractInput,
 ): HermesPortableStartupContract {
   const current = resolveHermesPortableStartupContract(input);
-  if (!isDeepStrictEqual(current, expected)) fail("current startup authority disagrees");
+  if (!startupAuthorityMatches(current, expected)) fail("current startup authority disagrees");
   return current;
 }

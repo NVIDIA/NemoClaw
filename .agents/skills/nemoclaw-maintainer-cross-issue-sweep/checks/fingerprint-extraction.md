@@ -65,8 +65,8 @@ Fingerprint JSON shape:
 ```json
 {
   "pr": 2851,
-  "files": ["src/lib/shields.ts", "Dockerfile.base"],
-  "symbols": ["normalize_mutable_config_perms", "applyStateDirLockMode"],
+  "files": ["src/lib/sandbox/mutable-config-perms.ts", "Dockerfile.base"],
+  "symbols": ["normalize_mutable_config_perms", "repairMutableConfigPerms"],
   "error_strings": ["EACCES on .openclaw"],
   "primary_issue": 2681
 }

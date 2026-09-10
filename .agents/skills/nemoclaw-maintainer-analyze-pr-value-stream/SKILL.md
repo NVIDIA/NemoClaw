@@ -22,7 +22,7 @@ Do not run a reduced or latest-revision-only analysis. The latest-revision water
 ## Run the analysis
 
 ```bash
-node --experimental-strip-types --no-warnings \
+node --no-warnings \
   .agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/analyze-pr-value-stream.mts \
   --workdir "$PWD" \
   --number <pull-request-number>

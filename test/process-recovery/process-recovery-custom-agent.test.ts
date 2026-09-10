@@ -12,6 +12,9 @@ const requireSource = createRequire(import.meta.url);
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
   "../../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
+const forwardService = requireSource(
+  "../../src/lib/adapters/openshell/forward-service.ts",
+) as typeof import("../../src/lib/adapters/openshell/forward-service.js");
 
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -92,14 +95,14 @@ function spawnResultForCommand(
       : { status: 1, stdout: "", stderr: "" };
 }
 
-function withFakeOpenshellBinary<T>(fn: () => T): T {
+async function withFakeOpenshellBinary<T>(fn: () => Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
   const bin = path.join(dir, "openshell");
   const previous = process.env.NEMOCLAW_OPENSHELL_BIN;
   fs.writeFileSync(bin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   process.env.NEMOCLAW_OPENSHELL_BIN = bin;
   try {
-    return fn();
+    return await fn();
   } finally {
     restoreEnvValue("NEMOCLAW_OPENSHELL_BIN", previous);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -107,7 +110,7 @@ function withFakeOpenshellBinary<T>(fn: () => T): T {
 }
 
 describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
-  it("retains SSH health-probe compatibility for an explicitly loaded custom gateway agent", () => {
+  it("retains SSH health-probe compatibility for an explicitly loaded custom gateway agent", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
     const registry = requireSource("../../src/lib/state/registry.ts");
@@ -144,15 +147,15 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
       dashboardPort: 19000,
     });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
-      output: `SANDBOX  BIND  PORT  PID  STATUS
-custom-box  127.0.0.1  19000  12345  running`,
+      output: "SANDBOX  BIND  PORT  PID  STATUS",
     });
 
-    expect(
+    await expect(
       withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("custom-box", { quiet: true })),
-    ).toEqual({
+    ).resolves.toEqual({
       checked: true,
       wasRunning: true,
       recovered: false,
@@ -163,14 +166,13 @@ custom-box  127.0.0.1  19000  12345  running`,
     expect(sshCommands[0]).not.toContain("gateway run");
   });
 
-  it("recovers a stopped custom gateway agent over SSH fallback", () => {
+  it("recovers a stopped custom gateway agent over SSH fallback", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
     const registry = requireSource("../../src/lib/state/registry.ts");
     const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.ts");
     const childProcess = requireSource("node:child_process");
-    const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
-custom-box  127.0.0.1  19000  12345  running`;
+    const runningForward = "SANDBOX  BIND  PORT  PID  STATUS";
     const sshCommands: string[] = [];
     const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
     const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
@@ -190,8 +192,7 @@ custom-box  127.0.0.1  19000  12345  running`;
       vi.spyOn(childProcess, "spawnSync").mockImplementation(
         (command: unknown, rawArgs: unknown) => {
           healthProbeCalls += Number(
-            String(command).endsWith("openshell") &&
-              getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl"),
+            command === "ssh" && getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl"),
           );
           const setRecovered = (value: boolean): void => {
             recovered = value;
@@ -219,17 +220,18 @@ custom-box  127.0.0.1  19000  12345  running`;
         dashboardPort: 19000,
       });
       vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+      vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
         output: runningForward,
       });
       vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
 
-      expect(
+      await expect(
         withFakeOpenshellBinary(() =>
           checkAndRecoverSandboxProcesses("custom-box", { quiet: true }),
         ),
-      ).toEqual({
+      ).resolves.toEqual({
         checked: true,
         wasRunning: false,
         recovered: true,
@@ -247,7 +249,7 @@ custom-box  127.0.0.1  19000  12345  running`;
     }
   });
 
-  it("fails closed when a persisted non-OpenClaw manifest cannot be loaded", () => {
+  it("fails closed when a persisted non-OpenClaw manifest cannot be loaded", async () => {
     const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
     const registry = requireSource("../../src/lib/state/registry.ts");
     const childProcess = requireSource("node:child_process");
@@ -270,11 +272,14 @@ custom-box  127.0.0.1  19000  12345  running`;
       dashboardPort: 19000,
     });
 
-    expect(
+    await expect(
       withFakeOpenshellBinary(() =>
-        checkAndRecoverSandboxProcesses("custom-box", { quiet: false }),
+        checkAndRecoverSandboxProcesses("custom-box", {
+          quiet: false,
+          isSandboxGatewayRunningImpl: async () => false,
+        }),
       ),
-    ).toEqual({
+    ).resolves.toEqual({
       checked: true,
       wasRunning: false,
       recovered: false,

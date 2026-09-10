@@ -50,7 +50,6 @@ import {
   RuntimeProviderSelectionError,
   requireRuntimeProviderHostLocalInferenceOperation,
   requireRuntimeProviderReadOnlyHostMounts,
-  requireRuntimeProviderStateMutationSurface,
   resolveRuntimeProviderBundle,
 } from "./registry";
 
@@ -60,6 +59,18 @@ const PORTABLE_PROFILE = {
     platforms: ["linux/amd64", "linux/arm64"],
     startupProfileContractVersions: [1],
     capabilityContractVersions: [1],
+  },
+  portableAgentRuntimeSupport: {
+    exactDigestReferences: true,
+    agents: ["hermes"],
+    platforms: ["linux/amd64", "linux/arm64"],
+    contractVersions: [1],
+    capabilityContractVersions: [1],
+    tokenizedStartupCommands: true,
+    openshellSandboxCommand: true,
+    openshellNonRootIdentity: true,
+    openshellWorkspaceOwnership: true,
+    ownerOnlyPrivateState: true,
   },
   hostArchitectures: ["amd64", "arm64"],
   managedImageSelectionPolicy: "require-managed",
@@ -141,7 +152,6 @@ describe("RuntimeProviderBundle registry contract", () => {
             "hostLocalInference",
             "lifecycle",
             "mutationAuthority",
-            "stateMutation",
             "bootstrap",
             "snapshot",
             "recovery",
@@ -152,10 +162,6 @@ describe("RuntimeProviderBundle registry contract", () => {
       ).toBe(true);
       const managedLocalProvider = providerId === "docker" || providerId === "podman";
       expect(bundle.bootstrap).toMatchObject({ supported: managedLocalProvider });
-      expect(bundle.stateMutation).toMatchObject({
-        supported: managedLocalProvider,
-        ...(managedLocalProvider ? { contractVersion: 2 } : {}),
-      });
       expect(bundle.snapshot).toMatchObject(
         managedLocalProvider
           ? {
@@ -169,6 +175,7 @@ describe("RuntimeProviderBundle registry contract", () => {
           : { supported: false },
       );
       expect(bundle.recovery).toMatchObject({ supported: providerId === "podman" });
+      expect(bundle.workload.profile.portableAgentRuntimeSupport).toBeUndefined();
     });
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.capabilities.hostLocalInference).toBe(true);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.hostLocalInference).toMatchObject({
@@ -181,12 +188,6 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes?.hostLocalInference).toMatchObject({
       supported: false,
     });
-    expect(
-      requireRuntimeProviderStateMutationSurface(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!),
-    ).toMatchObject({ providerId: "docker", supported: true, contractVersion: 2 });
-    expect(() =>
-      requireRuntimeProviderStateMutationSurface(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes!),
-    ).toThrow(/no state-mutation implementation/u);
   });
 
   it("declares and enforces read-only host-mount support per runtime provider", () => {
@@ -242,6 +243,10 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(Object.isFrozen(registry)).toBe(true);
     expect(Object.isFrozen(registered)).toBe(true);
     expect(Object.isFrozen(registered.workload.profile)).toBe(true);
+    expect(Object.isFrozen(registered.workload.profile.portableAgentRuntimeSupport)).toBe(true);
+    expect(Object.isFrozen(registered.workload.profile.portableAgentRuntimeSupport!.agents)).toBe(
+      true,
+    );
     const support = registered.workload.profile.support;
     expect(support).not.toBeNull();
     expect(Object.isFrozen(support!.platforms)).toBe(true);
@@ -257,6 +262,27 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(() => {
       (registered.capabilities as { directLifecycle: boolean }).directLifecycle = false;
     }).toThrow(TypeError);
+  });
+
+  it("rejects incomplete portable runtime capability advertisements (#11079)", () => {
+    const bundle = mxcBundle();
+    const support = bundle.workload.profile.portableAgentRuntimeSupport!;
+    const { openshellSandboxCommand: _openshellSandboxCommand, ...incomplete } = support;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "workload", {
+            ...bundle.workload,
+            profile: {
+              ...bundle.workload.profile,
+              portableAgentRuntimeSupport: incomplete,
+            },
+          }),
+        ],
+      ]),
+    ).toThrow(/must declare portable agent runtime openshellSandboxCommand/u);
   });
 
   it("registers an MXC-style managed-bootstrap provider through the bundle surface", () => {
@@ -368,7 +394,6 @@ describe("RuntimeProviderBundle registry contract", () => {
     "hostLocalInference",
     "lifecycle",
     "mutationAuthority",
-    "stateMutation",
     "bootstrap",
     "snapshot",
     "recovery",
@@ -418,10 +443,10 @@ describe("RuntimeProviderBundle registry contract", () => {
     ],
     [
       "gateway",
-      (bundle: RuntimeProviderBundle) => ({
-        ...bundle.gateway,
-        launcher: "invalid",
-      }),
+      (bundle: RuntimeProviderBundle) => {
+        const { observeHostRuntime: _observeHostRuntime, ...incomplete } = bundle.gateway;
+        return incomplete;
+      },
     ],
     [
       "workload",
@@ -450,14 +475,6 @@ describe("RuntimeProviderBundle registry contract", () => {
       (bundle: RuntimeProviderBundle) => ({
         ...bundle.mutationAuthority,
         operations: ["not-an-operation"],
-      }),
-    ],
-    [
-      "stateMutation",
-      (bundle: RuntimeProviderBundle) => ({
-        ...bundle.stateMutation,
-        supported: true,
-        contractVersion: 2,
       }),
     ],
     [
@@ -512,33 +529,6 @@ describe("RuntimeProviderBundle registry contract", () => {
           ["mxc", replaceSurface(bundle, surface, mutate(bundle))],
         ]),
       ).toThrow(RuntimeProviderRegistrationError);
-    },
-  );
-
-  it.each(["publish", "rollback", "release"] as const)(
-    "rejects state-mutation v2 without %s",
-    (operation) => {
-      const bundle = mxcBundle();
-      const supported = {
-        providerId: "mxc",
-        supported: true,
-        contractVersion: 2,
-        acquire: vi.fn(),
-        assertFenced: vi.fn(),
-        publish: vi.fn(),
-        rollback: vi.fn(),
-        activate: vi.fn(),
-        release: vi.fn(),
-        recover: vi.fn(),
-      };
-      const incomplete = { ...supported } as Record<string, unknown>;
-      Reflect.deleteProperty(incomplete, operation);
-
-      expect(() =>
-        createRuntimeProviderBundleRegistry([
-          ["mxc", replaceSurface(bundle, "stateMutation", incomplete)],
-        ]),
-      ).toThrow(new RegExp(`stateMutation\\.${operation} must be a function`, "u"));
     },
   );
 
@@ -676,6 +666,72 @@ describe("RuntimeProviderBundle registry contract", () => {
       ]),
     ).toThrow(/duplicate operation identities/u);
   });
+
+  it("requires an explicit boolean gateway readiness owner", () => {
+    const bundle = mxcBundle();
+    const { ownsHostReadiness: _ownsHostReadiness, ...gatewayWithoutReadinessOwner } =
+      bundle.gateway;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["mxc", replaceSurface(bundle, "gateway", gatewayWithoutReadinessOwner)],
+      ]),
+    ).toThrow(/gateway\.ownsHostReadiness must be a boolean/u);
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "gateway", {
+            ...bundle.gateway,
+            ownsHostReadiness: "true",
+          }),
+        ],
+      ]),
+    ).toThrow(/gateway\.ownsHostReadiness must be a boolean/u);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.gateway.ownsHostReadiness).toBe(false);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.gateway.ownsHostReadiness).toBe(true);
+  });
+
+  it("requires provider-owned readiness observation from a gateway readiness owner (#10984)", () => {
+    const bundle = CURRENT_RUNTIME_PROVIDER_BUNDLES.podman!;
+    const { observeOwnedGateway: _observeOwnedGateway, ...gatewayWithoutObservation } =
+      bundle.gateway;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["podman", replaceSurface(bundle, "gateway", gatewayWithoutObservation)],
+      ]),
+    ).toThrow(/gateway\.observeOwnedGateway must be a function/u);
+  });
+
+  it("rejects provider-owned readiness observation from a non-owning gateway (#10984)", () => {
+    const bundle = mxcBundle();
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "gateway", {
+            ...bundle.gateway,
+            observeOwnedGateway: vi.fn(),
+          }),
+        ],
+      ]),
+    ).toThrow(/observeOwnedGateway requires gateway\.ownsHostReadiness/u);
+  });
+
+  it.each(["observeHostRuntime", "prepareHostRuntime"] as const)(
+    "rejects a gateway surface without %s",
+    (method) => {
+      const bundle = mxcBundle();
+      const { [method]: _missing, ...incomplete } = bundle.gateway;
+
+      expect(() =>
+        createRuntimeProviderBundleRegistry([
+          ["mxc", replaceSurface(bundle, "gateway", incomplete)],
+        ]),
+      ).toThrow(new RegExp(`gateway\\.${method} must be a function`, "u"));
+    },
+  );
 
   it("rejects an unsupported host-local-inference capability with an actionable provider error", () => {
     const bundle = mxcBundle();
@@ -1060,7 +1116,6 @@ describe("socket-free MXC action contract", () => {
       const getSandbox = vi.fn(() => entry);
       const stopSandboxChannels = vi.fn();
       const teardownSandboxDashboardForward = vi.fn();
-      const cleanupShieldsArtifacts = vi.fn();
       const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
 
       await expect(
@@ -1083,7 +1138,6 @@ describe("socket-free MXC action contract", () => {
       expect(() => requireInferenceSetRuntimeAuthority(entry, providers)).not.toThrow();
       await expect(
         executeSandboxDestroy({
-          cleanupShieldsArtifacts,
           force: false,
           runOpenshell,
           sandbox: entry,
@@ -1092,7 +1146,6 @@ describe("socket-free MXC action contract", () => {
           stopInferenceResources: vi.fn(),
           runtimeProviders: providers,
           deps: {
-            readTimerMarker: () => null,
             wipeSandboxState: vi.fn(),
           },
         }),
@@ -1122,7 +1175,6 @@ describe("socket-free MXC action contract", () => {
       expect(recordEvent.mock.invocationCallOrder[prepareDestroyIndex]).toBeLessThan(
         runOpenshell.mock.invocationCallOrder.at(-1)!,
       );
-      expect(cleanupShieldsArtifacts).toHaveBeenCalledWith(sandboxName);
       expect(stopSandboxChannels).toHaveBeenCalledWith(
         sandboxName,
         expect.objectContaining({

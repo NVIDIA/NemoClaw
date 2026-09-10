@@ -11,6 +11,7 @@ import {
   applyGeneratedPolicy,
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
+  getPolicyGatewayState,
   getRegisteredGeneratedPolicy,
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
@@ -29,6 +30,10 @@ const entry: McpBridgeEntry = {
   policyName: buildMcpBridgePolicyName("github"),
   addedAt: "2026-08-27T00:00:00.000Z",
 };
+const runtimeSelection = {
+  gatewayName: "nemoclaw-9090",
+  workspace: "default",
+};
 
 beforeEach(() => vi.restoreAllMocks());
 
@@ -42,9 +47,93 @@ describe("generated MCP policy", () => {
     );
   });
 
+  it("renders denied tool names and globs as tools/call deny rules (#11115)", () => {
+    const managed = getRegisteredGeneratedPolicy("alpha", {
+      ...entry,
+      denyTools: ["delete_*", "doordash_submit_order"],
+    });
+    const parsed = YAML.parse(managed?.content ?? "") as {
+      network_policies: Record<
+        string,
+        { endpoints: Array<{ deny_rules?: Array<{ method: string; tool: string }> }> }
+      >;
+    };
+
+    expect(managed?.name).toBe("mcp-bridge-github");
+    expect(parsed.network_policies.mcp_bridge_github.endpoints[0].deny_rules).toEqual([
+      { method: "tools/call", tool: "delete_*" },
+      { method: "tools/call", tool: "doordash_submit_order" },
+    ]);
+  });
+
+  it("matches live policy against persisted denied-tool intent (#11115)", () => {
+    const stateSpy = vi.spyOn(policies, "getPresetContentGatewayState").mockImplementation(
+      (_sandboxName, content) => {
+        const parsed = YAML.parse(content) as {
+          network_policies: Record<
+            string,
+            { endpoints: Array<{ deny_rules?: Array<{ method: string; tool: string }> }> }
+          >;
+        };
+        return parsed.network_policies.mcp_bridge_github.endpoints[0].deny_rules?.[0]?.tool ===
+          "delete_*"
+          ? "match"
+          : "drift";
+      },
+    );
+
+    expect(
+      getPolicyGatewayState("alpha", { ...entry, denyTools: ["delete_*"] }, runtimeSelection),
+    ).toBe("match");
+    expect(stateSpy).toHaveBeenCalledOnce();
+  });
+
+  it("renders journaled replacement intent for restart recovery (#11115)", () => {
+    const managed = getRegisteredGeneratedPolicy("alpha", {
+      ...entry,
+      denyTools: ["old_tool"],
+      pendingDenyTools: ["replacement_*"],
+    });
+    const parsed = YAML.parse(managed?.content ?? "") as {
+      network_policies: Record<
+        string,
+        { endpoints: Array<{ deny_rules?: Array<{ method: string; tool: string }> }> }
+      >;
+    };
+
+    expect(parsed.network_policies.mcp_bridge_github.endpoints[0].deny_rules).toEqual([
+      { method: "tools/call", tool: "replacement_*" },
+    ]);
+  });
+
+  it("keeps policy drift distinct from unavailable inspection (#11115)", () => {
+    vi.spyOn(policies, "getPresetContentGatewayState")
+      .mockReturnValueOnce("drift")
+      .mockReturnValueOnce(null);
+
+    expect(
+      getPolicyGatewayState("alpha", { ...entry, denyTools: ["delete_*"] }, runtimeSelection),
+    ).toBe("drift");
+    expect(getPolicyGatewayState("alpha", entry, runtimeSelection)).toBeNull();
+  });
+
+  it("omits deny_rules when the bridge has no denied tools (#11115)", () => {
+    const parsed = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        entry.server,
+        entry.url,
+        "mcporter",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+      ),
+    ) as { network_policies: Record<string, { endpoints: Array<Record<string, unknown>> }> };
+
+    expect(parsed.network_policies.mcp_bridge_github.endpoints[0]).not.toHaveProperty("deny_rules");
+  });
+
   it("applies directly to live OpenShell policy without a custom-policy registry row", () => {
     const livePolicy: { network_policies: Record<string, unknown> } = { network_policies: {} };
-    vi.spyOn(policies, "applyPresetContent").mockImplementation(
+    const applySpy = vi.spyOn(policies, "applyPresetContent").mockImplementation(
       (_sandboxName, _presetName, content) => {
         Object.assign(
           livePolicy.network_policies,
@@ -53,7 +142,7 @@ describe("generated MCP policy", () => {
         return true;
       },
     );
-    vi.spyOn(policies, "getPresetContentGatewayState").mockImplementation(
+    const stateSpy = vi.spyOn(policies, "getPresetContentGatewayState").mockImplementation(
       (_sandboxName, content) => {
         const expected = (YAML.parse(content) as typeof livePolicy).network_policies;
         return Object.keys(expected).every((key) => key in livePolicy.network_policies)
@@ -62,7 +151,12 @@ describe("generated MCP policy", () => {
       },
     );
 
-    applyGeneratedPolicy("alpha", entry, { addresses: ["8.8.8.8"] });
+    applyGeneratedPolicy(
+      "alpha",
+      entry,
+      { addresses: ["8.8.8.8"] },
+      { runtimeSelection },
+    );
 
     expect(livePolicy.network_policies.mcp_bridge_github).toMatchObject({
       endpoints: [
@@ -72,6 +166,18 @@ describe("generated MCP policy", () => {
         }),
       ],
     });
+    expect(applySpy).toHaveBeenCalledWith(
+      "alpha",
+      entry.policyName,
+      expect.any(String),
+      expect.objectContaining({ runtimeSelection }),
+    );
+    expect(stateSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(String),
+      undefined,
+      runtimeSelection,
+    );
   });
 
   it("removes generated content from the live policy", () => {
@@ -88,7 +194,7 @@ describe("generated MCP policy", () => {
         ).network_policies.mcp_bridge_github,
       },
     };
-    vi.spyOn(policies, "removePreset").mockImplementation(
+    const removeSpy = vi.spyOn(policies, "removePreset").mockImplementation(
       (_sandboxName, _presetName, options) => {
         const removal = (YAML.parse(options?.presetContent ?? "") as typeof livePolicy)
           .network_policies;
@@ -98,14 +204,24 @@ describe("generated MCP policy", () => {
       },
     );
 
-    removeGeneratedPolicy("alpha", entry);
+    removeGeneratedPolicy("alpha", entry, { runtimeSelection });
 
     expect(livePolicy.network_policies).not.toHaveProperty("mcp_bridge_github");
+    expect(removeSpy).toHaveBeenCalledWith(
+      "alpha",
+      entry.policyName,
+      expect.objectContaining({ runtimeSelection }),
+    );
   });
 
   it("refuses generated policy without exact public address pins", () => {
     expect(() =>
-      applyGeneratedPolicy("alpha", { ...entry, allowedIps: [] }, { addresses: [] }),
+      applyGeneratedPolicy(
+        "alpha",
+        { ...entry, allowedIps: [] },
+        { addresses: [] },
+        { runtimeSelection },
+      ),
     ).toThrow(/without exact public address pins/);
   });
 

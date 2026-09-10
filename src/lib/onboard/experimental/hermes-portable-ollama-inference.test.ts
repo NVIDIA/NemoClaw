@@ -2,38 +2,37 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type {
-  PodmanExecutableAuthorityDeps,
-  PodmanExecutableStat,
-  PodmanSocketAuthority,
-} from "../../adapters/podman";
-import type {
-  ContainerEngineCommandCapture,
-  ContainerEngineCommandResult,
-} from "../../adapters/container-engine";
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
-import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { createSession } from "../../state/onboard-session";
 import { makeDeps, makeHostState, unexpected } from "../__test-helpers__/setup-nim-flow";
+import { runOnboardCommand } from "../command";
 import { GatewayStateConflictError } from "../gateway-management";
+import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "../resume-hint";
 import { handleProviderInferenceState } from "../machine/handlers/provider-inference";
 import { baseOptions, createDeps } from "../machine/handlers/provider-inference.test-support";
 import {
   type HostLocalInferenceGatewayMutation,
+  type HostLocalInferenceStartupSelection,
   prepareHostLocalInferenceStartup,
 } from "../runtime-provider/host-local-inference-routing";
-import { createPortableOnboardEnvironmentScope } from "../session-bootstrap";
 import type { SetupInference } from "../setup-inference";
 import { createSetupNim } from "../setup-nim-flow";
-import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
+import {
+  createDirectSetupInferenceHarnessFactory,
+  createHermesPortableInferenceFixture,
+  FRESH_PORTABLE_INFERENCE_INPUT as freshPortableInput,
+  PORTABLE_INFERENCE_GPU_DEVICE as GPU_DEVICE,
+  PORTABLE_INFERENCE_NETWORK_ID as NETWORK_ID,
+  PORTABLE_INFERENCE_PODMAN_PATH as PODMAN_PATH,
+} from "../../../../test/support/setup-inference-test-harness";
+import { writeOkOpenshell } from "../../../../test/helpers/onboard-openshell-fixture";
 import {
   createPortableGatewayProviderHarness,
   createPortablePodmanCapture,
@@ -52,10 +51,6 @@ import {
 import { createHermesPortableOllamaInferenceResolver } from "./hermes-portable-ollama-inference";
 import { PORTABLE_HOST_GATEWAY_IP } from "./portable-profile";
 
-const PODMAN_PATH = "/usr/bin/podman";
-const PODMAN_BYTES = Buffer.from("portable-podman-5.7.0", "utf8");
-const NETWORK_ID = "6".repeat(64);
-const GPU_DEVICE = "nvidia.com/gpu=GPU-12345678-1234-1234-1234-123456789abc";
 const temporaryDirectories: string[] = [];
 const environmentRestorers: Array<() => void> = [];
 
@@ -94,156 +89,11 @@ function snapshotExactTestFile(filePath: string) {
   }
 }
 
-interface PullFailure {
-  readonly image: string;
-  readonly result: ContainerEngineCommandResult;
-}
-
-const freshPortableInput = {
-  application: "hermes" as const,
-  sandboxName: "portable-hermes",
-  provider: "ollama-local",
-  model: "qwen3-vl:4b",
-  acceleration: "nvidia-gpu" as const,
-  requireToolCalling: true,
-  allowPublishedResume: false,
-  recover: false,
-};
-
-function runtimeAuthority(homeDir: string): CheckpointPortableRuntimeAuthority {
-  const uid = process.getuid!();
-  return {
-    schemaVersion: 1,
-    kind: "podman",
-    ownership: "current-user",
-    uid,
-    homeDir,
-    configHome: path.join(homeDir, ".config"),
-    runtimeDir: `/run/user/${String(uid)}`,
-    socketPath: `/run/user/${String(uid)}/podman/podman.sock`,
-  };
-}
-
-function socketAuthority(runtime: CheckpointPortableRuntimeAuthority): PodmanSocketAuthority {
-  return {
-    device: "1",
-    inode: "2",
-    mode: String(0o140600),
-    ownerUid: String(runtime.uid),
-    socketPath: runtime.socketPath,
-    directoryChain: [],
-  };
-}
-
-function executableAuthorityDeps(): PodmanExecutableAuthorityDeps {
-  const executable = (): PodmanExecutableStat => ({
-    dev: 1n,
-    ino: 10n,
-    mode: 0o100755n,
-    uid: 0n,
-    size: BigInt(PODMAN_BYTES.byteLength),
-    mtimeNs: 10n,
-    ctimeNs: 11n,
-    isDirectory: () => false,
-    isFile: () => true,
-    isSymbolicLink: () => false,
-  });
-  return {
-    uid: process.getuid!(),
-    lstat: (filePath) =>
-      filePath === PODMAN_PATH
-        ? executable()
-        : {
-            ...executable(),
-            ino: filePath === "/usr/bin" ? 20n : 30n,
-            mode: 0o40755n,
-            size: 0n,
-            isDirectory: () => true,
-            isFile: () => false,
-          },
-    readFile: () => PODMAN_BYTES,
-    realpath: (filePath) => filePath,
-  };
-}
-
-function createRuntimeFixture(pullFailure?: PullFailure) {
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-inference-"));
-  temporaryDirectories.push(homeDir);
-  const runtime = runtimeAuthority(homeDir);
-  vi.stubEnv("HOME", homeDir);
-  vi.stubEnv("PATH", "/usr/bin");
-  const environmentScope = createPortableOnboardEnvironmentScope(process.env, null);
-  environmentRestorers.push(() => environmentScope.restore());
-  environmentScope.installRuntime({
-    containersConf: path.join(runtime.configHome, "nemoclaw", "portable", "containers.conf"),
-    socketPath: runtime.socketPath,
-  });
-  const events: string[] = [];
-  const authorityState: PortablePodmanAuthorityState = {
-    networkId: NETWORK_ID,
-    images: new Set<string>(),
-    failPull: pullFailure?.image ?? null,
-  };
-  const gatewayProvider = createPortableGatewayProviderHarness(events);
-  const runGatewayOpenshell = vi.fn(gatewayProvider.run);
-  const assertSocketAuthority = vi.fn();
-  const harness = createPodmanHostLocalInferenceTestHarness({
-    probeImageRef: PORTABLE_PROBE_IMAGE,
-  });
-  harness.state.networkId = NETWORK_ID;
-  harness.state.networkName = "openshell-docker";
-  harness.state.networkGatewayIp = "10.87.0.1";
-  harness.state.ollamaPsModels = [
-    {
-      name: "qwen3-vl:4b",
-      model: "qwen3-vl:4b",
-      size: 8 * 1024 ** 3,
-      size_vram: 8 * 1024 ** 3,
-      digest: "8".repeat(64),
-    },
-  ];
-  let cdiDevices = ["nvidia.com/gpu=all", GPU_DEVICE];
-  const capture = createPortablePodmanCapture(events, authorityState, harness.engine.capture);
-  const injectedCapture: ContainerEngineCommandCapture = pullFailure
-    ? (executable, args, timeoutMs, input, environment) => {
-        const result = capture(executable, args, timeoutMs, input, environment);
-        return args[2] === "pull" && args[3] === pullFailure.image ? pullFailure.result : result;
-      }
-    : capture;
-  const resolverOptions = {
-    runtimeContext: { authority: runtime, environmentScope },
-    credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
-    getReservationSessionId: () => "portable-session",
-    runGatewayOpenshell,
-    stateDir: path.join(homeDir, "state"),
-    captureSocketAuthority: () => socketAuthority(runtime),
-    captureGpuDevices: () => [GPU_DEVICE],
-    captureCdiDevices: () => cdiDevices,
-    podmanAuthorityDeps: {
-      capture: injectedCapture,
-      executableAuthorityDeps: executableAuthorityDeps(),
-      assertSocketAuthority,
-      resolveExecutablePath: () => PODMAN_PATH,
-      platform: "linux",
-      architecture: "x64",
-      uid: runtime.uid,
-    },
-  } as const;
-  return {
-    assertSocketAuthority,
-    authorityState,
-    events,
-    gatewayProvider,
-    harness,
-    homeDir,
-    resolverOptions,
-    runtime,
-    resolve: (input = freshPortableInput) =>
-      createHermesPortableOllamaInferenceResolver(resolverOptions)(input),
-    setCdiDevices: (devices: string[]) => {
-      cdiDevices = devices;
-    },
-  };
+function createRuntimeFixture(...args: Parameters<typeof createHermesPortableInferenceFixture>) {
+  const fixture = createHermesPortableInferenceFixture(...args);
+  temporaryDirectories.push(fixture.homeDir);
+  environmentRestorers.push(fixture.restoreEnvironment);
+  return fixture;
 }
 
 function prepareManagedRoute(
@@ -295,6 +145,7 @@ function gatewayJournal(fixture: ReturnType<typeof createRuntimeFixture>) {
   return JSON.parse(fs.readFileSync(gatewayJournalPath(fixture), "utf8")) as {
     phase: string;
     intent: {
+      gatewayName: string;
       providerCredentialEnv: string;
       transactionId: string;
       targetSha256: string;
@@ -323,6 +174,7 @@ async function publishPortableInference(fixture: ReturnType<typeof createRuntime
 
 afterEach(() => {
   for (const restore of environmentRestorers.splice(0).reverse()) restore();
+  resetOnboardResumeHintForTests();
   vi.unstubAllEnvs();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -341,6 +193,7 @@ describe("Hermes Portable Ollama inference activation", () => {
 
     const authority = prepareHermesPortableOllamaPublishedReceiptAuthority({
       directory: path.dirname(receiptPath),
+      gatewayName: journal.intent.gatewayName,
       sandboxName: journal.intent.sandboxName,
       credentialEnv: journal.intent.credentialEnv,
     });
@@ -365,6 +218,7 @@ describe("Hermes Portable Ollama inference activation", () => {
 
     const authority = prepareHermesPortableOllamaPublishedInferenceAuthority({
       directory: path.dirname(receiptPath),
+      gatewayName: journal.intent.gatewayName,
       sandboxName: journal.intent.sandboxName,
       credentialEnv: journal.intent.credentialEnv,
       runGatewayOpenshell: fixture.gatewayProvider.run,
@@ -538,6 +392,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const resolverOptions = {
       runtimeContext: null,
+      gatewayName: "nemoclaw",
       credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
       getReservationSessionId: () => null,
       runGatewayOpenshell: () => ({ status: 1, stdout: "", stderr: "" }),
@@ -685,16 +540,47 @@ describe("Hermes Portable Ollama inference activation", () => {
     );
   });
 
-  it("recovers a committed gateway transaction before checking rebound live authority (#9596)", async () => {
-    const fixture = createRuntimeFixture();
+  it("preserves the selected gateway through publication and retirement for a non-default port (#10778)", async () => {
+    const gatewayName = "nemoclaw-18080";
+    const fixture = createRuntimeFixture(undefined, gatewayName);
     const selection = fixture.resolve()!;
     const route = prepareManagedRoute(fixture, selection);
     route.prepared.validateBeforeCommit();
-    const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
+    const mutation = await selection.prepareGatewayMutation({
+      ...gatewayMutationInput,
+      gatewayName,
+    });
     createExactGatewayProvider(mutation);
     await mutation.commit();
     route.prepared.commit();
-    const durableJournal = gatewayJournal(fixture);
+    const journal = gatewayJournal(fixture);
+
+    expect(journal.intent.gatewayName).toBe(gatewayName);
+    const published = prepareHermesPortableOllamaPublishedReceiptAuthority({
+      directory: path.dirname(gatewayJournalPath(fixture)),
+      gatewayName,
+      sandboxName: journal.intent.sandboxName,
+      credentialEnv: journal.intent.credentialEnv,
+    });
+    published.assertCurrent();
+    const retirement = prepareHermesPortableOllamaProviderRetirement({
+      directory: path.dirname(gatewayJournalPath(fixture)),
+      transactionId: journal.intent.transactionId,
+      targetSha256: journal.intent.targetSha256,
+      gatewayName,
+      sandboxName: journal.intent.sandboxName,
+      model: journal.intent.model,
+      credentialEnv: journal.intent.credentialEnv,
+      runGatewayOpenshell: fixture.gatewayProvider.run,
+    });
+    expect(retirement.present).toBe(true);
+    retirement.removeAndVerify();
+    retirement.verifyAbsent();
+  });
+
+  it("recovers a committed gateway transaction before checking rebound live authority (#9596)", async () => {
+    const fixture = createRuntimeFixture();
+    const durableJournal = await publishPortableInference(fixture);
 
     const reboundResolver = createHermesPortableOllamaInferenceResolver({
       ...fixture.resolverOptions,
@@ -716,13 +602,7 @@ describe("Hermes Portable Ollama inference activation", () => {
 
   it("heals a missing session route marker from exact published authority (#9211)", async () => {
     const fixture = createRuntimeFixture();
-    const selection = fixture.resolve()!;
-    const route = prepareManagedRoute(fixture, selection);
-    route.prepared.validateBeforeCommit();
-    const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
-    createExactGatewayProvider(mutation);
-    await mutation.commit();
-    route.prepared.commit();
+    await publishPortableInference(fixture);
 
     const healed = fixture.resolve({
       ...freshPortableInput,
@@ -1108,50 +988,47 @@ describe("Hermes Portable Ollama inference activation", () => {
     expect(fixture.harness.container()).not.toBeNull();
   });
 
-  it("recovers the exact route-publication gap before receipt commit (#9596)", async () => {
-    const fixture = createRuntimeFixture();
-    const selection = fixture.resolve()!;
-    const route = prepareManagedRoute(fixture, selection);
-    route.prepared.validateBeforeCommit();
-    const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
-    createExactGatewayProvider(mutation);
-    await mutation.commit();
+  it.each(["nemoclaw", "nemoclaw-18080"])(
+    "recovers a fresh-session route-publication gap on gateway %s",
+    async (gatewayName) => {
+      const fixture = createRuntimeFixture(undefined, gatewayName);
+      const selection = fixture.resolve()!;
+      const route = prepareManagedRoute(fixture, selection);
+      route.prepared.validateBeforeCommit();
+      const input = { ...gatewayMutationInput, gatewayName };
+      const mutation = await selection.prepareGatewayMutation(input);
+      createExactGatewayProvider(mutation);
+      await mutation.commit();
 
-    const interruptedTransactionId = gatewayJournal(fixture).intent.transactionId;
-    const reboundResolver = createHermesPortableOllamaInferenceResolver({
-      ...fixture.resolverOptions,
-      getReservationSessionId: () => "portable-session-fresh",
-    });
-    const restarted = reboundResolver({
-      ...freshPortableInput,
-      allowPublishedResume: true,
-      recover: true,
-    })!;
-    expect(gatewayJournal(fixture).intent.transactionId).toBe(interruptedTransactionId);
-    expect(restarted.request).toMatchObject({ recover: true });
-    const recoveredRoute = prepareManagedRoute(fixture, restarted);
-    recoveredRoute.prepared.validateBeforeCommit();
-    const resumedMutation = await restarted.prepareGatewayMutation(gatewayMutationInput);
-    expect(createExactGatewayProvider(resumedMutation)).toEqual({ ok: true });
-    await resumedMutation.commit();
-    recoveredRoute.prepared.commit();
+      const interruptedTransactionId = gatewayJournal(fixture).intent.transactionId;
+      const reboundResolver = createHermesPortableOllamaInferenceResolver({
+        ...fixture.resolverOptions,
+        getReservationSessionId: () => "portable-session-fresh",
+      });
+      const restarted = reboundResolver(freshPortableInput)!;
+      expect(gatewayJournal(fixture).intent.transactionId).toBe(interruptedTransactionId);
+      expect(restarted.request).toMatchObject({ recover: true });
+      const recoveredRoute = prepareManagedRoute(fixture, restarted);
+      recoveredRoute.prepared.validateBeforeCommit();
+      const resumedMutation = await restarted.prepareGatewayMutation(input);
+      expect(createExactGatewayProvider(resumedMutation)).toEqual({ ok: true });
+      await resumedMutation.commit();
+      recoveredRoute.prepared.commit();
 
-    expect(
-      fixture.events.filter((event) => event.includes("provider create --name ollama-local")),
-    ).toHaveLength(1);
-    expect(gatewayJournal(fixture)).toMatchObject({ phase: "committed" });
-    expect(fs.existsSync(inferenceReceiptPath(fixture))).toBe(true);
-  });
+      expect(
+        fixture.events.filter((event) => event.includes("provider create --name ollama-local")),
+      ).toHaveLength(1);
+      expect(gatewayJournal(fixture)).toMatchObject({
+        phase: "committed",
+        intent: { gatewayName },
+      });
+      expect(fs.existsSync(inferenceReceiptPath(fixture))).toBe(true);
+    },
+  );
 
   it("accepts only the exact hard-link residue from durable file publication (#9596)", async () => {
     const fixture = createRuntimeFixture();
-    const selection = fixture.resolve()!;
-    const route = prepareManagedRoute(fixture, selection);
-    route.prepared.validateBeforeCommit();
-    const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
-    createExactGatewayProvider(mutation);
-    await mutation.commit();
-    route.prepared.commit();
+    await publishPortableInference(fixture);
     const journalPath = gatewayJournalPath(fixture);
     const receiptPath = inferenceReceiptPath(fixture);
     fs.linkSync(
@@ -1330,24 +1207,273 @@ describe("Hermes Portable Ollama inference activation", () => {
         fixture.gatewayProvider.setMalformed(true),
       expected: "ambiguous gateway provider authority",
     },
-  ])("fails closed with zero gateway mutation for $name (#9596)", async ({ mutate, expected }) => {
+    {
+      name: "provider before recorded creation",
+      mutate: (fixture: ReturnType<typeof createRuntimeFixture>) => {
+        const journal = { ...gatewayJournal(fixture), phase: "prepared", providerAuthority: null };
+        fs.writeFileSync(gatewayJournalPath(fixture), `${JSON.stringify(journal)}\n`);
+      },
+      expected: "gateway provider appeared before recorded create",
+    },
+    {
+      name: "ambiguous interrupted creation",
+      mutate: (fixture: ReturnType<typeof createRuntimeFixture>) => {
+        const journal = { ...gatewayJournal(fixture), phase: "creating", providerAuthority: null };
+        fs.writeFileSync(gatewayJournalPath(fixture), `${JSON.stringify(journal)}\n`);
+        fixture.gatewayProvider.bumpResourceVersion();
+      },
+      expected: "recorded provider creation is ambiguous",
+    },
+    {
+      name: "changed provider during interrupted rollback",
+      mutate: (fixture: ReturnType<typeof createRuntimeFixture>) => {
+        const journal = { ...gatewayJournal(fixture), phase: "rolling-back" };
+        fs.writeFileSync(gatewayJournalPath(fixture), `${JSON.stringify(journal)}\n`);
+        fixture.gatewayProvider.bumpResourceVersion();
+      },
+      expected: "recorded gateway provider authority changed",
+    },
+    {
+      name: "provider after recorded rollback",
+      mutate: (fixture: ReturnType<typeof createRuntimeFixture>) => {
+        const journal = { ...gatewayJournal(fixture), phase: "rolled-back" };
+        fs.writeFileSync(gatewayJournalPath(fixture), `${JSON.stringify(journal)}\n`);
+      },
+      expected: "unowned existing gateway provider",
+    },
+    {
+      name: "corrupted published journal",
+      mutate: (
+        fixture: ReturnType<typeof createRuntimeFixture>,
+        selection: HostLocalInferenceStartupSelection,
+      ) => {
+        const route = prepareManagedRoute(fixture, selection);
+        route.prepared.validateBeforeCommit();
+        route.prepared.commit();
+        fs.writeFileSync(gatewayJournalPath(fixture), "{\n");
+      },
+      expected: "gateway provider journal is malformed",
+    },
+  ])("reports $name without gateway mutation or a stack trace", async ({ mutate, expected }) => {
     const fixture = createRuntimeFixture();
     const selection = fixture.resolve()!;
     const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
     createExactGatewayProvider(mutation);
-    mutate(fixture);
+    mutate(fixture, selection);
     const mutationsBefore = fixture.events.filter(
       (event) => event.includes("provider create") || event.includes("provider delete"),
     );
+    const journalPath = gatewayJournalPath(fixture);
+    const journalBefore = fs.existsSync(journalPath) ? fs.readFileSync(journalPath, "utf8") : null;
+    const errors: string[] = [];
 
-    expect(() => fixture.resolve()).toThrow(expected);
-
+    await expect(
+      runOnboardCommand({
+        flags: { fresh: true, "experimental-profile": "portable" },
+        env: {},
+        runOnboard: async () => {
+          fixture.resolve();
+        },
+        error: (message = "") => errors.push(message),
+        exit: (code) => {
+          throw new Error(`exit:${String(code)}`);
+        },
+      }),
+    ).rejects.toThrow("exit:1");
+    expect(errors.join("\n")).toContain(expected);
+    expect(errors.join("\n")).toContain("Existing state was preserved");
+    expect(errors.join("\n")).not.toContain("    at ");
+    printOnboardResumeHint(true, (message) => errors.push(message));
+    expect(errors.join("\n")).not.toContain("onboard --resume");
+    expect(errors.join("\n")).not.toContain("onboard --experimental-profile portable --fresh");
     expect(
       fixture.events.filter(
         (event) => event.includes("provider create") || event.includes("provider delete"),
       ),
     ).toEqual(mutationsBefore);
+    expect(fs.existsSync(journalPath) ? fs.readFileSync(journalPath, "utf8") : null).toBe(
+      journalBefore,
+    );
   });
+
+  it("recovers an interrupted provider through public fresh onboarding", async () => {
+    const fixture = createRuntimeFixture();
+    const fakeBin = path.join(fixture.homeDir, "bin");
+    fs.mkdirSync(fakeBin);
+    writeOkOpenshell(fakeBin);
+    vi.stubEnv("PATH", `${fakeBin}:/usr/bin`);
+    const selection = fixture.resolve()!;
+    prepareManagedRoute(fixture, selection).prepared.validateBeforeCommit();
+    const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
+    createExactGatewayProvider(mutation);
+    await mutation.commit();
+    const interruptedTransaction = gatewayJournal(fixture).intent.transactionId;
+    const sessionApi =
+      require("../../state/onboard-session") as typeof import("../../state/onboard-session");
+    sessionApi.saveSession(
+      sessionApi.createSession({
+        sessionId: "portable-session",
+        sandboxName: freshPortableInput.sandboxName,
+        agent: "hermes",
+      }),
+    );
+    const runtime =
+      require("../resume/locked-runtime") as typeof import("../resume/locked-runtime");
+    const prepareRuntime = runtime.prepare;
+    vi.spyOn(runtime, "prepare").mockImplementation((options, ...args) =>
+      prepareRuntime(
+        {
+          ...options,
+          preparePortableHost: () =>
+            ({
+              authority: fixture.runtime,
+              containersConf: path.join(
+                fixture.runtime.configHome,
+                "nemoclaw/portable/containers.conf",
+              ),
+            }) as never,
+        },
+        ...args,
+      ),
+    );
+    const inference =
+      require("./hermes-portable-ollama-inference") as typeof import("./hermes-portable-ollama-inference");
+    const createResolver = inference.createHermesPortableOllamaInferenceResolver;
+    vi.spyOn(inference, "createHermesPortableOllamaInferenceResolver").mockImplementation(
+      (options) =>
+        createResolver({
+          ...options,
+          stateDir: fixture.resolverOptions.stateDir,
+          captureSocketAuthority: fixture.resolverOptions.captureSocketAuthority,
+          captureGpuDevices: fixture.resolverOptions.captureGpuDevices,
+          captureCdiDevices: fixture.resolverOptions.captureCdiDevices,
+          podmanAuthorityDeps: fixture.resolverOptions.podmanAuthorityDeps,
+        }),
+    );
+    const runner = require("../../runner") as typeof import("../../runner");
+    vi.spyOn(runner, "run").mockImplementation((command, options) => {
+      const args = Array.isArray(command) ? command.map(String) : [String(command)];
+      const providerIndex = args.indexOf("provider");
+      expect(
+        providerIndex,
+        `Unexpected onboarding command: ${args.join(" ")}`,
+      ).toBeGreaterThanOrEqual(0);
+      const providerArgs = args.slice(providerIndex);
+      const gatewayIndex = providerArgs.indexOf("-g");
+      expect(providerArgs.slice(gatewayIndex, gatewayIndex + 2)).toEqual(["-g", "nemoclaw"]);
+      providerArgs.splice(gatewayIndex, 2);
+      return fixture.gatewayProvider.run(providerArgs, options as never) as never;
+    });
+    vi.spyOn(runner, "runCapture").mockImplementation((command) => {
+      throw new Error(`Unexpected onboarding capture: ${String(command)}`);
+    });
+    const initial =
+      require("../machine/initial-flow-composition") as typeof import("../machine/initial-flow-composition");
+    const { advanceTo } = require("../machine/result") as typeof import("../machine/result");
+    vi.spyOn(initial, "createInitialOnboardFlowPhases").mockImplementation(
+      () =>
+        [
+          {
+            state: "preflight",
+            async run(context) {
+              return {
+                context: {
+                  ...context,
+                  gpu: { type: "nvidia" },
+                  gpuPassthrough: true,
+                  sandboxGpuConfig: { mode: "enable", sandboxGpuEnabled: true },
+                },
+                result: advanceTo("gateway"),
+              };
+            },
+          },
+          {
+            state: "gateway",
+            async run(context) {
+              return { context, result: advanceTo("provider_selection") };
+            },
+          },
+        ] as ReturnType<typeof initial.createInitialOnboardFlowPhases>,
+    );
+    const setup = require("../setup-inference") as typeof import("../setup-inference");
+    const createSetup = setup.createSetupInference;
+    vi.spyOn(setup, "createSetupInference").mockImplementation(
+      (deps) =>
+        createDirectSetupInferenceHarnessFactory((overrides) =>
+          createSetup({ ...deps, ...overrides }),
+        )({ overrides: { error: deps.error, log: deps.log } }).setupInference,
+    );
+    const core =
+      require("../machine/core-flow-composition") as typeof import("../machine/core-flow-composition");
+    const createPhases = core.createCoreOnboardFlowPhases;
+    const stop = "observed recovered provider before sandbox creation";
+    vi.spyOn(core, "createCoreOnboardFlowPhases").mockImplementation((input) => {
+      const phases = createPhases({
+        ...input,
+        providerInference: {
+          ...input.providerInference,
+          deps: {
+            ...input.providerInference.deps,
+            checkGatewayRouteCompatibility: () => ({ ok: true }),
+            preflightGatewayRouteDiscovery: () => ({
+              ok: true,
+              requiredModel: null,
+              requiredEndpointUrl: null,
+              requiredInferenceApi: null,
+            }),
+            assessHost: () => ({ cpus: 8 }),
+            formatSandboxBuildEstimateNote: () => "",
+            formatOnboardConfigSummary: () => "Portable Ollama",
+          },
+        },
+      });
+      return {
+        ...phases,
+        sandbox: {
+          state: "sandbox",
+          async run() {
+            throw new Error(stop);
+          },
+        },
+      };
+    });
+    const { runOnboardAction } =
+      require("../../actions/onboard") as typeof import("../../actions/onboard");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const outcome = await runOnboardAction({
+      agent: "hermes",
+      name: freshPortableInput.sandboxName,
+      fresh: true,
+      "experimental-profile": "portable",
+      "yes-i-accept-third-party-software": true,
+    }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(outcome, errors.mock.calls.flat().join("\n")).toHaveProperty("message", stop);
+
+    const currentSession = sessionApi.loadSession();
+    expect(currentSession?.sessionId).toBeTruthy();
+    expect(currentSession?.sessionId).not.toBe("portable-session");
+    expect(currentSession?.steps.inference.status).toBe("complete");
+    expect(gatewayJournal(fixture)).toMatchObject({
+      phase: "committed",
+      intent: { transactionId: interruptedTransaction },
+    });
+    expect(fs.existsSync(inferenceReceiptPath(fixture))).toBe(true);
+    expect(
+      fixture.gatewayProvider
+        .calls()
+        .filter(({ args }) => args[0] === "provider" && args[1] === "create"),
+    ).toHaveLength(1);
+    expect(
+      fixture.gatewayProvider
+        .calls()
+        .some(({ args }) => args[0] === "provider" && args[1] === "delete"),
+    ).toBe(false);
+  }, 30_000);
 
   it("retains runtime authority when exact gateway provider deletion fails (#9596)", async () => {
     const fixture = createRuntimeFixture();

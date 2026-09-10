@@ -67,7 +67,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     Promise.resolve(),
   );
   const restoreStartupState = vi.fn<NonNullable<SandboxStartDeps["restoreStartupState"]>>(
-    () => SUCCESSFUL_RECOVERY,
+    async () => SUCCESSFUL_RECOVERY,
   );
   const waitForManagedGatewaySupervisor = vi.fn<
     NonNullable<SandboxStartDeps["waitForManagedGatewaySupervisor"]>
@@ -116,57 +116,16 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
 }
 
 describe("startSandbox", () => {
-  it("restores sealed access before recovering sandbox processes (#8112)", async () => {
-    const restoreAccess = vi.fn();
-    const recovery = SUCCESSFUL_RECOVERY;
-    const restoreProcesses = vi.fn(() => recovery);
-
-    const result = await restoreStoppedSandboxStartupState("my-sandbox", {
-      agent: "openclaw",
-      restoreLockedStartupAccess: restoreAccess,
-      waitForSandboxReady: vi.fn(),
-      restoreProcessState: restoreProcesses,
-    });
-
-    expect(restoreAccess).toHaveBeenCalledWith("my-sandbox");
-    expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox");
-    expect(restoreAccess.mock.invocationCallOrder[0]).toBeLessThan(
-      restoreProcesses.mock.invocationCallOrder[0],
-    );
-    expect(result).toBe(recovery);
-  });
-
-  it("keeps Hermes sealed state untouched while recovering sandbox processes (#8112)", async () => {
-    const restoreAccess = vi.fn();
-    const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
-
-    await restoreStoppedSandboxStartupState("my-sandbox", {
-      agent: "hermes",
-      restoreLockedStartupAccess: restoreAccess,
-      waitForSandboxReady: vi.fn(),
-      restoreProcessState: restoreProcesses,
-    });
-
-    expect(restoreAccess).not.toHaveBeenCalled();
-    expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox");
-  });
-
-  it("waits for OpenShell readiness after restoring sealed access and before recovering sandbox processes (#8978)", async () => {
-    const restoreAccess = vi.fn();
+  it("waits for OpenShell readiness before recovering sandbox processes (#8978)", async () => {
     const waitForSandboxReady = vi.fn();
-    const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
+    const restoreProcesses = vi.fn(async () => SUCCESSFUL_RECOVERY);
 
     await restoreStoppedSandboxStartupState("my-sandbox", {
-      agent: "openclaw",
-      restoreLockedStartupAccess: restoreAccess,
       waitForSandboxReady,
       restoreProcessState: restoreProcesses,
     });
 
     expect(waitForSandboxReady).toHaveBeenCalledWith("my-sandbox");
-    expect(restoreAccess.mock.invocationCallOrder[0]).toBeLessThan(
-      waitForSandboxReady.mock.invocationCallOrder[0],
-    );
     expect(waitForSandboxReady.mock.invocationCallOrder[0]).toBeLessThan(
       restoreProcesses.mock.invocationCallOrder[0],
     );
@@ -174,11 +133,9 @@ describe("startSandbox", () => {
 
   it("waits for OpenShell readiness before recovering Hermes sandbox processes (#8978)", async () => {
     const waitForSandboxReady = vi.fn();
-    const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
+    const restoreProcesses = vi.fn(async () => SUCCESSFUL_RECOVERY);
 
     await restoreStoppedSandboxStartupState("my-sandbox", {
-      agent: "hermes",
-      restoreLockedStartupAccess: vi.fn(),
       waitForSandboxReady,
       restoreProcessState: restoreProcesses,
     });
@@ -189,14 +146,11 @@ describe("startSandbox", () => {
   });
 
   it("starts the container, then waits for readiness, then recovers, then probes the gateway (#8978)", async () => {
-    const restoreAccess = vi.fn();
     const waitForSandboxReady = vi.fn();
-    const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
+    const restoreProcesses = vi.fn(async () => SUCCESSFUL_RECOVERY);
     const h = harness({
       restoreStartupState: (name: string) =>
         restoreStoppedSandboxStartupState(name, {
-          agent: "openclaw",
-          restoreLockedStartupAccess: restoreAccess,
           waitForSandboxReady,
           restoreProcessState: restoreProcesses,
         }),
@@ -207,7 +161,6 @@ describe("startSandbox", () => {
     expect(result.exitCode).toBe(0);
     const order = [
       h.recoverDockerDriverSandbox.mock.invocationCallOrder[0],
-      restoreAccess.mock.invocationCallOrder[0],
       waitForSandboxReady.mock.invocationCallOrder[0],
       restoreProcesses.mock.invocationCallOrder[0],
       h.verifyGateway.mock.invocationCallOrder[0],
@@ -244,12 +197,11 @@ describe("startSandbox", () => {
       const observer: OpenShellSandboxObserver = {
         listSandboxes,
       };
-      const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
+      const restoreProcesses = vi.fn(async () => SUCCESSFUL_RECOVERY);
       const h = harness({
         allowDockerRuntimeInspection: false,
         observer,
         environment: { ...process.env, HOME: home },
-        restoreLockedStartupAccess: vi.fn(),
         restoreProcessState: restoreProcesses,
       });
       delete h.deps.restoreStartupState;
@@ -297,7 +249,7 @@ describe("startSandbox", () => {
     testTimeoutOptions(30_000),
     async () => {
       const h = harness();
-      h.restoreStartupState.mockReturnValueOnce(FAILED_RECOVERY);
+      h.restoreStartupState.mockResolvedValueOnce(FAILED_RECOVERY);
 
       await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("gateway did not recover");
       expect(h.verifyGateway).not.toHaveBeenCalled();
@@ -316,12 +268,12 @@ describe("startSandbox", () => {
   it("waits for a transient managed supervisor before repeating full startup recovery (#8726)", async () => {
     const h = harness();
     h.restoreStartupState
-      .mockReturnValueOnce({
+      .mockResolvedValueOnce({
         ...FAILED_RECOVERY,
         recoveryFailureLayer: "supervisor not running",
         recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
       })
-      .mockReturnValueOnce(SUCCESSFUL_RECOVERY);
+      .mockResolvedValueOnce(SUCCESSFUL_RECOVERY);
     h.waitForManagedGatewaySupervisor.mockReturnValue(true);
 
     const result = await startSandbox("my-sandbox", h.deps);
@@ -344,7 +296,7 @@ describe("startSandbox", () => {
 
   it("preserves the first recovery failure when the managed supervisor remains absent (#8726)", async () => {
     const h = harness();
-    h.restoreStartupState.mockReturnValue({
+    h.restoreStartupState.mockResolvedValue({
       ...FAILED_RECOVERY,
       recoveryFailureLayer: "supervisor not running",
       recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
@@ -360,7 +312,7 @@ describe("startSandbox", () => {
 
   it("preserves the first recovery failure when the managed supervisor wait throws (#8726)", async () => {
     const h = harness();
-    h.restoreStartupState.mockReturnValue({
+    h.restoreStartupState.mockResolvedValue({
       ...FAILED_RECOVERY,
       recoveryFailureLayer: "supervisor not running",
       recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
@@ -384,7 +336,7 @@ describe("startSandbox", () => {
       recoveryFailureLayer: "supervisor not running" as const,
       recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
     };
-    h.restoreStartupState.mockReturnValue(missingSupervisor);
+    h.restoreStartupState.mockResolvedValue(missingSupervisor);
     h.waitForManagedGatewaySupervisor.mockReturnValue(true);
 
     await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
@@ -410,7 +362,7 @@ describe("startSandbox", () => {
     ],
   ] as const)("does not wait after a %s (#8726)", async (_label, layer, detail) => {
     const h = harness();
-    h.restoreStartupState.mockReturnValue({
+    h.restoreStartupState.mockResolvedValue({
       ...FAILED_RECOVERY,
       recoveryFailureLayer: layer,
       recoveryFailureDetail: detail,
@@ -424,7 +376,7 @@ describe("startSandbox", () => {
 
   it("keeps successful legacy supervisor relaunch recovery free of a settling wait (#8726)", async () => {
     const h = harness();
-    h.restoreStartupState.mockReturnValue({
+    h.restoreStartupState.mockResolvedValue({
       ...SUCCESSFUL_RECOVERY,
       wasRunning: false,
       recovered: true,
@@ -464,7 +416,7 @@ describe("startSandbox", () => {
     async (agent, _layer, recovery, expected) => {
       const h = harness();
       h.getSandbox.mockReturnValue(sandbox({ agent }));
-      h.restoreStartupState.mockReturnValue(recovery);
+      h.restoreStartupState.mockResolvedValue(recovery);
 
       const failure = await startSandbox("my-sandbox", h.deps).catch((error) => String(error));
       expect(failure).toMatch(expected);
@@ -476,7 +428,7 @@ describe("startSandbox", () => {
 
   it("does not claim preservation when startup recovery reports a failed rollback (#9364)", async () => {
     const h = harness();
-    h.restoreStartupState.mockReturnValue({
+    h.restoreStartupState.mockResolvedValue({
       ...FAILED_RECOVERY,
       recoveryFailureDetail:
         "NemoClaw could not confirm rollback to the previous sandbox container. Inspect Docker state before retrying. Recovery failure before rollback: the sandbox did not become ready in OpenShell",
@@ -524,8 +476,8 @@ describe("startSandbox", () => {
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
   });
 
-  it("keeps active Hermes start out of every Docker path (#9203)", async () => {
-    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+  it("repairs Hermes Portable forwards after lifecycle recovery (#11248)", async () => {
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
       sandbox({
@@ -546,7 +498,10 @@ describe("startSandbox", () => {
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
     expect(h.dockerUnpause).not.toHaveBeenCalled();
     expect(h.restoreStartupState).not.toHaveBeenCalled();
-    expect(h.verifyGateway).not.toHaveBeenCalled();
+    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+    expect(h.recoverPortableSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
 
@@ -735,7 +690,7 @@ describe("startSandbox", () => {
   });
 
   it("pins a Deep Agents Code start probe to its recorded gateway and managed launcher identity (#10080)", async () => {
-    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
       sandbox({
@@ -769,7 +724,7 @@ describe("startSandbox", () => {
   });
 
   it("pins a Hermes start probe to its recorded OpenShell gateway (#10302)", async () => {
-    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
       sandbox({
@@ -803,7 +758,7 @@ describe("startSandbox", () => {
 
   it("exits nonzero when the started gateway will not serve an agent request", async () => {
     const probeInferenceInvocation = vi.fn(
-      () =>
+      async () =>
         ({
           ok: false,
           detail: "sandbox inference invocation probe returned HTTP 401",
@@ -824,7 +779,7 @@ describe("startSandbox", () => {
   });
 
   it("stays unattested instead of failing when the sandbox records no route", async () => {
-    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
 
     const result = await startSandbox("my-sandbox", h.deps);

@@ -11,7 +11,7 @@ import {
   type OnboardEntryOptionsDeps,
   resolveOnboardEntryOptions,
 } from "../onboard/entry-options";
-import { migrateLegacyPortState } from "./legacy-port-migration";
+import { hasMigratableLegacySandbox, migrateLegacyPortState } from "./legacy-port-migration";
 import {
   listRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery,
@@ -92,6 +92,25 @@ afterEach(() => {
 });
 
 describe("legacy non-default gateway state migration", () => {
+  it("detects an exact migratable sandbox without changing legacy state", () => {
+    const home = makeHome();
+    const registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
+    writeJson(registryFile, {
+      defaultSandbox: "doctor",
+      sandboxes: {
+        doctor: { name: "doctor", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    const before = fs.readFileSync(registryFile, "utf8");
+
+    expect({
+      selected: hasMigratableLegacySandbox("doctor", { home, gatewayPort: 9123 }),
+      otherPort: hasMigratableLegacySandbox("doctor", { home, gatewayPort: 9124 }),
+      missing: hasMigratableLegacySandbox("missing", { home, gatewayPort: 9123 }),
+      unchanged: fs.readFileSync(registryFile, "utf8") === before,
+    }).toEqual({ selected: true, otherPort: false, missing: false, unchanged: true });
+  });
+
   it("partitions a recovery-only session and mixed-gateway recovery authority", () => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");
@@ -342,7 +361,12 @@ describe("legacy non-default gateway state migration", () => {
           path.join(selected, "retained-sandbox-recovery.json"),
         ).map((record) => record.sandboxName),
       ).toEqual(["port-box"]);
-      expect(fs.existsSync(path.join(shared, ".gateway-state-migration"))).toBe(true);
+      const pendingIntent = path.join(shared, ".gateway-state-migration", "intent.json");
+      const pendingIntentBefore = fs.readFileSync(pendingIntent, "utf8");
+      expect({
+        recognized: hasMigratableLegacySandbox("port-box", { home, gatewayPort: 9123 }),
+        unchanged: fs.readFileSync(pendingIntent, "utf8") === pendingIntentBefore,
+      }).toEqual({ recognized: true, unchanged: true });
       expect(() => migrateLegacyPortState({ home, gatewayPort: 8080 })).toThrow(
         /recoverable migration for gateway port 9123 is pending/,
       );
@@ -423,14 +447,16 @@ describe("legacy non-default gateway state migration", () => {
     const shared = path.join(home, ".nemoclaw");
     const selected = path.join(shared, "gateways", "9123");
     const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
+    const lockFile = path.join(root(shared, selected), "onboard.lock");
     recordRecovery(recoveryFile, "port-box", 9123, "d");
     const before = fs.readFileSync(recoveryFile, "utf8");
     fs.mkdirSync(root(shared, selected), { recursive: true });
-    fs.writeFileSync(path.join(root(shared, selected), "onboard.lock"), "active writer");
+    fs.writeFileSync(lockFile, "active writer");
 
     expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
-      /onboarding lock .* is present/u,
+      `onboarding lock ${lockFile} is present; confirm that no NemoClaw onboarding process in any environment sharing this state root is active, then remove only ${lockFile} and retry; migration will not remove it automatically`,
     );
+    expect(fs.readFileSync(lockFile, "utf8")).toBe("active writer");
     expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
     expect(fs.existsSync(path.join(selected, "retained-sandbox-recovery.json"))).toBe(false);
   });

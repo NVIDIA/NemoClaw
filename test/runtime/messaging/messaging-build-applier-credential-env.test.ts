@@ -44,7 +44,7 @@ function runApplierProcess(
 ) {
   return spawnSync(
     "node",
-    ["--experimental-strip-types", SCRIPT_PATH, "--agent", agent, "--phase", phase],
+    [SCRIPT_PATH, "--agent", agent, "--phase", phase],
     { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], env, timeout: 10_000 },
   );
 }

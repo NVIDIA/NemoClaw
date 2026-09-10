@@ -54,7 +54,6 @@ export type RebuildFlowOverrides = {
     forwardRecovered: boolean;
     forwardRecoveryFailed?: boolean;
     secretBoundaryRefused?: boolean;
-    mcpReconciliationRefused?: boolean;
   };
   restartSandboxGateway?: () => GatewayRestartResult;
   onboard?: (
@@ -63,7 +62,7 @@ export type RebuildFlowOverrides = {
   ) => Promise<void> | void;
   beforeBackup?: () => void;
   repairMutableConfigPerms?: () =>
-    | { applied: false; skipReason: "agent" | "locked" | "unreadable"; reason: string }
+    | { applied: false; skipReason: "agent"; reason: string }
     | { applied: true; verified: boolean; errors: string[] };
   restoreSandboxState?: () => {
     success: boolean;
@@ -156,7 +155,6 @@ export type RebuildFlowOverrides = {
   preDeleteDefaultSelectionRevision?: number;
   removalReceipt?: SandboxRemovalReceipt | null;
   removeSandboxRegistryEntryWithReceipt?: () => SandboxRemovalReceipt | null | void;
-  clearShieldsState?: () => void;
 };
 export type RebuildFlowHarness = {
   backupPath: string;
@@ -184,7 +182,6 @@ export type RebuildFlowHarness = {
   logSpy: MockInstance;
   finalizeIncompleteOnboardStepSpy: MockInstance;
   onboardSpy: MockInstance;
-  openShieldsSpy: MockInstance;
   preflightAuthoritativeRebuildTargetSpy: MockInstance;
   preflightMessagingConflictsSpy: MockInstance;
   preflightDcodeRouteSpy: MockInstance;
@@ -200,7 +197,8 @@ export type RebuildFlowHarness = {
   };
   registerHermesInferenceProviderSpy: MockInstance;
   releaseOnboardLockSpy: MockInstance;
-  relockSpy: MockInstance;
+  enforceRemovedImmutabilityMigrationBoundarySpy: MockInstance;
+  retireRemovedImmutabilityStateRecordSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
   captureOpenshellSpy: MockInstance;
   captureResolvedOpenshellSpy: MockInstance;

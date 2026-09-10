@@ -4,7 +4,8 @@
 import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
-import { waitForMcpBridgeCondition } from "./mcp-bridge/timing";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
+import { waitForMcpBridgeConditionAsync } from "./mcp-bridge/timing";
 import {
   assertAuthenticatedBridgeEntry,
   assertPersistedAuthenticatedBridgeEntry,
@@ -46,12 +47,14 @@ type McpCredentialRevisionAttempt =
 function executeMcpCredentialProofCommand(
   sandboxName: string,
   command: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): ReturnType<typeof executeSandboxExecCommand> {
   // OpenShell preserves the proof as one multiline command argument. The
   // script classifies placeholder shape/revision only and never prints a raw
   // credential value or writes sandbox state.
   return executeSandboxExecCommand(sandboxName, command, undefined, {
-    allowLocalDockerFallback: false,
+    localDockerFallbackPolicy: "never",
+    runtimeSelection,
   });
 }
 
@@ -112,13 +115,15 @@ function parseMcpCredentialRevisionObservation(
     : null;
 }
 
-function tryObserveMcpCredentialRevision(
+async function tryObserveMcpCredentialRevision(
   sandboxName: string,
   envName: string,
-): McpCredentialRevisionAttempt {
-  const result = executeMcpCredentialProofCommand(
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): Promise<McpCredentialRevisionAttempt> {
+  const result = await executeMcpCredentialProofCommand(
     sandboxName,
     buildMcpCredentialRevisionObservationCommand(envName),
+    runtimeSelection,
   );
   if (!result) return { kind: "transport-unavailable" };
   if (result.status !== 0) return { kind: "command-failed", status: result.status };
@@ -139,12 +144,17 @@ function describeMcpCredentialRevisionAttempt(attempt: McpCredentialRevisionAtte
   }
 }
 
-export function observeMcpCredentialRevision(
+export async function observeMcpCredentialRevision(
   sandboxName: string,
   entry: McpBridgeEntry,
-): McpCredentialRevisionObservation {
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): Promise<McpCredentialRevisionObservation> {
   assertAuthenticatedBridgeEntry(entry);
-  const attempt = tryObserveMcpCredentialRevision(sandboxName, entry.env[0]);
+  const attempt = await tryObserveMcpCredentialRevision(
+    sandboxName,
+    entry.env[0],
+    runtimeSelection,
+  );
   if (attempt.kind !== "observation") {
     throw new McpBridgeError(
       `Could not observe the current OpenShell credential revision for sandbox '${sandboxName}'.`,
@@ -153,14 +163,15 @@ export function observeMcpCredentialRevision(
   return attempt.observation;
 }
 
-export function waitForAttachedMcpCredential(
+export async function waitForAttachedMcpCredential(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: {
     previousRevision?: McpCredentialRevisionObservation;
-    refreshAfterObservedAbsence?: () => void;
+    refreshAfterObservedAbsence?: () => void | Promise<void>;
   } = {},
-): McpAttachedCredentialRevision {
+): Promise<McpAttachedCredentialRevision> {
   assertAuthenticatedBridgeEntry(entry);
   const envName = entry.env[0];
   if (
@@ -177,12 +188,12 @@ export function waitForAttachedMcpCredential(
   let lastAttempt: McpCredentialRevisionAttempt = { kind: "transport-unavailable" };
   let candidateRevision: McpAttachedCredentialRevision | undefined;
   let attachedRevision: McpAttachedCredentialRevision | undefined;
-  const ready = waitForMcpBridgeCondition(
-    () => {
+  const ready = await waitForMcpBridgeConditionAsync(
+    async () => {
       // Each exec is a fresh OpenShell process. Only the bounded placeholder
       // classification crosses back to the host, where the comparison cannot
       // be influenced by a same-UID sandbox process rewriting a snapshot file.
-      let attempt = tryObserveMcpCredentialRevision(sandboxName, envName);
+      let attempt = await tryObserveMcpCredentialRevision(sandboxName, envName, runtimeSelection);
       lastAttempt = attempt;
       if (
         attempt.kind === "observation" &&
@@ -191,8 +202,8 @@ export function waitForAttachedMcpCredential(
         options.refreshAfterObservedAbsence
       ) {
         refreshedAfterObservedAbsence = true;
-        options.refreshAfterObservedAbsence();
-        attempt = tryObserveMcpCredentialRevision(sandboxName, envName);
+        await options.refreshAfterObservedAbsence();
+        attempt = await tryObserveMcpCredentialRevision(sandboxName, envName, runtimeSelection);
         lastAttempt = attempt;
       }
       const observation = attempt.kind === "observation" ? attempt.observation : null;
@@ -241,7 +252,11 @@ export function buildMcpCredentialDetachedCommand(envName: string): string {
   return `[ -z "\${${envName}+x}" ]`;
 }
 
-export function waitForDetachedMcpCredential(sandboxName: string, entry: McpBridgeEntry): void {
+export async function waitForDetachedMcpCredential(
+  sandboxName: string,
+  entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): Promise<void> {
   assertPersistedAuthenticatedBridgeEntry(entry);
   const envName = entry.env[0];
   try {
@@ -256,10 +271,15 @@ export function waitForDetachedMcpCredential(sandboxName: string, entry: McpBrid
     process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
     10,
   );
-  const revoked = waitForMcpBridgeCondition(
-    () =>
-      executeMcpCredentialProofCommand(sandboxName, buildMcpCredentialDetachedCommand(envName))
-        ?.status === 0,
+  const revoked = await waitForMcpBridgeConditionAsync(
+    async () =>
+      (
+        await executeMcpCredentialProofCommand(
+          sandboxName,
+          buildMcpCredentialDetachedCommand(envName),
+          runtimeSelection,
+        )
+      )?.status === 0,
     Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
     1_000,
   );

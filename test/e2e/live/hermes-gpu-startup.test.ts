@@ -4,6 +4,12 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { resolveSandboxLaunchForwardPorts } from "../../../src/lib/actions/sandbox/process-recovery";
+import {
+  createForwardServiceTarget,
+  isForwardServiceListenerOwner,
+} from "../../../src/lib/adapters/openshell/forward-service";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { cleanupUnlessVerified } from "../fixtures/cleanup-resources.ts";
@@ -324,7 +330,7 @@ done`;
 test(
   `hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches stable Ready state`,
   {
-    timeout: LIVE_TIMEOUT_MS,
+    timeout: testTimeout(LIVE_TIMEOUT_MS),
     meta: {
       e2ePhases: [
         "prepare clean Hermes GPU runner",
@@ -467,12 +473,16 @@ test(
       cwd: REPO_ROOT,
       env,
       redactionValues: [FAKE_API_KEY],
-      timeoutMs: 60 * 60_000,
+      timeoutMs: execTimeout(60 * 60_000),
     });
     const gpuDiagnosticsDir = extractHermesGpuDiagnosticsDirectory(resultText(install));
     await (install.exitCode !== 0
       ? captureFailedGpuContainer(host, runtimeProvider, gpuDiagnosticsDir)
       : Promise.resolve());
+    const fallbackEvents = fallbackWrapper
+      ? readHermesGpuFallbackEvents(fallbackWrapper.eventsPath)
+      : [];
+    await (fallbackWrapper && artifacts.writeJson("gpu-fallback-events.json", fallbackEvents));
     expect(install.exitCode, resultText(install)).toBe(0);
     assertStockManagedImageReceipt({
       environment: env,
@@ -480,14 +490,35 @@ test(
       sandboxName: SANDBOX_NAME,
     });
 
-    const verifyFallback = async (wrapper: ReturnType<typeof createHermesGpuFallbackWrapper>) => {
-      const fallbackEvents = readHermesGpuFallbackEvents(wrapper.eventsPath);
-      await artifacts.writeJson("gpu-fallback-events.json", fallbackEvents);
-      expect(fallbackEvents).toEqual([
+    const verifyFallback = (wrapper: ReturnType<typeof createHermesGpuFallbackWrapper>) => {
+      const forwardPorts = resolveSandboxLaunchForwardPorts(SANDBOX_NAME);
+      const forwardOwnership = (forwardPorts ?? []).map(
+        (port) =>
+          `${port}=${isForwardServiceListenerOwner(
+            createForwardServiceTarget(
+              {
+                executable: wrapper.wrapperPath,
+                gatewayName: "nemoclaw",
+                localHost: "127.0.0.1",
+                sandboxName: SANDBOX_NAME,
+                workspace: "default",
+              },
+              port,
+            ),
+          )}`,
+      );
+      const expectedFallbackEvents = [
         HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
         HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
         HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback,
-      ]);
+      ];
+      expect(
+        fallbackEvents.join("\n") === expectedFallbackEvents.join("\n") &&
+          forwardOwnership.length === 2 &&
+          new Set(forwardPorts ?? []).size === 2 &&
+          forwardOwnership.every((entry) => entry.endsWith("=true")),
+        `fallback events: ${fallbackEvents.join(", ")}; forward ownership: ${forwardOwnership.join(", ") || "unresolved"}`,
+      ).toBe(true);
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
       expect(
         HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS.every((fragment) =>
@@ -495,7 +526,7 @@ test(
         ),
       ).toBe(true);
     };
-    await (fallbackWrapper ? verifyFallback(fallbackWrapper) : Promise.resolve());
+    fallbackWrapper && verifyFallback(fallbackWrapper);
 
     progress.phase("validate GPU startup and supervisor proof");
     const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {

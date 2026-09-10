@@ -1,13 +1,47 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
+import { runOnboardCommand } from "./command";
+import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
 import {
+  GatewayStateConflictError,
   GATEWAY_MANAGEMENT_ENV_VAR,
   loadGatewayManagementDeclaration,
   parseGatewayManagementDeclaration,
 } from "./gateway-management";
+
+afterEach(resetOnboardResumeHintForTests);
+
+it("prints a clean CLI error for an onboarding state conflict", async () => {
+  const errors: string[] = [];
+  await expect(
+    runOnboardCommand({
+      flags: { "experimental-profile": "portable" },
+      env: {},
+      runOnboard: async () => {
+        throw new GatewayStateConflictError(
+          "Portable gateway state conflicts with this run.\nOPENAI_API_KEY=state-secret",
+        );
+      },
+      error: (message = "") => errors.push(message),
+      exit: (code) => {
+        throw new Error(`exit:${String(code)}`);
+      },
+    }),
+  ).rejects.toThrow("exit:1");
+
+  const output = errors.join("\n");
+  expect(output).toContain("Portable gateway state conflicts with this run");
+  expect(output).toContain("OPENAI_API_KEY=<REDACTED>");
+  expect(output).not.toContain("state-secret");
+  expect(output).not.toContain(".js:");
+  expect(output).not.toContain("    at ");
+  printOnboardResumeHint(true, (message) => errors.push(message));
+  expect(errors.join("\n")).not.toContain("onboard --resume");
+  expect(errors.join("\n")).not.toContain("onboard --experimental-profile portable --fresh");
+});
 
 function externalDeclaration(overrides: Record<string, unknown> = {}) {
   return {

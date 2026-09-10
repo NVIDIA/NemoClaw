@@ -12,6 +12,7 @@ readonly MIN_FREE_KIB=$((20 * 1024 * 1024))
 readonly GB300_PCI_VENDOR="0x10de"
 readonly -a GB300_PCI_DEVICES=("0x31c2" "0x31c3")
 readonly GB300_PCI_CLASS_PREFIX="0x03"
+readonly STATION_IDENTITY_VALUE_MAX_BYTES=256
 STATION_HOST_PROFILE="generic-ubuntu"
 FORCE_STATION_INSTALL=0
 # The qualified generic image currently ships this OEM telemetry bootcmd. Its
@@ -140,6 +141,18 @@ station_product_name_path() {
   printf '%s' /sys/class/dmi/id/product_name
 }
 
+station_product_family_path() {
+  printf '%s' /sys/class/dmi/id/product_family
+}
+
+station_board_name_path() {
+  printf '%s' /sys/class/dmi/id/board_name
+}
+
+station_device_tree_model_path() {
+  printf '%s' /sys/firmware/devicetree/base/model
+}
+
 station_pci_devices_path() {
   printf '%s' /sys/bus/pci/devices
 }
@@ -226,7 +239,7 @@ dgx_station_no_ota_stock_version_is_supported() {
 }
 
 dgx_station_release_profile() {
-  local path=$1 ota_pretty="" ota_key pretty version build_date platform
+  local path=$1 ota_pretty="" ota_key version build_date platform
   dgx_station_release_schema_is_valid "$path" || return 1
   platform="$(dgx_station_release_value "$path" DGX_PLATFORM)" || return 1
   [[ "$platform" == "DGX Server for GALAXY-GB300" ]] || return 1
@@ -234,19 +247,13 @@ dgx_station_release_profile() {
   # DGX OS keeps its upgrade history in the DGX_OTA_* fields, so a host that has
   # an OTA history is classified by the most recent OTA version it applied.
   #
-  # A host provisioned from a full DGX OS image also carries the identity field
-  # DGX_OTA_PRETTY_NAME="DGX OS"; when that field is present it must read exactly
-  # "DGX OS". It is absent on a host that was first installed from an older base
-  # image (for example 7.4.1-GB300ws) and later OTA-upgraded, because an OTA
-  # upgrade never adds that field. In that case, fall back to the hardware
-  # identity and require DGX_PRETTY_NAME="NVIDIA DGX GB300WS" so that other
-  # release lineages that also emit DGX_OTA_* fields stay fail-closed.
+  # A host provisioned from a full DGX OS image also carries the lineage field
+  # DGX_OTA_PRETTY_NAME="DGX OS". When present, it must match. OTA upgrades can
+  # omit that field, so the hardware, platform, and latest OTA version own the
+  # fallback. DGX_PRETTY_NAME remains diagnostic release text.
   if dgx_station_release_value "$path" DGX_OTA_VERSION >/dev/null 2>&1; then
     if ota_pretty="$(dgx_station_release_value "$path" DGX_OTA_PRETTY_NAME 2>/dev/null)"; then
       [[ "$ota_pretty" == "DGX OS" ]] || return 1
-    else
-      pretty="$(dgx_station_release_value "$path" DGX_PRETTY_NAME)" || return 1
-      [[ "$pretty" == "NVIDIA DGX GB300WS" ]] || return 1
     fi
     version="$(dgx_station_release_value "$path" DGX_OTA_VERSION)" || return 1
     case "$version" in
@@ -256,34 +263,59 @@ dgx_station_release_profile() {
     return 0
   fi
 
-  # Stock DGX OS 7.6 omits DGX_OTA_* metadata. Reviewed builds use two exact
-  # DGX_PRETTY_NAME values. The factory-runtime path still proves GB300, driver,
-  # ECC, Docker, CDI, and container GPU capability before onboarding. Other
-  # no-OTA factory images remain exact profiles because they carry separately
-  # qualified stacks.
+  # Stock DGX OS 7.6 omits DGX_OTA_* metadata. Hardware, platform, version, and
+  # the factory-runtime checks own qualification. DGX_PRETTY_NAME remains
+  # diagnostic text. Other no-OTA factory images remain exact build profiles
+  # because they carry separately qualified stacks.
   for ota_key in DGX_OTA_PRETTY_NAME DGX_OTA_VERSION DGX_OTA_DATE; do
     dgx_station_release_value "$path" "$ota_key" >/dev/null 2>&1 && return 1
   done
-  pretty="$(dgx_station_release_value "$path" DGX_PRETTY_NAME)" || return 1
   version="$(dgx_station_release_value "$path" DGX_SWBUILD_VERSION)" || return 1
   build_date="$(dgx_station_release_value "$path" DGX_SWBUILD_DATE)" || return 1
 
-  if [[ "$pretty" == "NVIDIA DGX GB300WS" || "$pretty" == "NVIDIA DGX Server" ]] \
-    && dgx_station_no_ota_stock_version_is_supported "$version"; then
+  if dgx_station_no_ota_stock_version_is_supported "$version"; then
     printf '%s' supported-dgx-os
     return 0
   fi
 
-  case "${pretty}|${version}|${build_date}" in
-    "NVIDIA DGX Server|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16")
+  case "${version}|${build_date}" in
+    "7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16")
       printf '%s' supported-colossus-baseos
       ;;
-    "NVIDIA DGX GB300WS|7.5.0|2026-05-13-18-42-38" | \
-      "NVIDIA DGX GB300WS|7.5.0|2026-06-16-11-48-10")
+    "7.5.0|2026-05-13-18-42-38" | \
+      "7.5.0|2026-06-16-11-48-10")
       printf '%s' supported-ai-developer-tools
       ;;
     *) return 1 ;;
   esac
+}
+
+dgx_station_release_contents_are_complete_station_profile() {
+  local path=$1 ota_key ota_pretty="" platform
+  dgx_station_release_schema_is_valid "$path" || return 1
+  platform="$(dgx_station_release_value "$path" DGX_PLATFORM)" || return 1
+  [[ "$platform" == "DGX Server for GALAXY-GB300" ]] || return 1
+
+  if dgx_station_release_value "$path" DGX_OTA_VERSION >/dev/null 2>&1; then
+    if ota_pretty="$(dgx_station_release_value "$path" DGX_OTA_PRETTY_NAME 2>/dev/null)"; then
+      [[ "$ota_pretty" == "DGX OS" ]] || return 1
+    fi
+    dgx_station_release_value "$path" DGX_OTA_DATE >/dev/null
+    return
+  fi
+
+  for ota_key in DGX_OTA_PRETTY_NAME DGX_OTA_VERSION DGX_OTA_DATE; do
+    dgx_station_release_value "$path" "$ota_key" >/dev/null 2>&1 && return 1
+  done
+  dgx_station_release_value "$path" DGX_SWBUILD_VERSION >/dev/null \
+    && dgx_station_release_value "$path" DGX_SWBUILD_DATE >/dev/null
+}
+
+dgx_station_release_is_complete_unrecognized_profile() {
+  local path=$1
+  dgx_station_release_file_is_safe "$path" \
+    && dgx_station_release_contents_are_complete_station_profile "$path" \
+    && ! dgx_station_release_contents_are_supported "$path"
 }
 
 dgx_station_release_contents_are_supported() {
@@ -386,7 +418,7 @@ parse_args() {
   FORCE_STATION_INSTALL=0
   for arg in "$@"; do
     case "$arg" in
-      --check | --apply | --verify | --bind-controller | --classify-dgx-release)
+      --check | --apply | --verify | --bind-controller | --classify-dgx-release | --classify-station-hardware)
         [[ -z "$MODE" ]] || return 1
         MODE="$arg"
         ;;
@@ -396,13 +428,105 @@ parse_args() {
   done
   [[ -n "$MODE" ]] || return 1
   [[ "$MODE" != "--classify-dgx-release" || "$FORCE_STATION_INSTALL" == "0" ]] \
+    && [[ "$MODE" != "--classify-station-hardware" || "$FORCE_STATION_INSTALL" == "0" ]] \
     && [[ "$MODE" != "--bind-controller" || "$FORCE_STATION_INSTALL" == "0" ]]
 }
 
-is_station_gb300_product() {
+nvidia_firmware_product_class() {
   local product=${1:-}
-  [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
-    "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
+  if [[ "$product" =~ [Dd][Gg][Xx]([_[:space:]-]+)[Ss][Pp][Aa][Rr][Kk] ]]; then
+    printf '%s' spark
+  elif [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([_[:space:]-]+)[Gg][Bb]300($|[^[:alnum:]]) ]]; then
+    printf '%s' station-gb300
+  elif [[ "$product" =~ (^|[^[:alnum:]])[Pp]3830($|[^[:alnum:]]) || "$product" =~ [Dd][Gg][Xx]([_[:space:]-]+)[Ss][Tt][Aa][Tt][Ii][Oo][Nn] ]]; then
+    printf '%s' station-other
+  elif [[ "$product" =~ [Jj][Ee][Tt][Ss][Oo][Nn]|[Tt][Ee][Gg][Rr][Aa]|[Tt][Hh][Oo][Rr]|[Oo][Rr][Ii][Nn]|[Xx][Aa][Vv][Ii][Ee][Rr] ]]; then
+    printf '%s' jetson
+  else
+    return 1
+  fi
+}
+
+is_station_gb300_product() {
+  [[ "$(nvidia_firmware_product_class "${1:-}" 2>/dev/null || true)" == "station-gb300" ]]
+}
+
+station_firmware_value_is_printable() {
+  local printable value=${1:-}
+  printable="$(printf '%s' "$value" | LC_ALL=C tr -d '\000-\037\177')"
+  [[ "$printable" == "$value" ]]
+}
+
+station_bounded_line_value() {
+  local byte_count control_count last_byte newline_count path=$1
+  byte_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 2)) "$path" 2>/dev/null | wc -c | tr -d '[:space:]')"
+  [[ "$byte_count" =~ ^[0-9]+$ ]] && ((byte_count <= STATION_IDENTITY_VALUE_MAX_BYTES + 1)) || return 1
+  control_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 1)) "$path" 2>/dev/null | LC_ALL=C tr -cd '\000-\037\177' | wc -c | tr -d '[:space:]')"
+  [[ "$control_count" =~ ^[0-9]+$ ]] || return 1
+  if ((control_count > 0)); then
+    newline_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 1)) "$path" 2>/dev/null | LC_ALL=C tr -cd '\012' | wc -c | tr -d '[:space:]')"
+    [[ "$newline_count" == "1" && "$control_count" == "1" ]] || return 1
+    last_byte="$(tail -c 1 "$path" 2>/dev/null | od -An -tu1 | tr -d '[:space:]')"
+    [[ "$last_byte" == "10" ]] || return 1
+  fi
+  head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 1)) "$path" 2>/dev/null | tr -d '\n'
+}
+
+station_device_tree_model_value() {
+  local byte_count control_count last_byte nul_count path=$1
+  byte_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 2)) "$path" 2>/dev/null | wc -c | tr -d '[:space:]')"
+  [[ "$byte_count" =~ ^[0-9]+$ ]] && ((byte_count <= STATION_IDENTITY_VALUE_MAX_BYTES + 1)) || return 1
+  control_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 1)) "$path" 2>/dev/null | LC_ALL=C tr -cd '\000-\037\177' | wc -c | tr -d '[:space:]')"
+  [[ "$control_count" =~ ^[0-9]+$ ]] || return 1
+  nul_count="$(head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 1)) "$path" 2>/dev/null | LC_ALL=C tr -cd '\000' | wc -c | tr -d '[:space:]')"
+  [[ "$nul_count" =~ ^[0-9]+$ ]] || return 1
+  ((byte_count <= STATION_IDENTITY_VALUE_MAX_BYTES || nul_count == 1)) || return 1
+  if ((control_count > 0)); then
+    ((control_count == 1 && nul_count == 1)) || return 1
+    last_byte="$(tail -c 1 "$path" 2>/dev/null | od -An -tu1 | tr -d '[:space:]')"
+    [[ "$last_byte" == "0" ]] || return 1
+  fi
+  head -c $((STATION_IDENTITY_VALUE_MAX_BYTES + 1)) "$path" 2>/dev/null | tr -d '\000'
+}
+
+station_firmware_identity() {
+  local LC_ALL=C class="" output=${1:?firmware identity output is required} path recognized="" station_product="" value
+  for path in "$(station_product_name_path)" "$(station_product_family_path)" "$(station_board_name_path)" "$(station_device_tree_model_path)"; do
+    [[ -r "$path" ]] || continue
+    if [[ "$path" == "$(station_device_tree_model_path)" ]]; then
+      value="$(station_device_tree_model_value "$path")" || continue
+    else
+      value="$(station_bounded_line_value "$path")" || continue
+    fi
+    [[ ${#value} -le STATION_IDENTITY_VALUE_MAX_BYTES ]] || continue
+    station_firmware_value_is_printable "$value" || continue
+    class="$(nvidia_firmware_product_class "$value" 2>/dev/null || true)"
+    [[ -n "$class" ]] || continue
+    if [[ -n "$recognized" && "$recognized" != "$class" ]]; then
+      if [[ "$output" == "state" ]]; then
+        printf '%s' conflicting
+        return 0
+      fi
+      return 2
+    fi
+    recognized=$class
+    [[ "$class" != "station-gb300" || -n "$station_product" ]] || station_product=$value
+  done
+  if [[ "$output" == "state" ]]; then
+    printf '%s' "${recognized:-not-station}"
+    return 0
+  fi
+  [[ "$output" == "product" ]] || return 1
+  [[ "$recognized" == "station-gb300" && -n "$station_product" ]] || return 1
+  printf '%s' "$station_product"
+}
+
+station_firmware_product() {
+  station_firmware_identity product
+}
+
+station_firmware_identity_state() {
+  station_firmware_identity state
 }
 
 normalize_nvidia_pci_bus_id() {
@@ -442,20 +566,38 @@ station_pci_device_is_gb300() {
     -r "$pci_path/vendor" &&
     -r "$pci_path/device" &&
     -r "$pci_path/class" ]] || return 1
-  IFS= read -r vendor <"$pci_path/vendor" || return 1
-  IFS= read -r device <"$pci_path/device" || return 1
-  IFS= read -r class <"$pci_path/class" || return 1
+  vendor="$(station_bounded_line_value "$pci_path/vendor")" || return 1
+  device="$(station_bounded_line_value "$pci_path/device")" || return 1
+  class="$(station_bounded_line_value "$pci_path/class")" || return 1
   [[ "$vendor" == "$GB300_PCI_VENDOR" ]] || return 1
   gb300_pci_device_is_known "$device" || return 1
-  [[ "$class" == "${GB300_PCI_CLASS_PREFIX}"* ]]
+  [[ "$class" =~ ^${GB300_PCI_CLASS_PREFIX}[0-9a-fA-F]{4}$ ]]
 }
 
 station_has_exact_gb300_pci_gpu() {
   local pci_root=${1:-/sys/bus/pci/devices} pci_path
+  local -a pci_paths=()
   for pci_path in "$pci_root"/*; do
+    [[ -d "$pci_path" ]] || continue
+    pci_paths+=("$pci_path")
+  done
+  ((${#pci_paths[@]} > 0 && ${#pci_paths[@]} <= 256)) || return 1
+  for pci_path in "${pci_paths[@]}"; do
     station_pci_device_is_gb300 "${pci_path##*/}" "$pci_root" && return 0
   done
   return 1
+}
+
+station_hardware_identity_state() {
+  local firmware_state
+  firmware_state="$(station_firmware_identity_state)"
+  if [[ "$firmware_state" != "station-gb300" ]]; then
+    printf '%s' "$firmware_state"
+  elif station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)"; then
+    printf '%s' station-gb300
+  else
+    printf '%s' station-gb300-pci-missing
+  fi
 }
 
 is_preparation_critical_unit() {
@@ -831,7 +973,7 @@ file_mode() {
 }
 
 check_platform() {
-  local arch os_release_path product product_name_path release_path release_state
+  local arch firmware_status=0 os_release_path product release_path release_state
   arch="$(uname -m)"
   [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] || fatal "Expected ARM64, found ${arch}"
 
@@ -841,10 +983,17 @@ check_platform() {
   source "$os_release_path"
   [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "24.04" ]] \
     || fatal "Expected Ubuntu 24.04, found ${PRETTY_NAME:-unknown}"
-  product_name_path="$(station_product_name_path)"
-  [[ -r "$product_name_path" ]] || fatal "DGX Station product identity is unavailable"
-  product="$(<"$product_name_path")"
-  is_station_gb300_product "$product" || fatal "Expected DGX Station GB300 DMI, found ${product}"
+  if product="$(station_firmware_product)"; then
+    :
+  else
+    firmware_status=$?
+    if ((firmware_status == 2)); then
+      fatal "DGX Station firmware identity conflicts across product, family, board, or device-tree fields"
+    fi
+    fatal "DGX Station GB300 firmware identity is unavailable"
+  fi
+  station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
+    || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:$(gb300_pci_device_display))"
   release_path="$(dgx_station_release_path)"
   release_state="$(dgx_station_release_state "$release_path")"
   if ((FORCE_STATION_INSTALL == 1)); then
@@ -852,12 +1001,14 @@ check_platform() {
       generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
         fatal "--force-station-install is only for unrecognized DGX Station release metadata. This host is already supported (${release_state}); omit --force-station-install."
         ;;
+      unsupported-dgx-os)
+        dgx_station_release_is_complete_unrecognized_profile "$release_path" \
+          || fatal "--force-station-install requires a trusted, complete DGX Station release marker with an unrecognized profile tuple"
+        ;;
     esac
   fi
   case "$release_state" in
     generic-ubuntu)
-      station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
-        || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:$(gb300_pci_device_display)) before generic Ubuntu preparation"
       STATION_HOST_PROFILE="generic-ubuntu"
       ;;
     supported-dgx-os) STATION_HOST_PROFILE="stock-dgx-os" ;;
@@ -865,8 +1016,6 @@ check_platform() {
     supported-ai-developer-tools) STATION_HOST_PROFILE="ai-developer-tools" ;;
     *)
       if ((FORCE_STATION_INSTALL == 1)); then
-        station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
-          || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:$(gb300_pci_device_display)) before forced factory-runtime validation"
         STATION_HOST_PROFILE="forced-factory-runtime"
         warn "DGX release metadata allowlist bypassed by explicit --force-station-install intent; all hardware and factory-runtime health checks remain required"
       else
@@ -874,6 +1023,7 @@ check_platform() {
       fi
       ;;
   esac
+  info "station_hardware=confirmed firmware_product=${product}"
   info "platform=${product} profile=${STATION_HOST_PROFILE} release=${release_state} os=${PRETTY_NAME} arch=${arch} kernel=$(uname -r)"
 }
 
@@ -2779,6 +2929,10 @@ main() {
   fi
   if [[ "$MODE" == "--classify-dgx-release" ]]; then
     dgx_station_release_state
+    return 0
+  fi
+  if [[ "$MODE" == "--classify-station-hardware" ]]; then
+    station_hardware_identity_state
     return 0
   fi
   if [[ "$MODE" == "--apply" ]]; then

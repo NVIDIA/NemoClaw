@@ -25,6 +25,7 @@ The contributor lifecycle has one owner for each stage: `nemoclaw-contributor-on
 Component-specific guidance belongs in the `AGENTS.md` file of the package it describes, not in a skill.
 Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
 Skills that write or review explanatory text must follow the shared [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md) contract.
+Keep repository skill workflows agent-harness agnostic. State required capabilities, actions, and observable results instead of requiring harness-specific tool names. A skill may name a client or command when that client or command is the user-visible subject. Harness-specific automation may assist with a workflow, but it does not define or replace the skill's requirements.
 
 ## Architecture
 
