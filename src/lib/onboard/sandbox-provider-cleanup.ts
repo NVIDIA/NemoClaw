@@ -53,6 +53,8 @@ export type DetachSandboxProvidersDeps = {
 };
 
 export type DeleteProviderWithRecoveryDeps = DetachSandboxProvidersDeps & {
+  /** Result already observed for this provider and adapter; do not repeat that delete. */
+  initialDeleteResult?: Awaited<ReturnType<OpenShellProviderAdapter["deleteProvider"]>>;
   /**
    * Security containment for the force-detach recovery path. When provided,
    * `deleteProviderWithRecovery` may only force-detach sandboxes whose names
@@ -303,7 +305,7 @@ export async function deleteProviderWithRecovery(
 ): Promise<ProviderDeleteWithRecoveryResult> {
   const adapter = deps.providerAdapter ?? createManagedProviderAdapter(deps.runOpenshell);
   const request = { target: { kind: "selected" as const }, providerName };
-  let result = await adapter.deleteProvider(request);
+  let result = deps.initialDeleteResult ?? (await adapter.deleteProvider(request));
   let recoveryFailures: Array<{ sandbox: string; output: string }> = [];
   if (!result.ok && result.error.kind === "command" && result.error.reason === "attached") {
     const attached = [...(result.error.attachedSandboxes ?? [])];

@@ -64,16 +64,14 @@ export function createStaleAnthropicProviderRunner(
     const isProviderOperation =
       (args[0] === "provider" && ["get", "delete"].includes(args[1])) ||
       (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach");
-    if (isProviderOperation && args.at(-1) !== provider) {
+    if (isProviderOperation && (!exists || args.at(-1) !== provider)) {
       return { status: 1, stderr: `provider '${args.at(-1)}' not found` };
     }
     if (args[0] === "provider" && args[1] === "get") {
-      return exists
-        ? {
-            status: 0,
-            stdout: `Name: ${provider}\nType: anthropic\nCredential keys: ${credentialEnv}\nConfig keys: ANTHROPIC_BASE_URL`,
-          }
-        : { status: 1 };
+      return {
+        status: 0,
+        stdout: `Name: ${provider}\nType: anthropic\nCredential keys: ${credentialEnv}\nConfig keys: ANTHROPIC_BASE_URL`,
+      };
     }
     if (args[0] === "provider" && args[1] === "delete") {
       if (attached.length > 0) {

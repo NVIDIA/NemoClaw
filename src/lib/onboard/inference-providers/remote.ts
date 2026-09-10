@@ -40,8 +40,8 @@ type StaleProviderReplaceResult = { ok: boolean; status?: number | null; message
  * Security containment: force-detach recovery may only touch the sandbox being
  * onboarded. The authorized set is exactly the confirmed `sandboxName`; every
  * attachment reported by the delete failure is revalidated against it before
- * any detach, and the same set is passed to `deleteProviderWithRecovery` so its
- * next inspection also fails closed on an outside sandbox. With no confirmed
+ * any detach, and `deleteProviderWithRecovery` checks the same authorized set
+ * against the initial typed deletion failure. With no confirmed
  * sandbox (`sandboxName === null`) there is nothing to authorize against, so
  * force-detach recovery is refused with an actionable error rather than run
  * unconstrained. A provider still attached to other live sandboxes fails closed
@@ -114,6 +114,7 @@ async function replaceStaleAnthropicProviderForOpenAiSurface(args: {
   if (attached.length > 0 && foreign.length === 0) {
     const recovery = await deleteProviderWithRecovery(provider, {
       providerAdapter: adapter,
+      initialDeleteResult: attempt,
       allowedSandboxes,
     });
     const detail = compactText(redact(`${recovery.stderr || ""} ${recovery.stdout || ""}`));

@@ -225,23 +225,19 @@ describe("custom Anthropic provider replacement on the OpenAI surface", () => {
       stdout: "",
       stderr: `provider '${PROVIDER}' is attached to sandbox(es): ${SANDBOX}`,
     };
-    harness.runOpenshell
-      .mockReturnValueOnce(ANTHROPIC_PROVIDER)
-      .mockReturnValueOnce(attached)
-      .mockReturnValueOnce(attached);
+    harness.runOpenshell.mockReturnValueOnce(ANTHROPIC_PROVIDER).mockReturnValueOnce(attached);
 
     await expect(
       setupRemoteProviderInference(makeArgs(SANDBOX), { ...harness.deps, providerAdapter }),
     ).resolves.toEqual({ done: false });
 
-    expect(harness.runOpenshell.mock.calls.slice(0, 5).map(([args]) => args)).toEqual([
+    expect(harness.runOpenshell.mock.calls.slice(0, 4).map(([args]) => args)).toEqual([
       ["provider", "get", PROVIDER],
-      ["provider", "delete", PROVIDER],
       ["provider", "delete", PROVIDER],
       ["sandbox", "provider", "detach", SANDBOX, PROVIDER],
       ["provider", "delete", PROVIDER],
     ]);
-    expect(deleteProvider).toHaveBeenCalledTimes(3);
+    expect(deleteProvider).toHaveBeenCalledTimes(2);
     expect(harness.upsertProvider).toHaveBeenCalledWith(
       PROVIDER,
       "openai",
@@ -249,9 +245,38 @@ describe("custom Anthropic provider replacement on the OpenAI surface", () => {
       OPENAI_SURFACE,
       { [CREDENTIAL_ENV]: "test-secret" },
     );
-    expect(harness.runOpenshell.mock.invocationCallOrder[4]).toBeLessThan(
+    expect(harness.runOpenshell.mock.invocationCallOrder[3]).toBeLessThan(
       harness.upsertProvider.mock.invocationCallOrder[0],
     );
+  });
+
+  it("does not retry deletion or register a provider after an uncertain detach", async () => {
+    const harness = createHarness();
+    const providerAdapter = createManagedProviderAdapter(harness.runOpenshell);
+    vi.spyOn(providerAdapter, "detachProvider").mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "uncertain", message: "outcome unknown" },
+    });
+    harness.runOpenshell.mockReturnValueOnce(ANTHROPIC_PROVIDER).mockReturnValueOnce({
+      status: 1,
+      stdout: "",
+      stderr: `provider '${PROVIDER}' is attached to sandbox(es): ${SANDBOX}`,
+    });
+
+    await expect(
+      setupRemoteProviderInference(makeArgs(SANDBOX), { ...harness.deps, providerAdapter }),
+    ).rejects.toThrow("EXIT_CALLED:1");
+
+    expect(providerAdapter.detachProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "selected" },
+      sandboxName: SANDBOX,
+      providerName: PROVIDER,
+    });
+    expect(harness.runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "get", PROVIDER],
+      ["provider", "delete", PROVIDER],
+    ]);
+    expect(harness.upsertProvider).not.toHaveBeenCalled();
   });
 
   it("fails closed when a foreign sandbox is attached (#6294)", async () => {

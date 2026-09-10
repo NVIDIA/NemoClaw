@@ -457,6 +457,10 @@ describe("deleteProviderWithRecovery", () => {
       await expect(
         deleteProviderWithRecovery("provider", {
           providerAdapter: adapter,
+          initialDeleteResult: await adapter.deleteProvider({
+            target: { kind: "selected" },
+            providerName: "provider",
+          }),
           allowedSandboxes: ["owned"],
         }),
       ).resolves.toMatchObject({
@@ -488,6 +492,10 @@ describe("deleteProviderWithRecovery", () => {
     await expect(
       deleteProviderWithRecovery("provider", {
         providerAdapter: adapter,
+        initialDeleteResult: await adapter.deleteProvider({
+          target: { kind: "selected" },
+          providerName: "provider",
+        }),
         allowedSandboxes: ["owned"],
       }),
     ).resolves.toMatchObject({ ok: false });
