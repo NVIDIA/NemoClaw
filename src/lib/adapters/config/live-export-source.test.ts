@@ -887,7 +887,7 @@ describe("live export snapshot reader", () => {
     { label: "oversized service", telemetry: { serviceName: "s".repeat(257) } },
     { label: "out-of-range sample", telemetry: { sampleRate: 1.1 } },
     { label: "disabled nondefault settings", telemetry: { enabled: false } },
-    { label: "unimplemented agent setting", settings: { agentTimeoutSeconds: 900 } },
+    { label: "invalid agent timeout", settings: { agentTimeoutSeconds: 1000000001 } },
     { label: "conflicting agent", registry: { agent: "hermes" } },
     { label: "DCode observability marker", registry: { observabilityEnabled: true } },
     {

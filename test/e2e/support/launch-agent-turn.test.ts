@@ -143,7 +143,7 @@ function runLaunchSessionFixture(
   try {
     writeFileSync(
       join(fixtureRoot, "sleep"),
-      '#!/bin/bash\n[[ "$1:$NEMOCLAW_FIXTURE_MODE" =~ ^0\.05:pty-(socket-(invalid|permission)|response-identity)$ ]] || exec /usr/bin/sleep "$@"\n',
+      '#!/bin/bash\n[[ "$1:$NEMOCLAW_FIXTURE_MODE" =~ ^0.05:pty-(socket-(invalid|permission)|response-identity)$ ]] || exec /usr/bin/sleep "$@"\n',
       { mode: 0o755 },
     );
     writeFileSync(
