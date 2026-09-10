@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellSandboxSessionOutcome } from "../../src/lib/adapters/openshell/sandbox-session";
 import childProcess from "node:child_process";
 import { createRequire } from "node:module";
 
@@ -67,12 +68,14 @@ export type ConnectHarness = {
   requalifyPortableAgentAuthoritySpy: MockInstance;
   qualifyHermesPortableAcceptedReadinessAuthoritySpy: MockInstance;
   inspectPortableReceiptDispositionSpy: MockInstance;
+  registryUpdateSpy: MockInstance;
   registryEntries: SandboxEntry[];
   resolveAgentConfigSpy: MockInstance;
   restoreSandboxStartupState: RestoreSandboxStartupState;
   runAutoPairSpy: MockInstance;
   sandboxRunBufferedSpy: MockInstance;
-  runSandboxExecChildSpy: MockInstance;
+  startSandboxSessionSpy: MockInstance;
+  createSessionExecutorSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   runSetupDnsProxySpy: MockInstance;
   spawnSyncSpy: MockInstance;
@@ -82,6 +85,7 @@ export type ConnectHarness = {
 };
 
 export type ConnectHarnessOptions = {
+  sessionOutcome?: OpenShellSandboxSessionOutcome;
   agentName?: string;
   inferenceGetOutput?: string;
   isWsl?: boolean;
@@ -363,11 +367,19 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const requalifyPortableAgentAuthoritySpy = vi
     .spyOn(gatewayState, "requalifyPortableAgentSandboxAuthority")
     .mockReturnValue({ kind: "not-hermes" });
-  const sandboxExec = requireDist("../../src/lib/actions/sandbox/exec.js");
-  const runSandboxExecChildSpy = vi.spyOn(sandboxExec, "runSandboxExecChild").mockResolvedValue({
-    status: spawnStatusFromOptions(options),
-    signal: options.spawnSignal ?? null,
-  });
+  const sessionCli = requireDist("../../src/lib/adapters/openshell/sandbox-command-cli.js");
+  const startSandboxSessionSpy = vi.fn(() => ({
+    completion: Promise.resolve({
+      outcome: options.sessionOutcome ?? { kind: "exited", exitCode: 0 },
+      stdout: "",
+      stderr: "",
+      release: vi.fn(),
+    }),
+    cancel: vi.fn(),
+  }));
+  const createSessionExecutorSpy = vi
+    .spyOn(sessionCli, "createCliOpenShellSandboxSessionExecutor")
+    .mockReturnValue({ start: startSandboxSessionSpy });
 
   const inspectLaunchReadinessSpy = vi
     .spyOn(launchReadiness, "inspectLaunchReadiness")
@@ -600,6 +612,15 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     sandboxes: registryEntries,
     defaultSandbox: primaryRegistryEntry.name,
   });
+  const registryUpdateSpy = vi
+    .spyOn(registry, "updateSandbox")
+    .mockImplementation((...args: unknown[]) => {
+      const [name, updates] = args as [unknown, Partial<SandboxEntry>];
+      const entry = registryEntries.find((candidate) => candidate.name === String(name));
+      if (!entry) return false;
+      Object.assign(entry, updates);
+      return true;
+    });
   const hermesConfigTarget = {
     agentName: "hermes",
     configPath: "/sandbox/.hermes/config.yaml",
@@ -668,12 +689,14 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     requalifyPortableAgentAuthoritySpy,
     qualifyHermesPortableAcceptedReadinessAuthoritySpy,
     inspectPortableReceiptDispositionSpy,
+    registryUpdateSpy,
     registryEntries,
     resolveAgentConfigSpy,
     restoreSandboxStartupState: requireDist(connectModulePath).restoreSandboxStartupState,
     runAutoPairSpy,
     sandboxRunBufferedSpy,
-    runSandboxExecChildSpy,
+    startSandboxSessionSpy,
+    createSessionExecutorSpy,
     settlePortablePairingSpy,
     runOpenshellSpy,
     runSetupDnsProxySpy,

@@ -93,7 +93,7 @@ describe("CLI sandbox SSH execution", () => {
     expect(existsSync(dirname(file))).toBe(false);
   });
 
-  it("retains the version probe's qualified host when OpenShell emits a legacy alias", async () => {
+  it("uses the legacy host selected from the OpenShell SSH configuration", async () => {
     const { run, executor } = fixture();
     run
       .mockReset()
@@ -101,7 +101,7 @@ describe("CLI sandbox SSH execution", () => {
       .mockResolvedValueOnce({ ...success, stdout: "Host openshell-alpha\n" })
       .mockResolvedValueOnce(success);
     await executor.run(request);
-    expect(run.mock.calls[2][1].slice(-2)).toEqual(["openshell-alpha.default", "hermes --version"]);
+    expect(run.mock.calls[2][1].slice(-2)).toEqual(["openshell-alpha", "hermes --version"]);
   });
 
   it.each([

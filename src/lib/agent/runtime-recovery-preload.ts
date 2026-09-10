@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Gateway recovery preload repair logic. The generated shell restores the two
-// critical Node preload guards from the packaged image copies before recovery
+// Gateway recovery preload repair logic. The generated shell restores the
+// required Node preload from its packaged image copy before recovery
 // relaunches a gateway.
 
 export const GATEWAY_PRELOAD_GUARDS: ReadonlyArray<{
@@ -12,10 +12,6 @@ export const GATEWAY_PRELOAD_GUARDS: ReadonlyArray<{
   {
     tmpPath: "/tmp/nemoclaw-sandbox-safety-net.js",
     sourcePath: "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js",
-  },
-  {
-    tmpPath: "/tmp/nemoclaw-ciao-network-guard.js",
-    sourcePath: "/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js",
   },
 ];
 

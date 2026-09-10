@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import * as agentRuntime from "../../agent/runtime";
 import type { AgentDefinition } from "../../agent/definition-types";
-import { spawnExitCode } from "../../core/process-exit";
+import { createCliOpenShellSandboxSessionExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import {
   createCliOpenShellSandboxCommandExecutor,
@@ -20,12 +20,7 @@ import {
   printInteractiveSessionHints,
 } from "./connect";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
-import {
-  buildOpenshellExecArgs,
-  execSandbox,
-  runSandboxExecChild,
-  wrapExecCommandWithRuntimeEnv,
-} from "./exec";
+import { execSandbox, wrapExecCommandWithRuntimeEnv } from "./exec";
 import {
   inspectPortableAgentReceiptDisposition,
   captureHermesPortableAcceptedReadinessObservation,
@@ -264,30 +259,28 @@ async function launchAgentWithPortableAuthority(
     gatewayName: string,
     commandAuthority: HermesPortableReadinessCommandAuthority,
   ): Promise<void> => {
-    const options = {
-      tty: true,
-      stdin: true,
-      timeoutSeconds: 0,
-      subprocessEnv: commandAuthority.env,
-    } as const;
     commandAuthority.assertCurrent();
     beforeAgentExec?.();
-    const result = await runSandboxExecChild(
-      commandAuthority.executablePath,
-      buildOpenshellExecArgs(
-        sandboxName,
-        wrapExecCommandWithRuntimeEnv(command),
-        options,
-        gatewayName,
-      ),
-      options,
-    );
+    const session = createCliOpenShellSandboxSessionExecutor({
+      resolveBinary: () => commandAuthority.executablePath,
+      environment: commandAuthority.env,
+    }).start({
+      kind: "command",
+      sandboxName,
+      target: { kind: "named", gatewayName },
+      command: wrapExecCommandWithRuntimeEnv(command),
+      tty: true,
+      output: "inherit",
+      timeoutSeconds: 0,
+    });
+    const result = await session.completion;
     try {
-      if (result.error) throw result.error;
-      const exitCode = spawnExitCode(result);
-      if (exitCode !== 0) process.exit(exitCode);
+      if (result.outcome.kind === "failed" && result.outcome.reason !== "transport") {
+        throw new Error(result.outcome.message);
+      }
+      if (result.outcome.exitCode !== 0) process.exit(result.outcome.exitCode);
     } finally {
-      result.releaseSignals?.();
+      result.release();
     }
   };
   const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;

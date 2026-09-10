@@ -14,6 +14,7 @@ import {
   NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
   NemoClawAgentTypeSchema,
+  NemoClawOpenClawObservabilitySchema,
   NemoClawManagedProxyConfigSchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
@@ -268,6 +269,7 @@ export const ExportSourceValuesSchema = Type.Object({
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
   execution: Type.Optional(NemoClawAgentExecutionSchema),
   agent: NemoClawAgentTypeSchema,
+  auth: Type.Optional(Type.Object({ method: Type.Literal("api-key") })),
   runtime: Type.Object({
     provider: RuntimeProviderSchema,
     imageRef: ImmutableImageReferenceSchema,
@@ -275,6 +277,7 @@ export const ExportSourceValuesSchema = Type.Object({
   gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
   proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
+  observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
   webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
 });
 
