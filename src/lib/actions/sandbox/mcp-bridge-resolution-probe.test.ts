@@ -345,6 +345,38 @@ describe("MCP credential-resolution probe execution gates", () => {
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
 
+  it("probes a recorded trusted private endpoint instead of skipping it as unsafe (#11377)", async () => {
+    mocks.executeSandboxCommand.mockImplementation((_sandboxName: string, command: string) => {
+      const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
+      return {
+        status: 0,
+        stdout: [
+          resultMarker,
+          probeStdout(
+            { httpStatus: 200, curlExit: 0, controlHttpStatus: 401, controlExit: 0 },
+            resultMarker,
+          ),
+        ].join("\n"),
+        stderr: "",
+      };
+    });
+    const probe = await probeCredentialResolution(
+      "alpha",
+      {
+        ...baseEntry,
+        url: "https://172.17.0.2:8443/mcp",
+        trustedPrivateHost: "172.17.0.2",
+        allowedIps: ["172.17.0.2"],
+      },
+      "mcporter",
+      readyProbe,
+      runtimeSelection,
+    );
+    expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
+    expect(mocks.executeSandboxCommand).toHaveBeenCalledTimes(1);
+    expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain("https://172.17.0.2:8443/mcp");
+  });
+
   it("executes the probe in the sandbox and classifies the outcome (#6379)", async () => {
     mocks.executeSandboxCommand.mockImplementation((_sandboxName: string, command: string) => {
       const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];

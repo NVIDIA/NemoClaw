@@ -90,7 +90,7 @@ export function toolDiscoveryReadinessSkipDetail(
 }
 
 export function buildMcpToolDiscoveryCommand(
-  entry: Pick<McpBridgeEntry, "server" | "url" | "env">,
+  entry: Pick<McpBridgeEntry, "server" | "url" | "env" | "trustedPrivateHost">,
   adapter: AgentMcpAdapter,
 ): McpToolDiscoveryCommand | null {
   const credentialEnv = entry.env[0];
@@ -101,8 +101,19 @@ export function buildMcpToolDiscoveryCommand(
   // Under the approved trusted-configured-endpoint contract, advertised names
   // remain untrusted and bounded display text, but may be credential-derived;
   // parser validation is not a confidentiality proof for a malicious server.
+  //
+  // The recorded exact-host trust intent must ride along: a trusted private
+  // endpoint is canonical only under that intent, and dropping it made status
+  // skip a healthy registration as "no valid managed endpoint" (#11377).
+  // Entries without a recorded trusted host keep the strict public boundary.
   try {
-    if (normalizeMcpServerUrl(entry.url) !== entry.url) return null;
+    if (
+      normalizeMcpServerUrl(entry.url, {
+        trustedPrivateHosts: entry.trustedPrivateHost ? [entry.trustedPrivateHost] : undefined,
+      }) !== entry.url
+    ) {
+      return null;
+    }
   } catch {
     return null;
   }
