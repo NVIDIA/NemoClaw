@@ -328,6 +328,11 @@ interface DockerAuthoritySelection {
   conflict: DockerAuthorityConflict | null;
 }
 
+/**
+ * Probe the ambient Docker authority and the fallback sockets once, returning
+ * the selection detectDockerHost makes and the engine conflict, if any, that
+ * made it decline. The policy stays fail-closed (#8816, #10253).
+ */
 function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAuthoritySelection {
   const env = opts.env ?? process.env;
   if (env.DOCKER_HOST) {
@@ -371,6 +376,7 @@ function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAut
   return { selection, conflict: null };
 }
 
+/** Select the Docker authority the CLI should use, or null to keep the host default. */
 function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDetection | null {
   return selectDockerAuthority(opts).selection;
 }

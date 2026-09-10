@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as platform from "../platform";
 import type { DockerAuthorityConflict } from "../platform";
-import { assessHost, planHostAdvisories } from "./preflight";
+import {
+  assessHost,
+  planHostAdvisories,
+  resolveDockerAuthorityConflictObserver,
+} from "./preflight";
 
 // Regression: NemoClaw #10622. The default Docker authority is unreachable
 // and the socket fallback meets both a Podman and a Docker engine. Detection
@@ -168,5 +172,32 @@ describe("assessHost Docker authority conflict (#10622)", () => {
     expect(observe).not.toHaveBeenCalled();
     expect(assessment.dockerAuthorityConflict).toBeUndefined();
     expect(planHostAdvisories(assessment).map((action) => action.id)).toContain("install_docker");
+  });
+});
+
+describe("resolveDockerAuthorityConflictObserver (#10622)", () => {
+  it("wires the real observer when the assessment probes the local host itself", () => {
+    expect(resolveDockerAuthorityConflictObserver({})).toBe(
+      platform.observeDockerAuthorityConflict,
+    );
+  });
+
+  it.each([
+    ["Docker evidence", { dockerInfoOutput: "" }],
+    ["a command transport", { runCaptureImpl: () => "" }],
+    [
+      "an extended command transport",
+      { runCaptureExImpl: () => ({ stdout: "", stderr: "", exitCode: 1, timedOut: false }) },
+    ],
+  ])("wires no observer when the caller injects %s", (_case, opts) => {
+    expect(resolveDockerAuthorityConflictObserver(opts)).toBeUndefined();
+  });
+
+  it("prefers an injected observer over the default", () => {
+    const observe = vi.fn(() => CONFLICT);
+
+    expect(
+      resolveDockerAuthorityConflictObserver({ observeDockerAuthorityConflictImpl: observe }),
+    ).toBe(observe);
   });
 });

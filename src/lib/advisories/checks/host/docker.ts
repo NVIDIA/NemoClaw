@@ -28,6 +28,7 @@ export const enableDockerDesktopWslIntegration: AdvisoryCheck<HostAssessment> = 
   phase: "preflight.host",
   severity: "blocking",
   resumeSafe: false,
+  /** WSL guidance yields to a diagnosed authority conflict, which names the real remedy (#10622). */
   check(host) {
     if (
       host.dockerHostInvalid ||
@@ -139,6 +140,7 @@ export const chooseDockerAuthority: AdvisoryCheck<HostAssessment> = {
   phase: "preflight.host",
   severity: "blocking",
   resumeSafe: false,
+  /** Name both engines and the DOCKER_HOST remedy when detection declined to choose (#10622). */
   check(host) {
     const conflict = host.dockerAuthorityConflict;
     if (
@@ -173,6 +175,7 @@ export const addUserToDockerGroup: AdvisoryCheck<HostAssessment> = {
   phase: "preflight.host",
   severity: "blocking",
   resumeSafe: false,
+  /** Silent while an authority conflict is observed: group membership is not the diagnosed cause (#10622). */
   check(host) {
     if (
       host.dockerHostInvalid ||
@@ -210,6 +213,7 @@ export const startDocker: AdvisoryCheck<HostAssessment> = {
   phase: "preflight.host",
   severity: "blocking",
   resumeSafe: false,
+  /** Silent while an authority conflict is observed: two engines already answer (#10622). */
   check(host) {
     const likelyGroupIssue = host.platform === "linux" && host.dockerServiceActive === true;
     if (
