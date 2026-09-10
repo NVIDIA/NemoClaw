@@ -127,6 +127,23 @@ repos:
         entry: npx oxlint --fix --no-error-on-unmatched-pattern
         language: system
         files: \.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$
+        exclude: ^(src/lib/adapters/|nemoclaw/src/)
+        pass_filenames: true
+        priority: 6
+
+      - id: oxlint-type-aware
+        name: Oxlint type-aware rules
+        entry: npx oxlint --fix --type-aware --no-error-on-unmatched-pattern
+        language: system
+        files: ^nemoclaw/src/.*\.(cts|mts|ts|tsx)$
+        pass_filenames: true
+        priority: 6
+
+      - id: oxlint-adapters-type-aware
+        name: Oxlint adapter type-aware rules
+        entry: npx oxlint --fix --type-aware --no-error-on-unmatched-pattern
+        language: system
+        files: ^src/lib/adapters/.*\.(cts|mts|ts|tsx)$
         pass_filenames: true
         priority: 6
 
@@ -160,22 +177,6 @@ repos:
 
   - repo: local
     hooks:
-      - id: oxlint-type-aware
-        name: Oxlint type-aware rules
-        entry: npx oxlint --type-aware --no-error-on-unmatched-pattern
-        language: system
-        files: ^nemoclaw/src/.*\.ts$
-        pass_filenames: true
-        priority: 10
-
-      - id: oxlint-adapters-type-aware
-        name: Oxlint adapter type-aware rules
-        entry: npx oxlint --type-aware --no-error-on-unmatched-pattern
-        language: system
-        files: ^src/lib/adapters/.*\.ts$
-        pass_filenames: true
-        priority: 10
-
       - id: validate-config-schemas
         name: Validate config files against JSON schemas
         entry: npx tsx scripts/validate-configs.mts
