@@ -27,8 +27,7 @@ const finalDockerfiles = [
 ] as const;
 const copyInstruction =
   "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts";
-const patchInstruction =
-  "node /scripts/patch-bundled-npm-brace-expansion.mts";
+const patchInstruction = "node /scripts/patch-bundled-npm-brace-expansion.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const hermesTarCacheSeedArguments = [
   ...npmRootArguments,
@@ -71,24 +70,25 @@ describe("bundled npm brace-expansion image remediation contract", () => {
     expect(patch.commandStart, file).toBeGreaterThan(upgrade);
   });
 
-  it.each(
-    finalDockerfiles,
-  )("reasserts the private package fix in the completed %s filesystem", (file) => {
-    const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
-    const copy = source.indexOf(copyInstruction);
-    const tarPatch = requireSingleReviewedDockerfileRunCommand(
-      source,
-      "node /scripts/patch-bundled-npm-tar.mts",
-      tarPatchArgumentsByDockerfile[file],
-    ).commandStart;
-    const bracePatch = requireSingleReviewedDockerfileRunCommand(
-      source,
-      patchInstruction,
-      npmRootArguments,
-    );
+  it.each(finalDockerfiles)(
+    "reasserts the private package fix in the completed %s filesystem",
+    (file) => {
+      const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
+      const copy = source.indexOf(copyInstruction);
+      const tarPatch = requireSingleReviewedDockerfileRunCommand(
+        source,
+        "node /scripts/patch-bundled-npm-tar.mts",
+        tarPatchArgumentsByDockerfile[file],
+      ).commandStart;
+      const bracePatch = requireSingleReviewedDockerfileRunCommand(
+        source,
+        patchInstruction,
+        npmRootArguments,
+      );
 
-    expect(copy, file).toBeGreaterThanOrEqual(0);
-    expect(tarPatch, file).toBeGreaterThan(copy);
-    expect(bracePatch.commandStart, file).toBeGreaterThan(tarPatch);
-  });
+      expect(copy, file).toBeGreaterThanOrEqual(0);
+      expect(tarPatch, file).toBeGreaterThan(copy);
+      expect(bracePatch.commandStart, file).toBeGreaterThan(tarPatch);
+    },
+  );
 });

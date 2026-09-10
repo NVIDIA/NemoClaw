@@ -61,11 +61,14 @@ export function buildExportConfig(
             provider: source.runtime.provider,
             image: { ref: source.runtime.imageRef },
           },
-          network: { policy: { explicit: source.policy } },
+          network: {
+            policy: { explicit: source.policy },
+            ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
+          },
           agents: [
             {
               name: "primary",
-              type: "openclaw",
+              type: source.agent,
               inference: {
                 routes: [
                   {

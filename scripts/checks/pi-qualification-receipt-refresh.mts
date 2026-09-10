@@ -160,14 +160,7 @@ function requireReceiptSourceParity(
   comparisonRevision: string,
   imageSourcePaths: readonly string[],
 ): void {
-  const result = git([
-    "diff",
-    "--quiet",
-    revision,
-    comparisonRevision,
-    "--",
-    ...imageSourcePaths,
-  ]);
+  const result = git(["diff", "--quiet", revision, comparisonRevision, "--", ...imageSourcePaths]);
   if (result.error) {
     throw new Error(`Could not run git to validate Pi receipt source parity (${result.error})`);
   }

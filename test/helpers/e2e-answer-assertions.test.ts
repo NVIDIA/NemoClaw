@@ -64,9 +64,12 @@ describe("E2E answer assertions", () => {
     ["initial", "PONG", "PONG"],
     ["resumed", "PONG", "PONG"],
     ["continued", "PONG", "PONG"],
-  ])("accepts the semantic %s reply used by the Hermes follow-up sequence", (_turn, output, answer) => {
-    expect(containsAnswer(output, answer)).toBe(true);
-  });
+  ])(
+    "accepts the semantic %s reply used by the Hermes follow-up sequence",
+    (_turn, output, answer) => {
+      expect(containsAnswer(output, answer)).toBe(true);
+    },
+  );
 
   it("matches deterministic reply tokens split by streaming whitespace", () => {
     expect(containsReplyTokenAllowingWhitespace("A\n2603-REPLY", "A2603-REPLY")).toBe(true);

@@ -67,7 +67,9 @@ function dockerQualifiedPresetRuntimeFailure(
       requirement.readiness.kind === "observation" &&
       requirement.readiness.id === "host.docker.runtime",
   );
-  const resolvedProvider = String(runtimeProviderId ?? "").trim().toLowerCase();
+  const resolvedProvider = String(runtimeProviderId ?? "")
+    .trim()
+    .toLowerCase();
   return requiresDocker && resolvedProvider && resolvedProvider !== "docker"
     ? `Managed llama.cpp preset ${selection.preset.metadata.id} requires the Docker runtime provider selected by its readiness qualification; the resolved runtime provider is ${resolvedProvider}.`
     : null;
@@ -178,9 +180,10 @@ function managedLlamaCppChoiceEligibilityFailure(
   );
   if (runtimeFailure) return runtimeFailure;
   return (
-    choice.selection.recipe.metadata.id === N1X_WSL_RECIPE_ID &&
-    n1xWslDockerLocalityFailure(env, options)
-  ) || null;
+    (choice.selection.recipe.metadata.id === N1X_WSL_RECIPE_ID &&
+      n1xWslDockerLocalityFailure(env, options)) ||
+    null
+  );
 }
 
 function resolveManagedLlamaCppSelectionFromChoices(
@@ -395,10 +398,7 @@ export function discoverManagedLlamaCppSelectionsForGpu(
   env: NodeJS.ProcessEnv | undefined,
   gpu: GpuDetection | null,
   catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
-  collectionOptions: Omit<
-    CollectHostObservationsOptions,
-    "detectGpu" | "containerGpuProof"
-  > = {},
+  collectionOptions: Omit<CollectHostObservationsOptions, "detectGpu" | "containerGpuProof"> = {},
   selectionOptions: ManagedLlamaCppSelectionOptions = {},
 ): ManagedLlamaCppDiscoveryResult {
   const report = createHostReadinessReport(getBuildIdentity(), {

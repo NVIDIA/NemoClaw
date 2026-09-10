@@ -151,9 +151,9 @@ describe("authenticated MCP live fixtures", () => {
       auth: `Bearer ${secret}`,
       body: "",
     });
-    expect(
-      shouldRetryMcpDiscoveryAfterRestart(server.observations.slice(observationOffset)),
-    ).toBe(false);
+    expect(shouldRetryMcpDiscoveryAfterRestart(server.observations.slice(observationOffset))).toBe(
+      false,
+    );
 
     slowRequest.end(body.slice(1));
     expect(await observedStatus).toEqual({ ok: true, status: 200 });
@@ -567,13 +567,8 @@ describe("authenticated MCP live fixtures", () => {
       ).status,
     ).toBe(404);
     expect(
-      (
-        await request(
-          "POST",
-          { jsonrpc: "2.0", id: 9, method: "tools/list" },
-          legacy.endpoint,
-        )
-      ).status,
+      (await request("POST", { jsonrpc: "2.0", id: 9, method: "tools/list" }, legacy.endpoint))
+        .status,
     ).toBe(409);
     expect(
       (
@@ -654,46 +649,30 @@ describe("authenticated MCP live fixtures", () => {
       ).status,
     ).toBe(202);
     expect(
+      (await request("POST", { jsonrpc: "2.0", id: 11, method: "tools/list" }, legacy.endpoint))
+        .status,
+    ).toBe(400);
+    expect(
       (
-        await request(
-          "POST",
-          { jsonrpc: "2.0", id: 11, method: "tools/list" },
-          legacy.endpoint,
-        )
+        await request("POST", { jsonrpc: "2.0", id: 11, method: "tools/list" }, legacy.endpoint, {
+          "mcp-protocol-version": "2025-03-26",
+        })
       ).status,
     ).toBe(400);
     expect(
       (
-        await request(
-          "POST",
-          { jsonrpc: "2.0", id: 11, method: "tools/list" },
-          legacy.endpoint,
-          { "mcp-protocol-version": "2025-03-26" },
-        )
-      ).status,
-    ).toBe(400);
-    expect(
-      (
-        await request(
-          "POST",
-          { jsonrpc: "2.0", id: 11, method: "tools/list" },
-          legacy.endpoint,
-          {
-            "mcp-protocol-version": "2025-06-18",
-            "mcp-session-id": "fake-session-cross-route",
-          },
-        )
+        await request("POST", { jsonrpc: "2.0", id: 11, method: "tools/list" }, legacy.endpoint, {
+          "mcp-protocol-version": "2025-06-18",
+          "mcp-session-id": "fake-session-cross-route",
+        })
       ).status,
     ).toBe(400);
     const legacyListEvent = legacy.reader.next();
     expect(
       (
-        await request(
-          "POST",
-          { jsonrpc: "2.0", id: 11, method: "tools/list" },
-          legacy.endpoint,
-          { "mcp-protocol-version": "2025-06-18" },
-        )
+        await request("POST", { jsonrpc: "2.0", id: 11, method: "tools/list" }, legacy.endpoint, {
+          "mcp-protocol-version": "2025-06-18",
+        })
       ).status,
     ).toBe(202);
     expect(JSON.parse((await legacyListEvent).value ?? "")).toMatchObject({
@@ -732,22 +711,18 @@ describe("authenticated MCP live fixtures", () => {
     const requestOffset = server.requests.length;
     const orderedEvents = [legacy.reader.next(), legacy.reader.next()];
     const concurrentResponses = await Promise.all([
-      request(
-        "POST",
-        { jsonrpc: "2.0", id: 30, method: "tools/list" },
-        legacy.endpoint,
-        { "mcp-protocol-version": "2025-06-18" },
-      ),
-      request(
-        "POST",
-        { jsonrpc: "2.0", id: 31, method: "tools/list" },
-        legacy.endpoint,
-        { "mcp-protocol-version": "2025-06-18" },
-      ),
+      request("POST", { jsonrpc: "2.0", id: 30, method: "tools/list" }, legacy.endpoint, {
+        "mcp-protocol-version": "2025-06-18",
+      }),
+      request("POST", { jsonrpc: "2.0", id: 31, method: "tools/list" }, legacy.endpoint, {
+        "mcp-protocol-version": "2025-06-18",
+      }),
     ]);
     expect(concurrentResponses.map((response) => response.status)).toEqual([202, 202]);
     const wireIds = await Promise.all(
-      orderedEvents.map(async (event) => (JSON.parse((await event).value ?? "") as { id: number }).id),
+      orderedEvents.map(
+        async (event) => (JSON.parse((await event).value ?? "") as { id: number }).id,
+      ),
     );
     const recordedResponses = server.requests
       .slice(requestOffset)
@@ -764,12 +739,9 @@ describe("authenticated MCP live fixtures", () => {
     await expect.poll(() => server.activeLegacySessionCount()).toBe(1);
     expect(
       (
-        await request(
-          "POST",
-          { jsonrpc: "2.0", id: 40, method: "tools/list" },
-          legacy.endpoint,
-          { "mcp-protocol-version": "2025-06-18" },
-        )
+        await request("POST", { jsonrpc: "2.0", id: 40, method: "tools/list" }, legacy.endpoint, {
+          "mcp-protocol-version": "2025-06-18",
+        })
       ).status,
     ).toBe(404);
     secondLegacy.channel.destroy();

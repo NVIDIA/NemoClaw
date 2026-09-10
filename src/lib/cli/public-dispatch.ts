@@ -22,10 +22,7 @@ const {
   sandboxActionTokensForDispatch,
 } = require("./command-registry");
 
-import {
-  hasMigratableLegacySandbox,
-  migrateLegacyPortState,
-} from "../state/legacy-port-migration";
+import { hasMigratableLegacySandbox, migrateLegacyPortState } from "../state/legacy-port-migration";
 import {
   isGlobalCommandInvocation,
   type NormalizedArgv,
@@ -601,8 +598,5 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
     return;
   }
 
-  await dispatchNormalizedArgv(
-    normalizeArgv(argv, PUBLIC_ARGV_OPTIONS),
-    argv,
-  );
+  await dispatchNormalizedArgv(normalizeArgv(argv, PUBLIC_ARGV_OPTIONS), argv);
 }

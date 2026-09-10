@@ -195,30 +195,29 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(fs.existsSync(path.join(result.home, ".deepagents", "config.toml"))).toBe(false);
   });
 
-  it.each([
-    "nvidia/nemotron-3-ultra-550b-a55b",
-    "nvidia/nvidia/nemotron-3-ultra",
-  ])("adds the required coding-agent request options for %s", (model) => {
-    const config = runGenerator({ NEMOCLAW_MODEL: model });
+  it.each(["nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nvidia/nemotron-3-ultra"])(
+    "adds the required coding-agent request options for %s",
+    (model) => {
+      const config = runGenerator({ NEMOCLAW_MODEL: model });
 
-    expect(config).toContain(`[models.providers.openai.params."${model}"]`);
-    expect(config).toContain(
-      "extra_body = { chat_template_kwargs = { force_nonempty_content = true } }",
-    );
-  });
+      expect(config).toContain(`[models.providers.openai.params."${model}"]`);
+      expect(config).toContain(
+        "extra_body = { chat_template_kwargs = { force_nonempty_content = true } }",
+      );
+    },
+  );
 
-  it.each([
-    "low",
-    "medium",
-    "high",
-  ])("records the onboarding reasoning effort as a managed request parameter: %s (#7938)", (effort) => {
-    const config = runGenerator({ NEMOCLAW_REASONING_EFFORT: effort });
+  it.each(["low", "medium", "high"])(
+    "records the onboarding reasoning effort as a managed request parameter: %s (#7938)",
+    (effort) => {
+      const config = runGenerator({ NEMOCLAW_REASONING_EFFORT: effort });
 
-    expect(config).toContain(
-      '[models.providers.openai.params."nvidia/nemotron-3-super-120b-a12b"]',
-    );
-    expect(config).toContain(`extra_body = { reasoning_effort = "${effort}" }`);
-  });
+      expect(config).toContain(
+        '[models.providers.openai.params."nvidia/nemotron-3-super-120b-a12b"]',
+      );
+      expect(config).toContain(`extra_body = { reasoning_effort = "${effort}" }`);
+    },
+  );
 
   it("keeps both managed request parameters for an Ultra model with a reasoning effort (#7938)", () => {
     const config = runGenerator({
