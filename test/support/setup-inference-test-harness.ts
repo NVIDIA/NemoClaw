@@ -57,7 +57,7 @@ export function createStaleAnthropicProviderRunner(
   provider: string,
   credentialEnv: string,
   attachedSandboxes: readonly string[] = [],
-): NonNullable<DirectSetupHarnessOptions["runOpenshell"]> {
+): (args: string[]) => DirectRunStubResult | undefined {
   let exists = true;
   let attached = attachedSandboxes;
   return (args) => {

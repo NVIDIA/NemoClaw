@@ -50,3 +50,35 @@ it("binds provider deletion to the uninstall environment and preserves uncertain
     expect.objectContaining({ env }),
   );
 });
+
+it.each([
+  ["ETIMEDOUT", { kind: "timeout" }],
+  ["ENOENT", { kind: "transport", reason: "process_start" }],
+  ["EACCES", { kind: "transport", reason: "process_start" }],
+])(
+  "preserves %s from the uninstall subprocess through provider classification",
+  async (code, error) => {
+    spawn.mockReturnValue({
+      status: null,
+      stdout: "",
+      stderr: "",
+      error: Object.assign(new Error(code), { code }),
+    });
+    const adapter = createUninstallProviderAdapter(defaultRun, {});
+    await expect(
+      adapter.deleteProvider({ target: { kind: "selected" }, providerName: "nvidia-nim" }),
+    ).resolves.toMatchObject({ ok: false, error });
+  },
+);
+
+it("preserves a signal so interrupted detach cannot look idempotent", async () => {
+  spawn.mockReturnValue({ status: 1, stdout: "NotAttached", stderr: "", signal: "SIGTERM" });
+  const adapter = createUninstallProviderAdapter(defaultRun, {});
+  await expect(
+    adapter.detachProvider({
+      target: { kind: "selected" },
+      providerName: "nvidia-nim",
+      sandboxName: "alpha",
+    }),
+  ).resolves.toMatchObject({ ok: false });
+});

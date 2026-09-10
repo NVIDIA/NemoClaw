@@ -78,6 +78,9 @@ describe("CLI OpenShell provider adapter uncertain mutations", () => {
 
   it.each([
     "provider other-provider is not attached",
+    "Provider other-provider was not attached to sandbox alpha.",
+    "Provider search-prod was not attached to sandbox other-sandbox.",
+    "unauthorized; Provider search-prod was not attached to sandbox alpha.",
     "status: NotAttached, provider 'other-provider' is not bound",
     "unauthorized; provider search-prod is not attached",
     "connection reset; NotAttached",

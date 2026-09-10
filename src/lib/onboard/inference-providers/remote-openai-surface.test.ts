@@ -253,9 +253,12 @@ describe("custom Anthropic provider replacement on the OpenAI surface", () => {
   it("does not retry deletion or register a provider after an uncertain detach", async () => {
     const harness = createHarness();
     const providerAdapter = createManagedProviderAdapter(harness.runOpenshell);
+    harness.deps.redact.mockImplementation((value) =>
+      value.replaceAll("test-secret", "[redacted]"),
+    );
     vi.spyOn(providerAdapter, "detachProvider").mockResolvedValue({
       ok: false,
-      error: { kind: "command", reason: "uncertain", message: "outcome unknown" },
+      error: { kind: "command", reason: "uncertain", message: "outcome unknown: test-secret" },
     });
     harness.runOpenshell.mockReturnValueOnce(ANTHROPIC_PROVIDER).mockReturnValueOnce({
       status: 1,
@@ -267,6 +270,10 @@ describe("custom Anthropic provider replacement on the OpenAI surface", () => {
       setupRemoteProviderInference(makeArgs(SANDBOX), { ...harness.deps, providerAdapter }),
     ).rejects.toThrow("EXIT_CALLED:1");
 
+    expect(harness.error).toHaveBeenCalledWith(
+      expect.stringContaining(`detach failures: ${SANDBOX}: outcome unknown: [redacted]`),
+    );
+    expect(harness.error.mock.calls.flat().join(" ")).not.toContain("test-secret");
     expect(providerAdapter.detachProvider).toHaveBeenCalledExactlyOnceWith({
       target: { kind: "selected" },
       sandboxName: SANDBOX,

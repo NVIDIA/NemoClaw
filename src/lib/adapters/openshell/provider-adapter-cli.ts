@@ -695,7 +695,7 @@ export function createCliOpenShellProviderAdapter(
       !result.error &&
       !result.signal &&
       result.status !== null &&
-      reportsProviderNotAttached(output, request.providerName);
+      reportsProviderNotAttached(output, request.providerName, request.sandboxName);
     if (confirmedIdempotentDetach) {
       return success({ changed: false });
     }

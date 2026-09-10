@@ -8,6 +8,8 @@ import { dockerSpawnSync } from "../docker/exec";
 
 export interface RunResult {
   status: number | null;
+  error?: Error;
+  signal?: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
 }
@@ -15,6 +17,8 @@ export interface RunResult {
 function toRunResult(result: SpawnSyncReturns<string | Buffer>): RunResult {
   return {
     status: result.status,
+    ...(result.error ? { error: result.error } : {}),
+    ...(result.signal ? { signal: result.signal } : {}),
     stdout: typeof result.stdout === "string" ? result.stdout : String(result.stdout ?? ""),
     stderr: typeof result.stderr === "string" ? result.stderr : String(result.stderr ?? ""),
   };

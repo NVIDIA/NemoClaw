@@ -75,12 +75,12 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     "rejects a mismatched provider name during fixture %s without changing its state",
     (_operation, args) => {
       const runner = createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV, ["test-box"]);
-      expect(runner(args, {}, [])).toEqual({
+      expect(runner(args)).toEqual({
         status: 1,
         stderr: "provider 'other-provider' not found",
       });
-      expect(runner(["provider", "get", PROVIDER], {}, [])?.status).toBe(0);
-      expect(runner(["provider", "delete", PROVIDER], {}, [])).toEqual({
+      expect(runner(["provider", "get", PROVIDER])?.status).toBe(0);
+      expect(runner(["provider", "delete", PROVIDER])).toEqual({
         status: 1,
         stderr: `provider '${PROVIDER}' is attached to sandbox(es): test-box`,
       });
@@ -93,8 +93,8 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     ["detach", ["sandbox", "provider", "detach", "test-box", PROVIDER]],
   ])("reports provider absence during fixture %s after deletion", (_operation, args) => {
     const runner = createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV);
-    expect(runner(["provider", "delete", PROVIDER], {}, [])).toEqual({ status: 0 });
-    expect(runner(args, {}, [])).toEqual({
+    expect(runner(["provider", "delete", PROVIDER])).toEqual({ status: 0 });
+    expect(runner(args)).toEqual({
       status: 1,
       stderr: `provider '${PROVIDER}' not found`,
     });

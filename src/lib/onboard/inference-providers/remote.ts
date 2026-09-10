@@ -121,11 +121,14 @@ async function replaceStaleAnthropicProviderForOpenAiSurface(args: {
         `endpoint or remove those sandboxes first.`,
     };
   }
+  const recovery = attempt.recoveryFailures
+    .map((failure) => compactText(redact(`${failure.sandbox}: ${failure.output}`)))
+    .join("; ");
   const detail = compactText(redact(raw));
   return {
     ok: false,
     status: 1,
-    message: `Failed to replace provider '${provider}' for the OpenAI-compatible route${detail ? `: ${detail}` : "."}`,
+    message: `Failed to replace provider '${provider}' for the OpenAI-compatible route${detail ? `: ${detail}` : "."}${recovery ? ` (detach failures: ${recovery})` : ""}`,
   };
 }
 

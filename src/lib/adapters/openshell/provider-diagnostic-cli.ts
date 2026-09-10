@@ -266,9 +266,15 @@ export function reportsExactSandboxNotFound(
 }
 
 /** Accept an absent attachment only when the complete diagnostic matches this operation. */
-export function reportsProviderNotAttached(output: string, providerName: string): boolean {
+export function reportsProviderNotAttached(
+  output: string,
+  providerName: string,
+  sandboxName: string,
+): boolean {
   const text = stripDiagnosticPrefixes(output.trim());
   if (/^(?:NotAttached|provider not attached to sandbox)[.!]?$/iu.test(text)) return true;
+  const absent = /^provider (.+) was not attached to sandbox (.+?)[.!]?$/iu.exec(text);
+  if (absent) return absent[1] === providerName && absent[2] === sandboxName;
   const compact = /^NotAttached, provider (["'`])(.+)\1 is not bound[.!]?$/iu.exec(text);
   if (compact) return compact[2] === providerName;
   const named = /^provider (?:(["'`])(.+)\1|([^\s]+)) is not attached[.!]?$/iu.exec(text);
