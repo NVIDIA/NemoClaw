@@ -164,6 +164,100 @@ def windows_taskkill(environment):
     return Path(root) / "System32" / "taskkill.exe"
 
 
+NODE_DEPS_COMMAND_TIMEOUT_SECONDS = 600
+NODE_DEPS_COMMAND_COUNT = 3  # npm root, Playwright Chromium, npm ui-tui
+NODE_DEPS_REPORTING_GRACE_SECONDS = 60
+
+
+def official_stage_timeout(stage):
+    if stage == "node-deps":
+        return (
+            NODE_DEPS_COMMAND_COUNT * NODE_DEPS_COMMAND_TIMEOUT_SECONDS
+            + NODE_DEPS_REPORTING_GRACE_SECONDS
+        )
+    return 600
+
+
+def node_stage_log_bytes(evidence):
+    evidence = Path(evidence)
+    files = list((evidence / "npm-cache" / "diagnostic-logs").glob("*")) + list(
+        (evidence / "npm-cache" / "tmp").glob("hermes-*.log")
+    )
+    if len(files) > 256:
+        raise ValueError("The owned npm diagnostic inventory exceeded its bound")
+    total = 0
+    for file in files:
+        info = file.lstat()
+        if file.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise ValueError("The npm diagnostic path is a link")
+        if file.is_file():
+            total += info.st_size
+    return total
+
+
+def retain_node_stage_logs(evidence):
+    """Copy bounded npm/command diagnostics out of the artifact-excluded scratch root."""
+    evidence = Path(evidence)
+    locations = [
+        (
+            evidence / "npm-cache" / "tmp",
+            "upstream-command-logs",
+            r"hermes-(?:npm-browser|npm-tui|playwright-install)-[0-9]+\.log",
+        ),
+        (
+            evidence / "npm-cache" / "diagnostic-logs",
+            "npm-logs",
+            r"[A-Za-z0-9_.-]+\.(?:log|json)",
+        ),
+    ]
+    files = []
+    total = 0
+    for scratch, category, pattern in locations:
+        target = evidence / category
+        target.mkdir(exist_ok=True)
+        for source in sorted(scratch.glob("*")):
+            if not re.fullmatch(pattern, source.name):
+                continue
+            info = source.lstat()
+            if (
+                source.is_symlink()
+                or not source.is_file()
+                or info.st_nlink != 1
+                or getattr(info, "st_file_attributes", 0) & 0x400
+            ):
+                raise ValueError(
+                    "The upstream command log is not an ordinary owned file"
+                )
+            count = min(info.st_size, 8 * 1024 * 1024, 64 * 1024 * 1024 - total)
+            if count < 0 or len(files) >= 256:
+                raise ValueError(
+                    "The upstream command log inventory exceeded its bound"
+                )
+            with source.open("rb") as reader:
+                data = reader.read(count)
+            with (target / source.name).open("xb") as writer:
+                writer.write(data)
+                writer.flush()
+                os.fsync(writer.fileno())
+            total += len(data)
+            files.append(
+                {
+                    "category": category,
+                    "file": source.name,
+                    "sourceBytes": info.st_size,
+                    "retainedBytes": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                    "truncated": len(data) != info.st_size,
+                }
+            )
+    return {
+        "files": files,
+        "retainedBytes": total,
+        "sourceScratch": "npm-cache",
+        "maximumRetainedBytes": 64 * 1024 * 1024,
+    }
+
+
 def run_owned(executable, args, environment, cwd, evidence, label, timeout=600):
     stdout_path = Path(evidence) / f"{label}.stdout.log"
     stderr_path = Path(evidence) / f"{label}.stderr.log"
@@ -197,6 +291,8 @@ def run_owned(executable, args, environment, cwd, evidence, label, timeout=600):
                     output_size = (
                         stdout_path.stat().st_size + stderr_path.stat().st_size
                     )
+                    if label == "stage-node-deps":
+                        output_size += node_stage_log_bytes(evidence)
                     print(
                         f"[Hermes runtime] {label}: {elapsed:.0f}s elapsed, {output_size:,} diagnostic bytes",
                         flush=True,
@@ -229,8 +325,33 @@ def run_owned(executable, args, environment, cwd, evidence, label, timeout=600):
                     process.wait(timeout=10)
                 except Exception as error:
                     cleanup_errors.append(str(error))
+    node_logs = None
+    if (
+        label == "stage-node-deps"
+        and process is not None
+        and process.poll() is not None
+    ):
+        try:
+            node_logs = retain_node_stage_logs(evidence)
+        except Exception as error:
+            if primary is None:
+                primary = error
+            else:
+                primary.add_note(f"Upstream command log retention also failed: {error}")
     result = {
         "label": label,
+        "observerTimeoutSeconds": timeout,
+        "upstreamNodeCommands": (
+            {
+                "maximumSequentialCommands": NODE_DEPS_COMMAND_COUNT,
+                "perCommandTimeoutSeconds": NODE_DEPS_COMMAND_TIMEOUT_SECONDS,
+                "reportingGraceSeconds": NODE_DEPS_REPORTING_GRACE_SECONDS,
+                "classification": "CI-build-observer-envelope",
+            }
+            if label == "stage-node-deps"
+            else None
+        ),
+        "retainedNodeLogs": node_logs,
         "executable": str(executable),
         "arguments": list(map(str, args)),
         "elapsedSeconds": time.monotonic() - started,
@@ -290,6 +411,8 @@ def clean_environment(runtime, evidence, build_paths):
     environment = {name: os.environ[name] for name in names if name in os.environ}
     for directory in ["profile", "appdata", "localappdata", "config"]:
         (evidence / directory).mkdir()
+    (evidence / "npm-cache" / "tmp").mkdir(parents=True)
+    (evidence / "npm-cache" / "diagnostic-logs").mkdir()
     for name in ["npm-user.npmrc", "npm-global.npmrc"]:
         (evidence / name).write_text("", encoding="utf-8")
     environment.update(
@@ -330,7 +453,13 @@ def clean_environment(runtime, evidence, build_paths):
         UV_KEYRING_PROVIDER="disabled",
         UV_TOOL_DIR=str(runtime / "tools"),
         UV_TOOL_BIN_DIR=str(runtime / "bin"),
+        TEMP=str(evidence / "npm-cache" / "tmp"),
+        TMP=str(evidence / "npm-cache" / "tmp"),
         npm_config_cache=str(evidence / "npm-cache"),
+        npm_config_logs_dir=str(evidence / "npm-cache" / "diagnostic-logs"),
+        npm_config_logs_max="64",
+        npm_config_timing="true",
+        NODE_DEPS_TIMEOUT=str(NODE_DEPS_COMMAND_TIMEOUT_SECONDS),
         npm_config_userconfig=str(evidence / "npm-user.npmrc"),
         npm_config_globalconfig=str(evidence / "npm-global.npmrc"),
         PLAYWRIGHT_BROWSERS_PATH=str(runtime / "browsers"),
@@ -705,6 +834,7 @@ def main():
                     "-Json",
                 ],
                 label="stage-" + stage,
+                timeout=official_stage_timeout(stage),
             )
             frames = [
                 json.loads(line)

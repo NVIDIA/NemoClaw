@@ -217,6 +217,102 @@ class BuildControls(unittest.TestCase):
             self.assertEqual(captured.exception.code, 404)
             captured.exception.close()
 
+    def test_node_stage_keeps_real_failed_child_logs_outside_excluded_cache(self):
+        with mock.patch.dict(
+            os.environ,
+            {"SystemRoot": os.environ.get("SystemRoot", str(self.root))},
+            clear=True,
+        ):
+            environment = builder.clean_environment(
+                self.root / "runtime", self.root, []
+            )
+        self.assertEqual(environment["NODE_DEPS_TIMEOUT"], "600")
+        self.assertEqual(
+            environment["npm_config_logs_dir"],
+            str(self.root / "npm-cache/diagnostic-logs"),
+        )
+        self.assertNotEqual(
+            environment["npm_config_userconfig"], environment["npm_config_globalconfig"]
+        )
+        child = (
+            "import os,pathlib,sys; "
+            "pathlib.Path(os.environ['TEMP'],'hermes-npm-browser-17.log').write_text('actual npm phase failure'); "
+            "pathlib.Path(os.environ['npm_config_logs_dir'],'timing.json').write_text('{\"phase\":\"actual-child\"}'); "
+            "sys.exit(7)"
+        )
+        with self.assertRaisesRegex(RuntimeError, "exited 7"):
+            builder.run_owned(
+                sys.executable,
+                ["-c", child],
+                environment,
+                self.root,
+                self.root,
+                "stage-node-deps",
+                timeout=3,
+            )
+        receipt = json.loads((self.root / "stage-node-deps.process.json").read_text())
+        self.assertEqual(receipt["exitCode"], 7)
+        self.assertFalse(receipt["passed"])
+        retained = [
+            item
+            for item in receipt["retainedNodeLogs"]["files"]
+            if item["category"] == "upstream-command-logs"
+        ]
+        self.assertEqual(len(retained), 1)
+        self.assertFalse(retained[0]["truncated"])
+        self.assertEqual(
+            (self.root / "upstream-command-logs" / retained[0]["file"]).read_text(),
+            "actual npm phase failure",
+        )
+        self.assertEqual(
+            json.loads((self.root / "npm-logs/timing.json").read_text()),
+            {"phase": "actual-child"},
+        )
+        self.assertEqual(
+            receipt["upstreamNodeCommands"]["perCommandTimeoutSeconds"], 600
+        )
+        self.assertEqual(builder.official_stage_timeout("node-deps"), 1860)
+        self.assertEqual(builder.official_stage_timeout("node"), 600)
+
+    def test_node_log_retention_failure_preserves_real_primary_exit(self):
+        with mock.patch.object(
+            builder, "retain_node_stage_logs", side_effect=OSError("owned-log-denied")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "exited 7") as captured:
+                builder.run_owned(
+                    sys.executable,
+                    ["-c", "import sys;sys.exit(7)"],
+                    os.environ.copy(),
+                    self.root,
+                    self.root,
+                    "stage-node-deps",
+                    timeout=3,
+                )
+        self.assertIn("owned-log-denied", " ".join(captured.exception.__notes__))
+        receipt = json.loads((self.root / "stage-node-deps.process.json").read_text())
+        self.assertEqual(receipt["exitCode"], 7)
+        self.assertIsNone(receipt["retainedNodeLogs"])
+
+    def test_node_log_retention_bounds_bytes_and_rejects_hardlinks(self):
+        scratch = self.root / "npm-cache/tmp"
+        scratch.mkdir(parents=True)
+        source = scratch / "hermes-npm-browser-9.log"
+        with source.open("wb") as handle:
+            handle.seek(8 * 1024 * 1024)
+            handle.write(b"x")
+        retained = builder.retain_node_stage_logs(self.root)
+        self.assertEqual(retained["files"][0]["retainedBytes"], 8 * 1024 * 1024)
+        self.assertTrue(retained["files"][0]["truncated"])
+        source.unlink()
+        outside = self.root / "outside.txt"
+        outside.write_text("must not be retained")
+        os.link(outside, scratch / "hermes-npm-tui-10.log")
+        with self.assertRaisesRegex(ValueError, "ordinary owned file"):
+            builder.retain_node_stage_logs(self.root)
+        self.assertFalse(
+            (self.root / "upstream-command-logs/hermes-npm-tui-10.log").exists()
+        )
+
     def build_receipts(self):
         runtime = self.root / "moved-runtime"
         runtime.mkdir()
