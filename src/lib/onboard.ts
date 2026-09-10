@@ -2492,7 +2492,7 @@ const setupMessagingChannels = messagingChannelSetup.createSetupMessagingChannel
   prompt,
 });
 
-const configSyncDeps = { getProviderSelectionConfig, sandboxCommandExecutor: sandboxExec };
+const configSyncDeps = { getProviderSelectionConfig, sandboxCommandExecutor: sandboxExec, getGatewayName: () => GATEWAY_NAME };
 const syncNemoClawConfigInSandbox = createNemoClawConfigSync(configSyncDeps);
 
 const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({

@@ -5,7 +5,8 @@ import { stripVTControlCharacters } from "node:util";
 
 import type { ProviderSelectionConfig } from "../inference/config";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
-import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/sandbox-identity-cli";
+import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 
 export interface RunSandboxConfigSyncDeps {
   getSelectionConfig: () => ProviderSelectionConfig | null;
@@ -15,6 +16,8 @@ export interface RunSandboxConfigSyncDeps {
 export interface NemoClawConfigSyncDeps {
   getProviderSelectionConfig(provider: string, model: string): ProviderSelectionConfig | null;
   sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor;
+  getGatewayName(): string;
+  inspectSandboxIdentity?: typeof inspectOpenShellSandboxIdentityFingerprint;
 }
 
 const skipSandboxIdentityRevalidation = (_operation: string): void => undefined;
@@ -30,11 +33,27 @@ export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
       getSelectionConfig: () => deps.getProviderSelectionConfig(provider, model),
       runConnectScript: async (name, scriptContent) => {
         const deadlineMs = Date.now() + 60_000;
+        const gatewayName = deps.getGatewayName();
+        const inspectIdentity =
+          deps.inspectSandboxIdentity ?? inspectOpenShellSandboxIdentityFingerprint;
+        const identityRequest = { sandboxName: name, gatewayName };
+        const originalIdentity = inspectIdentity({ ...identityRequest, timeoutMs: 60_000 });
+        let retrying = false;
         while (Date.now() < deadlineMs) {
           revalidateSandboxIdentity(`synchronize OpenClaw config in sandbox '${name}'`);
+          if (
+            retrying &&
+            inspectIdentity({
+              ...identityRequest,
+              timeoutMs: Math.max(1, deadlineMs - Date.now()),
+            }) !== originalIdentity
+          ) {
+            throw new Error(`Sandbox '${name}' identity changed before config-sync retry`);
+          }
+          if (Date.now() >= deadlineMs) break;
           const result = await deps.sandboxCommandExecutor.runBuffered({
             sandboxName: name,
-            target: selectedOpenShellGateway(),
+            target: namedOpenShellGateway(gatewayName),
             command: ["/bin/bash", "-s"],
             tty: false,
             input: scriptContent,
@@ -43,13 +62,14 @@ export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
           });
           if (result.stderr) process.stderr.write(result.stderr);
           if (result.outcome.kind === "failed") throw new Error(result.outcome.error.message);
-          // Config sync owns this 60s retry window for stale backup-removal events.
+          // Config sync owns this 60s retry window for the exact Error-phase refusal.
           // OpenShell rejected execution before the script ran. Recheck identity on each
           // attempt, retain its diagnostic, and never retry an ambiguous command result.
           const diagnostic = stripVTControlCharacters(result.stderr)
             .replace(/[×│]/g, " ")
             .replace(/\s+/g, " ")
-            .trim();
+            .trim()
+            .replace(/\.$/, "");
           if (
             result.outcome.exitCode === 1 &&
             !result.outcome.signal &&
@@ -57,6 +77,7 @@ export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
             diagnostic ===
               `Error: sandbox '${name}' is not ready (phase: Error); wait for it to reach Ready state`
           ) {
+            retrying = true;
             await new Promise((resolve) =>
               setTimeout(resolve, Math.min(2_000, Math.max(0, deadlineMs - Date.now()))),
             );
