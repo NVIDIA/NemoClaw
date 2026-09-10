@@ -39,6 +39,7 @@ on:
         options:
           - components
           - python
+          - runtime
   push:
     branches:
       - feat/windows-native-installer
@@ -51,7 +52,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-native-installer-${{ github.ref }}${{ inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || '' }}
+  group: windows-native-installer-${{ github.ref }}${{ inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -851,7 +852,7 @@ jobs:
     name: Official Hermes ${{ inputs.official_hermes_phase || 'components' }} probe (Windows ARM64)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 90
+    timeout-minutes: ${{ inputs.official_hermes_phase == 'runtime' && 180 || 90 }}
     steps:
       - name: Check out the component probe
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -871,7 +872,7 @@ jobs:
             -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-components"
 
       - name: Check the canonical Python phase result contract
-        if: ${{ inputs.official_hermes_phase == 'python' }}
+        if: ${{ (inputs.official_hermes_phase == 'python' || inputs.official_hermes_phase == 'runtime') }}
         shell: powershell
         env:
           HERMES_COMPONENT_ROOT: ${{ steps.hermes-components.outputs.runtime_root }}
@@ -883,7 +884,7 @@ jobs:
             -OfficialInstallerPath "$env:HERMES_COMPONENT_ROOT\hermes-agent\scripts\install.ps1"
 
       - name: Set up pinned native Rust for canonical Hermes Python
-        if: ${{ inputs.official_hermes_phase == 'python' }}
+        if: ${{ (inputs.official_hermes_phase == 'python' || inputs.official_hermes_phase == 'runtime') }}
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           toolchain: 1.95.0-aarch64-pc-windows-msvc
@@ -892,13 +893,14 @@ jobs:
           rustflags: ""
 
       - name: Provision canonical Hermes Python before baseline setup
-        if: ${{ inputs.official_hermes_phase == 'python' }}
+        if: ${{ (inputs.official_hermes_phase == 'python' || inputs.official_hermes_phase == 'runtime') }}
         id: hermes-python
         shell: powershell
         # Pinned OpenSSL SDK build precedes the unchanged 20-minute Python stage.
-        timeout-minutes: 55
+        timeout-minutes: ${{ inputs.official_hermes_phase == 'runtime' && 165 || 55 }}
         env:
           HERMES_COMPONENT_ROOT: ${{ steps.hermes-components.outputs.runtime_root }}
+          HERMES_SELECTED_PHASE: ${{ inputs.official_hermes_phase }}
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
@@ -911,7 +913,8 @@ jobs:
           $vsDevCmd = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -find 'Common7\Tools\VsDevCmd.bat' | Select-Object -First 1)
           if ($LASTEXITCODE -ne 0 -or -not $vsDevCmd) { throw 'The runner does not contain the required Visual Studio ARM64 tools.' }
           $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-          $script = "$env:GITHUB_WORKSPACE\packaging\windows\hermes\prepare-official-python.ps1"
+          $entry = if ($env:HERMES_SELECTED_PHASE -eq 'runtime') { 'prepare-official-runtime.ps1' } else { 'prepare-official-python.ps1' }
+          $script = Join-Path "$env:GITHUB_WORKSPACE\packaging\windows\hermes" $entry
           $phaseLock = "$env:GITHUB_WORKSPACE\packaging\windows\hermes\official-python.lock.json"
           $evidence = "$env:RUNNER_TEMP\official-hermes-python"
           $components = "$env:RUNNER_TEMP\official-hermes-components"
@@ -919,11 +922,40 @@ jobs:
             if ($value -match '["\r\n%!]') { throw 'A build-prerequisite path cannot be represented safely.' }
           }
           $command = 'call "' + $vsDevCmd + '" -arch=arm64 -host_arch=arm64 && "' + $powershell + '" -NoProfile -ExecutionPolicy Bypass -File "' + $script + '" -LockPath "' + $phaseLock + '" -RuntimeRoot "' + $env:HERMES_COMPONENT_ROOT + '" -ArtifactDirectory "' + $evidence + '" -ComponentEvidenceDirectory "' + $components + '" -RustcPath "' + $rustc + '" -CargoPath "' + $cargo + '"'
+          if ($env:HERMES_SELECTED_PHASE -eq 'runtime') { $command += ' -ControllerSource "' + $env:GITHUB_SHA + '"' }
           & "$env:SystemRoot\System32\cmd.exe" /d /c $command
           if ($LASTEXITCODE -ne 0) { throw 'The canonical Hermes Python phase failed; baseline setup will not run.' }
 
+      - name: Upload the complete unqualified official runtime candidate
+        if: ${{ always() && inputs.official_hermes_phase == 'runtime' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: official-hermes-runtime-candidate-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/official-hermes-runtime-candidate/
+            ${{ runner.temp }}/official-hermes-runtime-build/
+            ${{ runner.temp }}/official-hermes-runtime-phase.json
+            ${{ runner.temp }}/official-hermes-components/
+            ${{ runner.temp }}/official-hermes-python/
+            !${{ runner.temp }}/official-hermes-components/downloads/
+            !${{ runner.temp }}/official-hermes-python/downloads/
+            !${{ runner.temp }}/official-hermes-python/cargo-home/
+            !${{ runner.temp }}/official-hermes-python/dependency-stage/uv-cache/
+            !${{ runner.temp }}/official-hermes-python/openssl/downloads/
+            !${{ runner.temp }}/official-hermes-python/openssl/strawberryperl/
+            !${{ runner.temp }}/official-hermes-python/openssl/nasm-windows-bin/
+            !${{ runner.temp }}/official-hermes-python/openssl/jom-windows-bin/
+            !${{ runner.temp }}/official-hermes-python/openssl/openssl/
+            !${{ runner.temp }}/official-hermes-runtime-build/downloads/
+            !${{ runner.temp }}/official-hermes-runtime-build/browser-use-wheels/
+            !${{ runner.temp }}/official-hermes-runtime-build/uv-cache/
+            !${{ runner.temp }}/official-hermes-runtime-build/npm-cache/
+            !${{ runner.temp }}/official-hermes-runtime-build/node-addon-headers/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Install the immutable MXC baseline
-        if: ${{ inputs.official_hermes_phase != 'python' }}
+        if: ${{ inputs.official_hermes_phase != 'python' && inputs.official_hermes_phase != 'runtime' }}
         id: component-baseline
         shell: powershell
         run: |
@@ -994,7 +1026,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'The installed read-only runtime probe failed.' }
 
       - name: Upload failed component evidence before baseline cleanup
-        if: failure()
+        if: ${{ failure() && inputs.official_hermes_phase != 'runtime' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: official-hermes-windows-mxc-components-precleanup-${{ github.sha }}
@@ -1017,14 +1049,14 @@ jobs:
           retention-days: 14
 
       - name: Uninstall the component probe baseline
-        if: ${{ always() && steps.component-baseline.outcome != 'skipped' }}
+        if: ${{ always() && inputs.official_hermes_phase != 'runtime' && steps.component-baseline.outcome != 'skipped' }}
         shell: powershell
         run: |
           & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\component-probe-baseline.ps1" `
             -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-baseline" -Uninstall
 
       - name: Upload official Hermes component evidence
-        if: always()
+        if: ${{ always() && inputs.official_hermes_phase != 'runtime' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: official-hermes-windows-mxc-components-${{ github.sha }}
