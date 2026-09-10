@@ -130,6 +130,25 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
     );
   });
 
+  it("targets the hook gateway and default workspace without a runtime selection", () => {
+    const isListenerOwner = vi.fn(() => true);
+    const options = createMessagingHostForwardPortConflictHookOptions({
+      resolveExecutable: () => "/usr/bin/openshell",
+      isListenerOwner,
+    });
+
+    expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978, 1234)).toBe(true);
+    expect(isListenerOwner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gatewayName: "nemoclaw",
+        workspace: "default",
+        sandboxName: "demo",
+        localPort: 3978,
+      }),
+      { expectedPid: 1234 },
+    );
+  });
+
   it.each([
     { sandbox: "demo", gateway: null, executable: "/usr/bin/openshell" },
     { sandbox: "demo", gateway: "other", executable: "/usr/bin/openshell" },
