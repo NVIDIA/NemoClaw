@@ -4214,8 +4214,9 @@ export function createDockerManagedBootstrapAdapter(
         throw new Error("Managed bootstrap Docker completed image content changed.");
       }
       assertReplacementBoundary(completedReplacement, handle, snapshot);
-      const normalized = normalizeDockerManagedBootstrapLaunchSpec(completedReplacement);
-      if (normalized.hash !== replacement.replacementSpecHash) {
+      const completedReplacementSpec =
+        normalizeDockerManagedBootstrapLaunchSpec(completedReplacement);
+      if (completedReplacementSpec.hash !== replacement.replacementSpecHash) {
         throw new Error("Managed bootstrap Docker replacement changed during bootstrap.");
       }
       let completedJournal = afterCompletionJournal;

@@ -11,12 +11,7 @@ const PROFILE_ID = "langfuse-hermes-v1";
 describe("OpenShell endpointless provider profiles", () => {
   it("resolves a checked-in profile path for the requested profile", () => {
     expect(endpointlessProviderProfilePath("/repo", PROFILE_ID)).toBe(
-      path.join(
-        "/repo",
-        "nemoclaw-blueprint",
-        "provider-profiles",
-        "langfuse-hermes-v1.yaml",
-      ),
+      path.join("/repo", "nemoclaw-blueprint", "provider-profiles", "langfuse-hermes-v1.yaml"),
     );
   });
 });

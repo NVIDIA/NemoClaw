@@ -54,6 +54,20 @@ describe("Shields retirement upgrade workflow plan", () => {
         82,
       );
       expect(
+        unfiltered.coverageMatrix.filter(
+          (row) =>
+            row.id === "shields-retirement-upgrade" ||
+            row.id === "shields-config" ||
+            row.id === "hermes-shields-config",
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          id: "shields-retirement-upgrade",
+          variant: "default-docker",
+          unresolvedReason: "",
+        }),
+      ]);
+      expect(
         Object.values(unfiltered.catalogueMatrices)
           .flat()
           .filter((row) => row.id === "shields-retirement-upgrade"),

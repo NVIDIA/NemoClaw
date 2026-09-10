@@ -64,6 +64,12 @@ function expectTrustedTemplate(source: string, digest: string): void {
 }
 
 describe("installer Homebrew formula reuse trust", () => {
+  const supersededV00106Template = INSTALLER_SOURCE.replace(
+    'MIN_VERSION="0.0.116"',
+    'MIN_VERSION="0.0.106"',
+  )
+    .replace('MAX_VERSION="0.0.116"', 'MAX_VERSION="0.0.106"')
+    .replace('DEV_MIN_VERSION="0.0.116"', 'DEV_MIN_VERSION="0.0.106"');
   const untrustedTemplate = INSTALLER_SOURCE.replace(
     'info "Detected $OS_LABEL ($ARCH_LABEL)"',
     'info "Detected $OS_LABEL ($ARCH_LABEL)"\n# unlisted installer template',
@@ -81,5 +87,14 @@ describe("installer Homebrew formula reuse trust", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("installer operational template is not base-trusted");
+  });
+
+  it("rejects the superseded OpenShell 0.0.106 installer path", () => {
+    const result = runTrustCheck(supersededV00106Template);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "installer pin-table release 0.0.116 must match installer MIN_VERSION 0.0.106",
+    );
   });
 });
