@@ -107,33 +107,32 @@ describe("provider/sandbox flow phases", () => {
     expect(sandboxResult.result).toEqual(branchResult);
   });
 
-  it.each([
-    "model",
-    "provider",
-    "sandboxGpuConfig",
-  ] as const)("rejects sandbox phase execution before %s is selected (#5938)", async (missingField) => {
-    const runSandbox = vi.fn(async (current) => ({
-      context: {
-        ...current,
-        session: createSession(),
-        sandboxName: "my-assistant",
-        webSearchConfig: null,
-        selectedMessagingChannels: [],
-        webSearchSupported: false,
-      },
-      result: branchTo("openclaw"),
-    }));
-    const phase = createSandboxPhase(runSandbox);
-    const incomplete = context({
-      model: "model",
-      provider: "nvidia-prod",
-      sandboxGpuConfig: { mode: "0" },
-    });
-    incomplete[missingField] = null;
+  it.each(["model", "provider", "sandboxGpuConfig"] as const)(
+    "rejects sandbox phase execution before %s is selected (#5938)",
+    async (missingField) => {
+      const runSandbox = vi.fn(async (current) => ({
+        context: {
+          ...current,
+          session: createSession(),
+          sandboxName: "my-assistant",
+          webSearchConfig: null,
+          selectedMessagingChannels: [],
+          webSearchSupported: false,
+        },
+        result: branchTo("openclaw"),
+      }));
+      const phase = createSandboxPhase(runSandbox);
+      const incomplete = context({
+        model: "model",
+        provider: "nvidia-prod",
+        sandboxGpuConfig: { mode: "0" },
+      });
+      incomplete[missingField] = null;
 
-    await expect(phase.run(incomplete)).rejects.toThrow(
-      /Onboarding state is incomplete before sandbox setup\./,
-    );
-    expect(runSandbox).not.toHaveBeenCalled();
-  });
+      await expect(phase.run(incomplete)).rejects.toThrow(
+        /Onboarding state is incomplete before sandbox setup\./,
+      );
+      expect(runSandbox).not.toHaveBeenCalled();
+    },
+  );
 });

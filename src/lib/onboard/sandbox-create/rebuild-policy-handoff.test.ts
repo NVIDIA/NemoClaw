@@ -617,10 +617,7 @@ network_policies:
         agent === "openclaw"
           ? path.join(process.cwd(), "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml")
           : path.join(process.cwd(), "agents", "hermes", "policy-additions.yaml");
-      const baseSource = fs.readFileSync(
-        basePolicyPath,
-        "utf8",
-      );
+      const baseSource = fs.readFileSync(basePolicyPath, "utf8");
       const keysByChannel = getMessagingPolicyKeysByChannel({ agent });
       const keysFor = (selected: string[]) =>
         selected.flatMap((channel) => [...(keysByChannel[channel] ?? [])]);
@@ -634,9 +631,7 @@ network_policies:
       const activeDocument = YAML.parse(compose(channels));
       activeDocument.network_policies.nvidia.endpoints[0].host = "host-maintained.example.com";
       const activeSource = YAML.stringify(activeDocument);
-      expect(getCredentialBindingProviders(activeSource)).toContain(
-        `${sandboxName}-teams-bridge`,
-      );
+      expect(getCredentialBindingProviders(activeSource)).toContain(`${sandboxName}-teams-bridge`);
 
       const stopped = mergeReplacementPolicyAccess(
         activeSource,
@@ -656,9 +651,7 @@ network_policies:
         [],
         sandboxName,
       ).source;
-      expect(getCredentialBindingProviders(reenabled)).toContain(
-        `${sandboxName}-teams-bridge`,
-      );
+      expect(getCredentialBindingProviders(reenabled)).toContain(`${sandboxName}-teams-bridge`);
 
       const selectedRemoved = mergeReplacementPolicyAccess(
         reenabled,
@@ -685,7 +678,9 @@ network_policies:
       expect(Object.keys(finalPolicies)).not.toEqual(
         expect.arrayContaining(keysFor(removedChannels)),
       );
-      expect(Object.keys(finalPolicies)).toEqual(expect.arrayContaining(keysFor(remainingChannels)));
+      expect(Object.keys(finalPolicies)).toEqual(
+        expect.arrayContaining(keysFor(remainingChannels)),
+      );
     },
   );
 });

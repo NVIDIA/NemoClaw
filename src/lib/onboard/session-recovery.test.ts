@@ -109,12 +109,12 @@ describe("assertRecoverableEntry", () => {
     expect(assertRecoverableEntry("gateway")).toBe("gateway");
   });
 
-  it.each([
-    "complete",
-    "failed",
-  ] as const)("rejects the terminal entry %s as unrecoverable", (state) => {
-    expect(() => assertRecoverableEntry(state)).toThrow(UnrecoverableSessionError);
-  });
+  it.each(["complete", "failed"] as const)(
+    "rejects the terminal entry %s as unrecoverable",
+    (state) => {
+      expect(() => assertRecoverableEntry(state)).toThrow(UnrecoverableSessionError);
+    },
+  );
 });
 
 describe("applySessionRecovery", () => {

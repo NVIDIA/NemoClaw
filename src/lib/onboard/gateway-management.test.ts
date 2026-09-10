@@ -249,7 +249,8 @@ describe("gateway management declaration loading", () => {
   it.each([
     {
       kind: "file",
-      create: (filePath: string) => fs.writeFileSync(filePath, JSON.stringify(externalDeclaration())),
+      create: (filePath: string) =>
+        fs.writeFileSync(filePath, JSON.stringify(externalDeclaration())),
     },
     {
       kind: "dangling symlink",
