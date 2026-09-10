@@ -119,7 +119,7 @@ describe("CLI OpenShell provider adapter", () => {
       }),
     ];
 
-    const results = await Promise.all(operations);
+    const results = await Promise.all(operations.map((operation) => Promise.resolve(operation)));
 
     const expectedFailure = {
       ok: false,
@@ -435,7 +435,9 @@ describe("CLI OpenShell provider adapter", () => {
       {
         env: { TAVILY_API_KEY: credentialValue },
         ignoreError: true,
+        maxBuffer: 64 * 1024,
         stdio: ["ignore", "pipe", "pipe"],
+        suppressOutput: true,
         timeout: 30_000,
       },
     );

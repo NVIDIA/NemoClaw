@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import { inspect } from "node:util";
+import { describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 import { createProviders } from "../../src/lib/adapters/openshell/providers";
 import { createSandboxes } from "../../src/lib/adapters/openshell/sandboxes";
-import { createSandboxConfig } from "../../src/lib/adapters/openshell/sandbox-config";
+import {
+  createSandboxConfig,
+  serializeSdkPolicy,
+} from "../../src/lib/adapters/openshell/sandbox-config";
 import type { OpenShellReadClient } from "../../src/lib/adapters/openshell/sdk-read";
 
 // CI stages the reviewed optional SDK artifact. Source-only checkouts can run
@@ -68,6 +74,17 @@ describe("released OpenShell SDK export reads", () => {
             }),
           getSandboxConfig: async () =>
             roundTrip(raw.GetSandboxConfigResponseSchema, {
+              policy: {
+                version: 1,
+                filesystem: { readOnly: ["/usr"] },
+                networkPolicies: {
+                  api: {
+                    name: "api",
+                    endpoints: [{ host: "api.example", ports: [443] }],
+                    binaries: [{ path: "/usr/bin/curl" }],
+                  },
+                },
+              },
               workspace: "default",
               version: 3,
               policyHash: "a".repeat(64),
@@ -98,13 +115,420 @@ describe("released OpenShell SDK export reads", () => {
         policyVersion: 3,
         providers: [],
       });
-      expect(
-        await createSandboxConfig(connect).get({ ...request, sandboxId: "resource-id" }),
-      ).toMatchObject({
+      const config = await createSandboxConfig(connect).get({
+        ...request,
+        sandboxId: "resource-id",
+      });
+      expect(config).toMatchObject({
         policySource: "sandbox",
         globalPolicyVersion: 0,
         configRevision: "9007199254740993",
         providerEnvRevision: "18446744073709551615",
+        policy: { appliedRevision: 3 },
+      });
+      expect(YAML.parse(config.policy.document)).toEqual({
+        version: 1,
+        filesystem_policy: { include_workdir: false, read_only: ["/usr"] },
+        network_policies: {
+          api: {
+            name: "api",
+            endpoints: [{ host: "api.example", port: 443 }],
+            binaries: [{ path: "/usr/bin/curl" }],
+          },
+        },
+      });
+    },
+  );
+});
+
+describe.skipIf(!hasSdkArtifact())("released OpenShell policy wire safety", () => {
+  it("rejects unknown policy wire fields instead of exporting a partial policy", async () => {
+    const sdkPackage = "@nvidia/openshell-sdk/raw";
+    const protobufPackage = "@bufbuild/protobuf";
+    const [{ SandboxPolicySchema }, { create, toBinary, fromBinary }] = await Promise.all([
+      import(sdkPackage),
+      import(protobufPackage),
+    ]);
+    const bytes = toBinary(SandboxPolicySchema, create(SandboxPolicySchema, { version: 1 }));
+    const policy = fromBinary(SandboxPolicySchema, Uint8Array.from([...bytes, 0xf8, 0x07, 0x01]));
+    await expect(serializeSdkPolicy(policy)).rejects.toMatchObject({
+      kind: "schema",
+      message: "OpenShell read failed (schema).",
+    });
+  });
+
+  it("rejects an oversized encoded policy before YAML serialization", async () => {
+    const sdkPackage = "@nvidia/openshell-sdk/raw";
+    const protobufPackage = "@bufbuild/protobuf";
+    const [{ SandboxPolicySchema }, { create }] = await Promise.all([
+      import(sdkPackage),
+      import(protobufPackage),
+    ]);
+    const policy = create(SandboxPolicySchema, {
+      version: 1,
+      filesystem: { readOnly: ["/" + "界".repeat(350000)] },
+    });
+    const stringify = vi.spyOn(YAML, "stringify");
+    try {
+      await expect(serializeSdkPolicy(policy)).rejects.toMatchObject({ kind: "schema" });
+      expect(stringify).not.toHaveBeenCalled();
+    } finally {
+      stringify.mockRestore();
+    }
+  });
+
+  it("rejects an aborted policy read before loading the SDK", async () => {
+    await expect(serializeSdkPolicy(undefined, AbortSignal.abort())).rejects.toMatchObject({
+      kind: "timeout",
+    });
+  });
+
+  it("stops conversion when the read aborts during SDK loading", async () => {
+    const controller = new AbortController();
+    const stringify = vi.spyOn(YAML, "stringify");
+    try {
+      const result = serializeSdkPolicy(undefined, controller.signal);
+      controller.abort();
+      await expect(result).rejects.toMatchObject({ kind: "timeout" });
+      expect(stringify).not.toHaveBeenCalled();
+    } finally {
+      stringify.mockRestore();
+    }
+  });
+
+  it.runIf(process.platform !== "win32")("rejects deep MCP paths within a bounded heap", () => {
+    const source = `
+      (async () => {
+        const [{ create }, { SandboxPolicySchema }] = await Promise.all([
+          import("@bufbuild/protobuf"), import("@nvidia/openshell-sdk/raw"),
+        ]);
+        const { serializeSdkPolicy } = require("./src/lib/adapters/openshell/sandbox-config.ts");
+        const params = { ["a.".repeat(16000) + "leaf"]: { glob: "safe" } };
+        const policy = create(SandboxPolicySchema, {
+          version: 1,
+          networkPolicies: { api: {
+            name: "api", endpoints: [{ host: "api.example", port: 443, protocol: "mcp", rules: [{ allow: { params } }] }],
+          } },
+        });
+        await serializeSdkPolicy(policy).then(
+          () => process.exit(2),
+          (error) => { process.stdout.write(error.kind); process.exit(error.kind === "schema" ? 0 : 2); },
+        );
+      })();
+    `;
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        'ulimit -c 0; exec "$@"',
+        "bounded-policy",
+        process.execPath,
+        "--max-old-space-size=256",
+        "--import",
+        "tsx",
+        "--eval",
+        source,
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        timeout: 10_000,
+        env: { PATH: process.env.PATH },
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("schema");
+  });
+
+  it("rejects YAML expansion beyond the policy read limit", async () => {
+    const sdkPackage = "@nvidia/openshell-sdk/raw";
+    const protobufPackage = "@bufbuild/protobuf";
+    const [{ SandboxPolicySchema }, { create, toBinary }] = await Promise.all([
+      import(sdkPackage),
+      import(protobufPackage),
+    ]);
+    const policy = create(SandboxPolicySchema, {
+      version: 1,
+      filesystem: { readOnly: ["/" + "\x01".repeat(300000)] },
+    });
+    expect(toBinary(SandboxPolicySchema, policy).byteLength).toBeLessThan(1024 * 1024);
+    const outcome = await serializeSdkPolicy(policy).then(
+      () => "accepted",
+      (error) => error.kind,
+    );
+    expect(outcome).toBe("schema");
+  });
+
+  it("serializes equal policy maps identically regardless of wire order", async () => {
+    const sdkPackage = "@nvidia/openshell-sdk/raw";
+    const protobufPackage = "@bufbuild/protobuf";
+    const [{ SandboxPolicySchema }, { create }] = await Promise.all([
+      import(sdkPackage),
+      import(protobufPackage),
+    ]);
+    const rule = {
+      name: "api",
+      endpoints: [{ host: "api.example", port: 443 }],
+      binaries: [{ path: "/usr/bin/curl" }],
+    };
+    const first = create(SandboxPolicySchema, {
+      version: 1,
+      networkPolicies: { z: rule, a: rule },
+    });
+    const second = create(SandboxPolicySchema, {
+      version: 1,
+      networkPolicies: { a: rule, z: rule },
+    });
+    expect(await serializeSdkPolicy(first)).toBe(await serializeSdkPolicy(second));
+  });
+
+  it("rejects unknown nested policy wire fields", async () => {
+    const sdkPackage = "@nvidia/openshell-sdk/raw";
+    const protobufPackage = "@bufbuild/protobuf";
+    const [{ SandboxPolicySchema }, { create, toBinary, fromBinary }] = await Promise.all([
+      import(sdkPackage),
+      import(protobufPackage),
+    ]);
+    const input = create(SandboxPolicySchema, {
+      version: 1,
+      networkPolicies: {
+        api: {
+          name: "api",
+          endpoints: [{ host: "api.example", port: 443 }],
+          binaries: [{ path: "/usr/bin/curl" }],
+        },
+      },
+    });
+    input.networkPolicies.api.endpoints[0].$unknown = [
+      { no: 127, wireType: 0, data: Uint8Array.of(1) },
+    ];
+    const policy = fromBinary(SandboxPolicySchema, toBinary(SandboxPolicySchema, input));
+    await expect(serializeSdkPolicy(policy)).rejects.toMatchObject({
+      kind: "schema",
+      message: "OpenShell read failed (schema).",
+    });
+  });
+
+  it.each([undefined, {}])("rejects missing or untyped policy messages: %j", async (policy) => {
+    await expect(serializeSdkPolicy(policy)).rejects.toMatchObject({
+      kind: "schema",
+      message: "OpenShell read failed (schema).",
+    });
+  });
+
+  it("rejects credential-bearing policy matchers without exposing their values", async () => {
+    const sdkPackage = "@nvidia/openshell-sdk/raw";
+    const protobufPackage = "@bufbuild/protobuf";
+    const [{ SandboxPolicySchema }, { create }] = await Promise.all([
+      import(sdkPackage),
+      import(protobufPackage),
+    ]);
+    const policy = create(SandboxPolicySchema, {
+      version: 1,
+      networkPolicies: {
+        api: {
+          name: "api",
+          endpoints: [
+            {
+              host: "api.example",
+              port: 443,
+              rules: [{ allow: { query: { api_key: { glob: "credential-canary" } } } }],
+            },
+          ],
+          binaries: [{ path: "/usr/bin/curl" }],
+        },
+      },
+    });
+    const error = await serializeSdkPolicy(policy).catch((reason: unknown) => reason);
+    expect(error).toMatchObject({
+      kind: "schema",
+      message: "OpenShell read failed (schema).",
+    });
+    expect(inspect(error, { depth: null })).not.toContain("credential-canary");
+  });
+});
+
+describe.skipIf(!hasSdkArtifact())("released OpenShell policy document conversion", () => {
+  it.each([
+    ["single port", { port: 443 }, { port: 443 }],
+    ["single port list", { ports: [443] }, { port: 443 }],
+    ["multiple ports", { port: 80, ports: [443, 8443] }, { ports: [443, 8443] }],
+    [
+      "REST allow and deny query matchers",
+      {
+        port: 443,
+        protocol: "rest",
+        rules: [
+          {
+            allow: {
+              method: "GET",
+              path: "/v1/*",
+              query: { repo: { glob: "NVIDIA/*" }, scope: { any: ["read", "list"] } },
+            },
+          },
+        ],
+        denyRules: [{ method: "DELETE", path: "/v1/*", query: { scope: { glob: "admin" } } }],
+      },
+      {
+        port: 443,
+        protocol: "rest",
+        rules: [
+          {
+            allow: {
+              method: "GET",
+              path: "/v1/*",
+              query: { repo: "NVIDIA/*", scope: { any: ["read", "list"] } },
+            },
+          },
+        ],
+        deny_rules: [{ method: "DELETE", path: "/v1/*", query: { scope: "admin" } }],
+      },
+    ],
+    [
+      "JSON-RPC body limit and flat parameters",
+      {
+        port: 443,
+        protocol: "json-rpc",
+        jsonRpcMaxBodyBytes: 4096,
+        rules: [
+          {
+            allow: {
+              method: "read",
+              params: {
+                name: { glob: "x" },
+                "a.b": { glob: "y" },
+              },
+            },
+          },
+        ],
+      },
+      {
+        port: 443,
+        protocol: "json-rpc",
+        json_rpc: { max_body_bytes: 4096 },
+        rules: [{ allow: { method: "read", params: { name: "x", "a.b": "y" } } }],
+      },
+    ],
+    [
+      "MCP false options, tool selection, and nested parameters",
+      {
+        port: 443,
+        protocol: "mcp",
+        jsonRpcMaxBodyBytes: 4096,
+        mcp: { strictToolNames: false, allowAllKnownMcpMethods: false },
+        rules: [
+          {
+            allow: {
+              method: "tools/call",
+              params: {
+                name: { glob: "search" },
+                "arguments.repo": { glob: "NVIDIA/*" },
+                "arguments.limit": { any: ["1", "2"] },
+              },
+            },
+          },
+        ],
+      },
+      {
+        port: 443,
+        protocol: "mcp",
+        mcp: { max_body_bytes: 4096, strict_tool_names: false, allow_all_known_mcp_methods: false },
+        rules: [
+          {
+            allow: {
+              method: "tools/call",
+              tool: "search",
+              params: { arguments: { repo: "NVIDIA/*", limit: { any: ["1", "2"] } } },
+            },
+          },
+        ],
+      },
+    ],
+    [
+      "MCP method profile and denied tools",
+      {
+        port: 443,
+        protocol: "mcp",
+        mcp: { strictToolNames: true, allowAllKnownMcpMethods: true },
+        rules: [
+          { allow: { method: "tools/call", params: { name: { glob: "search" } } } },
+          { allow: { method: "*" } },
+        ],
+        denyRules: [{ method: "tools/call", params: { name: { any: ["delete", "write"] } } }],
+      },
+      {
+        port: 443,
+        protocol: "mcp",
+        mcp: { strict_tool_names: true, allow_all_known_mcp_methods: true },
+        rules: [{ allow: { tool: "search" } }, { allow: {} }],
+        deny_rules: [{ tool: { any: ["delete", "write"] } }],
+      },
+    ],
+    [
+      "colliding MCP parameter paths",
+      {
+        port: 443,
+        protocol: "mcp",
+        rules: [{ allow: { params: { a: { glob: "x" }, "a.b": { glob: "y" } } } }],
+      },
+      {
+        port: 443,
+        protocol: "mcp",
+        rules: [{ allow: { params: { a: "x", "a.b": "y" } } }],
+      },
+    ],
+  ])(
+    "preserves %s through SDK binary and JSON serialization",
+    async (_case, endpoint, expected) => {
+      const sdkPackage = "@nvidia/openshell-sdk/raw";
+      const protobufPackage = "@bufbuild/protobuf";
+      const [{ SandboxPolicySchema }, { create, toBinary, fromBinary }] = await Promise.all([
+        import(sdkPackage),
+        import(protobufPackage),
+      ]);
+      const input = create(SandboxPolicySchema, {
+        version: 1,
+        networkPolicies: {
+          api: {
+            name: "api",
+            endpoints: [{ host: "api.example", ...endpoint }],
+            binaries: [{ path: "/usr/bin/curl", harness: true }],
+          },
+        },
+      });
+      const policy = fromBinary(SandboxPolicySchema, toBinary(SandboxPolicySchema, input));
+      const reader = createSandboxConfig(async () => ({
+        raw: {
+          getProvider: async () => undefined,
+          getProviderProfile: async () => undefined,
+          getSandbox: async () => undefined,
+          getSandboxConfig: async () => ({
+            policy,
+            workspace: "default",
+            version: 3,
+            policyHash: "a".repeat(64),
+            policySource: 1,
+            configRevision: 3n,
+            providerEnvRevision: 1n,
+            globalPolicyVersion: 0,
+          }),
+        },
+      }));
+      const config = await reader.get({
+        sandboxId: "verified-id",
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        workspace: "default",
+        signal: new AbortController().signal,
+      });
+      expect(YAML.parse(config.policy.document)).toEqual({
+        version: 1,
+        network_policies: {
+          api: {
+            name: "api",
+            endpoints: [{ host: "api.example", ...expected }],
+            binaries: [{ path: "/usr/bin/curl" }],
+          },
+        },
       });
     },
   );

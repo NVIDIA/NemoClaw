@@ -1,71 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const require = createRequire(import.meta.url);
-
-type ModuleProperty = string | number | boolean | Function | object | null | undefined;
-type ModuleRecord = { [key: string]: ModuleProperty };
-
-type MessagingProvider = {
-  name: string;
-  envKey: string;
-  token: string | null;
-};
-
-type CredentialRotationInternals = {
-  hashCredential: (value: string | null | undefined) => string | null;
-  detectMessagingCredentialRotation: (
-    sandboxName: string,
-    providers: MessagingProvider[],
-  ) => { changed: boolean; changedProviders: string[] };
-};
-
-function isObjectRecord(value: unknown): value is ModuleRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isCredentialRotationInternals(value: unknown): value is CredentialRotationInternals {
-  return (
-    isObjectRecord(value) &&
-    typeof value.hashCredential === "function" &&
-    typeof value.detectMessagingCredentialRotation === "function"
-  );
-}
-
-function isRegistryModule(value: unknown): value is typeof import("../../src/lib/state/registry.js") {
-  return isObjectRecord(value) && typeof value.getSandbox === "function";
-}
-
-function loadCredentialRotationInternals(): CredentialRotationInternals {
-  const loaded: unknown = require("../../src/lib/onboard.js");
-  if (!isCredentialRotationInternals(loaded)) {
-    throw new Error("Expected onboard internals to expose credential rotation helpers");
-  }
-  return loaded;
-}
-
-function loadRegistryModule(): typeof import("../../src/lib/state/registry.js") {
-  const loaded: unknown = require("../../src/lib/state/registry.js");
-  if (!isRegistryModule(loaded)) {
-    throw new Error("Expected registry module to expose getSandbox");
-  }
-  return loaded;
-}
+import { describe, expect, it, vi } from "vitest";
+import { detectMessagingCredentialRotation } from "../../src/lib/onboard/messaging-credentials";
+import { hashCredential } from "../../src/lib/security/credential-hash";
+import * as registry from "../../src/lib/state/registry";
 
 describe("credential rotation detection", () => {
-  let hashCredential: CredentialRotationInternals["hashCredential"];
-  let detectMessagingCredentialRotation: CredentialRotationInternals["detectMessagingCredentialRotation"];
-  let registry: typeof import("../../src/lib/state/registry.js");
-
-  beforeEach(() => {
-    // Fresh imports to avoid cross-test contamination
-    ({ hashCredential, detectMessagingCredentialRotation } = loadCredentialRotationInternals());
-    registry = loadRegistryModule();
-  });
-
   function hashCredentialOrThrow(value: string): string {
     const hash = hashCredential(value);
     expect(hash).not.toBeNull();

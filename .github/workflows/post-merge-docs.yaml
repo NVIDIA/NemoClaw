@@ -23,29 +23,26 @@ jobs:
       pull-requests: read
     outputs:
       automate: ${{ steps.scan.outputs.automate }}
+      previous_sha: ${{ steps.scan.outputs.previous_sha }}
     steps:
       - id: scan
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          owner="$(
+          selection="$(
             gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&per_page=100" |
               jq --slurp -r '
                 [.[][] | select((.head.ref | test("^automation/post-merge-docs-[0-9a-f]{12}$")) and .head.repo.full_name == "NVIDIA/NemoClaw")] |
-                if length > 1 then "invalid"
-                elif length == 0 or .[0].draft == true then "automation"
-                elif .[0].draft == false then "maintainer"
-                else "invalid"
-                end
+                if length > 1 then error("multiple managed documentation PRs are open")
+                elif length == 0 then {automate: true, previous_sha: ""}
+                elif (.[0].draft | type) == "boolean" and (.[0].head.sha | test("^[0-9a-f]{40}$"))
+                  then {automate: .[0].draft, previous_sha: .[0].head.sha}
+                else error("invalid managed documentation PR")
+                end | to_entries[] | "\(.key)=\(.value)"
               '
           )"
-          [[ "$owner" == "automation" || "$owner" == "maintainer" ]]
-          if [[ "$owner" == "automation" ]]; then
-            echo "automate=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "automate=false" >> "$GITHUB_OUTPUT"
-          fi
+          printf '%s\n' "$selection" >> "$GITHUB_OUTPUT"
 
   author:
     name: Docs / Author and review documentation catch-up
@@ -61,6 +58,7 @@ jobs:
       OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
       PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
       POST_MERGE_DOCS_CONFIG_DIR: ${{ github.workspace }}/config
+      POST_MERGE_DOCS_PREVIOUS_SHA: ${{ needs.gate.outputs.previous_sha }}
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
       - name: Checkout exact main commit

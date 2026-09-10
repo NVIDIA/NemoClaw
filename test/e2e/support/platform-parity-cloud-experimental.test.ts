@@ -16,7 +16,10 @@ vi.mock("../../../src/lib/actions/sandbox/exec", () => ({
 import SandboxExecCommand from "../../../src/commands/sandbox/exec.ts";
 import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS } from "../live/cloud-experimental-check-list.ts";
+import {
+  cloudExperimentalChecksForOnboarding,
+  DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS,
+} from "../live/cloud-experimental-check-list.ts";
 import {
   assertRequiredCloudExperimentalResult,
   buildCloudExperimentalChecksEvidence,
@@ -33,10 +36,7 @@ fi
 `;
 const dcodeFreshReonboardCheck = path.join(cloudChecksDir, "04-deepagents-code-fresh-reonboard.sh");
 const dcodeLandlockCheck = path.join(cloudChecksDir, "05-deepagents-code-landlock-readonly.sh");
-const dcodeObservabilityCheck = path.join(
-  cloudChecksDir,
-  "11-deepagents-code-observability.sh",
-);
+const dcodeObservabilityCheck = path.join(cloudChecksDir, "11-deepagents-code-observability.sh");
 const DEFAULT_TEST_PATH = process.env.PATH ?? "/usr/bin:/bin";
 const tavilyBlocked = "BLOCKED:policy denied";
 const observabilityEnabled = "enabled";
@@ -71,6 +71,12 @@ function writeDcodeApprovalTestDriver(driverPath: string, testEntrypoint: string
 }
 
 describe("P0-E cloud-experimental parity guardrails", () => {
+  it.each(["cloud-openclaw", "cloud-hermes", undefined])(
+    "does not select Deep Agents checks for onboarding %s",
+    (onboarding) => {
+      expect(cloudExperimentalChecksForOnboarding(onboarding)).toEqual([]);
+    },
+  );
   it("skips the destructive fresh re-onboard check outside a Deep Agents sandbox", () => {
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
     try {
@@ -798,6 +804,18 @@ assert_status_mode disabled
       "secret-key",
       { HOME: "/home/runner", PATH: "/usr/bin" },
       { forwardDcodeBaseImage: true },
+    );
+
+    expect(env[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
+  });
+
+  it("omits base overrides from managed-image fresh re-onboarding (#11305)", () => {
+    const baseImageReference = `${DCODE_BASE_IMAGE}@sha256:${"a".repeat(64)}`;
+    const env = buildCloudExperimentalCommandEnv(
+      "deepagents-sandbox",
+      "secret-key",
+      { E2E_WORKLOAD_SOURCE: "managed-image", [DCODE_BASE_IMAGE_ENV]: baseImageReference },
+      { dcodeBaseImageReference: baseImageReference, forwardDcodeBaseImage: true },
     );
 
     expect(env[DCODE_BASE_IMAGE_ENV]).toBeUndefined();

@@ -6,6 +6,11 @@ import { isDeepStrictEqual } from "node:util";
 import * as agentRuntime from "../../agent/runtime";
 import type { AgentDefinition } from "../../agent/definition-types";
 import { spawnExitCode } from "../../core/process-exit";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
+import {
+  createCliOpenShellSandboxCommandExecutor,
+  createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor,
+} from "../../adapters/openshell/sandbox-command-cli";
 import { resolveSandboxGatewayName } from "../../gateway-runtime-action";
 import type { SandboxEntry } from "../../state/registry";
 import {
@@ -43,6 +48,9 @@ import {
 
 const LAUNCH_READINESS_FENCE_REPAIR =
   "Launch readiness evidence could not be safely invalidated. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.";
+const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({
+  hostCwd: REPOSITORY_ROOT,
+});
 
 /**
  * Connect to a sandbox and start its agent in one host-side step (#6006).
@@ -102,22 +110,75 @@ type HermesPortableReadinessCommandAuthority = ReturnType<
   typeof qualifyHermesPortableOperatingCommandAuthority
 >;
 
-type HermesPortableAcceptedLaunchAuthority = {
+type HermesPortableLaunchAuthority = {
   readonly active: HermesPortableActiveLifecycleAuthority;
   readonly command: HermesPortableReadinessCommandAuthority;
 };
+
+function requireHermesPortableLaunchAuthorityCurrent(
+  sandboxName: string,
+  authority: HermesPortableLaunchAuthority,
+  readSandbox: typeof getKnownSandboxTarget,
+): void {
+  authority.command.assertCurrent();
+  const current = requireHermesPortableActiveLifecycleAuthority(sandboxName, authority.active, {
+    readRegistry: readSandbox,
+  });
+  if (!isDeepStrictEqual(current.entry, authority.active.entry)) {
+    throw new Error("Hermes portable registry authority changed during launch readiness.");
+  }
+}
+
+function createHermesPortableLaunchReadinessDeps(
+  sandboxName: string,
+  authority: HermesPortableLaunchAuthority,
+  readSandbox: typeof getKnownSandboxTarget,
+): {
+  readonly deps: NonNullable<Parameters<typeof publishLaunchReadiness>[1]>;
+  readonly assertCurrent: () => void;
+} {
+  const assertCurrent = () =>
+    requireHermesPortableLaunchAuthorityCurrent(sandboxName, authority, readSandbox);
+  const capture = (args: string[], options = {}) => {
+    assertCurrent();
+    try {
+      return captureHermesPortableAcceptedReadinessObservation(authority.command, args, options);
+    } finally {
+      assertCurrent();
+    }
+  };
+  const commandExecutor = createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor(
+    {
+      resolveBinary: () => authority.command.executablePath,
+      hostCwd: REPOSITORY_ROOT,
+      hostEnv: authority.command.env,
+    },
+    assertCurrent,
+  );
+  return {
+    assertCurrent,
+    deps: {
+      ...createBoundLaunchReadinessDeps(capture, commandExecutor),
+      getSandbox: readSandbox,
+      assertPublicationCurrent: assertCurrent,
+    },
+  };
+}
 
 async function inspectLaunchReadinessForLaunch(
   sandboxName: string,
   deps: LaunchSandboxDeps,
 ): Promise<{
   readonly decision: Awaited<ReturnType<typeof inspectLaunchReadiness>>;
-  readonly hermesAuthority: HermesPortableAcceptedLaunchAuthority | null;
+  readonly hermesAuthority: HermesPortableLaunchAuthority | null;
 }> {
   const inspect = deps.inspectLaunchReadiness ?? inspectLaunchReadiness;
   const readSandbox = deps.getSandbox ?? getKnownSandboxTarget;
   if (inspectPortableAgentReceiptDisposition(sandboxName).kind !== "hermes") {
-    return { decision: await inspect(sandboxName), hermesAuthority: null };
+    return {
+      decision: await inspect(sandboxName, { commandExecutor: sandboxCommandExecutor }),
+      hermesAuthority: null,
+    };
   }
   if (readSandbox(sandboxName)?.agent !== "hermes") {
     throw new Error("Hermes portable registry authority changed before launch readiness.");
@@ -148,9 +209,17 @@ async function inspectLaunchReadinessForLaunch(
     const command = qualified.commandAuthority;
     const capture = (args: string[], options = {}) =>
       captureHermesPortableAcceptedReadinessObservation(command, args, options);
+    const commandExecutor = createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor(
+      {
+        resolveBinary: () => command.executablePath,
+        hostCwd: REPOSITORY_ROOT,
+        hostEnv: command.env,
+      },
+      command.assertCurrent,
+    );
     command.assertCurrent();
     const decision = await inspect(sandboxName, {
-      ...createBoundLaunchReadinessDeps(capture),
+      ...createBoundLaunchReadinessDeps(capture, commandExecutor),
       getSandbox: readSandbox,
       withSandboxLock: async (_name, operation) => operation(),
     });
@@ -165,7 +234,7 @@ async function inspectLaunchReadinessForLaunch(
     }
     return {
       decision,
-      hermesAuthority: decision.kind === "accepted" ? { active: current, command } : null,
+      hermesAuthority: { active: current, command },
     };
   });
 }
@@ -177,7 +246,7 @@ async function launchAgentWithPortableAuthority(
   hermesPortableSnapshot: boolean,
   command: readonly string[],
   deps: LaunchSandboxDeps,
-  acceptedHermesAuthority: HermesPortableAcceptedLaunchAuthority | null,
+  acceptedHermesAuthority: HermesPortableLaunchAuthority | null,
   beforeOrdinaryLaunch?: () => void,
   beforeAgentExec?: () => void,
 ): Promise<void> {
@@ -302,7 +371,7 @@ export async function launchSandbox(
   const enterMutationGate = deps.withLaunchReadinessMutationGate ?? withLaunchReadinessMutationGate;
   let inspection = await inspectLaunchReadinessForLaunch(sandboxName, deps);
   let decision = inspection.decision;
-  let acceptedHermesAuthority = inspection.hermesAuthority;
+  let acceptedHermesAuthority = decision.kind === "accepted" ? inspection.hermesAuthority : null;
   let session: Awaited<ReturnType<typeof prepareInteractiveSession>>;
   let acceptedReadinessSetup: (() => void) | undefined;
   let readinessAction: LaunchReadinessAction = "prepared";
@@ -337,17 +406,32 @@ export async function launchSandbox(
     if (decision.recoveryBlocked) throw new Error(LAUNCH_READINESS_FENCE_REPAIR);
     const fallbackDecision = decision;
     const publicationRequest = publicationFromDecision(sandboxName, fallbackDecision);
-    const gated = await enterMutationGate(publicationRequest, async () => {
-      const prepared = await prepareInteractiveSession(sandboxName);
-      const publication = fallbackDecision.fence
-        ? await (deps.publishLaunchReadiness ?? publishLaunchReadiness)(publicationRequest)
+    const readSandbox = deps.getSandbox ?? getKnownSandboxTarget;
+    const hermesPublication =
+      fallbackDecision.fence && inspection.hermesAuthority
+        ? createHermesPortableLaunchReadinessDeps(
+            sandboxName,
+            inspection.hermesAuthority,
+            readSandbox,
+          )
         : null;
+    const gated = await enterMutationGate(publicationRequest, async () => {
+      hermesPublication?.assertCurrent();
+      const prepared = await prepareInteractiveSession(sandboxName);
+      hermesPublication?.assertCurrent();
+      const publication = fallbackDecision.fence
+        ? await (deps.publishLaunchReadiness ?? publishLaunchReadiness)(
+            publicationRequest,
+            hermesPublication?.deps ?? { commandExecutor: sandboxCommandExecutor },
+          )
+        : null;
+      hermesPublication?.assertCurrent();
       return { prepared, publication };
     });
     if (gated.kind === "changed") {
       inspection = await inspectLaunchReadinessForLaunch(sandboxName, deps);
       decision = inspection.decision;
-      acceptedHermesAuthority = inspection.hermesAuthority;
+      acceptedHermesAuthority = decision.kind === "accepted" ? inspection.hermesAuthority : null;
       continue;
     }
     if (gated.kind === "unsafe") throw new Error(LAUNCH_READINESS_FENCE_REPAIR);
