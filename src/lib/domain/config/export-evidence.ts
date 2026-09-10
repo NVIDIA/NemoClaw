@@ -270,6 +270,7 @@ const ExportInferenceSchema = Type.Union([
 const exportSourceFields = {
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
   execution: Type.Optional(NemoClawAgentExecutionSchema),
+  auth: Type.Optional(Type.Object({ method: Type.Literal("api-key") })),
   runtime: Type.Object({
     provider: RuntimeProviderSchema,
     imageRef: ImmutableImageReferenceSchema,

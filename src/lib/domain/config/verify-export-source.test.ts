@@ -33,6 +33,7 @@ import {
   entry,
   snapshot,
   hermesSnapshot,
+  hermesManagedAuthSnapshot,
   verify,
   changeRetainedProfile,
 } from "./export-source-test-fixture";
@@ -581,6 +582,23 @@ describe("config export source verification (#10938)", () => {
     expect(result.publish).not.toHaveBeenCalled();
   });
 
+  it("does not publish while retained Hermes auth provenance is changing (#11432)", async () => {
+    const accepted = hermesManagedAuthSnapshot();
+    const missing = hermesManagedAuthSnapshot({ hermesAuthMethod: null });
+    const result = await exportSnapshots([accepted, missing, accepted, missing]);
+
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: [expect.objectContaining({ category: "unstable-source" })],
+      },
+    });
+    expect(result.read).toHaveBeenCalledTimes(4);
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
   it.each([
     { managedHost: "user:secret-canary@proxy.internal" },
     { managedHost: "http://proxy.internal" },
@@ -671,6 +689,65 @@ describe("config export source verification (#10938)", () => {
     expect(Check(ExportSourceValuesSchema, verifiedSource(result))).toBe(true);
   });
 
+  it("exports explicit retained Hermes Nous API-key authentication (#11432)", async () => {
+    const observed = hermesManagedAuthSnapshot();
+    expect(verifiedSource(verify(observed)).auth).toEqual({ method: "api-key" });
+
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.read).toHaveBeenCalledTimes(2);
+    expect(result.publish).not.toHaveBeenCalled();
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.sandboxes[0]!.agents[0]!.auth).toEqual({
+      method: "api-key",
+      providerRef: "hosted-hermes-provider",
+    });
+    expect(document.spec.inferenceProviders[0]).toMatchObject({
+      name: "hosted-hermes-provider",
+      provider: "hermes-provider",
+      credential: { env: "NOUS_API_KEY" },
+    });
+  });
+
+  it.each([
+    ["OAuth", { hermesAuthMethod: "oauth" as const }, "unsupported", "api-key"],
+    ["missing auth provenance", { hermesAuthMethod: null }, "missing-provenance", "api-key"],
+    ["foreign auth provenance", { hermesAuthMethod: "api_key" as const }, "drifted", "generic"],
+    [
+      "API-key authentication with a foreign API",
+      { preferredInferenceApi: "anthropic-messages" },
+      "drifted",
+      "api-key",
+    ],
+    [
+      "API-key authentication with a foreign endpoint",
+      { endpointUrl: "https://api.example.com/v1" },
+      "drifted",
+      "api-key",
+    ],
+  ])("does not export Hermes %s (#11432)", async (_case, registryOverrides, category, source) => {
+    const observed =
+      source === "generic"
+        ? hermesSnapshot(registryOverrides)
+        : hermesManagedAuthSnapshot(registryOverrides);
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: expect.arrayContaining([
+          expect.objectContaining({
+            category,
+            field: "spec.sandboxes[].agents[0].auth",
+          }),
+        ]),
+      },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
   it.each([
     { sandboxName: "alpha--beta" },
     { runtime: { provider: "docker", imageRef: "registry/image:latest" } },
@@ -733,14 +810,9 @@ describe("config export source verification (#10938)", () => {
       "spec.sandboxes[].agents[0].tools",
     ],
     [
-      "Hermes authentication",
-      { hermesAuthMethod: "api_key" as const },
-      "spec.sandboxes[].agents[0].authentication",
-    ],
-    [
       "Hermes inference provider",
       { hermesInferenceProvider: "hermes-provider" },
-      "spec.sandboxes[].agents[0].authentication",
+      "spec.sandboxes[].agents[0].auth",
     ],
   ])("rejects excluded %s state (#11286)", (_case, registryOverrides, field) => {
     expect(findings(verify(hermesSnapshot(registryOverrides)))).toContainEqual(

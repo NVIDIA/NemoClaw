@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as gatewayRuntime from "../../gateway-runtime-action";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
+import * as dockerDriverRecovery from "../../onboard/docker-driver-sandbox-recovery";
 import * as portableAgentLifecycle from "../../onboard/experimental/portable-agent-lifecycle";
 import * as registry from "../../state/registry";
 import * as gatewaySelect from "./gateway-select";
@@ -102,6 +103,19 @@ describe("getReconciledSandboxGatewayState observe mode", () => {
 
     expect(recover).not.toHaveBeenCalled();
     expect(result).toMatchObject({ state: "present" });
+  });
+
+  it("does not restore a missing sandbox in observe mode (#11025)", async () => {
+    const recover = vi.spyOn(dockerDriverRecovery, "recoverDockerDriverSandbox");
+    const getState = vi.fn().mockResolvedValue({ state: "missing", output: "not found" });
+
+    const result = await getReconciledSandboxGatewayState("beta", {
+      getState,
+      gatewayRecovery: "observe",
+    });
+
+    expect(recover).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ state: "missing", output: "not found" });
   });
 
   it("keeps receipt-owned observation scoped without changing global gateway selection (#9203)", async () => {

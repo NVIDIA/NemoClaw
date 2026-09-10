@@ -251,3 +251,67 @@ export function changeRetainedProfile(
     },
   };
 }
+
+const nousEndpoint = "https://inference-api.nousresearch.com/v1";
+
+export function hermesManagedAuthSnapshot(
+  registryOverrides: Partial<SandboxEntry> = {},
+): ObservedExportSnapshot {
+  const model = "moonshotai/kimi-k2.6";
+  const api =
+    registryOverrides.preferredInferenceApi === "anthropic-messages"
+      ? "anthropic-messages"
+      : "openai-completions";
+  const endpointUrl = registryOverrides.endpointUrl ?? nousEndpoint;
+  const workload = managedWorkload(
+    {
+      ...hermesProfileInput(),
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "hermes-provider",
+        model,
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: null,
+        api,
+        primaryModelRef: null,
+        compatibility: null,
+      },
+    },
+    hermesImageRef,
+  );
+  const value = hermesSnapshot({
+    provider: "hermes-provider",
+    model,
+    preferredInferenceApi: api,
+    endpointUrl,
+    credentialEnv: "NOUS_API_KEY",
+    hermesAuthMethod: "api_key",
+    workload,
+    ...registryOverrides,
+  });
+  return {
+    ...value,
+    inference: {
+      topology: "hosted",
+      provider: "hermes-provider",
+      model,
+      api,
+      endpoint: endpointUrl,
+      endpointEvidence: {
+        endpoint: endpointUrl,
+        provider: {
+          gatewayName: "nemoclaw",
+          workspace: "default",
+          name: "hermes-provider",
+          id: "hermes-provider-id",
+          resourceVersion: "9",
+        },
+        source: {
+          kind: "provider-config",
+          key: api === "anthropic-messages" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL",
+        },
+      },
+      credentialEnv: "NOUS_API_KEY",
+    },
+  };
+}

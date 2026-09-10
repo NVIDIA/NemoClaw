@@ -45,6 +45,9 @@ function inferenceProvider(
 function exportAgent(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig {
   return {
     name: "primary",
+    ...(source.auth === undefined
+      ? {}
+      : { auth: { method: source.auth.method, providerRef: providerName } }),
     ...(source.agent === "openclaw"
       ? {
           type: "openclaw" as const,
