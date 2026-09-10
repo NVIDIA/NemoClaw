@@ -364,6 +364,7 @@ export function captureOpenshellCommandAsync(
     timeoutKillSignal:
       opts.killSignal === "SIGTERM" || opts.killSignal === "SIGKILL" ? opts.killSignal : undefined,
     timeoutMilliseconds: opts.timeout,
+    outputLimitBytes: opts.maxBuffer,
   }).then((result) => ({
     status: result.status ?? (result.timedOut ? null : 1),
     output: `${result.stdout}${shouldIncludeStderr(opts) ? result.stderr : ""}`.trim(),

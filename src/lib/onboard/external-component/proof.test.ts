@@ -52,10 +52,10 @@ function fixture() {
 }
 
 describe("external component activation proof", () => {
-  it("binds the durable OpenShell identity to the effective policy (#11340)", () => {
+  it("binds the durable OpenShell identity to the effective policy (#11340)", async () => {
     const { deps } = fixture();
 
-    const proof = createExternalComponentActivationProof("assistant", "nemoclaw", deps);
+    const proof = await createExternalComponentActivationProof("assistant", "nemoclaw", deps);
 
     expect(proof).toMatchObject({
       gatewayName: "nemoclaw",
@@ -73,13 +73,13 @@ describe("external component activation proof", () => {
     );
   });
 
-  it("rejects a mutable-name match with a different durable identity (#11340)", () => {
+  it("rejects a mutable-name match with a different durable identity (#11340)", async () => {
     const { deps, row } = fixture();
     deps.listSandboxes.mockReturnValue(JSON.stringify([{ ...row, id: "replacement-456" }]));
 
-    expect(() => createExternalComponentActivationProof("assistant", "nemoclaw", deps)).toThrow(
-      ExternalComponentProofError,
-    );
+    await expect(
+      (async () => await createExternalComponentActivationProof("assistant", "nemoclaw", deps))(),
+    ).rejects.toThrow(ExternalComponentProofError);
     expect(deps.inspectPolicy).not.toHaveBeenCalled();
   });
 
@@ -129,30 +129,33 @@ describe("external component activation proof", () => {
         value.inspection.effectivePolicy.network_policies.inference.endpoints = [];
       },
     ],
-  ])("rejects %s before handoff (#11340)", (_title, mutate) => {
+  ])("rejects %s before handoff (#11340)", async (_title, mutate) => {
     const value = fixture();
     mutate(value);
 
-    expect(() =>
-      createExternalComponentActivationProof("assistant", "nemoclaw", value.deps),
-    ).toThrow(ExternalComponentProofError);
+    await expect(
+      (async () =>
+        await createExternalComponentActivationProof("assistant", "nemoclaw", value.deps))(),
+    ).rejects.toThrow(ExternalComponentProofError);
   });
 
-  it("rejects identity or policy changes during revalidation (#11340)", () => {
+  it("rejects identity or policy changes during revalidation (#11340)", async () => {
     const { deps, entry } = fixture();
-    const proof = createExternalComponentActivationProof("assistant", "nemoclaw", deps);
+    const proof = await createExternalComponentActivationProof("assistant", "nemoclaw", deps);
     entry.lifecycleGeneration = "generation-2";
 
-    expect(() => proof.revalidate("after_activation")).toThrow(ExternalComponentProofError);
+    await expect(proof.revalidate("after_activation")).rejects.toThrow(ExternalComponentProofError);
   });
 
-  it("replaces inspection details with the bounded proof reason class (#11340)", () => {
+  it("replaces inspection details with the bounded proof reason class (#11340)", async () => {
     const { deps } = fixture();
     deps.inspectPolicy.mockImplementation(() => {
       throw new Error("component text and /private/activation.sock");
     });
 
-    expect(() => createExternalComponentActivationProof("assistant", "nemoclaw", deps)).toThrow(
+    await expect(
+      (async () => await createExternalComponentActivationProof("assistant", "nemoclaw", deps))(),
+    ).rejects.toThrow(
       "External component activation proof is unavailable. Reason class: evidence_mismatch.",
     );
   });

@@ -140,6 +140,23 @@ export function captureSandboxSshConfig(sandboxName: string, opts: RunnerOptions
   });
 }
 
+/** Capture a resolved command asynchronously with bounded output and no process exit. */
+export function captureResolvedOpenshellAsync(args: CommandArgs, opts: RunnerOptions = {}) {
+  const openshell = opts.openshellBinary ?? resolveOpenshellBinaryOrNull();
+  if (!openshell) throw new Error("OpenShell is unavailable");
+  if (!path.isAbsolute(openshell)) throw new Error("OpenShell executable must be absolute");
+  return captureOpenshellCommandAsync(openshell, args, {
+    cwd: ROOT,
+    env: opts.env,
+    replaceEnv: opts.replaceEnv,
+    ignoreError: opts.ignoreError,
+    includeStderr: opts.includeStderr,
+    includeStreams: opts.includeStreams,
+    timeout: opts.timeout,
+    maxBuffer: opts.maxBuffer,
+  });
+}
+
 /** Resolve the status-probe timeout (ms) from env, falling back to the default. */
 export function getStatusProbeTimeoutMs(): number {
   const raw = process.env.NEMOCLAW_STATUS_PROBE_TIMEOUT_MS;

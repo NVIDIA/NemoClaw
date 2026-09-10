@@ -82,12 +82,12 @@ describe("onboarding policy application", () => {
 
   describe("non-interactive selection with a previously-applied channel preset", () => {
     function createApplication(env: Record<string, string>) {
-      vi.mocked(policies.listSetupPolicyPresets).mockReturnValue([
+      vi.mocked(policies.listSetupPolicyPresets).mockResolvedValue([
         { name: "npm" },
         { name: "pypi" },
         { name: "discord" },
-      ] as ReturnType<typeof policies.listSetupPolicyPresets>);
-      vi.mocked(policies.getAppliedPresets).mockReturnValue(["npm", "pypi", "discord"]);
+      ] as Awaited<ReturnType<typeof policies.listSetupPolicyPresets>>);
+      vi.mocked(policies.getAppliedPresets).mockResolvedValue(["npm", "pypi", "discord"]);
       syncPresetSelection.mockImplementation(() => undefined);
       seedInitialPolicyContext.mockImplementation(() => undefined);
       return createOnboardPolicyApplication({
@@ -197,7 +197,7 @@ describe("onboarding policy application", () => {
 
     it("adds an enabled channel preset when policy selection is skipped (#10153)", async () => {
       const application = createApplication({ NEMOCLAW_POLICY_MODE: "skip" });
-      vi.mocked(policies.getAppliedPresets).mockReturnValue([]);
+      vi.mocked(policies.getAppliedPresets).mockResolvedValue([]);
 
       await expect(
         application.setupPoliciesWithSelection("alpha", {

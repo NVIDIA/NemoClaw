@@ -49,7 +49,7 @@ export interface RebuildDestroyPhaseInput {
   ) => Promise<RebuildDeleteValidationResult>;
   validateAtDeleteEdge?: (
     runtimeSelection?: OpenShellRuntimeSelection,
-  ) => RebuildDeleteValidationResult;
+  ) => RebuildDeleteValidationResult | Promise<RebuildDeleteValidationResult>;
   cleanupDockerOrphanAfterDelete?: () => void;
   onDeleted: () => void;
   onDeleteStateAmbiguous?: () => void;
@@ -417,7 +417,7 @@ export async function runRebuildDestroyPhase(
   if (validateAtDeleteEdge) {
     let validation: RebuildDeleteValidationResult;
     try {
-      validation = validateAtDeleteEdge(rebuildMcpRuntimeSelection);
+      validation = await validateAtDeleteEdge(rebuildMcpRuntimeSelection);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       log(`Unexpected delete-edge validation failure: ${redactFull(detail)}`);

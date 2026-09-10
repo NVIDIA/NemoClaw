@@ -12,7 +12,7 @@ import YAML from "yaml";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
-  syncCliOpenShellSandboxPolicyReader,
+  cliOpenShellSandboxPolicyReader,
 } from "../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
 import { validateNemoClawConfig } from "../../../src/lib/config/schema.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
@@ -83,7 +83,7 @@ export async function verifyHermesConfigExportLive(
 
   const registry = load();
   const entry = registry.sandboxes[input.sandboxName]!;
-  const policy = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
+  const policy = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
     target: namedOpenShellGateway(entry.gatewayName ?? ""),
     sandboxName: input.sandboxName,
     scope: "effective",

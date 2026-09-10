@@ -116,7 +116,7 @@ export async function discardSafeIncompleteMcpAdds(
     if (options.sandboxAbsent) {
       assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
     } else {
-      removeGeneratedPolicy(sandboxName, entry, {
+      await removeGeneratedPolicy(sandboxName, entry, {
         runtimeSelection: providerRuntimeSelection!,
       });
     }

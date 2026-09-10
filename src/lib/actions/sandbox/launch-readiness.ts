@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 
 import {
-  createSyncCliOpenShellSandboxPolicyReader,
+  createCliOpenShellSandboxPolicyReader,
   namedOpenShellGateway,
   type OpenShellSandboxError,
 } from "../../adapters/openshell/sandbox-policy-cli";
@@ -655,13 +655,13 @@ function classifyReceipt(
   return read.kind === "valid" ? "config" : read.kind;
 }
 
-function validateLivePolicy(
+async function validateLivePolicy(
   sandboxName: string,
   gatewayName: string,
   deps: LaunchReadinessDeps,
-): void {
+): Promise<void> {
   const capture = deps.capture ?? captureLaunchReadiness;
-  const result = createSyncCliOpenShellSandboxPolicyReader({
+  const result = await createCliOpenShellSandboxPolicyReader({
     capture: (args, options) =>
       capture(args, {
         ...options,
@@ -783,7 +783,7 @@ async function captureLaunchIdentity(
 
   const policyStartedAt = performance.now();
   try {
-    validateLivePolicy(sandboxName, gatewayName, deps);
+    await validateLivePolicy(sandboxName, gatewayName, deps);
   } catch (error) {
     recordLaunchReadinessObservationFailure(deps, "policy-get");
     throw error;

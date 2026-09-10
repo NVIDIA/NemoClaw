@@ -305,7 +305,9 @@ function printInferenceRouteDrift(
 }
 
 /** Render registry-backed sandbox details and return any non-fatal degraded outcome. */
-export function printSandboxDetails(context: SandboxStatusTextContext): SandboxStatusTextOutcome {
+export async function printSandboxDetails(
+  context: SandboxStatusTextContext,
+): Promise<SandboxStatusTextOutcome> {
   const { sb, currentModel, currentProvider, sandboxName } = context;
   if (!sb) return { exitCode: null };
 
@@ -339,7 +341,7 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   console.log(
     `    OpenShell: ${sb.openshellVersion || "unknown"} (${sb.openshellDriver || "unknown"})`,
   );
-  const livePolicies = getGatewayPresets(sandboxName);
+  const livePolicies = await getGatewayPresets(sandboxName);
   console.log(
     `    Policies: ${livePolicies === null ? "unavailable" : livePolicies.join(", ") || "none"}`,
   );

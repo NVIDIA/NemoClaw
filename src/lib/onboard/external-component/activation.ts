@@ -38,7 +38,7 @@ export interface ExternalComponentActivationProof {
   readonly policySource: "sandbox";
   readonly policyHash: string;
   readonly policyActiveVersion: number;
-  revalidate(operation: "before_handoff" | "after_activation"): void;
+  revalidate(operation: "before_handoff" | "after_activation"): void | Promise<void>;
 }
 
 interface ActivationResponse {
@@ -217,7 +217,7 @@ export async function activateExternalComponent(
   });
   try {
     component.revalidateBeforeActivation();
-    proof.revalidate("before_handoff");
+    await proof.revalidate("before_handoff");
   } catch {
     return { kind: "ambiguous", activationId, reason: "evidence_mismatch" };
   }
@@ -248,7 +248,7 @@ export async function activateExternalComponent(
   if (response.result === "rejected") return { kind: "rejected", activationId };
   try {
     component.revalidateBeforeActivation();
-    proof.revalidate("after_activation");
+    await proof.revalidate("after_activation");
   } catch {
     return { kind: "ambiguous", activationId, reason: "evidence_mismatch" };
   }

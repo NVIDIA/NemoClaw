@@ -53,7 +53,7 @@ const policyBoundaryMocks = vi.hoisted(() => ({
 
 vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
-  syncCliOpenShellSandboxPolicyReader: {
+  cliOpenShellSandboxPolicyReader: {
     inspectSandboxPolicy: policyBoundaryMocks.inspectSandboxPolicy,
     readSandboxPolicy: policyBoundaryMocks.readSandboxPolicy,
     readSandboxPolicyRevision: vi.fn(),

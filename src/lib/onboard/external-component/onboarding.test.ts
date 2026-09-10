@@ -180,7 +180,7 @@ describe("external component onboarding lifecycle", () => {
         registry,
         runCaptureOpenshell,
       );
-      const proof = deps.createExternalComponentActivationProof(sandboxName);
+      const proof = await deps.createExternalComponentActivationProof(sandboxName);
       const component: PreparedExternalComponent = {
         declaration: {
           schemaVersion: 1,

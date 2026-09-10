@@ -105,8 +105,8 @@ describe("onboard helpers", () => {
     expect(loadedOnboardInternals).not.toHaveProperty("buildProviderArgs");
   });
 
-  it("does not treat an empty policy preset selection as already applied (#6042)", () => {
-    expect(arePolicyPresetsApplied("unused", [])).toBe(false);
+  it("does not treat an empty policy preset selection as already applied (#6042)", async () => {
+    expect(await arePolicyPresetsApplied("unused", [])).toBe(false);
   });
 
   it("adds host proxy variables to sandbox startup env args", () => {

@@ -233,7 +233,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     // credentials. The temporary policy cannot bind the provider until an
     // endpointless profile is attached.
     await ensureMcpBridgeProviderProfile(providerRuntimeSelection);
-    applyGeneratedPolicy(sandboxName, entry, target, {
+    await applyGeneratedPolicy(sandboxName, entry, target, {
       bindCredential: false,
       runtimeSelection: providerRuntimeSelection,
     });
@@ -276,7 +276,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       );
     }
     await attachProvider(sandboxName, entry, providerRuntimeSelection);
-    applyGeneratedPolicy(sandboxName, entry, target, {
+    await applyGeneratedPolicy(sandboxName, entry, target, {
       runtimeSelection: providerRuntimeSelection,
     });
     await refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
@@ -376,14 +376,14 @@ export async function restoreExistingMcpBridgeRuntime(
     );
     await ensureMcpBridgeProviderProfile(providerRuntimeSelection);
     if (options.applyPolicy !== false) {
-      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+      await applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
         bindCredential: false,
         runtimeSelection: providerRuntimeSelection,
       });
     }
     await attachProvider(sandboxName, entry, providerRuntimeSelection);
     if (options.applyPolicy !== false) {
-      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+      await applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
         runtimeSelection: providerRuntimeSelection,
       });
     }

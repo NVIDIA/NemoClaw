@@ -74,15 +74,15 @@ function getPublishedSandbox(sandboxName: string): registry.SandboxEntry | null 
   return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
 }
 
-function hermesPortableStatusReport(
+async function hermesPortableStatusReport(
   sandboxName: string,
   authority: HermesPortableAgentLifecycleAuthority,
   readPolicies: typeof getGatewayPresets,
-): SandboxStatusReport {
+): Promise<SandboxStatusReport> {
   const { entry, phase } = authority;
   const model = entry?.model ?? "unknown";
   const provider = entry?.provider ?? "unknown";
-  const livePolicies = readPolicies(sandboxName);
+  const livePolicies = await readPolicies(sandboxName);
   return {
     schemaVersion: 1,
     name: sandboxName,
@@ -127,7 +127,7 @@ export async function getSandboxStatusReport(
   return withMcpLifecycleLock(sandboxName, async () => {
     const hermesPortable = inspectHermesPortableStatus(sandboxName);
     if (hermesPortable) {
-      return hermesPortableStatusReport(
+      return await hermesPortableStatusReport(
         sandboxName,
         hermesPortable,
         deps.getGatewayPresets ?? getGatewayPresets,
@@ -235,7 +235,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
     statusAgent,
     phase,
   };
-  const textOutcome = printSandboxDetails(textContext);
+  const textOutcome = await printSandboxDetails(textContext);
   if (
     (textOutcome.exitCode || llamaCpp?.kind === "unavailable") &&
     (!process.exitCode || process.exitCode === 0)

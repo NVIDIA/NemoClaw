@@ -40,24 +40,24 @@ describe("policy list live state", () => {
     mocks.getGatewayPresets.mockReturnValue(["npm"]);
   });
 
-  it("marks presets from the current OpenShell policy as active", () => {
-    listSandboxPolicies("alpha");
+  it("marks presets from the current OpenShell policy as active", async () => {
+    await listSandboxPolicies("alpha");
     expect(output()).toContain("● npm [user-added]");
     expect(output()).toContain("○ pypi");
   });
 
-  it("lists namespaced custom presets derived from live policy", () => {
+  it("lists namespaced custom presets derived from live policy", async () => {
     mocks.listCustomPresets.mockReturnValue([
       { file: "corp.yaml", name: "corp", description: "custom OpenShell policy" },
     ]);
     mocks.getAppliedPresets.mockReturnValue(["corp"]);
     mocks.getGatewayPresets.mockReturnValue(["corp"]);
-    listSandboxPolicies("alpha");
+    await listSandboxPolicies("alpha");
     expect(output()).toContain("● corp [user-added]");
   });
 
-  it("does not report a durable baseline exclusion or repair ledger", () => {
-    listSandboxPolicies("alpha");
+  it("does not report a durable baseline exclusion or repair ledger", async () => {
+    await listSandboxPolicies("alpha");
     expect(output()).not.toContain("repair required");
     expect(output()).not.toContain("Baseline exclusions");
   });
