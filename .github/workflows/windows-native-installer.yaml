@@ -21,6 +21,11 @@ on:
         required: false
         default: false
         type: boolean
+      test_native_windows_runtime:
+        description: Test native runtime ownership and transaction primitives without installing a package
+        required: false
+        default: false
+        type: boolean
       probe_official_hermes_components:
         description: Run the selected official Hermes Windows probe without publishing an installer
         required: false
@@ -46,13 +51,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-native-installer-${{ github.ref }}${{ inputs.profile_native_windows && '-profiling' || '' }}
+  group: windows-native-installer-${{ github.ref }}${{ inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || '' }}
   cancel-in-progress: true
 
 jobs:
   windows-native-installer:
     name: Windows native installer candidate (ARM64, no WSL)
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.profile_native_windows && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id == '') }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.test_native_windows_runtime && !inputs.profile_native_windows && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id == '') }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 240
     steps:
@@ -494,7 +499,7 @@ jobs:
 
   windows-native-package-diagnostic:
     name: Windows native package/runtime diagnostic (ARM64, no WSL)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.profile_native_windows && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id != '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.test_native_windows_runtime && !inputs.profile_native_windows && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id != '' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 90
     steps:
@@ -844,7 +849,7 @@ jobs:
 
   official-hermes-components:
     name: Official Hermes ${{ inputs.official_hermes_phase || 'components' }} probe (Windows ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && !inputs.profile_native_windows }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 60
     steps:
@@ -1031,7 +1036,7 @@ jobs:
 
   windows-native-profiling:
     name: Installed Windows baseline profiling (diagnostic only)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.profile_native_windows }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.profile_native_windows && !inputs.test_native_windows_runtime }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 90
     steps:
@@ -1075,4 +1080,66 @@ jobs:
             !${{ runner.temp }}/windows-native-profiling/baseline/baseline-setup.exe
           if-no-files-found: warn
           compression-level: 6
+          retention-days: 14
+
+  windows-runtime-controls:
+    name: Native Windows runtime ownership controls
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_native_windows_runtime }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out the native ownership controls
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate the explicit ownership request
+        shell: powershell
+        env:
+          OTHER_BUILD: ${{ inputs.run_windows_native_installer }}
+          OTHER_COMPONENTS: ${{ inputs.probe_official_hermes_components }}
+          OTHER_PROFILE: ${{ inputs.profile_native_windows }}
+          OTHER_DIAGNOSTIC: ${{ inputs.windows_native_diagnostic_source_run_id }}
+        run: |
+          if ($env:OTHER_BUILD -eq 'true' -or $env:OTHER_COMPONENTS -eq 'true' -or $env:OTHER_PROFILE -eq 'true' -or $env:OTHER_DIAGNOSTIC) {
+            throw 'Native ownership controls require a separate explicit dispatch.'
+          }
+
+      - name: Set up pinned Rust for the native ownership controls
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.95.0-aarch64-pc-windows-msvc
+          target: aarch64-pc-windows-msvc
+          cache: false
+          rustflags: ""
+
+      - name: Exercise real Windows leases and protected fixtures
+        shell: powershell
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $output = Join-Path $env:RUNNER_TEMP 'windows-runtime-controls'
+          [IO.Directory]::CreateDirectory($output) | Out-Null
+          $log = Join-Path $output 'runtime-lease-tests.log'
+          try {
+            $ErrorActionPreference = 'Continue'
+            & rustup run 1.95.0-aarch64-pc-windows-msvc cargo test --locked `
+              --manifest-path "$env:GITHUB_WORKSPACE\packaging\windows\launcher\Cargo.toml" `
+              --target aarch64-pc-windows-msvc runtime_lease:: -- --nocapture --test-threads=1 2>&1 | Tee-Object -FilePath $log
+            $result = $LASTEXITCODE
+          } finally { $ErrorActionPreference = 'Stop' }
+          if ($result -ne 0) { throw 'The real native runtime ownership controls failed.' }
+          if ((Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 16 passed; 0 failed; 0 ignored;') {
+            throw 'The six portable and ten Windows ownership controls did not all execute.'
+          }
+
+      - name: Upload runtime ownership control evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-runtime-controls-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/windows-runtime-controls/
+          if-no-files-found: warn
           retention-days: 14

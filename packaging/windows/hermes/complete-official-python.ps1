@@ -67,6 +67,11 @@ function Assert-PythonBuildSource {
 
 Assert-PythonBuildSource
 if ($StageWorker) {
+    # Prove the real call-operator/native-output boundary before any dependency
+    # work. A missing/incorrect extension environment must not start fallback tiers.
+    & (Join-Path $PSScriptRoot 'test-official-native-dispatch.ps1') `
+        -UvPath (Join-Path $runtimeBuildRoot 'bin\uv.exe') -PythonPath $runtimeBuildPython `
+        -ReceiptPath (Join-Path $runtimeBuildEvidence 'native-dispatch.json')
     # The official installer explicitly supports dot-sourcing. Invoke its real
     # stage and inspect the tier in that same process, without replacing helpers.
     $runtimeBuildBefore = (Get-FileHash -LiteralPath (Join-Path $runtimeBuildSource 'package-lock.json') -Algorithm SHA256).Hash
@@ -148,11 +153,14 @@ try {
     $runtimeBuildStart.RedirectStandardOutput = $true
     $runtimeBuildStart.RedirectStandardError = $true
     $runtimeBuildStart.EnvironmentVariables.Clear()
-    foreach ($name in @('SystemRoot','SystemDrive','WINDIR','COMSPEC','OS','TEMP','TMP','LOCALAPPDATA','APPDATA','USERPROFILE','PROCESSOR_ARCHITECTURE','PROCESSOR_ARCHITEW6432','NUMBER_OF_PROCESSORS','INCLUDE','LIB','LIBPATH','VCINSTALLDIR','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion','WindowsSdkVerBinPath','UniversalCRTSdkDir','UCRTVersion','VSCMD_ARG_TGT_ARCH','VSCMD_ARG_HOST_ARCH','CARGO_HOME','RUSTUP_HOME')) {
+    foreach ($name in @('SystemRoot','SystemDrive','WINDIR','COMSPEC','OS','TEMP','TMP','LOCALAPPDATA','APPDATA','USERPROFILE','PROCESSOR_ARCHITECTURE','PROCESSOR_ARCHITEW6432','NUMBER_OF_PROCESSORS','INCLUDE','LIB','LIBPATH','VCINSTALLDIR','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion','WindowsSdkVerBinPath','UniversalCRTSdkDir','UCRTVersion','VSCMD_ARG_TGT_ARCH','VSCMD_ARG_HOST_ARCH','CARGO_HOME','RUSTUP_HOME','RUNNER_TRACKING_ID')) {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($null -ne $value) { $runtimeBuildStart.EnvironmentVariables[$name] = $value }
     }
     $runtimeBuildStart.EnvironmentVariables['PATH'] = $runtimeBuildOwnedPath
+    # A cleared Windows PowerShell environment otherwise becomes PATHEXT=.CPL,
+    # which launches even absolute .exe paths as detached documents.
+    $runtimeBuildStart.EnvironmentVariables['PATHEXT'] = '.COM;.EXE;.BAT;.CMD'
     $runtimeBuildStart.EnvironmentVariables['UV_LINK_MODE'] = 'copy'
     $runtimeBuildStart.EnvironmentVariables['UV_CACHE_DIR'] = (Join-Path $runtimeBuildEvidence 'uv-cache')
     $runtimeBuildStart.EnvironmentVariables['UV_PYTHON_DOWNLOADS'] = 'never'

@@ -5,6 +5,7 @@
 
 mod state_session;
 mod inference_job;
+mod runtime_lease;
 mod native_ui_file_owner;
 
 #[cfg(not(target_os = "windows"))]
@@ -224,6 +225,25 @@ fn main() {
         .unwrap_or_else(|| fail("The NemoClaw installation directory is unavailable."));
     let node = bin.join("node.exe");
     let mut forwarded = env::args_os().skip(1).collect::<Vec<_>>();
+    // Dormant helper API. Normal launch selection is not changed until the
+    // installed read-only and MSI transaction qualifications have passed.
+    if forwarded.first().is_some_and(|value| value == "--runtime-current-descriptor") {
+        if forwarded.len() != 1 { credential_error("The runtime descriptor query takes no extra arguments."); }
+        if let Err(message) = runtime_lease::describe() { credential_error(&message); }
+        return;
+    }
+    if forwarded.first().is_some_and(|value| value == "--runtime-session") {
+        if forwarded.len() != 2 { credential_error("A single runtime purpose is required."); }
+        if let Err(message) = runtime_lease::run(forwarded[1].to_str().unwrap_or("")) { credential_error(&message); }
+        return;
+    }
+    if forwarded.first().is_some_and(|value| value == "--runtime-retire" || value == "--runtime-restore") {
+        if forwarded.len() != 3 { credential_error("The immutable runtime identity is required."); }
+        if let Err(message) = runtime_lease::transition(
+            forwarded[1].to_str().unwrap_or(""), forwarded[2].to_str().unwrap_or(""), forwarded[0] == "--runtime-restore",
+        ) { credential_error(&message); }
+        return;
+    }
     if forwarded.first().is_some_and(|value| value == "--native-ui-file-owner") {
         if forwarded.len() != 2 { credential_error("A single native UI relay root is required."); }
         if let Err(message) = native_ui_file_owner::run(&forwarded[1]) { credential_error(&message); }
