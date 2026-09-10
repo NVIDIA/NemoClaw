@@ -6,7 +6,6 @@ import type { OpenShellRuntimeSelection } from "./runtime-selection";
 import type {
   OpenShellPolicyInspection,
   OpenShellSandboxPolicyRead,
-  OpenShellSandboxPolicySetOutcome,
   OpenShellSandboxPolicySetSubmission,
 } from "./policy-boundary";
 
