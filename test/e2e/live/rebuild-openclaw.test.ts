@@ -744,6 +744,33 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
         timeoutMs: REBUILD_TIMEOUT_MS,
       },
     );
+    await (rebuild.exitCode === 0
+      ? Promise.resolve()
+      : sandbox
+          .exec(
+            SANDBOX_NAME,
+            [
+              "/usr/bin/curl",
+              "--silent",
+              "--output",
+              "/dev/null",
+              "--write-out",
+              "%{http_code}",
+              "--max-time",
+              "3",
+              "http://127.0.0.1:18789/health",
+            ],
+            {
+              artifactName: "phase-6-rebuild-failure-http-status",
+              env: dockerContextEnv(),
+              redactionValues: [apiKey, PRE_REBUILD_GATEWAY_TOKEN],
+              captureLimitBytes: 8192,
+              timeoutMs: 15_000,
+            },
+          )
+          .catch(() => {
+            console.error("Rebuild failure HTTP status could not be collected.");
+          }));
     expectExitZero(rebuild, "nemoclaw rebuild");
     const rebuildText = resultText(rebuild);
     expect(rebuildText).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
