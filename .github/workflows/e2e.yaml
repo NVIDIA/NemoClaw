@@ -115,7 +115,6 @@ env:
 
 jobs:
   package-openshell-sdk:
-    if: ${{ github.event_name == 'workflow_dispatch' && contains(format(',{0},', inputs.jobs), ',external-gateway-health,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -3055,7 +3054,7 @@ jobs:
 
   catalogue-standard:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ needs.generate-matrix.outputs.catalogue_standard_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3071,6 +3070,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
@@ -3101,7 +3101,7 @@ jobs:
 
   catalogue-nvidia-api:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_api_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3117,6 +3117,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
@@ -3148,7 +3149,7 @@ jobs:
 
   catalogue-nvidia-inference:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3164,6 +3165,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
@@ -3195,7 +3197,7 @@ jobs:
 
   catalogue-github-read:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ needs.generate-matrix.outputs.catalogue_github_read_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3211,6 +3213,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
@@ -3241,7 +3244,7 @@ jobs:
 
   catalogue-brave-nvidia-inference:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ needs.generate-matrix.outputs.catalogue_brave_nvidia_inference_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3258,6 +3261,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}

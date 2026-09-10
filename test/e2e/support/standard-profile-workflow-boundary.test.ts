@@ -122,9 +122,25 @@ describe("standard E2E execution profile", () => {
 
     expect(validateStandardProfileWorkflowBoundary(workflow)).toEqual(
       expect.arrayContaining([
-        "catalogue-nvidia-inference must call the standard E2E profile after matrix generation and base-image publication",
+        "catalogue-nvidia-inference must call the standard E2E profile after matrix generation, base-image publication, and SDK packaging",
         "catalogue-nvidia-inference must pass managed_image_revision from the catalogue matrix",
       ]),
+    );
+  });
+
+  it("rejects a catalogue SDK dependency that is restricted to another target", () => {
+    const workflow = readWorkflow() as { jobs: Record<string, { if?: string }> };
+    workflow.jobs["package-openshell-sdk"]!.if = "${{ inputs.jobs == 'external-gateway-health' }}";
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
+      "catalogue profiles require SDK packaging for every E2E run with package-read permission",
+    );
+  });
+
+  it("rejects a catalogue caller that does not consume its SDK artifact", () => {
+    const workflow = readWorkflow() as { jobs: Record<string, { with: Record<string, string> }> };
+    workflow.jobs["catalogue-nvidia-inference"]!.with.openshell_sdk_artifact_name = "unrelated";
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
+      "catalogue-nvidia-inference must pass openshell_sdk_artifact_name from the catalogue matrix",
     );
   });
 
@@ -177,6 +193,11 @@ describe("standard E2E execution profile", () => {
       "echo unsafe swap";
     steps.find((step) => step.name === "Install reviewed cloudflared")!.run =
       "sudo apt-get install cloudflared";
+    steps.find((step) => step.name === "Download reviewed OpenShell SDK archive")!.with!.name =
+      "unrelated";
+    steps.find(
+      (step) => step.name === "Install reviewed OpenShell SDK archive without package credentials",
+    )!.run = "npm install @nvidia/openshell-sdk";
     steps.find((step) => step.name === "Initialize runner comparison telemetry")!.run =
       "echo skipped";
     steps.find((step) => step.name === "Run catalogue E2E target")!.env!.COMPATIBLE_API_KEY =
@@ -196,6 +217,8 @@ describe("standard E2E execution profile", () => {
           "standard E2E profile must preserve trusted Hermes swap before candidate checkout",
           "standard E2E profile must add the reviewed Hermes rebuild swap after CLI restore",
           "standard E2E profile must install only the reviewed cloudflared package",
+          "standard E2E profile must download the run-scoped reviewed SDK archive",
+          "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
           "standard E2E profile must initialize only planned trusted-main runner telemetry",
           "standard E2E profile must run the planned catalogue target with guarded secrets",
           "standard E2E profile must upload only the fixed skill-agent artifact set with the reviewed action",
