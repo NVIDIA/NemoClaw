@@ -71,5 +71,4 @@ describe("gatewayStartGuidance", () => {
       gatewayStartGuidance("nemoclaw", resolveGatewayLauncher({ gatewayName: "nemoclaw" })),
     );
   });
-
 });

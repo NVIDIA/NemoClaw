@@ -255,10 +255,19 @@ describe("credential rotation detection", () => {
     it("names both Slack providers and excludes unchanged Telegram and Discord siblings", () => {
       vi.spyOn(registry, "getSandbox").mockReturnValue(
         makePlanEntry("multi-sandbox", [
-          { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: hashCredentialOrThrow("tg-same") },
+          {
+            providerEnvKey: "TELEGRAM_BOT_TOKEN",
+            credentialHash: hashCredentialOrThrow("tg-same"),
+          },
           { providerEnvKey: "DISCORD_BOT_TOKEN", credentialHash: hashCredentialOrThrow("dc-same") },
-          { providerEnvKey: "SLACK_BOT_TOKEN", credentialHash: hashCredentialOrThrow("sl-bot-old") },
-          { providerEnvKey: "SLACK_APP_TOKEN", credentialHash: hashCredentialOrThrow("sl-app-old") },
+          {
+            providerEnvKey: "SLACK_BOT_TOKEN",
+            credentialHash: hashCredentialOrThrow("sl-bot-old"),
+          },
+          {
+            providerEnvKey: "SLACK_APP_TOKEN",
+            credentialHash: hashCredentialOrThrow("sl-app-old"),
+          },
         ]),
       );
 

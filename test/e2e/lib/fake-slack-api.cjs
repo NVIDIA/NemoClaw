@@ -24,7 +24,9 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
-  console.error(`FAKE_SLACK_API_PORT must be an integer between 0 and 65535 (received: ${rawPort})`);
+  console.error(
+    `FAKE_SLACK_API_PORT must be an integer between 0 and 65535 (received: ${rawPort})`,
+  );
   process.exit(2);
 }
 
@@ -41,7 +43,9 @@ if (port !== 0 && websocketPort === port) {
 }
 
 if (!expectedBotToken || !expectedAppToken) {
-  console.error("FAKE_SLACK_API_EXPECTED_BOT_TOKEN and FAKE_SLACK_API_EXPECTED_APP_TOKEN are required");
+  console.error(
+    "FAKE_SLACK_API_EXPECTED_BOT_TOKEN and FAKE_SLACK_API_EXPECTED_APP_TOKEN are required",
+  );
   process.exit(2);
 }
 

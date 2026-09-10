@@ -777,14 +777,14 @@ describe("rebuild replacement recovery backup", () => {
     expect(findRebuildRecoveryBackup(identity(), deps())).toEqual(
       expect.objectContaining({ backupPath, timestamp: manifest.timestamp }),
     );
-    expect(
-      isRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps()),
-    ).toBe(false);
+    expect(isRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps())).toBe(
+      false,
+    );
 
     markRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps());
-    expect(
-      isRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps()),
-    ).toBe(true);
+    expect(isRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps())).toBe(
+      true,
+    );
 
     clearRebuildRecoveryBackup({ ...identity(), backupManifest: manifest }, deps());
     expect(fs.existsSync(recordPath)).toBe(false);

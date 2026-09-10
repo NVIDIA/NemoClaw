@@ -89,9 +89,7 @@ function throwAfterCleanup(deps: ProviderPreparationDeps, message: string): neve
     deps.cleanupCreateSources();
   } catch (error) {
     const cleanupFailure =
-      error instanceof Error
-        ? error
-        : new Error("Temporary sandbox create-source cleanup failed.");
+      error instanceof Error ? error : new Error("Temporary sandbox create-source cleanup failed.");
     throw new AggregateError(
       [providerFailure, cleanupFailure],
       `${message} Temporary sandbox create-source cleanup also failed.`,

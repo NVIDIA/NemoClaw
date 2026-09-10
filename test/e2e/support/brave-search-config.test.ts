@@ -42,5 +42,4 @@ describe("Brave Search E2E configuration assertion", () => {
       assertBraveConfig(openClawConfig(VERSIONED_PLACEHOLDER, "test-raw-brave-key")),
     ).toThrow();
   });
-
 });

@@ -32,7 +32,6 @@ describe("seedInitialPolicyContext", () => {
 
   it("stringifies non-Error throws so the log never silently drops the cause", () => {
     const refresh = vi.fn(() => {
-      // eslint-disable-next-line no-throw-literal
       throw "broken-string";
     });
     const logError = vi.fn();

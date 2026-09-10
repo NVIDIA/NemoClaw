@@ -65,8 +65,7 @@ export function materializeHostLocalVllmSelection(
   const { recipe, preset } = selection;
   if (
     recipe.spec.backend !== "vllm" ||
-    recipe.spec.execution.materializerRef !==
-      HOST_LOCAL_VLLM_MATERIALIZER_REF ||
+    recipe.spec.execution.materializerRef !== HOST_LOCAL_VLLM_MATERIALIZER_REF ||
     recipe.spec.execution.lifecycleRef !== HOST_LOCAL_VLLM_LIFECYCLE_REF
   ) {
     throw new Error("selected serving preset is not a host-local vLLM recipe");
@@ -77,15 +76,8 @@ export function materializeHostLocalVllmSelection(
     : recipe.spec.serve.directInstall;
   const hostArchitecture = baseProfile.architecture ?? process.arch;
   const expectedRuntimeArchitecture =
-    hostArchitecture === "x64"
-      ? "amd64"
-      : hostArchitecture === "arm64"
-        ? "arm64"
-        : null;
-  if (
-    !expectedRuntimeArchitecture ||
-    runtime.architecture !== expectedRuntimeArchitecture
-  ) {
+    hostArchitecture === "x64" ? "amd64" : hostArchitecture === "arm64" ? "arm64" : null;
+  if (!expectedRuntimeArchitecture || runtime.architecture !== expectedRuntimeArchitecture) {
     throw new Error(
       `host-local vLLM recipe architecture ${runtime.architecture} does not match host architecture ${hostArchitecture}`,
     );
@@ -102,9 +94,7 @@ export function materializeHostLocalVllmSelection(
     !directInstall ||
     !recipe.spec.readiness?.timeoutSeconds
   ) {
-    throw new Error(
-      "host-local vLLM recipe is missing required runtime or model fields",
-    );
+    throw new Error("host-local vLLM recipe is missing required runtime or model fields");
   }
   const serveEnvironment = {
     ...runtime.environment,
@@ -125,9 +115,7 @@ export function materializeHostLocalVllmSelection(
     gated: recipe.spec.model.gated,
     platforms: [baseProfile.platform],
     minComputeCapability: runtime.minimumComputeCapability,
-    ...(Object.keys(serveEnvironment).length > 0
-      ? { serveEnv: serveEnvironment }
-      : {}),
+    ...(Object.keys(serveEnvironment).length > 0 ? { serveEnv: serveEnvironment } : {}),
     runtime: {
       image: runtime.image,
       imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
@@ -141,12 +129,8 @@ export function materializeHostLocalVllmSelection(
       dockerRunArgsMode: "replace",
     },
     installFastSafetensors: recipe.spec.model.installFastSafetensors,
-    ...(directInstall.authentication === "bearer"
-      ? { managedBearerAuth: true as const }
-      : {}),
-    ...(directInstall.fixedArguments
-      ? { fixedServeCommand: true as const }
-      : {}),
+    ...(directInstall.authentication === "bearer" ? { managedBearerAuth: true as const } : {}),
+    ...(directInstall.fixedArguments ? { fixedServeCommand: true as const } : {}),
   };
   return {
     presetId: preset.metadata.id,
@@ -158,9 +142,7 @@ export function materializeHostLocalVllmSelection(
       imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
       imageUnpackedSizeBytes:
         runtime.imageUnpackedSizeBytes ??
-        (runtime.image === baseProfile.image
-          ? baseProfile.imageUnpackedSizeBytes
-          : undefined),
+        (runtime.image === baseProfile.image ? baseProfile.imageUnpackedSizeBytes : undefined),
       pullTimeoutSec: runtime.pullTimeoutSeconds,
       loadTimeoutSec: recipe.spec.readiness.timeoutSeconds,
       modelDownloadSizeBytes: recipe.spec.model.downloadSizeBytes,
@@ -191,8 +173,7 @@ export function resolveHostLocalVllmSelection(
 ): HostLocalVllmSelectionResult {
   const presetId = String(env.NEMOCLAW_SERVING_PRESET ?? "").trim();
   const model = String(env.NEMOCLAW_VLLM_MODEL ?? "").trim();
-  if (!presetId && !model && !options.automatic)
-    return { kind: "not-selected" };
+  if (!presetId && !model && !options.automatic) return { kind: "not-selected" };
   if (presetId && model) {
     return {
       kind: "rejected",

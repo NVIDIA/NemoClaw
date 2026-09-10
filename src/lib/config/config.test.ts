@@ -83,6 +83,28 @@ describe("NemoClawConfig v1", () => {
     expect(validateNemoClawConfig(config())).toEqual(config());
   });
 
+  it.each([
+    { host: "user:secret-canary@proxy.internal", port: 3129 },
+    { host: "http://proxy.internal", port: 3129 },
+    { host: "proxy.internal\n", port: 3129 },
+    { host: "a".repeat(257), port: 3129 },
+    { host: "proxy.internal", port: 0 },
+    { host: "proxy.internal", port: 65_536 },
+    { host: "proxy.internal", port: 3129.5 },
+    { host: "proxy.internal", port: 3129, credential: "secret-canary" },
+    { host: "proxy.internal" },
+    { port: 3129 },
+  ])("rejects malformed or incomplete managed proxy configuration", (proxy) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.network, { proxy });
+    expect(() => validateNemoClawConfig(value)).toThrow();
+    try {
+      validateNemoClawConfig(value);
+    } catch (error) {
+      expect(String(error)).not.toContain("secret-canary");
+    }
+  });
+
   it("returns an owned and deeply frozen validated document (#10938)", () => {
     const input = config();
     const validated = validateNemoClawConfig(input);

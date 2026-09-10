@@ -526,14 +526,15 @@ async function upsertProvider(
     const value = env[envKey];
     return typeof value === "string" && value.length > 0 ? [{ name: envKey, value }] : [];
   });
-  const config = baseUrl && (type === "openai" || type === "anthropic")
-    ? [
-        {
-          key: type === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL",
-          value: baseUrl,
-        },
-      ]
-    : [];
+  const config =
+    baseUrl && (type === "openai" || type === "anthropic")
+      ? [
+          {
+            key: type === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL",
+            value: baseUrl,
+          },
+        ]
+      : [];
   revalidate();
   const result =
     action === "create"

@@ -154,38 +154,41 @@ describe("channel lifecycle agent gate", () => {
   it.each([
     ["start", ["googlechat"], () => startSandboxChannel("da-test", { channel: "googlechat" })],
     ["stop", [], () => stopSandboxChannel("da-test", { channel: "googlechat" })],
-  ])("rejects a stale channel during %s before reading channel state or mutating the sandbox", async (_verb, disabledChannels, run) => {
-    // googlechat now supports openclaw + hermes, so exercise the unsupported-pair
-    // lifecycle gate with a non-messaging custom agent (supported by no channel).
-    getSandboxMock.mockReturnValue({ name: "da-test", agent: "custom-agent" });
-    vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("custom-agent"));
-    const configuredChannelsMock = vi
-      .spyOn(registry, "getConfiguredMessagingChannelsFromEntry")
-      .mockReturnValue(["googlechat"]);
-    const disabledChannelsMock = vi
-      .spyOn(registry, "getDisabledChannels")
-      .mockReturnValue(disabledChannels);
+  ])(
+    "rejects a stale channel during %s before reading channel state or mutating the sandbox",
+    async (_verb, disabledChannels, run) => {
+      // googlechat now supports openclaw + hermes, so exercise the unsupported-pair
+      // lifecycle gate with a non-messaging custom agent (supported by no channel).
+      getSandboxMock.mockReturnValue({ name: "da-test", agent: "custom-agent" });
+      vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("custom-agent"));
+      const configuredChannelsMock = vi
+        .spyOn(registry, "getConfiguredMessagingChannelsFromEntry")
+        .mockReturnValue(["googlechat"]);
+      const disabledChannelsMock = vi
+        .spyOn(registry, "getDisabledChannels")
+        .mockReturnValue(disabledChannels);
 
-    let caught: unknown;
-    try {
-      await run();
-    } catch (err) {
-      caught = err;
-    }
+      let caught: unknown;
+      try {
+        await run();
+      } catch (err) {
+        caught = err;
+      }
 
-    expect(exitCodeFromError(caught)).toBe(1);
-    const errorText = (errSpy.mock.calls as unknown[][])
-      .map((call) => call.map(String).join(" "))
-      .join("\n");
-    expect(errorText).toContain("This channel does not support the configured agent.");
-    expect(errorText).not.toContain("custom-agent");
+      expect(exitCodeFromError(caught)).toBe(1);
+      const errorText = (errSpy.mock.calls as unknown[][])
+        .map((call) => call.map(String).join(" "))
+        .join("\n");
+      expect(errorText).toContain("This channel does not support the configured agent.");
+      expect(errorText).not.toContain("custom-agent");
 
-    expect(configuredChannelsMock).not.toHaveBeenCalled();
-    expect(disabledChannelsMock).not.toHaveBeenCalled();
-    expect(loadPresetForSandboxMock).not.toHaveBeenCalled();
-    expect(applyPresetMock).not.toHaveBeenCalled();
-    expect(updateSandboxMock).not.toHaveBeenCalled();
-    expect(rebuildMock).not.toHaveBeenCalled();
-    expect(runOpenshellMock).not.toHaveBeenCalled();
-  });
+      expect(configuredChannelsMock).not.toHaveBeenCalled();
+      expect(disabledChannelsMock).not.toHaveBeenCalled();
+      expect(loadPresetForSandboxMock).not.toHaveBeenCalled();
+      expect(applyPresetMock).not.toHaveBeenCalled();
+      expect(updateSandboxMock).not.toHaveBeenCalled();
+      expect(rebuildMock).not.toHaveBeenCalled();
+      expect(runOpenshellMock).not.toHaveBeenCalled();
+    },
+  );
 });
