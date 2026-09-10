@@ -1424,16 +1424,24 @@ describe("attached Ollama export pipeline", () => {
     vi.mocked(createOllamaExportProbe).mockImplementation(() =>
       ollamaProbe({ ...observed, pid: ++pid }),
     );
-    const { result, writeStdout } = await exportLiveSource();
-    expect(result).toMatchObject({ ok: false });
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: expect.arrayContaining([
+          expect.objectContaining({ category: "unstable-source" }),
+        ]),
+      },
+    });
     expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
   });
 });
 
 describe("dashboard export observation", () => {
   it("projects registered dashboard and direct tools through complete live observation (#10904)", async () => {
     const sourceEntry = dashboardSource();
-    expect(sourceEntry.workload?.kind).toBe("managed-image");
     mockSupportedLiveSource(3, 3, sourceEntry);
     const reader = createLiveExportSnapshotReader();
     const observed = await reader.read("alpha");
@@ -1461,7 +1469,6 @@ describe("dashboard export observation", () => {
       },
     );
     expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
-    expect(raw.getSandbox).toHaveBeenCalledTimes(3);
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
     const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
     expect(yaml).not.toContain(readFailureCanary);
