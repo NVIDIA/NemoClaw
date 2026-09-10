@@ -45,8 +45,7 @@ function inferenceProvider(
 function primaryAgent(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig {
   return {
     name: "primary",
-    type: source.agent,
-    ...(source.execution ? { execution: source.execution } : {}),
+    ...agentSettings(source),
     ...(source.auth === undefined
       ? {}
       : { auth: { method: source.auth.method, providerRef: providerName } }),
@@ -71,6 +70,18 @@ function primaryAgent(source: VerifiedExportSource, providerName: string): NemoC
 export interface ExportConfigBuildIdentity {
   readonly documentName: NemoClawConfigDocumentName;
   readonly documentUid: NemoClawConfigDocumentUid;
+}
+
+function agentSettings(source: VerifiedExportSource) {
+  return {
+    ...(source.agent === "openclaw"
+      ? {
+          type: "openclaw" as const,
+          ...(source.observability ? { observability: source.observability } : {}),
+        }
+      : { type: "hermes" as const }),
+    ...(source.execution ? { execution: source.execution } : {}),
+  };
 }
 
 /** Map one verified export source to an unbound aggregate document. */
@@ -102,9 +113,7 @@ export function buildExportConfig(
             policy: { explicit: source.policy },
             ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
           },
-          ...(source.webSearch === undefined
-            ? {}
-            : { integrations: { webSearch: source.webSearch } }),
+          ...(source.webSearch ? { integrations: { webSearch: source.webSearch } } : {}),
           agents: [primaryAgent(source, providerName)],
         },
       ],

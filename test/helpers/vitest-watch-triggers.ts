@@ -321,11 +321,17 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e\.yaml$/,
-    testsToRun: runTests(...E2E_WORKFLOW_CONTRACTS),
+    testsToRun: runTests(
+      ...E2E_WORKFLOW_CONTRACTS,
+      "test/e2e/support/openshell-sdk-install.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e-standard-profile\.yaml$/,
-    testsToRun: runTests("test/e2e/support/standard-profile-workflow-boundary.test.ts"),
+    testsToRun: runTests(
+      "test/e2e/support/standard-profile-workflow-boundary.test.ts",
+      "test/e2e/support/openshell-sdk-install.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/portable-profile-e2e\.yaml$/,

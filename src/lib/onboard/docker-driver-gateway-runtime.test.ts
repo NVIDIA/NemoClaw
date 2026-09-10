@@ -7,7 +7,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as dockerDriverGatewayEnv from "./docker-driver-gateway-env";
-import { gatewayIdForStateDir } from "./docker-driver-gateway-config";
+import {
+  gatewayIdForStateDir,
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
+} from "./docker-driver-gateway-config";
 import {
   createDockerDriverGatewayRuntimeHelpers,
   type DockerDriverGatewayRuntimeDeps,
@@ -554,10 +557,74 @@ describe("docker-driver gateway runtime helpers", () => {
     ).toBe("NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS=1 (expected <unset>)");
   });
 
-  it("reuses a systemd-owned gateway without detached cleanup identity (#6903)", () => {
+  it("marks a gateway stale when its external component identity differs (#11340)", () => {
+    const { helpers } = makeHelpers();
+    expect(
+      helpers.getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: {
+          OPENSHELL_DRIVERS: "docker",
+          [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "prior-component",
+        },
+        processExe: "/usr/bin/openshell-gateway",
+        desiredEnv: {
+          OPENSHELL_DRIVERS: "docker",
+          [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "approved-component",
+        },
+        gatewayBin: "/usr/bin/openshell-gateway",
+      })?.reason,
+    ).toBe(
+      `${NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV}=prior-component (expected approved-component)`,
+    );
+  });
+
+  it("marks a gateway stale after persisted external component removal (#11340)", () => {
+    const { helpers } = makeHelpers();
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nc-component-removal-"));
+    try {
+      fs.chmodSync(stateDir, 0o700);
+      const options = {
+        platform: "linux" as const,
+        stateDir,
+        getDockerSupervisorImage: () => "supervisor:test",
+        resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
+      };
+      const env = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv(options);
+      dockerDriverGatewayEnv.configureDockerDriverGatewayExternalComponent(env, {
+        componentId: "policy-governance",
+        interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
+      });
+      const processEnv = { ...env };
+      dockerDriverGatewayEnv.configureDockerDriverGatewayExternalComponent(env, null);
+      const desiredEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv(options);
+      const snapshot = {
+        processExe: "/usr/bin/openshell-gateway",
+        gatewayBin: "/usr/bin/openshell-gateway",
+        desiredEnv,
+      };
+      expect(desiredEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]).toBe("none");
+      expect(
+        helpers.getDockerDriverGatewayRuntimeDriftFromSnapshot({ ...snapshot, processEnv })?.reason,
+      ).toBe(
+        `${NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV}=${processEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]} (expected none)`,
+      );
+      expect(
+        helpers.getDockerDriverGatewayRuntimeDriftFromSnapshot({
+          ...snapshot,
+          processEnv: desiredEnv,
+        }),
+      ).toBeNull();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses a systemd-owned gateway with a legacy unset component identity (#11340)", () => {
     const pid = 12_350;
     const gatewayBin = "/usr/bin/openshell-gateway";
-    const desiredEnv = { OPENSHELL_DRIVERS: "docker" };
+    const desiredEnv = {
+      OPENSHELL_DRIVERS: "docker",
+      [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "none",
+    };
     const { helpers } = makeHelpers({
       runCapture: vi.fn(() => gatewayBin),
     });
