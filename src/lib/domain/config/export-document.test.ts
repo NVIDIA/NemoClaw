@@ -55,6 +55,7 @@ describe("export config builder", () => {
       documentUid: firstUid,
     });
 
+    expect(result.spec.sandboxes[0]?.agents[0]).not.toHaveProperty("observability");
     expect(result).toMatchObject({
       apiVersion: "nemoclaw.nvidia.com/v1",
       kind: "NemoClawConfig",
@@ -149,6 +150,7 @@ describe("export config builder", () => {
     );
 
     expect(result.spec.sandboxes[0]?.agents[0]?.type).toBe("hermes");
+    expect(result.spec.sandboxes[0]?.agents[0]).not.toHaveProperty("observability");
   });
 
   it("omits an absent hosted credential reference (#10938)", () => {

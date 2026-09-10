@@ -533,7 +533,20 @@ describe("managed llama.cpp profile onboarding", () => {
       makeDeps({
         isNonInteractive: () => true,
         getNonInteractiveProvider: () => "install-llama-cpp",
-        discoverManagedLlamaCppSelections: discoverManagedLlamaCppSelectionsForGpu,
+        discoverManagedLlamaCppSelections: (
+          env,
+          detectedGpu,
+          catalog,
+          _collectionOptions,
+          selectionOptions,
+        ) =>
+          discoverManagedLlamaCppSelectionsForGpu(
+            env,
+            detectedGpu,
+            catalog,
+            n1xCollectionOptions(),
+            selectionOptions,
+          ),
         installManagedLlamaCpp,
       }),
     );

@@ -223,6 +223,7 @@ describe("gateway guard legacy keepalive fixture", () => {
         timeoutSecs: 180,
       },
       {
+        commandExecutor: expect.objectContaining({ runBuffered: expect.any(Function) }),
         dockerCapture: expect.any(Function),
         runCaptureOpenshell: expect.any(Function),
         runOpenshell: expect.any(Function),

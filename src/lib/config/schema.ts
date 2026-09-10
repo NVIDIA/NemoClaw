@@ -82,7 +82,7 @@ function sandboxProblems(
     ),
   );
   for (const [agentIndex, agent] of sandbox.agents.entries()) {
-    if (agent.type === "hermes" && agent.execution !== undefined) {
+    if (agent.type === "hermes" && "execution" in agent) {
       problems.push(
         `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}/execution is supported only for OpenClaw agents`,
       );

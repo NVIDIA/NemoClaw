@@ -362,7 +362,9 @@ and transport. It also stops the gateway and removes its temporary state.
 Every catalogue profile installs the reviewed OpenShell SDK archive before restoring the candidate CLI.
 The shared package job downloads and verifies the pinned SDK with package-read permission.
 Catalogue jobs receive the run-scoped archive without package credentials and reject a missing or ambiguous archive.
-The install disables package scripts and verifies that the SDK connection API loads before running tests.
+Catalogue and external-gateway health jobs add the archive to npm's cache, then reinstall dependencies from the lockfile with package scripts disabled.
+This preserves the locked dependency versions and avoids npm resolving a new peer dependency graph during SDK installation.
+Both jobs verify that the SDK connection API loads before running tests.
 This keeps the private optional dependency available for SDK-backed commands such as configuration export.
 
 The `network-policy` target also owns live configuration-export evidence for #10938 and PR #11065.
@@ -1081,17 +1083,19 @@ Brev Launchable`. The workflow names this selection `E2E full main`, with the
 correlation ID when one was supplied, so maintainers can find the newest full
 manual run without scanning every run's jobs.
 
-Each full dispatch uses `github.run_id` in its workflow concurrency identity, so
-another full dispatch cannot supersede it while it waits. The trusted `main`
+Each full or focused Launchable dispatch uses `github.run_id` in its workflow concurrency identity,
+so another dispatch cannot supersede it while it waits. The trusted `main`
 workflow dispatch verifies that the dispatching and rerunning actors have
 repository `maintain` or `admin` permission before the Launchable path's source
 checkout. That automatic role check authorizes `staging-brev-launchable` and
 `staging-brev-launchable-identity`; neither job uses GitHub environment
 approval.
 
-Both Launchable jobs use the `staging-brev-launchable-cpu` concurrency group
-without cancelling a running job. GitHub keeps at most one pending job in that
-group, so a newer job can replace an older pending job.
+Both Launchable jobs and `.github/workflows/staging-launchable-full.yaml` share the
+`staging-brev-launchable-cpu` concurrency group with `queue: max` and `cancel-in-progress: false`.
+One job or workflow runs at a time, and up to 100 pending entries wait without replacing each other.
+GitHub cancels new entries when the queue is full. Entries run in the order they enter the group;
+that order can differ from workflow dispatch order.
 
 For a full manual run dispatched against `main`, `Release qualification` waits
 for every E2E job that does not require a separate opt-in, including `Exact staging Brev Launchable`. The strict aggregate reports whether that full run

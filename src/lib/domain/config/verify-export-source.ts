@@ -26,6 +26,7 @@ import {
   isValidNemoClawRuntimeProvider,
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
+  NemoClawOpenClawObservabilitySchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
 } from "../../config/model";
@@ -95,6 +96,7 @@ type VerifiedExportSourceData = Pick<
   | "execution"
   | "gateway"
   | "inference"
+  | "observability"
   | "policy"
   | "proxy"
   | "runtime"
@@ -407,6 +409,16 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
   }).profile;
 }
 
+function exportedObservability(
+  profile: ManagedStartupProfile,
+): VerifiedExportSource["observability"] {
+  if (profile.agentConfig.agent !== "openclaw" || !profile.agentConfig.otel.enabled)
+    return undefined;
+  const { enabled, endpointUrl, serviceName, sampleRate } = profile.agentConfig.otel;
+  const value = { otlp: { enabled, endpoint: endpointUrl, serviceName, sampleRate } };
+  return Check(NemoClawOpenClawObservabilitySchema, value) ? value : undefined;
+}
+
 function projectAgentSettings(profile: ManagedStartupProfile, defaults: ManagedStartupProfile) {
   if (profile.agentConfig.agent !== "openclaw" || defaults.agentConfig.agent !== "openclaw") {
     return {};
@@ -488,6 +500,19 @@ function supportedAgentSettingsProfile(
   };
 }
 
+function supportedObservabilityProfile(
+  profile: ManagedStartupProfile,
+  expected: ManagedStartupProfile,
+): ManagedStartupProfile {
+  const observability = exportedObservability(profile);
+  if (!observability || expected.agentConfig.agent !== "openclaw") return expected;
+  const { endpoint: endpointUrl, ...telemetry } = observability.otlp;
+  return {
+    ...expected,
+    agentConfig: { ...expected.agentConfig, otel: { ...telemetry, endpointUrl } },
+  };
+}
+
 function classifyManagedStartupProfile(
   entry: ObservedExportRegistry,
   profile: ManagedStartupProfile,
@@ -512,6 +537,7 @@ function classifyManagedStartupProfile(
       ),
     ];
   }
+  expected = supportedObservabilityProfile(profile, expected);
   const findings = classifyReasoningAgreement(entry, profile);
   if (entry.servingProfileProvenance?.preset.id !== EXPORTED_VLLM_PROFILE_ID) {
     const supported = supportedAgentSettingsProfile(profile, expected);
@@ -1016,6 +1042,16 @@ function projectVerifiedInference(
       };
 }
 
+function projectVerifiedProxy(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile | undefined,
+) {
+  const proxy = profile?.proxy;
+  return proxy && !hasEqualJsonStructure(proxy, expectedManagedStartupProfile(entry).proxy)
+    ? { proxy: { host: proxy.managedHost, port: proxy.managedPort } }
+    : {};
+}
+
 function completeVerifiedSource(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
@@ -1023,13 +1059,14 @@ function completeVerifiedSource(
   policy: CanonicalExportPolicy,
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
+  const observability = authority ? exportedObservability(authority.profile) : undefined;
   const selected = normalizeInferenceSelection(entry);
   const settings =
     authority && snapshot.inference.topology !== "managed"
       ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
       : {};
-  const proxy = authority?.profile.proxy;
   const values = {
+    ...(observability ? { observability } : {}),
     sandboxName: requestedSandboxName,
     agent: entry.agent,
     ...(settings.execution ? { execution: settings.execution } : {}),
@@ -1044,9 +1081,7 @@ function completeVerifiedSource(
       : {}),
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
-    ...(proxy && !hasEqualJsonStructure(proxy, expectedManagedStartupProfile(entry).proxy)
-      ? { proxy: { host: proxy.managedHost, port: proxy.managedPort } }
-      : {}),
+    ...projectVerifiedProxy(entry, authority?.profile),
     inference: projectVerifiedInference(snapshot, selected, settings),
   };
   if (!Check(ExportSourceValuesSchema, values)) {
