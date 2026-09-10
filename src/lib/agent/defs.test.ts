@@ -177,6 +177,22 @@ describe("agent definitions", () => {
     expect(choices.map((choice) => choice.name)).toContain("hermes");
   });
 
+  it("loads deferred onboarding as an explicit agent-manifest capability", () => {
+    expect(loadAgent("hermes").deferred_onboarding).toBe(true);
+    expect(loadAgent("langchain-deepagents-code").deferred_onboarding).toBe(true);
+    expect(loadAgent("openclaw").deferred_onboarding).toBe(false);
+  });
+
+  it("rejects a non-boolean deferred onboarding capability", () => {
+    const agentName = `invalid-deferred-onboarding-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "deferred_onboarding: enabled"].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/deferred_onboarding/);
+  });
+
   it("uses agent display names in interactive choices", () => {
     const choices = getAgentChoices();
     expect(choices).toEqual(

@@ -108,6 +108,36 @@ The global `$$nemoclaw doctor` command remains available without a sandbox name.
 
 The hosted installer accepts options after `bash -s --`. These options control installation and the onboarding run that follows it.
 
+### `--defer-onboarding`
+
+Use this option only with `NEMOCLAW_AGENT=hermes` or `NEMOCLAW_AGENT=langchain-deepagents-code`.
+Leave `NEMOCLAW_PROVIDER` unset, or select the `build`, `cloud`, or `routed` NVIDIA hosted provider.
+Do not combine this option with a local model profile.
+
+If NVIDIA inference credentials are absent and no sandbox is registered, the installer installs NemoClaw and skips onboarding.
+It does not create an OpenShell provider or sandbox, and it does not report onboarding as complete.
+If a supported credential or registered sandbox exists, the installer follows the normal onboarding or recovery path.
+An invalid credential fails validation and does not select deferred onboarding.
+
+After the runtime process supplies one of these credentials, run the onboarding command for the selected agent:
+
+- Non-empty `NVIDIA_INFERENCE_API_KEY`
+- Non-empty `NVIDIA_API_KEY`
+- Valid `NEMOCLAW_PROVIDER_KEY`
+
+For the selected agent, run:
+
+- Hermes: `nemohermes onboard`
+- LangChain Deep Agents Code: `nemo-deepagents onboard`
+
+Set `NEMOCLAW_DEFER_ONBOARDING=1` to select the same installer behavior without the command-line option.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+  NEMOCLAW_AGENT=hermes \
+  bash -s -- --defer-onboarding
+```
+
 ### `--local-model-runtime=vllm`
 
 Enable the fixed vLLM local model profile. The flag accepts only `vllm`. It makes the remaining onboarding non-interactive and disables Express profile selection.
@@ -131,28 +161,6 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 The profile selects a fixed catalog model and serving command from the managed-inference catalog. The hosted installer rejects `NEMOCLAW_PROVIDER` and `NEMOCLAW_MODEL` before onboarding. The dedicated vLLM onboarder accepts `NEMOCLAW_VLLM_MODEL` only when the catalog resolves it to the matching fixed recipe. It rejects a model that does not resolve to that recipe and all `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` values before it installs vLLM. Set `NEMOCLAW_VLLM_PORT` before installation to publish the fixed serving recipe on another host port.
 
 The hosted installer's equivalent environment-variable form requires both `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1` and `NEMOCLAW_LOCAL_MODEL_RUNTIME`. Use the installer flag unless an automation boundary cannot pass installer arguments. For prerequisites, effects, verification, and recovery, refer to [Choose a Local Inference Server](../inference/local-inference/choose-local-inference-server#install-a-fixed-vllm-profile).
-
-### `--defer-onboarding`
-
-Install Hermes without starting onboarding when NVIDIA hosted inference credentials are not yet available.
-The equivalent environment variable is `NEMOCLAW_DEFER_ONBOARDING=1`.
-The installer defers onboarding only when all these conditions apply:
-
-- `NEMOCLAW_AGENT=hermes` is set.
-- No sandbox is registered.
-- No supported NVIDIA inference credential is available.
-- No local model profile is selected.
-- `NEMOCLAW_PROVIDER` is unset or selects `build`, `cloud`, or `routed`.
-
-If a supported credential or registered sandbox exists, the installer follows the normal onboarding or recovery path.
-When onboarding is deferred, the installer completes the software installation and reports that Hermes onboarding did not run.
-After credentials are available, run `nemohermes onboard` to create the sandbox.
-
-```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
-  NEMOCLAW_AGENT=hermes \
-  bash -s -- --defer-onboarding
-```
 
 ## Hosted Installer Exit Statuses
 
@@ -3912,6 +3920,7 @@ The following variables let you tune onboarding without editing the Dockerfile o
 
 | Variable | Format | Effect |
 | --- | --- | --- |
+| `NEMOCLAW_DEFER_ONBOARDING` | `1` to enable | Hosted installer only. Selects the same behavior as `--defer-onboarding` for Hermes or LangChain Deep Agents Code with NVIDIA hosted inference. When none of the accepted credentials (`NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, or a valid `NEMOCLAW_PROVIDER_KEY`) is present and no sandbox is registered, the installer installs NemoClaw without creating a provider, sandbox, or completed onboarding state. |
 | `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `llama-cpp`, `install-llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. On a qualified N1x host, `install-vllm` supplies Deferred preview intent, while another provider supplies standard-onboarding intent and retains its existing requirements. Local NVIDIA NIM remains unavailable on N1x. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. `install-llama-cpp` selects the compatible experimental managed path on DGX Spark, generic NVIDIA GPU, or Windows WSL N1x hosts and rejects `NEMOCLAW_MODEL`; use `NEMOCLAW_LLAMACPP_RECIPE` for an explicit declarative selection. A qualifying Windows WSL N1x host automatically selects this provider and its Qwen 3.6 recipe when no provider is requested or recorded. If an operator-managed server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
 | `NEMOCLAW_LLAMACPP_RECIPE` | repository-owned managed-inference recipe ID | Selects the managed llama.cpp recipe when `NEMOCLAW_PROVIDER=install-llama-cpp`, including a compatible lower-priority profile. When unset, NemoClaw selects the unique highest-priority compatible automatic profile. An unknown recipe, an ambiguous selection, or a stale or incompatible readiness report fails before image, model, or runtime effects. |
 | `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. NemoClaw preserves it across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
