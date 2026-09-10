@@ -71,7 +71,6 @@ function runReconcile(scenario: Scenario): {
       '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
       '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
-      '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
       "_TOOL_REDIRECTS=()",
       `OPENCLAW_GATEWAY_TOKEN=${shellQuote(scenario.intended)}`,
       "write_runtime_shell_env",

@@ -303,13 +303,12 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       const opaqueValue = "opaqueMintedGatewayMaterial_7qR2v9XcL4n8";
       const expectedMarkers = [
         "nemoclaw-sandbox-safety-net",
-        "nemoclaw-ciao-network-guard",
         "-leading",
         "literal;$(false)",
       ];
       const proxyEnv =
         'export NODE_OPTIONS="--require /tmp/nemoclaw-sandbox-safety-net.js ' +
-        '--require /tmp/nemoclaw-ciao-network-guard.js -leading literal;$(false)"\n' +
+        '-leading literal;$(false)"\n' +
         `export HTTPS_PROXY="http://gateway-user:${opaqueValue}@127.0.0.1:3128"\n`;
       expect(redactString(proxyEnv)).toBe(proxyEnv);
       fs.writeFileSync(proxyEnvPath, proxyEnv, { mode: 0o600 });
@@ -383,7 +382,6 @@ describe("GatewayClient recovery helpers (#2701)", () => {
         "/tmp/nemoclaw-proxy-env.sh",
         "NEMOCLAW_GUARD_CHAIN_ACTIVE",
         "nemoclaw-sandbox-safety-net",
-        "nemoclaw-ciao-network-guard",
       ]);
     });
 
@@ -695,7 +693,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
 });
 
 describe("SandboxClient disruption helpers (#2701)", () => {
-  it("wipeGuardChain removes the five guard files plus proxy-env.sh", async () => {
+  it("wipeGuardChain removes the four guard files plus proxy-env.sh", async () => {
     const runner = new ScriptedRunner();
     const sandbox = new SandboxClient(runner);
 
@@ -707,7 +705,6 @@ describe("SandboxClient disruption helpers (#2701)", () => {
     expect(removeArgs[0]).toBe("rm");
     expect(removeArgs[1]).toBe("-f");
     expect(removeArgs).toContain("/tmp/nemoclaw-proxy-env.sh");
-    expect(removeArgs).toContain("/tmp/nemoclaw-ciao-network-guard.js");
     expect(removeArgs).toContain("/tmp/nemoclaw-sandbox-safety-net.js");
     expect(removeArgs).toContain("/tmp/nemoclaw-slack-channel-guard.js");
     expect(removeArgs).toContain("/tmp/nemoclaw-http-proxy-fix.js");

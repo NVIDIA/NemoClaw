@@ -163,6 +163,7 @@
         "test/e2e/live/launch-agent-turn.ts"
       ],
       "fast": [
+        "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
