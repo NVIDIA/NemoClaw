@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import fs, { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { vi } from "vitest";
 
 export function fixtureGit(root: string, ...args: string[]): string {
   return execFileSync(
@@ -43,4 +44,35 @@ export function validationFixture(): string {
   fixtureGit(root, "commit", "-m", "test: fixture");
   fixtureGit(root, "update-ref", "refs/remotes/origin/main", "HEAD");
   return root;
+}
+
+export function replaceInputBeforeRead(root: string, linked: boolean) {
+  const file = path.join(root, "src/example.ts");
+  if (linked) {
+    fs.symlinkSync("example.ts", path.join(root, "src/alias.ts"));
+    fixtureGit(root, "add", ".");
+    fixtureGit(root, "commit", "-m", "test: linked input");
+  }
+  const replace = vi.fn(() => {
+    fs.renameSync(file, `${file}.previous`);
+    writeFixture(root, "src/example.ts", "export const example = 1;\n");
+  });
+  const lstat = fs.lstatSync;
+  vi.spyOn(fs, "lstatSync").mockImplementation((...args: Parameters<typeof fs.lstatSync>) => {
+    const stat = lstat(...args);
+    if (args[0] === file && replace.mock.calls.length === 0) replace();
+    return stat;
+  });
+  return replace;
+}
+
+export function changeInputDuringRead() {
+  const change = vi.fn((descriptor: number) => fs.fchmodSync(descriptor, 0o600));
+  const read = fs.readFileSync;
+  vi.spyOn(fs, "readFileSync").mockImplementation((...args: Parameters<typeof fs.readFileSync>) => {
+    const bytes = read(...args);
+    if (typeof args[0] === "number" && change.mock.calls.length === 0) change(args[0]);
+    return bytes;
+  });
+  return change;
 }

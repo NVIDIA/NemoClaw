@@ -256,7 +256,7 @@ repos:
     hooks:
       - id: tsc-plugin
         name: TypeScript (plugin)
-        entry: npx tsx scripts/checks/cached-command.mts tsc-plugin npm --prefix nemoclaw run typecheck
+        entry: npx tsx scripts/checks/cached-command.mts tsc-plugin
         language: system
         pass_filenames: false
         files: ^nemoclaw/
@@ -265,7 +265,7 @@ repos:
 
       - id: tsc-js
         name: TypeScript (JS config)
-        entry: npx tsx scripts/checks/cached-command.mts tsc-js bash -c 'npm run build:cli && npx tsc -p jsconfig.json'
+        entry: npx tsx scripts/checks/cached-command.mts tsc-js
         language: system
         pass_filenames: false
         files: ^(bin|test|scripts)/.*\.js$|^(jsconfig\.json|package(-lock)?\.json)$
@@ -274,7 +274,7 @@ repos:
 
       - id: tsc-cli
         name: TypeScript (CLI)
-        entry: npx tsx scripts/checks/cached-command.mts tsc-cli npm run typecheck:cli -- --incremental
+        entry: npx tsx scripts/checks/cached-command.mts tsc-cli
         language: system
         pass_filenames: false
         files: ^(agents/hermes|bin|scripts|src|test|tools|nemoclaw-blueprint/scripts)/.*\.(ts|tsx|mts|cts|json)$|^\.agents/skills/nemoclaw-maintainer-day/scripts/(check-gates|shared)\.ts$|^nemoclaw/src/(lib/subprocess-env|blueprint/private-networks)\.ts$|^(package(-lock)?\.json|tsconfig\.cli\.json|vitest\.config\.ts)$

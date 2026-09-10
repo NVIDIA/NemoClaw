@@ -16,6 +16,26 @@ function git(root: string, args: string[]): string {
   return result.stdout;
 }
 
+function readStableFile(file: string, expected: fs.Stats): Buffer {
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  const identity = (stat: fs.Stats) =>
+    [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeMs, stat.ctimeMs].join(":");
+  try {
+    const opened = fs.fstatSync(descriptor);
+    if (!opened.isFile() || identity(opened) !== identity(expected))
+      throw new Error("Validation input changed before reading");
+    const bytes = fs.readFileSync(descriptor);
+    if (
+      identity(fs.fstatSync(descriptor)) !== identity(opened) ||
+      identity(fs.lstatSync(file)) !== identity(opened)
+    )
+      throw new Error("Validation input changed while reading");
+    return bytes;
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 function hashPaths(root: string, files: readonly string[], excludeCaches = false): string {
   const hash = createHash("sha256");
   const activeLinks = new Set<string>();
@@ -37,8 +57,9 @@ function hashPaths(root: string, files: readonly string[], excludeCaches = false
       hash.update(fs.readlinkSync(absolute));
       // Hash the destination too; a stable executable symlink is not tool identity.
       const resolved = fs.realpathSync(absolute);
-      if (fs.statSync(resolved).isFile())
-        hash.update(String(fs.statSync(resolved).mode)).update(fs.readFileSync(resolved));
+      const target = fs.lstatSync(resolved);
+      if (target.isFile())
+        hash.update(String(target.mode)).update(readStableFile(resolved, target));
       else {
         const relative = path.relative(root, resolved);
         if (relative.startsWith("..") || path.isAbsolute(relative) || activeLinks.has(resolved))
@@ -49,7 +70,7 @@ function hashPaths(root: string, files: readonly string[], excludeCaches = false
       }
     } else if (stat.isDirectory()) {
       for (const entry of fs.readdirSync(absolute).sort()) visit(path.join(file, entry));
-    } else if (stat.isFile()) hash.update(fs.readFileSync(absolute));
+    } else if (stat.isFile()) hash.update(readStableFile(absolute, stat));
     else throw new Error("Unsupported validation input");
     hash.update("\0");
   }
@@ -101,10 +122,8 @@ export function validationFingerprint(
     .split("\0")
     .filter(Boolean);
   const refs = git(root, ["rev-parse", "HEAD", "origin/main"]);
-  const executable =
-    process.platform === "win32" && /^(?:npm|npx|tsx)$/.test(command[0])
-      ? `${command[0]}.cmd`
-      : command[0];
+  const npmCli = windowsNpmCli(root, command[0], env);
+  const executable = npmCli ?? command[0];
   const resolved = path.isAbsolute(executable)
     ? executable
     : (env.PATH ?? "")
@@ -163,6 +182,7 @@ export function validationFingerprint(
         "nemoclaw-blueprint",
         process.execPath,
         resolved,
+        ...(npmCli ? [path.resolve(npmCli, "../..")] : []),
         ".npmrc",
         "nemoclaw/.npmrc",
         ...npmInputs,
@@ -245,27 +265,56 @@ export function runCachedCommand(options: CachedCommandOptions): number {
   return status;
 }
 
+function windowsNpmCli(
+  root: string,
+  executable: string,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  if (process.platform !== "win32" || !/^(?:npm|npx)$/.test(executable)) return undefined;
+  // Invoke npm's JavaScript entry point directly on Windows, without cmd.exe
+  // interpreting paths, environment values, or arguments as shell syntax.
+  const npmCli = (env.PATH ?? "")
+    .split(path.delimiter)
+    .map((directory) =>
+      path.resolve(root, directory, "node_modules/npm/bin", `${executable}-cli.js`),
+    )
+    .find((candidate) => fs.existsSync(candidate));
+  if (!npmCli) throw new Error("Could not resolve the installed npm entry point");
+  return npmCli;
+}
+
 function executeCommand(root: string, command: string[], env: NodeJS.ProcessEnv): number {
   const executable = command[0];
-  const windowsShim =
-    process.platform === "win32" && /^(?:npm|npx|tsx)(?:\.cmd)?$/.test(executable);
+  const npmCli = windowsNpmCli(root, executable, env);
   const result = spawnSync(
-    windowsShim ? (env.ComSpec ?? "cmd.exe") : executable,
-    windowsShim
-      ? ["/d", "/s", "/c", `${executable.replace(/\.cmd$/, "")}.cmd`, ...command.slice(1)]
-      : command.slice(1),
+    npmCli ? process.execPath : executable,
+    npmCli ? [npmCli, ...command.slice(1)] : command.slice(1),
     { cwd: root, env, stdio: "inherit" },
   );
   if (result.error) console.error(result.error.message);
   return result.status ?? 1;
 }
 
+export function compilerCommand(label: string): string[] {
+  switch (label) {
+    case "tsc-plugin":
+      return ["npm", "--prefix", "nemoclaw", "run", "typecheck"];
+    case "tsc-js":
+      return ["bash", "-c", "npm run build:cli && npx tsc -p jsconfig.json"];
+    case "tsc-cli":
+      return ["npm", "run", "typecheck:cli", "--", "--incremental"];
+    default:
+      throw new Error("Unknown compiler check");
+  }
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [label, ...command] = process.argv.slice(2);
+  const [label, ...extra] = process.argv.slice(2);
+  if (extra.length) throw new Error("Expected only a compiler check name");
   process.exitCode = runCachedCommand({
     root: path.resolve(import.meta.dirname, "../.."),
     label,
-    command,
+    command: compilerCommand(label),
     // Plugin type checks consume source and dependencies, without compiled artifacts.
     outputPaths: label === "tsc-plugin" ? [] : undefined,
   });

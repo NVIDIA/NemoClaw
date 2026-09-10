@@ -2,12 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { rmSync, symlinkSync } from "node:fs";
+import fs, { rmSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runCachedCommand, validationEnvironment } from "../../scripts/checks/cached-command.mts";
+import {
+  compilerCommand,
+  runCachedCommand,
+  validationEnvironment,
+  validationFingerprint,
+} from "../../scripts/checks/cached-command.mts";
 import { changedCheckFiles } from "../../scripts/checks/run.mts";
-import { fixtureGit, validationFixture, writeFixture } from "./validation-fixture";
+import {
+  changeInputDuringRead,
+  fixtureGit,
+  replaceInputBeforeRead,
+  validationFixture,
+  writeFixture,
+} from "./validation-fixture";
 
 let root: string;
 beforeEach(() => {
@@ -29,6 +40,69 @@ function check(execute = vi.fn(() => 0), env: NodeJS.ProcessEnv = {}) {
 }
 
 describe("validation reuse", () => {
+  it.each([false, true])("rejects a replaced input before reading (symlink: %s)", (linked) => {
+    const replace = replaceInputBeforeRead(root, linked);
+    expect(() => validationFingerprint(root, [process.execPath, "--version"], {})).toThrow(
+      "Validation input changed before reading",
+    );
+    expect(replace).toHaveBeenCalledOnce();
+  });
+
+  it("runs the compiler when an input changes while its bytes are read", () => {
+    const options = check();
+    runCachedCommand(options);
+    const change = changeInputDuringRead();
+    runCachedCommand(options);
+    expect(change).toHaveBeenCalledOnce();
+    expect(options.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects arbitrary compiler names before executing commands", () => {
+    expect(() => compilerCommand("npm --version; touch injected")).toThrow(
+      "Unknown compiler check",
+    );
+  });
+
+  it("rejects additional command arguments at the process boundary", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", path.resolve("scripts/checks/cached-command.mts"), "tsc-cli", "--help"],
+      { encoding: "utf8" },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Expected only a compiler check name");
+  });
+
+  it.each(["npm", "npx"])("passes Windows %s arguments without shell interpretation", (command) => {
+    const directory = path.join(root, ".git/tools & fixture");
+    writeFixture(
+      root,
+      `.git/tools & fixture/node_modules/npm/bin/${command}-cli.js`,
+      'require("node:fs").writeFileSync(".git/arguments.json", JSON.stringify(process.argv.slice(2)));\n',
+    );
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    try {
+      Object.defineProperty(process, "platform", { value: "win32" });
+      expect(
+        runCachedCommand({
+          root,
+          label: "fixture",
+          command: [command, "literal & argument"],
+          env: {
+            PATH: [directory, process.env.PATH].join(path.delimiter),
+            ComSpec: "/must-not-run",
+          },
+          report: vi.fn(),
+        }),
+      ).toBe(0);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+    expect(JSON.parse(fs.readFileSync(path.join(root, ".git/arguments.json"), "utf8"))).toEqual([
+      "literal & argument",
+    ]);
+  });
+
   it.skipIf(process.platform === "win32")(
     "reuses results with a repository directory alias",
     () => {
