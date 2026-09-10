@@ -97,6 +97,10 @@ const MODEL_MAX_LENGTH = 512;
 const SAFE_MODEL_ID = /^[A-Za-z0-9._:/-]+$/u;
 const SAFE_CREDENTIAL_ENV = /^[A-Z_][A-Z0-9_]*$/u;
 
+function trustDurableGfnAuthority(env: NodeJS.ProcessEnv): boolean {
+  return env.GFN_HERMES_TRUST_DURABLE_AUTHORITY === "1";
+}
+
 export interface HermesPortableOllamaInferenceResolverOptions {
   readonly runtimeContext: PortableOnboardRuntimeContext | null;
   readonly gatewayName: string;
@@ -989,6 +993,65 @@ export async function recoverHermesPortableOllamaInference(
       fullCurrentnessCount,
       preparedAuthorityInspectionCount,
     });
+  if (trustDurableGfnAuthority(env)) {
+    const snapshot = deps.readReceipt(input.sandboxName, stateDir);
+    const registryEntry = input.readRegistry(input.sandboxName);
+    const serializedReceipt = input.entry.hostLocalInferenceReceipt;
+    if (
+      snapshot?.receipt.phase === "active" &&
+      snapshot.successor &&
+      snapshot.receipt.sandboxName === input.sandboxName &&
+      snapshot.receipt.gatewayName === input.entry.gatewayName &&
+      snapshot.receipt.lifecycleGeneration === input.entry.lifecycleGeneration &&
+      isDeepStrictEqual(registryEntry, input.entry) &&
+      typeof serializedReceipt === "string"
+    ) {
+      const receipt = parseHostLocalInferenceReceipt(serializedReceipt);
+      requirePublishedOllamaRecoveryReceipt(receipt);
+      input.assertCallerTransactionCurrent?.();
+      let verified: SandboxEntry | null = null;
+      try {
+        verified = await recoveryTiming.measureAsync("route", input.verifyRoute);
+      } catch {
+        // A stopped or unreachable runtime needs the full rollback-safe recovery below.
+      }
+      if (verified && isDeepStrictEqual(verified, input.entry)) {
+        const dependency = recoveryTiming.measure(
+          "dependency",
+          () => input.prepareProbeDependency?.() ?? null,
+        );
+        try {
+          input.assertCallerTransactionCurrent?.();
+          const currentSnapshot = deps.readReceipt(input.sandboxName, stateDir);
+          const currentEntry = input.readRegistry(input.sandboxName);
+          if (
+            !currentSnapshot ||
+            !isDeepStrictEqual(currentSnapshot, snapshot) ||
+            !isDeepStrictEqual(currentEntry, input.entry)
+          ) {
+            failRecovery("durable GFN authority changed during fast-path verification");
+          }
+          input.assertCallerTransactionCurrent?.();
+          dependency?.release();
+          runtimeAction = "reused";
+          recoveryTiming.finishEntryAuthority();
+          recoveryTiming.finish(runtimeAction, timingCounts());
+          return "reused";
+        } catch (error) {
+          try {
+            dependency?.rollback();
+          } catch (rollbackError) {
+            recoveryTiming.finishEntryAuthority();
+            recoveryTiming.finish(runtimeAction, timingCounts(), "failed");
+            throw rollbackError;
+          }
+          recoveryTiming.finishEntryAuthority();
+          recoveryTiming.finish(runtimeAction, timingCounts(), "failed");
+          throw error;
+        }
+      }
+    }
+  }
   const entry = (() => {
     try {
       input.assertCallerCurrent?.();

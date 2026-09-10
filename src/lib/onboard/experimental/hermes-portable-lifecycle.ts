@@ -1596,18 +1596,20 @@ export function recoverHermesPortableSandboxLifecycle(
         );
       }
       if (initialHealth === "ready") {
-        timing.increment("qualification");
-        timing.measure("finalQualification", () =>
-          qualify(
-            sandboxName,
-            context,
-            instrumentedDeps,
-            qualified.snapshot,
-            ["Ready"],
-            {},
-            currentnessTiming,
-          ),
-        );
+        if (!trustDurableGfnAuthority(commandEnv)) {
+          timing.increment("qualification");
+          timing.measure("finalQualification", () =>
+            qualify(
+              sandboxName,
+              context,
+              instrumentedDeps,
+              qualified.snapshot,
+              ["Ready"],
+              {},
+              currentnessTiming,
+            ),
+          );
+        }
         const result = wasRunning
           ? { kind: "already-running" as const }
           : { kind: "recovered" as const };
