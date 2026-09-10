@@ -178,7 +178,7 @@ export function normalizeMcpServerUrl(
     parsed.pathname.includes("%") ||
     rawUrl.includes("\\") ||
     /\/{2,}/.test(parsed.pathname) ||
-    /[\*\[\]\{\};]/.test(parsed.pathname)
+    /[*[\]{};]/.test(parsed.pathname)
   ) {
     throw new McpBridgeError(
       "MCP server URL paths must be literal and canonical; percent characters, backslashes, semicolons, and glob metacharacters are not supported.",

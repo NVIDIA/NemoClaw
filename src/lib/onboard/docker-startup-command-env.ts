@@ -11,7 +11,7 @@ import { appendHermesDashboardEnvArgs, type HermesDashboardOnboardState } from "
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
 
-const STARTUP_COMMAND_TOKEN = /^[A-Za-z0-9_./:=,@%+\-\[\]]+$/u;
+const STARTUP_COMMAND_TOKEN = /^[A-Za-z0-9_./:=,@%+\-[\]]+$/u;
 export const OPENSHELL_MAIN_PROCESS_SPEC_ENV = "OPENSHELL_MAIN_PROCESS_SPEC";
 const OPENSHELL_MAIN_PROCESS_SPEC_VERSION = 1;
 const MAX_MAIN_PROCESS_ARGV_BYTES = 128 * 1024;

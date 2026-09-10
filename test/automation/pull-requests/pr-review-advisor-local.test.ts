@@ -257,7 +257,7 @@ describe("local PR review advisor", () => {
         "config",
         "--global",
         "filter.hostile.smudge",
-        `sh -c 'printf %s \"$PR_REVIEW_ADVISOR_API_KEY\" > ${bootstrapFilterMarker}; cat'`,
+        `sh -c 'printf %s "$PR_REVIEW_ADVISOR_API_KEY" > ${bootstrapFilterMarker}; cat'`,
       ],
       { env: { ...process.env, HOME: path.resolve(npmBin, "../..") } },
     );
@@ -445,7 +445,7 @@ describe("local PR review advisor", () => {
         "config",
         "--global",
         "filter.hostile.smudge",
-        `sh -c 'printf %s \"$PR_REVIEW_ADVISOR_API_KEY\" > ${marker}; cat'`,
+        `sh -c 'printf %s "$PR_REVIEW_ADVISOR_API_KEY" > ${marker}; cat'`,
       ],
       { env: { ...process.env, HOME: home } },
     );

@@ -884,7 +884,7 @@ network_policies:
     "resumes an exact interrupted %s receipt prefix after process-style reentry (#9203)",
     async (phase) => {
       interruptReceiptWrite(
-        Buffer.from(`\"phase\":\"${phase}\"`),
+        Buffer.from(`"phase":"${phase}"`),
         `simulated process exit during ${phase} write`,
         () => 1,
       );

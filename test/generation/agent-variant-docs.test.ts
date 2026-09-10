@@ -550,6 +550,53 @@ Real content.
     expect(() => renderAgentVariantPage(mixed, "openclaw")).not.toThrow();
   });
 
+  it("points OpenClaw enterprise readiness at the OpenClaw OTEL command fragment (#11145)", () => {
+    const sourcePath = path.join(repoRoot, "docs/reference/enterprise-readiness.mdx");
+    const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), "openclaw", {
+      sourcePath,
+    });
+
+    expect(rendered).toContain("#openclaw-conversation-otel-diagnostics");
+    expect(rendered).not.toContain("#deep-agents-code-otlp-traces");
+  });
+
+  it("does not send Hermes enterprise readiness to the Deep Agents OTLP command fragment (#11145)", () => {
+    const sourcePath = path.join(repoRoot, "docs/reference/enterprise-readiness.mdx");
+    const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), "hermes", {
+      sourcePath,
+    });
+
+    expect(rendered).not.toContain("#deep-agents-code-otlp-traces");
+    expect(rendered).toContain("#messaging-bridge-appears-running-but-no-messages-arrive");
+  });
+
+  it("keeps the messaging-bridge heading on the Hermes troubleshooting page (#11145)", () => {
+    const sourcePath = path.join(repoRoot, "docs/reference/troubleshooting.mdx");
+    const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), "hermes", {
+      sourcePath,
+    });
+
+    expect(rendered).toContain("### Messaging bridge appears running but no messages arrive");
+  });
+
+  it("omits the messaging-bridge fragment from Deep Agents pages (#11145)", () => {
+    const readinessPath = path.join(repoRoot, "docs/reference/enterprise-readiness.mdx");
+    const troubleshootingPath = path.join(repoRoot, "docs/reference/troubleshooting.mdx");
+    const readiness = renderAgentVariantPage(readFileSync(readinessPath, "utf8"), "deepagents", {
+      sourcePath: readinessPath,
+    });
+    const troubleshooting = renderAgentVariantPage(
+      readFileSync(troubleshootingPath, "utf8"),
+      "deepagents",
+      { sourcePath: troubleshootingPath },
+    );
+
+    expect(troubleshooting).not.toContain(
+      "### Messaging bridge appears running but no messages arrive",
+    );
+    expect(readiness).not.toContain("#messaging-bridge-appears-running-but-no-messages-arrive");
+  });
+
   it("points Hermes recovery at the variant recover command fragment (#11147)", () => {
     const sourcePath = path.join(repoRoot, "docs/manage-sandboxes/recover-rebuild-sandboxes.mdx");
     const pageSource = readFileSync(sourcePath, "utf8");
