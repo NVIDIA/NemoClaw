@@ -116,6 +116,96 @@ function waitForFile(filename: string, timeoutMs = 2_000): void {
 }
 
 describe("source require loader", () => {
+  it.each([
+    { built: false, prepareBuild: (_root: string) => {} },
+    {
+      built: true,
+      prepareBuild: (root: string) => {
+        fs.mkdirSync(path.join(root, "nemoclaw/dist/shared"), { recursive: true });
+        fs.writeFileSync(
+          path.join(root, "nemoclaw/dist/shared/fixture.cjs"),
+          "exports.value = 7;\n",
+        );
+      },
+    },
+  ])(
+    "loads shared CommonJS dependencies when build output exists: $built",
+    ({ built, prepareBuild }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-require-shared-"));
+      roots.push(root);
+      fs.mkdirSync(path.join(root, "test/helpers"), { recursive: true });
+      fs.mkdirSync(path.join(root, "src"));
+      fs.mkdirSync(path.join(root, "nemoclaw/src/shared"), { recursive: true });
+      fs.mkdirSync(path.join(root, "node_modules"));
+      fs.copyFileSync(
+        SOURCE_REQUIRE_HOOK,
+        path.join(root, "test/helpers/onboard-script-mocks.cjs"),
+      );
+      fs.copyFileSync(
+        path.join(REPO_ROOT, "test/helpers/onboard-fixture-contract.json"),
+        path.join(root, "test/helpers/onboard-fixture-contract.json"),
+      );
+      fs.copyFileSync(
+        path.join(REPO_ROOT, "test/helpers/register-source-require.ts"),
+        path.join(root, "test/helpers/register-source-require.ts"),
+      );
+      fs.copyFileSync(
+        path.join(REPO_ROOT, "test/helpers/source-require-cache.ts"),
+        path.join(root, "test/helpers/source-require-cache.ts"),
+      );
+      fs.symlinkSync(
+        path.join(REPO_ROOT, "node_modules/typescript"),
+        path.join(root, "node_modules/typescript"),
+        "junction",
+      );
+      fs.writeFileSync(
+        path.join(root, "tsconfig.src.json"),
+        JSON.stringify({
+          compilerOptions: { module: "commonjs", target: "ES2022", esModuleInterop: true },
+        }),
+      );
+      fs.writeFileSync(
+        path.join(root, "src/entry.ts"),
+        'export { value } from "../nemoclaw/dist/shared/fixture.cjs";\n',
+      );
+      fs.writeFileSync(
+        path.join(root, "nemoclaw/src/shared/fixture.cts"),
+        'export { value } from "./nested.cjs";\n',
+      );
+      fs.writeFileSync(
+        path.join(root, "nemoclaw/src/shared/nested.cts"),
+        "export const value: number = 42;\n",
+      );
+      prepareBuild(root);
+      const script = `
+const assert = require("node:assert/strict");
+const { createRequire } = require("node:module");
+require("./test/helpers/onboard-script-mocks.cjs");
+assert.equal(require("./src/entry.ts").value, ${built ? 7 : 42});
+const sourceRequire = createRequire(process.cwd() + "/src/entry.ts");
+assert.throws(() => sourceRequire("../other/dist/shared/fixture.cjs"), { code: "MODULE_NOT_FOUND" });
+assert.throws(() => sourceRequire("../nemoclaw/dist/shared/missing.cjs"), { code: "MODULE_NOT_FOUND" });
+const packagedRequire = createRequire(process.cwd() + "/dist/entry.js");
+${
+  built
+    ? 'assert.equal(packagedRequire("../nemoclaw/dist/shared/fixture.cjs").value, 7);'
+    : 'assert.throws(() => packagedRequire("../nemoclaw/dist/shared/fixture.cjs"), { code: "MODULE_NOT_FOUND" });'
+}
+`;
+      const result = spawnSync(process.execPath, ["-e", script], {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NODE_OPTIONS: nodeOptionsWithoutSourceLoader(process.env.NODE_OPTIONS),
+        },
+        timeout: 10_000,
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(fs.existsSync(path.join(root, "nemoclaw/dist"))).toBe(built);
+    },
+  );
+
   it("emits opt-in cache statistics and reuses a cross-process cache entry (#6237)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-require-"));
     roots.push(root);
