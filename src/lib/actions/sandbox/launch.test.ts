@@ -602,6 +602,33 @@ describe("launchSandbox", () => {
     expect(launchedCommand()).toEqual(["bash", "-lc", "openclaw tui"]);
   });
 
+  it("emits already-running Portable receipts for accepted OpenClaw readiness", async () => {
+    const openclaw = loadAgent("openclaw");
+    const sb = sandboxEntry("openclaw");
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: openclaw,
+      sb,
+    });
+    mocks.inspectPortableReceiptDisposition.mockReturnValue({ kind: "openclaw" });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await launchSandbox("alpha");
+
+      const output = logSpy.mock.calls.map((call) => String(call[0] ?? ""));
+      expect(output.filter((line) => line.startsWith("  Portable lifecycle timing:"))).toHaveLength(
+        1,
+      );
+      expect(
+        output.filter((line) => line.startsWith("  Portable OpenClaw gateway startup timing:")),
+      ).toHaveLength(1);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it("launches accepted Hermes readiness without entering recovery (#9203)", async () => {
     const hermes = loadAgent("hermes");
     const entry = sandboxEntry("hermes");
@@ -1050,36 +1077,36 @@ describe("launchSandbox", () => {
   });
 
   it("does not launch after final live-policy validation fails", async () => {
-      const error = {
-        kind: "transport" as const,
-        reason: "unreachable" as const,
-        message: "OpenShell could not reach the selected gateway.",
-      };
-      mocks.inspectLaunchReadiness.mockResolvedValue({
-        kind: "fallback",
-        category: "unsafe",
-        fence: { epochId: "a".repeat(64) },
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        fenceFailed: false,
-        recoveryBlocked: false,
-      });
-      mocks.publishLaunchReadiness.mockResolvedValue({
-        kind: "policy-observation-failed",
-        error,
-      });
+    const error = {
+      kind: "transport" as const,
+      reason: "unreachable" as const,
+      message: "OpenShell could not reach the selected gateway.",
+    };
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "unsafe",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    mocks.publishLaunchReadiness.mockResolvedValue({
+      kind: "policy-observation-failed",
+      error,
+    });
 
-      await expect(launchSandbox("alpha")).rejects.toThrow(
-        [
-          `Launch readiness final policy validation failed for sandbox 'alpha' on gateway 'nemoclaw': ${error.message}`,
-          `recovery:${error.kind}:alpha:nemoclaw:launch`,
-        ].join("\n"),
-      );
+    await expect(launchSandbox("alpha")).rejects.toThrow(
+      [
+        `Launch readiness final policy validation failed for sandbox 'alpha' on gateway 'nemoclaw': ${error.message}`,
+        `recovery:${error.kind}:alpha:nemoclaw:launch`,
+      ].join("\n"),
+    );
 
-      expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
-      expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
-      expect(mocks.execSandbox).not.toHaveBeenCalled();
-      expect(mocks.runSandboxExecChild).not.toHaveBeenCalled();
+    expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
+    expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
+    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.runSandboxExecChild).not.toHaveBeenCalled();
   });
 
   it("does not print connect's in-sandbox command hint (#6006)", async () => {
