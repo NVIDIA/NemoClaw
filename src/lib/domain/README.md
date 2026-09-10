@@ -28,3 +28,10 @@ registry and remote bind agrees with recorded preparation. Port 18789 and loopba
 Legacy registry entries may omit the port only for the canonical loopback/default-port profile.
 Custom URLs, WSL exposure and device-auth changes remain unsupported. Export does not establish
 that a dashboard listener is currently running.
+
+OpenClaw telemetry supports an enabled local OTLP/HTTP collector at
+`http://host.openshell.internal:4318`, a printable ASCII service name of 1–256 characters without
+edge spaces, and a sample rate from 0 to 1. Canonical disabled telemetry is omitted. Other disabled
+settings, Unicode service names, remote collectors, headers, and credentials remain unsupported.
+Export preserves the observed effective policy, including local collector rules, without adding
+permissions or claiming collector health.

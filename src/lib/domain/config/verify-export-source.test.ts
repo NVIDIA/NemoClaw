@@ -193,6 +193,43 @@ function proxySnapshot(
 }
 
 describe("config export source verification (#10938)", () => {
+  it.each([
+    { label: "default proxy", environment: {}, expected: {} },
+    {
+      label: "managed proxy",
+      environment: { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
+      expected: { proxy: { host: "proxy.internal", port: 3129 } },
+    },
+  ])("exports retained OpenClaw telemetry with $label", ({ environment, expected }) => {
+    const value = snapshot({
+      registry: entry({
+        workload: managedWorkload(
+          profileInput({
+            environment: {
+              NEMOCLAW_OPENCLAW_OTEL: "1",
+              NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
+              NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: "research-assistant",
+              NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: "0.5",
+              ...environment,
+            },
+          }),
+        ),
+      }),
+    });
+
+    expect(verifiedSource(verify(value))).toMatchObject({
+      ...expected,
+      observability: {
+        otlp: {
+          enabled: true,
+          endpoint: "http://host.openshell.internal:4318",
+          serviceName: "research-assistant",
+          sampleRate: 0.5,
+        },
+      },
+    });
+  });
+
   it.each([false, true])(
     "verifies Brave with optional inference attachment %s (#10904)",
     (attached) => {
@@ -298,35 +335,58 @@ describe("config export source verification (#10938)", () => {
     });
   });
 
-  it("exports retained tuning and execution settings through the complete action", async () => {
-    const observed = tunedSnapshot();
-    const result = await exportSnapshots([observed]);
-    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-    expect(result.read).toHaveBeenCalledTimes(2);
-    const [yaml] = result.writeStdout.mock.calls[0]!;
-    const config = validateNemoClawConfig(YAML.parse(yaml));
-    const agent = primaryOpenClawAgent(config);
-    expect(agent.inference.routes[0]!.overrides).toEqual({
-      model: "gpt-5",
-      contextWindow: 65536,
-      maxTokens: 8192,
-      reasoning: true,
-      reasoningEffort: "high",
-    });
-    expect(agent.execution).toEqual({ timeoutSeconds: 900, heartbeatEvery: "30m" });
-    expect(config.spec.sandboxes[0]!.network.policy.explicit).toEqual(canonicalPolicy);
-    expect(config.spec.inferenceProviders[0]).toEqual(
-      expect.objectContaining({ credential: { env: "OPENAI_API_KEY" } }),
-    );
-    const verifiedInference = verifiedSource(verify(observed)).inference;
-    expect("overrides" in verifiedInference).toBe(true);
-    const hostedInference = verifiedInference as Extract<
-      typeof verifiedInference,
-      { readonly endpoint: string }
-    >;
-    expect(Object.isFrozen(hostedInference.overrides)).toBe(true);
-    expect(result.publish).not.toHaveBeenCalled();
-  });
+  it.each([
+    { telemetry: false, expected: {} },
+    {
+      telemetry: true,
+      expected: {
+        observability: {
+          otlp: {
+            enabled: true,
+            endpoint: "http://host.openshell.internal:4318",
+            serviceName: "openclaw-gateway",
+            sampleRate: 1,
+          },
+        },
+      },
+    },
+  ])(
+    "exports retained tuning and execution with telemetry $telemetry",
+    async ({ telemetry, expected }) => {
+      const observed = tunedSnapshot({
+        ...tunedEnvironment,
+        ...(telemetry ? { NEMOCLAW_OPENCLAW_OTEL: "1" } : {}),
+      });
+      const result = await exportSnapshots([observed]);
+      expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+      expect(result.read).toHaveBeenCalledTimes(2);
+      const [yaml] = result.writeStdout.mock.calls[0]!;
+      const config = validateNemoClawConfig(YAML.parse(yaml));
+      const agent = primaryOpenClawAgent(config);
+      expect(agent.inference.routes[0]!.overrides).toEqual({
+        model: "gpt-5",
+        contextWindow: 65536,
+        maxTokens: 8192,
+        reasoning: true,
+        reasoningEffort: "high",
+      });
+      expect(agent.execution).toEqual({ timeoutSeconds: 900, heartbeatEvery: "30m" });
+      expect(agent).toMatchObject(expected);
+      expect(Object.hasOwn(agent, "observability")).toBe(telemetry);
+      expect(config.spec.sandboxes[0]!.network.policy.explicit).toEqual(canonicalPolicy);
+      expect(config.spec.inferenceProviders[0]).toEqual(
+        expect.objectContaining({ credential: { env: "OPENAI_API_KEY" } }),
+      );
+      const verifiedInference = verifiedSource(verify(observed)).inference;
+      expect("overrides" in verifiedInference).toBe(true);
+      const hostedInference = verifiedInference as Extract<
+        typeof verifiedInference,
+        { readonly endpoint: string }
+      >;
+      expect(Object.isFrozen(hostedInference.overrides)).toBe(true);
+      expect(result.publish).not.toHaveBeenCalled();
+    },
+  );
 
   it("preserves canonical output when all six settings use their defaults", async () => {
     const baseline = await exportSnapshots([snapshot()]);
@@ -453,7 +513,7 @@ describe("config export source verification (#10938)", () => {
       {
         otel: {
           enabled: true,
-          endpointUrl: "http://host.openshell.internal:4318",
+          endpointUrl: "https://unsupported-collector.example",
           serviceName: "openclaw-gateway",
           sampleRate: 1,
         },

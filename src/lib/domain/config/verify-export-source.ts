@@ -26,6 +26,7 @@ import {
   isValidNemoClawRuntimeProvider,
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
+  NemoClawOpenClawObservabilitySchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
 } from "../../config/model";
@@ -95,6 +96,7 @@ type VerifiedExportSourceData = Pick<
   | "gateway"
   | "inference"
   | "interfaces"
+  | "observability"
   | "policy"
   | "proxy"
   | "runtime"
@@ -449,6 +451,16 @@ function classifyDashboard(
   return [];
 }
 
+function exportedObservability(
+  profile: ManagedStartupProfile,
+): VerifiedExportSource["observability"] {
+  if (profile.agentConfig.agent !== "openclaw" || !profile.agentConfig.otel.enabled)
+    return undefined;
+  const { enabled, endpointUrl, serviceName, sampleRate } = profile.agentConfig.otel;
+  const value = { otlp: { enabled, endpoint: endpointUrl, serviceName, sampleRate } };
+  return Check(NemoClawOpenClawObservabilitySchema, value) ? value : undefined;
+}
+
 function projectAgentSettings(profile: ManagedStartupProfile, defaults: ManagedStartupProfile) {
   if (profile.agentConfig.agent !== "openclaw" || defaults.agentConfig.agent !== "openclaw") {
     return {};
@@ -557,6 +569,19 @@ function supportedHostProfile(
   };
 }
 
+function supportedObservabilityProfile(
+  profile: ManagedStartupProfile,
+  expected: ManagedStartupProfile,
+): ManagedStartupProfile {
+  const observability = exportedObservability(profile);
+  if (!observability || expected.agentConfig.agent !== "openclaw") return expected;
+  const { endpoint: endpointUrl, ...telemetry } = observability.otlp;
+  return {
+    ...expected,
+    agentConfig: { ...expected.agentConfig, otel: { ...telemetry, endpointUrl } },
+  };
+}
+
 function classifyManagedStartupProfile(
   entry: ObservedExportRegistry,
   profile: ManagedStartupProfile,
@@ -573,6 +598,7 @@ function classifyManagedStartupProfile(
       ),
     ];
   }
+  expected = supportedObservabilityProfile(profile, expected);
   const findings = [
     ...classifyDashboard(entry, profile),
     ...classifyReasoningAgreement(entry, profile),
@@ -1089,12 +1115,14 @@ function completeVerifiedSource(
   policy: CanonicalExportPolicy,
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
+  const observability = authority ? exportedObservability(authority.profile) : undefined;
   const selected = normalizeInferenceSelection(entry);
   const settings =
     authority && snapshot.inference.topology !== "managed"
       ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
       : {};
   const values = {
+    ...(observability ? { observability } : {}),
     sandboxName: requestedSandboxName,
     agent: entry.agent,
     ...(settings.execution ? { execution: settings.execution } : {}),

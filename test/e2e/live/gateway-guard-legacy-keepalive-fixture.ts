@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 
 import * as dockerRunNamespace from "../../../src/lib/adapters/docker/run.ts";
 import * as openshellRuntimeNamespace from "../../../src/lib/adapters/openshell/runtime.ts";
+import * as sandboxCommandCliNamespace from "../../../src/lib/adapters/openshell/sandbox-command-cli.ts";
 import * as managedBootstrapAdapterNamespace from "../../../src/lib/onboard/managed-bootstrap/adapter.ts";
 import * as dockerGpuPatchCloneNamespace from "../../../src/lib/onboard/docker-gpu-patch-clone.ts";
 import type {
@@ -59,6 +60,11 @@ const openshellRuntime = (
     ? openshellRuntimeNamespace.default
     : openshellRuntimeNamespace
 ) as typeof import("../../../src/lib/adapters/openshell/runtime.ts");
+const { createCliOpenShellSandboxCommandExecutor } = (
+  "default" in sandboxCommandCliNamespace
+    ? sandboxCommandCliNamespace.default
+    : sandboxCommandCliNamespace
+) as typeof import("../../../src/lib/adapters/openshell/sandbox-command-cli.ts");
 
 type StartupCommandRecreate = typeof recreateOpenShellDockerSandboxWithStartupCommand;
 type DockerCapture = NonNullable<DockerGpuPatchDeps["dockerCapture"]>;
@@ -76,6 +82,7 @@ export type LegacyKeepaliveHandoffReceipt = {
 };
 
 export type LegacyKeepaliveFixtureDeps = {
+  commandExecutor: NonNullable<DockerGpuPatchDeps["commandExecutor"]>;
   recreate: StartupCommandRecreate;
   dockerCapture: DockerCapture;
   runOpenshell: NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
@@ -83,6 +90,7 @@ export type LegacyKeepaliveFixtureDeps = {
 };
 
 const defaultDeps: LegacyKeepaliveFixtureDeps = {
+  commandExecutor: createCliOpenShellSandboxCommandExecutor(),
   recreate: recreateOpenShellDockerSandboxWithStartupCommand,
   dockerCapture: defaultDockerCapture,
   runOpenshell: openshellRuntime.runOpenshell,
@@ -328,6 +336,7 @@ export async function createLegacyKeepaliveFixture(
       timeoutSecs: options.timeoutSecs ?? DEFAULT_RECREATE_TIMEOUT_SECS,
     },
     {
+      commandExecutor: deps.commandExecutor ?? defaultDeps.commandExecutor,
       dockerCapture: legacyKeepaliveDockerCapture(options.expectedContainerId, dockerCapture),
       runCaptureOpenshell,
       runOpenshell,
