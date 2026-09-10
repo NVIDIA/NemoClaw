@@ -185,17 +185,59 @@ function selectedDockerMode(
   }
 }
 
+// Docker repeats the digest-pinned image reference in its own message and puts
+// the reason last, so a fixed prefix slice kept the reference twice and dropped
+// the reason without saying so (#11197). Spend the budget on the reason instead:
+// abbreviate digests, keep the ending, and mark how much was cut.
+const GPU_MODE_ATTEMPT_DETAIL_LIMIT = 400;
+const GPU_MODE_ATTEMPT_DETAIL_TAIL = 120;
+const GPU_MODE_FAILURE_DETAILS_LIMIT = 1_600;
+const GPU_MODE_FAILURE_DETAILS_TAIL = 400;
+
+/** Shorten `@sha256:<64 hex>` image digests to twelve hex characters so the reason, not the reference, fills the budget. */
+function abbreviateImageDigests(text: string): string {
+  return text.replace(/@sha256:([0-9a-f]{12})[0-9a-f]{52}(?![0-9a-f])/gu, "@sha256:$1...");
+}
+
+/** Keep the head and the ending of an over-long diagnostic within `limit` and say how much was cut. */
+function clampDiagnostic(text: string, limit: number, tailLength: number): string {
+  if (text.length <= limit) return text;
+  const omissionMarker = (count: number): string => ` ... [${count} characters omitted] ... `;
+  // Reserve the marker at its widest: the omitted count never exceeds the text length.
+  const head = text.slice(
+    0,
+    Math.max(0, limit - tailLength - omissionMarker(text.length).length),
+  );
+  const tail = text.slice(-tailLength);
+  return `${head}${omissionMarker(text.length - head.length - tail.length)}${tail}`;
+}
+
+/** Render each failed GPU-mode probe as `<mode label>: <redacted, clamped Docker error>` for the thrown message. */
 export function formatDockerGpuModeFailureDetails(
   attempts: readonly DockerGpuPatchModeAttempt[],
 ): string {
   const redactor = createDockerGpuDiagnosticRedactor();
   const failures = attempts
     .filter((attempt) => !attempt.ok && attempt.error)
-    .map(
-      (attempt) =>
-        `${attempt.mode.label}: ${redactor.redactText(attempt.error ?? "docker create failed").slice(0, 240)}`,
-    );
-  return failures.length > 0 ? ` Attempts: ${failures.join("; ")}`.slice(0, 1_200) : "";
+    .map((attempt) => {
+      const detail = abbreviateImageDigests(
+        redactor.redactText(attempt.error ?? "docker create failed"),
+      )
+        .replace(/\s+/gu, " ")
+        .trim();
+      return `${attempt.mode.label}: ${clampDiagnostic(
+        detail,
+        GPU_MODE_ATTEMPT_DETAIL_LIMIT,
+        GPU_MODE_ATTEMPT_DETAIL_TAIL,
+      )}`;
+    });
+  return failures.length > 0
+    ? clampDiagnostic(
+        ` Attempts: ${failures.join("; ")}`,
+        GPU_MODE_FAILURE_DETAILS_LIMIT,
+        GPU_MODE_FAILURE_DETAILS_TAIL,
+      )
+    : "";
 }
 
 function createDockerLifecycle(

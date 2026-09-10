@@ -1522,8 +1522,9 @@ $$nemoclaw my-assistant stop
 
 <AgentOnly variant="hermes">
 
-For an active Portable Hermes receipt, `stop` targets only the receipt-owned Podman container without using Docker as a fallback.
-It waits for Podman to report `exited` and OpenShell to report `Error` or `Stopped`.
+For an active Portable Hermes receipt, `stop` uses OpenShell to stop only the receipt-owned sandbox.
+It does not fall back to Docker.
+It waits for the receipt-owned Podman container to report `exited` and OpenShell to report `Error` or `Stopped`.
 If either state does not settle, the command exits nonzero.
 A `pending` or `configuring` receipt instead directs you to resume Portable onboarding.
 Portable Hermes does not run the Docker provider's channel hook or the generic post-stop dashboard-forward cleanup.
@@ -1561,8 +1562,9 @@ $$nemoclaw my-assistant start
 
 <AgentOnly variant="hermes">
 
-For an active Portable Hermes receipt, `start` follows the Podman container, supervisor, authenticated health, and rollback contract documented for [`recover`](#$$nemoclaw-name-recover).
-It then checks and repairs the recorded host forwards before reporting success.
+For an active Portable Hermes receipt, `start` uses OpenShell to start only the receipt-owned sandbox.
+It then verifies the receipt-owned Podman container, supervisor, authenticated health, and rollback contract documented for [`recover`](#$$nemoclaw-name-recover).
+It checks and repairs the recorded host forwards before reporting success.
 It does not fall back to Docker.
 A `pending` or `configuring` receipt instead directs you to resume Portable onboarding.
 
