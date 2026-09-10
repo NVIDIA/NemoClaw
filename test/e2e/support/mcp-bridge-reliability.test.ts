@@ -21,6 +21,7 @@ import {
   isRetryableOpenClawBaselineScopeOnboardFailure,
   MCP_BRIDGE_TEST_REDACTION_VALUES,
   readConcurrentMcpStatusAndConfirmHermesRegistration,
+  runDeniedMcpToolCall,
   restartBridgeWithoutHostSecret,
   retryAfterHermesRestartTransportFailure,
   retryHermesGatewayDraining,
@@ -28,6 +29,54 @@ import {
 } from "../live/mcp-bridge-reliability.ts";
 
 const HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
+
+describe("OpenClaw denied-tool target", () => {
+  it.each([undefined, "", "relative/path"])(
+    "rejects an invalid URL %j before host or sandbox work",
+    async (mcpUrl) => {
+      const command = vi.fn();
+      const execShell = vi.fn();
+      await expect(
+        runDeniedMcpToolCall({ command } as unknown as HostCliClient, {
+          agent: "openclaw",
+          artifactName: "invalid-target",
+          mcpUrl,
+          sandbox: { execShell } as unknown as SandboxClient,
+          sandboxName: "alpha",
+          serverName: "fake",
+          requests: [],
+        }),
+      ).rejects.toThrow(TypeError);
+      expect(command).not.toHaveBeenCalled();
+      expect(execShell).not.toHaveBeenCalled();
+    },
+  );
+
+  it("passes a parsed URL to the existing denied-tool probe", async () => {
+    const ok = { exitCode: 0, timedOut: false, stdout: "", stderr: "" };
+    const command = vi
+      .fn()
+      .mockResolvedValueOnce(ok)
+      .mockResolvedValueOnce(ok)
+      .mockResolvedValue({
+        ...ok,
+        stdout:
+          "JSONRPC_L7_REQUEST decision=deny rule_methods=tools/call tools=fake_status reason=blocked by deny rule",
+      });
+    const execShell = vi.fn().mockResolvedValue(ok);
+    const result = await runDeniedMcpToolCall({ command } as unknown as HostCliClient, {
+      agent: "openclaw",
+      artifactName: "valid-target",
+      mcpUrl: "https://example.test:443/mcp",
+      sandbox: { execShell } as unknown as SandboxClient,
+      sandboxName: "alpha",
+      serverName: "fake",
+      requests: [],
+    });
+    expect(execShell.mock.calls[0]?.[1]).toContain("'https://example.test/mcp' tools/call deny");
+    expect(result.policyDenied).toBe(true);
+  });
+});
 
 function gatewayResult(status: number, code: string) {
   return {

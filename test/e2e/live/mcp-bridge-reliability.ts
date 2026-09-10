@@ -70,6 +70,7 @@ export async function runDeniedMcpToolCall(
     requests: ReadonlyArray<{ rpcMethod?: string }>;
   },
 ): Promise<{ after: number; before: number; policyDenied: boolean; result: ShellProbeResult }> {
+  const targetUrl = options.agent === "openclaw" ? new URL(options.mcpUrl ?? "") : null;
   const countToolCalls = () =>
     options.requests.filter((request) => request.rpcMethod === "tools/call").length;
   const readDenialAuditEvents = async (artifactName: string): Promise<string[] | null> => {
@@ -113,14 +114,11 @@ export async function runDeniedMcpToolCall(
     MCP_BRIDGE_DENIED_TOOL_PROMPT,
     payload,
   ];
-  if (options.agent === "openclaw" && !options.mcpUrl) {
-    throw new Error("OpenClaw denied-tool proof requires the exact MCP URL");
-  }
   const deniedToolName = options.deniedTool ?? MCP_BRIDGE_DENIED_TOOL_NAME;
   const command =
     options.agent === "openclaw"
       ? [
-          `nemoclaw-start node - ${shellQuote(options.mcpUrl ?? "")} tools/call deny FAKE_MCP_SECRET ${shellQuote(deniedToolName)} <<'NEMOCLAW_MCP_DENIED_TOOL_PROBE'`,
+          `nemoclaw-start node - ${shellQuote(targetUrl)} tools/call deny FAKE_MCP_SECRET ${shellQuote(deniedToolName)} <<'NEMOCLAW_MCP_DENIED_TOOL_PROBE'`,
           MCP_PROVIDER_REWRITE_PROBE_SOURCE,
           "NEMOCLAW_MCP_DENIED_TOOL_PROBE",
         ].join("\n")

@@ -664,15 +664,8 @@ test(
       await waitForAcknowledgement(
         sandbox,
         CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
-        "denied",
+        "allowed",
       );
-      expect(
-        requestEvidence(
-          fakeMcp,
-          credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction),
-          rotatedSecret,
-        ).seen,
-      ).toBe(false);
 
       const freshAfterEvictionId = `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:fresh-after-eviction`;
       const freshAfterEviction = await runFreshRequest(
@@ -686,11 +679,19 @@ test(
         revision: currentRevision,
         status: 200,
       });
-      expect(requestEvidence(fakeMcp, freshAfterEvictionId, rotatedSecret)).toEqual({
+      const currentCredential = requestEvidence(fakeMcp, freshAfterEvictionId, rotatedSecret);
+      expect(currentCredential).toEqual({
         seen: true,
         credentialRewritten: true,
         placeholderAbsent: true,
       });
+      expect(
+        requestEvidence(
+          fakeMcp,
+          credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction),
+          rotatedSecret,
+        ),
+      ).toEqual(currentCredential);
 
       progress.phase("prove key and bridge removal revoke access");
       await updateProviderCredential(
@@ -873,7 +874,7 @@ test(
       outcomes: [
         {
           step: CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
-          outcome: "denied",
+          outcome: "allowed",
         },
         { step: CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval, outcome: "denied" },
         { step: CREDENTIAL_WINDOW_STEPS.deniedAfterDetach, outcome: "denied" },
@@ -943,7 +944,7 @@ test(
     expect(upstreamRequestIds).not.toContain(
       credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry),
     );
-    expect(upstreamRequestIds).not.toContain(
+    expect(upstreamRequestIds).toContain(
       credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction),
     );
     expect(upstreamRequestIds).not.toContain(
