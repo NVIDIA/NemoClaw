@@ -588,16 +588,10 @@ describe("pull request and main workflow contracts", () => {
     },
   );
   it.each([
-    [
-      "CLI shards",
-      requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools"),
-    ],
+    ["CLI shards", requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools")],
     [
       "Advisor runtime",
-      requiredWorkflowStep(
-        advisorWorkflow.jobs["build-advisor-runtime"],
-        "Install locked runtime",
-      ),
+      requiredWorkflowStep(advisorWorkflow.jobs["build-advisor-runtime"], "Install locked runtime"),
     ],
   ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
     // Both callers delegate source isolation to the shared installer, which
@@ -613,7 +607,7 @@ describe("pull request and main workflow contracts", () => {
     const actionPath = join(temp, "actions", "ci-cli-coverage-shard");
     const aptTrace = join(temp, "apt-trace");
     const binaryTrace = join(temp, "binary-trace");
-    const runnerTemp = join(temp, "runner");
+    const aptLists = join(temp, "apt-lists");
     const ubuntuSources = join(temp, "ubuntu.sources");
     mkdirSync(fakeBin);
     mkdirSync(actionPath, { recursive: true });
@@ -636,7 +630,11 @@ describe("pull request and main workflow contracts", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'printf "%s\\n" "$*" >> "$APT_TRACE"',
-        'if [ "${FAIL_APT_INSTALL:-0}" = "1" ] && [[ " $* " == *" install "* ]]; then',
+        'if [ "${1:-}" = "mktemp" ]; then',
+        '  printf "%s\\n" "$APT_LISTS_DIR"',
+        "  exit 0",
+        "fi",
+        'if [ "${1:-}" = "apt-get" ] && [ "${FAIL_APT_INSTALL:-0}" = "1" ] && [[ " $* " == *" install "* ]]; then',
         "  exit 42",
         "fi",
       ].join("\n"),
@@ -674,19 +672,21 @@ describe("pull request and main workflow contracts", () => {
       const runInstall = (extraEnv: Record<string, string> = {}) =>
         runWorkflowShellStep(installStep, {
           APT_TRACE: aptTrace,
+          APT_LISTS_DIR: aptLists,
           BINARY_TRACE: binaryTrace,
           GITHUB_ACTION_PATH: actionPath,
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-          RUNNER_TEMP: runnerTemp,
           ...extraEnv,
         });
       const result = runInstall();
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toEqual([
-        `mkdir -p ${runnerTemp}/nemoclaw-apt-lists/partial`,
-        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${runnerTemp}/nemoclaw-apt-lists update -qq`,
-        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${runnerTemp}/nemoclaw-apt-lists install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1`,
+        "mktemp -d /var/lib/apt/nemoclaw-lists.XXXXXXXX",
+        `chmod 0755 ${aptLists}`,
+        `install -d -o _apt -g root -m 0700 ${aptLists}/partial`,
+        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${aptLists} update -qq`,
+        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${aptLists} install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1`,
       ]);
       expect(readFileSync(binaryTrace, "utf8").trim().split("\n")).toEqual(["fdfind", "rg"]);
 
@@ -710,7 +710,7 @@ describe("pull request and main workflow contracts", () => {
 
       const unavailablePackageResult = runInstall({ FAIL_APT_INSTALL: "1" });
       expect(unavailablePackageResult.status).not.toBe(0);
-      expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toHaveLength(3);
+      expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toHaveLength(5);
       expect(existsSync(binaryTrace)).toBe(false);
     } finally {
       rmSync(temp, { force: true, recursive: true });
@@ -1067,9 +1067,7 @@ describe("pull request and main workflow contracts", () => {
       NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
-    expect(fetch.run).toContain(
-      "node scripts/checks/package-openshell-sdk-for-pr.mts",
-    );
+    expect(fetch.run).toContain("node scripts/checks/package-openshell-sdk-for-pr.mts");
     expect(fetch.run).toContain("artifact_path=");
     expect(
       (sdkPackageJob.steps ?? [])
