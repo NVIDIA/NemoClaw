@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
 import { runConfigExport } from "../../actions/config/export";
 import {
   parseNemoClawConfigDocumentName,
@@ -216,6 +217,7 @@ function braveProvider() {
         resourceVersion: 9n,
       },
       type: "brave",
+      profileWorkspace: "default",
       credentials,
       config: {},
     },
@@ -241,6 +243,7 @@ function mockBraveLiveSource() {
     },
   });
   const search = braveProvider();
+  raw.getProviderProfile.mockResolvedValue({ profile: managedBraveProfile() });
   raw.getProvider.mockImplementation(async ({ name }: { name: string }) =>
     name === "alpha-brave-search" ? { provider: search.provider } : provider(),
   );
@@ -313,11 +316,18 @@ describe("live export snapshot reader", () => {
       "nvidia-prod",
       "alpha-brave-search",
     ]);
+    expect(raw.getProviderProfile).toHaveBeenCalledTimes(2);
+    expect(raw.getProviderProfile).toHaveBeenCalledWith(
+      { id: "brave", workspace: "default" },
+      { signal: expect.any(AbortSignal) },
+    );
     expect(publish).not.toHaveBeenCalled();
   });
 
   it.each([
     { type: "generic" },
+    { profileWorkspace: undefined },
+    { profileWorkspace: "foreign" },
     { credentials: { OTHER_API_KEY: readFailureCanary } },
     { config: { BASE_URL: readFailureCanary } },
   ])("rejects unsupported Brave provider metadata without output %j (#10904)", async (change) => {
@@ -343,6 +353,50 @@ describe("live export snapshot reader", () => {
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
     expect(writeStdout).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { source: "interceptor/foreign" },
+    { source: "user", scope: "platform" },
+    { resourceVersion: 0n },
+    { endpoints: [] },
+    { binaries: [] },
+    { credentials: [] },
+  ])("rejects a shadowed or changed Brave profile %# (#10904)", async (change) => {
+    const search = mockBraveLiveSource();
+    raw.getProviderProfile.mockResolvedValue({ profile: { ...managedBraveProfile(), ...change } });
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toMatchObject({ ok: false });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(search.readCredential).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes a failed Brave profile read before publication (#10904)", async () => {
+    const search = mockBraveLiveSource();
+    raw.getProviderProfile.mockRejectedValue(new Error(readFailureCanary));
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(search.readCredential).not.toHaveBeenCalled();
+  });
+
+  it("rejects a changing managed Brave profile revision without output (#10904)", async () => {
+    const search = mockBraveLiveSource();
+    let revision = 10n;
+    raw.getProviderProfile.mockImplementation(async () => ({
+      profile: { ...managedBraveProfile(), resourceVersion: revision++ },
+    }));
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { findings: [expect.objectContaining({ category: "unstable-source" })] },
+    });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(search.readCredential).not.toHaveBeenCalled();
   });
 
   it.each(["id", "resourceVersion"])(

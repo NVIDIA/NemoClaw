@@ -109,6 +109,13 @@ export interface ObservedExportWebSearchProvider {
   readonly type: string;
   readonly credentialKeys: readonly string[];
   readonly configKeys: readonly string[];
+  readonly profileWorkspace?: string;
+  readonly profile?: {
+    readonly id: string;
+    readonly source: string;
+    readonly scope: string;
+    readonly resourceVersion: string;
+  };
 }
 
 export interface ObservedExportInference {

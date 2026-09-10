@@ -439,6 +439,26 @@ function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): Export
   return findings;
 }
 
+function validBraveProfile(
+  provider: NonNullable<QualifiedExportSnapshot["webSearchProvider"]>,
+): boolean {
+  const { profile, profileWorkspace } = provider;
+  if (!profile || profile.id !== "brave" || !isValidNemoClawBoundedText(profile.resourceVersion))
+    return false;
+  if (profile.source === "builtin") {
+    return isDeepStrictEqual(
+      [profileWorkspace, profile.scope, profile.resourceVersion],
+      ["", "", "0"],
+    );
+  }
+  return (
+    profile.source === "user" &&
+    /^[1-9][0-9]*$/u.test(profile.resourceVersion) &&
+    (isDeepStrictEqual([profileWorkspace, profile.scope], ["", "platform"]) ||
+      isDeepStrictEqual([profileWorkspace, profile.scope], [provider.workspace, "workspace"]))
+  );
+}
+
 function validateWebSearchProvider(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { registry, webSearchProvider: provider, sandbox, gateway } = snapshot;
   if (!hasBraveSearch(registry)) {
@@ -456,6 +476,7 @@ function validateWebSearchProvider(snapshot: QualifiedExportSnapshot): ExportFin
     ];
   }
   if (
+    !validBraveProfile(provider) ||
     !isValidNemoClawBoundedText(provider.id) ||
     !isValidNemoClawBoundedText(provider.resourceVersion) ||
     !/^[1-9][0-9]*$/u.test(provider.resourceVersion) ||

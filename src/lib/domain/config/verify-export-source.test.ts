@@ -190,6 +190,8 @@ function braveSnapshot(): ObservedExportSnapshot {
       id: "brave-provider-id",
       resourceVersion: "4",
       type: "brave",
+      profileWorkspace: "default",
+      profile: { id: "brave", source: "user", scope: "workspace", resourceVersion: "4" },
       credentialKeys: ["BRAVE_API_KEY"],
       configKeys: [],
     },
@@ -263,6 +265,13 @@ describe("config export source verification (#10938)", () => {
     { credentialKeys: ["TAVILY_API_KEY"] },
     { credentialKeys: ["BRAVE_API_KEY", "OTHER_KEY"] },
     { configKeys: ["BASE_URL"] },
+    { profileWorkspace: "foreign" },
+    { profileWorkspace: undefined },
+    { profile: undefined },
+    { profile: { id: "other", source: "builtin", scope: "", resourceVersion: "0" } },
+    { profile: { id: "brave", source: "user", scope: "platform", resourceVersion: "1" } },
+    { profile: { id: "brave", source: "builtin", scope: "workspace", resourceVersion: "0" } },
+    { profile: { id: "brave", source: "builtin", scope: "", resourceVersion: "1" } },
   ])("rejects mismatched Brave metadata %j (#10904)", (change) => {
     const value = braveSnapshot();
     expect(

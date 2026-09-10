@@ -203,6 +203,7 @@ async function readWebSearchProvider(
     workspace: "default",
     name: `${entry.name}-brave-search`,
     configKeys: [],
+    profileContract: "brave",
     signal,
   });
   if (!provider) throw new Error("The live web-search provider is missing.");
@@ -213,6 +214,10 @@ async function readWebSearchProvider(
     id: provider.id,
     resourceVersion: provider.resourceVersion,
     type: provider.type,
+    ...(provider.profileWorkspace === undefined
+      ? {}
+      : { profileWorkspace: provider.profileWorkspace }),
+    ...(provider.managedProfile === undefined ? {} : { profile: provider.managedProfile }),
     credentialKeys: provider.credentialKeys,
     configKeys: provider.configKeys,
   };
