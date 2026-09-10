@@ -262,7 +262,7 @@ function buildPublicTunnelSubprocessEnv(): Record<string, string> {
   return env;
 }
 
-export function buildPublicTunnelProbeArgs(url: string): string[] {
+function buildPublicTunnelProbeArgs(url: string): string[] {
   return [
     "--disable",
     "--silent",
