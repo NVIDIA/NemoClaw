@@ -221,16 +221,13 @@ describe("live E2E target gating", () => {
     },
   );
 
-  it.concurrent.for([
-    {
-      file: "issue-4434-tui-unreachable-inference.test.ts",
-      gate: "NEMOCLAW_ISSUE_4434_LIVE",
-    },
-  ] as const)(
-    "applies the $file special target's $gate opt-in at real Vitest collection",
+  it.concurrent(
+    "applies the issue-4434 live opt-in at real Vitest collection",
     collectorTimeoutOptions(2),
-    async ({ file, gate }, context) => {
+    async (context) => {
       const listLiveTests = liveTestLister(context);
+      const file = "issue-4434-tui-unreachable-inference.test.ts";
+      const gate = "NEMOCLAW_ISSUE_4434_LIVE";
       const disabled = await listLiveTests({ enabled: true, files: [file] });
 
       expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
