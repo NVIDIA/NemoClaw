@@ -320,7 +320,10 @@ describe("config export source verification (#10938)", () => {
   ])("rejects malformed or unsupported retained tools without output", async (change) => {
     const input = profileInput({ toolDisclosure: "direct" });
     const built = buildManagedStartupProfile(input);
-    const changed = { ...built.profile, tools: { ...built.profile.tools, ...change } };
+    const canonical = JSON.parse(
+      Buffer.from(built.encodedProfile, "base64url").toString("utf8"),
+    ) as typeof built.profile;
+    const changed = { ...canonical, tools: { ...canonical.tools, ...change } };
     const encodedProfile = Buffer.from(JSON.stringify(changed)).toString("base64url");
     const observed = directToolsSnapshot({
       workload: {
