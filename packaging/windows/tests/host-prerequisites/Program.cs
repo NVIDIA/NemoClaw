@@ -14,12 +14,14 @@ if (args is ["--control-policy-tests"])
 }
 if (!OperatingSystem.IsWindows() || RuntimeInformation.OSArchitecture != Architecture.Arm64 || Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true")
     throw new InvalidOperationException("This proof requires the disposable GitHub Windows ARM64 runner.");
-if (args.Length != 1) throw new ArgumentException("One fresh evidence directory is required.");
+var largeTree = args is ["--measure-large-tree", _];
+if (args.Length != 1 && !largeTree) throw new ArgumentException("One fresh evidence directory is required.");
 var temporary = Path.GetFullPath(Environment.GetEnvironmentVariable("RUNNER_TEMP") ?? throw new InvalidOperationException("Runner temporary root missing")).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-var evidence = Path.GetFullPath(args[0]);
+var evidence = Path.GetFullPath(args[largeTree ? 1 : 0]);
 if (!evidence.StartsWith(temporary, StringComparison.OrdinalIgnoreCase) || Directory.Exists(evidence) || File.Exists(evidence))
     throw new InvalidOperationException("The proof may create only a fresh runner-owned evidence directory.");
 Directory.CreateDirectory(evidence);
+if (largeTree) { LargeTreeMeasurement.Run(evidence); return; }
 var fixtures = Path.Combine(evidence, "fixtures");
 Directory.CreateDirectory(fixtures);
 var results = new List<object>();
@@ -39,11 +41,16 @@ string Tree(string name)
 Dictionary<string, string> Children(string root)
 {
     var records = new Dictionary<string, string>(StringComparer.Ordinal);
+    var details = new Dictionary<string, object>(StringComparer.Ordinal);
     foreach (var item in Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories))
     {
         using var file = DirectoryAcl.Open(item, DirectoryAcl.OrdinaryAclAccess, requireDirectory:false);
-        records.Add(Path.GetRelativePath(root, item), file.Read().Sha256);
+        var snapshot = file.Read();
+        var relative = Path.GetRelativePath(root, item);
+        records.Add(relative, snapshot.Sha256);
+        details.Add(relative, snapshot.Details());
     }
+    observations.Add(new { phase = "descendant-descriptor-readback", root = Path.GetFileName(root), entries = details });
     return records;
 }
 void EqualChildren(Dictionary<string, string> before, Dictionary<string, string> after)

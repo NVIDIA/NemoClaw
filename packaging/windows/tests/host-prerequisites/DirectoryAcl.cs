@@ -46,7 +46,7 @@ internal sealed class DirectoryAcl : IDisposable
             var bytes = new byte[size]; Marshal.Copy(pointer, bytes, 0, bytes.Length);
             var descriptor = new RawSecurityDescriptor(bytes, 0);
             if (descriptor.DiscretionaryAcl is null) throw new IOException("A null or absent DACL is not an admissible fixture input.");
-            return new(descriptor, Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant());
+            return new(descriptor, Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), bytes);
         }
         finally { LocalFree(pointer); }
     }
@@ -122,12 +122,15 @@ internal sealed class DirectoryAcl : IDisposable
         foreach (GenericAce ace in acl) { var bytes = new byte[ace.BinaryLength]; ace.GetBinaryForm(bytes, 0); yield return Convert.ToHexString(bytes); }
     }
 
-    internal sealed record Snapshot(RawSecurityDescriptor Descriptor, string Sha256)
+    internal sealed record Snapshot(RawSecurityDescriptor Descriptor, string Sha256, byte[] OriginalBytes)
     {
         internal string? Owner => Descriptor.Owner?.Value;
         internal string? Group => Descriptor.Group?.Value;
         internal string Control => Descriptor.ControlFlags.ToString();
         internal ushort ControlValue => (ushort)Descriptor.ControlFlags;
+        internal object Details() => new { sha256 = Sha256, owner = Owner, group = Group, control = Control,
+            controlValue = ControlValue, aclRevision = Descriptor.DiscretionaryAcl!.Revision,
+            aces = AceBytes(Descriptor.DiscretionaryAcl).ToArray(), originalDescriptorHex = Convert.ToHexString(OriginalBytes) };
     }
     internal sealed record Result(bool WroteDacl, double WriteMilliseconds, string BeforeSha256, string AfterSha256, string? Owner, string? Group, string Control, ushort BeforeControlValue, ushort AfterControlValue, string ControlTransition);
     public void Dispose() => handle.Dispose();

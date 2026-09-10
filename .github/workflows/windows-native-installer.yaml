@@ -174,18 +174,38 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Build isolated permission controls
+        id: permission-controls-build
+        shell: pwsh
+        run: |
+          dotnet build packaging/windows/tests/host-prerequisites/HandleAcl.Controls.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'The isolated permission controls did not build.' }
+      - name: Measure intended metadata handling and directory enumeration
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE\packaging\windows\tests\host-prerequisites\test-capture-process.ps1"
+          & "$env:GITHUB_WORKSPACE\packaging\windows\tests\host-prerequisites\measure-directory-enumeration.ps1" `
+            -ArtifactDirectory "$env:RUNNER_TEMP\handle-acl-large"
       - name: Exercise permission handling on disposable directories
+        if: ${{ always() && steps.permission-controls-build.outcome == 'success' }}
         shell: pwsh
         run: |
           dotnet run --project packaging/windows/tests/host-prerequisites/HandleAcl.Controls.csproj `
-            --configuration Release -- "$env:RUNNER_TEMP\handle-acl-proof"
+            --configuration Release --no-build -- "$env:RUNNER_TEMP\handle-acl-proof"
           if ($LASTEXITCODE -ne 0) { throw 'The isolated directory permission proof failed.' }
       - name: Preserve the permission proof result
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-directory-permission-proof-${{ github.sha }}
-          path: ${{ runner.temp }}/handle-acl-proof/handle-acl-proof.json
+          path: |
+            ${{ runner.temp }}/handle-acl-proof/handle-acl-proof.json
+            ${{ runner.temp }}/handle-acl-large/*.json
+            ${{ runner.temp }}/handle-acl-large/*.etl
+            ${{ runner.temp }}/handle-acl-large/*.xml
+            ${{ runner.temp }}/handle-acl-large/*.txt
+            ${{ runner.temp }}/handle-acl-large/*.log
+            ${{ runner.temp }}/handle-acl-large/measurement/*.json
           if-no-files-found: error
 
   windows-native-installer:
