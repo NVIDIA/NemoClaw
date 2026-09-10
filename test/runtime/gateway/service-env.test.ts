@@ -532,15 +532,14 @@ describe("service environment", () => {
     it.each(["sh", "bash"])(
       "entrypoint writes proxy-env.sh that can be sourced by %s",
       (sourceShell) => {
-        const fakeDataDir = join(tmpdir(), `nemoclaw-data-test-${process.pid}`);
-        mkdirSync(fakeDataDir, { recursive: true });
+        const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-data-test-"));
         const nativeHome = join(fakeDataDir, "home");
         mkdirSync(join(nativeHome, ".config", "git"), { recursive: true });
         writeFileSync(
           join(nativeHome, ".config", "git", "config"),
           "[user]\n\temail = native@example.invalid\n",
         );
-        const tmpFile = join(tmpdir(), `nemoclaw-proxyenv-write-test-${process.pid}.sh`);
+        const tmpFile = join(fakeDataDir, "write-proxy-env.sh");
         try {
           const persistBlock = extractRuntimeShellEnvSnippet();
           const toolRedirects = extractToolRedirectsSnippet();
@@ -636,11 +635,6 @@ describe("service environment", () => {
             "name = Native Fixture",
           );
         } finally {
-          try {
-            unlinkSync(tmpFile);
-          } catch {
-            /* ignore */
-          }
           try {
             rmSync(fakeDataDir, { recursive: true, force: true });
           } catch {
