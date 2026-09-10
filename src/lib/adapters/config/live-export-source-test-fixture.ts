@@ -202,3 +202,29 @@ export function telemetryEntry(
     },
   };
 }
+
+export function dashboardSource() {
+  const built = buildManagedStartupProfile({
+    ...startupInput,
+    toolDisclosure: "direct",
+    dashboard: {
+      agent: "openclaw" as const,
+      mode: "remote" as const,
+      url: "http://127.0.0.1:19000",
+      port: 19000,
+      bindAddress: "0.0.0.0" as const,
+      wslExposure: false,
+    },
+  });
+  return {
+    ...entry,
+    toolDisclosure: "direct" as const,
+    dashboardPort: 19000,
+    dashboardRemoteBindPrepared: true,
+    workload: {
+      ...entry.workload,
+      encodedProfile: built.encodedProfile,
+      startupProfileSha256: built.startupProfileSha256,
+    },
+  };
+}

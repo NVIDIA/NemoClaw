@@ -235,7 +235,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
     statusAgent,
     phase,
   };
-  const textOutcome = printSandboxDetails(textContext);
+  const textOutcome = await printSandboxDetails(textContext);
   if (
     (textOutcome.exitCode || llamaCpp?.kind === "unavailable") &&
     (!process.exitCode || process.exitCode === 0)

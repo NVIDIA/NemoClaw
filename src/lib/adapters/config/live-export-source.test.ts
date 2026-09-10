@@ -1,11 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import os from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
-import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
 import { runConfigExport } from "../../actions/config/export";
 import {
@@ -57,10 +55,8 @@ import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/rou
 import type { ObservedManagedVllmRuntime } from "../../domain/config/export-evidence";
 import { getLiveGatewayInference } from "../../inference/live";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
-import {
-  buildManagedStartupProfile,
-  type ManagedStartupProfileBuilderInput,
-} from "../../onboard/managed-startup/profile-builder";
+import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
+import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import type { SandboxEntry } from "../../state/registry/types";
@@ -73,13 +69,13 @@ import {
   readFailureCanary,
   imageRef,
   startupInput,
-  startup,
   entry,
   inventory,
   provider,
   configuration,
   ollamaSource,
   telemetryEntry,
+  dashboardSource,
 } from "./live-export-source-test-fixture";
 
 const raw = {
@@ -942,6 +938,7 @@ describe("live export snapshot reader", () => {
 function mockManagedVllmSource(
   environmentOverrides: NodeJS.ProcessEnv = {},
   webSearch: ManagedStartupProfileBuilderInput["webSearch"] = null,
+  toolDisclosure: ManagedStartupProfileBuilderInput["toolDisclosure"] = "progressive",
 ) {
   const catalog = loadServingCatalog();
   const provenance = servingProfileProvenance(catalog, EXPORTED_VLLM_PROFILE_ID);
@@ -982,7 +979,7 @@ function mockManagedVllmSource(
       wslExposure: false,
     },
     webSearch,
-    toolDisclosure: "progressive",
+    toolDisclosure,
     hermesToolGateways: [],
     messagingPlan: null,
     dcodeAutoApprovalMode: null,
@@ -997,6 +994,7 @@ function mockManagedVllmSource(
     endpointUrl: "http://host.openshell.internal:18000/v1",
     credentialEnv: null,
     servingProfileProvenance: provenance,
+    toolDisclosure,
     webSearchEnabled: webSearch !== null,
     webSearchProvider: webSearch?.provider ?? null,
     workload: {
@@ -1106,7 +1104,7 @@ describe("managed vLLM export pipeline", () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
-  it("exports managed vLLM, Brave and retained OTLP with qualified profile bindings", async () => {
+  it("exports direct tools, managed vLLM, Brave and retained OTLP with qualified profile bindings", async () => {
     const f = mockManagedVllmSource(
       {
         NEMOCLAW_OPENCLAW_OTEL: "1",
@@ -1115,6 +1113,7 @@ describe("managed vLLM export pipeline", () => {
         NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: "0.5",
       },
       { fetchEnabled: true, provider: "brave" },
+      "direct",
     );
     const search = braveProvider();
     const readManagedProvider = raw.getProvider.getMockImplementation()!;
@@ -1133,32 +1132,43 @@ describe("managed vLLM export pipeline", () => {
     const { result, writeStdout, publish } = await exportLiveSource();
     expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
     const yaml = writeStdout.mock.calls[0]![0];
-    const document = validateNemoClawConfig(YAML.parse(yaml));
-    expect(document.spec.inferenceProviders[0]).toMatchObject({ serving: f.observed.serving });
-    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
-      type: "openclaw",
-      observability: {
-        otlp: {
-          enabled: true,
-          endpoint: "http://host.openshell.internal:4318",
-          serviceName: "research-assistant",
-          sampleRate: 0.5,
-        },
-      },
-      inference: {
-        routes: [
-          {
-            name: "primary",
-            providerRef: "managed-vllm",
-            overrides: { model: f.source.model, contextWindow: 65536 },
-          },
-        ],
-      },
-    });
-    expect(document.spec.sandboxes[0]!.network.policy.explicit).toEqual(configuration().policy);
     expect(yaml).not.toContain(readFailureCanary);
     expect(yaml).not.toContain("NEMOCLAW_VLLM_LOCAL_TOKEN");
     expect(yaml).not.toContain("host.openshell.internal:18000");
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.inferenceProviders).toEqual([
+      {
+        name: "managed-vllm",
+        provider: "vllm-local",
+        api: "openai-completions",
+        serving: f.observed.serving,
+      },
+    ]);
+    expect(document.spec.sandboxes[0]!.agents).toEqual([
+      {
+        name: "primary",
+        type: "openclaw",
+        tools: { disclosure: "direct" },
+        observability: {
+          otlp: {
+            enabled: true,
+            endpoint: "http://host.openshell.internal:4318",
+            serviceName: "research-assistant",
+            sampleRate: 0.5,
+          },
+        },
+        inference: {
+          routes: [
+            {
+              name: "primary",
+              providerRef: "managed-vllm",
+              overrides: { model: f.source.model, contextWindow: 65536 },
+            },
+          ],
+        },
+      },
+    ]);
+    expect(document.spec.sandboxes[0]!.network.policy.explicit).toEqual(configuration().policy);
     expect(document.spec.sandboxes[0]!.integrations?.webSearch).toEqual({
       provider: "brave",
       agentRefs: ["primary"],
@@ -1421,40 +1431,19 @@ describe("attached Ollama export pipeline", () => {
 });
 
 describe("dashboard export observation", () => {
-  it("projects registered dashboard authority through complete live observation (#10904)", async () => {
-    const workload = entry.workload as Extract<
-      NonNullable<SandboxEntry["workload"]>,
-      { kind: "managed-image" }
-    >;
-    expect(workload?.kind).toBe("managed-image");
-    const profile = {
-      ...startup.profile,
-      dashboard: {
-        agent: "openclaw" as const,
-        mode: "remote" as const,
-        url: "http://127.0.0.1:19000",
-        port: 19000,
-        bindAddress: "0.0.0.0" as const,
-        wslExposure: false,
-      },
-    };
-    const encodedProfile = encodeManagedStartupProfile(profile);
-    const sourceEntry = {
-      ...entry,
-      dashboardPort: 19000,
-      dashboardRemoteBindPrepared: true,
-      workload: {
-        ...workload,
-        encodedProfile,
-        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
-      },
-    };
+  it("projects registered dashboard and direct tools through complete live observation (#10904)", async () => {
+    const sourceEntry = dashboardSource();
+    expect(sourceEntry.workload?.kind).toBe("managed-image");
     mockSupportedLiveSource(3, 3, sourceEntry);
     const reader = createLiveExportSnapshotReader();
     const observed = await reader.read("alpha");
     expect(observed).toMatchObject({
       kind: "observed",
-      registry: { dashboardPort: 19000, dashboardRemoteBindPrepared: true },
+      registry: {
+        dashboardPort: 19000,
+        dashboardRemoteBindPrepared: true,
+        toolDisclosure: "direct",
+      },
     });
     const writeStdout = vi.fn(async (_yaml: string) => {});
     const result = await runConfigExport(
@@ -1472,12 +1461,15 @@ describe("dashboard export observation", () => {
       },
     );
     expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(raw.getSandbox).toHaveBeenCalledTimes(3);
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
     const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
     expect(yaml).not.toContain(readFailureCanary);
     const document = validateNemoClawConfig(YAML.parse(yaml));
     expect(document.spec.sandboxes[0]?.agents[0]).toMatchObject({
       type: "openclaw",
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+      tools: { disclosure: "direct" },
     });
   });
 
