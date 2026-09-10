@@ -225,11 +225,14 @@ function printActiveSessions(sandboxName: string): void {
   }
 }
 
-function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEntry): void {
+async function printAgentVersion(
+  context: SandboxStatusTextContext,
+  sandbox: SandboxEntry,
+): Promise<void> {
   try {
     const { lookup, sandboxName, statusAgent } = context;
     const shouldProbe = shouldProbeSandboxRuntimeVersion(lookup, sandbox, statusAgent.agentRuntime);
-    const versionCheck = sandboxVersion.checkAgentVersion(sandboxName, {
+    const versionCheck = await sandboxVersion.checkAgentVersion(sandboxName, {
       forceProbe: shouldProbe,
       skipProbe: !shouldProbe,
     });
@@ -296,7 +299,9 @@ function printInferenceRouteDrift(
 }
 
 /** Render registry-backed sandbox details and return any non-fatal degraded outcome. */
-export function printSandboxDetails(context: SandboxStatusTextContext): SandboxStatusTextOutcome {
+export async function printSandboxDetails(
+  context: SandboxStatusTextContext,
+): Promise<SandboxStatusTextOutcome> {
   const { sb, currentModel, currentProvider, sandboxName } = context;
   if (!sb) return { exitCode: null };
 
@@ -336,7 +341,7 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   );
   const agentExitCode = printAgentHarness(context);
   printActiveSessions(sandboxName);
-  printAgentVersion(context, sb);
+  await printAgentVersion(context, sb);
   return { exitCode: inferenceExitCode ?? agentExitCode };
 }
 

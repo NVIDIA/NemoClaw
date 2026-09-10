@@ -97,7 +97,7 @@ export interface RebuildPostRestorePhaseInput {
   hermesOperatorConfigRestore?: HermesOperatorConfigRestoreReport;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
   preparedBackupRecovery: boolean;
-  versionCheck: ReturnType<typeof sandboxVersion.checkAgentVersion>;
+  versionCheck: sandboxVersion.VersionCheckResult;
   log: RebuildLog;
   bail: RebuildBail;
 }
@@ -365,7 +365,7 @@ export async function runRebuildPostRestorePhase(
     // version. Clear create-time bookkeeping before the forced live probe so a
     // failed probe cannot leave the requested version recorded as observed.
     registry.updateSandbox(sandboxName, { agentVersion: null });
-    const rebuiltVersion = probeRebuiltAgentVersion(sandboxName);
+    const rebuiltVersion = await probeRebuiltAgentVersion(sandboxName);
     if (
       rebuiltVersion.verificationFailed ||
       rebuiltVersion.sandboxVersion !== versionCheck.expectedVersion

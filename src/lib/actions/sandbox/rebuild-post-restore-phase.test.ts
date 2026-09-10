@@ -114,7 +114,7 @@ describe("rebuild post-restore phase", () => {
       () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
     );
     vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
-    vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
+    vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({
       sandboxVersion: null,
       expectedVersion: null,
       isStale: false,
@@ -449,7 +449,7 @@ describe("rebuild post-restore phase", () => {
       displayName: "Hermes Agent",
       expectedVersion: "0.20.6",
     } as never);
-    vi.mocked(sandboxVersion.checkAgentVersion).mockReturnValue({
+    vi.mocked(sandboxVersion.checkAgentVersion).mockResolvedValue({
       sandboxVersion: "0.19.0",
       expectedVersion: "0.20.6",
       isStale: true,
@@ -501,7 +501,7 @@ describe("rebuild post-restore phase", () => {
       displayName: "Hermes Agent",
       expectedVersion: "0.20.6",
     } as never);
-    vi.mocked(sandboxVersion.checkAgentVersion).mockReturnValue({
+    vi.mocked(sandboxVersion.checkAgentVersion).mockResolvedValue({
       sandboxVersion: "0.20.6",
       expectedVersion: "0.20.6",
       isStale: false,
