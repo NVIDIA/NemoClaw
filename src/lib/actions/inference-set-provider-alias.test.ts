@@ -134,7 +134,8 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
   });
 
   it("still rejects a genuinely unsupported provider name", async () => {
-    const output = "nvidia-prod\nqa-non-inference\ncompatible-endpoint\nollama-local\n";
+    const output =
+      "nvidia-prod\nqa-non-inference\ncompatible-endpoint\nllama-cpp-local\nollama-local\n";
     const captureOpenshell = vi.fn(() => ({ status: 0, output, stdout: output, stderr: "" }));
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
@@ -149,7 +150,7 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
       runInferenceSet({ provider: "totally-made-up", model: "nvidia/model-a" }, deps),
     ).rejects.toThrow(
       "Unsupported provider 'totally-made-up'. Selectable providers registered on gateway " +
-        "'nemoclaw-18080': compatible-endpoint, nvidia-prod, ollama-local.",
+        "'nemoclaw-18080': compatible-endpoint, llama-cpp-local, nvidia-prod, ollama-local.",
     );
     expect(captureOpenshell).toHaveBeenCalledWith(
       ["provider", "list", "-g", "nemoclaw-18080", "--names"],

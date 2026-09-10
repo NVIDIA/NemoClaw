@@ -227,6 +227,7 @@ const SUPPORTED_PROVIDER_NAMES = [
   "gemini-api",
   "compatible-endpoint",
   "hermes-provider",
+  "llama-cpp-local",
   "ollama-local",
   "vllm-local",
 ] as const;
@@ -265,6 +266,7 @@ const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   nous: "hermes-provider",
   "nous-portal": "hermes-provider",
   custom: "compatible-endpoint",
+  "llama-cpp": "llama-cpp-local",
   ollama: "ollama-local",
   vllm: "vllm-local",
   nim: "nvidia-nim",
