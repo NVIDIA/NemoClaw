@@ -945,6 +945,13 @@ function removeGatewayRegistration(
       stderr: outcome.result.stderr ?? "",
     }),
   );
+  if (!runtime.commandExists("docker")) {
+    runtime.warn(
+      "Docker is not available in this shell. Restore Docker access and verify docker info. " +
+        "If using Docker Desktop on Windows, enable WSL integration for this distro. " +
+        "Then rerun the same uninstall command.",
+    );
+  }
   return false;
 }
 
