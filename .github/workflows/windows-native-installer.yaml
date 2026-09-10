@@ -16,9 +16,17 @@ on:
         required: false
         default: ""
         type: string
+      probe_official_hermes_components:
+        description: Probe pinned official Hermes Windows components inside MXC without publishing an installer
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - feat/windows-native-installer
+    paths:
+      - packaging/windows/**
+      - .github/workflows/windows-native-installer.yaml
 
 permissions:
   actions: read
@@ -31,7 +39,7 @@ concurrency:
 jobs:
   windows-native-installer:
     name: Windows native installer candidate (ARM64, no WSL)
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '') }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id == '') }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 240
     steps:
@@ -442,7 +450,7 @@ jobs:
 
   windows-native-package-diagnostic:
     name: Windows native package/runtime diagnostic (ARM64, no WSL)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id != '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id != '' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 90
     steps:
@@ -789,3 +797,76 @@ jobs:
           path: ${{ runner.temp }}/windows-native-package-diagnostic/
           if-no-files-found: error
           retention-days: 3
+
+  official-hermes-components:
+    name: Official Hermes component feasibility (Windows ARM64, MXC)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 60
+    steps:
+      - name: Check out the component probe
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the immutable MXC baseline
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\component-probe-baseline.ps1" `
+            -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-baseline"
+
+      - name: Check bounded component process diagnostics on Windows
+        shell: powershell
+        run: |
+          $node = Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw\bin\node.exe'
+          & $node --experimental-strip-types --no-warnings --test `
+            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-components.test.mts"
+          if ($LASTEXITCODE -ne 0) { throw 'The component process diagnostic controls failed.' }
+
+      - name: Provision pinned official Hermes components
+        id: hermes-components
+        shell: powershell
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $runtimeRoot = "$env:SystemDrive\NemoClawHermesProbe-$([guid]::NewGuid().ToString('N').Substring(0, 12))"
+          "runtime_root=$runtimeRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\prepare-official-components.ps1" `
+            -RuntimeRoot $runtimeRoot `
+            -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-components"
+
+      - name: Execute the official components inside MXC
+        shell: powershell
+        env:
+          HERMES_COMPONENT_ROOT: ${{ steps.hermes-components.outputs.runtime_root }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $installRoot = Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw'
+          & "$installRoot\bin\node.exe" --experimental-strip-types --no-warnings `
+            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-official-components.mts" `
+            --install-root $installRoot `
+            --runtime-root $env:HERMES_COMPONENT_ROOT `
+            --artifact-directory "$env:RUNNER_TEMP\official-hermes-mxc"
+          if ($LASTEXITCODE -ne 0) { throw 'The official Hermes MXC component probe failed.' }
+
+      - name: Uninstall the component probe baseline
+        if: always()
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\component-probe-baseline.ps1" `
+            -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-baseline" -Uninstall
+
+      - name: Upload official Hermes component evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: official-hermes-windows-mxc-components-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/official-hermes-baseline/
+            ${{ runner.temp }}/official-hermes-components/
+            ${{ runner.temp }}/official-hermes-mxc/
+            !${{ runner.temp }}/official-hermes-baseline/baseline-setup.exe
+            !${{ runner.temp }}/official-hermes-components/downloads/
+          if-no-files-found: error
+          retention-days: 14
