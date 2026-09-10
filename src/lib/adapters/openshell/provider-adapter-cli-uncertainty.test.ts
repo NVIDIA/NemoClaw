@@ -53,6 +53,13 @@ describe("CLI OpenShell provider adapter uncertain mutations", () => {
   );
   it.each([
     ["sandbox 'alpha' not found", "sandbox_not_found"],
+    ["sandbox 'other-box' not found", "failed"],
+    ["status: NotFound, code: PermissionDenied, message: \"sandbox 'alpha' not found\"", "failed"],
+    ["sandbox 'other' not found, message: \"sandbox 'alpha' not found\"", "failed"],
+    ["status: NotFound, message: \"sandbox 'alpha' not found\"", "sandbox_not_found"],
+    ["sandbox not found", "failed"],
+    ["sandbox alpha not found", "failed"],
+    ["sandbox 'alpha' not found\nsandbox 'other-box' not found", "failed"],
     ["provider 'search-prod' not found", "not_found"],
     ["provider 'sandbox-telegram' not found", "failed"],
     ["provider 'other-provider' not found", "failed"],

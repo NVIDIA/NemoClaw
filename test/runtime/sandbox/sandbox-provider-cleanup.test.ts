@@ -181,6 +181,30 @@ describe("detachSandboxProviders", () => {
     expect(result.failures.some((f) => f.name === "yankee-telegram-bridge")).toBe(false);
   });
 
+  it("retains a detach failure for a different missing sandbox even when absence is tolerated", async () => {
+    const { runOpenshell } = buildRunOpenshell(
+      new Map([
+        [
+          "sandbox provider detach phantom phantom-telegram-bridge",
+          {
+            status: 1,
+            stderr: "Error: status: NotFound, sandbox 'other-box' not found",
+          },
+        ],
+      ]),
+    );
+    const result = await detachSandboxProviders("phantom", {
+      runOpenshell,
+      tolerateMissingSandbox: true,
+    });
+    expect(result.failures).toEqual([
+      {
+        name: "phantom-telegram-bridge",
+        output: "Error: status: NotFound, sandbox 'other-box' not found",
+      },
+    ]);
+  });
+
   it("tolerates sandbox-not-found when tolerateMissingSandbox is set (opportunistic call)", async () => {
     const responses = new Map<string, RunResult>([
       [

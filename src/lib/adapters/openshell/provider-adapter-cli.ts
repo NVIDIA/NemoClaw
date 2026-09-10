@@ -27,7 +27,10 @@ import {
   type OpenShellProviderResult,
   type UpdateOpenShellProviderRequest,
 } from "./provider-adapter";
-import { reportsExactProviderNotFound } from "./provider-diagnostic-cli";
+import {
+  reportsExactProviderNotFound,
+  reportsExactSandboxNotFound,
+} from "./provider-diagnostic-cli";
 import {
   isValidCliOpenShellProviderIdentifier,
   parseCliOpenShellProviderMetadata,
@@ -701,7 +704,7 @@ export function createCliOpenShellProviderAdapter(
       !result.signal &&
       result.status !== null &&
       error?.kind === "command" &&
-      /\bsandbox\s+[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i.test(output)
+      reportsExactSandboxNotFound(output, request.sandboxName, PROVIDER_GET_DIAGNOSTIC_LIMIT)
     ) {
       return failure({
         kind: "command",
