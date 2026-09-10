@@ -12,11 +12,13 @@ const testHome = fs.mkdtempSync(path.join(os.tmpdir(), "uninstall-docker-recover
 afterAll(() => fs.rmSync(testHome, { recursive: true, force: true }));
 
 it.each([
-  { condition: "Docker is missing", dockerAvailable: false },
-  { condition: "Docker is installed", dockerAvailable: true },
+  { condition: "Docker is missing", dockerInstalled: false, dockerStatus: 0, recovery: true },
+  { condition: "Docker is available", dockerInstalled: true, dockerStatus: 0, recovery: false },
+  { condition: "Docker is unreachable", dockerInstalled: true, dockerStatus: 1, recovery: true },
+  { condition: "Docker times out", dockerInstalled: true, dockerStatus: null, recovery: true },
 ])(
   "preserves failed gateway removal and reports Docker availability when $condition (#11438)",
-  ({ dockerAvailable }) => {
+  ({ dockerInstalled, dockerStatus, recovery }) => {
     const warnings: string[] = [];
     const logs: string[] = [];
     const rmSync = vi.fn();
@@ -40,7 +42,7 @@ it.each([
           requiredCapabilities: [],
         }),
         commandExists: (command) =>
-          (command !== "docker" || dockerAvailable) && command !== "pgrep",
+          (command !== "docker" || dockerInstalled) && command !== "pgrep",
         env: { HOME: testHome, TMPDIR: os.tmpdir() },
         error: (line) => warnings.push(line),
         existsSync: () => false,
@@ -48,7 +50,7 @@ it.each([
         log: (line) => logs.push(line),
         rmSync,
         run: (_command, args) => responses.get(args.join(" ")) ?? ok,
-        runDocker: () => ok,
+        runDocker: (args) => ({ ...ok, status: args[0] === "info" ? dockerStatus : 0 }),
       }),
     );
 
@@ -56,15 +58,12 @@ it.each([
     expect(warnings).toContain(
       "Could not remove gateway registration 'nemoclaw': openshell gateway remove failed (exit 1).",
     );
-    expect(warnings.filter((line) => line.startsWith("Docker is not available"))).toEqual(
-      dockerAvailable
-        ? []
-        : [
-            "Docker is not available in this shell. Restore Docker access and verify docker info. " +
-              "If using Docker Desktop on Windows, enable WSL integration for this distro. " +
-              "Then rerun the same uninstall command.",
-          ],
-    );
+    const guidance = warnings.find((line) => line.startsWith("Docker is not available")) ?? "";
+    expect(guidance.includes("WSL integration")).toBe(recovery);
+    expect(guidance.includes("wsl --shutdown")).toBe(recovery);
+    expect(guidance.includes("docker info")).toBe(recovery);
+    expect(guidance.includes("rerun the same uninstall command")).toBe(recovery);
+    expect(/WSL integration.*wsl --shutdown.*docker info.*rerun/s.test(guidance)).toBe(recovery);
     expect(rmSync).not.toHaveBeenCalled();
     expect(logs).not.toContain("[3/6] NemoClaw CLI");
   },
