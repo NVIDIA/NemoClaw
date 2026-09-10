@@ -13,6 +13,11 @@ import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
+  HERMES_ACP_LIFECYCLE_BUDGET_MS,
+  type HermesAcpLiveScenario,
+  runHermesAcpLiveScenario,
+} from "../fixtures/hermes-acp-live.ts";
+import {
   assertHermesHasNoRoutingSidecars,
   captureHermesRoutingTopology,
 } from "../fixtures/hermes-routing-topology.ts";
@@ -449,6 +454,8 @@ test(
       timeoutMs: 30_000,
     });
     expect(hermesVersion.exitCode, resultText(hermesVersion)).toBe(0);
+    // The exact executable and version compatibility is exercised through the
+    // packaged ACP adapter below and classified by lower source tests.
 
     // Observe the first native diagnostic before editing profiles or repairing
     // anything. Other doctor findings remain visible for their owning issues.
@@ -780,14 +787,54 @@ test(
     // OpenClaw launch qualification now reads its structured JSONL session
     // store. Hermes owns a different SQLite contract, so this target must not
     // infer Hermes replies from terminal copy through the OpenClaw helper.
-    progress.phase("exercise hosted and inference.local routes");
-    // Phase 5: live inference through both the external provider and the
-    // sandbox's inference.local route.
+    progress.phase("exercise Hermes ACP lifecycle and inference routes");
+    // Phase 5: exercise the packaged host adapter against the managed Hermes
+    // ACP server, then retain the existing inference route coverage.
+    const acpDeadlineAtMs = Date.now() + HERMES_ACP_LIFECYCLE_BUDGET_MS;
+    const runAcpScenario = (scenario: HermesAcpLiveScenario) =>
+      runHermesAcpLiveScenario({
+        artifacts,
+        deadlineAtMs: acpDeadlineAtMs,
+        env,
+        progress,
+        sandbox,
+        sandboxName: SANDBOX_NAME,
+        scenario,
+      });
+    const exchangePassed = await runAcpScenario("exchange");
+    const remoteExitPassed = await runAcpScenario("remote-exit");
+    const cancellationPassed = await runAcpScenario("cancel");
+    const clientDisconnectPassed = await runAcpScenario("client-disconnect");
+    const gatewayRestartPassed = await runHermesAcpLiveScenario({
+      artifacts,
+      deadlineAtMs: acpDeadlineAtMs,
+      env,
+      progress,
+      restartGateway: async () => {
+        await lifecycle.restartGatewayRuntime({ sandboxName: SANDBOX_NAME });
+        await lifecycle.waitForGatewayConnected();
+      },
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+      scenario: "gateway-restart",
+    });
+    const postRestartInitializePassed = await runAcpScenario("initialize");
+    const acpLifecyclePassed =
+      exchangePassed &&
+      remoteExitPassed &&
+      cancellationPassed &&
+      clientDisconnectPassed &&
+      gatewayRestartPassed &&
+      postRestartInitializePassed;
+
     const directChat = await inference.directChat("Reply with exactly one word: PONG", {
       artifactName: "phase-5-direct-inference-chat",
       maxTokens: 1024,
     });
-    expect(exhaustedReasoningBudget(directChat)).toBe(false);
+    expect(
+      exhaustedReasoningBudget(directChat) || !acpLifecyclePassed,
+      "Hermes ACP lifecycle failed or direct inference exhausted its reasoning budget; inspect the fixed ACP receipts and inference artifact",
+    ).toBe(false);
     expectPong(`${inference.mode} direct chat`, directChat);
 
     const sandboxChat = await sandbox.exec(
@@ -916,6 +963,9 @@ test(
         hermesSkillDiscovered: true,
         hermesSkillUsedInFreshSession: true,
         standaloneRoutingSidecarsAbsentAfterRecovery: true,
+        hermesAcpInitializeSessionPromptPong: true,
+        hermesAcpInterruptDisconnectAndRemoteExitClean: true,
+        hermesAcpCleansUpAndReconnectsAfterOpenShellGatewayRestart: true,
         dashboardChecked: hermesDashboardE2eEnabled(),
         securityPostureChecked: securityPosture !== null,
       },

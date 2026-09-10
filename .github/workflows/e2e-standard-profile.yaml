@@ -30,6 +30,9 @@ on:
       cli_artifact_provenance:
         required: true
         type: string
+      openshell_sdk_artifact_name:
+        required: true
+        type: string
       managed_image_catalog:
         required: true
         type: string
@@ -417,6 +420,23 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
+
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.openshell_sdk_artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(find "$RUNNER_TEMP/openshell-sdk" -maxdepth 1 -type f -name '*.tgz' -print)
+          test "${#archives[@]}" -eq 1
+          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+            npm install --no-save --package-lock=false --ignore-scripts "${archives[0]}"
+          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+            node --input-type=module -e 'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");'
 
       - name: Restore exact-commit CLI artifact
         if: ${{ inputs.restore_cli }}

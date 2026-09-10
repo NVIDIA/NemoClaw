@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,23 +10,42 @@ import { describe, expect, it } from "vitest";
 import {
   execTimeout,
   HERMES_CLI,
-  isCliErrorCandidate,
-  readBufferOrStringProperty,
-  readCliErrorOutput,
-  run,
-  runWithEnv,
+  runAsync,
+  runWithEnvAsync,
   testTimeout,
 } from "./helpers";
 
-describe("CLI dispatch", () => {
+function runHermes(args: string[]): Promise<{ code: number; out: string }> {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-cli-test-"));
+  return new Promise<{ code: number; out: string }>((resolve) => {
+    const child = execFile(
+      process.execPath,
+      [HERMES_CLI, ...args],
+      {
+        encoding: "utf-8",
+        timeout: execTimeout(),
+        env: { ...process.env, HOME: home },
+      },
+      (error, stdout, stderr) => {
+        fs.rmSync(home, { force: true, recursive: true });
+        const code = typeof error?.code === "number" ? error.code : error ? 1 : 0;
+        const errorOutput = error && typeof error.code !== "number" ? String(error) : "";
+        resolve({ code, out: `${stdout}${stderr}${errorOutput}` });
+      },
+    );
+    child.stdin?.end();
+  });
+}
+
+describe.concurrent("CLI dispatch", () => {
   it.each([
     "inference set 2>&1",
     "inference set --provider nvidia-prod 2>&1",
     "inference set --model nvidia/model 2>&1",
   ])(
     "keeps `inference set` inside NemoClaw when provider or model is missing [%s]",
-    (argv) => {
-      const r = run(argv);
+    async (argv) => {
+      const r = await runAsync(argv);
       expect(r.code, `nemoclaw ${argv}`).toBe(1);
       expect(r.out, `nemoclaw ${argv}`).toContain(
         "nemoclaw inference set requires --provider and --model",
@@ -38,93 +57,59 @@ describe("CLI dispatch", () => {
       expect(r.out, `nemoclaw ${argv}`).not.toContain("Missing required flag");
       expect(r.out, `nemoclaw ${argv}`).not.toContain("FailedFlagValidationError");
       expect(r.out, `nemoclaw ${argv}`).not.toContain("node_modules/@oclif/core");
-
-      let hermesOut = "";
-      let hermesCode = 0;
-      try {
-        hermesOut = execSync(`node "${HERMES_CLI}" inference set 2>&1`, {
-          encoding: "utf-8",
-          stdio: "pipe",
-          timeout: execTimeout(),
-          env: {
-            ...process.env,
-            HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-")),
-          },
-        });
-      } catch (err) {
-        const result = readCliErrorOutput(
-          isCliErrorCandidate(err)
-            ? {
-                status: typeof err.status === "number" ? err.status : undefined,
-                stdout: readBufferOrStringProperty(err, "stdout"),
-                stderr: readBufferOrStringProperty(err, "stderr"),
-              }
-            : String(err),
-        );
-        hermesOut = result.out;
-        hermesCode = result.code;
-      }
-      expect(hermesCode).toBe(1);
-      expect(hermesOut).toContain("nemohermes inference set requires --provider and --model");
-      expect(hermesOut).toContain(
-        "Run: nemohermes inference set --provider <provider> --model <model> [--sandbox <name>]",
-      );
-      expect(hermesOut).not.toContain("openshell inference set");
     },
     testTimeout(15_000),
   );
 
-  it("list exits 0", () => {
-    const r = run("list");
+  it("keeps `inference set` inside NemoClaw under the Hermes alias", async () => {
+    const hermes = await runHermes(["inference", "set"]);
+    expect(hermes.code).toBe(1);
+    expect(hermes.out).toContain("nemohermes inference set requires --provider and --model");
+    expect(hermes.out).toContain(
+      "Run: nemohermes inference set --provider <provider> --model <model> [--sandbox <name>]",
+    );
+    expect(hermes.out).not.toContain("openshell inference set");
+  });
+
+  it("list exits 0", async () => {
+    const r = await runAsync("list");
     expect(r.code).toBe(0);
     // With empty HOME, should say no sandboxes
     expect(r.out.includes("No sandboxes")).toBeTruthy();
   });
 
-  it("list --help exits 0 and shows list usage", () => {
-    const r = run("list --help");
+  it("list --help exits 0 and shows list usage", async () => {
+    const r = await runAsync("list --help");
     expect(r.code).toBe(0);
     expect(r.out).toContain("list [--json]");
     expect(r.out).toContain("List all sandboxes");
   });
 
-  it("nemohermes list --help uses alias branding", () => {
-    const out = execSync(`node "${HERMES_CLI}" list --help`, {
-      encoding: "utf-8",
-      stdio: "pipe",
-      timeout: execTimeout(),
-      env: {
-        ...process.env,
-        HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-")),
-      },
-    });
-    expect(out).toContain("$ nemohermes list [--json]");
-    expect(out).not.toContain("$ nemoclaw list [--json]");
+  it("nemohermes list --help uses alias branding", async () => {
+    const result = await runHermes(["list", "--help"]);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("$ nemohermes list [--json]");
+    expect(result.out).not.toContain("$ nemoclaw list [--json]");
   });
 
-  it("nemohermes inference set --help uses alias branding and agent-aware wording", () => {
-    const out = execSync(`node "${HERMES_CLI}" inference set --help`, {
-      encoding: "utf-8",
-      stdio: "pipe",
-      timeout: execTimeout(),
-      env: {
-        ...process.env,
-        HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-")),
-      },
-    });
-    expect(out).toContain("$ nemohermes inference set --provider <provider> --model <model>");
-    expect(out).toContain("[--sandbox <name>] [--no-verify]");
-    expect(out).toMatch(/OpenClaw or Hermes\s+sandbox config/);
+  it("nemohermes inference set --help uses alias branding and agent-aware wording", async () => {
+    const result = await runHermes(["inference", "set", "--help"]);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain(
+      "$ nemohermes inference set --provider <provider> --model <model>",
+    );
+    expect(result.out).toContain("[--sandbox <name>] [--no-verify]");
+    expect(result.out).toMatch(/OpenClaw or Hermes\s+sandbox config/);
   });
 
-  it("inference set rejects empty provider values during oclif parsing", () => {
-    const result = run("inference set --provider '' --model nvidia/model");
+  it("inference set rejects empty provider values during oclif parsing", async () => {
+    const result = await runAsync("inference set --provider '' --model nvidia/model");
     expect(result.code).toBe(1);
     expect(result.out).toContain("Parsing --provider");
     expect(result.out).toContain("OpenShell inference provider name cannot be empty");
   });
 
-  it("inference get reports the live NemoClaw gateway route", () => {
+  it("inference get reports the live NemoClaw gateway route", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-get-"));
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
@@ -144,7 +129,7 @@ describe("CLI dispatch", () => {
     );
 
     try {
-      const text = runWithEnv("inference get", {
+      const text = await runWithEnvAsync("inference get", {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
@@ -152,7 +137,7 @@ describe("CLI dispatch", () => {
       expect(text.out).toContain("Provider: nvidia-prod");
       expect(text.out).toContain("Model:    nvidia/nemotron-3-super-120b-a12b");
 
-      const json = runWithEnv("inference get --json", {
+      const json = await runWithEnvAsync("inference get --json", {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
@@ -166,7 +151,7 @@ describe("CLI dispatch", () => {
     }
   });
 
-  it("inference get --json reports the selected non-default gateway endpoint (#10671)", () => {
+  it("inference get --json reports the selected non-default gateway endpoint (#10671)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-get-port-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -216,7 +201,7 @@ describe("CLI dispatch", () => {
     );
 
     try {
-      const result = runWithEnv("inference get --json", {
+      const result = await runWithEnvAsync("inference get --json", {
         HOME: home,
         NEMOCLAW_GATEWAY_PORT: "19090",
         PATH: `${localBin}:${process.env.PATH || ""}`,
@@ -234,7 +219,7 @@ describe("CLI dispatch", () => {
     }
   });
 
-  it("sandbox inference get --json queries the recorded gateway binding (#10671)", () => {
+  it("sandbox inference get --json queries the recorded gateway binding (#10671)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-inference-get-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -284,7 +269,7 @@ describe("CLI dispatch", () => {
     );
 
     try {
-      const result = runWithEnv("beta inference get --json", {
+      const result = await runWithEnvAsync("beta inference get --json", {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
@@ -301,8 +286,8 @@ describe("CLI dispatch", () => {
     }
   });
 
-  it("list --json emits structured empty inventory", () => {
-    const r = run("list --json");
+  it("list --json emits structured empty inventory", async () => {
+    const r = await runAsync("list --json");
     expect(r.code).toBe(0);
     expect(JSON.parse(r.out)).toEqual({
       schemaVersion: 1,
@@ -317,7 +302,7 @@ describe("CLI dispatch", () => {
     });
   });
 
-  it("list --json emits structured sandbox details", () => {
+  it("list --json emits structured sandbox details", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-json-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -356,7 +341,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("list --json", {
+    const r = await runWithEnvAsync("list --json", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -392,7 +377,7 @@ describe("CLI dispatch", () => {
     });
   });
 
-  it("list and global status report a resumable inference-route reservation separately (#10097)", () => {
+  it("list and global status report a resumable inference-route reservation separately (#10097)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-incomplete-onboard-"));
     const localBin = path.join(home, "bin");
     const stateDir = path.join(home, ".nemoclaw");
@@ -437,14 +422,14 @@ describe("CLI dispatch", () => {
     const env = { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` };
 
     try {
-      const listText = runWithEnv("list", env);
+      const listText = await runWithEnvAsync("list", env);
       expect(listText.code).toBe(0);
       expect(listText.out).toContain("Incomplete onboarding:");
       expect(listText.out).toContain("sandbox-d  interrupted at inference");
       expect(listText.out).toContain("nemoclaw onboard --resume");
       expect(listText.out).not.toContain("Sandboxes:");
 
-      const listJson = runWithEnv("list --json", env);
+      const listJson = await runWithEnvAsync("list --json", env);
       expect(listJson.code).toBe(0);
       expect(JSON.parse(listJson.out)).toMatchObject({
         incompleteOnboarding: {
@@ -457,12 +442,12 @@ describe("CLI dispatch", () => {
         sandboxes: [],
       });
 
-      const statusText = runWithEnv("status", env);
+      const statusText = await runWithEnvAsync("status", env);
       expect(statusText.code).toBe(0);
       expect(statusText.out).toContain("Incomplete onboarding:");
       expect(statusText.out).toContain("sandbox-d  interrupted at inference");
 
-      const statusJson = runWithEnv("status --json", env);
+      const statusJson = await runWithEnvAsync("status --json", env);
       expect(statusJson.code).toBe(0);
       expect(JSON.parse(statusJson.out)).toMatchObject({
         incompleteOnboarding: {
@@ -479,8 +464,8 @@ describe("CLI dispatch", () => {
     }
   });
 
-  it("list forwards oclif parse errors for unknown options", () => {
-    const r = run("list --bogus");
+  it("list forwards oclif parse errors for unknown options", async () => {
+    const r = await runAsync("list --bogus");
     expect(r.code).toBe(2);
     expect(r.out.includes("Nonexistent flag: --bogus")).toBeTruthy();
     expect(r.out.includes("See more help with --help")).toBeTruthy();

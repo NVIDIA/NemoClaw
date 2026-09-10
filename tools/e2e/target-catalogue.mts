@@ -23,6 +23,7 @@ import {
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
+import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "./openshell-gateway-upgrade-fixture.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
@@ -1033,7 +1034,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "credential-free",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
+    owningPaths: [
+      "test/helpers/openshell-gateway-start-output.ts",
+      "tools/e2e/onboard-timeout-contract.mts",
+    ],
     environment: { ...nonInteractive, NEMOCLAW_SANDBOX_NAME: "e2e-resume" },
   }),
   managedRuntimeTarget("openclaw-discord-pairing", {
@@ -1225,7 +1229,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
-    owningPaths: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
+    owningPaths: [...HERMES_ACP_E2E_OWNING_PATHS, "test/e2e/live/rebuild-hermes-cron-restore.ts"],
     timeoutMinutes: 90,
     installMode: "credential-free",
     installNonInteractive: true,
@@ -1797,7 +1801,7 @@ export async function runCatalogueTarget(id: string, testFile: string): Promise<
   const runPressureCommand = (command: string): void => {
     const result = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", "--no-warnings", "tools/e2e/runner-pressure.mts", command],
+      ["--no-warnings", "tools/e2e/runner-pressure.mts", command],
       { env: process.env, stdio: "inherit", timeout: 60_000 },
     );
     if (result.error) throw result.error;

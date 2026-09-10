@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --no-warnings --experimental-strip-types
+#!/usr/bin/env -S node --no-warnings
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 

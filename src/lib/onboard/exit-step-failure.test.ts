@@ -348,31 +348,37 @@ describe("incomplete-onboard --resume backstop (#6003)", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "prints the resume hint before re-raising SIGINT in a real subprocess",
+    "releases the owned lock before re-raising SIGINT in a real subprocess",
     async () => {
       const childDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resume-signal-"));
       const childScript = path.join(childDir, "signal-resume-hint.cjs");
       const helperPath = path.resolve("src/lib/onboard/exit-step-failure.ts");
+      const onboardSessionPath = path.resolve("src/lib/state/onboard-session.ts");
       fs.writeFileSync(
         childScript,
         `
 const { registerIncompleteOnboardExitFailureHandler } = require(${JSON.stringify(helperPath)});
+const onboardSession = require(${JSON.stringify(onboardSessionPath)});
+
+if (!onboardSession.acquireOnboardLock("signal cleanup test").acquired) process.exit(2);
 
 const resumableSession = { lastStepStarted: "inference" };
 registerIncompleteOnboardExitFailureHandler(
   {
     loadSession: () => resumableSession,
     finalizeIncompleteOnboardStep: () => resumableSession,
+    releaseOnboardLock: onboardSession.releaseOnboardLock,
   },
   () => false,
   "Onboarding exited before the step completed.",
 );
-process.stdout.write("ready\\n");
+process.stdout.write(JSON.stringify({ lockFile: onboardSession.LOCK_FILE }) + "\\n");
 setInterval(() => {}, 1_000);
 `,
       );
 
       const child = spawn(process.execPath, ["--require", "tsx/cjs", childScript], {
+        env: { ...process.env, HOME: childDir },
         stdio: ["ignore", "pipe", "pipe"],
       });
       let stderr = "";
@@ -383,13 +389,15 @@ setInterval(() => {}, 1_000);
 
       try {
         const [ready] = await once(child.stdout, "data");
-        expect(String(ready)).toContain("ready");
+        const { lockFile } = JSON.parse(String(ready)) as { lockFile: string };
+        expect(fs.existsSync(lockFile)).toBe(true);
         const exited = once(child, "exit");
         child.kill("SIGINT");
         const [code, signal] = await exited;
         expect(code).toBeNull();
         expect(signal).toBe("SIGINT");
         expect(stderr).toContain("onboard --resume");
+        expect(fs.existsSync(lockFile)).toBe(false);
       } finally {
         child.kill("SIGKILL");
         fs.rmSync(childDir, { recursive: true, force: true });

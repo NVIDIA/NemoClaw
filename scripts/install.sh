@@ -145,8 +145,12 @@ canonical_agent_name() {
 }
 
 # Resolve which Git ref to install from.
-# Priority: NEMOCLAW_INSTALL_TAG env var > lkg tag.
+# Priority: bootstrap fetch pin > NEMOCLAW_INSTALL_REF > NEMOCLAW_INSTALL_TAG > lkg tag.
 resolve_release_tag() {
+  if [[ -n "${NEMOCLAW_BOOTSTRAP_FETCH_REF:-}" ]]; then
+    printf "%s" "${NEMOCLAW_BOOTSTRAP_FETCH_REF}"
+    return
+  fi
   if [[ -n "${NEMOCLAW_INSTALL_REF:-}" ]]; then
     printf "%s" "${NEMOCLAW_INSTALL_REF}"
     return
@@ -2272,7 +2276,7 @@ EOF
 ensure_nemoclaw_shim() {
   local cli_bin status=0
   ensure_cli_shim "$_CLI_BIN" || status=$?
-  for cli_bin in nemoclaw nemohermes nemo-deepagents; do
+  for cli_bin in nemoclaw nemoclaw-acp nemohermes nemo-deepagents; do
     [[ "$cli_bin" == "$_CLI_BIN" ]] && continue
     ensure_cli_shim "$cli_bin" || true
   done
@@ -5924,7 +5928,7 @@ ensure_station_express_pair() {
   revision="$(station_installer_revision)"
 
   local -a pair_command=(
-    node --no-warnings --experimental-strip-types "$coordinator"
+    node --no-warnings "$coordinator"
     --helper "$helper"
     --state "$state_file"
     --revision "$revision"
@@ -6025,7 +6029,7 @@ clear_station_dual_pair_resume() {
   assert_nemoclaw_state_path_safe "$state_file"
   [[ -e "$state_file" || -L "$state_file" || -e "${state_file}.ssh-binding" || -L "${state_file}.ssh-binding" ]] || return 0
   [[ -f "$coordinator" ]] || error "Dual DGX Station preparation coordinator is missing: ${coordinator}"
-  node --no-warnings --experimental-strip-types "$coordinator" --state "$state_file" --clear-state >/dev/null \
+  node --no-warnings "$coordinator" --state "$state_file" --clear-state >/dev/null \
     || error "Could not safely clear completed dual DGX Station resume state: ${state_file}"
 }
 

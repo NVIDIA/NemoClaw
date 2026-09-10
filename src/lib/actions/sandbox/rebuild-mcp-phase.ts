@@ -45,17 +45,17 @@ export function resolveMcpPreparationRuntimeSelection(
   }
 }
 
-function canExecuteMcpPreparation(
+async function canExecuteMcpPreparation(
   sandboxName: string,
   runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
-): boolean {
+): Promise<boolean> {
   // Live MCP preparation uses both transports: SSH-backed adapter
   // inspection/mutation and OpenShell-mediated adapter/provider operations.
   // Prove both before any mutation. A direct Docker fallback would not prove
   // that the OpenShell transport itself can run.
   const sshProbe = executeSandboxCommand(sandboxName, ":", { runtimeSelection });
-  const execProbe = executeSandboxExecCommand(sandboxName, ":", undefined, {
-    allowLocalDockerFallback: false,
+  const execProbe = await executeSandboxExecCommand(sandboxName, ":", undefined, {
+    localDockerFallbackPolicy: "never",
     runtimeSelection,
   });
   return sshProbe !== null && sshProbe.status === 0 && execProbe !== null && execProbe.status === 0;
@@ -89,7 +89,7 @@ export async function prepareMcpForRebuild(
     force &&
     !staleRecovery &&
     requiresRuntimeSelection &&
-    (!runtimeSelection || !canExecuteMcpPreparation(sandboxName, runtimeSelection))
+    (!runtimeSelection || !(await canExecuteMcpPreparation(sandboxName, runtimeSelection)))
   ) {
     console.error(`  ${YW}⚠${R} MCP transport probe failed; --force using host-side MCP recovery`);
     try {

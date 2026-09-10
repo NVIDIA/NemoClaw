@@ -140,7 +140,11 @@ Every source file needs the repository SPDX header; the pre-commit hook inserts 
 - `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.19+
 - `test/`: **ESM** (`import`/`export`)
 - Do not add new JavaScript source files. Prefer TypeScript when modifying existing JavaScript. New test files must use TypeScript.
-- Oxlint uses `oxlint.config.ts`. The isolated `oxlint.type-aware.config.ts` configuration enforces `typescript/no-floating-promises` for plugin sources.
+- Oxlint uses `oxlint.config.ts`. The isolated `oxlint.type-aware.config.ts` configuration checks promises in plugin and adapter sources.
+  Adapter checks use `--tsconfig tsconfig.cli.json` and also reject misused promises, invalid awaits, and incomplete switches.
+- Adapter sources and tests require type-only imports and exports, strict equality, and no unused variables or explicit `any`.
+  Production adapters also reject non-null assertions and nested ternaries.
+- Oxfmt covers all `src/lib/adapters` files. The formatting hook also formats changes to existing adapters.
 
 - Use `eslint-plugin-sonarjs` only for the `oxlint.config.ts` cognitive-complexity rules documented in [`tools/lint/DEPENDENCY-REVIEW.md`](tools/lint/DEPENDENCY-REVIEW.md).
 - Keep function complexity low; existing complexity hotspots are tracked separately
