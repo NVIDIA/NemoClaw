@@ -145,9 +145,7 @@ export function mergeHermesPreservedEnvIntoMessagingPlan(
     .flatMap((file) => file.assignments);
   if (assignments.length === 0) return plan;
 
-  const enabledChannels = plan.channels.filter(
-    (channel) => channel.active && !channel.disabled,
-  );
+  const enabledChannels = plan.channels.filter((channel) => channel.active && !channel.disabled);
   // Prefer a channel that already renders into ~/.hermes/.env so the preserved
   // lines ride along with an existing entry. Fall back to any enabled channel:
   // whether a channel renders env lines depends on its inputs, and anchoring

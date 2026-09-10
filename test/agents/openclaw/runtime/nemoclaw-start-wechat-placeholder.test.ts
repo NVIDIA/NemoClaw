@@ -247,10 +247,12 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
         const normalizer = path.join(tmpDir, "normalizer.py");
         fs.writeFileSync(
           normalizer,
-          fs.readFileSync(MUTABLE_CONFIG_NORMALIZER, "utf-8").replace(
-            'if __name__ == "__main__":',
-            'runtime_config_modes = lambda: (0o2770, 0o660)\n\nif __name__ == "__main__":',
-          ),
+          fs
+            .readFileSync(MUTABLE_CONFIG_NORMALIZER, "utf-8")
+            .replace(
+              'if __name__ == "__main__":',
+              'runtime_config_modes = lambda: (0o2770, 0o660)\n\nif __name__ == "__main__":',
+            ),
         );
         const normalized = spawnSync(
           "python3",

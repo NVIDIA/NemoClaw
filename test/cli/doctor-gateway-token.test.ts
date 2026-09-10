@@ -423,7 +423,6 @@ describe("CLI dispatch", () => {
     },
   );
 
-
   it(
     "doctor does not query sandbox state from a different active gateway",
     testTimeoutOptions(15_000),

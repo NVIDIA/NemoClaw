@@ -153,35 +153,35 @@ describe("OnboardRuntime", () => {
     });
   });
 
-  it.each([
-    "pending",
-    "in_progress",
-  ] as const)("emits one mapped skip event when a $status step becomes skipped", async (status) => {
-    const initial = sessionInState("policies");
-    initial.endpointUrl =
-      "https://alice:super-secret@example.com/v1?token=super-secret&keep=yes#token=super-secret";
-    initial.steps.agent_setup.status = status;
-    const { runtime, events, getSession, stepCalls } = createHarness(initial);
+  it.each(["pending", "in_progress"] as const)(
+    "emits one mapped skip event when a $status step becomes skipped",
+    async (status) => {
+      const initial = sessionInState("policies");
+      initial.endpointUrl =
+        "https://alice:super-secret@example.com/v1?token=super-secret&keep=yes#token=super-secret";
+      initial.steps.agent_setup.status = status;
+      const { runtime, events, getSession, stepCalls } = createHarness(initial);
 
-    await runtime.markStepSkipped("agent_setup");
-    await runtime.markStepSkipped("agent_setup");
+      await runtime.markStepSkipped("agent_setup");
+      await runtime.markStepSkipped("agent_setup");
 
-    expect(stepCalls).toEqual(["markStepSkipped", "markStepSkipped"]);
-    expect(getSession().steps.agent_setup.status).toBe("skipped");
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      version: 1,
-      type: "state.skipped",
-      sessionId: initial.sessionId,
-      state: "agent_setup",
-      step: "agent_setup",
-      context: { endpointOrigin: "https://example.com" },
-      error: null,
-      metadata: {},
-    });
-    expect(JSON.stringify(events)).not.toContain("super-secret");
-    expect(JSON.stringify(events)).not.toContain("alice");
-  });
+      expect(stepCalls).toEqual(["markStepSkipped", "markStepSkipped"]);
+      expect(getSession().steps.agent_setup.status).toBe("skipped");
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        version: 1,
+        type: "state.skipped",
+        sessionId: initial.sessionId,
+        state: "agent_setup",
+        step: "agent_setup",
+        context: { endpointOrigin: "https://example.com" },
+        error: null,
+        metadata: {},
+      });
+      expect(JSON.stringify(events)).not.toContain("super-secret");
+      expect(JSON.stringify(events)).not.toContain("alice");
+    },
+  );
 
   it.each([
     { label: "complete", stepName: "openclaw", status: "complete" as const },

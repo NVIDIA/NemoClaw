@@ -172,20 +172,23 @@ describe("advisory early warning correlation", () => {
   it.each([
     ["garbage range first", [garbageRangeVulnerability, exactRangeVulnerability]],
     ["exact range first", [exactRangeVulnerability, garbageRangeVulnerability]],
-  ])("keeps an exact signal free of ambiguous evidence for the same package (%s)", (_label, vulnerabilities) => {
-    const advisory = { ghsa_id: "GHSA-23hp-3jrh-7fpw", vulnerabilities };
-    expect(correlateAdvisories([advisory], inventory)).toEqual([
-      {
-        advisoryId: "GHSA-23hp-3jrh-7fpw",
-        package: "tar",
-        vulnerableRange: "< 9.0.0",
-        matchedVersions: ["7.5.20"],
-        source: "upstream-ghsa",
-        confidence: "exact",
-        action: "investigate",
-      },
-    ]);
-  });
+  ])(
+    "keeps an exact signal free of ambiguous evidence for the same package (%s)",
+    (_label, vulnerabilities) => {
+      const advisory = { ghsa_id: "GHSA-23hp-3jrh-7fpw", vulnerabilities };
+      expect(correlateAdvisories([advisory], inventory)).toEqual([
+        {
+          advisoryId: "GHSA-23hp-3jrh-7fpw",
+          package: "tar",
+          vulnerableRange: "< 9.0.0",
+          matchedVersions: ["7.5.20"],
+          source: "upstream-ghsa",
+          confidence: "exact",
+          action: "investigate",
+        },
+      ]);
+    },
+  );
 
   it.each([
     ["null", null],

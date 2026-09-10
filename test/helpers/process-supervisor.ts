@@ -4,12 +4,11 @@
 import type { ChildProcess } from "node:child_process";
 
 /**
- * Lifecycle-only supervisor for child processes spawned by the E2E
- * TypeScript layer.
+ * Lifecycle-only supervisor for child processes spawned by tests.
  *
  * Spec ownership: detached process-group cleanup, SIGTERM -> SIGKILL
- * escalation, timeout enforcement, and AbortSignal handling are
- * FIXTURE INFRASTRUCTURE. The shared observed-child boundary owns spawn,
+ * escalation, timeout enforcement, and AbortSignal handling are shared
+ * deterministic test infrastructure. The observed-child boundary owns spawn,
  * activity, and timestamp-only output reporting; callers that need bounded
  * command completion hand its child to this supervisor immediately.
  *

@@ -331,11 +331,16 @@ describe("execSandbox mutable OpenClaw cleanup (#6047)", () => {
 
     const result = await runExecCase({
       outcome: { kind: "completed", exitCode: 0 },
-      cleanupDeps: cleanupDeps({ inspectMutableConfigPerms: inspect, repairMutableConfigPerms: repair }),
+      cleanupDeps: cleanupDeps({
+        inspectMutableConfigPerms: inspect,
+        repairMutableConfigPerms: repair,
+      }),
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr.join("\n")).toContain("permission inspection unavailable: startup-not-ready");
+    expect(result.stderr.join("\n")).toContain(
+      "permission inspection unavailable: startup-not-ready",
+    );
     expect(repair).not.toHaveBeenCalled();
   });
 });

@@ -395,7 +395,10 @@ describe("E2E fixture primitives", () => {
       expect(result.stdout).not.toContain(secret);
       expect(result.stderr).not.toContain(secret);
       artifacts.addRedactionValues([secret]);
-      await artifacts.writeText("retained-install.log", `${result.stdout}\n${result.stderr}\n${secret}`);
+      await artifacts.writeText(
+        "retained-install.log",
+        `${result.stdout}\n${result.stderr}\n${secret}`,
+      );
       const retained = fs.readFileSync(artifacts.pathFor("retained-install.log"), "utf8");
       expect(retained).toContain("[REDACTED]");
       expect(retained).not.toContain(secret);

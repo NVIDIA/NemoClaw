@@ -211,8 +211,11 @@ test(
       const registryContainerId = registryCreate.stdout.trim();
       expect(registryContainerId).toMatch(/^[a-f0-9]{64}$/u);
       createdContainerIds.push(registryContainerId);
-      expect(createdContainerIds.every((containerId) =>
-          Object.is(engine.capture(["start", containerId]).status, 0))).toBe(true);
+      expect(
+        createdContainerIds.every((containerId) =>
+          Object.is(engine.capture(["start", containerId]).status, 0),
+        ),
+      ).toBe(true);
 
       const runtimeAuthority = {
         schemaVersion: 1,

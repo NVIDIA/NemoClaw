@@ -163,16 +163,13 @@ describe("OpenClaw config posture verification", () => {
   it.each([
     ["invalid-restart-posture", "/sandbox/.openclaw"],
     ["config-not-mutable", "/sandbox/.openclaw/openclaw.json"],
-  ])(
-    "recognizes the guard's mode-only refusal: %s",
-    (code, issuePath) => {
-      const run = vi.fn(() => result({ status: 1, stdout: postureFailure(code, issuePath) }));
-      expect(verifyOpenClawConfigPosture({ run })).toMatchObject({
-        repairable: true,
-        issues: [expect.stringContaining(code)],
-      });
-    },
-  );
+  ])("recognizes the guard's mode-only refusal: %s", (code, issuePath) => {
+    const run = vi.fn(() => result({ status: 1, stdout: postureFailure(code, issuePath) }));
+    expect(verifyOpenClawConfigPosture({ run })).toMatchObject({
+      repairable: true,
+      issues: [expect.stringContaining(code)],
+    });
+  });
 
   it.each([
     { status: 1, stdout: postureFailure("recovery-required") },

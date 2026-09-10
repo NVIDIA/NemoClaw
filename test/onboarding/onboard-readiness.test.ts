@@ -14,12 +14,7 @@ vi.mock("../../src/lib/runner", async (importOriginal) => ({
   runCapture: policySideEffects.runCapture,
 }));
 
-import {
-  applyPreset,
-  applyPresetContent,
-  applyPresets,
-  removePreset,
-} from "../../src/lib/policy";
+import { applyPreset, applyPresetContent, applyPresets, removePreset } from "../../src/lib/policy";
 
 type OnboardReadinessInternals = {
   hasStaleGateway: (output: string | null | undefined) => boolean;
@@ -157,13 +152,16 @@ describe("WSL sandbox name handling", () => {
     ["removePreset", (name: string) => removePreset(name, "npm")],
     ["applyPresetContent", (name: string) => applyPresetContent(name, "npm", "")],
     ["applyPresets", (name: string) => applyPresets(name, ["npm"])],
-  ])("%s rejects 20-character and consecutive-hyphen names before policy side effects (#8497)", (_entrypoint, invoke) => {
-    ["a".repeat(20), "legacy--box"].forEach((name) => {
-      expect(() => invoke(name)).toThrow(/Allowed format: 1-19 characters/);
-    });
-    expect(policySideEffects.runCapture).not.toHaveBeenCalled();
-    expect(policySideEffects.run).not.toHaveBeenCalled();
-  });
+  ])(
+    "%s rejects 20-character and consecutive-hyphen names before policy side effects (#8497)",
+    (_entrypoint, invoke) => {
+      ["a".repeat(20), "legacy--box"].forEach((name) => {
+        expect(() => invoke(name)).toThrow(/Allowed format: 1-19 characters/);
+      });
+      expect(policySideEffects.runCapture).not.toHaveBeenCalled();
+      expect(policySideEffects.run).not.toHaveBeenCalled();
+    },
+  );
 
   it("readiness check uses exact match preventing truncated name false-positive", () => {
     // If "my-assistant" was truncated to "m", the readiness check should

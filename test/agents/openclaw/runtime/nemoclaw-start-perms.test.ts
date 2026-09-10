@@ -7,7 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "scripts",
+  "nemoclaw-start.sh",
+);
 const NORMALIZER_SCRIPT = path.join(
   import.meta.dirname,
   "..",
@@ -184,7 +190,17 @@ describe("nemoclaw-start config guard output permissions", () => {
         expect(fs.statSync(privateDir).uid).toBe(0);
         const remainingOutput = spawnSync(
           "sudo",
-          ["-n", "/usr/bin/find", privateDir, "-mindepth", "1", "-maxdepth", "1", "-print", "-quit"],
+          [
+            "-n",
+            "/usr/bin/find",
+            privateDir,
+            "-mindepth",
+            "1",
+            "-maxdepth",
+            "1",
+            "-print",
+            "-quit",
+          ],
           { encoding: "utf-8" },
         );
         expect(remainingOutput.status, remainingOutput.stderr).toBe(0);
@@ -633,7 +649,6 @@ describe("nemoclaw-start mutable config startup ordering", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
-
 });
 
 describe("nemoclaw-start mutable config seal classification", () => {
