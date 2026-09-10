@@ -19,8 +19,11 @@ $wrapper=Read-ControlAst (Join-Path $PSScriptRoot 'complete-official-python.ps1'
 $pathAssignment=$wrapper.Find({param($item) $item -is [Management.Automation.Language.AssignmentStatementAst] -and $item.Left -is [Management.Automation.Language.VariableExpressionAst] -and $item.Left.VariablePath.UserPath -ceq 'runtimeBuildOwnedPath'},$true)
 $stageCall=$wrapper.Find({param($item) $item -is [Management.Automation.Language.TryStatementAst] -and $item.Extent.Text.Contains('Get-InstallStage')},$true)
 if($null -eq $resolver -or $null -eq $stageCall -or $null -eq $pathAssignment){throw 'The actual upstream resolver or stage invocation is missing.'}
+$jsonWriter=$wrapper.Find({param($item) $item -is [Management.Automation.Language.FunctionDefinitionAst] -and $item.Name -eq 'Write-PythonBuildJson'},$true)
+. ([scriptblock]::Create($jsonWriter.Extent.Text))
 $priorPath=$env:PATH
 $priorSystemRoot=$env:SystemRoot
+$priorExpectedPath=$env:NEMOCLAW_HERMES_DEPENDENCY_PATH
 $root=Join-Path ([IO.Path]::GetTempPath()) ('hermes stage control '+[guid]::NewGuid().ToString('N'))
 try {
     [IO.Directory]::CreateDirectory((Join-Path $root 'bin'))|Out-Null
@@ -37,11 +40,15 @@ param([switch]$NonInteractive,[switch]$SkipSetup,[switch]$SkipComputerUse,[strin
 '@ + "`n" + $resolver.Extent.Text + @'
 
 function Get-InstallStage([string]$Name){if($Name -cne 'dependencies'){throw 'Unexpected stage.'};return @{Name=$Name}}
+# This fixture owns strict-mode/resolver semantics only. The separate real
+# Windows registry control executes the official Sync-EnvPath/Invoke-Stage.
+function Sync-EnvPath {$env:PATH=$script:ControlRefreshedPath}
 function Invoke-Stage([hashtable]$StageDef){Resolve-UvCmd;if($script:ExpectedStageFailure){throw 'expected-stage-error'}}
 '@
     $runtimeBuildInstaller=Join-Path $root 'fixture-installer.ps1'
     [IO.File]::WriteAllText($runtimeBuildInstaller,$fixture)
     $runtimeBuildRoot=$root;$runtimeBuildSource=$root
+    $runtimeBuildEvidence=$root
     # Evaluate the actual production build PATH, with only owned fixture roots.
     # Native command discovery must not inherit the runner's unrelated Git tools.
     $runtimeBuildPython=Join-Path $root 'python/python.exe'
@@ -52,6 +59,8 @@ function Invoke-Stage([hashtable]$StageDef){Resolve-UvCmd;if($script:ExpectedSta
     . ([scriptblock]::Create($pathAssignment.Extent.Text))
     $controlledPath=($runtimeBuildOwnedPath -split ';') -join [IO.Path]::PathSeparator
     $env:PATH=$controlledPath
+    $env:NEMOCLAW_HERMES_DEPENDENCY_PATH=$controlledPath
+    $script:ControlRefreshedPath=$controlledPath
     $runtimeBuildLock=[pscustomobject]@{upstream=[pscustomobject]@{tag='v2026.9.7';commit='2237be355906fbe6065ce1815711eee52b2d646e'}}
     $exercise=[scriptblock]::Create('try {'+"`n"+$stageCall.Extent.Text+@'
 
@@ -77,7 +86,12 @@ if(-not $script:ExpectedStageFailure -and $stageError){throw $stageError}
         [IO.File]::SetUnixFileMode($agent,([IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute))
     }
     $env:PATH=$legacy+[IO.Path]::PathSeparator+$controlledPath
+    $script:ControlRefreshedPath=$env:PATH
+    $env:NEMOCLAW_HERMES_DEPENDENCY_PATH=$env:PATH
     if(-not(Get-Command winpty-agent -CommandType Application -ErrorAction SilentlyContinue)){throw 'Legacy discovery control did not expose its fixture.'}
+    # The inherited path is clean; this fixture adds the legacy location only
+    # at the refresh boundary, proving the actual guard runs after it.
+    $env:PATH=$controlledPath
     $script:ExpectedStageFailure=$false;$stageError=$null;$guarded=$false
     try {& $exercise}catch{$guarded=$_.Exception.Message -ceq 'Legacy WinPTY is unexpectedly discoverable in the native ARM64 dependency build.'}
     if(-not $guarded){throw 'The actual stage guard accepted discoverable legacy WinPTY.'}
@@ -86,6 +100,7 @@ if(-not $script:ExpectedStageFailure -and $stageError){throw $stageError}
 } finally {
     $env:PATH=$priorPath
     $env:SystemRoot=$priorSystemRoot
-    Remove-Variable UvCmd,ExpectedStageFailure -Scope Script -ErrorAction SilentlyContinue
+    $env:NEMOCLAW_HERMES_DEPENDENCY_PATH=$priorExpectedPath
+    Remove-Variable UvCmd,ExpectedStageFailure,ControlRefreshedPath -Scope Script -ErrorAction SilentlyContinue
     if([IO.Directory]::Exists($root)){[IO.Directory]::Delete($root,$true)}
 }

@@ -904,6 +904,9 @@ jobs:
           & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-msvc-tools.ps1"
           & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-python-semantics.ps1" `
             -OfficialInstallerPath "$env:HERMES_COMPONENT_ROOT\hermes-agent\scripts\install.ps1"
+          & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-registry-path.ps1" `
+            -OfficialInstallerPath "$env:HERMES_COMPONENT_ROOT\hermes-agent\scripts\install.ps1" `
+            -ReceiptPath "$env:RUNNER_TEMP\official-hermes-components\python-registry-path-controls.json"
 
       - name: Set up pinned native Rust for canonical Hermes Python
         if: ${{ (inputs.official_hermes_phase == 'python' || inputs.official_hermes_phase == 'runtime') }}

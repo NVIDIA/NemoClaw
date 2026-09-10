@@ -82,7 +82,18 @@ if ($StageWorker) {
         . $runtimeBuildInstaller -NonInteractive -SkipSetup -SkipComputerUse `
             -Branch $runtimeBuildLock.upstream.tag -Commit $runtimeBuildLock.upstream.commit `
             -HermesHome $runtimeBuildRoot -InstallDir $runtimeBuildSource -Json
-        if (Get-Command winpty-agent -CommandType Application -ErrorAction SilentlyContinue) {
+        # Invoke-Stage repeats this official refresh. Check its effective PATH,
+        # not only the inherited process environment before registry refresh.
+        Sync-EnvPath
+        $runtimeBuildLegacy = @(Get-Command winpty-agent -CommandType Application -ErrorAction SilentlyContinue)
+        Write-PythonBuildJson -Value ([ordered]@{ schemaVersion = 1; classification = 'official-dependency-path'
+            afterOfficialSync = $env:PATH; expectedPath = $env:NEMOCLAW_HERMES_DEPENDENCY_PATH
+            legacyWinpty = @($runtimeBuildLegacy | ForEach-Object { $_.Source })
+        }) -Path (Join-Path $runtimeBuildEvidence 'dependency-path.json')
+        if ($env:PATH -cne $env:NEMOCLAW_HERMES_DEPENDENCY_PATH) {
+            throw 'The official registry refresh changed the approved dependency build PATH.'
+        }
+        if ($runtimeBuildLegacy.Count -ne 0) {
             throw 'Legacy WinPTY is unexpectedly discoverable in the native ARM64 dependency build.'
         }
         $runtimeBuildStage = Get-InstallStage -Name 'dependencies'
@@ -128,7 +139,8 @@ if (Test-Path -LiteralPath $runtimeBuildEvidence) { throw 'Python build evidence
 $runtimeBuildSystem32 = Join-Path $env:SystemRoot 'System32'
 $runtimeBuildPowerShell = Join-Path $runtimeBuildSystem32 'WindowsPowerShell\v1.0\powershell.exe'
 $runtimeBuildTaskkill = Join-Path $runtimeBuildSystem32 'taskkill.exe'
-$runtimeBuildSavedUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+. (Join-Path $PSScriptRoot 'build-registry-path.ps1')
+$runtimeBuildRegistryScopes = @()
 # winpty-rs 0.4.1 auto-enables legacy WinPTY if winpty-agent is discoverable.
 # PortableGit's usr/bin contains x64 WinPTY; keep it out of this ARM64 build
 # process only. The complete runtime Git tree and Bash path are unchanged.
@@ -149,7 +161,17 @@ $runtimeBuildReceipt = [ordered]@{
     buildRequirementsSha256 = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'official-python-build.requirements.txt') -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 try {
-    [Environment]::SetEnvironmentVariable('Path', $runtimeBuildOwnedPath, 'User')
+    if ($env:GITHUB_ACTIONS -cne 'true' -or [string]::IsNullOrEmpty($env:RUNNER_TEMP)) {
+        throw 'Registry PATH preparation is restricted to the disposable GitHub Windows build runner.'
+    }
+    # Preflight both handles/values before either mutation. The official stage
+    # merges User and Machine PATH, so sanitizing User alone admits host Git.
+    $runtimeBuildRegistryScopes += New-BuildRegistryPathScope -Name 'User' `
+        -Key ([Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true))
+    $runtimeBuildRegistryScopes += New-BuildRegistryPathScope -Name 'Machine' `
+        -Key ([Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true))
+    Set-BuildRegistryPathScope -Scope $runtimeBuildRegistryScopes[0] -Value $runtimeBuildOwnedPath
+    Set-BuildRegistryPathScope -Scope $runtimeBuildRegistryScopes[1] -Value $runtimeBuildSystem32
     $runtimeBuildStart = [Diagnostics.ProcessStartInfo]::new()
     $runtimeBuildStart.FileName = $runtimeBuildPowerShell
     $runtimeBuildArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath,
@@ -169,6 +191,7 @@ try {
         if ($null -ne $value) { $runtimeBuildStart.EnvironmentVariables[$name] = $value }
     }
     $runtimeBuildStart.EnvironmentVariables['PATH'] = $runtimeBuildOwnedPath
+    $runtimeBuildStart.EnvironmentVariables['NEMOCLAW_HERMES_DEPENDENCY_PATH'] = $runtimeBuildOwnedPath + ';' + $runtimeBuildSystem32
     # A cleared Windows PowerShell environment otherwise becomes PATHEXT=.CPL,
     # which launches even absolute .exe paths as detached documents.
     $runtimeBuildStart.EnvironmentVariables['PATHEXT'] = '.COM;.EXE;.BAT;.CMD'
@@ -232,8 +255,11 @@ try {
             try { $resource.Dispose() } catch { $runtimeBuildCleanupErrors.Add($_.Exception.Message) }
         }
     }
-    try { [Environment]::SetEnvironmentVariable('Path', $runtimeBuildSavedUserPath, 'User') }
-    catch { $runtimeBuildCleanupErrors.Add($_.Exception.Message) }
+    try {
+        $runtimeBuildRestoration = Restore-BuildRegistryPathScopes -Scopes $runtimeBuildRegistryScopes
+        $runtimeBuildReceipt['registryPathRestoration'] = $runtimeBuildRestoration.paths
+        foreach ($errorText in $runtimeBuildRestoration.errors) { $runtimeBuildCleanupErrors.Add($errorText) }
+    } catch { $runtimeBuildCleanupErrors.Add($_.Exception.Message) }
     $runtimeBuildReceipt['cleanupErrors'] = @($runtimeBuildCleanupErrors.ToArray())
     if ($runtimeBuildCleanupErrors.Count -gt 0 -or -not $runtimeBuildReceipt.cleanupStopped) {
         $runtimeBuildReceipt.status = 'failed'
