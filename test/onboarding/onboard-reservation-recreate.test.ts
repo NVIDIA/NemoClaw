@@ -4,10 +4,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { describe, it, onTestFinished } from "vitest";
+import { describe, it, vi } from "vitest";
 import {
   createOnboardProcessWorkspace,
-  runOnboardProcess,
+  runOnboardProcessAsync,
   trailingJsonPayload,
   workspaceEnv,
 } from "../helpers/onboard-child-process-harness";
@@ -24,8 +24,11 @@ const managedWorkloadOnboardPath = JSON.stringify(
   path.join(repoRoot, "src", "lib", "onboard", "managed-workload", "onboard-orchestration.ts"),
 );
 
+// Each case loads CLI source in a child process; limit overlap to bound memory.
+vi.setConfig({ maxConcurrency: 2 });
+
 describe("onboard sandbox recreate reservation safety", () => {
-  it.each([
+  it.concurrent.for([
     {
       name: "preserves a current-session pending route reservation across a not-ready recreate",
       reservationSessionId: "session-owner",
@@ -68,14 +71,12 @@ describe("onboard sandbox recreate reservation safety", () => {
   ] as const)(
     "$name (#6562)",
     { timeout: 60_000 },
-    async ({
-      reservationSessionId,
-      expectedRemoval,
-      replaceBeforeCleanup,
-      expectedRetainedReservation,
-    }) => {
+    async (
+      { reservationSessionId, expectedRemoval, replaceBeforeCleanup, expectedRetainedReservation },
+      context,
+    ) => {
       const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-reservation-survives-");
-      onTestFinished(() => workspace.remove());
+      context.onTestFinished(() => workspace.remove());
       const scriptPath = workspace.path("reservation-survives.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
@@ -307,13 +308,14 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = runOnboardProcess([scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         env: workspaceEnv(workspace, {
           NEMOCLAW_NON_INTERACTIVE: "1",
           NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
           NEMOCLAW_SANDBOX_PREBUILD: "1",
         }),
         timeoutMs: 30_000,
+        context,
       });
 
       assert.equal(
@@ -363,16 +365,16 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
-  it.each([
+  it.concurrent.for([
     { scenario: "same-session", resumes: true },
     { scenario: "foreign-reservation", resumes: false },
     { scenario: "changed-checkpoint", resumes: false },
   ] as const)(
     "recovers a verified create in a new process for $scenario authority (#9833)",
     { timeout: 90_000 },
-    async ({ scenario, resumes }) => {
+    async ({ scenario, resumes }, context) => {
       const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-verified-create-resume-");
-      onTestFinished(() => workspace.remove());
+      context.onTestFinished(() => workspace.remove());
       const scriptPath = workspace.path("verified-create-resume.js");
       const createCountPath = workspace.path("sandbox-create-count.txt");
       const effectCountPath = workspace.path("deferred-effect-count.txt");
@@ -672,9 +674,10 @@ createArgs[16] = async () => {
         NEMOCLAW_SANDBOX_PREBUILD: "1",
       });
 
-      const first = runOnboardProcess([scriptPath, "seed", scenario], {
+      const first = await runOnboardProcessAsync([scriptPath, "seed", scenario], {
         env,
         timeoutMs: 40_000,
+        context,
       });
       assert.equal(first.status, 0, first.stderr || first.error?.message);
       const retained = trailingJsonPayload<{
@@ -699,9 +702,10 @@ createArgs[16] = async () => {
         retained.registryEntry.lifecycleLiveIdentityFingerprint,
       );
 
-      const second = runOnboardProcess([scriptPath, "resume", scenario], {
+      const second = await runOnboardProcessAsync([scriptPath, "resume", scenario], {
         env,
         timeoutMs: 40_000,
+        context,
       });
       assert.equal(second.status, 0, second.stderr || second.error?.message);
       const recovered = trailingJsonPayload<{
