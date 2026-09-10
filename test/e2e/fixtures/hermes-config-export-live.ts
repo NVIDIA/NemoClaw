@@ -141,6 +141,8 @@ export async function verifyHermesConfigExportLive(
   const nemoclawDocument = validateNemoClawConfig(YAML.parse(nemoclawRaw));
   const nemohermesDocument = validateNemoClawConfig(YAML.parse(nemohermesRaw));
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
+  const provider = nemoclawDocument.spec.inferenceProviders[0];
+  const hostedProvider = provider && !("serving" in provider) ? provider : undefined;
   const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
   const expectedImage = entry.workload?.kind === "managed-image" ? entry.workload.reference : null;
 
@@ -191,8 +193,7 @@ export async function verifyHermesConfigExportLive(
     agent: sandbox.agents[0]?.type,
     checked: true,
     credentialValuesOmitted: !containsCredential,
-    credentialReferenceMatches:
-      nemoclawDocument.spec.inferenceProviders[0]?.credential?.env === entry.credentialEnv,
+    credentialReferenceMatches: hostedProvider?.credential?.env === entry.credentialEnv,
     identityDriftPreventedPublication:
       typeof nemoclawDriftExitCode === "number" &&
       nemoclawDriftExitCode !== 0 &&
@@ -204,8 +205,7 @@ export async function verifyHermesConfigExportLive(
       nemoclawDriftDiagnostics.includes("drifted") &&
       nemohermesDriftDiagnostics.includes("drifted"),
     immutableManagedImageMatches: sandbox.runtime.image.ref === expectedImage,
-    inferenceEndpointMatches:
-      nemoclawDocument.spec.inferenceProviders[0]?.endpoint === entry.endpointUrl,
+    inferenceEndpointMatches: hostedProvider?.endpoint === entry.endpointUrl,
     launchersSucceeded,
     policyMatches: isDeepStrictEqual(sandbox.network.policy.explicit, expectedPolicy),
     sandboxNameMatches: sandbox.name === input.sandboxName,
