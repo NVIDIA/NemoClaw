@@ -48,6 +48,7 @@ describe("credential-handoff process-control environment policy", () => {
     "LOCPATH",
     "NETRC",
     "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL",
+    "NEMOCLAW_BOOTSTRAP_FETCH_REF",
     "NEMOCLAW_BOOTSTRAP_PAYLOAD",
     "NEMOCLAW_INSTALL_REF",
     "NEMOCLAW_INSTALL_TAG",

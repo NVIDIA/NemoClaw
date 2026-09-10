@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
 import {
   dockerEnv,
@@ -86,6 +87,16 @@ import type { ManagedBootstrapRuntimeCreateLifecycleInput } from "./runtime-crea
 
 const temporaryStateRoots: string[] = [];
 
+function successfulCommandExecutor(): OpenShellSandboxBufferedCommandExecutor {
+  return {
+    runBuffered: vi.fn(async () => ({
+      outcome: { kind: "completed" as const, exitCode: 0 },
+      stdout: "",
+      stderr: "",
+    })),
+  };
+}
+
 function compatibilityLifecycleInput(
   seed: ReturnType<typeof authority>,
   dependencies: ManagedBootstrapRuntimeCreateLifecycleInput["dependencies"] & DockerGpuPatchDeps,
@@ -136,7 +147,7 @@ function compatibilityLifecycleInput(
       gatewayPort: 8080,
       reverifyBridgeReachability: vi.fn(),
     },
-    dependencies,
+    dependencies: { commandExecutor: successfulCommandExecutor(), ...dependencies },
   };
 }
 
@@ -173,6 +184,7 @@ function gpuModeDependencies() {
   return {
     dockerRun,
     dependencies: {
+      commandExecutor: successfulCommandExecutor(),
       dockerCapture: vi.fn(() => ""),
       dockerRun,
       dockerRm: vi.fn(() => ({ status: 0 })),
@@ -561,7 +573,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         gatewayPort: 0,
         reverifyBridgeReachability: () => undefined,
       },
-      dependencies: {},
+      dependencies: { commandExecutor: successfulCommandExecutor() },
     });
     const child = new FakeChild();
     let ready = false;
@@ -668,7 +680,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         gatewayPort: 0,
         reverifyBridgeReachability: () => undefined,
       },
-      dependencies: {},
+      dependencies: { commandExecutor: successfulCommandExecutor() },
     });
 
     await expect(

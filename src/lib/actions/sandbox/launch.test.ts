@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   requireActiveLifecycleAuthority: vi.fn(),
   requalifyPortableAuthority: vi.fn(),
   assertCommandCurrent: vi.fn(),
+  captureAcceptedReadinessObservation: vi.fn(),
 }));
 
 vi.mock("./connect", () => ({
@@ -64,7 +65,11 @@ vi.mock("./connect-hermes-light-skin", () => ({
   prepareHermesLightTerminalSkin: mocks.prepareHermesLightTerminalSkin,
 }));
 vi.mock("./launch-readiness", () => ({
-  createBoundLaunchReadinessDeps: () => ({ boundReadinessCapture: true }),
+  createBoundLaunchReadinessDeps: (capture: unknown, commandExecutor: unknown) => ({
+    boundReadinessCapture: true,
+    capture,
+    commandExecutor,
+  }),
   inspectLaunchReadiness: mocks.inspectLaunchReadiness,
   publishLaunchReadiness: mocks.publishLaunchReadiness,
   withLaunchReadinessMutationGate: mocks.withLaunchReadinessMutationGate,
@@ -83,7 +88,7 @@ vi.mock("./gateway-state", async () => {
     typeof import("../../onboard/experimental/hermes-portable-lifecycle")
   >("../../onboard/experimental/hermes-portable-lifecycle");
   return {
-    captureHermesPortableAcceptedReadinessObservation: vi.fn(),
+    captureHermesPortableAcceptedReadinessObservation: mocks.captureAcceptedReadinessObservation,
     policyObservationRecoveryAction: (
       error: { kind: string },
       sandboxName: string,
@@ -927,6 +932,105 @@ describe("launchSandbox", () => {
 
     expect(mocks.prepareInteractiveSession).toHaveBeenCalledBefore(mocks.publishLaunchReadiness);
     expect(mocks.publishLaunchReadiness).toHaveBeenCalledBefore(mocks.execSandbox);
+    expect(mocks.publishLaunchReadiness).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        commandExecutor: expect.objectContaining({ runBuffered: expect.any(Function) }),
+      }),
+    );
+  });
+
+  it("keeps fenced Hermes fallback publication on retained command authority", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    prepareSession("hermes", hermes, true);
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+    mocks.qualifyAcceptedReadinessAuthority.mockReturnValueOnce({
+      kind: "current",
+      commandAuthority: {
+        env: { HERMES_AUTHORITY_ENV: "retained" },
+        executablePath: "/usr/bin/openshell",
+        assertCurrent: mocks.assertCommandCurrent,
+      },
+    });
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "expired",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "gateway-alpha",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    mocks.publishLaunchReadiness.mockImplementation(async (_publication, publicationDeps) => {
+      publicationDeps.capture?.(["sandbox", "get", "alpha"]);
+      return { kind: "published" };
+    });
+
+    await launchSandbox("alpha", {
+      getSandbox: () => entry,
+      resolveSandboxGatewayName: () => "gateway-alpha",
+      withSandboxMutationLock: async (_name, operation) => await operation(),
+    });
+
+    expect(mocks.publishLaunchReadiness).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        assertPublicationCurrent: expect.any(Function),
+        boundReadinessCapture: true,
+        commandExecutor: expect.objectContaining({ runBuffered: expect.any(Function) }),
+      }),
+    );
+    expect(mocks.captureAcceptedReadinessObservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executablePath: "/usr/bin/openshell",
+        env: { HERMES_AUTHORITY_ENV: "retained" },
+      }),
+      ["sandbox", "get", "alpha"],
+      {},
+    );
+    expect(mocks.assertCommandCurrent).toHaveBeenCalled();
+  });
+
+  it("rejects Hermes authority drift after async fallback publication", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    const publicationStarted = deferred();
+    const publicationRelease = deferred();
+    prepareSession("hermes", hermes, true);
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "expired",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "gateway-alpha",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    mocks.publishLaunchReadiness.mockImplementation(async () => {
+      publicationStarted.resolve();
+      await publicationRelease.promise;
+      return { kind: "published" };
+    });
+
+    const launch = launchSandbox("alpha", {
+      getSandbox: () => entry,
+      resolveSandboxGatewayName: () => "gateway-alpha",
+      withSandboxMutationLock: async (_name, operation) => await operation(),
+    });
+    const rejection = expect(launch).rejects.toThrow(
+      "Hermes portable command authority changed during fallback publication",
+    );
+    await publicationStarted.promise;
+    mocks.assertCommandCurrent.mockImplementation(() => {
+      throw new Error("Hermes portable command authority changed during fallback publication");
+    });
+    publicationRelease.resolve();
+
+    await rejection;
+    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.runSandboxExecChild).not.toHaveBeenCalled();
   });
 
   it("stops before readiness publication and agent execution when recovery rejects launch (#9364)", async () => {

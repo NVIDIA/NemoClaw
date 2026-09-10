@@ -15,7 +15,7 @@ import {
 import { PolicyObservationError } from "./policy-state";
 import { openshellNotFoundDiagnosticLines } from "./command-argv";
 import { captureSanitizedResolvedOpenshell } from "./sanitized-capture";
-import type { OpenShellSandboxError, OpenShellSandboxResult } from "./sandbox-observer";
+import type { OpenShellSandboxResult } from "./sandbox-observer";
 import {
   classifyCliOpenShellCommandError,
   type CapturedOpenShellCommandResult,
