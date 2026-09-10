@@ -98,6 +98,32 @@ export default defineConfig({
         "no-nested-ternary": "error",
       },
     },
+    {
+      files: ["src/lib/adapters/**/*.ts"],
+      rules: {
+        "no-unused-vars": "error",
+        "no-debugger": "error",
+        eqeqeq: "error",
+        "typescript/no-explicit-any": "error",
+        "typescript/consistent-type-exports": "error",
+        "typescript/consistent-type-imports": [
+          "error",
+          {
+            disallowTypeAnnotations: false,
+            fixStyle: "separate-type-imports",
+            prefer: "type-imports",
+          },
+        ],
+      },
+    },
+    {
+      files: ["src/lib/adapters/**/*.ts"],
+      excludeFiles: ["**/*.test.ts"],
+      rules: {
+        "no-nested-ternary": "error",
+        "typescript/no-non-null-assertion": "error",
+      },
+    },
     // Pin the migration-baseline SonarJS scores for existing hotspots so later changes cannot increase them.
 
     {

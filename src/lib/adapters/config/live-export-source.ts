@@ -11,7 +11,6 @@ import { createSandboxConfig } from "../openshell/sandbox-config";
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import { fingerprintOpenShellSandboxId } from "../openshell/sandbox-identity";
 import { namedOpenShellGateway } from "../openshell/sandbox-observer";
-import { syncCliOpenShellSandboxPolicyReader } from "../openshell/sandbox-policy-cli";
 import { EXPORT_REGISTRY_EVIDENCE_KEYS } from "../../domain/config/export-evidence";
 import type {
   ExportSnapshotReadStage,
@@ -193,39 +192,29 @@ async function inferenceFor(
   };
 }
 
-async function effectivePolicy(
-  sandboxName: string,
-  gateway: ObservedExportGateway,
-  row: Sandbox,
-  signal: AbortSignal,
-) {
-  const configuration = await createSandboxConfig().get({
+async function effectivePolicy(gateway: ObservedExportGateway, row: Sandbox, signal: AbortSignal) {
+  const { policy, ...configuration } = await createSandboxConfig().get({
     target: namedOpenShellGateway(gateway.name),
     workspace: row.workspace,
     sandboxId: row.id,
     signal,
   });
-  const result = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
-    target: namedOpenShellGateway(gateway.name),
-    sandboxName,
-    scope: "effective",
-  });
-  if (!result.ok || result.value.appliedRevision === null) {
+  if (policy.appliedRevision === null) {
     throw new Error("The effective OpenShell policy and its applied revision could not be read.");
   }
-  if (!isSandboxPolicyCredentialFree(result.value.document)) {
+  if (!isSandboxPolicyCredentialFree(policy.document)) {
     throw new Error("The effective OpenShell policy is not credential-free.");
   }
   if (
-    row.policyVersion !== result.value.appliedRevision ||
-    configuration.revision !== result.value.appliedRevision
+    row.policyVersion !== policy.appliedRevision ||
+    configuration.revision !== policy.appliedRevision
   ) {
     throw new Error("The effective OpenShell policy revision does not match the live sandbox.");
   }
   return {
     sandboxId: row.id,
-    revision: String(result.value.appliedRevision),
-    document: result.value.document,
+    revision: String(policy.appliedRevision),
+    document: policy.document,
     configuration,
   };
 }
@@ -259,7 +248,7 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
       signal,
     );
     stage = "effective-policy";
-    const { configuration, ...policy } = await effectivePolicy(sandboxName, gateway, row, signal);
+    const { configuration, ...policy } = await effectivePolicy(gateway, row, signal);
     return {
       kind: "observed",
       sandboxName,
