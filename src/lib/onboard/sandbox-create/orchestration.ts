@@ -811,7 +811,7 @@ export function finalizeRecreatedSourceHermesStateVolume(
   deps.removeSourceRegistryEntry(input.sourceEntry, input.sandboxName);
 }
 
-export async function readManagedDcodeCreateSelectionDrift(
+export function readManagedDcodeCreateSelectionDrift(
   input: {
     sandboxName: string;
     provider: string;
@@ -821,7 +821,7 @@ export async function readManagedDcodeCreateSelectionDrift(
   },
   readDcodeSelectionDrift: DcodeSelectionDriftReader,
 ) {
-  return await readDcodeSelectionDrift(
+  return readDcodeSelectionDrift(
     input.sandboxName,
     input.provider,
     input.model,
@@ -912,7 +912,7 @@ type CreatedHermesCredentialEnvReconciliationDeps = {
   readonly waitForGateway: (
     sandboxName: string,
     revalidateSandboxIdentity: (operation: string) => void,
-  ) => Promise<boolean>;
+  ) => boolean;
   readonly revalidateSandboxIdentity: (operation: string) => void;
 };
 
@@ -921,15 +921,15 @@ type CreatedHermesCredentialEnvReconciliationDeps = {
  * onboarding reports success. A changed env file is not effective until the
  * exact managed gateway supervisor restarts and passes its authenticated probe.
  */
-export async function reconcileCreatedHermesCredentialEnvironment(
+export function reconcileCreatedHermesCredentialEnvironment(
   input: {
     readonly sandboxName: string;
     readonly plan: SandboxMessagingPlan | null;
   },
   deps: CreatedHermesCredentialEnvReconciliationDeps,
   recordRecovery: () => void,
-): Promise<void> {
-  return runAsyncWithPostCreateRecovery(async () => {
+): void {
+  return runWithPostCreateRecovery(() => {
     if (input.plan?.agent !== "hermes") return;
 
     deps.revalidateSandboxIdentity(
@@ -947,7 +947,7 @@ export async function reconcileCreatedHermesCredentialEnvironment(
         `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the managed gateway restart did not complete.`,
       );
     }
-    if (!(await deps.waitForGateway(input.sandboxName, deps.revalidateSandboxIdentity))) {
+    if (!deps.waitForGateway(input.sandboxName, deps.revalidateSandboxIdentity)) {
       throw new Error(
         `Hermes messaging credential reconciliation restarted sandbox '${input.sandboxName}', but the managed gateway did not remain healthy.`,
       );
@@ -960,10 +960,10 @@ export async function reconcileCreatedHermesCredentialEnvironment(
 
 export async function finalizeCreatedSandboxBeforeHermesCredentialReconciliation<T>(
   completeRegistration: () => Promise<T>,
-  reconcileCredentialEnvironment: () => Promise<void>,
+  reconcileCredentialEnvironment: () => void,
 ): Promise<T> {
   const registration = await completeRegistration();
-  await reconcileCredentialEnvironment();
+  reconcileCredentialEnvironment();
   return registration;
 }
 
@@ -1524,7 +1524,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       formatSandboxBuildEstimateNote,
       getDashboardForwardPort,
       readDcodeSelectionDrift,
-      sandboxCommandExecutor,
       getDefaultSandboxNameForAgent,
       getDockerDriverGatewayStateDir,
       getHermesToolGatewayBroker,
@@ -2024,7 +2023,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       const needsProviderMigration =
         hasMessagingTokens && providerExistence.some(({ token, exists }) => token && !exists);
       const selectionDrift = isManagedDcodeAgent
-        ? await readManagedDcodeCreateSelectionDrift(
+        ? readManagedDcodeCreateSelectionDrift(
             { sandboxName, provider, model, preferredInferenceApi, createIntent },
             readDcodeSelectionDrift,
           )
@@ -2967,7 +2966,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               ...agentCreateInput,
             },
             {
-              commandExecutor: sandboxCommandExecutor,
               runOpenshell: hermesPortableReadyRunner ?? runOpenshell,
               runCaptureOpenshell: hermesPortableReadyCapture ?? runCaptureOpenshell,
               sandboxObserver: createCliOpenShellSandboxObserverFromRunner(
@@ -3068,7 +3066,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       managedWorkloadRuntime,
       preparedSandboxWorkload,
       note,
-      sandboxCommandExecutor,
     );
     // Managed bootstrap can invalidate OpenShell's cached Ready state after it
     // replaces the container. Registry publication stays bound to the durable
