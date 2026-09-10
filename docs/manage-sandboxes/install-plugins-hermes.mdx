@@ -155,10 +155,19 @@ my-hermes-plugin-sandbox/
 If you start from the stock NemoClaw Hermes Dockerfile, keep the NemoClaw Hermes image contract intact.
 The image must still include the generated Hermes config, NemoClaw Hermes plugin, blueprint files, `nemoclaw-start` entrypoint, root-only gateway control helper, root-only managed controller, and shared supervisor library.
 
+Start a standalone custom Dockerfile from the published complete image, which already carries every managed Hermes layer:
+
+```dockerfile
+FROM ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:<digest>
+```
+
+Releases publish `ghcr.io/nvidia/nemoclaw/hermes-sandbox:<release>` and its digest alongside `openclaw-sandbox`.
+Pin the digest rather than a tag so rebuilds stay reproducible.
+
 <Warning>
   A custom `--from` Dockerfile replaces the normal NemoClaw Hermes Dockerfile.
-  Starting from `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest` alone is not enough.
-  Your Dockerfile must also preserve the NemoClaw Hermes layers from `agents/hermes/Dockerfile`.
+  Starting from `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest` alone is not enough: the platform base does not include the managed Hermes layers.
+  Extend the complete `ghcr.io/nvidia/nemoclaw/hermes-sandbox` image, or preserve the NemoClaw Hermes layers from `agents/hermes/Dockerfile` yourself.
 </Warning>
 
 If `gateway restart` or `recover` reports `privileged control unavailable` for an older custom image, update the Dockerfile to the current Hermes image contract and rebuild it with `nemohermes <name> rebuild --yes`.

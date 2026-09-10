@@ -85,7 +85,6 @@ describe("post-agent-install messaging selection", () => {
     const result = spawnSync(
       process.execPath,
       [
-        "--experimental-strip-types",
         "--input-type=module",
         "--eval",
         `import(${JSON.stringify(moduleUrl)})`,

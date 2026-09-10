@@ -391,7 +391,7 @@ async function removeMcpBridgeUnlocked(
         // skipping a fresh-exec probe lets cleanup proceed even if another
         // unrelated provider reference is also dangling.
         if (!providerWasMissing && !providerDetachedBeforeAdapterCleanup) {
-          waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+          await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
         }
         reservationCleanupProved = true;
       }

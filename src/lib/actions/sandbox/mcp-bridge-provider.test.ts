@@ -627,14 +627,14 @@ describe("OpenShell MCP provider state", () => {
     expect(command).not.toMatch(/\/tmp|snapshot|cat\s|exec\s+[0-9]*>/);
   });
 
-  it("uses an OpenShell-only exec for provider credential proofs", () => {
-    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+  it("uses an OpenShell-only exec for provider credential proofs", async () => {
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "v11",
       stderr: "",
     });
 
-    expect(
+    await expect(
       observeMcpCredentialRevision(
         "alpha",
         {
@@ -650,19 +650,19 @@ describe("OpenShell MCP provider state", () => {
         },
         runtimeSelection,
       ),
-    ).toBe("v11");
+    ).resolves.toBe("v11");
     const proofCommand = exec.mock.calls[0]?.[1] ?? "";
     expect(proofCommand).toContain("\n");
     expect(proofCommand).toContain("GITHUB_TOKEN");
     expect(proofCommand).not.toMatch(/\/tmp|snapshot/);
     expect(proofCommand).not.toContain("base64 -d");
     expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
-      allowLocalDockerFallback: false,
+      localDockerFallbackPolicy: "never",
       runtimeSelection,
     });
 
-    exec.mockReturnValue({ status: 0, stdout: "raw-secret", stderr: "" });
-    expect(() =>
+    exec.mockResolvedValue({ status: 0, stdout: "raw-secret", stderr: "" });
+    await expect(
       observeMcpCredentialRevision(
         "alpha",
         {
@@ -678,14 +678,14 @@ describe("OpenShell MCP provider state", () => {
         },
         runtimeSelection,
       ),
-    ).toThrow(/Could not observe the current OpenShell credential revision/);
+    ).rejects.toThrow(/Could not observe the current OpenShell credential revision/);
   });
 
   it("waits for native multiline OpenShell exec to expose an attached revision", async () => {
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockReturnValueOnce({ status: 0, stdout: "canonical", stderr: "" })
-      .mockReturnValue({ status: 0, stdout: "v11", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: "canonical", stderr: "" })
+      .mockResolvedValue({ status: 0, stdout: "v11", stderr: "" });
     const refreshAfterObservedAbsence = vi.fn();
 
     const revision = await waitForAttachedMcpCredential(
@@ -729,8 +729,8 @@ describe("OpenShell MCP provider state", () => {
     };
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockReturnValueOnce({ status: 0, stdout: "v11", stderr: "" })
-      .mockReturnValue({ status: 0, stdout: "v12", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: "v11", stderr: "" })
+      .mockResolvedValue({ status: 0, stdout: "v12", stderr: "" });
 
     await expect(waitForAttachedMcpCredential("alpha", entry, runtimeSelection)).resolves.toBe(
       "v12",
@@ -752,10 +752,10 @@ describe("OpenShell MCP provider state", () => {
     };
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockReturnValueOnce({ status: 0, stdout: "v15566468742889590075", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "v15566468742889590075", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "v7480654703696766813", stderr: "" })
-      .mockReturnValue({ status: 0, stdout: "v7480654703696766813", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: "v15566468742889590075", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "v15566468742889590075", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "v7480654703696766813", stderr: "" })
+      .mockResolvedValue({ status: 0, stdout: "v7480654703696766813", stderr: "" });
 
     await expect(
       waitForAttachedMcpCredential("alpha", entry, runtimeSelection, {
@@ -767,7 +767,7 @@ describe("OpenShell MCP provider state", () => {
 
   it("does not accept an identityless placeholder as attachment readiness", async () => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
-    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "canonical",
       stderr: "",
@@ -795,7 +795,7 @@ describe("OpenShell MCP provider state", () => {
 
   it("reports an absent attached credential without attempting policy recovery", async () => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
-    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "absent",
       stderr: "",
@@ -836,8 +836,8 @@ describe("OpenShell MCP provider state", () => {
     };
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockReturnValueOnce({ status: 0, stdout: "absent", stderr: "" })
-      .mockReturnValue({ status: 0, stdout: "v12", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: "absent", stderr: "" })
+      .mockResolvedValue({ status: 0, stdout: "v12", stderr: "" });
     const refreshAfterObservedAbsence = vi.fn();
 
     await expect(
@@ -851,7 +851,7 @@ describe("OpenShell MCP provider state", () => {
 
   it("does not repeat the provider refresh when the credential remains absent", async () => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
-    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "absent",
       stderr: "",
@@ -887,7 +887,7 @@ describe("OpenShell MCP provider state", () => {
     ["rejected", { status: 1, stdout: "", stderr: "" }, "proof-command-exit-1"],
   ])("does not refresh when a credential observation is %s", async (_case, result, diagnostic) => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
-    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(result);
+    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(result);
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
     const refreshAfterObservedAbsence = vi.fn();
 
@@ -919,7 +919,7 @@ describe("OpenShell MCP provider state", () => {
   });
 
   it("propagates a provider refresh failure after observed absence", async () => {
-    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "absent",
       stderr: "",
@@ -953,8 +953,8 @@ describe("OpenShell MCP provider state", () => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
-      .mockReturnValueOnce({ status: 0, stdout: "absent", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "v11", stderr: "" });
+      .mockResolvedValueOnce({ status: 0, stdout: "absent", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "v11", stderr: "" });
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
     const refreshAfterObservedAbsence = vi.fn();
 
@@ -982,12 +982,12 @@ describe("OpenShell MCP provider state", () => {
     expect(exec).toHaveBeenCalledTimes(2);
   });
 
-  it("fails detach verification when the strict OpenShell exec is unavailable", () => {
+  it("fails detach verification when the strict OpenShell exec is unavailable", async () => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
-    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(null);
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(null);
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
 
-    expect(() =>
+    await expect(
       waitForDetachedMcpCredential(
         "alpha",
         {
@@ -1003,13 +1003,13 @@ describe("OpenShell MCP provider state", () => {
         },
         runtimeSelection,
       ),
-    ).toThrow(/did not confirm credential 'GITHUB_TOKEN' was revoked/);
+    ).rejects.toThrow(/did not confirm credential 'GITHUB_TOKEN' was revoked/);
 
     const proofCommand = exec.mock.calls[0]?.[1] ?? "";
     expect(proofCommand).toContain("GITHUB_TOKEN+x");
     expect(proofCommand).not.toContain("base64 -d");
     expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
-      allowLocalDockerFallback: false,
+      localDockerFallbackPolicy: "never",
       runtimeSelection,
     });
   });
@@ -1026,7 +1026,7 @@ describe("OpenShell MCP provider state", () => {
       policyName: "mcp-bridge-github",
       addedAt: "2026-06-01T00:00:00.000Z",
     };
-    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "v12",
       stderr: "",
@@ -1041,7 +1041,7 @@ describe("OpenShell MCP provider state", () => {
 
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
     exec.mockClear();
-    exec.mockReturnValue({ status: 0, stdout: "v11", stderr: "" });
+    exec.mockResolvedValue({ status: 0, stdout: "v11", stderr: "" });
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
     await expect(
       waitForAttachedMcpCredential("alpha", entry, runtimeSelection, {

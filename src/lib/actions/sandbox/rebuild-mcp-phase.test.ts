@@ -80,7 +80,7 @@ describe("forced rebuild MCP preparation", () => {
     );
 
     expect(mocks.executeSandboxExecCommand).toHaveBeenCalledWith("alpha", ":", undefined, {
-      allowLocalDockerFallback: false,
+      localDockerFallbackPolicy: "never",
       runtimeSelection,
     });
     expect(mocks.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":", {
@@ -105,7 +105,7 @@ describe("forced rebuild MCP preparation", () => {
       runtimeSelection,
     });
     expect(mocks.executeSandboxExecCommand).toHaveBeenCalledWith("alpha", ":", undefined, {
-      allowLocalDockerFallback: false,
+      localDockerFallbackPolicy: "never",
       runtimeSelection,
     });
     expect(mocks.prepareExecUnavailable).toHaveBeenCalledWith("alpha", runtimeSelection);
@@ -128,7 +128,7 @@ describe("forced rebuild MCP preparation", () => {
     );
 
     expect(mocks.executeSandboxExecCommand).toHaveBeenCalledWith("alpha", ":", undefined, {
-      allowLocalDockerFallback: false,
+      localDockerFallbackPolicy: "never",
       runtimeSelection,
     });
     expect(mocks.prepareExecUnavailable).toHaveBeenCalledWith("alpha", runtimeSelection);
@@ -172,7 +172,7 @@ describe("forced rebuild MCP preparation", () => {
       runtimeSelection,
     });
     expect(mocks.executeSandboxExecCommand).toHaveBeenCalledWith("alpha", ":", undefined, {
-      allowLocalDockerFallback: false,
+      localDockerFallbackPolicy: "never",
       runtimeSelection,
     });
     expect(mocks.prepareAbsent).not.toHaveBeenCalled();
