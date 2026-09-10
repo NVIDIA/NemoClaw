@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import {
   INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS,
@@ -72,6 +72,7 @@ const STABLE_GNU_SANDBOX_SELECTOR = `    SANDBOX_LIBC="gnu"
       SANDBOX_LIBC="musl"
     fi`;
 const STABLE_MUSL_SANDBOX_SELECTOR = '    SANDBOX_LIBC="musl"';
+type ScriptProcessResult = { status: number; stderr: string; stdout: string };
 type FixtureMode =
   | "allowlisted-alternate-version"
   | "brev-bypassed-comparison"
@@ -552,13 +553,31 @@ const PARSER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>>
   "missing-trusted-formula": removeFirstReleaseFormula,
   "trusted-formula-mismatch": (source) => source.replace(FORMULA_DIGEST, "0".repeat(64)),
 };
+// Each case owns separate fixtures; keep child-process overlap bounded on CI.
+vi.setConfig({ maxConcurrency: 3 });
+
 const tempDirs: string[] = [];
 
-afterEach(() => {
+afterAll(() => {
   for (const tempDir of tempDirs.splice(0)) {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+function runCommand(
+  file: string,
+  args: string[],
+  options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
+): Promise<ScriptProcessResult> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { ...options, encoding: "utf8" }, (error, stdout, stderr) => {
+      const exitCode = error?.code;
+      error && typeof exitCode !== "number"
+        ? reject(error)
+        : resolve({ status: typeof exitCode === "number" ? exitCode : 0, stderr, stdout });
+    });
+  });
+}
 
 function renderPinFunction(
   functionName: string,
@@ -925,9 +944,8 @@ function runFixture(
       : fs.readFileSync(targetParser, "utf8"),
   );
   INPUT_MUTATIONS[mode]?.({ blueprint, brevInstaller, fixtureRoot, installer });
-  return spawnSync("bash", [checker], {
+  return runCommand("bash", [checker], {
     cwd: fixtureRoot,
-    encoding: "utf8",
     env: {
       ...process.env,
       GITHUB_TOKEN: "",
@@ -941,7 +959,7 @@ function runFixture(
 }
 
 function expectTrustedRelease(
-  result: ReturnType<typeof runFixture>,
+  result: Awaited<ReturnType<typeof runFixture>>,
   version: string,
   manifests: ReadonlyMap<string, string>,
   assets: ReadonlyMap<string, string>,
@@ -956,16 +974,16 @@ function expectTrustedRelease(
   expect(result.stdout).toContain("All installer hashes are current");
 }
 
-describe("installer hash verification", () => {
-  it("verifies all installer and Brev pins from token-free checksum manifests", () => {
-    const result = runFixture("complete");
+describe.concurrent("installer hash verification", () => {
+  it("verifies all installer and Brev pins from token-free checksum manifests", async () => {
+    const result = await runFixture("complete");
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
-  it("verifies each complete installer release table independently", () => {
-    const result = runFixture("complete-multiple-installer-versions", undefined, true);
+  it("verifies each complete installer release table independently", async () => {
+    const result = await runFixture("complete-multiple-installer-versions", undefined, true);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
@@ -973,8 +991,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
-  it("accepts the reviewed product and qualification release cohorts", () => {
-    const result = runFixture("reviewed-release-cohorts", "0.0.101", true);
+  it("accepts the reviewed product and qualification release cohorts", async () => {
+    const result = await runFixture("reviewed-release-cohorts", "0.0.101", true);
 
     expect(result.status, result.stdout).toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v0.0.101 release assets");
@@ -982,16 +1000,16 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
-  it("rejects download drift from the reviewed release cohorts", () => {
-    const result = runFixture("reviewed-release-cohorts-url-drift", "0.0.101", true);
+  it("rejects download drift from the reviewed release cohorts", async () => {
+    const result = await runFixture("reviewed-release-cohorts-url-drift", "0.0.101", true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("installer operational template is not base-trusted");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("fails closed when a secondary installer release pin differs from its manifest", () => {
-    const result = runFixture("secondary-installer-version-mismatch", undefined, true);
+  it("fails closed when a secondary installer release pin differs from its manifest", async () => {
+    const result = await runFixture("secondary-installer-version-mismatch", undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
@@ -1000,8 +1018,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("verifies the pinned Homebrew formula", () => {
-    const result = runFixture("complete", undefined, true);
+  it("verifies the pinned Homebrew formula", async () => {
+    const result = await runFixture("complete", undefined, true);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(`OK: installer ${FORMULA_ASSET} (${FORMULA_DIGEST})`);
@@ -1013,8 +1031,8 @@ describe("installer hash verification", () => {
     "installer-homebrew-trust-transition-stable-leak",
     "installer-homebrew-trust-transition-complete-current",
     "installer-homebrew-untrust-cleanup-drift",
-  ] as const)("rejects Homebrew trust-transition drift in %s", (mode) => {
-    const result = runFixture(mode, undefined, true);
+  ] as const)("rejects Homebrew trust-transition drift in %s", async (mode) => {
+    const result = await runFixture(mode, undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("installer operational template is not base-trusted");
@@ -1024,8 +1042,8 @@ describe("installer hash verification", () => {
   it.each([
     ["formula-mismatch", "does not match the base-trusted"],
     ["formula-pin-mismatch", "pin does not match the base-trusted"],
-  ] as const)("fails closed for %s", (mode, diagnostic) => {
-    const result = runFixture(mode, undefined, true);
+  ] as const)("fails closed for %s", async (mode, diagnostic) => {
+    const result = await runFixture(mode, undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
@@ -1034,8 +1052,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("prevents a pin change from self-authorizing a replaced formula asset", () => {
-    const result = runFixture("formula-self-authorized", undefined, true);
+  it("prevents a pin change from self-authorizing a replaced formula asset", async () => {
+    const result = await runFixture("formula-self-authorized", undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
@@ -1046,8 +1064,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("derives the release version from matching static installer pin tables", () => {
-    const result = runFixture("complete", undefined, true);
+  it("derives the release version from matching static installer pin tables", async () => {
+    const result = await runFixture("complete", undefined, true);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
@@ -1062,14 +1080,14 @@ describe("installer hash verification", () => {
     ["0.0.116", V00116_CHECKSUM_MANIFESTS, V00116_ASSET_DIGESTS],
   ] as const)(
     "accepts the complete trusted OpenShell %s release identity",
-    (version, manifests, assets) => {
-      expectTrustedRelease(runFixture("complete", version, true), version, manifests, assets);
+    async (version, manifests, assets) => {
+      expectTrustedRelease(await runFixture("complete", version, true), version, manifests, assets);
     },
   );
 
   it.each(["0.0.72", "0.0.99", "0.0.101", "0.0.103", "0.0.106", "0.0.116"])(
     "accepts the gateway-preparation template with the selected OpenShell %s release (#11212)",
-    (version) => {
+    async (version) => {
       const root = createFixture(version);
       const runtimePath = "src/lib/onboard/docker-driver-gateway-runtime.ts";
       const candidatePins = fs.readFileSync(path.join(root, runtimePath), "utf8");
@@ -1079,31 +1097,27 @@ describe("installer hash verification", () => {
         candidatePins.trim(),
       );
       fs.writeFileSync(path.join(root, runtimePath), prepared);
-      const result = spawnSync(
-        "node",
-        [
-          "--no-warnings",
-          path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts"),
-          "--blueprint",
-          path.join(root, "nemoclaw-blueprint/blueprint.yaml"),
-          "--installer",
-          path.join(root, "scripts/install-openshell.sh"),
-          "--brev-installer",
-          path.join(root, "scripts/brev-launchable-ci-cpu.sh"),
-          "--supervisor-runtime",
-          path.join(root, runtimePath),
-          "--format",
-          "tsv",
-        ],
-        { encoding: "utf8" },
-      );
+      const result = await runCommand("node", [
+        "--no-warnings",
+        path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts"),
+        "--blueprint",
+        path.join(root, "nemoclaw-blueprint/blueprint.yaml"),
+        "--installer",
+        path.join(root, "scripts/install-openshell.sh"),
+        "--brev-installer",
+        path.join(root, "scripts/brev-launchable-ci-cpu.sh"),
+        "--supervisor-runtime",
+        path.join(root, runtimePath),
+        "--format",
+        "tsv",
+      ]);
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain(version);
     },
   );
 
-  it("rejects v0.0.116 pins when the stable selector requests a GNU sandbox (#10790)", () => {
-    const result = runFixture("stable-gnu-v00116", "0.0.116", true);
+  it("rejects v0.0.116 pins when the stable selector requests a GNU sandbox (#10790)", async () => {
+    const result = await runFixture("stable-gnu-v00116", "0.0.116", true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("installer operational template is not base-trusted");
@@ -1115,8 +1129,8 @@ describe("installer hash verification", () => {
     ["Brev launchable", "brev-changed-url", "Brev launchable operational template"],
   ] as const)(
     "rejects an operational mutation of the base-trusted v0.0.116 %s fixture",
-    (_consumer, mode, diagnostic) => {
-      const result = runFixture(mode, "0.0.116", true);
+    async (_consumer, mode, diagnostic) => {
+      const result = await runFixture(mode, "0.0.116", true);
 
       expect(result.status).toBe(1);
       expect(result.stdout).toContain(`${diagnostic} is not base-trusted`);
@@ -1124,16 +1138,16 @@ describe("installer hash verification", () => {
     },
   );
 
-  it("accepts a base-trusted release with non-default consumer cardinality", () => {
-    const result = runFixture("allowlisted-alternate-version", "9.9.9", true);
+  it("accepts a base-trusted release with non-default consumer cardinality", async () => {
+    const result = await runFixture("allowlisted-alternate-version", "9.9.9", true);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v9.9.9 release assets");
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
-  it("fails closed when the derived release has no base-trusted release record", () => {
-    const result = runFixture("complete", "9.9.9", true);
+  it("fails closed when the derived release has no base-trusted release record", async () => {
+    const result = await runFixture("complete", "9.9.9", true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("OpenShell v9.9.9 is not in the base-trusted release records");
@@ -1141,27 +1155,27 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("requires the trusted release-record prerequisite before a newer pin PR", () => {
+  it("requires the trusted release-record prerequisite before a newer pin PR", async () => {
     // The first invocation keeps the base trust records unchanged while the
     // separate target tree selects 9.9.9. The target cannot authorize itself.
     // The second models the complete trust prerequisite already present in
     // base code; only then may the otherwise identical pin tree pass.
-    const beforePrerequisite = runFixture("complete", "9.9.9", true);
+    const beforePrerequisite = await runFixture("complete", "9.9.9", true);
     expect(beforePrerequisite.status).toBe(1);
     expect(beforePrerequisite.stdout).toContain(
       "OpenShell v9.9.9 is not in the base-trusted release records",
     );
     expect(beforePrerequisite.stdout).not.toContain("PR_CHECKER_EXECUTED");
 
-    const afterPrerequisite = runFixture("allowlisted-alternate-version", "9.9.9", true);
-    expect(afterPrerequisite.status).toBe(0);
+    const afterPrerequisite = await runFixture("allowlisted-alternate-version", "9.9.9", true);
+    expect(afterPrerequisite.status, afterPrerequisite.stdout).toBe(0);
     expect(afterPrerequisite.stdout).toContain("Checking OpenShell v9.9.9 release assets");
     expect(afterPrerequisite.stdout).toContain("All installer hashes are current");
     expect(afterPrerequisite.stdout).not.toContain("PR_CHECKER_EXECUTED");
   });
 
-  it("fails closed when a trusted release record lacks all three manifest digests", () => {
-    const result = runFixture("incomplete-trusted-allowlist", undefined, true);
+  it("fails closed when a trusted release record lacks all three manifest digests", async () => {
+    const result = await runFixture("incomplete-trusted-allowlist", undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
@@ -1171,8 +1185,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("fails closed when a trusted release record lacks its formula identity", () => {
-    const result = runFixture("missing-trusted-formula", undefined, true);
+  it("fails closed when a trusted release record lacks its formula identity", async () => {
+    const result = await runFixture("missing-trusted-formula", undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("trusted OpenShell v0.0.72 formula record is invalid");
@@ -1180,8 +1194,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("fails closed when trusted release records contain a duplicate version", () => {
-    const result = runFixture("duplicate-trusted-release", undefined, true);
+  it("fails closed when trusted release records contain a duplicate version", async () => {
+    const result = await runFixture("duplicate-trusted-release", undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
@@ -1193,8 +1207,8 @@ describe("installer hash verification", () => {
 
   it.each(["malformed-trusted-formula", "mismatched-trusted-formula-url"] as const)(
     "fails closed when a trusted formula record is invalid: %s",
-    (mode) => {
-      const result = runFixture(mode, undefined, true);
+    async (mode) => {
+      const result = await runFixture(mode, undefined, true);
 
       expect(result.status).toBe(1);
       expect(result.stdout).toContain("trusted OpenShell v0.0.72 formula record is invalid");
@@ -1203,8 +1217,8 @@ describe("installer hash verification", () => {
     },
   );
 
-  it("fails closed when the live formula differs from its trusted release digest", () => {
-    const result = runFixture("trusted-formula-mismatch", undefined, true);
+  it("fails closed when the live formula differs from its trusted release digest", async () => {
+    const result = await runFixture("trusted-formula-mismatch", undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
@@ -1215,8 +1229,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("rejects newer runtime consumers when both trusted pin tables stay on an older release", () => {
-    const result = runFixture("runtime-consumers-newer-than-tables", undefined, true);
+  it("rejects newer runtime consumers when both trusted pin tables stay on an older release", async () => {
+    const result = await runFixture("runtime-consumers-newer-than-tables", undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
@@ -1245,8 +1259,8 @@ describe("installer hash verification", () => {
       "installer pin-table release 0.0.72 must match Brev stable OpenShell default 0.0.85",
     ],
     ["installer-pin-selector-drift", "installer operational template is not base-trusted"],
-  ] as const)("rejects %s", (mode, diagnostic) => {
-    const result = runFixture(mode, undefined, true);
+  ] as const)("rejects %s", async (mode, diagnostic) => {
+    const result = await runFixture(mode, undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
@@ -1283,8 +1297,8 @@ describe("installer hash verification", () => {
     ["brev-changed-url", "Brev launchable operational template is not base-trusted"],
     ["brev-bypassed-comparison", "Brev launchable operational template is not base-trusted"],
     ["brev-changed-extraction-target", "Brev launchable operational template is not base-trusted"],
-  ] as const)("rejects operational-consumption drift in %s", (mode, diagnostic) => {
-    const result = runFixture(mode, undefined, true);
+  ] as const)("rejects operational-consumption drift in %s", async (mode, diagnostic) => {
+    const result = await runFixture(mode, undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
@@ -1307,8 +1321,8 @@ describe("installer hash verification", () => {
       `installer pin table for 0.0.72 must contain the exact consumed asset set; missing=[${ASSETS[0]}]`,
     ],
     ["mismatched-table-versions", "installer pin table has no assets for selected release 0.0.73"],
-  ] as const)("fails closed for %s", (mode, diagnostic) => {
-    const result = runFixture(mode, undefined, true);
+  ] as const)("fails closed for %s", async (mode, diagnostic) => {
+    const result = await runFixture(mode, undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
@@ -1328,16 +1342,19 @@ describe("installer hash verification", () => {
       "Brev pin table must contain the exact consumed asset set",
       OFFICIAL_UNEXPECTED_BREV_ASSET,
     ],
-  ] as const)("rejects %s despite a valid published digest", (mode, diagnostic, unexpected) => {
-    const result = runFixture(mode, undefined, true);
+  ] as const)(
+    "rejects %s despite a valid published digest",
+    async (mode, diagnostic, unexpected) => {
+      const result = await runFixture(mode, undefined, true);
 
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
-    expect(result.stdout).toContain(diagnostic);
-    expect(result.stdout).toContain(`unexpected=[${unexpected}]`);
-    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
-    expect(result.stdout).not.toContain("All installer hashes are current");
-  });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
+      expect(result.stdout).toContain(diagnostic);
+      expect(result.stdout).toContain(`unexpected=[${unexpected}]`);
+      expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+      expect(result.stdout).not.toContain("All installer hashes are current");
+    },
+  );
 
   it.each([
     "equals-whitespace",
@@ -1345,15 +1362,15 @@ describe("installer hash verification", () => {
     "line-continuations",
     "quote-styles",
     "mixed-whitespace",
-  ] as const)("extracts pins across %s formatting", (formatting) => {
-    const result = runFixture("complete", undefined, false, formatting);
+  ] as const)("extracts pins across %s formatting", async (formatting) => {
+    const result = await runFixture("complete", undefined, false, formatting);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
-  it("lets trusted checker code inspect a separate pull-request tree", () => {
-    const result = runFixture("complete", undefined, true);
+  it("lets trusted checker code inspect a separate pull-request tree", async () => {
+    const result = await runFixture("complete", undefined, true);
 
     expect(result.status).toBe(0);
     expect(result.stdout).not.toContain("PR_CHECKER_EXECUTED");
@@ -1362,8 +1379,8 @@ describe("installer hash verification", () => {
 
   it.each(["missing-brev-pin", "duplicate-brev-pin"] as const)(
     "fails closed when the pull-request tree has a %s",
-    (mode) => {
-      const result = runFixture(mode, undefined, true);
+    async (mode) => {
+      const result = await runFixture(mode, undefined, true);
 
       expect(result.status).toBe(1);
       expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
@@ -1371,8 +1388,8 @@ describe("installer hash verification", () => {
     },
   );
 
-  it("fails closed when the installer pin table contains a duplicate asset", () => {
-    const result = runFixture("duplicate-installer-pin", undefined, true);
+  it("fails closed when the installer pin table contains a duplicate asset", async () => {
+    const result = await runFixture("duplicate-installer-pin", undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
@@ -1382,8 +1399,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("does not let a pull request replace the trusted verifier with a success stub", () => {
-    const result = runFixture("pr-checker-bypass", undefined, true);
+  it("does not let a pull request replace the trusted verifier with a success stub", async () => {
+    const result = await runFixture("pr-checker-bypass", undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
@@ -1393,8 +1410,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("does not let a pull request replace the trusted parser with a success stub", () => {
-    const result = runFixture("pr-parser-bypass", undefined, true);
+  it("does not let a pull request replace the trusted parser with a success stub", async () => {
+    const result = await runFixture("pr-parser-bypass", undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
@@ -1415,8 +1432,8 @@ describe("installer hash verification", () => {
       "symlink-scripts-parent",
       "installer input parent must be a real directory and not a symbolic link",
     ],
-  ] as const)("fails closed for %s", (mode, diagnostic) => {
-    const result = runFixture(mode, undefined, true);
+  ] as const)("fails closed for %s", async (mode, diagnostic) => {
+    const result = await runFixture(mode, undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
@@ -1426,8 +1443,8 @@ describe("installer hash verification", () => {
     expect(result.stderr).not.toContain(SYMLINK_INPUT_MARKER);
   });
 
-  it("fails closed when the OpenShell checksum release assets are unreachable", () => {
-    const result = runFixture("failure");
+  it("fails closed when the OpenShell checksum release assets are unreachable", async () => {
+    const result = await runFixture("failure");
 
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
@@ -1435,8 +1452,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("fails closed when an OpenShell checksum manifest is incomplete", () => {
-    const result = runFixture("partial");
+  it("fails closed when an OpenShell checksum manifest is incomplete", async () => {
+    const result = await runFixture("partial");
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("digest does not match the pinned v0.0.72 release asset");
@@ -1444,8 +1461,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("fails closed when one OpenShell checksum manifest returns HTTP 404", () => {
-    const result = runFixture("partial-manifest-missing");
+  it("fails closed when one OpenShell checksum manifest returns HTTP 404", async () => {
+    const result = await runFixture("partial-manifest-missing");
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("OK: openshell-checksums-sha256.txt");
@@ -1457,8 +1474,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("fails closed when a pinned installer asset is outside the exact consumed set", () => {
-    const result = runFixture("partial-asset-missing");
+  it("fails closed when a pinned installer asset is outside the exact consumed set", async () => {
+    const result = await runFixture("partial-asset-missing");
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
@@ -1470,8 +1487,8 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("fails closed when the Brev launchable pin drifts from the release manifest", () => {
-    const result = runFixture("brev-mismatch");
+  it("fails closed when the Brev launchable pin drifts from the release manifest", async () => {
+    const result = await runFixture("brev-mismatch");
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
