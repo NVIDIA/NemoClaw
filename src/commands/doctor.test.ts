@@ -141,6 +141,20 @@ describe("global doctor command", () => {
     expect(mocks.runGlobalDoctor).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["--text", "--json"],
+    ["--json", "--text"],
+  ])("rejects conflicting output flags %s %s before health checks (#11150)", async (...flags) => {
+    const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(DoctorCommand.run(flags, rootDir)).rejects.toThrow(
+      /--json.*cannot also be provided.*--text/,
+    );
+
+    expect(mocks.runGlobalDoctor).not.toHaveBeenCalled();
+    expect(output).not.toHaveBeenCalled();
+  });
+
   it("shows global help without running health checks (#10212)", async () => {
     await expect(DoctorCommand.run(["--help"], rootDir)).rejects.toThrow(/EEXIT: 0/);
 
