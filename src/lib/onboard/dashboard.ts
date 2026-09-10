@@ -287,7 +287,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   }
 
   function getDashboardForwardPort(
-    chatUiUrl = deps.env?.CHAT_UI_URL || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
+    chatUiUrl = deps.env?.CHAT_UI_URL ||
+      process.env.CHAT_UI_URL ||
+      `http://127.0.0.1:${CONTROL_UI_PORT}`,
     options: Parameters<typeof dashboardAccess.getDashboardForwardPort>[1] = {},
   ): string {
     return dashboardAccess.getDashboardForwardPort(chatUiUrl, {
@@ -299,7 +301,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   }
 
   function getDashboardForwardTarget(
-    chatUiUrl = deps.env?.CHAT_UI_URL || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
+    chatUiUrl = deps.env?.CHAT_UI_URL ||
+      process.env.CHAT_UI_URL ||
+      `http://127.0.0.1:${CONTROL_UI_PORT}`,
     options: Parameters<typeof dashboardAccess.getDashboardForwardTarget>[1] = {},
   ): string {
     return dashboardAccess.getDashboardForwardTarget(chatUiUrl, {

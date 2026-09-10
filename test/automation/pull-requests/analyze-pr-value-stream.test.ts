@@ -129,15 +129,7 @@ async function run(scenario: string, extra: string[] = []) {
   const cleanupRoot = null;
   const result = await execa(
     process.execPath,
-    [
-      "--no-warnings",
-      analyzer,
-      "--workdir",
-      fake.directory,
-      "--number",
-      "42",
-      ...extra,
-    ],
+    ["--no-warnings", analyzer, "--workdir", fake.directory, "--number", "42", ...extra],
     {
       env: {
         ...process.env,
@@ -168,18 +160,14 @@ afterEach(async () => {
 describe("pull request value-stream analysis", () => {
   test("rejects invalid bounded input before invoking GitHub (#10542)", async () => {
     const fake = await fakeGithub("complete");
-    const result = await execa(
-      process.execPath,
-      ["--no-warnings", analyzer, "--number", "0"],
-      {
-        env: {
-          ...process.env,
-          PATH: fake.directory + path.delimiter + process.env.PATH,
-          VALUE_STREAM_LOG: fake.logPath,
-        },
-        reject: false,
+    const result = await execa(process.execPath, ["--no-warnings", analyzer, "--number", "0"], {
+      env: {
+        ...process.env,
+        PATH: fake.directory + path.delimiter + process.env.PATH,
+        VALUE_STREAM_LOG: fake.logPath,
       },
-    );
+      reject: false,
+    });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("number must be a positive integer");
     await expect(readFile(fake.logPath, "utf8")).resolves.toBe("");
@@ -430,14 +418,7 @@ describe("pull request value-stream analysis", () => {
     temporaryDirectories.push(cancellationRoot);
     const processResult = execa(
       process.execPath,
-      [
-        "--no-warnings",
-        analyzer,
-        "--workdir",
-        root,
-        "--number",
-        "42",
-      ],
+      ["--no-warnings", analyzer, "--workdir", root, "--number", "42"],
       {
         env: {
           ...process.env,

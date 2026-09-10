@@ -211,11 +211,9 @@ describe("ShellCheck JSON1 to SARIF conversion", () => {
       "utf-8",
     );
 
-    const result = spawnSync(
-      process.execPath,
-      [HELPER_PATH, inputPath, outputPath],
-      { encoding: "utf-8" },
-    );
+    const result = spawnSync(process.execPath, [HELPER_PATH, inputPath, outputPath], {
+      encoding: "utf-8",
+    });
 
     expect(result.status, result.stderr).toBe(0);
     const output = JSON.parse(readFileSync(outputPath, "utf-8")) as {
@@ -232,11 +230,9 @@ describe("ShellCheck JSON1 to SARIF conversion", () => {
     const outputPath = join(root, "shellcheck.sarif");
     writeFileSync(inputPath, "{ not-json", "utf-8");
 
-    const result = spawnSync(
-      process.execPath,
-      [HELPER_PATH, inputPath, outputPath],
-      { encoding: "utf-8" },
-    );
+    const result = spawnSync(process.execPath, [HELPER_PATH, inputPath, outputPath], {
+      encoding: "utf-8",
+    });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("ShellCheck json1 input is not valid JSON");

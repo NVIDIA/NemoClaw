@@ -387,7 +387,8 @@ export async function runLocalReview(input: {
     if (specialists.length > 0) {
       await lifecycle.prepare(
         specialistEnvironment(
-          input.advisorDirectory ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+          input.advisorDirectory ??
+            path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
           output,
           runnerTemp,
           snapshot,

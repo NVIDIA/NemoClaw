@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearPersistedOllamaHostIfUnused,
   loadPersistedOllamaHost,
@@ -53,6 +53,15 @@ const OPENAI_API_PROVIDER_METADATA = [
 ].join("\n");
 
 describe("onboard helpers", () => {
+  let fixtureHome: string;
+  beforeEach(() => {
+    fixtureHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inference-reconciliation-"));
+    vi.stubEnv("HOME", fixtureHome);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(fixtureHome, { recursive: true, force: true });
+  });
   it("reuses a registered Hermes Provider without re-collecting host credentials", async () => {
     await withProcessEnv(
       {

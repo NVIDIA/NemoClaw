@@ -55,7 +55,7 @@ describe.runIf(process.platform === "linux")(
         env.NEMOCLAW_INSTALLER_STAGED = installerCleanupSentinel;
         const staged = execFileSync(
           "bash",
-          ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+          ["-c", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
           { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 30_000 },
         );
 
@@ -64,7 +64,7 @@ describe.runIf(process.platform === "linux")(
         expect(fs.readFileSync(unit, "utf8")).toContain(`ExecStart=${bin}/openshell-gateway`);
         expect(fs.statSync(unit).mode & 0o777).toBe(0o600);
 
-        execFileSync("sh", ["-lc", buildOpenShellGatewayUserServiceRemovalScript()], {
+        execFileSync("sh", ["-c", buildOpenShellGatewayUserServiceRemovalScript()], {
           env,
           killSignal: "SIGKILL",
           timeout: 30_000,
@@ -102,7 +102,7 @@ describe.runIf(process.platform === "linux")(
         });
         const output = execFileSync(
           "bash",
-          ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+          ["-c", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
           { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 30_000 },
         );
 
@@ -147,7 +147,7 @@ describe.runIf(process.platform === "linux")(
         expect(() =>
           execFileSync(
             "bash",
-            ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+            ["-c", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
             { env, killSignal: "SIGKILL", stdio: "pipe", timeout: 30_000 },
           ),
         ).toThrow();
@@ -186,7 +186,7 @@ describe.runIf(process.platform === "linux")(
         expect(() =>
           execFileSync(
             "bash",
-            ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+            ["-c", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
             { env, killSignal: "SIGKILL", stdio: "pipe", timeout: 30_000 },
           ),
         ).toThrow();
@@ -231,7 +231,7 @@ describe("managed OpenShell gateway user-service restart", () => {
         PATH: `${bin}:/usr/bin:/bin`,
         XDG_CONFIG_HOME: configHome,
       });
-      execFileSync("sh", ["-lc", buildOpenShellGatewayUserServiceRestartScript()], {
+      execFileSync("sh", ["-c", buildOpenShellGatewayUserServiceRestartScript()], {
         env,
         killSignal: "SIGKILL",
         timeout: 30_000,

@@ -155,8 +155,8 @@ Before collecting secrets, determine every environment-variable name and the com
 Do not generate, rewrite, or redesign the helper or form.
 Use this reviewed pair without modification:
 
-- Helper: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/11e0bb209103b03ee8239cbc307d1cb5d3521866/scripts/local-credential-helper.mts` (SHA-256 `72c187067dca6423e7aa7fa4bfab660e4202805f503c79520d8a0cf24869b668`).
-- Form: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/11e0bb209103b03ee8239cbc307d1cb5d3521866/docs/resources/local-credential-form.html` (SHA-256 `5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8`).
+- Helper: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/15bd0dd25b185eafae02a067532fe18718b2be23/scripts/local-credential-helper.mts` (SHA-256 `f7c255120735307c93767c348bfcd54e7c7008275f9f5215f249e4c1a9daa9be`).
+- Form: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/15bd0dd25b185eafae02a067532fe18718b2be23/docs/resources/local-credential-form.html` (SHA-256 `cdd85dc6a0b31a8b9773e7ddaacb38a4e8162b0a13b70bebef3dc297ae7a6c44`).
 
 - Treat the two immutable URL and digest pairs as one reviewed trust boundary; before executing the helper, compute the SHA-256 digest of both downloaded files and compare each result with its pinned digest.
 - If either digest differs, do not execute the helper; delete both temporary files and stop.

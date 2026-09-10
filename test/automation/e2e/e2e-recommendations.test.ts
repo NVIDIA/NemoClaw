@@ -130,6 +130,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/execution-coverage.mts",
         "tools/e2e/full-e2e-timeout-contract.mts",
         "tools/e2e/gateway-runtime.mts",
+        "tools/e2e/hermes-acp-owning-paths.mts",
         "tools/e2e/onboard-timeout-contract.mts",
         "tools/e2e/openshell-gateway-upgrade-fixture.mts",
         "tools/e2e/selector-aliases.mts",
@@ -151,15 +152,11 @@ describe("E2E recommendation normalizer", () => {
         path.join(tmp, "tools/advisors/e2e-recommendations.mts"),
       ).href;
       const script = `const module = await import(${JSON.stringify(moduleUrl)}); const inventory = module.trustedE2eRecommendationInventory(); if (!inventory.allowedJobIds.includes("onboard-resume") || !inventory.allowedJobIds.includes("vllm-docker-storage")) process.exit(2);`;
-      const result = spawnSync(
-        process.execPath,
-        ["--input-type=module", "--eval", script],
-        {
-          cwd: tmp,
-          encoding: "utf8",
-          env: { PATH: process.env.PATH ?? "" },
-        },
-      );
+      const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: { PATH: process.env.PATH ?? "" },
+      });
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(fs.existsSync(path.join(tmp, "node_modules"))).toBe(false);
     } finally {

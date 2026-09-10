@@ -285,11 +285,11 @@ run_installer_host_preflight
     };
     const result =
       terminal === "none"
-        ? spawnSync(process.platform === "linux" ? "setsid" : "bash", [
-            ...(process.platform === "linux" ? ["bash"] : []),
-            "-c",
-            snippet,
-          ], { cwd: tmp, encoding: "utf-8", env })
+        ? spawnSync(
+            process.platform === "linux" ? "setsid" : "bash",
+            [...(process.platform === "linux" ? ["bash"] : []), "-c", snippet],
+            { cwd: tmp, encoding: "utf-8", env },
+          )
         : runInstallerSnippetWithTty(snippet, terminal === "tty" ? "tty" : "pipe", {
             cwd: tmp,
             env,

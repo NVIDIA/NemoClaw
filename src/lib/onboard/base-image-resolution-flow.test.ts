@@ -44,16 +44,14 @@ describe("base image resolution flow", () => {
     vi.clearAllMocks();
   });
 
-  it.each([
-    "1",
-    "true",
-    "YES",
-    "on",
-  ])("recognizes the %s refresh environment value (#4680)", (value) => {
-    expect(isSandboxBaseImageRefreshRequested({ NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH: value })).toBe(
-      true,
-    );
-  });
+  it.each(["1", "true", "YES", "on"])(
+    "recognizes the %s refresh environment value (#4680)",
+    (value) => {
+      expect(
+        isSandboxBaseImageRefreshRequested({ NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH: value }),
+      ).toBe(true);
+    },
+  );
 
   it("captures a recorded hint for warm runs and exposes patch options (#4680)", () => {
     mocks.dockerImageInspectFormat.mockReturnValue(

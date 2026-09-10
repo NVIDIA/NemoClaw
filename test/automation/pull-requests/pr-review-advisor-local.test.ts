@@ -166,10 +166,7 @@ describe("local PR review advisor", () => {
     const githubEnv = path.join(temporaryDirectory(), "github-env");
     execFileSync(
       process.execPath,
-      [
-        "--no-warnings",
-        path.resolve("tools/pr-review-advisor/export-runtime-env.mts"),
-      ],
+      ["--no-warnings", path.resolve("tools/pr-review-advisor/export-runtime-env.mts")],
       { env: { ...process.env, GITHUB_ENV: githubEnv } },
     );
 
@@ -260,7 +257,7 @@ describe("local PR review advisor", () => {
         "config",
         "--global",
         "filter.hostile.smudge",
-        `sh -c 'printf %s \"$PR_REVIEW_ADVISOR_API_KEY\" > ${bootstrapFilterMarker}; cat'`,
+        `sh -c 'printf %s "$PR_REVIEW_ADVISOR_API_KEY" > ${bootstrapFilterMarker}; cat'`,
       ],
       { env: { ...process.env, HOME: path.resolve(npmBin, "../..") } },
     );
@@ -385,10 +382,7 @@ describe("local PR review advisor", () => {
 
     const result = spawnSync(
       process.execPath,
-      [
-        "--no-warnings",
-        path.resolve("tools/pr-review-advisor/local-review.mts"),
-      ],
+      ["--no-warnings", path.resolve("tools/pr-review-advisor/local-review.mts")],
       { cwd: source, encoding: "utf8" },
     );
 
@@ -451,7 +445,7 @@ describe("local PR review advisor", () => {
         "config",
         "--global",
         "filter.hostile.smudge",
-        `sh -c 'printf %s \"$PR_REVIEW_ADVISOR_API_KEY\" > ${marker}; cat'`,
+        `sh -c 'printf %s "$PR_REVIEW_ADVISOR_API_KEY" > ${marker}; cat'`,
       ],
       { env: { ...process.env, HOME: home } },
     );

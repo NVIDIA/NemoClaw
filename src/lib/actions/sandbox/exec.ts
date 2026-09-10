@@ -47,7 +47,7 @@ export type SandboxExecChildOptions = SandboxExecOptions & {
   subprocessEnv?: NodeJS.ProcessEnv;
 };
 
-export type SandboxExecGatewayRestart = (sandboxName: string) => { ok: boolean };
+export type SandboxExecGatewayRestart = (sandboxName: string) => Promise<{ ok: boolean }>;
 
 export type SandboxExecAgentResolver = (sandboxName: string) => string | null;
 
@@ -175,7 +175,8 @@ export function cleanupOpenClawAfterExec(
     const detail = error instanceof Error ? error.message : String(error);
     return `permission inspection failed: ${detail}`;
   }
-  if (inspection.applies && inspection.ok) return null;
+  if (!inspection.applies) return `permission inspection unavailable: ${inspection.reason}`;
+  if (inspection.ok) return null;
 
   let repair: MutableConfigRepairResult;
   try {
@@ -184,23 +185,7 @@ export function cleanupOpenClawAfterExec(
     const detail = error instanceof Error ? error.message : String(error);
     return `permission repair failed: ${detail}`;
   }
-  const repairFailure = repairFailureDetail(inspection, repair);
-  if (repairFailure || !repair.applied) return repairFailure;
-
-  let verification: MutableConfigPermsInspection;
-  try {
-    verification = deps.inspectMutableConfigPerms(sandboxName);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return `post-repair permission verification failed: ${detail}`;
-  }
-  if (!verification.applies) {
-    return `post-repair permission verification unavailable: ${verification.reason}`;
-  }
-  if (!verification.ok) {
-    return `post-repair permission verification failed: ${verification.issues.join("; ")}`;
-  }
-  return null;
+  return repairFailureDetail(inspection, repair);
 }
 
 /**
@@ -299,7 +284,7 @@ export function isGoogleChatPairingApproval(command: readonly string[]): boolean
   );
 }
 
-function defaultRestartGateway(sandboxName: string): { ok: boolean } {
+function defaultRestartGateway(sandboxName: string): Promise<{ ok: boolean }> {
   const { defaultInferenceGatewayRestart } =
     require("../inference-set-gateway-restart") as typeof import("../inference-set-gateway-restart");
   return defaultInferenceGatewayRestart(sandboxName);
@@ -444,7 +429,7 @@ export async function execSandbox(
     if (recordedAgent === "openclaw") {
       let restartSucceeded = false;
       try {
-        restartSucceeded = (deps.restartGateway ?? defaultRestartGateway)(sandboxName).ok;
+        restartSucceeded = (await (deps.restartGateway ?? defaultRestartGateway)(sandboxName)).ok;
       } catch {
         // The approval already committed inside OpenClaw. Convert restart
         // exceptions into the same explicit partial-commit recovery contract.
