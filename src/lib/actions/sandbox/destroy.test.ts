@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../../state/registry";
+import { SANDBOX_PROVIDER_SUFFIXES } from "../../onboard/sandbox-provider-cleanup";
 import { assertUnambiguousDestroyContainerIdentity, cleanupSandboxServices } from "./destroy";
 
 const SANDBOX = "mybox";
@@ -12,6 +13,33 @@ const mainPidDir = path.resolve("/tmp", `nemoclaw-services-${SANDBOX}`);
 const googlechatPidDir = `${mainPidDir}-googlechat`;
 
 describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
+  it("deletes every messaging and search registration through the selected gateway", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+
+    await cleanupSandboxServices(
+      SANDBOX,
+      { stopHostServices: false },
+      {
+        getSandbox: () => null,
+        rmSync: vi.fn(),
+        runOpenshell,
+        stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
+        googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
+      },
+    );
+
+    expect(runOpenshell.mock.calls).toEqual(
+      SANDBOX_PROVIDER_SUFFIXES.map((suffix) => [
+        ["provider", "delete", `${SANDBOX}-${suffix}`],
+        expect.objectContaining({
+          ignoreError: true,
+          suppressOutput: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      ]),
+    );
+  });
+
   it("fails closed before later cleanup when the Google Chat tunnel cannot stop", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const rmSync = vi.fn();

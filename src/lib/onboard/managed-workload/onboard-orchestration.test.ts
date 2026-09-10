@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
+import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import {
   managedStartupStateRoots,
   managedStartupWorkspaceRoot,
@@ -539,34 +540,66 @@ describe("managed workload onboard orchestration", () => {
     );
   });
 
-  it("resolves final-image patch metadata after managed build-context staging", async () => {
-    const resolutionMetadata = { key: "published-dcode-base" };
-    const trustedDockerfile = path.join(
-      process.cwd(),
-      "agents",
-      "langchain-deepagents-code",
-      "Dockerfile",
-    );
-    let staged = false;
+  const stagedContext = {
+    buildCtx: path.join(releaseRoot, "staged"),
+    stagedDockerfile: path.join(releaseRoot, "staged", "Dockerfile"),
+  };
+  const dcodeDockerfile = path.join(process.cwd(), "agents/langchain-deepagents-code/Dockerfile");
+  const hermesDockerfile = path.join(process.cwd(), "agents/hermes/Dockerfile");
+  const preparedHermesContext: PreparedSandboxBuildContext = {
+    ...stagedContext,
+    origin: "generated",
+    buildId: "prepared-hermes-build",
+    cleanupBuildCtx: () => true,
+    verifyBuildCtx: () => true,
+    rebuildTarget: { agentName: "hermes", fromDockerfile: hermesDockerfile },
+  };
+
+  it.each([
+    {
+      behavior: "stages a fresh LangChain Deep Agents Code build before resolving patch metadata",
+      agentName: "langchain-deepagents-code",
+      fromDockerfile: dcodeDockerfile,
+      preparedBuildContext: null,
+      expectedFromDockerfile: null,
+      expectedStageCalls: 1,
+    },
+    {
+      behavior: "passes the original Dockerfile to patch resolution for a prepared Hermes rebuild",
+      agentName: "hermes",
+      fromDockerfile: hermesDockerfile,
+      preparedBuildContext: preparedHermesContext,
+      expectedFromDockerfile: hermesDockerfile,
+      expectedStageCalls: 0,
+    },
+  ])("$behavior", async (testCase) => {
+    const { agentName, fromDockerfile, preparedBuildContext } = testCase;
+    const resolutionMetadata = { key: "published-agent-base" };
+    const createAgentSandbox = vi.fn(() => ({
+      ...stagedContext,
+      baseImageResolutionMetadata: resolutionMetadata,
+    }));
     const resolvePatchInput = vi.fn(() => {
-      expect(staged).toBe(true);
+      expect(createAgentSandbox).toHaveBeenCalledTimes(testCase.expectedStageCalls);
       return {
-        fromDockerfile: trustedDockerfile,
+        fromDockerfile,
+        preparedBuildContext,
         preResolvedBaseImageMetadata: resolutionMetadata,
       } as never;
     });
     const resolveSandboxBuildPatch = vi.fn(async (input: Record<string, unknown>) => {
-      expect(input.fromDockerfile).toBeNull();
+      expect(input.fromDockerfile).toBe(testCase.expectedFromDockerfile);
+      expect(input.preparedBuildContext).toBe(preparedBuildContext);
       expect(input.preResolvedBaseImageMetadata).toBe(resolutionMetadata);
-      expect(input.stagedDockerfile).toBe("/tmp/nemoclaw-staged-context/Dockerfile");
-      return { buildId: "dcode-build", dashboardRemoteBindPrepared: false };
+      expect(input.stagedDockerfile).toBe(stagedContext.stagedDockerfile);
+      return { buildId: "image-build", dashboardRemoteBindPrepared: false };
     });
     const materializeSandboxCreatePlan = vi.fn(() => ({
       activeMessagingChannels: [],
       compatibilityPolicyPath: null,
       createArgs: [
         "--from",
-        "/tmp/nemoclaw-staged-context/Dockerfile",
+        stagedContext.stagedDockerfile,
         "--name",
         "dcode",
         "--policy",
@@ -590,28 +623,17 @@ describe("managed workload onboard orchestration", () => {
       workload: {
         source: {
           kind: "legacy-dockerfile",
-          dockerfilePath: "agents/langchain-deepagents-code/Dockerfile",
+          dockerfilePath: fromDockerfile,
           reason: "runtime-unsupported",
         },
         release: "v0.0.0",
         fallbackDiagnostic: null,
       },
       legacy: {
-        preparedBuildContext: null,
-        agent: {
-          name: "langchain-deepagents-code",
-          displayName: "LangChain Deep Agents Code",
-          dockerfilePath: trustedDockerfile,
-        },
-        fromDockerfile: trustedDockerfile,
-        createAgentSandbox: () => {
-          staged = true;
-          return {
-            buildCtx: "/tmp/nemoclaw-staged-context",
-            stagedDockerfile: "/tmp/nemoclaw-staged-context/Dockerfile",
-            baseImageResolutionMetadata: resolutionMetadata,
-          };
-        },
+        preparedBuildContext,
+        agent: { name: agentName, displayName: agentName, dockerfilePath: fromDockerfile },
+        fromDockerfile,
+        createAgentSandbox,
         resolvePatchInput,
       },
       plan: {

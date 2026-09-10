@@ -94,6 +94,17 @@ const UuidSchema = Type.Unsafe<NemoClawConfigDocumentUid>({
   pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
 });
 export const TcpPortSchema = Type.Integer({ minimum: 1, maximum: 65_535 });
+export const NemoClawManagedProxyConfigSchema = Type.Object(
+  {
+    host: Type.String({
+      minLength: 1,
+      maxLength: 256,
+      pattern: "^[A-Za-z0-9._-]+$(?![\\s\\S])",
+    }),
+    port: TcpPortSchema,
+  },
+  { additionalProperties: false },
+);
 export const CredentialEnvironmentReferenceNameSchema = Type.String({
   pattern: CREDENTIAL_ENVIRONMENT_REFERENCE_PATTERN,
 });
@@ -184,6 +195,9 @@ export const NEMOCLAW_INFERENCE_APIS = [
 
 export const NemoClawInferenceApiSchema = Type.Enum(NEMOCLAW_INFERENCE_APIS);
 
+export const NEMOCLAW_CONFIG_AGENT_TYPES = ["openclaw", "hermes"] as const;
+export const NemoClawAgentTypeSchema = Type.Enum(NEMOCLAW_CONFIG_AGENT_TYPES);
+
 export function isSupportedInferenceApi(value: unknown): value is InferenceApi {
   return Check(NemoClawInferenceApiSchema, value);
 }
@@ -238,7 +252,7 @@ const NemoClawInferenceRouteConfigSchema = Type.Object(
 const NemoClawAgentConfigSchema = Type.Object(
   {
     name: LocalResourceNameSchema,
-    type: Type.Literal("openclaw"),
+    type: NemoClawAgentTypeSchema,
     inference: Type.Object(
       {
         routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }),
@@ -272,6 +286,7 @@ const NemoClawSandboxConfigSchema = Type.Object(
     runtime: NemoClawSandboxRuntimeConfigSchema,
     network: Type.Object(
       {
+        proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
         policy: Type.Object(
           { explicit: NemoClawExplicitPolicySchema },
           { additionalProperties: false },

@@ -46,18 +46,16 @@ function requireEqual(actual: string, expected: string, label: string): void {
  * never retried.
  */
 export function runRealOpenClawMcpStartRetryProof(options: ProofOptions): void {
-  const applied = spawnSync(
-    options.nodeExecutable,
-    [options.patchScript, options.dist],
-    { encoding: "utf8", timeout: options.timeoutMs },
-  );
+  const applied = spawnSync(options.nodeExecutable, [options.patchScript, options.dist], {
+    encoding: "utf8",
+    timeout: options.timeoutMs,
+  });
   requireSuccess(applied, "apply MCP startup recovery patch");
 
-  const audit = spawnSync(
-    options.nodeExecutable,
-    [options.patchScript, "--audit", options.dist],
-    { encoding: "utf8", timeout: options.timeoutMs },
-  );
+  const audit = spawnSync(options.nodeExecutable, [options.patchScript, "--audit", options.dist], {
+    encoding: "utf8",
+    timeout: options.timeoutMs,
+  });
   requireSuccess(audit, "audit MCP startup recovery patch");
   if (!String(audit.stdout ?? "").includes("MCP startup recovery audit ok")) {
     throw new Error("MCP startup recovery audit did not confirm the patched dist");

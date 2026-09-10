@@ -12,7 +12,6 @@ import {
 import {
   type AttachOpenShellProviderRequest,
   type ConfigureOpenShellProviderRefreshRequest,
-  type CreateOpenShellProviderRequest,
   type DeleteOpenShellProviderRequest,
   type DetachOpenShellProviderRequest,
   type GetOpenShellProviderRequest,
@@ -131,14 +130,14 @@ function rawCommandOutput(result: CapturedProviderCommandResult): string {
   const streams = [bufferOrStringToText(result.stderr), bufferOrStringToText(result.stdout)].filter(
     Boolean,
   );
-  return streams.length > 0
-    ? streams.join("\n")
-    : Array.isArray(result.output)
-      ? [result.output[2], result.output[1]]
-          .map((value) => bufferOrStringToText(value as string | Buffer | null | undefined))
-          .filter(Boolean)
-          .join("\n")
-      : bufferOrStringToText(result.output as string | Buffer | null | undefined);
+  if (streams.length > 0) return streams.join("\n");
+  if (Array.isArray(result.output)) {
+    return [result.output[2], result.output[1]]
+      .map((value) => bufferOrStringToText(value as string | Buffer | null | undefined))
+      .filter(Boolean)
+      .join("\n");
+  }
+  return bufferOrStringToText(result.output as string | Buffer | null | undefined);
 }
 
 function commandOutput(result: CapturedProviderCommandResult): string {

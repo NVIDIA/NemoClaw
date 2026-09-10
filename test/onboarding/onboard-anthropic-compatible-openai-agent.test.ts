@@ -67,6 +67,26 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
   });
   afterAll(() => fs.rmSync(testHome, { recursive: true, force: true }));
 
+  it.each<[string, string[]]>([
+    ["get", ["provider", "get", "other-provider"]],
+    ["delete", ["provider", "delete", "other-provider"]],
+    ["detach", ["sandbox", "provider", "detach", "test-box", "other-provider"]],
+  ])(
+    "rejects a mismatched provider name during fixture %s without changing its state",
+    (_operation, args) => {
+      const runner = createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV, ["test-box"]);
+      expect(runner(args, {}, [])).toEqual({
+        status: 1,
+        stderr: "provider 'other-provider' not found",
+      });
+      expect(runner(["provider", "get", PROVIDER], {}, [])?.status).toBe(0);
+      expect(runner(["provider", "delete", PROVIDER], {}, [])).toEqual({
+        status: 1,
+        stderr: `provider '${PROVIDER}' is attached to sandbox(es): test-box`,
+      });
+    },
+  );
+
   it("registers the provider as type=openai on the /v1 surface after the probe passes", async () => {
     vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));

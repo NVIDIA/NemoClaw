@@ -56,9 +56,15 @@ type FixtureMode =
   | "pty-socket-timeout"
   | "pty-path-unreadable"
   | "pty-termios-unavailable"
-  | "provider-cleanup-failure" | "provider-empty-message" | "provider-exit-after-recording"
-  | "provider-terminal-spoof" | "provider-wrong-api" | "provider-wrong-route"
-  | "recording-timeout" | "restored-canonical-timeout" | "valid";
+  | "provider-cleanup-failure"
+  | "provider-empty-message"
+  | "provider-exit-after-recording"
+  | "provider-terminal-spoof"
+  | "provider-wrong-api"
+  | "provider-wrong-route"
+  | "recording-timeout"
+  | "restored-canonical-timeout"
+  | "valid";
 
 interface LaunchFixtureInvocation {
   args: string[];
@@ -95,7 +101,6 @@ it("reports a residual PTY monitor socket without removing it (#9384)", async ()
       ],
       { encoding: "utf8" },
     );
-
     expect(cleanup.status).toBe(2);
     expect(cleanup.stderr).toContain('"reason":"pty_monitor_socket_still_present"');
     expect(existsSync(socketPath)).toBe(true);
@@ -468,7 +473,6 @@ exec "$@"
     chmodSync(fakeLaunch, 0o755);
     chmodSync(fakeOpenshell, 0o755);
     chmodSync(fakeStty, 0o755);
-
     const unavailablePtyMonitorStarterScript = OPENCLAW_PTY_MONITOR_STARTER_SCRIPT.replace(
       'const termiosCommand = "/usr/bin/stty";',
       `const termiosCommand = ${JSON.stringify(fakeStty)};`,
@@ -478,7 +482,6 @@ exec "$@"
       mode === "pty-termios-unavailable"
         ? unavailablePtyMonitorStarterScript
         : OPENCLAW_PTY_MONITOR_STARTER_SCRIPT;
-
     const launchCommand = invocation?.command ?? "bash";
     const launchArgs = invocation?.args ?? ["-c", LAUNCH_TURN_SCRIPT];
     const result = spawnSync(launchCommand, launchArgs, {
@@ -530,7 +533,6 @@ exec "$@"
       },
       timeout: 15_000,
     });
-
     const tuiProcessIds = existsSync(tuiPidsPath)
       ? readFileSync(tuiPidsPath, "utf8").trim().split("\n").filter(Boolean)
       : [];
@@ -734,7 +736,6 @@ it.each([[], ["-g", "fixture-gateway"]].map((gatewayArgs) => [gatewayArgs] as co
     const fixture = runOpenShellShimFixture(gatewayArgs);
     const separator = fixture.exactArgv.indexOf("--");
     const expectedRemote = fixture.exactArgv.slice(separator + 1);
-
     expect(fixture.passThrough.status, fixture.passThrough.stderr).toBe(0);
     expect(fixture.ttyPassThrough.status, fixture.ttyPassThrough.stderr).toBe(0);
     expect(fixture.malformed.status).toBe(73);
@@ -779,7 +780,6 @@ it.runIf(process.platform === "linux")(
         ["-e", OPENCLAW_PTY_MONITOR_STARTER_SCRIPT, runId, monitorRoot, "/usr/bin/env", "true"],
         { encoding: "utf8", timeout: 2_000, killSignal: "SIGKILL" },
       );
-
       expect(result.status).toBe(72);
       expect(result.stderr).toContain('"reason":"pty_stdin_not_pty"');
       expect(statSync(monitorRoot).mode & 0o777).toBe(0o700);
@@ -805,7 +805,6 @@ it.runIf(process.platform === "linux").each(["absent", "ansi", "reordered"] as c
       tuiProcessIds,
       ttyObserved,
     } = runLaunchSessionFixture("valid", terminalCopy);
-
     expect(ttyObserved, result.stderr).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(ptyMonitorRemoved).toBe(true);
@@ -839,7 +838,6 @@ it.runIf(process.platform === "linux")(
       "delayed-input-attachment",
       "absent",
     );
-
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
@@ -851,7 +849,6 @@ it.runIf(process.platform === "linux")(
   "waits for OpenClaw startup to accept its auto-message before submitting one PTY input (#9384)",
   () => {
     const fixture = runLaunchSessionFixture("delayed-tui-ready", "absent");
-
     expect(fixture.earlyInputObserved, fixture.result.stderr).toBe(false);
     expect(fixture.baselineRemoved, fixture.result.stderr).toBe(true);
     expect(fixture.result.status, fixture.result.stderr).toBe(0);
@@ -871,7 +868,6 @@ it.runIf(process.platform === "linux" && process.getuid?.() !== 0)(
       result,
       ttyObserved,
     } = runLaunchSessionFixture("pty-path-unreadable", "absent");
-
     expect(ttyObserved, result.stderr).toBe(true);
     expect(ptyPathQueryResult, result.stderr).toEqual({ errorCode: null, status: 1 });
     expect(baselineRemoved, result.stderr).toBe(true);
@@ -939,7 +935,6 @@ it.runIf(process.platform === "linux").each([
         return [];
       }
     });
-
     expect(ttyObserved, failureEvidence).toBe(true);
     expect(orphanedMonitorProcessIds, failureEvidence).toEqual([]);
     expect(orphanedTuiProcessIds, failureEvidence).toEqual([]);
@@ -961,7 +956,6 @@ it.runIf(process.platform === "linux")(
   () => {
     const { baselineRemoved, pendingQualificationObserved, result, ttyObserved } =
       runLaunchSessionFixture("delayed-recording", "absent");
-
     expect(ttyObserved).toBe(true);
     expect(pendingQualificationObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
@@ -975,7 +969,6 @@ it.runIf(process.platform === "linux")(
   () => {
     const { baselineRemoved, orphanedMonitorProcessIds, ptyMonitorRemoved, result, ttyObserved } =
       runLaunchSessionFixture("input-mode-timeout", "absent");
-
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(ptyMonitorRemoved).toBe(true);
@@ -1002,7 +995,6 @@ it.runIf(process.platform === "linux")(
       result,
       ttyObserved,
     } = runLaunchSessionFixture("restored-canonical-timeout", "absent");
-
     expect(ttyObserved).toBe(true);
     expect(canonicalRestored).toBe(true);
     expect(earlyInputObserved).toBe(false);
@@ -1023,7 +1015,6 @@ it.runIf(process.platform === "linux")(
       "pty-socket-timeout",
       "absent",
     );
-
     expect(ttyObserved).toBe(false);
     expect(baselineRemoved).toBe(true);
     expect(ptyMonitorRemoved).toBe(true);
@@ -1041,7 +1032,6 @@ it.runIf(process.platform === "linux")(
       "provider-empty-message",
       "provider",
     );
-
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(result.status).toBe(1);
@@ -1156,7 +1146,6 @@ it.runIf(process.platform === "linux")(
       },
       openshellCommandPath: "/usr/bin/openshell",
     };
-
     expect(produced.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
     expect(produced.stderr).toContain("structured session baseline cleanup failed");
     await expect(
@@ -1191,7 +1180,6 @@ it.runIf(process.platform === "linux")(
       },
       openshellCommandPath: "/usr/bin/openshell",
     };
-
     expect(produced.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
     await runOpenClawLaunchSession({
       artifactName: "producer-terminal-spoof-handoff",
@@ -1227,7 +1215,6 @@ it.runIf(process.platform === "linux").each([
       },
       openshellCommandPath: "/usr/bin/openshell",
     };
-
     expect(firstResult.stderr).toContain("ServiceUnavailableError");
     expect(firstResult.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
     await expect(
@@ -1249,7 +1236,6 @@ it.runIf(process.platform === "linux")(
   "does not mark provider output without structured empty-message evidence (#10978)",
   () => {
     const produced = runLaunchSessionFixture("recording-timeout", "provider").result;
-
     expect(produced.status).toBe(1);
     expect(produced.stderr).toContain("ServiceUnavailableError");
     expect(produced.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
@@ -1264,7 +1250,6 @@ it.runIf(process.platform === "linux")(
       "invalid-order",
       "absent",
     );
-
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
@@ -1279,7 +1264,6 @@ it.runIf(process.platform === "linux")(
       "late-extra",
       "absent",
     );
-
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
@@ -1295,7 +1279,6 @@ it.runIf(process.platform === "linux")(
   "propagates a nonzero TUI exit after two structured turns (#9160)",
   () => {
     const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture("nonzero", "absent");
-
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
@@ -1308,7 +1291,6 @@ it.runIf(process.platform === "linux")(
   () => {
     const { hostSessionResidue, orphanedTuiProcessIds, ptyMonitorRemoved, result } =
       runLaunchSessionFixture("pty-cleanup-failure", "absent");
-
     expect(ptyMonitorRemoved).toBe(false);
     expect(hostSessionResidue).toEqual([]);
     expect(orphanedTuiProcessIds).toEqual([]);
@@ -1325,7 +1307,6 @@ it.runIf(process.platform === "linux")(
       "pty-cleanup-unknown-entry",
       "absent",
     );
-
     expect(ptyMonitorRemoved).toBe(false);
     expect(orphanedTuiProcessIds).toEqual([]);
     expect(result.signal).toBeNull();
@@ -1341,7 +1322,6 @@ it.runIf(process.platform === "linux")(
       "cleanup-failure",
       "absent",
     );
-
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(false);
     expect(result.signal).toBeNull();
@@ -1357,7 +1337,6 @@ it.runIf(process.platform === "linux")(
       "nonzero-pty-cleanup-failure",
       "absent",
     );
-
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(ptyMonitorRemoved).toBe(false);
@@ -1377,7 +1356,6 @@ it.runIf(process.platform === "linux")(
       },
       openshellCommandPath: "openshell",
     };
-
     await expect(
       runOpenClawLaunchSession({
         artifactName: "relative-openshell-command",
@@ -1404,7 +1382,6 @@ it.each(["", "relative-tmp", "/tmp/absolute-tmp"])(
       },
       openshellCommandPath: "/usr/bin/openshell",
     };
-
     try {
       await runOpenClawLaunchSession({
         artifactName: "host-temporary-root",
@@ -1414,7 +1391,6 @@ it.each(["", "relative-tmp", "/tmp/absolute-tmp"])(
         redactionValues: [],
         sandboxName: "alpha",
       });
-
       expect(roots).toEqual([root === "" ? resolve("/tmp") : resolve(root)]);
     } finally {
       platform.mockRestore();
@@ -1434,7 +1410,6 @@ it.runIf(process.platform === "linux")(
       },
       openshellCommandPath: "/usr/bin/openshell",
     };
-
     await runOpenClawLaunchReadinessLeaseTurns({
       artifactName: "lease-turn",
       cliCommand: "node",
@@ -1448,7 +1423,6 @@ it.runIf(process.platform === "linux")(
         launchPhaseStartedAtCallCount = calls.length;
       },
     });
-
     expect(
       launchPhaseStartedAtCallCount === 1 &&
         OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS >=

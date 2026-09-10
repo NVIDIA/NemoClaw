@@ -73,10 +73,7 @@ describe("fixture redaction entry point", () => {
     expect(childEnv).toMatchObject({ E2E_TARGET_ID: "target-a" });
     expect(childEnv.E2E_PROVIDER_TOKEN).toBeUndefined();
     expect(() =>
-      buildChildEnv(
-        {},
-        { fixtureOverlay: { E2E_PROVIDER_TOKEN: "must-not-pass" } },
-      ),
+      buildChildEnv({}, { fixtureOverlay: { E2E_PROVIDER_TOKEN: "must-not-pass" } }),
     ).toThrow(/fixtureOverlay entry 'E2E_PROVIDER_TOKEN' looks secret-bearing/);
   });
 
@@ -317,7 +314,7 @@ describe("fixture redaction entry point", () => {
     expect(out).not.toContain(canonical);
   });
 
-  it.each([
+  it.concurrent.each([
     { scenario: "hosted inference key" },
     { scenario: "Docker token" },
     { scenario: "gateway token" },

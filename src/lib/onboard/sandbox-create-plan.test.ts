@@ -662,8 +662,16 @@ describe("resolveSandboxCreateIntent", () => {
     });
     const serializedIntent = JSON.stringify(intent);
     const events: string[] = [];
+    let completeCleanup!: () => void;
+    let cleanupStarted!: () => void;
+    const pendingCleanup = new Promise<void>((resolve) => {
+      completeCleanup = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      cleanupStarted = resolve;
+    });
 
-    const result = await materializeSandboxCreatePlan({
+    const materializing = materializeSandboxCreatePlan({
       intent,
       fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
       messagingTokenDefs: tokenDefs,
@@ -676,6 +684,8 @@ describe("resolveSandboxCreateIntent", () => {
         expect(policy.appliedPresets).toEqual(["telegram"]);
       },
       runProviderPreDeleteCleanup: async () => {
+        cleanupStarted();
+        await pendingCleanup;
         events.push("cleanup");
       },
       upsertMessagingProviders: vi.fn((receivedTokenDefs, options) => {
@@ -693,6 +703,13 @@ describe("resolveSandboxCreateIntent", () => {
       },
     });
 
+    try {
+      await Promise.race([started, materializing]);
+      expect(events).not.toContain("upsert");
+    } finally {
+      completeCleanup();
+    }
+    const result = await materializing;
     expect(events).toEqual(["policy", "hermes", "disclose", "cleanup", "upsert"]);
     expect(result.createArgs).toEqual([
       "--from",

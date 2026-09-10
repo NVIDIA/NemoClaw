@@ -18,6 +18,7 @@ import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "./onboard/gateway-binding";
+import type { GatewayRecoveryOutput } from "./onboard/gateway-recovery";
 
 export { resolveGatewayName, resolveSandboxGatewayName };
 
@@ -28,6 +29,7 @@ export const snapshotOpenShellEnv = openshellRuntime.snapshotOpenShellEnv;
 type StartGatewayForRecoveryOptions = {
   gatewayName?: string;
   gatewayPort?: number;
+  output?: GatewayRecoveryOutput;
   runtimeSelection?: openshellRuntime.OpenShellRuntimeSelection;
 };
 
@@ -188,6 +190,7 @@ type NamedGatewayLifecycleStateName = NamedGatewayLifecycleState["state"];
 export type RecoverNamedGatewayRuntimeOptions = {
   recoverableStates?: readonly NamedGatewayLifecycleStateName[];
   gatewayName?: string;
+  output?: GatewayRecoveryOutput;
   runtimeSelection?: openshellRuntime.OpenShellRuntimeSelection;
 };
 
@@ -250,6 +253,7 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
       await gatewayRuntimeDependencies.startGatewayForRecovery({
         gatewayName,
         gatewayPort: resolveGatewayPortFromName(gatewayName) ?? undefined,
+        ...(options.output ? { output: options.output } : {}),
         ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
       });
     } catch {

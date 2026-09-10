@@ -270,7 +270,12 @@ describe("probeLinuxLoopbackBind tcp6 visibility degradation (#9730)", () => {
   const V4_OK = HEADER + tcpRow(`${FIX_IPV4_LOOPBACK_1}:2CAA`, "0A");
   const errWithCode = (code: string) => Object.assign(new Error(code), { code });
   const readerFor = (byPath: Record<string, () => string>) => (requested: unknown) =>
-    (byPath[String(requested)] ?? (() => { throw errWithCode("ENOENT"); }))();
+    (
+      byPath[String(requested)] ??
+      (() => {
+        throw errWithCode("ENOENT");
+      })
+    )();
 
   afterEach(() => {
     vi.restoreAllMocks();
@@ -280,7 +285,9 @@ describe("probeLinuxLoopbackBind tcp6 visibility degradation (#9730)", () => {
     vi.spyOn(fs, "readFileSync").mockImplementation(
       readerFor({
         "/proc/net/tcp": () => V4_OK,
-        "/proc/net/tcp6": () => { throw errWithCode("EACCES"); },
+        "/proc/net/tcp6": () => {
+          throw errWithCode("EACCES");
+        },
       }) as typeof fs.readFileSync,
     );
 
@@ -352,25 +359,19 @@ describe("isLoopbackLsofAddress bind probe (#6014)", () => {
 });
 
 describe("public surface bind probe (#6014)", () => {
-  it.each([
-    "localhost",
-    "127.0.0.1",
-    "127.0.0.2",
-    "::1",
-    "[::1]",
-    "::ffff:127.0.0.9",
-  ])("probes the local backend hostname %s", (hostname) => {
-    expect(shouldProbeBackendHostname(hostname)).toBe(true);
-  });
+  it.each(["localhost", "127.0.0.1", "127.0.0.2", "::1", "[::1]", "::ffff:127.0.0.9"])(
+    "probes the local backend hostname %s",
+    (hostname) => {
+      expect(shouldProbeBackendHostname(hostname)).toBe(true);
+    },
+  );
 
-  it.each([
-    "10.0.0.1",
-    "192.168.1.9",
-    "ollama.example.com",
-    "2001:db8::1",
-  ])("skips the remote backend hostname %s", (hostname) => {
-    expect(shouldProbeBackendHostname(hostname)).toBe(false);
-  });
+  it.each(["10.0.0.1", "192.168.1.9", "ollama.example.com", "2001:db8::1"])(
+    "skips the remote backend hostname %s",
+    (hostname) => {
+      expect(shouldProbeBackendHostname(hostname)).toBe(false);
+    },
+  );
 
   it("exports EXIT_BACKEND_NOT_LOOPBACK as 2 (locked-in contract with the host CLI)", () => {
     // The host (src/lib/inference/ollama/proxy.ts) maps this code to a

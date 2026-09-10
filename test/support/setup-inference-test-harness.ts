@@ -61,6 +61,12 @@ export function createStaleAnthropicProviderRunner(
   let exists = true;
   let attached = attachedSandboxes;
   return (args) => {
+    const isProviderOperation =
+      (args[0] === "provider" && ["get", "delete"].includes(args[1])) ||
+      (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach");
+    if (isProviderOperation && args.at(-1) !== provider) {
+      return { status: 1, stderr: `provider '${args.at(-1)}' not found` };
+    }
     if (args[0] === "provider" && args[1] === "get") {
       return exists
         ? {

@@ -92,7 +92,7 @@ export const SANDBOX_PROVIDER_SUFFIXES = [
 
 export type SandboxProviderSuffix = string;
 
-/** Best-effort registration cleanup after the owning sandbox has been removed. */
+/** Deletes registrations after sandbox removal. Failures can leave stale registrations. */
 export async function deleteSandboxProviderRegistrations(
   sandboxName: string,
   scope: "messaging" | "all",

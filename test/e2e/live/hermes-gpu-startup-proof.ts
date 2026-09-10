@@ -12,6 +12,7 @@ import { MANAGED_BOOTSTRAP_REQUEST_FILE } from "../../../src/lib/onboard/managed
 import { fingerprintManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
 import { OPENSHELL_SANDBOX_SUPERVISOR_ARGV } from "../../../src/lib/onboard/sandbox-create-launch.ts";
 import { load as loadSandboxRegistry } from "../../../src/lib/state/registry/persistence.ts";
+import { OPENSHELL_GATEWAY_START_LINE } from "../../helpers/openshell-gateway-start-output.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   type HostCliClient,
@@ -60,7 +61,7 @@ export function assertHermesGpuStartupOutputContract(
   installText: string,
 ): void {
   expect(installText).toContain(`Container runtime: ${runtimeProviderId}`);
-  expect(installText).toMatch(/Starting OpenShell .*gateway/u);
+  expect(installText).toMatch(OPENSHELL_GATEWAY_START_LINE);
   expect(installText).toMatch(/gateway is healthy/u);
   expect(installText).not.toContain("Reusing healthy NemoClaw gateway.");
   expect(installText).not.toMatch(/Reusing existing .*gateway/u);

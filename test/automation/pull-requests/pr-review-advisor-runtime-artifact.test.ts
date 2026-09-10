@@ -49,7 +49,9 @@ describe("PR Review Advisor runtime artifact", () => {
     expect(fs.readFileSync(path.join(input.advisor, "node_modules/package/index.js"), "utf8")).toBe(
       "export {};\n",
     );
-    expect(fs.readFileSync(env.GITHUB_PATH as string, "utf8")).toContain("pr-review-advisor-runtime-bin");
+    expect(fs.readFileSync(env.GITHUB_PATH as string, "utf8")).toContain(
+      "pr-review-advisor-runtime-bin",
+    );
   });
 
   it("rejects a payload whose digest changed", () => {

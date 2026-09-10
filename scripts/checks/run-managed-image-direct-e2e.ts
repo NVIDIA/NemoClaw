@@ -131,7 +131,10 @@ function docker(
   return normalized;
 }
 
-function requestFor(agent: ShippedManagedImageAgent, changed = false): ManagedStartupRootApplyRequest {
+function requestFor(
+  agent: ShippedManagedImageAgent,
+  changed = false,
+): ManagedStartupRootApplyRequest {
   return createManagedStartupRootApplyRequest({
     agent,
     encodedProfile: encodeManagedStartupProfile(

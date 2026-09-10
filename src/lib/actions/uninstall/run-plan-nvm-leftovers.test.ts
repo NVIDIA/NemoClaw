@@ -55,9 +55,10 @@ describe("uninstall NVM leftovers", () => {
     const foreignVersion = path.join(nodeVersionsDir, "v20.20.0");
     const packageDir = path.join(ownedVersion, "lib", "node_modules", "nemoclaw");
     const nestedForeignBin = path.join(ownedVersion, "lib", "node_modules", "unrelated", "bin");
-    const cliNames = ["nemoclaw", "nemohermes", "nemo-deepagents"] as const;
+    const cliNames = ["nemoclaw", "nemoclaw-acp", "nemohermes", "nemo-deepagents"] as const;
     const declaredBins = {
       nemoclaw: "bin/nemoclaw.js",
+      "nemoclaw-acp": "dist/lib/acp/main.js",
       nemohermes: "bin/nemohermes.js",
       "nemo-deepagents": "bin/nemoclaw.js",
     } as const;
@@ -82,14 +83,14 @@ describe("uninstall NVM leftovers", () => {
     shims.forEach((entry) => fs.symlinkSync("/tmp/prefix/bin/cli", entry));
     const packageTarget = (entry: string) =>
       path.join(packageDir, declaredBins[path.basename(entry) as keyof typeof declaredBins]);
-    ownedBins.slice(0, 2).forEach((entry) => {
+    ownedBins.slice(0, -1).forEach((entry) => {
       const target = packageTarget(entry);
       fs.symlinkSync(path.relative(path.dirname(entry), target), entry);
     });
-    fs.linkSync(packageTarget(ownedBins[2]), ownedBins[2]);
+    fs.linkSync(packageTarget(ownedBins.at(-1)!), ownedBins.at(-1)!);
     kept.forEach((entry) => fs.symlinkSync("/tmp/foreign-package/bin/cli", entry));
-    expect(fs.lstatSync(ownedBins[1]).isSymbolicLink()).toBe(true);
-    expect(fs.existsSync(ownedBins[1])).toBe(false);
+    expect(fs.lstatSync(ownedBins[2]).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(ownedBins[2])).toBe(false);
 
     const removed: string[] = [];
     try {
@@ -108,6 +109,7 @@ describe("uninstall NVM leftovers", () => {
     const linkedPackage = path.join(tmpHome, "linked-nemoclaw");
     const declaredBins = {
       nemoclaw: "bin/nemoclaw.js",
+      "nemoclaw-acp": "dist/lib/acp/main.js",
       nemohermes: "bin/nemohermes.js",
       "nemo-deepagents": "bin/nemo-deepagents.js",
     } as const;
@@ -120,6 +122,7 @@ describe("uninstall NVM leftovers", () => {
     fs.symlinkSync(linkedPackage, packageLink);
     const bins = Object.entries(declaredBins).map(([name, relativeTarget]) => {
       const packageTarget = path.join(linkedPackage, relativeTarget);
+      fs.mkdirSync(path.dirname(packageTarget), { recursive: true });
       fs.writeFileSync(packageTarget, "#!/usr/bin/env node\n");
       const bin = path.join(versionDir, "bin", name);
       fs.mkdirSync(path.dirname(bin), { recursive: true });
