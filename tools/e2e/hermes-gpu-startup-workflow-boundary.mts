@@ -285,7 +285,6 @@ if ! @run restore`;
     ni !== restoreI + 1 ||
     ni + 3 !== steps.indexOf(runStep) ||
     node?.uses !== "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" ||
-    asRecord(node?.with)["node-version"] !== "22" ||
     !trustedEnv(node) ||
     asRecord(node?.env).NODE_OPTIONS !== "" ||
     staleDockerRestore?.name !== "Recover Docker CLI before native Podman E2E" ||

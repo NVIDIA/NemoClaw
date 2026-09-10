@@ -101,6 +101,10 @@ const createDirectSetupInferenceHarness =
   createDirectSetupInferenceHarnessFactory(createSetupInference);
 
 describe("onboard helpers", () => {
+  it("does not expose the removed provider argument builder", () => {
+    expect(loadedOnboardInternals).not.toHaveProperty("buildProviderArgs");
+  });
+
   it("does not treat an empty policy preset selection as already applied (#6042)", () => {
     expect(arePolicyPresetsApplied("unused", [])).toBe(false);
   });
@@ -760,7 +764,7 @@ const { createSandbox } = require(${onboardPath});
         (entry: CommandEntry) =>
           entry.command.includes("forward service my-assistant") &&
           entry.command.includes("--target-port 18789") &&
-          entry.command.includes("--local 0.0.0.0:18789"),
+          entry.command.includes("--local 127.0.0.1:18789"),
       ),
       "expected dashboard forward restore on sandbox reuse",
     );
@@ -793,7 +797,12 @@ const { createSandbox } = require(${onboardPath});
       const harness = createDirectSetupInferenceHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: "", stderr: "" }
+            ? {
+                status: 0,
+                stdout:
+                  "Name: openai-api\nType: openai\nCredential keys: OPENAI_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+                stderr: "",
+              }
             : undefined,
         overrides: { verifyInferenceRoute: route.verifyInferenceRoute },
       });
@@ -832,7 +841,12 @@ const { createSandbox } = require(${onboardPath});
       const harness = createDirectSetupInferenceHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: "", stderr: "" }
+            ? {
+                status: 0,
+                stdout:
+                  "Name: openai-api\nType: openai\nCredential keys: OPENAI_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+                stderr: "",
+              }
             : undefined,
         overrides: { verifyInferenceRoute: route.verifyInferenceRoute },
       });

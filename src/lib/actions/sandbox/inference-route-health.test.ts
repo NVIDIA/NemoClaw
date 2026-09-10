@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import {
   DCODE_MANAGED_EXEC_LAUNCHER,
   DCODE_MANAGED_EXEC_MISSING_DETAIL,
@@ -14,16 +15,19 @@ import {
 } from "./inference-route-health";
 
 describe("sandbox inference route health", () => {
-  const makeCapture =
-    (output: string, status = 0) =>
-    async () =>
-      ({ status, output }) as never;
+  const makeExecutor = (stdout: string, status = 0): OpenShellSandboxBufferedCommandExecutor => ({
+    runBuffered: vi.fn(async () => ({
+      outcome: { kind: "completed" as const, exitCode: status },
+      stdout,
+      stderr: "",
+    })),
+  });
 
   it.each([200, 401, 403])(
     "reports a reachable route for final HTTP responses [case %#]",
     async (httpStatus) => {
       const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
-        captureOpenshellImpl: makeCapture(`OK ${httpStatus}`),
+        commandExecutor: makeExecutor(`OK ${httpStatus}`),
       });
 
       expect(result).toMatchObject({
@@ -37,7 +41,7 @@ describe("sandbox inference route health", () => {
 
   it("reports HTTP 5xx as an unhealthy authoritative route (#6192)", async () => {
     const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
-      captureOpenshellImpl: makeCapture("BROKEN 503"),
+      commandExecutor: makeExecutor("BROKEN 503"),
     });
 
     expect(result).toMatchObject({ ok: false, httpStatus: 503 });
@@ -46,7 +50,7 @@ describe("sandbox inference route health", () => {
 
   it("reports transport status 000 as unreachable", async () => {
     const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
-      captureOpenshellImpl: makeCapture("BROKEN 000"),
+      commandExecutor: makeExecutor("BROKEN 000"),
     });
 
     expect(result).toMatchObject({ ok: false, httpStatus: 0 });
@@ -56,58 +60,51 @@ describe("sandbox inference route health", () => {
   it("returns null when the authoritative probe is unavailable (#6192)", async () => {
     await expect(
       probeSandboxInferenceGatewayHealth("my-sandbox", {
-        captureOpenshellImpl: makeCapture("transport unavailable", 1),
+        commandExecutor: makeExecutor("transport unavailable", 1),
       }),
     ).resolves.toBeNull();
     await expect(
       probeSandboxInferenceGatewayHealth("my-sandbox", {
-        captureOpenshellImpl: async () => {
-          throw new Error("openshell unavailable");
+        commandExecutor: {
+          runBuffered: async () => {
+            throw new Error("openshell unavailable");
+          },
         },
       }),
     ).resolves.toBeNull();
   });
 
   it("uses the DCode agent path while reporting observable route health (#6192)", async () => {
-    const captureOpenshellImpl = vi.fn(makeCapture("OK 200"));
+    const commandExecutor = makeExecutor("OK 200");
     const getSessionAgentImpl = vi.fn(() => ({ name: "langchain-deepagents-code" }) as never);
 
     const result = await probeSandboxInferenceGatewayHealth("deep-code", {
-      captureOpenshellImpl,
+      commandExecutor,
       gatewayName: "recorded-gateway",
       getSessionAgentImpl,
     });
 
     expect(result).toMatchObject({ ok: true, httpStatus: 200 });
     expect(getSessionAgentImpl).toHaveBeenCalledWith("deep-code");
-    expect(captureOpenshellImpl).toHaveBeenCalledWith(
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        "deep-code",
-        "-g",
-        "recorded-gateway",
-        "--no-tty",
-        "--env",
-        "HOME=/usr/local/lib/nemoclaw",
-        "--env",
-        "BASH_ENV=",
-        "--env",
-        "ENV=",
-        "--",
-        "/usr/local/lib/nemoclaw/dcode-managed-exec",
-        "/bin/sh",
-        "-c",
-        expect.stringContaining("/usr/bin/curl -q"),
-      ],
-      expect.objectContaining({ ignoreError: true }),
+    expect(commandExecutor.runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "deep-code",
+        target: { kind: "named", gatewayName: "recorded-gateway" },
+        tty: false,
+        sandboxEnvironment: { HOME: "/usr/local/lib/nemoclaw", BASH_ENV: "", ENV: "" },
+        command: [
+          "/usr/local/lib/nemoclaw/dcode-managed-exec",
+          "/bin/sh",
+          "-c",
+          expect.stringContaining("/usr/bin/curl -q"),
+        ],
+      }),
     );
   });
 
   it("reports missing DCode helper as a failed compatibility boundary (#6192)", async () => {
     const result = await probeSandboxInferenceGatewayHealth("deep-code", {
-      captureOpenshellImpl: makeCapture(`exec: ${DCODE_MANAGED_EXEC_LAUNCHER}: not found`, 127),
+      commandExecutor: makeExecutor(`exec: ${DCODE_MANAGED_EXEC_LAUNCHER}: not found`, 127),
       getSessionAgentImpl: () => ({ name: "langchain-deepagents-code" }) as never,
     });
 

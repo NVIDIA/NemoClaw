@@ -759,9 +759,15 @@ function runRuntimeShellEnvBootstrap() {
   const caFile = path.join(tmpDir, "proxy ca.pem");
   const hermesHome = path.join(tmpDir, ".hermes");
   const scriptPath = path.join(tmpDir, "run.sh");
+  const hermesPath = path.join(tmpDir, "hermes");
 
   fs.mkdirSync(hermesHome, { recursive: true });
   fs.writeFileSync(caFile, "ca");
+  fs.writeFileSync(
+    hermesPath,
+    '#!/bin/sh\nprintf "arg:%s\\n" "$@"\nprintf "native diagnostic\\n" >&2\nexit 7\n',
+    { mode: 0o700 },
+  );
 
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   fs.writeFileSync(
@@ -799,8 +805,17 @@ function runRuntimeShellEnvBootstrap() {
     const guardResult = spawnSync("bash", ["-c", `. ${shellQuote(envFile)}; hermes setup`], {
       encoding: "utf-8",
       timeout: 5000,
-      env: { ...process.env, PATH: "/usr/bin:/bin" },
+      env: { ...process.env, PATH: `${tmpDir}:/usr/bin:/bin` },
     });
+    const doctorResult = spawnSync(
+      "bash",
+      ["-c", `. ${shellQuote(envFile)}; hermes doctor --fix 'argument with spaces'`],
+      {
+        encoding: "utf-8",
+        timeout: 5000,
+        env: { ...process.env, PATH: `${tmpDir}:/usr/bin:/bin` },
+      },
+    );
     const sourcedEnvResult = spawnSync(
       "bash",
       ["-c", `. ${shellQuote(envFile)}; printf '%s' "$SSL_CERT_FILE"`],
@@ -817,6 +832,7 @@ function runRuntimeShellEnvBootstrap() {
       envFileContent,
       envFileMode,
       guardResult,
+      doctorResult,
       hermesHome,
       caFile,
       sourcedEnvResult,
@@ -887,7 +903,7 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(preserved.stdout.trim()).toBe("/sandbox/.hermes/lazy-packages");
   });
 
-  it("puts the Hermes configure guard in the sourced proxy env file", () => {
+  it("passes native doctor through the runtime environment while denying setup", () => {
     const run = runRuntimeShellEnvBootstrap();
 
     expect(run.result.status).toBe(0);
@@ -909,9 +925,13 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.envFileContent).not.toContain(".profile");
 
     expect(run.guardResult.status).toBe(1);
+    expect(run.guardResult.stdout).toBe("");
     expect(run.guardResult.stderr).toContain(
       "Error: 'hermes setup' cannot modify config inside the sandbox.",
     );
+    expect(run.doctorResult.status).toBe(7);
+    expect(run.doctorResult.stdout).toBe("arg:doctor\narg:--fix\narg:argument with spaces\n");
+    expect(run.doctorResult.stderr).toBe("native diagnostic\n");
   });
 });
 

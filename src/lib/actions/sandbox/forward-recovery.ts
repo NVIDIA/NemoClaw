@@ -84,6 +84,11 @@ export function createHermesPortableForwardRecoveryInput(input: {
     operationTimeoutMs: 30_000,
     ports: input.ports,
     probeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    forwardService: {
+      executablePath: input.commandAuthority.executablePath,
+      sourceEnvironment: input.commandAuthority.env,
+      workspace: "default",
+    },
     timing: { onComplete: input.onTiming },
     deps: {
       assertCurrent: input.assertCurrent,
@@ -115,6 +120,8 @@ export function createHermesPortableForwardRecoveryInput(input: {
           stdio: "ignore",
           timeout,
         }),
+      isForwardServiceOwner: (target) => isForwardServiceListenerOwner(target),
+      launchForwardService: (target, options) => launchForwardService(target, options),
       isPortReachable: isLocalForwardReachable,
     },
   };

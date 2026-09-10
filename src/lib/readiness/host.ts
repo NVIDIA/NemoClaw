@@ -200,10 +200,16 @@ function adaptHostAssessment(
     cdiNvidiaGpuSpecMissing: host.cdiNvidiaGpuSpecMissing,
     cdiNvidiaGpuSpecStale: host.cdiNvidiaGpuSpecStale,
     cdiNvidiaGpuSpecNeedsRepair: host.cdiNvidiaGpuSpecNeedsRepair,
+    platformIdentity: {
+      ...platformIdentity,
+      n1xWslGpu:
+        host.isWsl && hostGpuPlatform === "n1x"
+          ? true
+          : undefined,
+    },
     runtimeProviderId: runtimeProvider?.providerId,
     runtimeProviderOwnsHostReadiness: runtimeProvider?.ownsHostReadiness,
     containerGpuProof,
-    platformIdentity,
   };
 }
 

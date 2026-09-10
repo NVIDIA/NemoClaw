@@ -293,7 +293,7 @@ beforeEach(() => {
 
   execSpy = vi
     .spyOn(processRecovery, "executeSandboxExecCommand")
-    .mockImplementation((_name, command) => {
+    .mockImplementation(async (_name, command) => {
       return command.includes("/sandbox/.openclaw/openclaw.json")
         ? { status: 0, stdout: JSON.stringify(testConfig), stderr: "" }
         : command.includes("tail -n 400") && command.includes("/tmp/gateway.log")

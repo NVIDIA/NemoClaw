@@ -125,7 +125,7 @@ function printDockerGpuPatchCleanup(
   );
 }
 
-export function applyDockerGpuPatchOrExit(
+export async function applyDockerGpuPatchOrExit(
   options: {
     sandboxName: string;
     gpuDevice?: string | null;
@@ -139,11 +139,14 @@ export function applyDockerGpuPatchOrExit(
     openshellSandboxCommand?: readonly string[] | null;
     dockerDesktopWsl?: boolean;
   },
-  deps: Pick<DockerGpuPatchDeps, "runOpenshell" | "runCaptureOpenshell" | "sleep">,
-): DockerGpuPatchResult {
+  deps: Pick<
+    DockerGpuPatchDeps,
+    "commandExecutor" | "runOpenshell" | "runCaptureOpenshell" | "sleep"
+  >,
+): Promise<DockerGpuPatchResult> {
   console.log("  Recreating OpenShell Docker sandbox container with NVIDIA GPU access...");
   try {
-    const result = recreateOpenShellDockerSandboxWithGpu(options, deps);
+    const result = await recreateOpenShellDockerSandboxWithGpu(options, deps);
     console.log(`  ✓ Docker GPU mode selected: ${result.mode.label}`);
     return result;
   } catch (error) {

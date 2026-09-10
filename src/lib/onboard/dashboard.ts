@@ -179,9 +179,6 @@ export interface OnboardDashboardHelpers {
     chatUiUrl?: string,
     options?: Parameters<typeof dashboardAccess.getDashboardForwardTarget>[1],
   ): string;
-  getWslHostAddress(
-    options?: Parameters<typeof dashboardAccess.getWslHostAddress>[0],
-  ): string | null;
   printDashboard(
     sandboxName: string,
     model: string,
@@ -325,15 +322,6 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     });
   }
 
-  function getWslHostAddress(
-    options: Parameters<typeof dashboardAccess.getWslHostAddress>[0] = {},
-  ): string | null {
-    return dashboardAccess.getWslHostAddress({
-      ...options,
-      runCapture: options.runCapture || runCapture,
-    });
-  }
-
   /**
    * Build the delivery chain deployment verification probes for `sandboxName`.
    *
@@ -346,13 +334,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     sandboxName: string,
     agent: VerifyChainAgent | null | undefined,
   ): ReturnType<typeof buildChain> {
-    // Resolve WSL once: `buildChain` and the host-address lookup must agree, or
-    // the chain can claim WSL while dropping the fallback URL that pairs with it.
-    const isWsl = deps.isWsl();
+    // One resolver for the host hints, so this chain and the forward's chain
+    // cannot disagree about WSL, its fallback address, or the bind override
+    // (#10861).
     return buildChain({
       chatUiUrl,
-      isWsl,
-      wslHostAddress: getWslHostAddress({ isWsl }),
+      ...dashboardAccess.resolveDashboardPlatformHints({ isWsl: deps.isWsl(), runCapture }),
       dashboardHealthEndpoint: agent?.dashboard?.healthPath,
       gatewayPort: resolveVerifyAgentApiPort(sandboxName, agent, {
         getSandbox,
@@ -790,8 +777,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
     const chain = buildChain({
       chatUiUrl,
-      isWsl: deps.isWsl(),
-      wslHostAddress: getWslHostAddress({ isWsl: deps.isWsl(), runCapture: deps.runCapture }),
+      ...dashboardAccess.resolveDashboardPlatformHints({
+        isWsl: deps.isWsl(),
+        runCapture: deps.runCapture,
+      }),
     });
     const dashboardBaseUrl = `${chain.accessUrl.replace(/\/$/, "")}/`;
     const dashboardUrl = dashboardUrlForDisplay(
@@ -894,7 +883,6 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     fetchAgentWebAuthTokenFromSandbox,
     getDashboardForwardPort,
     getDashboardForwardTarget,
-    getWslHostAddress,
     printDashboard,
     stopAllDashboardForwards,
   };

@@ -51,9 +51,11 @@ function launcherWith(
 describe("the dashboard launcher records the bind of the forward it starts (#10861)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("records the bind before the forward starts and keeps it when the forward comes up", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const record = vi.fn(() => true);
     const launch = vi.fn();
     const helpers = launcherWith(launch, record);
@@ -67,6 +69,7 @@ describe("the dashboard launcher records the bind of the forward it starts (#108
   });
 
   it("puts the previous record back when the forward does not start", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const record = vi.fn(() => true);
     const helpers = launcherWith(
@@ -92,6 +95,7 @@ describe("the dashboard launcher records the bind of the forward it starts (#108
   });
 
   it("warns when the previous record cannot be put back", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const record = vi
       .fn(() => true)
@@ -121,6 +125,7 @@ describe("the dashboard launcher records the bind of the forward it starts (#108
   ])(
     "refuses to start a wide forward whose exposure cannot be recorded when %s",
     (_case, write) => {
+      vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
       const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
       const launch = vi.fn();
       const helpers = launcherWith(launch, vi.fn(write));
@@ -167,6 +172,7 @@ describe("the dashboard launcher records the bind of the forward it starts (#108
   });
 
   it("leaves the record alone when it keeps an owned forward", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const record = vi.fn(() => true);
     const launch = vi.fn();
     const helpers = launcherWith(launch, record, {
@@ -204,6 +210,7 @@ describe("a reused forward that does not start leaves the registry saying what i
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-reused-forward-"));
     createdHomes.push(home);
     vi.stubEnv("HOME", home);
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     vi.resetModules();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const registry = await import("../state/registry");
@@ -215,6 +222,7 @@ describe("a reused forward that does not start leaves the registry saying what i
       agent: "hermes",
       dashboardPort: 18789,
       dashboardBindAddress: "127.0.0.1",
+      dashboardRemoteBindPrepared: true,
       gatewayName: "nemoclaw-8080",
       gatewayPort: 8080,
     });
@@ -248,7 +256,7 @@ describe("a reused forward that does not start leaves the registry saying what i
     applyReusedSandboxDashboardState({
       sandboxName: "reuse-me",
       chatUiUrl: WIDE_URL,
-      env: {},
+      env: { NEMOCLAW_DASHBOARD_BIND: "0.0.0.0" },
       agent: null,
       model: "test-model",
       provider: "openai-compatible",
@@ -307,6 +315,7 @@ describe("a fresh agent forward that does not start leaves no record behind (#10
     createdHomes.push(home);
     vi.stubEnv("HOME", home);
     vi.stubEnv("CHAT_UI_URL", WIDE_URL);
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     vi.resetModules();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const registry = await import("../state/registry");
@@ -378,6 +387,7 @@ describe("a fresh agent forward that does not start leaves no record behind (#10
   it("warns when the record cannot be put back", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.stubEnv("CHAT_UI_URL", WIDE_URL);
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const record = vi
       .fn(() => true)
       .mockReturnValueOnce(true)
@@ -399,6 +409,7 @@ describe("a fresh agent forward that does not start leaves no record behind (#10
 
   it("records the bind once when the forward starts", async () => {
     vi.stubEnv("CHAT_UI_URL", WIDE_URL);
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const record = vi.fn(() => true);
     const helpers = launcherWith(() => undefined, record);
 
