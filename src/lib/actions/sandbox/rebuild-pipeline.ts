@@ -625,6 +625,7 @@ async function rebuildSandboxUnlocked(
           sandboxName,
           targetAgentName: rebuildAgent || "openclaw",
           messagingPlan,
+          recheckMessagingConflicts,
           backupManifest: recoveryBackup,
           mcpEntries,
           ...(recreateJournal.runtimeSelection
@@ -882,6 +883,7 @@ async function rebuildSandboxUnlocked(
         sandboxName,
         targetAgentName: rebuildAgent || "openclaw",
         messagingPlan,
+        recheckMessagingConflicts,
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
         mcpRuntimeSelection: mcpPreparation.runtimeSelection,

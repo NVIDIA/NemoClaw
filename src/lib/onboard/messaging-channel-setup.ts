@@ -6,7 +6,6 @@ import { getCredential, normalizeCredentialValue } from "../credentials/store";
 import {
   type ChannelInputSpec,
   type ChannelManifest,
-  type ConflictRegistry,
   createBuiltInChannelManifestRegistry,
   createBuiltInMessagingHookRegistry,
   createBuiltInRenderTemplateResolver,
@@ -29,10 +28,7 @@ import {
   detectInvalidMessagingChannelConfigEnvValues,
   resolveMessagingChannelConfigEnvValue,
 } from "../messaging-channel-config";
-import {
-  createMessagingHostForwardPreEnableHookRegistry,
-  type MessagingHostForwardPortConflictOptionsDeps,
-} from "./messaging-host-forward";
+export { createMessagingHostForwardPreEnableHookRegistry } from "./messaging-host-forward";
 import {
   type MessagingSelectorInput,
   type MessagingSelectorOutput,
@@ -66,22 +62,6 @@ export interface CreateSetupMessagingChannelsDeps {
   readonly isNonInteractive: NonNullable<SetupMessagingChannelsDeps["isNonInteractive"]>;
   readonly prompt: NonNullable<GooglechatTunnelRuntimeDeps["prompt"]>;
   readonly googlechatTunnelRuntime?: Omit<GooglechatTunnelRuntimeDeps, "prompt" | "sandboxName">;
-}
-
-export function withHostPortPreflight(
-  registry: ConflictRegistry,
-  resolveExecutable: () => string,
-  checkPortAvailable: NonNullable<
-    MessagingHostForwardPortConflictOptionsDeps["checkPortAvailable"]
-  >,
-) {
-  return {
-    listSandboxes: registry.listSandboxes,
-    preEnableHookRegistry: createMessagingHostForwardPreEnableHookRegistry({
-      resolveExecutable,
-      checkPortAvailable,
-    }),
-  };
 }
 
 export function createSetupMessagingChannels(deps: CreateSetupMessagingChannelsDeps) {

@@ -145,6 +145,7 @@ function createConflictFixture() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-5954-"));
   tmpFixtures.push(tmpDir);
   const nemoclawDir = path.join(tmpDir, ".nemoclaw");
+  const legacyForwardListMarker = path.join(tmpDir, "legacy-forward-list-called");
   fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
 
   const sandboxEntry = (name: string) => ({
@@ -202,7 +203,10 @@ if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider"
 if (a[0]==="inference")                      { process.exit(0); }
 if (a[0]==="provider" && a[1]==="get")       { process.exit(0); }
 if (a[0]==="provider")                       { process.exit(0); }
-if (a[0]==="forward" && a[1]==="list")     { process.stdout.write("SANDBOX BIND PORT PID STATUS\\nmy-assistant 127.0.0.1 3978 9876 active\\n"); process.exit(0); }
+if (a.some((value, index) => value === "forward" && a[index + 1] === "list")) {
+  require("node:fs").writeFileSync(${JSON.stringify(legacyForwardListMarker)}, "called", { mode: 0o600 });
+  process.exit(17);
+}
 process.exit(0);
 `,
     { mode: 0o755 },
@@ -233,7 +237,7 @@ process.exit(17);
     { mode: 0o755 },
   );
 
-  return { tmpDir, nemoclawDir };
+  return { tmpDir, nemoclawDir, legacyForwardListMarker };
 }
 
 function createHostPortConflictFixture() {
@@ -307,6 +311,7 @@ describe("rebuild messaging credential conflict preflight (#5954)", () => {
       expect(output).not.toContain("Backing up sandbox state");
       expect(output).not.toContain("Old sandbox deleted");
       expect(output).not.toContain("must not run before the conflict preflight");
+      expect(fs.existsSync(f.legacyForwardListMarker)).toBe(false);
       expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
     },
   );
@@ -327,6 +332,7 @@ describe("rebuild messaging credential conflict preflight (#5954)", () => {
       expect(output).not.toContain("Backing up sandbox state");
       expect(output).not.toContain("Old sandbox deleted");
       expect(output).not.toContain("must not run before the conflict preflight");
+      expect(fs.existsSync(f.legacyForwardListMarker)).toBe(false);
       expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
     },
   );

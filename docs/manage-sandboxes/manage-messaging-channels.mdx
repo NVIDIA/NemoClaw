@@ -178,6 +178,10 @@ A registry or Microsoft Teams host-port conflict leaves the original sandbox int
 Resolve any conflict, then rerun the operation.
 `$$nemoclaw status` reports cross-sandbox overlaps within the selected OpenShell gateway's sandbox registry.
 
+An unverified required webhook forward makes the rebuild fail without deleting the replacement sandbox.
+NemoClaw retains existing backup and recovery files.
+Correct the reported forwarding error, then run `$$nemoclaw <sandbox> rebuild --yes` to retry recovery.
+
 If an older registry entry lacks lifecycle identity, channel provider operations restore missing fields only from a matching completed onboarding receipt.
 The receipt must identify the same live sandbox on the recorded gateway.
 Missing proof or conflicting identity stops the operation; `--force` does not override this check.

@@ -867,7 +867,7 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).toHaveBeenCalledWith("Hermes post-restore verification failed for 'alpha'.");
   });
 
-  it("still prints the Hermes API token notice when a non-fatal post-restore step is unverified (#7175)", async () => {
+  it("blocks completion before the Hermes token notice when webhook forwarding is unverified", async () => {
     agentName = "hermes";
     vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
     const args = input();
@@ -875,10 +875,12 @@ describe("rebuild post-restore phase", () => {
     await runRebuildPostRestorePhase(args);
 
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(args.bail).not.toHaveBeenCalled();
+    expect(args.bail).toHaveBeenCalledWith(
+      "Messaging webhook forwarding remained unverified for 'alpha'.",
+    );
     expect(output).toContain("rebuilt but some post-restore steps were incomplete");
-    expect(output).toContain("Hermes API bearer token changed during rebuild");
-    expect(output).toContain("nemoclaw alpha gateway-token --quiet");
+    expect(output).not.toContain("Hermes API bearer token changed during rebuild");
+    expect(output).not.toContain("nemoclaw alpha gateway-token --quiet");
   });
 
   it("does not print the Hermes API token notice when prepared backup recovery is incomplete (#7175)", async () => {
@@ -893,7 +895,7 @@ describe("rebuild post-restore phase", () => {
     expect(output).not.toContain("Hermes API bearer token changed during rebuild");
     expect(output).not.toContain("gateway-token --quiet");
     expect(args.bail).toHaveBeenCalledWith(
-      "Prepared backup recovery for 'alpha' completed with unverified post-restore state.",
+      "Messaging webhook forwarding remained unverified for 'alpha'.",
     );
   });
 
@@ -932,7 +934,7 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).not.toHaveBeenCalled();
   });
 
-  it("names the connect recovery command when host forwarding is unverified (#8283)", async () => {
+  it("names the rebuild recovery command when host forwarding is unverified", async () => {
     vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
     const args = input();
 
@@ -940,8 +942,10 @@ describe("rebuild post-restore phase", () => {
 
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
     expect(output).toContain("Messaging webhook forward was not verified");
-    expect(output).toContain("nemoclaw alpha connect");
-    expect(args.bail).not.toHaveBeenCalled();
+    expect(output).toContain("nemoclaw alpha rebuild --yes");
+    expect(args.bail).toHaveBeenCalledWith(
+      "Messaging webhook forwarding remained unverified for 'alpha'.",
+    );
   });
 
   it("passes the Hermes config result through the successful completion report", async () => {

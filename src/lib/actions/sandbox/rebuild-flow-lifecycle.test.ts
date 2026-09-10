@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
+import { makePlan } from "../../../../test/helpers/messaging-conflict-fixtures";
 import {
   createRebuildFlowHarness,
   createHarnessTempDir,
@@ -44,17 +45,61 @@ describe("rebuildSandbox flow: lifecycle", () => {
   });
 
   it("carries the messaging recheck through backup and refuses deletion after port drift", async () => {
-    const check = vi.fn().mockResolvedValueOnce(undefined)
+    const check = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error("Teams port ownership changed"));
     const harness = createRebuildFlowHarness({ preflightMessagingConflicts: check });
 
-    await expect(harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }))
-      .rejects.toThrow("Teams port ownership changed");
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Teams port ownership changed");
     expect(check).toHaveBeenCalledTimes(2);
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
     expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledOnce();
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it("retains replacement recovery when Teams forwarding fails after the source is deleted", async () => {
+    const check = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("Teams webhook port 3978 is occupied by nc (PID 4321)"));
+    const harness = createRebuildFlowHarness({
+      preflightMessagingConflicts: check,
+      buildMessagingRebuildPlan: () =>
+        makePlan("alpha", {
+          workflow: "rebuild",
+          channels: [
+            {
+              channelId: "teams",
+              displayName: "Microsoft Teams",
+              authMode: "token-paste",
+              active: true,
+              selected: true,
+              configured: true,
+              disabled: false,
+              inputs: [],
+              hooks: [],
+              hostForward: { channelId: "teams", port: 3978, label: "Microsoft Teams webhook" },
+            },
+          ],
+        }),
+    });
+    harness.ensureMessagingHostForwardAfterRebuildSpy.mockReturnValue(false);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Teams webhook port 3978 is occupied by nc (PID 4321)");
+    expect(check).toHaveBeenCalledTimes(3);
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+    expect(fs.existsSync(harness.backupPath)).toBe(true);
+    expect(fs.existsSync(path.join(harness.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
+      true,
+    );
   });
 
   it("rejects a multi-agent sandbox before backup, onboard, or deletion", async () => {
