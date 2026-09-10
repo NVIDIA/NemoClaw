@@ -567,7 +567,14 @@ describe("pull request and main workflow contracts", () => {
       })),
     );
     expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual(
-      actions.map(() => 'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"'),
+      [
+        'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+        'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+        'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" none',
+        'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+        'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" production',
+        'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      ],
     );
   });
 
