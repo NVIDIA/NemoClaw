@@ -172,6 +172,7 @@ if [[ -n "$cache_from" ]]; then
     exit 1
   }
 fi
+
 if [[ -n "$audit_evidence_from" ]]; then
   [[ -n "$cache_from" && "$audit_evidence_from" == /* && "$audit_evidence_from" != *$'\n'* && -d "$audit_evidence_from" && ! -L "$audit_evidence_from" ]] || usage
   audit_evidence_from="$(cd -- "$audit_evidence_from" && pwd -P)"
@@ -428,6 +429,7 @@ build_agent() {
       cache_args+=(--cache-from "type=local,src=${cache_source}")
     fi
   fi
+
   if [[ "$agent" == "openclaw" && -n "$audit_receipt" ]]; then
     cache_args+=(
       --secret "id=nemoclaw-mcporter-audit-receipt,src=${audit_receipt}"

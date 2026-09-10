@@ -48,6 +48,7 @@ class ParsingTestCommand extends NemoClawCommand {
 
 class PlainFailureCommand extends NemoClawCommand {
   static id = "plain-failure-test";
+  static enableJsonFlag = true;
   static flags = {};
 
   public async run(): Promise<void> {
@@ -219,6 +220,22 @@ describe("NemoClawCommand", () => {
 
     expect(log).toHaveBeenCalledWith(
       JSON.stringify({ provider: "build", apiKey: "<REDACTED>" }, null, 2),
+    );
+  });
+
+  it("retains redacted error messages and exit metadata in JSON failures", async () => {
+    const secret = "nvapi-" + "a".repeat(24);
+    const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(PlainFailureCommand.prototype, "run").mockRejectedValue(
+      Object.assign(new Error(`Provider rejected ${secret}`), { exitCode: 7 }),
+    );
+    process.exitCode = undefined;
+
+    await PlainFailureCommand.run(["--json"], process.cwd());
+
+    expect(process.exitCode).toBe(7);
+    expect(output).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify({ error: { exitCode: 7, message: "Provider rejected <REDACTED>" } }, null, 2),
     );
   });
 

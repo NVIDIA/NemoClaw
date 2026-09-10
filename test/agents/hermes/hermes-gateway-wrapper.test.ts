@@ -103,6 +103,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("gateway run");
+    expect(run.realEnv.HERMES_SKIP_CHMOD).toBe("1");
     expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe(
       "/sandbox/.hermes/lazy-packages",
     );
@@ -301,15 +302,32 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("dashboard");
+    expect(run.realEnv.HERMES_SKIP_CHMOD).toBe("1");
   });
 
-  it("passes --version through (build assertion path) without invoking the guard", () => {
-    const run = runWrapper(["--version"], { SLACK_BOT_TOKEN: "xoxb-real-1234567890" });
+  it.each([
+    { flag: "missing", exitCode: 0 },
+    { flag: "empty", exitCode: 7 },
+  ])(
+    "supplies the image permission policy when the version caller's flag is $flag (#11153)",
+    ({ flag, exitCode }) => {
+      const run = runWrapper(
+        ["--version"],
+        {
+          SLACK_BOT_TOKEN: "xoxb-real-1234567890",
+          ...(flag === "empty" ? { HERMES_SKIP_CHMOD: "" } : {}),
+        },
+        { stub: { stdout: "version output", stderr: "version diagnostic", exitCode } },
+      );
 
-    expect(run.status).toBe(0);
-    expect(run.realInvoked).toBe(true);
-    expect(run.realArgs).toBe("--version");
-  });
+      expect(run.realInvoked).toBe(true);
+      expect(run.realArgv).toEqual(["--version"]);
+      expect(run.realEnv.HERMES_SKIP_CHMOD).toBe("1");
+      expect(run.status).toBe(exitCode);
+      expect(run.stdout).toBe("version output\n");
+      expect(run.stderr).toBe("version diagnostic\n");
+    },
+  );
 
   it("invokes the runtime-env validator with python3 -I (isolated mode)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-argv-"));
@@ -406,6 +424,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.status).toBe(0);
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("config show");
+    expect(run.realEnv.HERMES_SKIP_CHMOD).toBe("1");
     expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
     expect(run.stdout).toContain("'api_key': 'sk-****'");
     expect(run.stdout).toContain("'default': 'meta/llama-3.1-8b-instruct'");
