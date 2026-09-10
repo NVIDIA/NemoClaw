@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import { runConfigExport } from "../../actions/config/export";
@@ -33,6 +34,7 @@ vi.mock("../../onboard/gateway/state-dir", () => ({
 import { getLiveGatewayInference } from "../../inference/live";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
+import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import type { SandboxEntry } from "../../state/registry/types";
@@ -77,7 +79,7 @@ const startup = buildManagedStartupProfile({
   corporateCa: null,
 });
 
-const entry: SandboxEntry = {
+const entry = {
   name: "alpha",
   createdAt: "not-export-evidence",
   agent: "openclaw",
@@ -107,7 +109,7 @@ const entry: SandboxEntry = {
     credentialProxyReplayRequired: false,
     shared: true,
   },
-};
+} satisfies SandboxEntry;
 
 const raw = {
   getProvider: vi.fn(),
@@ -293,6 +295,27 @@ describe("live export snapshot reader", () => {
     expect(captureSanitizedResolvedOpenshell).toHaveBeenCalledTimes(1);
     expect(vi.mocked(captureSanitizedResolvedOpenshell).mock.calls[0]?.[0]).toContain("nemoclaw");
     expect(raw.getProvider).not.toHaveBeenCalled();
+  });
+
+  it("retains direct tool selection through the live reader and stable verifier", async () => {
+    const profile = {
+      ...startup.profile,
+      tools: { ...startup.profile.tools, disclosure: "direct" as const },
+    };
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    mockSupportedLiveSource(3, 3, {
+      ...entry,
+      toolDisclosure: "direct",
+      workload: {
+        ...entry.workload,
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+      },
+    });
+    const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
+    expect(result).toMatchObject({ ok: true, source: { tools: { disclosure: "direct" } } });
+    expect(raw.getSandbox).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
   it("returns a complete non-secret raw snapshot", async () => {

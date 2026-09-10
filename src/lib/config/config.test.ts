@@ -79,6 +79,32 @@ function renderInput(value: unknown) {
 }
 
 describe("NemoClawConfig v1", () => {
+  it.each(["progressive", "direct"])("validates tool disclosure %s", (disclosure) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, { tools: { disclosure } });
+    expect(validateNemoClawConfig(value)).toEqual(value);
+  });
+
+  it.each([
+    {},
+    { disclosure: "unknown" },
+    { disclosure: "DIRECT" },
+    { disclosure: " direct " },
+    { disclosure: false },
+    { disclosure: "credential-canary" },
+    { disclosure: "direct", token: "credential-canary" },
+    { disclosure: "direct", enabledGateways: ["nous-web"] },
+  ])("rejects malformed or unsupported tool configuration", (tools) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, { tools });
+    expect(() => validateNemoClawConfig(value)).toThrow();
+    try {
+      validateNemoClawConfig(value);
+    } catch (error) {
+      expect(String(error)).not.toContain("credential-canary");
+    }
+  });
+
   it("validates one aggregate config with explicit effective policy (#10938)", () => {
     expect(validateNemoClawConfig(config())).toEqual(config());
   });

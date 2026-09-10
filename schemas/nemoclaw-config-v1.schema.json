@@ -163,6 +163,25 @@
                       "type": "string",
                       "const": "openclaw"
                     },
+                    "tools": {
+                      "type": "object",
+                      "required": ["disclosure"],
+                      "properties": {
+                        "disclosure": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "const": "progressive"
+                            },
+                            {
+                              "type": "string",
+                              "const": "direct"
+                            }
+                          ]
+                        }
+                      },
+                      "additionalProperties": false
+                    },
                     "inference": {
                       "type": "object",
                       "required": ["routes"],

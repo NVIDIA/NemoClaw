@@ -1,9 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import YAML from "yaml";
 import { Check } from "typebox/value";
 import { ExportSourceValuesSchema } from "./export-evidence";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { runConfigExport } from "../../actions/config/export";
+import { validateNemoClawConfig } from "../../config/schema";
+import {
+  parseNemoClawConfigDocumentName,
+  parseNemoClawConfigDocumentUid,
+} from "../../config/model";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import {
@@ -195,7 +203,180 @@ function verify(
   return verifyExportSource(requestedSandboxName, qualified);
 }
 
+async function exportSnapshots(sequence: readonly ObservedExportSnapshot[]) {
+  let index = 0;
+  const read = vi.fn(async () => sequence[Math.min(index++, sequence.length - 1)]!);
+  const writeStdout = vi.fn(async (_contents: string) => undefined);
+  const publish = vi.fn(() => ({ ok: true, outputPath: "/tmp/alpha.yaml" }) as const);
+  const outcome = await runConfigExport(
+    {
+      sandboxName: "alpha",
+      documentName: parseNemoClawConfigDocumentName("alpha"),
+      target: { kind: "stdout" },
+    },
+    {
+      observe: (name) => observeStableExportSource(name, { read }),
+      createDocumentUid: () => parseNemoClawConfigDocumentUid(sandboxId),
+      writeStdout,
+      publish,
+    },
+  );
+  return { outcome, read, writeStdout, publish };
+}
+
+function directToolsSnapshot(overrides: Partial<SandboxEntry> = {}) {
+  return snapshot({
+    registry: entry({
+      toolDisclosure: "direct",
+      workload: managedWorkload(
+        profileInput({
+          toolDisclosure: "direct",
+          environment: { NEMOCLAW_TOOL_DISCLOSURE: "direct" },
+        }),
+      ),
+      ...overrides,
+    }),
+  });
+}
+
 describe("config export source verification (#10938)", () => {
+  it("exports direct tools when the registry and managed profile agree", async () => {
+    const observed = directToolsSnapshot();
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.read).toHaveBeenCalledTimes(2);
+    expect(result.publish).not.toHaveBeenCalled();
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.sandboxes[0]!.agents[0]!.tools).toEqual({ disclosure: "direct" });
+    expect(document.spec.sandboxes[0]!.network.policy.explicit).toEqual(canonicalPolicy);
+    expect(Object.isFrozen(verifiedSource(verify(observed)).tools)).toBe(true);
+  });
+
+  it.each([undefined, "progressive"] as const)(
+    "omits canonical progressive tools for registry selection %s",
+    async (toolDisclosure) => {
+      const result = await exportSnapshots([snapshot({ registry: entry({ toolDisclosure }) })]);
+      expect(result.outcome.ok).toBe(true);
+      const [yaml] = result.writeStdout.mock.calls[0]!;
+      expect(
+        validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agents[0],
+      ).not.toHaveProperty("tools");
+    },
+  );
+
+  it.each([
+    { label: "absent registry selection", change: { toolDisclosure: undefined } },
+    { label: "conflicting registry selection", change: { toolDisclosure: "progressive" as const } },
+    { label: "conflicting retained mode", change: { workload: managedWorkload() } },
+    { label: "missing workload", change: { workload: undefined } },
+    { label: "another agent", change: { agent: "hermes" as const } },
+    {
+      label: "stale image identity",
+      change: { imageTag: imageRef.replace(/a{64}$/, "b".repeat(64)) },
+    },
+    {
+      label: "stale live identity",
+      change: { lifecycleLiveIdentityFingerprint: "other-generation" },
+    },
+    { label: "custom image", change: { fromDockerfile: "/tmp/custom-image" } },
+    {
+      label: "minimal bootstrap",
+      change: {
+        workload: managedWorkload(
+          profileInput({
+            toolDisclosure: "direct",
+            environment: { NEMOCLAW_MINIMAL_BOOTSTRAP: "1" },
+          }),
+        ),
+      },
+    },
+  ])("does not publish direct tools with $label", async ({ change }) => {
+    const result = await exportSnapshots([directToolsSnapshot(change)]);
+    expect(result.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "", "DIRECT", " direct ", "credential-canary", false])(
+    "rejects malformed retained registry disclosure without exposing its value",
+    async (toolDisclosure) => {
+      const result = await exportSnapshots([
+        directToolsSnapshot({ toolDisclosure } as unknown as Partial<SandboxEntry>),
+      ]);
+      expect(result.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
+      expect(result.writeStdout).not.toHaveBeenCalled();
+      expect(result.publish).not.toHaveBeenCalled();
+      expect(JSON.stringify(result.outcome)).not.toContain("credential-canary");
+    },
+  );
+
+  it.each([
+    { disclosure: undefined },
+    { disclosure: null },
+    { disclosure: "credential-canary" },
+    { enabledGateways: ["nous-web"] },
+    { token: "credential-canary" },
+  ])("rejects malformed or unsupported retained tools without output", async (change) => {
+    const input = profileInput({ toolDisclosure: "direct" });
+    const built = buildManagedStartupProfile(input);
+    const changed = { ...built.profile, tools: { ...built.profile.tools, ...change } };
+    const encodedProfile = Buffer.from(JSON.stringify(changed)).toString("base64url");
+    const observed = directToolsSnapshot({
+      workload: {
+        ...managedWorkload(input),
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+      },
+    });
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+    expect(JSON.stringify(result.outcome)).not.toContain("credential-canary");
+  });
+
+  it.each([{ startupProfileSha256: "f".repeat(64) }, { capabilityContractVersion: 0 }])(
+    "retains managed image contract and profile hash checks for direct tools",
+    async (change) => {
+      const workload = managedWorkload(profileInput({ toolDisclosure: "direct" }));
+      const invalid = { ...workload, ...change } as unknown as SandboxWorkloadReceipt;
+      const result = await exportSnapshots([directToolsSnapshot({ workload: invalid })]);
+      expect(result.outcome.ok).toBe(false);
+      expect(result.writeStdout).not.toHaveBeenCalled();
+      expect(result.publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reobserves changed tool selection before publishing a stable direct profile", async () => {
+    const direct = directToolsSnapshot();
+    const result = await exportSnapshots([snapshot(), direct, direct, direct]);
+    expect(result.outcome.ok).toBe(true);
+    expect(result.read).toHaveBeenCalledTimes(4);
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    expect(validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agents[0]!.tools).toEqual({
+      disclosure: "direct",
+    });
+  });
+
+  it("does not publish when tool selection changes during both observations", async () => {
+    const result = await exportSnapshots([
+      snapshot(),
+      directToolsSnapshot(),
+      snapshot(),
+      directToolsSnapshot(),
+    ]);
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: [expect.objectContaining({ category: "unstable-source" })],
+      },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
   it("qualifies and verifies two equal snapshots through the observer", async () => {
     const observed = snapshot();
     const result = await observeStableExportSource("alpha", {
@@ -229,6 +410,8 @@ describe("config export source verification (#10938)", () => {
 
   it.each([
     { sandboxName: "alpha--beta" },
+    { tools: { disclosure: "unknown" } },
+    { tools: { disclosure: "direct", enabledGateways: [] } },
     { runtime: { provider: "docker", imageRef: "registry/image:latest" } },
     { gateway: { name: "nemoclaw", port: 0 } },
     { inference: { provider: "e\u0301".repeat(257) } },

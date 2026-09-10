@@ -235,10 +235,16 @@ const NemoClawInferenceRouteConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const NemoClawAgentToolsConfigSchema = Type.Object(
+  { disclosure: Type.Union([Type.Literal("progressive"), Type.Literal("direct")]) },
+  { additionalProperties: false },
+);
+
 const NemoClawAgentConfigSchema = Type.Object(
   {
     name: LocalResourceNameSchema,
     type: Type.Literal("openclaw"),
+    tools: Type.Optional(NemoClawAgentToolsConfigSchema),
     inference: Type.Object(
       {
         routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }),

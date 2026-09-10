@@ -9,6 +9,7 @@ import {
   InferenceEndpointSchema,
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
+  NemoClawAgentToolsConfigSchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
   TcpPortSchema,
@@ -203,6 +204,7 @@ export const ExportSourceValuesSchema = Type.Object({
   }),
   gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
   inference: ExportInferenceSchema,
+  tools: Type.Optional(NemoClawAgentToolsConfigSchema),
 });
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;

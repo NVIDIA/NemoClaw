@@ -21,6 +21,7 @@ import {
   isValidNemoClawRuntimeProvider,
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
+  NemoClawAgentToolsConfigSchema,
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
@@ -39,7 +40,7 @@ const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
-  "gateway" | "inference" | "policy" | "runtime" | "sandboxName"
+  "gateway" | "inference" | "policy" | "runtime" | "sandboxName" | "tools"
 >;
 
 function verifiedExportSource(data: VerifiedExportSourceData): VerifiedExportSource {
@@ -99,11 +100,6 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
       "secondary agents or added agent plugins",
     ],
     [
-      "spec.sandboxes[].agents[0].toolDisclosure",
-      entry.toolDisclosure === "direct",
-      "direct tool disclosure",
-    ],
-    [
       "spec.sandboxes[].agents[0].dashboard",
       entry.dashboardRemoteBindPrepared,
       "remote dashboard exposure",
@@ -124,6 +120,17 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
 
 function classifyRegistryProvenance(entry: ObservedExportRegistry): ExportFinding[] {
   const findings: ExportFinding[] = [];
+  if (
+    entry.toolDisclosure !== undefined &&
+    !Check(NemoClawAgentToolsConfigSchema, { disclosure: entry.toolDisclosure })
+  )
+    findings.push(
+      finding(
+        "spec.sandboxes[].agents[0].tools.disclosure",
+        "unsupported",
+        "The persisted tool disclosure is not a supported mode.",
+      ),
+    );
   if (!entry.lifecycleGeneration || !entry.lifecycleLiveIdentityFingerprint)
     findings.push(
       finding(
@@ -278,7 +285,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
       wslExposure: false,
     },
     webSearch: null,
-    toolDisclosure: "progressive",
+    toolDisclosure: entry.toolDisclosure ?? "progressive",
     hermesToolGateways: [],
     messagingPlan: null,
     dcodeAutoApprovalMode: null,
@@ -305,6 +312,15 @@ function classifyManagedStartupProfile(
     ];
   }
   const findings: ExportFinding[] = [];
+  if (profile.tools.disclosure !== expected.tools.disclosure) {
+    findings.push(
+      finding(
+        "spec.sandboxes[].agents[0].tools.disclosure",
+        entry.toolDisclosure === undefined ? "missing-provenance" : "drifted",
+        "The retained tool disclosure and the registry selection do not agree.",
+      ),
+    );
+  }
   if (!hasEqualJsonStructure(profile.inference, expected.inference)) {
     findings.push(
       finding(
@@ -683,6 +699,9 @@ function completeVerifiedSource(
     sandboxName: requestedSandboxName,
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
+    ...(authority?.profile.tools.disclosure === "direct"
+      ? { tools: { disclosure: authority.profile.tools.disclosure } }
+      : {}),
     inference: {
       provider: selected.provider,
       model: selected.model,
