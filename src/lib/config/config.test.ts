@@ -289,7 +289,6 @@ describe("NemoClawConfig v1", () => {
 
   it.each([
     ["OpenClaw agent", { agentType: "openclaw" }],
-    ["unrelated route", { routeProviderRef: "hosted-openai" }],
     ["unknown provider", { authProviderRef: "missing" }],
     ["foreign provider", { provider: "openai" }],
     ["foreign API", { api: "anthropic-messages" }],
@@ -321,6 +320,24 @@ describe("NemoClawConfig v1", () => {
     };
 
     expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
+  it("rejects Hermes API-key authentication unrelated to its inference route", () => {
+    const value = structuredClone(config()) as unknown as Record<string, any>;
+    value.spec.inferenceProviders.push({
+      name: "hosted-hermes-provider",
+      provider: "hermes-provider",
+      api: "openai-completions",
+      endpoint: "https://inference-api.nousresearch.com/v1",
+      credential: { env: "NOUS_API_KEY" },
+    });
+    const agent = value.spec.sandboxes[0].agents[0];
+    agent.type = "hermes";
+    agent.auth = { method: "api-key", providerRef: "hosted-hermes-provider" };
+
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "must match an inference route for this agent",
+    );
   });
 
   it.each([
