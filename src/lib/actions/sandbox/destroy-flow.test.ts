@@ -847,10 +847,24 @@ describe("destroySandbox flow", () => {
     // from raw `docker ps` output through identity classification to the
     // sandbox delete and registry removal — not just the parser or the
     // classifier in isolation.
-    const podmanOwned = "aaaa000000000000\t\tdefault\tsb-alpha\ttrue\tend";
-    const harness = createDestroyHarness({
-      dockerRunResult: { status: 0, stdout: podmanOwned },
-    });
+    const containerId = "aaaa000000000000";
+    const harness = createDestroyHarness({});
+    // The fake honours the identity-query contract: the Podman ownership value
+    // is visible only to a query that actually asks for that label. A caller
+    // that stops requesting it observes the same container with no ownership
+    // marker, which is foreign, so destroy fails closed through its own public
+    // behaviour instead of through a mock-shape assertion.
+    let removed = false;
+    harness.dockerRunSpy.mockImplementation(((args: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      const format = argv.at(-1) ?? "";
+      removed ||= argv[0] === "rm" && argv[1] === "-f" && argv[2] === containerId;
+      const podmanMarker = format.includes('{{.Label "openshell.managed"}}') ? "true" : "";
+      const row = `${containerId}\t\tdefault\tsb-alpha\t${podmanMarker}\tend`;
+      const listed = format === "{{.ID}}" ? containerId : row;
+      const visible = argv[0] === "ps" && !removed;
+      return { status: 0, stdout: visible ? listed : "", stderr: "" };
+    }) as never);
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
@@ -861,11 +875,6 @@ describe("destroySandbox flow", () => {
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(errorOutput).not.toContain("could not verify one complete container identity");
-    // The mocked engine returns a canned row regardless of the requested
-    // format, so also pin the caller path: destroy must actually ask for the
-    // Podman marker, otherwise this row could never appear in production.
-    const identityArgv = (harness.dockerRunSpy.mock.calls[0]?.[0] ?? []) as string[];
-    expect(identityArgv.at(-1)).toContain('{{.Label "openshell.managed"}}');
   });
 
   it("refuses before destructive work when multiple Docker identities share the name", async () => {
