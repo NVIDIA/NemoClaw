@@ -58,7 +58,7 @@ describe("sandbox command transport", () => {
         runtimeEnv,
       }),
     ).toEqual({ status: 0, stdout: "ok", stderr: "" });
-    expect(deps.sshExecutor.run).toHaveBeenCalledWith({
+    expect(deps.sshExecutor?.run).toHaveBeenCalledWith({
       sandboxName: "alpha",
       target: namedOpenShellGateway("recorded-gateway"),
       command: "openclaw doctor --fix",
