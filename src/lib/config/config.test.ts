@@ -81,6 +81,95 @@ function renderInput(value: unknown) {
 }
 
 describe("NemoClawConfig v1", () => {
+  it.each([0, 0.5, 1])("preserves local OTLP sample rate %s in canonical YAML", (sampleRate) => {
+    const value = config();
+    const observability = {
+      otlp: {
+        enabled: true,
+        endpoint: "http://host.openshell.internal:4318",
+        serviceName: "s".repeat(256),
+        sampleRate,
+      },
+    };
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, { observability });
+
+    const rendered = renderInput(value);
+    const roundTrip = validateNemoClawConfig(YAML.parse(rendered.yaml));
+
+    expect(roundTrip.spec.sandboxes[0]!.agents[0]!).toMatchObject({ observability });
+  });
+
+  it("rejects OpenClaw observability on a Hermes agent", () => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, {
+      type: "hermes",
+      observability: {
+        otlp: {
+          enabled: true,
+          endpoint: "http://host.openshell.internal:4318",
+          serviceName: "research-assistant",
+          sampleRate: 0.5,
+        },
+      },
+    });
+
+    expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
+  });
+
+  it.each([
+    { label: "disabled explicit profile", change: { enabled: false } },
+    { label: "remote collector", change: { endpoint: "https://collector.example/v1/traces" } },
+    {
+      label: "collector path",
+      change: { endpoint: "http://host.openshell.internal:4318/v1/traces" },
+    },
+    {
+      label: "collector credentials",
+      change: { endpoint: "http://user:OTEL_CANARY@host.openshell.internal:4318" },
+    },
+    {
+      label: "collector query",
+      change: { endpoint: "http://host.openshell.internal:4318?token=OTEL_CANARY" },
+    },
+    {
+      label: "collector fragment",
+      change: { endpoint: "http://host.openshell.internal:4318#OTEL_CANARY" },
+    },
+    { label: "collector headers", change: { headers: { authorization: "OTEL_CANARY" } } },
+    { label: "empty service", change: { serviceName: "" } },
+    { label: "leading service space", change: { serviceName: " research" } },
+    { label: "trailing service space", change: { serviceName: "research " } },
+    { label: "service newline", change: { serviceName: "research\n" } },
+    { label: "service carriage return", change: { serviceName: "research\r" } },
+    { label: "service control character", change: { serviceName: "research\u0000assistant" } },
+    { label: "Unicode service", change: { serviceName: "recherche-é" } },
+    { label: "oversized service", change: { serviceName: "s".repeat(257) } },
+    { label: "negative sample", change: { sampleRate: -0.1 } },
+    { label: "sample above one", change: { sampleRate: 1.1 } },
+    { label: "non-finite sample", change: { sampleRate: Infinity } },
+    { label: "NaN sample", change: { sampleRate: NaN } },
+  ])("rejects OTLP $label without echoing its value", ({ change }) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, {
+      observability: {
+        otlp: {
+          enabled: true,
+          endpoint: "http://host.openshell.internal:4318",
+          serviceName: "research-assistant",
+          sampleRate: 0.5,
+          ...change,
+        },
+      },
+    });
+
+    expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
+    try {
+      validateNemoClawConfig(value);
+    } catch (error) {
+      expect(String(error)).not.toContain("OTEL_CANARY");
+    }
+  });
+
   it("validates one aggregate config with explicit effective policy (#10938)", () => {
     expect(validateNemoClawConfig(config())).toEqual(config());
   });
@@ -320,9 +409,7 @@ describe("NemoClawConfig v1", () => {
     (type) => {
       const value = structuredClone(config()) as unknown as Record<string, any>;
       value.spec.sandboxes[0].agents[0].type = type;
-      expect(() => validateNemoClawConfig(value)).toThrow(
-        "must be equal to one of the allowed values",
-      );
+      expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
     },
   );
 
