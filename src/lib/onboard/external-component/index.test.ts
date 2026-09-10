@@ -65,6 +65,19 @@ async function closeServer(server: net.Server): Promise<void> {
 }
 
 async function preparedFixture() {
+  const ancestors = path
+    .dirname(process.cwd())
+    .split(path.sep)
+    .map((_part, index, parts) => parts.slice(0, index + 1).join(path.sep) || path.sep);
+  for (const ancestor of ancestors) {
+    const stat = fs.lstatSync(ancestor);
+    expect(
+      stat.isDirectory() &&
+        (stat.mode & 0o022) === 0 &&
+        (stat.uid === 0 || stat.uid === process.geteuid?.()),
+      `External component fixtures require a protected ancestor: ${ancestor}`,
+    ).toBe(true);
+  }
   const root = fs.mkdtempSync(path.join(path.dirname(process.cwd()), "nc-component-test-"));
   roots.push(root);
   fs.chmodSync(root, 0o700);

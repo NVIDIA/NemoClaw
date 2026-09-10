@@ -1060,12 +1060,10 @@ export function prepareDockerDriverGatewayConfigEnv(
     runtime,
     externalComponent,
   );
-  if (externalComponent) {
-    gatewayEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV] =
-      externalComponentGatewayIdentity(externalComponent);
-  } else {
-    delete gatewayEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV];
-  }
+  // An explicit absence lets the existing runtime comparison detect removal.
+  gatewayEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV] = externalComponent
+    ? externalComponentGatewayIdentity(externalComponent)
+    : "none";
   if (runtime.gatewayConfig.sandboxNamespace === "omitted") {
     delete gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
   } else {

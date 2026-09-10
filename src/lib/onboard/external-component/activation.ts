@@ -173,14 +173,21 @@ export function sendExternalComponentActivation(socketPath: string, body: string
         if (responseBytes === null) {
           responseBytes = externalComponentHttpResponseBytes(Buffer.concat(chunks, received));
         }
-        if (responseBytes === null || received < responseBytes) return;
-        const raw = Buffer.concat(chunks, received);
-        finish(undefined, parseExternalComponentHttpResponse(raw));
+        if (responseBytes !== null && received > responseBytes) {
+          finish(new Error("response_invalid"));
+        }
       } catch (error) {
         finish(error instanceof Error ? error : new Error("response_invalid"));
       }
     });
-    socket.once("end", () => finish(new Error("response_invalid")));
+    socket.once("end", () => {
+      try {
+        // EOF proves there is no second response after the declared body.
+        finish(undefined, parseExternalComponentHttpResponse(Buffer.concat(chunks, received)));
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error("response_invalid"));
+      }
+    });
     socket.once("error", () => finish(new Error("connection")));
   });
 }

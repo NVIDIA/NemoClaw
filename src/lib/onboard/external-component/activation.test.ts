@@ -12,6 +12,7 @@ import { EXTERNAL_COMPONENT_ACTIVATION_TIMEOUT_MS, type PreparedExternalComponen
 import {
   activateExternalComponent,
   parseExternalComponentHttpResponse,
+  sendExternalComponentActivation,
   type ExternalComponentActivationProof,
 } from "./activation";
 
@@ -68,11 +69,10 @@ describe("external component activation", () => {
     expect(EXTERNAL_COMPONENT_ACTIVATION_TIMEOUT_MS).toBe(30_000);
   });
 
-  it("completes a delayed framed response before the component closes its socket (#11340)", async () => {
+  it("completes a delayed response without half-closing the request (#11340)", async () => {
     const root = fs.mkdtempSync(path.join("/tmp", "nc-component-http-"));
     const socketPath = path.join(root, "activation.sock");
     let serverSocket: net.Socket | undefined;
-    let clientSocket: net.Socket | undefined;
     let resolveRequest!: (request: {
       body: string;
       contentType: string | undefined;
@@ -82,7 +82,7 @@ describe("external component activation", () => {
     const received = new Promise<Parameters<typeof resolveRequest>[0]>((resolve) => {
       resolveRequest = resolve;
     });
-    const server = http.createServer((request) => {
+    const server = http.createServer((request, response) => {
       serverSocket = request.socket;
       request.socket.once("error", () => undefined);
       const chunks: Buffer[] = [];
@@ -97,9 +97,8 @@ describe("external component activation", () => {
         resolveRequest(activationRequest);
         setTimeout(() => {
           const responseBody = responseFor(activationRequest.body);
-          request.socket.write(
-            `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${String(Buffer.byteLength(responseBody))}\r\nConnection: keep-alive\r\n\r\n${responseBody}`,
-          );
+          response.writeHead(200, { "Content-Length": String(Buffer.byteLength(responseBody)) });
+          response.end(responseBody);
         }, 25);
       });
     });
@@ -107,14 +106,6 @@ describe("external component activation", () => {
       server.once("error", reject);
       server.listen(socketPath, resolve);
     });
-    const createConnection = net.createConnection.bind(net);
-    const createConnectionSpy = vi.spyOn(net, "createConnection").mockImplementation(((options: {
-      path: string;
-    }) => {
-      const socket = createConnection(options);
-      clientSocket = socket;
-      return socket;
-    }) as typeof net.createConnection);
 
     try {
       const { component, proof } = fixture([], socketPath);
@@ -130,13 +121,55 @@ describe("external component activation", () => {
       });
       expect(request.body).toContain('"componentId":"policy-governance"');
       expect(request.body).toContain('"source":"sandbox"');
-      expect(clientSocket?.destroyed).toBe(true);
-      expect(serverSocket?.writableEnded).toBe(false);
     } finally {
-      createConnectionSpy.mockRestore();
       serverSocket?.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { delivery: "one chunk", firstCopies: 2, lastCopies: 0 },
+    { delivery: "separate chunks", firstCopies: 1, lastCopies: 1 },
+  ])("rejects extra responses in $delivery (#11340)", async ({ firstCopies, lastCopies }) => {
+    const root = fs.mkdtempSync("/tmp/nc-extra-response-");
+    const socketPath = `${root}/activation.sock`;
+    const body = JSON.stringify({
+      schemaVersion: 1,
+      activationId: "4b5a8e18-f967-4e27-a3b2-f2cc315abe21",
+      componentId: "policy-governance",
+      sandboxId: "sandbox-123",
+      policyHash: `sha256:${"a".repeat(64)}`,
+      result: "activated",
+    });
+    const response = `HTTP/1.1 200 OK\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`;
+    let serverSocket: net.Socket | undefined;
+    let done!: () => void;
+    const sent = new Promise<void>((resolve) => {
+      done = resolve;
+    });
+    const server = net.createServer({ allowHalfOpen: true }, (socket) => {
+      serverSocket = socket;
+      socket.on("error", () => undefined);
+      socket.once("data", () => {
+        socket.write(response.repeat(firstCopies));
+        setTimeout(() => {
+          socket.end(response.repeat(lastCopies));
+          done();
+        }, 20);
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    try {
+      const result = await sendExternalComponentActivation(socketPath, "{}").catch(
+        (error: Error) => error.message,
+      );
+      await sent;
+      expect(result).toBe("response_invalid");
+    } finally {
+      serverSocket?.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      fs.rmSync(root, { force: true, recursive: true });
     }
   });
 

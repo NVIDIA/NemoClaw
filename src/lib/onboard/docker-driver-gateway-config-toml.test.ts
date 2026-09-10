@@ -165,7 +165,7 @@ describe("docker-driver-gateway config TOML", () => {
       expect(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8")).not.toContain(
         "[[openshell.gateway.interceptors]]",
       );
-      expect(env[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]).toBeUndefined();
+      expect(env[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]).toBe("none");
       expect(hashDockerDriverGatewayEnv(env)).not.toBe(componentRuntimeIdentity);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });

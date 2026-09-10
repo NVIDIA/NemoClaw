@@ -139,11 +139,9 @@ describe("external component activation proof", () => {
   });
 
   it("rejects identity or policy changes during revalidation (#11340)", () => {
-    const { deps, row } = fixture();
+    const { deps, entry } = fixture();
     const proof = createExternalComponentActivationProof("assistant", "nemoclaw", deps);
-    deps.listSandboxes.mockReturnValue(
-      JSON.stringify([{ ...row, current_policy_version: row.current_policy_version + 1 }]),
-    );
+    entry.lifecycleGeneration = "generation-2";
 
     expect(() => proof.revalidate("after_activation")).toThrow(ExternalComponentProofError);
   });

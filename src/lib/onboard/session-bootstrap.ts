@@ -575,6 +575,7 @@ async function prepareResumeSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   let session = deps.loadSession();
+  assertNoIncompleteExternalComponentActivation(session);
   if (input.apfInterceptorRequested === true || session?.apfInterceptorRequested === true) {
     reportUnsupportedApfLifecycle("resume", deps);
   }
