@@ -545,9 +545,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
 
 // ── OpenAI-like probe ────────────────────────────────────────────
 function needsExtendedNvidiaEndpointValidationBudget(model) {
-  return (
-    vllmProbePolicyForModel(String(model || "")) === EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY
-  );
+  return vllmProbePolicyForModel(String(model || "")) === EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY;
 }
 
 function getChatCompletionsProbeTimingArgs(model, opts) {
@@ -1293,9 +1291,8 @@ export async function verifyOnboardInferenceSmoke(options: any, dependencies: an
   try {
     const teardownOrphanManagedGatewayOnAbort =
       dependencies.teardownOrphanManagedGatewayOnAbort ??
-      (
-        require("../onboard/gateway-destroy") as typeof import("../onboard/gateway-destroy")
-      ).teardownOrphanManagedGatewayOnAbort;
+      (require("../onboard/gateway-destroy") as typeof import("../onboard/gateway-destroy"))
+        .teardownOrphanManagedGatewayOnAbort;
     teardownOrphanManagedGatewayOnAbort();
   } catch (error) {
     // Helper never throws; this covers require/load failures only.

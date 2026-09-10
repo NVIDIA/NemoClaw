@@ -118,7 +118,9 @@ describe("OpenShell policy boundary package contract", () => {
       network_policies: { safe: {} },
     };
     expect(YAML.parse(cliPolicy.stripProviderComposedPolicies(policy))).toEqual(expectedPolicy);
-    expect(YAML.parse(pluginBoundary.stripProviderComposedPolicies(policy))).toEqual(expectedPolicy);
+    expect(YAML.parse(pluginBoundary.stripProviderComposedPolicies(policy))).toEqual(
+      expectedPolicy,
+    );
     expect(() => cliPolicy.stripProviderComposedPolicies("version: [unterminated")).toThrow();
     expect(() => pluginBoundary.stripProviderComposedPolicies("version: [unterminated")).toThrow();
 

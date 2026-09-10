@@ -106,9 +106,9 @@ function componentBuildVersionsMatch(left: string, right: string): boolean {
   const rightGit = right.match(/^(.*\+g)([0-9a-f]{7,})$/i);
   return Boolean(
     leftGit &&
-      rightGit &&
-      leftGit[1] === rightGit[1] &&
-      (leftGit[2].startsWith(rightGit[2]) || rightGit[2].startsWith(leftGit[2])),
+    rightGit &&
+    leftGit[1] === rightGit[1] &&
+    (leftGit[2].startsWith(rightGit[2]) || rightGit[2].startsWith(leftGit[2])),
   );
 }
 

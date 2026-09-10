@@ -512,7 +512,7 @@ test(
 
     // Assertion: resume-no-{preflight,gateway}-redo. Current CLI output
     // still prints phase headings before the resume-skip decisions, so assert
-    // the skip evidence and absence of redo-only success strings instead of
+    // the skip evidence and absence of the redo-only launch marker instead of
     // rejecting headings that now frame the skipped phases.
     expect(resumeText).not.toMatch(OPENSHELL_GATEWAY_START_LINE);
     const reconciledExtraProviders = readExtraProviders();
@@ -588,14 +588,11 @@ test(
     // re-probe and complete without recreating the sandbox.
     // ──────────────────────────────────────────────────────────────────
     progress.phase("retry final verification after route repair");
-    const sandboxBeforeRouteFailure = await sandbox.openshell(
-      ["sandbox", "get", SANDBOX_NAME],
-      {
-        artifactName: "phase-3-5-sandbox-before-route-failure",
-        env: probeEnv,
-        timeoutMs: 30_000,
-      },
-    );
+    const sandboxBeforeRouteFailure = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+      artifactName: "phase-3-5-sandbox-before-route-failure",
+      env: probeEnv,
+      timeoutMs: 30_000,
+    });
     const sandboxIdBeforeRouteFailure = parseOpenShellSandboxId(
       resultText(sandboxBeforeRouteFailure),
     );

@@ -64,10 +64,7 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
       });
 
       expect(recoverManagedLlamaCpp).toHaveBeenCalledOnce();
-      expect(recoverManagedLlamaCpp).toHaveBeenCalledWith(
-        "llama-cpp-local",
-        "spark-agent",
-      );
+      expect(recoverManagedLlamaCpp).toHaveBeenCalledWith("llama-cpp-local", "spark-agent");
       expect(recoverManagedLlamaCpp.mock.invocationCallOrder[0]).toBeLessThan(
         calls.recoverProvider.mock.invocationCallOrder[0]!,
       );
