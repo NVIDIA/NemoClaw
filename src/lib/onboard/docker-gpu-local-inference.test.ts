@@ -36,7 +36,7 @@ function gpuPatchOptions(extra: Record<string, unknown> = {}) {
 // emits either `NO_CURL` or `HTTP_<code>`. This mock answers with `stdout`.
 // Typed `(sandboxName, script)` so `.mock.calls[i][1]` (the script) type-checks.
 function execEmitting(stdout: string, { status = 0, stderr = "" } = {}) {
-  return vi.fn((_sandboxName: string, _script: string) => ({ status, stdout, stderr }));
+  return vi.fn(async (_sandboxName: string, _script: string) => ({ status, stdout, stderr }));
 }
 
 describe("shouldUseDockerGpuPatchHostNetwork", () => {
@@ -170,14 +170,18 @@ describe("getSandboxRuntimeInferenceEndpoint", () => {
 });
 
 describe("verifyDockerGpuSandboxLocalInference", () => {
-  it("skips for non-local providers", () => {
-    const result = verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "build", gpuPatchOptions());
+  it("skips for non-local providers", async () => {
+    const result = await verifyDockerGpuSandboxLocalInference(
+      GPU_CONFIG,
+      "build",
+      gpuPatchOptions(),
+    );
     expect(result).toEqual({ status: "skipped", reason: "not-local-provider" });
   });
 
-  it("skips the compatibility-only inference gate on the native route", () => {
+  it("skips the compatibility-only inference gate on the native route", async () => {
     const execInSandbox = vi.fn();
-    const result = verifyDockerGpuSandboxLocalInference(
+    const result = await verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "ollama-local",
       gpuPatchOptions({ selectedRoute: "native", deps: { execInSandbox } }),
@@ -187,9 +191,9 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     expect(execInSandbox).not.toHaveBeenCalled();
   });
 
-  it("probes inference.local from the runtime context, never a loopback or docker exec", () => {
+  it("probes inference.local from the runtime context, never a loopback or docker exec", async () => {
     const execInSandbox = execEmitting("HTTP_200");
-    const result = verifyDockerGpuSandboxLocalInference(
+    const result = await verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "vllm-local",
       gpuPatchOptions({ deps: { execInSandbox, sleep: vi.fn() } }),
@@ -208,8 +212,8 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     expect(script).not.toContain("docker exec");
   });
 
-  it("fails on a 4xx because the route is reached but unusable instead of satisfying the proof (#4509)", () => {
-    const result = verifyDockerGpuSandboxLocalInference(
+  it("fails on a 4xx because the route is reached but unusable instead of satisfying the proof (#4509)", async () => {
+    const result = await verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "ollama-local",
       gpuPatchOptions({ deps: { execInSandbox: execEmitting("HTTP_404"), sleep: vi.fn() } }),
@@ -221,10 +225,10 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     }
   });
 
-  it("fails as unreachable and retries on HTTP 000 (#4509)", () => {
+  it("fails as unreachable and retries on HTTP 000 (#4509)", async () => {
     const execInSandbox = execEmitting("HTTP_000");
     const sleep = vi.fn();
-    const result = verifyDockerGpuSandboxLocalInference(
+    const result = await verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "ollama-local",
       gpuPatchOptions({ deps: { execInSandbox, sleep } }),
@@ -243,8 +247,8 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     expect(sleep).toHaveBeenNthCalledWith(2, 2_000);
   });
 
-  it("fails when the inference route is up but the local backend errors (HTTP 502)", () => {
-    const result = verifyDockerGpuSandboxLocalInference(
+  it("fails when the inference route is up but the local backend errors (HTTP 502)", async () => {
+    const result = await verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "ollama-local",
       gpuPatchOptions({ deps: { execInSandbox: execEmitting("HTTP_502"), sleep: vi.fn() } }),
@@ -256,9 +260,9 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     }
   });
 
-  it("soft-skips when the sandbox image genuinely lacks curl (custom --from base)", () => {
+  it("soft-skips when the sandbox image genuinely lacks curl (custom --from base)", async () => {
     const log = vi.fn();
-    const result = verifyDockerGpuSandboxLocalInference(
+    const result = await verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "ollama-local",
       gpuPatchOptions({ log, deps: { execInSandbox: execEmitting("NO_CURL"), sleep: vi.fn() } }),
@@ -267,8 +271,8 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("curl is not available"));
   });
 
-  it("fails (exec) — not soft-skip — when sandbox exec cannot run", () => {
-    const result = verifyDockerGpuSandboxLocalInference(
+  it("fails (exec) — not soft-skip — when sandbox exec cannot run", async () => {
+    const result = await verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "ollama-local",
       gpuPatchOptions({ deps: { execInSandbox: vi.fn(() => null), sleep: vi.fn() } }),
@@ -280,8 +284,8 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     }
   });
 
-  it("fails (exec) when exec runs but emits no sentinel (sandbox Error / exec denied)", () => {
-    const result = verifyDockerGpuSandboxLocalInference(
+  it("fails (exec) when exec runs but emits no sentinel (sandbox Error / exec denied)", async () => {
+    const result = await verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "ollama-local",
       gpuPatchOptions({
