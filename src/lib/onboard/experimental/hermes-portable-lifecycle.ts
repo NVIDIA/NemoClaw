@@ -1254,6 +1254,7 @@ function waitForHermesReadiness(
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? defaultSleep;
   const deadline = now() + STARTUP_TIMEOUT_MS;
+  // Startup creates the credential asynchronously; retain its diagnosis until a valid probe receipt.
   let credentialFileUnavailable = false;
   do {
     qualified = refreshLifecycleCurrentness(
@@ -1289,7 +1290,7 @@ function waitForHermesReadiness(
       commandTimeoutMs,
       "healthOpenShellCommand",
     );
-    credentialFileUnavailable = !result.error && result.status === 64;
+    if (!result.error && result.status === 64) credentialFileUnavailable = true;
     const receipt = result.error
       ? null
       : parseHealthWaitReceipt(commandOutput(result.stdout, "authenticated health wait output"));
@@ -1302,6 +1303,7 @@ function waitForHermesReadiness(
     timing.measure("healthPollCurrentness", () =>
       assertLifecycleTransactionCurrent(qualified, timing, true, currentnessTiming),
     );
+    if (accepted) credentialFileUnavailable = false;
     if (accepted && receipt.result === "ready") return qualified;
     if (now() >= deadline) break;
     timing.measure("healthPollSleep", () =>
@@ -1314,7 +1316,7 @@ function waitForHermesReadiness(
     );
   } while (now() < deadline);
   if (credentialFileUnavailable) {
-    fail("managed startup did not pass authenticated health: Hermes credential file is unavailable or invalid");
+    fail("managed startup did not pass authenticated health: Hermes credential file was unavailable or invalid");
   }
   return null;
 }

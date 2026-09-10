@@ -95,6 +95,14 @@ describe.each(PROBES)("Hermes authenticated health $name", ({ name, program }) =
     expect(output.connections).toEqual([{ host: "127.0.0.1", port: expect.any(Number) }]);
   });
 
+  it("accepts successful responses with Location without following the header", () => {
+    const output = runProbe(program, `API_SERVER_KEY=${KEY}\n`, 200, true);
+    expect(output.code).toBe(0);
+    expect(output.stdout).toContain(name === "waiter" ? "result=ready" : "200");
+    expect(output.requests).toEqual([{ authorized: true, path: "/health" }]);
+    expect(output.connections).toHaveLength(1);
+  });
+
   it.each([
     ["missing file", null],
     ["invalid encoding", "invalid-utf8"],
@@ -112,18 +120,11 @@ describe.each(PROBES)("Hermes authenticated health $name", ({ name, program }) =
     ["wrong credential", "b".repeat(64), 200, false],
     ["wrong response status", KEY, 204, false],
     ["redirect status", KEY, 302, true],
-    ["success with Location", KEY, 200, true],
   ])("rejects %s", (_label, key, status, redirect) => {
     const output = runProbe(program, `API_SERVER_KEY=${key}\n`, status, redirect);
     expect(output.code).toBe(name === "waiter" ? 75 : 0);
     expect(output.stdout).toContain(
-      name === "waiter"
-        ? "result=not-ready"
-        : redirect
-          ? "redirect"
-          : key !== KEY
-            ? "401"
-            : String(status),
+      name === "waiter" ? "result=not-ready" : key !== KEY ? "401" : String(status),
     );
     expect(output.requests.length).toBeGreaterThan(0);
     expect(output.requests.every((request) => request.path === "/health")).toBe(true);

@@ -67,7 +67,7 @@ def authenticated_health_status(port, timeout):
         connection.request("GET", "/health", headers={"Authorization": "Bearer " + key})
         response = connection.getresponse()
         try:
-            return response.status if response.getheader("Location") is None else "redirect"
+            return response.status
         finally:
             response.close()
     finally:
