@@ -77,8 +77,7 @@
 # Only a small set of top-level commands are intercepted. Managed dashboard
 # launches receive the local API bearer token through process environment after
 # a descriptor-safe read, so the isolated dashboard home does not need a second
-# credential-bearing dotenv file. Other subcommands retain their arguments,
-# output, and exit status.
+# credential-bearing dotenv file.
 
 import ast
 import json
