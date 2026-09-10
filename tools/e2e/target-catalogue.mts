@@ -23,6 +23,7 @@ import {
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
+import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "./openshell-gateway-upgrade-fixture.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
@@ -1228,7 +1229,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
-    owningPaths: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
+    owningPaths: [...HERMES_ACP_E2E_OWNING_PATHS, "test/e2e/live/rebuild-hermes-cron-restore.ts"],
     timeoutMinutes: 90,
     installMode: "credential-free",
     installNonInteractive: true,

@@ -245,6 +245,12 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
     });
 
     it("starts recovery with the supplied gateway name and derived port", async () => {
+      const output = {
+        error: vi.fn(),
+        log: vi.fn(),
+        step: vi.fn(),
+        warn: vi.fn(),
+      };
       captureSpy
         .mockReturnValueOnce({ status: 0, output: "Status: Disconnected\nGateway: nemoclaw\n" })
         .mockReturnValueOnce({ status: 0, output: "" })
@@ -262,11 +268,13 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
 
       const result = await gatewayRuntime.recoverNamedGatewayRuntime({
         gatewayName: "nemoclaw-8090",
+        output,
       });
 
       expect(startGatewaySpy).toHaveBeenCalledWith({
         gatewayName: "nemoclaw-8090",
         gatewayPort: 8090,
+        output,
       });
       expect(result.recovered).toBe(true);
       expect(result.via).toBe("start");

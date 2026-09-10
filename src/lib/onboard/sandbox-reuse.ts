@@ -144,9 +144,7 @@ export function applyReusedSandboxDashboardState(
       `Sandbox '${input.sandboxName}' was created without remote dashboard exposure. Re-run onboarding with NEMOCLAW_DASHBOARD_BIND=0.0.0.0 and --recreate-sandbox before opening a remote bind.`,
     );
   }
-  input.revalidateSandboxIdentity?.(
-    `restore dashboard state for sandbox '${input.sandboxName}'`,
-  );
+  input.revalidateSandboxIdentity?.(`restore dashboard state for sandbox '${input.sandboxName}'`);
   const reuseExistingOpenClawForward = input.agent == null || input.agent.name === "openclaw";
   const dashboardPort = manageDashboard
     ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {

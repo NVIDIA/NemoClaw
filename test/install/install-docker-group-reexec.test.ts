@@ -382,9 +382,7 @@ maybe_offer_express_install
       const output = `${result.stdout}${result.stderr}`;
 
       expect(result.status, output).toBe(0);
-      const resumeCommand = output
-        .split("\n")
-        .find((line) => line.startsWith("RESUME_COMMAND="));
+      const resumeCommand = output.split("\n").find((line) => line.startsWith("RESUME_COMMAND="));
       expect(resumeCommand).toContain("NEMOCLAW_AGENT=openclaw");
       expect(resumeCommand).not.toContain("NEMOCLAW_PROVIDER");
       expect(output).toContain("PHASE=parent MODE=express PROVIDER=install-vllm");
