@@ -30,7 +30,13 @@ import {
   V00116_SANDBOX_BUILD_DIGESTS,
   v00116Pins,
 } from "../helpers/openshell-release-fixtures";
-import { installerReleaseTemplate } from "../helpers/openshell-installer-template";
+import {
+  addV00106OperationalTrust,
+  installerReleaseTemplate,
+  removeV00106OperationalTrust,
+} from "../helpers/openshell-installer-template";
+
+import { selectPreparedGatewayRuntime } from "../helpers/prepared-gateway-runtime";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const INSTALLER_TEMPLATE = fs.readFileSync(
@@ -615,62 +621,6 @@ function replacePinFunction(
   return `${source.slice(0, start)}${replacement}${source.slice(next)}`;
 }
 
-function addV00106OperationalTrust(source: string): string {
-  const withIdentityCheck = source.replace(
-    "pinned_sandbox_build_version() {",
-    `is_pinned_openshell_v00106_linux_x86_64_install() {
-  local openshell_bin="$1"
-  local gateway_bin="$2"
-  local sandbox_bin="$3"
-  local openshell_sha gateway_sha sandbox_sha
-
-  [ "$OS" = "Linux" ] && [ "$ARCH_LABEL" = "x86_64" ] || return 1
-  openshell_sha="$(file_sha256 "$openshell_bin")" || return 1
-  gateway_sha="$(file_sha256 "$gateway_bin")" || return 1
-  sandbox_sha="$(file_sha256 "$sandbox_bin")" || return 1
-  [ "$openshell_sha" = "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59" ] \\
-    && [ "$gateway_sha" = "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c" ] \\
-    && [ "$sandbox_sha" = "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8" ]
-}
-
-pinned_sandbox_build_version() {`,
-  );
-  const capabilityMarker = "  # OpenShell #1865 has no authoritative CLI/RPC capability query yet.";
-  const result = withIdentityCheck.replace(
-    capabilityMarker,
-    `  # The v0.0.106 release binaries are stripped and no longer retain every
-  # source-level capability marker used by the development-build fallback
-  # below. Accept only the reviewed executable byte identities as the stable
-  # release capability proof; arbitrary binaries that merely report 0.0.106
-  # must still pass the fail-closed marker checks.
-  if is_pinned_openshell_v00106_linux_x86_64_install \\
-    "$openshell_bin" "$gateway_bin" "$sandbox_bin"; then
-    return 0
-  fi
-
-${capabilityMarker}`,
-  );
-  expect(withIdentityCheck, "v0.0.106 executable identity helper").not.toBe(source);
-  expect(result, "v0.0.106 capability proof").not.toBe(withIdentityCheck);
-  return result;
-}
-
-function removeV00106OperationalTrust(source: string): string {
-  const identityStart = source.indexOf("is_pinned_openshell_v00106_linux_x86_64_install() {");
-  const sandboxStart = source.indexOf("pinned_sandbox_build_version() {", identityStart);
-  expect([identityStart, sandboxStart], "v0.0.106 helper boundaries").not.toContain(-1);
-  const withoutIdentity = `${source.slice(0, identityStart)}${source.slice(sandboxStart)}`;
-  const capabilityStart = withoutIdentity.indexOf(
-    "  # The v0.0.106 release binaries are stripped and no longer retain every",
-  );
-  const fallbackStart = withoutIdentity.indexOf(
-    "  # OpenShell #1865 has no authoritative CLI/RPC capability query yet.",
-    capabilityStart,
-  );
-  expect([capabilityStart, fallbackStart], "v0.0.106 proof boundaries").not.toContain(-1);
-  return `${withoutIdentity.slice(0, capabilityStart)}${withoutIdentity.slice(fallbackStart)}`;
-}
-
 function renderInstallerTemplate(openshellVersion: string, pinFunction: string): string {
   const selected = installerReleaseTemplate(INSTALLER_TEMPLATE, openshellVersion)
     .replace(/^MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m, `MIN_VERSION="${openshellVersion}"`)
@@ -1114,6 +1064,41 @@ describe("installer hash verification", () => {
     "accepts the complete trusted OpenShell %s release identity",
     (version, manifests, assets) => {
       expectTrustedRelease(runFixture("complete", version, true), version, manifests, assets);
+    },
+  );
+
+  it.each(["0.0.72", "0.0.99", "0.0.101", "0.0.103", "0.0.106", "0.0.116"])(
+    "accepts the gateway-preparation template with the selected OpenShell %s release (#11212)",
+    (version) => {
+      const root = createFixture(version);
+      const runtimePath = "src/lib/onboard/docker-driver-gateway-runtime.ts";
+      const candidatePins = fs.readFileSync(path.join(root, runtimePath), "utf8");
+      const source = fs.readFileSync(path.join(REPO_ROOT, runtimePath), "utf8");
+      const prepared = selectPreparedGatewayRuntime(source).replace(
+        /const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{[\s\S]*?\n\};/,
+        candidatePins.trim(),
+      );
+      fs.writeFileSync(path.join(root, runtimePath), prepared);
+      const result = spawnSync(
+        "node",
+        [
+          "--no-warnings",
+          path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts"),
+          "--blueprint",
+          path.join(root, "nemoclaw-blueprint/blueprint.yaml"),
+          "--installer",
+          path.join(root, "scripts/install-openshell.sh"),
+          "--brev-installer",
+          path.join(root, "scripts/brev-launchable-ci-cpu.sh"),
+          "--supervisor-runtime",
+          path.join(root, runtimePath),
+          "--format",
+          "tsv",
+        ],
+        { encoding: "utf8" },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(version);
     },
   );
 
