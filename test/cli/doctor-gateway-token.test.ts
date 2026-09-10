@@ -195,7 +195,15 @@ describe("CLI dispatch", () => {
       );
       // The Docker-driver gateway is healthy, so no Gateway check should fail.
       expect(report.checks.filter((c) => c.group === "Gateway" && c.status === "fail")).toEqual([]);
-      expect(report.status).toBe("ok");
+      expect(report.checks.find((check) => check.label === "Config permissions")).toEqual({
+        group: "Sandbox",
+        label: "Config permissions",
+        status: "warn",
+        detail: expect.stringContaining(
+          "No running direct OpenShell sandbox container found for 'alpha'",
+        ),
+      });
+      expect(report.status).toBe("warn");
       expect(r.code).toBe(0);
     },
   );
@@ -301,7 +309,15 @@ describe("CLI dispatch", () => {
       expect(
         report.checks.filter((check) => check.group === "Gateway" && check.status === "fail"),
       ).toEqual([]);
-      expect(report.status).toBe("ok");
+      expect(report.checks.find((check) => check.label === "Config permissions")).toEqual({
+        group: "Sandbox",
+        label: "Config permissions",
+        status: "warn",
+        detail: expect.stringContaining(
+          "Runtime provider 'kubernetes' does not support privileged sandbox control.",
+        ),
+      });
+      expect(report.status).toBe("warn");
 
       const calls = fs.readFileSync(hostCalls, "utf8");
       expect(calls).toContain(
@@ -395,7 +411,15 @@ describe("CLI dispatch", () => {
         }),
       );
       expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
-      expect(report.status).toBe("ok");
+      expect(report.checks.find((check) => check.label === "Config permissions")).toEqual({
+        group: "Sandbox",
+        label: "Config permissions",
+        status: "warn",
+        detail: expect.stringContaining(
+          "Runtime provider 'kubernetes' does not support privileged sandbox control.",
+        ),
+      });
+      expect(report.status).toBe("warn");
     },
   );
 

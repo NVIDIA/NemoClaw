@@ -462,6 +462,23 @@ The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep th
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
+The `brave-search` target qualifies configuration export after normal Brave-enabled OpenClaw onboarding.
+It validates two exports through the public schema, compares their specs, and requires a `BRAVE_API_KEY` reference without credential values or internal transports.
+The target retains checks of the materialized OpenClaw search configuration, credential isolation, real agent search, direct Brave API results, and disabled-search reuse.
+Private YAML files are removed during cleanup; artifacts retain redacted command results and an allowlisted qualification summary.
+The export assertions replace redundant checks within the same Brave lifecycle.
+Live policy qualification and a real Brave response cover the initial policy command and hostname substring.
+Successful agent execution and its answer cover the negative diagnostic-text check.
+Retained sandbox identity, materialized configuration, and HTTP egress cover the reused status command.
+Complete JSON parsing and expected configuration fields cover config-read exit codes; valid exact UUID continuity covers sandbox-read exit codes.
+The retained nonzero HTTP response covers the extra egress command exit check.
+The lower direct assertion count is recorded in the census; transitive coverage remains unchanged.
+
+For manual PR qualification, select `jobs=brave-search` with Docker and leave `targets` empty.
+Confirm that the target executes: an unavailable optional Brave credential can remove it from the plan.
+Trusted `main` controls the 45-minute job limit.
+Changes to `brave-search-helpers.ts` select the target through its catalogue ownership metadata.
+
 ### Catalogue Execution Evidence
 
 Every catalogue execution writes `evidence-manifest.json` in its target artifact directory.
@@ -1055,17 +1072,19 @@ Brev Launchable`. The workflow names this selection `E2E full main`, with the
 correlation ID when one was supplied, so maintainers can find the newest full
 manual run without scanning every run's jobs.
 
-Each full dispatch uses `github.run_id` in its workflow concurrency identity, so
-another full dispatch cannot supersede it while it waits. The trusted `main`
+Each full or focused Launchable dispatch uses `github.run_id` in its workflow concurrency identity,
+so another dispatch cannot supersede it while it waits. The trusted `main`
 workflow dispatch verifies that the dispatching and rerunning actors have
 repository `maintain` or `admin` permission before the Launchable path's source
 checkout. That automatic role check authorizes `staging-brev-launchable` and
 `staging-brev-launchable-identity`; neither job uses GitHub environment
 approval.
 
-Both Launchable jobs use the `staging-brev-launchable-cpu` concurrency group
-without cancelling a running job. GitHub keeps at most one pending job in that
-group, so a newer job can replace an older pending job.
+Both Launchable jobs and `.github/workflows/staging-launchable-full.yaml` share the
+`staging-brev-launchable-cpu` concurrency group with `queue: max` and `cancel-in-progress: false`.
+One job or workflow runs at a time, and up to 100 pending entries wait without replacing each other.
+GitHub cancels new entries when the queue is full. Entries run in the order they enter the group;
+that order can differ from workflow dispatch order.
 
 For a full manual run dispatched against `main`, `Release qualification` waits
 for every E2E job that does not require a separate opt-in, including `Exact staging Brev Launchable`. The strict aggregate reports whether that full run
