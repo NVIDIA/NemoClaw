@@ -30,6 +30,7 @@ export type ReportDockerDriverGatewayStartFailureOpts = {
   isGatewayStateInUse?: () => boolean;
   /** Resolve the service-manager stop command, or null for a standalone gateway. */
   resolveGatewayStopCommand?: () => string | null;
+  printError?: (message?: string) => void;
 };
 
 function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
@@ -114,6 +115,7 @@ export function reportDockerDriverGatewayStartFailure(
     exitOnFailure,
     launchLogOffset,
     isGatewayStateInUse,
+    printError = console.error,
     resolveGatewayStopCommand = getOpenShellGatewayServiceStopCommand,
   }: ReportDockerDriverGatewayStartFailureOpts,
 ): void {
@@ -123,32 +125,32 @@ export function reportDockerDriverGatewayStartFailure(
     .toString("utf-8");
   const tail = currentLaunchLog.split("\n").filter(Boolean).slice(-20).join("\n");
 
-  console.error("  Docker-driver gateway failed to start.");
+  printError("  Docker-driver gateway failed to start.");
   if (childExit.exited) {
-    console.error(`  Gateway process ${childExit.describeExit()} before becoming ready.`);
+    printError(`  Gateway process ${childExit.describeExit()} before becoming ready.`);
   } else {
-    console.error("  The gateway process did not become healthy within the timeout.");
+    printError("  The gateway process did not become healthy within the timeout.");
   }
   if (tail) {
-    console.error("  Gateway log tail:");
-    for (const line of tail.split("\n")) console.error(`    ${redact(line)}`);
+    printError("  Gateway log tail:");
+    for (const line of tail.split("\n")) printError(`    ${redact(line)}`);
   }
   const failure = classifyGatewayStartFailure(tail);
   if (failure.kind === "docker_unreachable") {
-    printDockerDaemonRecovery(console.error);
+    printDockerDaemonRecovery(printError);
   } else if (failure.kind === "database_migration_incompatible") {
     printIncompatibleGatewayDatabaseRecovery(
       logPath,
       isGatewayStateInUse,
       resolveGatewayStopCommand,
-      console.error,
+      printError,
     );
   }
-  console.error("  Troubleshooting:");
-  console.error(`    tail -100 ${logPath}`);
-  console.error("    openshell status");
-  console.error("    openshell gateway info");
-  console.error("    docker info --format '{{json .CDISpecDirs}}'");
+  printError("  Troubleshooting:");
+  printError(`    tail -100 ${logPath}`);
+  printError("    openshell status");
+  printError("    openshell gateway info");
+  printError("    docker info --format '{{json .CDISpecDirs}}'");
 
   if (exitOnFailure) process.exit(1);
 }

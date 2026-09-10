@@ -17,6 +17,7 @@ import {
   type OpenShellSandboxBufferedCommandRequest,
   type OpenShellSandboxBufferedCommandExecutor,
   type OpenShellSandboxCommandCompletion,
+  type OpenShellSandboxCommandError,
   type OpenShellSandboxCommandExecutor,
   type OpenShellSandboxCommandRequest,
   type OpenShellSandboxCommandOutcome,
@@ -186,11 +187,8 @@ export const runCliOpenShellBufferedCommand: OpenShellBufferedCommandRunner = as
       signal: result.signal ?? result.timeoutSignal ?? null,
       stdout: result.stdout,
       stderr: result.stderr,
-      ...(result.timedOut
-        ? { timedOut: true }
-        : result.error
-          ? { error: result.error, timedOut: false }
-          : {}),
+      ...(result.timedOut ? { timedOut: true } : {}),
+      ...(!result.timedOut && result.error ? { error: result.error, timedOut: false } : {}),
     };
   } catch (error) {
     return {
@@ -243,21 +241,15 @@ export async function runCliOpenShellStreamingCommand(
   });
 }
 
-function commandError(error: Error) {
+function commandError(error: Error): OpenShellSandboxCommandError {
   const code = (error as NodeJS.ErrnoException).code;
-  return {
-    kind:
-      code === "ENOENT"
-        ? "unavailable"
-        : code === "ECANCELED"
-          ? "cancelled"
-          : code === "ETIMEDOUT"
-            ? "timeout"
-            : code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
-              ? "capture"
-              : "invocation",
-    message: error.message,
-  } as const;
+  if (code === "ENOENT") return { kind: "unavailable", message: error.message };
+  if (code === "ECANCELED") return { kind: "cancelled", message: error.message };
+  if (code === "ETIMEDOUT") return { kind: "timeout", message: error.message };
+  if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+    return { kind: "capture", message: error.message };
+  }
+  return { kind: "invocation", message: error.message };
 }
 
 function commandFailure(error: Error): OpenShellSandboxCommandOutcome {
@@ -267,18 +259,21 @@ function commandFailure(error: Error): OpenShellSandboxCommandOutcome {
 function bufferedCommandCompletion(
   result: OpenShellBufferedCommandRunResult,
 ): OpenShellSandboxBufferedCommandCompletion {
-  const outcome = result.timedOut
-    ? {
-        kind: "failed" as const,
-        error: { kind: "timeout" as const, message: "OpenShell command timed out" },
-      }
-    : result.error
-      ? commandFailure(result.error)
-      : {
-          kind: "completed" as const,
-          exitCode: spawnExitCode(result),
-          ...(result.signal ? { signal: result.signal } : {}),
-        };
+  let outcome: OpenShellSandboxCommandOutcome;
+  if (result.timedOut) {
+    outcome = {
+      kind: "failed",
+      error: { kind: "timeout", message: "OpenShell command timed out" },
+    };
+  } else if (result.error) {
+    outcome = commandFailure(result.error);
+  } else {
+    outcome = {
+      kind: "completed",
+      exitCode: spawnExitCode(result),
+      ...(result.signal ? { signal: result.signal } : {}),
+    };
+  }
   return { outcome, stdout: result.stdout, stderr: result.stderr };
 }
 

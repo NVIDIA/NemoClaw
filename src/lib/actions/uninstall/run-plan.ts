@@ -1947,7 +1947,7 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
   const nodeVersionsDir = path.join(paths.nvmDir, "versions", "node");
   if (!runtime.existsSync(nodeVersionsDir)) return;
   // npm publishes every declared bin as a symlink, so an `isFile()` test never matched them.
-  const cliBinNames = ["nemoclaw", ...paths.agentAliasShimPaths.map((shim) => shim.binName)];
+  const cliBinNames = ["nemoclaw", ...paths.siblingCliShimPaths.map((shim) => shim.binName)];
   for (const version of dirEntries(nodeVersionsDir)) {
     if (!version.isDirectory()) continue;
     const versionDir = path.join(nodeVersionsDir, version.name);
@@ -1982,7 +1982,7 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
 
 /**
  * Remove installer-managed user-local CLI shims (`~/.local/bin/nemoclaw` and
- * agent-alias siblings). Classification still preserves foreign files of those
+ * sibling executables). Classification still preserves foreign files of those
  * names. Shared npm global package removal stays in `removeNemoclawCli`.
  * Returns how many shim paths `removePath` actually deleted.
  */
@@ -1996,10 +1996,10 @@ function removeManagedCliShims(paths: UninstallPaths, runtime: UninstallRuntime)
       `Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`,
     );
   }
-  // Also remove the sibling agent-alias shims (nemohermes, nemo-deepagents) the
-  // installer creates; uninstall previously left them resolving on PATH (#6098).
+  // Also remove the sibling CLI shims that the installer creates; uninstall
+  // previously left them resolving on PATH (#6098).
   // The same classification guard preserves any non-managed file of that name.
-  for (const alias of paths.agentAliasShimPaths) {
+  for (const alias of paths.siblingCliShimPaths) {
     const aliasShim = classifyShimPath(alias.path, {}, alias.binName);
     if (aliasShim.remove) {
       if (removePath(alias.path, runtime)) removed += 1;

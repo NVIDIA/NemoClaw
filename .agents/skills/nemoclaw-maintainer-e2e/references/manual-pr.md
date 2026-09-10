@@ -4,9 +4,9 @@
 # Manual PR E2E
 
 Use this mode when a maintainer requests E2E for a pull request. The trusted workflow stays on
-`main` and first checks out the latest PR commit. Replay the same selector against the exact PR base
-only after a candidate failure remains unresolved. The result is advisory and does not create a
-required PR check.
+`main` and first checks out the latest commit of an open PR. It rejects an arbitrary or historical
+commit SHA. Replay the same selector against the exact PR base only after a candidate failure remains
+unresolved. The result is advisory and does not create a required PR check.
 
 Manual PR E2E accepts only source branches in `NVIDIA/NemoClaw`, including for base replay.
 Review and adopt fork contributions onto a repository branch before dispatch.
@@ -34,7 +34,7 @@ Before dispatch, review the complete candidate diff. After a failure:
 - remove resources that cleanup left behind; and
 - rotate or revoke exposed credentials when necessary.
 
-`Staging Brev Launchable` is available only when the source is a branch in
+`Exact staging Brev Launchable` is available only when the source is a branch in
 `NVIDIA/NemoClaw`. Its trusted host receives the Brev API key and image-dispatch token. The guest
 receives the NVIDIA inference API key. The protected managed-image and native-runtime qualification
 jobs define narrower trusted-host boundaries in the workflow.

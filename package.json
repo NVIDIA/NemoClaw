@@ -15,6 +15,7 @@
   },
   "bin": {
     "nemoclaw": "./bin/nemoclaw.js",
+    "nemoclaw-acp": "./dist/lib/acp/main.js",
     "nemoclaw-blueprint-runner": "./dist/lib/blueprint-runner.js",
     "nemohermes": "./bin/nemohermes.js",
     "nemo-deepagents": "./bin/nemoclaw.js"
@@ -63,8 +64,8 @@
     "check:diff": "npm run validate:pr",
     "checks:repository": "tsx scripts/checks/run.mts",
     "checks": "node -e \"console.error('npm run checks runs only narrow repository checks. Use npm run validate:pr for routine PR validation or npm run checks:repository for the narrow runner.')\" && npm run checks:repository",
-    "lint": "oxlint . .dsh/tools && oxlint --config oxlint.type-aware.config.ts nemoclaw/src && npm run format:check && npm run checks:repository",
-    "lint:fix": "oxlint --fix . .dsh/tools && oxlint --config oxlint.type-aware.config.ts nemoclaw/src && npm run format && npm run checks:repository",
+    "lint": "oxlint . .dsh/tools && oxlint --config oxlint.type-aware.config.ts nemoclaw/src && oxlint --config oxlint.type-aware.config.ts --tsconfig tsconfig.cli.json src/lib/adapters && npm run format:check && npm run checks:repository",
+    "lint:fix": "oxlint --fix . .dsh/tools && oxlint --config oxlint.type-aware.config.ts nemoclaw/src && oxlint --config oxlint.type-aware.config.ts --tsconfig tsconfig.cli.json src/lib/adapters && npm run format && npm run checks:repository",
     "lint:ts": "cd nemoclaw && npm run check",
     "format": "bash tools/lint/format-added-files.sh --write",
     "format:check": "bash tools/lint/format-added-files.sh --check",
@@ -114,7 +115,7 @@
     "js-yaml": "^4.3.2",
     "p-retry": "^4.6.2",
     "qrcode-terminal": "^0.12.0",
-    "smol-toml": "1.7.0",
+    "smol-toml": "1.8.0",
     "typebox": "1.1.38",
     "undici": "8.10.0",
     "yaml": "2.8.3"

@@ -20,6 +20,17 @@ export default defineConfig({
     typeAware: true,
   },
   plugins: ["typescript"],
+  overrides: [
+    {
+      files: ["src/lib/adapters/**/*.ts"],
+      rules: {
+        "typescript/no-misused-promises": "error",
+        "typescript/consistent-type-exports": "error",
+        "typescript/await-thenable": "error",
+        "typescript/switch-exhaustiveness-check": "error",
+      },
+    },
+  ],
   rules: {
     "typescript/no-floating-promises": "error",
   },
