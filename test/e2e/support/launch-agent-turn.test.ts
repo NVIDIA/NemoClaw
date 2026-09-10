@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -25,8 +25,8 @@ import {
   SUBPROCESS_ENV_ALLOWED_NAMES,
   SUBPROCESS_ENV_ALLOWED_PREFIXES,
 } from "../../../src/lib/subprocess-env";
-import { superviseChild } from "../../helpers/process-supervisor.ts";
 import { testTimeout } from "../../helpers/timeouts";
+import { runLaunchCommand } from "./launch-agent-turn-process.ts";
 import {
   LAUNCH_TURN_SCRIPT,
   OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS,
@@ -40,7 +40,6 @@ import {
   runOpenClawLaunchReadinessLeaseTurns,
 } from "../live/launch-agent-turn.ts";
 
-// Each case owns its temporary files and child processes; cap overlap to avoid runner pressure.
 vi.setConfig({ maxConcurrency: 3 });
 const PROCESS_EXIT_WAIT = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
 type FixtureMode =
@@ -69,25 +68,14 @@ type FixtureMode =
   | "provider-wrong-route"
   | "recording-timeout"
   | "restored-canonical-timeout"
+  | "supervisor-timeout"
   | "valid";
 
 interface LaunchFixtureInvocation {
-  args: string[];
-  command: string;
+  args?: string[];
+  command?: string;
   env?: NodeJS.ProcessEnv;
-}
-
-async function runLaunchCommand(command: string, args: string[], env: NodeJS.ProcessEnv) {
-  let stderr = "";
-  let stdout = "";
-  const child = spawn(command, args, { detached: true, env, stdio: ["ignore", "pipe", "pipe"] });
-  const result = await superviseChild(child, {
-    killGraceMs: 1_000,
-    onStderr: (chunk) => (stderr += chunk),
-    onStdout: (chunk) => (stdout += chunk),
-    timeoutMs: 15_000,
-  });
-  return { signal: result.signal, status: result.exitCode, stderr, stdout };
+  timeoutMs?: number;
 }
 
 it("reports a residual PTY monitor socket without removing it (#9384)", async () => {
@@ -260,6 +248,8 @@ if (process.argv[2] !== "tui") {
   });
   if (!monitorPid) process.exit(71);
   fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_MONITOR_PID, monitorPid);
+  if (mode === "supervisor-timeout") process.on("SIGTERM", () => undefined);
+  if (mode === "supervisor-timeout") await new Promise((resolve) => setTimeout(resolve, 20_000));
   if (mode === "pty-socket-invalid" || mode === "pty-response-identity") {
     fs.unlinkSync(socketPath);
     const ttyPath = fs.realpathSync("/proc/self/fd/0");
@@ -502,7 +492,9 @@ exec "$@"
         : OPENCLAW_PTY_MONITOR_STARTER_SCRIPT;
     const launchCommand = invocation?.command ?? "bash";
     const launchArgs = invocation?.args ?? ["-c", LAUNCH_TURN_SCRIPT];
-    const result = await runLaunchCommand(launchCommand, launchArgs, {
+    const launch = (env: NodeJS.ProcessEnv) =>
+      runLaunchCommand(launchCommand, launchArgs, env, invocation?.timeoutMs);
+    const result = await launch({
       ...process.env,
       ...invocationEnv,
       HOME: fixtureRoot,
@@ -587,6 +579,7 @@ exec "$@"
         ? JSON.parse(readFileSync(ptySocketReceiptPath, "utf8"))
         : null,
       result,
+      monitorProcessIds,
       tuiProcessIds,
       ttyObserved: existsSync(ttyMarker),
     };
@@ -600,6 +593,21 @@ exec "$@"
     rmSync(ptyMonitorRoot, { force: true, recursive: true });
   }
 }
+
+it.runIf(process.platform === "linux").concurrent(
+  "kills launch descendants and removes owned state when the host command times out (#9160)",
+  async ({ expect }) => {
+    const fixture = await runLaunchSessionFixture("supervisor-timeout", "absent", {
+      timeoutMs: 2_500,
+    });
+    expect(fixture.result.timedOut).toBe(true);
+    expect(fixture.tuiProcessIds.length).toBeGreaterThan(0);
+    expect(fixture.monitorProcessIds.length).toBeGreaterThan(0);
+    expect([...fixture.orphanedTuiProcessIds, ...fixture.orphanedMonitorProcessIds]).toEqual([]);
+    expect([fixture.baselineRemoved, fixture.ptyMonitorRemoved]).toEqual([true, true]);
+  },
+  testTimeout(10_000),
+);
 
 function openShellLaunchArgv(sandboxName: string, gatewayArgs: string[]): string[] {
   return [
