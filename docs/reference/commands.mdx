@@ -241,9 +241,44 @@ If either identity cannot be verified, do not remove files by name alone.
 Do not remove the requested output file to clean up a temporary link.
 
 Version 1 exports managed OpenClaw sandboxes and canonical managed Hermes sandboxes in the default workspace.
-Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
+Supported sandboxes use an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
+They can use hosted external inference, the native NVIDIA hosted provider with its default endpoint, or the verified managed local vLLM configuration.
+The managed vLLM export is limited to its fixed managed serving identity and complete live runtime evidence.
+When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
+When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
 Hermes export also requires the default API configuration, a disabled dashboard, no Hermes tool gateways, and no Hermes-specific authentication settings.
 Other profiles fail with a diagnostic instead of producing an incomplete document.
+
+<AgentOnly variant="hermes">
+
+### `nemoclaw-acp`
+
+Use `nemoclaw-acp` to connect an external Agent Client Protocol (ACP) client to a compatible managed Hermes sandbox.
+The command starts an ACP session and writes protocol traffic only to standard output.
+It writes lifecycle diagnostics to standard error.
+
+Specify the registered sandbox name.
+If the name is registered on more than one gateway, specify its NemoClaw gateway name.
+
+```bash
+nemoclaw-acp --sandbox <sandbox-name> [--gateway <nemoclaw-gateway-name>] [--timeout <seconds>]
+```
+
+The command accepts a timeout from `1` through `86,400` seconds.
+When the timeout expires, it ends the ACP session.
+
+Before it starts the session, `nemoclaw-acp` recovers the selected gateway, verifies the live sandbox identity, and requires the sandbox to be ready.
+It accepts only a current managed Hermes sandbox with its recorded immutable lifecycle identity.
+It rejects custom-image, stale, missing, ambiguous, stopped, or incompatible targets before it opens the session.
+
+```bash
+nemoclaw-acp --sandbox my-hermes-sandbox
+```
+
+Use `--help` to print command usage.
+Use `--version` to print the installed NemoClaw version.
+
+</AgentOnly>
 
 ### `$$nemoclaw resources`
 
