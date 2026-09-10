@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ProcessSessionChild, ProcessSessionSignals } from "../../core/process-session";
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 
@@ -9,12 +10,7 @@ import type {
   OpenShellSandboxCommandExecutor,
   OpenShellSandboxCommandOutcome,
 } from "../../adapters/openshell/sandbox-command";
-import {
-  execSandbox,
-  type SandboxExecChild,
-  type SandboxExecCleanupDeps,
-  type SandboxExecSignalSource,
-} from "./exec";
+import { execSandbox, type SandboxExecCleanupDeps } from "./exec";
 
 const HEALTHY_MUTABLE_CONFIG = {
   applies: true as const,
@@ -224,7 +220,7 @@ describe("execSandbox mutable OpenClaw cleanup (#6047)", () => {
     const childEvents = new EventEmitter();
     const signalEvents = new EventEmitter();
     const order: string[] = [];
-    const child: SandboxExecChild = {
+    const child: ProcessSessionChild = {
       exitCode: null,
       signalCode: null,
       kill: vi.fn((receivedSignal) => {
@@ -237,9 +233,9 @@ describe("execSandbox mutable OpenClaw cleanup (#6047)", () => {
         return true;
       }),
       once: ((event: string, listener: (...args: unknown[]) => void) =>
-        childEvents.once(event, listener)) as SandboxExecChild["once"],
+        childEvents.once(event, listener)) as ProcessSessionChild["once"],
     };
-    const signalSource: SandboxExecSignalSource = {
+    const signalSource: ProcessSessionSignals = {
       add: (name, listener) => signalEvents.on(name, listener),
       remove: (name, listener) => {
         const recordRelease = {
@@ -281,14 +277,14 @@ describe("execSandbox mutable OpenClaw cleanup (#6047)", () => {
   it("does not deliver a second SIGINT when the terminal already signals the child", async () => {
     const childEvents = new EventEmitter();
     const signalEvents = new EventEmitter();
-    const child: SandboxExecChild = {
+    const child: ProcessSessionChild = {
       exitCode: null,
       signalCode: null,
       kill: vi.fn(() => true),
       once: ((event: string, listener: (...args: unknown[]) => void) =>
-        childEvents.once(event, listener)) as SandboxExecChild["once"],
+        childEvents.once(event, listener)) as ProcessSessionChild["once"],
     };
-    const signalSource: SandboxExecSignalSource = {
+    const signalSource: ProcessSessionSignals = {
       add: (name, listener) => signalEvents.on(name, listener),
       remove: (name, listener) => signalEvents.off(name, listener),
     };

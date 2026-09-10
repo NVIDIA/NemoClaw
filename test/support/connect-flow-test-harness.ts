@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellSandboxSessionOutcome } from "../../src/lib/adapters/openshell/sandbox-session";
 import childProcess from "node:child_process";
 import { createRequire } from "node:module";
 
@@ -73,7 +74,8 @@ export type ConnectHarness = {
   restoreSandboxStartupState: RestoreSandboxStartupState;
   runAutoPairSpy: MockInstance;
   sandboxRunBufferedSpy: MockInstance;
-  runSandboxExecChildSpy: MockInstance;
+  startSandboxSessionSpy: MockInstance;
+  createSessionExecutorSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   runSetupDnsProxySpy: MockInstance;
   spawnSyncSpy: MockInstance;
@@ -83,6 +85,7 @@ export type ConnectHarness = {
 };
 
 export type ConnectHarnessOptions = {
+  sessionOutcome?: OpenShellSandboxSessionOutcome;
   agentName?: string;
   inferenceGetOutput?: string;
   isWsl?: boolean;
@@ -364,11 +367,19 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const requalifyPortableAgentAuthoritySpy = vi
     .spyOn(gatewayState, "requalifyPortableAgentSandboxAuthority")
     .mockReturnValue({ kind: "not-hermes" });
-  const sandboxExec = requireDist("../../src/lib/actions/sandbox/exec.js");
-  const runSandboxExecChildSpy = vi.spyOn(sandboxExec, "runSandboxExecChild").mockResolvedValue({
-    status: spawnStatusFromOptions(options),
-    signal: options.spawnSignal ?? null,
-  });
+  const sessionCli = requireDist("../../src/lib/adapters/openshell/sandbox-command-cli.js");
+  const startSandboxSessionSpy = vi.fn(() => ({
+    completion: Promise.resolve({
+      outcome: options.sessionOutcome ?? { kind: "exited", exitCode: 0 },
+      stdout: "",
+      stderr: "",
+      release: vi.fn(),
+    }),
+    cancel: vi.fn(),
+  }));
+  const createSessionExecutorSpy = vi
+    .spyOn(sessionCli, "createCliOpenShellSandboxSessionExecutor")
+    .mockReturnValue({ start: startSandboxSessionSpy });
 
   const inspectLaunchReadinessSpy = vi
     .spyOn(launchReadiness, "inspectLaunchReadiness")
@@ -517,7 +528,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     detected: true,
     sessions: [{ pid: 1 }, { pid: 2 }],
   });
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({ isStale: false });
+  vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({ isStale: false });
   vi.spyOn(sandboxVersion, "formatStalenessWarning").mockReturnValue([]);
   const checkAndRecoverSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
@@ -684,7 +695,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     restoreSandboxStartupState: requireDist(connectModulePath).restoreSandboxStartupState,
     runAutoPairSpy,
     sandboxRunBufferedSpy,
-    runSandboxExecChildSpy,
+    startSandboxSessionSpy,
+    createSessionExecutorSpy,
     settlePortablePairingSpy,
     runOpenshellSpy,
     runSetupDnsProxySpy,

@@ -176,7 +176,9 @@ describe("NemoClawConfig v1", () => {
     const context = twoAgentConfig();
     mutate(context);
     const { value } = context;
-    expect(() => validateNemoClawConfig(value)).toThrow();
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "/spec/sandboxes/0/agents must pair primary with one read-only OpenClaw agent sharing its hosted route",
+    );
   });
 
   it("preserves existing v1 agent names and lists without an allowlist (#11434)", () => {

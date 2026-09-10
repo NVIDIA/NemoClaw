@@ -31,7 +31,7 @@ import { assertAgentMcpMutationRuntimeCapability } from "../../../src/lib/action
 
 type ProbeResult = { status: number; stdout: string; stderr: string };
 
-function runHermesProbe(results: ProbeResult[]) {
+async function runHermesProbe(results: ProbeResult[]) {
   const runtimeSelection = {
     gatewayName: "nemoclaw-8091",
     workspace: "default",
@@ -69,7 +69,7 @@ function runHermesProbe(results: ProbeResult[]) {
   );
   let message = "";
   try {
-    assertAgentMcpMutationRuntimeCapability("hermes-box", "hermes-config", runtimeSelection);
+    await assertAgentMcpMutationRuntimeCapability("hermes-box", "hermes-config", runtimeSelection);
   } catch (error) {
     message = error instanceof Error ? error.message : String(error);
   }
@@ -92,24 +92,24 @@ const ready: ProbeResult = {
   stderr: "",
 };
 describe("Hermes managed MCP startup probe", () => {
-  it("retries only the exact transient gateway-starting result", () => {
-    expect(runHermesProbe([starting, ready])).toEqual({
+  it("retries only the exact transient gateway-starting result", async () => {
+    expect(await runHermesProbe([starting, ready])).toEqual({
       calls: 2,
       recoveryActions: [],
       message: "",
     });
   });
 
-  it("does not recover when the third exact startup probe is ready", () => {
-    expect(runHermesProbe([starting, starting, ready])).toEqual({
+  it("does not recover when the third exact startup probe is ready", async () => {
+    expect(await runHermesProbe([starting, starting, ready])).toEqual({
       calls: 3,
       recoveryActions: [],
       message: "",
     });
   });
 
-  it("fails closed on the selected target without host-local supervisor recovery", () => {
-    const result = runHermesProbe([starting, starting, starting, ready]);
+  it("fails closed on the selected target without host-local supervisor recovery", async () => {
+    const result = await runHermesProbe([starting, starting, starting, ready]);
 
     expect(result.calls).toBe(3);
     expect(result.recoveryActions).toEqual([]);
@@ -117,8 +117,8 @@ describe("Hermes managed MCP startup probe", () => {
     expect(result.message).toContain("NemoClaw did not attempt host-local supervisor recovery");
   });
 
-  it("fails immediately on trust and topology errors", () => {
-    const result = runHermesProbe([
+  it("fails immediately on trust and topology errors", async () => {
+    const result = await runHermesProbe([
       {
         status: 1,
         stdout: "",
@@ -133,8 +133,8 @@ describe("Hermes managed MCP startup probe", () => {
     expect(result.message).not.toContain("nemoclaw hermes-box recover");
   });
 
-  it("directs an unmanaged but trusted gateway to recovery before mutation", () => {
-    const result = runHermesProbe([
+  it("directs an unmanaged but trusted gateway to recovery before mutation", async () => {
+    const result = await runHermesProbe([
       {
         status: 1,
         stdout: "",
@@ -149,8 +149,8 @@ describe("Hermes managed MCP startup probe", () => {
     expect(result.message).toContain("managed service lifecycle");
   });
 
-  it("fails clearly when the gateway never becomes ready", () => {
-    const result = runHermesProbe([starting, starting, starting]);
+  it("fails clearly when the gateway never becomes ready", async () => {
+    const result = await runHermesProbe([starting, starting, starting]);
 
     expect(result.calls).toBe(3);
     expect(result.recoveryActions).toEqual([]);

@@ -1413,7 +1413,7 @@ describe("managed vLLM export pipeline", () => {
 });
 
 describe("dashboard export observation", () => {
-  it("projects registered dashboard authority through complete live observation (#10904)", async () => {
+  it("projects registered dashboard and direct tools through complete live observation (#10904)", async () => {
     const workload = entry.workload as Extract<
       NonNullable<SandboxEntry["workload"]>,
       { kind: "managed-image" }
@@ -1421,6 +1421,7 @@ describe("dashboard export observation", () => {
     expect(workload?.kind).toBe("managed-image");
     const profile = {
       ...startup.profile,
+      tools: { ...startup.profile.tools, disclosure: "direct" as const },
       dashboard: {
         agent: "openclaw" as const,
         mode: "remote" as const,
@@ -1433,6 +1434,7 @@ describe("dashboard export observation", () => {
     const encodedProfile = encodeManagedStartupProfile(profile);
     const sourceEntry = {
       ...entry,
+      toolDisclosure: "direct" as const,
       dashboardPort: 19000,
       dashboardRemoteBindPrepared: true,
       workload: {
@@ -1446,7 +1448,11 @@ describe("dashboard export observation", () => {
     const observed = await reader.read("alpha");
     expect(observed).toMatchObject({
       kind: "observed",
-      registry: { dashboardPort: 19000, dashboardRemoteBindPrepared: true },
+      registry: {
+        dashboardPort: 19000,
+        dashboardRemoteBindPrepared: true,
+        toolDisclosure: "direct",
+      },
     });
     const writeStdout = vi.fn(async (_yaml: string) => {});
     const result = await runConfigExport(
@@ -1464,12 +1470,15 @@ describe("dashboard export observation", () => {
       },
     );
     expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(raw.getSandbox).toHaveBeenCalledTimes(3);
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
     const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
     expect(yaml).not.toContain(readFailureCanary);
     const document = validateNemoClawConfig(YAML.parse(yaml));
     expect(document.spec.sandboxes[0]?.agents[0]).toMatchObject({
       type: "openclaw",
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+      tools: { disclosure: "direct" },
     });
   });
 

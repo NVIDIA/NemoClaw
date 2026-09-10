@@ -6,6 +6,9 @@ import YAML from "yaml";
 import { buildConfig as buildOpenClawConfig } from "../../../../scripts/generate-openclaw-config.mts";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import { validateNemoClawConfig } from "../../config/schema";
+import { EXPORTED_VLLM_PROFILE_ID } from "../../config/model";
+import { loadServingCatalog } from "../../inference/serving/catalog-loader";
+import { servingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { mapManagedStartupProfileToAgentEnvironment } from "../../onboard/managed-startup/agent-environment";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import {
@@ -151,6 +154,35 @@ describe("read-only secondary-agent export", () => {
       const observed = additionalAgentSnapshot(agents);
       const result = await exportSnapshots([observed, observed]);
       expect(result.outcome.ok).toBe(false);
+      expect(result.writeStdout).not.toHaveBeenCalled();
+      expect(result.publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["podman", "managed serving"])(
+    "rejects secondary export with %s (#11434)",
+    async (runtime) => {
+      const observed = additionalAgentSnapshot([{ id: "researcher", tools: { allow: ["read"] } }]);
+      const registry = {
+        ...observed.registry,
+        ...(runtime === "podman"
+          ? { openshellDriver: "podman" as const }
+          : {
+              servingProfileProvenance: servingProfileProvenance(
+                loadServingCatalog(),
+                EXPORTED_VLLM_PROFILE_ID,
+              ),
+            }),
+      };
+      const result = await exportSnapshots([{ ...observed, registry }]);
+      expect(result.outcome).toMatchObject({
+        ok: false,
+        failure: {
+          findings: expect.arrayContaining([
+            expect.objectContaining({ field: "spec.sandboxes[].agents", category: "unsupported" }),
+          ]),
+        },
+      });
       expect(result.writeStdout).not.toHaveBeenCalled();
       expect(result.publish).not.toHaveBeenCalled();
     },

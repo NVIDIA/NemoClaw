@@ -23,8 +23,7 @@ src/lib/domain/<area>/<topic>.ts
 Configuration export represents retained startup intent from a validated managed-image receipt.
 Preserve image authority and full residual profile comparison when admitting a supported setting.
 
-Configuration export represents retained startup intent. Managed OpenClaw exports
-`agents[].tools.disclosure: direct` only when the registry selection agrees with
+Managed OpenClaw exports `agents[].tools.disclosure: direct` only when the registry selection agrees with
 the validated startup profile. Absent or explicit `progressive` selection keeps
 the canonical omission. Model compatibility can still downgrade runtime tool
 behavior. Preserve managed-image authority and full residual profile equality;
