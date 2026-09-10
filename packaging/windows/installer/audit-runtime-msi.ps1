@@ -29,6 +29,29 @@ public static class NativeRuntimeMsiAudit {
     [DllImport("msi.dll", CharSet=CharSet.Unicode)] static extern uint MsiRecordGetStringW(uint record, uint field, StringBuilder buffer, ref uint chars);
     [DllImport("msi.dll")] static extern uint MsiRecordReadStream(uint record, uint field, [Out] byte[] bytes, ref uint count);
     [DllImport("msi.dll")] static extern uint MsiCloseHandle(uint handle);
+    [DllImport("ole32.dll")] static extern int CoInitializeEx(IntPtr reserved, uint mode);
+    [DllImport("ole32.dll")] static extern void CoUninitialize();
+    [DllImport("msi.dll", CharSet=CharSet.Unicode)] static extern uint MsiOpenPackageExW(string path, uint options, out uint product);
+    [DllImport("msi.dll")] static extern uint MsiCreateRecord(uint fields);
+    [DllImport("msi.dll", CharSet=CharSet.Unicode)] static extern uint MsiRecordSetStringW(uint record, uint field, string value);
+    [DllImport("msi.dll", CharSet=CharSet.Unicode)] static extern uint MsiFormatRecordW(uint product, uint record, StringBuilder output, ref uint chars);
+    public static string FormatCommand(string path, string command) {
+        if(command.Length>255) throw new InvalidOperationException("Authored command exceeds CustomAction.Target.");
+        // IGNOREMACHINESTATE creates a restricted session incapable of running
+        // executable custom actions. No MsiDoAction or installation is invoked.
+        int com=CoInitializeEx(IntPtr.Zero,2); uint product=0,record=0;
+        if(com<0 && com!=unchecked((int)0x80010106)) Marshal.ThrowExceptionForHR(com);
+        try {
+            Check(MsiOpenPackageExW(path,1,out product)); record=MsiCreateRecord(0);
+            if(record==0) throw new InvalidOperationException("Cannot allocate MSI format record.");
+            Check(MsiRecordSetStringW(record,0,command));
+            uint count=4096; var result=new StringBuilder((int)count);
+            Check(MsiFormatRecordW(product,record,result,ref count)); return result.ToString();
+        } finally {
+            if(record!=0) MsiCloseHandle(record); if(product!=0) MsiCloseHandle(product);
+            if(com>=0) CoUninitialize();
+        }
+    }
     [DllImport("msi.dll", CharSet=CharSet.Unicode, EntryPoint="MsiQueryProductStateW")] public static extern int ProductState(string productCode);
     public static string ProductCode(string path) {
         var rows=Rows(path,"SELECT `Value` FROM `Property` WHERE `Property`='ProductCode'",1);
@@ -127,6 +150,48 @@ try {
             throw 'A runtime action is not a synchronous, elevated embedded executable.'
         }
     }
+    $column = @([NativeRuntimeMsiAudit]::Rows($MsiPath, 'SELECT `Type` FROM `_Columns` WHERE `Table`=''CustomAction'' AND `Name`=''Target''', 1))
+    if ($column.Count -ne 1 -or ([int]$column[0][0] -band 0xff) -ne 255) {
+        throw 'The compiled CustomAction.Target schema differs from its reviewed bound.'
+    }
+    foreach ($name in $owned) {
+        if ($actions[$name].target.Length -gt 255) { throw 'A compiled native action exceeds CustomAction.Target.' }
+    }
+    $fields = [ordered]@{ runtimeId='NemoClawRuntimeId'; manifestSha256='NemoClawManifestSha256';
+        sourceRevision='NemoClawSourceRevision'; nodeSha256='NemoClawNodeSha256'; nodeVersion='NemoClawNodeVersion' }
+    $identity = [ordered]@{}
+    foreach ($entry in $fields.GetEnumerator()) {
+        $query = 'SELECT `Value` FROM `Property` WHERE `Property`=' + [char]39 + $entry.Value + [char]39
+        $values = @([NativeRuntimeMsiAudit]::Rows($MsiPath, $query, 1))
+        if ($values.Count -ne 1) { throw 'A private runtime identity default is missing.' }
+        $value = $values[0][0]
+        $pattern = if ($entry.Key -ceq 'sourceRevision') { '^[a-f0-9]{40}$' }
+            elseif ($entry.Key -ceq 'nodeVersion') { '^(?:0|[1-9][0-9]{0,4})\.(?:0|[1-9][0-9]{0,4})\.(?:0|[1-9][0-9]{0,4})$' }
+            else { '^[a-f0-9]{64}$' }
+        if ($value -cnotmatch $pattern) { throw 'A private runtime identity default is malformed.' }
+        $identity[$entry.Key] = $value
+        foreach ($action in $actions.Values) {
+            if (($action.type -band 0x3f) -eq 51 -and $action.source -ceq $entry.Value) {
+                throw 'The sealed private identity cannot be replaced by a property setter.'
+            }
+        }
+    }
+    $references = ($fields.Values | ForEach-Object { '[' + $_ + ']' }) -join ' '
+    $tuple = ($identity.Values) -join ' '
+    $product = [NativeRuntimeMsiAudit]::ProductCode($MsiPath)
+    $transport = [ordered]@{}
+    foreach ($case in @(
+        @{ name='NativeRuntimeBeginInstall'; template=('--runtime-msi begin-install ' + $references + ' "[ProductCode]"'); expected=('--runtime-msi begin-install ' + $tuple + ' "' + $product + '"') },
+        @{ name='NativeRuntimeVerify'; template=('--runtime-msi verify ' + $references); expected=('--runtime-msi verify ' + $tuple) }
+    )) {
+        $target = $actions[$case.name].target
+        if ($target -cne $case.template) { throw 'A native action does not use the sealed private identity references.' }
+        $expanded = [NativeRuntimeMsiAudit]::FormatCommand($MsiPath, $target)
+        if ($expanded -cne $case.expected) { throw 'Actual MSI formatting did not preserve the complete runtime tuple.' }
+        $transport[$case.name] = @{ authoredCharacters=$target.Length; expandedCharacters=$expanded.Length; fullTupleMatched=$true }
+    }
+    $receipt.identityTransport = @{ kind='database-private-properties'; runtime=$identity; targetColumnCharacters=255;
+        actualMsiFormatting=$true; actions=$transport; executableActionsInvoked=$false }
     $commits = @($actions.Keys | Where-Object { ($actions[$_].type -band 0x600) -eq 0x600 })
     if ($commits.Count -ne 2 -or $commits -cnotcontains 'NativeRuntimeCommitInstall' -or
         $commits -cnotcontains 'NativeRuntimeCommitRemove' -or

@@ -1377,8 +1377,8 @@ jobs:
             & python -m unittest discover -s "$env:GITHUB_WORKSPACE\packaging\windows\installer" -p 'test_*.py' -v 2>&1 | Tee-Object -FilePath $pythonLog
             $pythonResult = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }
-          if ($pythonResult -ne 0 -or (Get-Content -LiteralPath $pythonLog -Raw) -notmatch 'Ran 58 tests') {
-            throw 'The fifty-eight MSI build and metadata controls did not all pass.'
+          if ($pythonResult -ne 0 -or (Get-Content -LiteralPath $pythonLog -Raw) -notmatch 'Ran 60 tests') {
+            throw 'The sixty MSI build and metadata controls did not all pass.'
           }
           $log = Join-Path $output 'msi-helper-tests.log'
           try {

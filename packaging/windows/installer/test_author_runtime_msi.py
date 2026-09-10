@@ -4,12 +4,19 @@
 """Portable authoring controls, not Windows Installer execution evidence."""
 
 import hashlib
+import re
 from pathlib import Path
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
-from author_runtime_msi import NAMESPACE, author, validate_identity
+from author_runtime_msi import (
+    IDENTITY_PROPERTIES,
+    NAMESPACE,
+    TARGET_LIMIT,
+    author,
+    validate_identity,
+)
 
 
 class AuthoringTests(unittest.TestCase):
@@ -88,6 +95,78 @@ class AuthoringTests(unittest.TestCase):
             tree.find("{" + NAMESPACE + "}Launch").get("Condition"),
             "NOT RollbackDisabled",
         )
+
+    def test_complete_5fc_and_maximum_tuple_fit_and_expand_without_truncation(self):
+        # The actual5fc input overflowed at287/264 characters with the inline tuple.
+        self.identity = {
+            "runtimeId": "586537e2f49937c1c3d8a86d78105b38d65194d2c82557b324cb3e28cd072dd6",
+            "manifestSha256": "312fa731eaea9486185a8060dc69b218c4960dbea5215ff80a02576a97ab8160",
+            "sourceRevision": "5fc2004212af660e7cc934a6c63784a984e440b2",
+            "nodeSha256": "97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878",
+            "nodeVersion": "22.23.2",
+        }
+        for version in ("22.23.2", "99999.99999.99999"):
+            with self.subTest(version=version):
+                self.identity["nodeVersion"] = version
+                tree, receipt = self.authored()
+                properties = {
+                    item.get("Id"): item.get("Value")
+                    for item in tree.findall("{" + NAMESPACE + "}Property")
+                }
+                product = "{12345678-1234-1234-1234-123456789ABC}"
+                values = {**properties, "ProductCode": product}
+                actions = {
+                    item.get("Id"): item.get("ExeCommand")
+                    for item in tree.findall("{" + NAMESPACE + "}CustomAction")
+                }
+                tuple_text = " ".join(
+                    self.identity[field] for field in IDENTITY_PROPERTIES
+                )
+                self.assertGreater(
+                    len("--runtime-msi verify " + tuple_text), TARGET_LIMIT
+                )
+                self.assertGreater(
+                    len(
+                        "--runtime-msi begin-install " + tuple_text + ' "[ProductCode]"'
+                    ),
+                    TARGET_LIMIT,
+                )
+                for command in actions.values():
+                    self.assertLessEqual(len(command), TARGET_LIMIT)
+                for action, expected in (
+                    (
+                        "NativeRuntimeBeginInstall",
+                        "--runtime-msi begin-install "
+                        + tuple_text
+                        + ' "'
+                        + product
+                        + '"',
+                    ),
+                    ("NativeRuntimeVerify", "--runtime-msi verify " + tuple_text),
+                ):
+                    expanded = re.sub(
+                        r"\[([^\]]+)\]", lambda match: values[match[1]], actions[action]
+                    )
+                    self.assertEqual(expanded, expected)
+                self.assertEqual(
+                    receipt["maximumAuthoredTargetLength"],
+                    max(map(len, actions.values())),
+                )
+                self.assertEqual(receipt["targetColumnLimit"], 255)
+
+    def test_identity_properties_are_private_database_defaults_only(self):
+        tree, receipt = self.authored()
+        properties = tree.findall("{" + NAMESPACE + "}Property")
+        self.assertEqual(len(properties), 5)
+        self.assertEqual(
+            {p.get("Id"): p.get("Value") for p in properties},
+            {name: self.identity[field] for field, name in IDENTITY_PROPERTIES.items()},
+        )
+        for prop in properties:
+            self.assertTrue(any(letter.islower() for letter in prop.get("Id")))
+            self.assertEqual(set(prop.attrib), {"Id", "Value"})
+        self.assertEqual(receipt["identityTransport"], "database-private-properties")
+        self.assertFalse(tree.findall("{" + NAMESPACE + "}SetProperty"))
 
     def test_modified_embedded_helper_is_rejected(self):
         self.helper.write_bytes(self.helper.read_bytes() + b"changed")

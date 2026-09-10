@@ -14,6 +14,15 @@ import xml.etree.ElementTree as ET
 
 NAMESPACE = "http://wixtoolset.org/schemas/v4/wxs"
 ET.register_namespace("", NAMESPACE)
+# WiX5.0.2 CustomAction.Target is a 255-character Formatted column.
+TARGET_LIMIT = 255
+IDENTITY_PROPERTIES = {
+    "runtimeId": "NemoClawRuntimeId",
+    "manifestSha256": "NemoClawManifestSha256",
+    "sourceRevision": "NemoClawSourceRevision",
+    "nodeSha256": "NemoClawNodeSha256",
+    "nodeVersion": "NemoClawNodeVersion",
+}
 
 
 def element(parent, name, **attributes):
@@ -90,16 +99,12 @@ def author(identity, helper: Path, expected_sha256: str):
         Id="NativeRuntimeTransaction",
         SourceFile=str(helper.resolve()),
     )
-    tuple_args = " ".join(
-        identity[name]
-        for name in (
-            "runtimeId",
-            "manifestSha256",
-            "sourceRevision",
-            "nodeSha256",
-            "nodeVersion",
-        )
-    )
+    # Database defaults exist in both UI and server sessions. Mixed-case names
+    # are private MSI properties, so command-line public properties cannot replace
+    # this sealed identity. No UI setter or SecureCustomProperties transport is used.
+    for field, name in IDENTITY_PROPERTIES.items():
+        element(include, "Property", Id=name, Value=identity[field])
+    tuple_args = " ".join("[" + name + "]" for name in IDENTITY_PROPERTIES.values())
     root = "NOT UPGRADINGPRODUCTCODE"
     installing = root + ' AND NOT (REMOVE ~= "ALL")'
     removing = root + ' AND REMOVE ~= "ALL"'
@@ -149,12 +154,15 @@ def author(identity, helper: Path, expected_sha256: str):
         ),
     ]
     for name, execute, arguments, _condition, _sequence in actions:
+        command = "--runtime-msi " + arguments
+        if len(command) > TARGET_LIMIT:
+            raise ValueError("A native MSI command exceeds CustomAction.Target.")
         element(
             include,
             "CustomAction",
             Id=name,
             BinaryRef="NativeRuntimeTransaction",
-            ExeCommand="--runtime-msi " + arguments,
+            ExeCommand=command,
             Execute=execute,
             Impersonate="no",
             Return="check",
@@ -174,6 +182,11 @@ def author(identity, helper: Path, expected_sha256: str):
         "classification": "dormant-msi-transaction-authoring",
         "runtime": identity,
         "helper": helper_record,
+        "identityTransport": "database-private-properties",
+        "targetColumnLimit": TARGET_LIMIT,
+        "maximumAuthoredTargetLength": max(
+            len("--runtime-msi " + row[2]) for row in actions
+        ),
         "installedExecution": False,
     }
 
