@@ -72,6 +72,7 @@ import {
   assertHermesPortableAgentLifecycleAuthority,
   buildHermesPortableCommandEnvironment,
   buildHermesPortableCommandAuthority,
+  defaultPortableDemoStateDir,
   inspectPortableAgentReceiptDisposition,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
@@ -132,6 +133,7 @@ export type {
 export {
   buildHermesPortableCommandAuthority,
   buildHermesPortableCommandEnvironment,
+  defaultPortableDemoStateDir,
   inspectPortableAgentReceiptDisposition,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,

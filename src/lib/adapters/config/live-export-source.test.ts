@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import os from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
 import { runConfigExport } from "../../actions/config/export";
 import {
@@ -77,32 +78,9 @@ import {
   inventory,
   provider,
   configuration,
+  ollamaSource,
+  telemetryEntry,
 } from "./live-export-source-test-fixture";
-
-function telemetryEntry(
-  telemetry: Readonly<Record<string, unknown>> = {},
-  agentSettings: Readonly<Record<string, unknown>> = {},
-) {
-  const profile = JSON.parse(Buffer.from(startup.encodedProfile, "base64url").toString("utf8")) as {
-    agentConfig: { otel: Record<string, unknown> };
-  };
-  Object.assign(profile.agentConfig.otel, {
-    enabled: true,
-    serviceName: "research-assistant",
-    sampleRate: 0.5,
-    ...telemetry,
-  });
-  Object.assign(profile.agentConfig, agentSettings);
-  const encodedProfile = Buffer.from(JSON.stringify(profile)).toString("base64url");
-  return {
-    ...entry,
-    workload: {
-      ...entry.workload,
-      encodedProfile,
-      startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
-    },
-  };
-}
 
 const raw = {
   getProvider: vi.fn(),
@@ -1323,47 +1301,7 @@ function ollamaProbe(observed: ObservedOllamaProxy) {
 function mockOllamaSource() {
   vi.spyOn(os, "platform").mockReturnValue("linux");
   const model = EXPORTED_OLLAMA_MODEL;
-  const route = resolveManagedStartupInferenceRoute(
-    "openclaw",
-    "ollama-local",
-    model,
-    "openai-completions",
-  );
-  const built = buildManagedStartupProfile({
-    ...startupInput,
-    inference: {
-      routeProvider: route.providerKey,
-      upstreamProvider: "ollama-local",
-      model,
-      routedBaseUrl: route.inferenceBaseUrl,
-      upstreamEndpointUrl: null,
-      api: "openai-completions",
-      primaryModelRef: route.primaryModelRef,
-      compatibility: route.inferenceCompat ?? {},
-    },
-  });
-  const source: SandboxEntry = {
-    ...entry,
-    provider: "ollama-local",
-    model,
-    endpointUrl: "http://host.openshell.internal:11440/v1",
-    credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
-    workload: {
-      ...entry.workload!,
-      encodedProfile: built.encodedProfile,
-      startupProfileSha256: built.startupProfileSha256,
-    } as SandboxEntry["workload"],
-  };
-  const observed: ObservedOllamaProxy = {
-    pid: 1234,
-    listenerAddress: "0.0.0.0",
-    serving: {
-      backend: "ollama",
-      daemon: { management: "external", hostPort: 11439 },
-      proxy: { management: "nemoclaw", hostPort: 11440 },
-      model: { servedName: model, digest: `sha256:${"a".repeat(64)}` },
-    },
-  };
+  const { source, observed } = ollamaSource(model);
   mockSupportedLiveSource(3, 3, source);
   const probe = ollamaProbe(observed);
   vi.mocked(createOllamaExportProbe).mockReturnValue(probe);
@@ -1479,5 +1417,83 @@ describe("attached Ollama export pipeline", () => {
     const { result, writeStdout } = await exportLiveSource();
     expect(result).toMatchObject({ ok: false });
     expect(writeStdout).not.toHaveBeenCalled();
+  });
+});
+
+describe("dashboard export observation", () => {
+  it("projects registered dashboard authority through complete live observation (#10904)", async () => {
+    const workload = entry.workload as Extract<
+      NonNullable<SandboxEntry["workload"]>,
+      { kind: "managed-image" }
+    >;
+    expect(workload?.kind).toBe("managed-image");
+    const profile = {
+      ...startup.profile,
+      dashboard: {
+        agent: "openclaw" as const,
+        mode: "remote" as const,
+        url: "http://127.0.0.1:19000",
+        port: 19000,
+        bindAddress: "0.0.0.0" as const,
+        wslExposure: false,
+      },
+    };
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const sourceEntry = {
+      ...entry,
+      dashboardPort: 19000,
+      dashboardRemoteBindPrepared: true,
+      workload: {
+        ...workload,
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+      },
+    };
+    mockSupportedLiveSource(3, 3, sourceEntry);
+    const reader = createLiveExportSnapshotReader();
+    const observed = await reader.read("alpha");
+    expect(observed).toMatchObject({
+      kind: "observed",
+      registry: { dashboardPort: 19000, dashboardRemoteBindPrepared: true },
+    });
+    const writeStdout = vi.fn(async (_yaml: string) => {});
+    const result = await runConfigExport(
+      {
+        sandboxName: "alpha",
+        documentName: parseNemoClawConfigDocumentName("alpha"),
+        target: { kind: "stdout" },
+      },
+      {
+        observe: (name) => observeStableExportSource(name, reader),
+        createDocumentUid: () =>
+          parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
+        writeStdout,
+        publish: vi.fn(),
+      },
+    );
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
+    expect(yaml).not.toContain(readFailureCanary);
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.sandboxes[0]?.agents[0]).toMatchObject({
+      type: "openclaw",
+      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+    });
+  });
+
+  it("retains dashboard registry changes in both complete snapshots (#10904)", async () => {
+    mockSupportedLiveSource();
+    let reads = 0;
+    vi.mocked(loadRegistry).mockImplementation(() => ({
+      sandboxes: { alpha: { ...entry, dashboardPort: reads++ % 2 === 0 ? 18789 : 19000 } },
+      defaultSandbox: null,
+    }));
+    const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
+    expect(result).toMatchObject({
+      ok: false,
+      attempts: 2,
+      findings: [expect.objectContaining({ category: "unstable-source" })],
+    });
+    expect(loadRegistry).toHaveBeenCalledTimes(4);
   });
 });
