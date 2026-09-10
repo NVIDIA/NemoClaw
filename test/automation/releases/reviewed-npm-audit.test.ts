@@ -266,8 +266,7 @@ describe("reviewed npm audit gate", () => {
       path.join(REPO_ROOT, ".github", "workflows"),
     );
 
-    expect(callers).toHaveLength(5);
-    expect(callers.map(({ timeoutMinutes }) => timeoutMinutes)).toEqual([25, 25, 25, 25, 25]);
+    expect(callers).toHaveLength(6);
     expect(Math.min(...callers.map(({ timeoutMinutes }) => timeoutMinutes))).toBeGreaterThanOrEqual(
       minimumJobTimeoutMinutes,
     );

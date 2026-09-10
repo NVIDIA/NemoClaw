@@ -15,6 +15,7 @@
   },
   "bin": {
     "nemoclaw": "./bin/nemoclaw.js",
+    "nemoclaw-acp": "./dist/lib/acp/main.js",
     "nemoclaw-blueprint-runner": "./dist/lib/blueprint-runner.js",
     "nemohermes": "./bin/nemohermes.js",
     "nemo-deepagents": "./bin/nemoclaw.js"
