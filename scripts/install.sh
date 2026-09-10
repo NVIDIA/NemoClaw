@@ -2276,7 +2276,7 @@ EOF
 ensure_nemoclaw_shim() {
   local cli_bin status=0
   ensure_cli_shim "$_CLI_BIN" || status=$?
-  for cli_bin in nemoclaw nemohermes nemo-deepagents; do
+  for cli_bin in nemoclaw nemoclaw-acp nemohermes nemo-deepagents; do
     [[ "$cli_bin" == "$_CLI_BIN" ]] && continue
     ensure_cli_shim "$cli_bin" || true
   done

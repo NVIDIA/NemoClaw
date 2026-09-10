@@ -7,6 +7,7 @@ import {
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
 } from "../../scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts";
 import * as importedProtectedManagedImageContract from "../../scripts/checks/protected-managed-image-contract.ts";
+import { HERMES_ACP_E2E_OWNING_PATHS } from "../e2e/hermes-acp-owning-paths.mts";
 
 // The root TypeScript package is exposed as CJS under the exact
 // `node --import tsx` workflow execution mode, but as an ESM namespace under
@@ -21,7 +22,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 21 as const;
+export const RISK_PLAN_VERSION = 22 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -75,6 +76,8 @@ const MANAGED_STARTUP_E2E_JOB_IDS = [
   "openclaw-inference-switch",
 ] as const;
 const HERMES_CLI_ADAPTER_E2E_JOB_IDS = ["channels-stop-start", "mcp-bridge"] as const;
+const HERMES_ACP_E2E_JOB_IDS = ["hermes-e2e", "rebuild-hermes"] as const;
+const HERMES_ACP_RUNTIME_FILES = new Set<string>(HERMES_ACP_E2E_OWNING_PATHS);
 const HERMES_CLI_ADAPTER_RUNTIME_FILES = new Set([
   "agents/hermes/hermes-cli-adapter-v1.json",
   "agents/hermes/hermes-wrapper.py",
@@ -371,6 +374,9 @@ export function focusedPrE2eJobsForChangedFiles(
       (file) => HERMES_CLI_ADAPTER_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
+  const hermesAcpRuntimeFiles = stableUnique(
+    changedFiles.filter((file) => HERMES_ACP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file)),
+  );
   const hermesCronRestoreFiles = stableUnique(
     changedFiles.filter(
       (file) => HERMES_CRON_RESTORE_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
@@ -417,6 +423,10 @@ export function focusedPrE2eJobsForChangedFiles(
     ...HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({
       id,
       matchedFiles: hermesCliAdapterFiles,
+    })),
+    ...HERMES_ACP_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesAcpRuntimeFiles,
     })),
     ...HERMES_CRON_RESTORE_E2E_JOB_IDS.map((id) => ({
       id,

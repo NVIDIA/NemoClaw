@@ -352,6 +352,32 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
+  it("keeps protected audit production in trusted workflow code", () => {
+    const value = workflow();
+    const audit = namedStep(
+      value,
+      "Reuse or refresh reviewed audit evidence before the offline build",
+    );
+    audit.uses = "./.candidate-runtime/.github/actions/ci-reviewed-npm-audit";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime must execute the trusted reviewed npm audit action",
+    );
+  });
+
+  it("audits the selected candidate before the protected build", () => {
+    const value = workflow();
+    const audit = namedStep(
+      value,
+      "Reuse or refresh reviewed audit evidence before the offline build",
+    );
+    (audit.with as Record<string, unknown>)["target-root"] = "${{ github.workspace }}";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime audit action must bind target-root to ${{ github.workspace }}/.candidate-runtime",
+    );
+  });
+
   it("rejects a mutable DCode base in protected runtime qualification", () => {
     const value = workflow();
     const bases = namedStep(value, "Resolve digest-pinned amd64 runtime base images");
@@ -409,6 +435,19 @@ describe("protected managed-image runtime workflow", () => {
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
       "managed-image-protected-runtime step 'Build exact all-agent protected runtime images' must include --cache-from \"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE\"",
+    );
+  });
+
+  it("keeps the protected build controller in the trusted checkout", () => {
+    const value = workflow();
+    const build = namedStep(value, "Build exact all-agent protected runtime images");
+    build.run = String(build.run).replace(
+      "scripts/checks/build-protected-managed-images.sh",
+      '"$GITHUB_WORKSPACE/.candidate-runtime/scripts/checks/build-protected-managed-images.sh"',
+    );
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime build controller must execute trusted workflow code",
     );
   });
 
