@@ -27,7 +27,10 @@ import { GATEWAY_PORT } from "../../core/ports";
 import { spawnExitCode } from "../../core/process-exit";
 import { readLineFromStdin } from "../../core/stdin";
 import { resolveGatewayName } from "../../onboard/gateway-binding";
-import { listGatewayStateRoots } from "../../state/gateway-registry";
+import {
+  listGatewayStateRoots,
+  readGatewayOpenShellStateDir,
+} from "../../state/gateway-registry";
 import {
   runUninstallPlanProduction,
   type UninstallRunDeps,
@@ -40,6 +43,7 @@ export const ALL_GATEWAY_PORTS_ENV = "NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS";
 export interface AllGatewayPortsDeps extends UninstallRunDeps {
   home?: string;
   listGatewayPorts?: (home: string) => readonly number[];
+  gatewayStateDirForPort?: (home: string, port: number) => string | null;
   runPortPass?: (port: number, options: UninstallRunOptions, env: NodeJS.ProcessEnv) => number;
   runSelectedPass?: (
     options: UninstallRunOptions,
@@ -64,6 +68,7 @@ function defaultListGatewayPorts(home: string): readonly number[] {
   return listGatewayStateRoots(home).map((root) => root.gatewayPort);
 }
 
+
 export function uninstallChildArgs(options: UninstallRunOptions): string[] {
   const args = ["internal", "uninstall", "run-plan", "--yes", "--all-gateway-ports-child"];
   if (options.deleteModels) args.push("--delete-models");
@@ -76,15 +81,25 @@ export function uninstallChildArgs(options: UninstallRunOptions): string[] {
  * The child must never re-enter the sweep: dropping the request variable keeps
  * an inherited `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1` from recursing.
  */
-export function uninstallChildEnv(env: NodeJS.ProcessEnv, port: number): NodeJS.ProcessEnv {
+export function uninstallChildEnv(
+  env: NodeJS.ProcessEnv,
+  port: number,
+  recordedGatewayStateDir?: string | null,
+): NodeJS.ProcessEnv {
   const next: NodeJS.ProcessEnv = { ...env, NEMOCLAW_GATEWAY_PORT: String(port) };
   delete next[ALL_GATEWAY_PORTS_ENV];
-  if (port !== GATEWAY_PORT) delete next.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+  if (port !== GATEWAY_PORT) {
+    if (recordedGatewayStateDir) {
+      next.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = recordedGatewayStateDir;
+    } else {
+      delete next.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+    }
+  }
   return next;
 }
 
 function defaultRunPortPass(
-  port: number,
+  _port: number,
   options: UninstallRunOptions,
   env: NodeJS.ProcessEnv,
 ): number {
@@ -92,7 +107,7 @@ function defaultRunPortPass(
   if (!entry) return 1;
   return spawnExitCode(
     spawnSync(process.execPath, [entry, ...uninstallChildArgs(options)], {
-      env: uninstallChildEnv(env, port),
+      env,
       stdio: "inherit",
     }),
   );
@@ -134,9 +149,9 @@ export async function runUninstallAllGatewayPorts(
   const error = deps.error ?? ((message: string) => console.error(message));
   const readLine = deps.readLine ?? (() => readLineFromStdin());
   const listPorts = deps.listGatewayPorts ?? defaultListGatewayPorts;
+  const gatewayStateDirForPort = deps.gatewayStateDirForPort ?? readGatewayOpenShellStateDir;
   const runPortPass = deps.runPortPass ?? defaultRunPortPass;
   const runSelectedPass = deps.runSelectedPass ?? runUninstallPlanProduction;
-  const runDeps = { ...deps, env };
   const expectedGatewayName = resolveGatewayName(GATEWAY_PORT);
 
   if (options.gatewayName && options.gatewayName !== expectedGatewayName) {
@@ -161,6 +176,28 @@ export async function runUninstallAllGatewayPorts(
   const otherPorts = [...new Set(discovered)]
     .filter((port) => port !== GATEWAY_PORT)
     .sort((left, right) => left - right);
+  const ordered = [...otherPorts, GATEWAY_PORT];
+  const recordedStateDirs = new Map<number, string>();
+  try {
+    for (const port of ordered) {
+      const recorded = gatewayStateDirForPort(home, port);
+      if (recorded) recordedStateDirs.set(port, recorded);
+    }
+  } catch (failure) {
+    error(
+      `Cannot recover per-gateway OpenShell state directories: ${
+        failure instanceof Error ? failure.message : String(failure)
+      }`,
+    );
+    return { exitCode: 1, ports: ordered };
+  }
+  const selectedRecordedStateDir = recordedStateDirs.get(GATEWAY_PORT);
+  const selectedEnv =
+    selectedRecordedStateDir && !env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim()
+      ? { ...env, NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: selectedRecordedStateDir }
+      : env;
+  const runDeps = { ...deps, env: selectedEnv };
+
   if (otherPorts.length === 0) {
     let selected: Pick<UninstallRunOutcome, "exitCode" | "otherGatewayEnvironmentsRemain">;
     try {
@@ -182,7 +219,6 @@ export async function runUninstallAllGatewayPorts(
     return { exitCode: selected.exitCode, ports: [GATEWAY_PORT] };
   }
 
-  const ordered = [...otherPorts, GATEWAY_PORT];
   if (!confirmSweep(options, ordered, branding, log, readLine)) {
     return { exitCode: 0, ports: ordered };
   }
@@ -190,11 +226,21 @@ export async function runUninstallAllGatewayPorts(
   let exitCode = 0;
   const retainedGatewayPorts: number[] = [];
   for (const port of otherPorts) {
+    const recordedStateDir = recordedStateDirs.get(port);
     log(`Uninstalling gateway '${resolveGatewayName(port)}' on port ${String(port)}.`);
-    if (runPortPass(port, options, env) !== 0) {
+    if (recordedStateDir) {
+      log(
+        `Using recorded OpenShell gateway state directory ${JSON.stringify(recordedStateDir)} for port ${String(port)}.`,
+      );
+    }
+    if (runPortPass(port, options, uninstallChildEnv(env, port, recordedStateDir)) !== 0) {
       exitCode = 1;
       retainedGatewayPorts.push(port);
-      error(`Uninstall failed for gateway port ${String(port)}; its resources may remain on disk.`);
+      error(
+        recordedStateDir
+          ? `Uninstall failed for gateway port ${String(port)} using recorded OpenShell state directory ${JSON.stringify(recordedStateDir)}; its resources may remain on disk.`
+          : `Uninstall failed for gateway port ${String(port)}; its resources may remain on disk.`,
+      );
     }
   }
   log(
