@@ -564,6 +564,89 @@ describe("managed-cluster vLLM installer selection", () => {
     expect(installEffects.downloadModel).not.toHaveBeenCalled();
   });
 
+  it("refuses a resumed model the cluster preset does not select, before any effect", async () => {
+    const capability = readyCapability();
+    const installEffects = effects();
+    const promptFn = vi.fn(async () => "yes");
+    const assertGatedModelAccess = vi.fn();
+    const revalidateCapability = vi.fn();
+    const claimCapability = vi.fn();
+    const checkpointInstallIntent = vi.fn();
+    const beforeInstall = vi.fn();
+    const error = vi.fn();
+
+    const result = await tryInstallManagedClusterManagedVllm(
+      {
+        platform: "spark",
+        env: {},
+        nonInteractive: true,
+        promptFn,
+        checkpointInstallIntent,
+        beforeInstall,
+        resumedPresetModel: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      },
+      installEffects,
+      {
+        probeCapability: () => capability,
+        resolveSelection: () => fixtureManagedClusterSelection(),
+        assertGatedModelAccess,
+        revalidateCapability,
+        claimCapability,
+        log: vi.fn(),
+        error,
+      },
+    );
+
+    expect(result).toEqual({ kind: "handled", result: { ok: false } });
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("the resumed model 'nvidia/Qwen3.6-35B-A3B-NVFP4' does not match"),
+    );
+    // Nothing may be claimed, recorded, pulled, staged, or created first.
+    expect(assertGatedModelAccess).not.toHaveBeenCalled();
+    expect(promptFn).not.toHaveBeenCalled();
+    expect(revalidateCapability).not.toHaveBeenCalled();
+    expect(claimCapability).not.toHaveBeenCalled();
+    expect(checkpointInstallIntent).not.toHaveBeenCalled();
+    expect(beforeInstall).not.toHaveBeenCalled();
+    expect(installEffects.prerequisites).not.toHaveBeenCalled();
+    expect(installEffects.pullImage).not.toHaveBeenCalled();
+    expect(installEffects.downloadModel).not.toHaveBeenCalled();
+  });
+
+  it("accepts a resumed model the cluster preset selects", async () => {
+    const capability = readyCapability();
+    const assertGatedModelAccess = vi.fn();
+    const error = vi.fn();
+
+    const result = await tryInstallManagedClusterManagedVllm(
+      {
+        platform: "spark",
+        env: {},
+        nonInteractive: true,
+        promptFn: vi.fn(async () => "yes"),
+        // The served name is one of the aliases the preset's model answers to.
+        resumedPresetModel: "deepseek-v4-flash-0731",
+      },
+      effects(),
+      {
+        probeCapability: () => capability,
+        resolveSelection: () => fixtureManagedClusterSelection(),
+        assertGatedModelAccess,
+        revalidateCapability: vi.fn(() => {
+          throw new Error("stop after the resumed-model check");
+        }),
+        log: vi.fn(),
+        error,
+      },
+    );
+
+    // The resumed model passed, so the run reached the gated-access preflight
+    // and the later stages instead of being refused up front.
+    expect(assertGatedModelAccess).toHaveBeenCalledOnce();
+    expect(error).not.toHaveBeenCalledWith(expect.stringContaining("does not match"));
+    expect(result).toEqual({ kind: "handled", result: { ok: false } });
+  });
+
   it("stages both exact nodes, launches, persists ownership, and retires temporary binding state", async () => {
     const capability = readyCapability();
     const confirmed = confirmedCapability(capability);

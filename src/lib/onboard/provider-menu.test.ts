@@ -143,6 +143,7 @@ describe("buildInferenceProviderMenu", () => {
         hermesProviderAvailable: false,
         readRecordedProvider: () => null,
         readRecordedNimContainer: () => null,
+        readRecordedManagedLlamaCpp: () => false,
         readRecordedModel: () => null,
       }),
     ).toEqual({
@@ -159,6 +160,10 @@ describe("buildInferenceProviderMenu", () => {
         experimental: true,
         isNonInteractive: () => true,
         getNonInteractiveProvider: () => "nim-local",
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [],
+          resolution: { kind: "rejected", reason: "No llama.cpp profile in this NIM fixture" },
+        }),
         detectInferenceProviderHostState: () =>
           makeHostState({
             gpuNimCapable: true,

@@ -427,14 +427,16 @@ describe("plugin registry refresh workaround for openclaw/openclaw#89606 (#2021)
   it("continues from a bounded registry timeout after restoring config postconditions", () => {
     const { result, hashRefreshState, registryState, startupContinueState, tmpDir } =
       runRefreshBlock({
-      gatewayReadyAfter: 1,
-      refreshTimesOut: true,
-      rewriteConfigMode: true,
+        gatewayReadyAfter: 1,
+        refreshTimesOut: true,
+        rewriteConfigMode: true,
       });
     try {
       expect(result.status).toBe(0);
       expect(fs.statSync(registryState).mode & 0o777).toBe(0o660);
-      expect(fs.readFileSync(hashRefreshState, "utf-8")).toBe(fs.readFileSync(registryState, "utf-8"));
+      expect(fs.readFileSync(hashRefreshState, "utf-8")).toBe(
+        fs.readFileSync(registryState, "utf-8"),
+      );
       expect(fs.readFileSync(startupContinueState, "utf-8")).toBe("stable");
       expect(result.stderr).toContain("registry refresh timed out after 30s");
     } finally {

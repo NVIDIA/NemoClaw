@@ -113,7 +113,7 @@ repos:
     hooks:
       - id: oxfmt
         name: Oxfmt
-        entry: bash tools/lint/format-added-files.sh --write
+        entry: npx oxfmt --write --no-error-on-unmatched-pattern
         language: system
         files: \.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$
         pass_filenames: true
@@ -127,6 +127,23 @@ repos:
         entry: npx oxlint --fix --no-error-on-unmatched-pattern
         language: system
         files: \.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$
+        exclude: ^(src/lib/adapters/|nemoclaw/src/)
+        pass_filenames: true
+        priority: 6
+
+      - id: oxlint-type-aware
+        name: Oxlint type-aware rules
+        entry: npx oxlint --fix --type-aware --no-error-on-unmatched-pattern
+        language: system
+        files: ^nemoclaw/src/.*\.(cts|mts|ts|tsx)$
+        pass_filenames: true
+        priority: 6
+
+      - id: oxlint-adapters-type-aware
+        name: Oxlint adapter type-aware rules
+        entry: npx oxlint --fix --type-aware --no-error-on-unmatched-pattern
+        language: system
+        files: ^src/lib/adapters/.*\.(cts|mts|ts|tsx)$
         pass_filenames: true
         priority: 6
 
@@ -160,20 +177,20 @@ repos:
 
   - repo: local
     hooks:
-      - id: oxlint-type-aware
-        name: Oxlint type-aware rules
-        entry: npx oxlint --config oxlint.type-aware.config.ts --no-error-on-unmatched-pattern
-        language: system
-        files: ^nemoclaw/src/.*\.ts$
-        pass_filenames: true
-        priority: 10
-
       - id: validate-config-schemas
         name: Validate config files against JSON schemas
         entry: npx tsx scripts/validate-configs.mts
         language: system
         pass_filenames: false
         files: ^(nemoclaw-blueprint/.*\.yaml$|nemoclaw/openclaw\.plugin\.json$|schemas/.*\.json$)
+        priority: 10
+
+      - id: validate-nemoclaw-config-schema
+        name: Validate generated NemoClawConfig schema
+        entry: npm run config-schema:check
+        language: system
+        pass_filenames: false
+        files: ^(package(?:-lock)?\.json|nemoclaw/src/shared/sandbox-name\.cts|schemas/nemoclaw-config-v1\.schema\.json|scripts/config/generate-nemoclaw-config-schema\.mts|src/lib/(?:config/model|core/endpoint-contract|name-validation|sandbox-name-contract)\.ts)$
         priority: 10
 
       - id: validate-managed-inference-catalog
@@ -283,7 +300,7 @@ repos:
     hooks:
       - id: stale-dist-check
         name: Warn if dist/ is older than src/
-        entry: node --experimental-strip-types scripts/check-stale-dist.mts
+        entry: node scripts/check-stale-dist.mts
         language: system
         always_run: true
         pass_filenames: false

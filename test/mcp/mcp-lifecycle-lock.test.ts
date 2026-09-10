@@ -81,7 +81,9 @@ describe("sandbox mutation lock integration", () => {
               resolve();
               break;
             default:
-              reject(new Error(`child exited ${String(code)}: ${Buffer.concat(stderr).toString()}`));
+              reject(
+                new Error(`child exited ${String(code)}: ${Buffer.concat(stderr).toString()}`),
+              );
           }
         });
         child.once("error", reject);

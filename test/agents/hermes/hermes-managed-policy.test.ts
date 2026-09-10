@@ -12,7 +12,13 @@ import {
   HERMES_MANAGED_POLICY_SCHEMA_VERSION,
 } from "../../../agents/hermes/config/managed-policy.ts";
 
-const READER_PATH = path.join(import.meta.dirname, "../../..", "agents", "hermes", "managed_policy.py");
+const READER_PATH = path.join(
+  import.meta.dirname,
+  "../../..",
+  "agents",
+  "hermes",
+  "managed_policy.py",
+);
 const PROFILE_PATCHER_PATH = path.join(
   import.meta.dirname,
   "../../..",

@@ -83,9 +83,9 @@ describe("Hermes SQLite temp-store patch", () => {
     expect(patched).toContain("os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW");
     expect(patched).toContain("os.open(name, file_flags, dir_fd=directory_fd)");
     expect(patched).toContain("os.fchmod(descriptor, 0o660)");
-    expect(patched.match(/_nemoclaw_normalize_shared_state_permissions\(self[.]db_path\)/gu)).toHaveLength(
-      2,
-    );
+    expect(
+      patched.match(/_nemoclaw_normalize_shared_state_permissions\(self[.]db_path\)/gu),
+    ).toHaveLength(2);
     expect(patched.indexOf("PRAGMA temp_store=MEMORY")).toBeLessThan(
       patched.indexOf("PRAGMA foreign_keys=ON"),
     );
@@ -160,9 +160,7 @@ print(f"unrelated={stat.S_IMODE(unrelated.stat().st_mode):03o}")
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe(
-      "state.db=660 state.db-wal=660 state.db-shm=660\nunrelated=640\n",
-    );
+    expect(result.stdout).toBe("state.db=660 state.db-wal=660 state.db-shm=660\nunrelated=640\n");
   });
 
   it.each([

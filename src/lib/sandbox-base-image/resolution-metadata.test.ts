@@ -89,16 +89,14 @@ describe("sandbox base-image resolution metadata lifecycle", () => {
     });
   });
 
-  it.each([
-    "",
-    "not JSON",
-    "null",
-    '"primitive"',
-  ])("ignores unusable Docker inspect output %# (#4680)", (output) => {
-    mocks.dockerImageInspectFormat.mockReturnValue(output);
+  it.each(["", "not JSON", "null", '"primitive"'])(
+    "ignores unusable Docker inspect output %# (#4680)",
+    (output) => {
+      mocks.dockerImageInspectFormat.mockReturnValue(output);
 
-    expect(inspectLocalImageMetadata(REF)).toBeNull();
-  });
+      expect(inspectLocalImageMetadata(REF)).toBeNull();
+    },
+  );
 
   it("creates metadata for a digest-pinned image with matching local identity (#4680)", () => {
     mocks.dockerImageInspectFormat.mockReturnValue(JSON.stringify(inspected));

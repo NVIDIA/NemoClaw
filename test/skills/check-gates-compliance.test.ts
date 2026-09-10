@@ -578,25 +578,25 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.gates.contributorCompliance.details).toContain("lacks a valid Signed-off-by");
   });
 
-  it.each([
-    "app/dependabot",
-    "dependabot[bot]",
-  ])("accepts the explicit PR-body DCO bypass for %s", (prAuthorLogin) => {
-    const output = JSON.parse(
-      runGate({
-        body: "Automated dependency update.",
-        prAuthorLogin,
-        verified: true,
-      }).stdout,
-    );
+  it.each(["app/dependabot", "dependabot[bot]"])(
+    "accepts the explicit PR-body DCO bypass for %s",
+    (prAuthorLogin) => {
+      const output = JSON.parse(
+        runGate({
+          body: "Automated dependency update.",
+          prAuthorLogin,
+          verified: true,
+        }).stdout,
+      );
 
-    expect(output.gates.contributorCompliance).toMatchObject({
-      pass: true,
-      dcoDeclarationPresent: false,
-      dcoDeclarationBypassed: true,
-      unverifiedCommits: [],
-    });
-  });
+      expect(output.gates.contributorCompliance).toMatchObject({
+        pass: true,
+        dcoDeclarationPresent: false,
+        dcoDeclarationBypassed: true,
+        unverifiedCommits: [],
+      });
+    },
+  );
 
   it("still rejects an unverified Dependabot commit", () => {
     const output = JSON.parse(
@@ -666,24 +666,24 @@ describe("maintainer PR comparator contributor compliance", () => {
     });
   });
 
-  it.each([
-    "app/dependabot",
-    "dependabot[bot]",
-  ])("accepts the explicit PR-body DCO bypass for %s", (prAuthorLogin) => {
-    const result = runComparatorGate({
-      body: "Automated dependency update.",
-      prAuthorLogin,
-      verified: true,
-    });
+  it.each(["app/dependabot", "dependabot[bot]"])(
+    "accepts the explicit PR-body DCO bypass for %s",
+    (prAuthorLogin) => {
+      const result = runComparatorGate({
+        body: "Automated dependency update.",
+        prAuthorLogin,
+        verified: true,
+      });
 
-    const output = JSON.parse(result.stdout);
-    expect(output.gates.contributor_compliance).toBe(true);
-    expect(output.details).toMatchObject({
-      dco_declaration_present: false,
-      dco_declaration_bypassed: true,
-      unverified_commits: [],
-    });
-  });
+      const output = JSON.parse(result.stdout);
+      expect(output.gates.contributor_compliance).toBe(true);
+      expect(output.details).toMatchObject({
+        dco_declaration_present: false,
+        dco_declaration_bypassed: true,
+        unverified_commits: [],
+      });
+    },
+  );
 
   it("still rejects an unverified Dependabot commit", () => {
     const result = runComparatorGate({
@@ -855,20 +855,19 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(JSON.parse(runComparatorGate(fixture).stdout).gates.ci_green_sha).toBe(true);
   });
 
-  it.each([
-    "ACTION_REQUIRED",
-    "STARTUP_FAILURE",
-    "STALE",
-  ])("fails closed for a completed required check with conclusion %s", (conclusion) => {
-    const result = runComparatorGate({
-      body: "Signed-off-by: Example User <user@example.com>",
-      verified: true,
-      checkConclusions: { checks: conclusion },
-    });
+  it.each(["ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"])(
+    "fails closed for a completed required check with conclusion %s",
+    (conclusion) => {
+      const result = runComparatorGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        checkConclusions: { checks: conclusion },
+      });
 
-    const output = JSON.parse(result.stdout);
-    expect(output.gates.ci_green_sha).toBe(false);
-    expect(output.details.ci_failing_checks).toEqual([`checks: ${conclusion}`]);
-    expect(output.failures).toContain("substantive:ci_failures=1,pending=0,missing=");
-  });
+      const output = JSON.parse(result.stdout);
+      expect(output.gates.ci_green_sha).toBe(false);
+      expect(output.details.ci_failing_checks).toEqual([`checks: ${conclusion}`]);
+      expect(output.failures).toContain("substantive:ci_failures=1,pending=0,missing=");
+    },
+  );
 });

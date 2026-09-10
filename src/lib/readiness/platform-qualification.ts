@@ -48,6 +48,7 @@ export interface PlatformIdentity {
   n1xCandidate?: boolean | null;
   n1xFastOsMarker?: boolean | null;
   n1xPciGpu?: boolean | null;
+  n1xWslGpu?: boolean | null;
   n1xWslProduct?: boolean | null;
   stationProfile?: StationProfile | null;
   stationGb300PciGpu?: boolean | null;
@@ -459,9 +460,9 @@ function deriveN1xWslQualification(
   activeRuntimeProviderId: string | null,
 ): QualificationStatus {
   if (!input.isWsl) return "unqualified";
-  if (input.n1xWslProduct === undefined || input.n1xWslProduct === null) return "unknown";
+  if (input.n1xWslGpu === undefined || input.n1xWslGpu === null) return "unknown";
   if (!activeRuntimeProviderId || input.containerGpuProof === undefined) return "unknown";
-  return input.n1xWslProduct === true &&
+  return input.n1xWslGpu === true &&
     input.platform === "linux" &&
     input.architecture === "arm64" &&
     input.containerGpuProof.providerId === activeRuntimeProviderId &&
@@ -587,6 +588,7 @@ export function projectPlatformQualification(
     input.n1xCandidate !== undefined ||
     input.n1xFastOsMarker !== undefined ||
     input.n1xPciGpu !== undefined ||
+    input.n1xWslGpu !== undefined ||
     input.n1xWslProduct !== undefined ||
     input.stationProfile ||
     input.stationFirmwareProduct
@@ -610,6 +612,7 @@ export function projectPlatformQualification(
         n1xCandidate: input.n1xCandidate ?? null,
         n1xFastOsMarker: input.n1xFastOsMarker ?? null,
         n1xPciGpu: input.n1xPciGpu ?? null,
+        n1xWslGpu: input.n1xWslGpu ?? null,
         n1xWslProduct: input.n1xWslProduct ?? null,
         stationProfile: input.stationProfile ?? null,
         stationGb300PciGpu: input.stationGb300PciGpu ?? null,
@@ -731,7 +734,7 @@ export function projectPlatformQualification(
         ],
       ),
     );
-    if (input.n1xWslProduct === true) {
+    if (input.n1xWslGpu === true) {
       qualifications.push(
         qualification("host.platform.n1x_wsl", n1xWslStatus, ["host.platform.n1x_wsl"]),
       );

@@ -702,9 +702,7 @@ function ensureRegistryContainer(
     );
   }
   const stoppedAddressUnavailable = running !== "true" && networkIp === "invalid IP";
-  if (
-    exists && networkIp && networkIp !== PORTABLE_REGISTRY_IP && !stoppedAddressUnavailable
-  ) {
+  if (exists && networkIp && networkIp !== PORTABLE_REGISTRY_IP && !stoppedAddressUnavailable) {
     throw new Error(
       `Refusing to move managed container '${REGISTRY_CONTAINER}' from unexpected network address '${networkIp}'. Expected ${PORTABLE_REGISTRY_IP}.`,
     );

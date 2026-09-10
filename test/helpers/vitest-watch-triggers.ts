@@ -45,6 +45,21 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern:
+      /(?:^|\/)(?:oxlint\.config\.ts|oxc\.ignore-patterns\.ts|tsconfig(?:\.cli)?\.json|nemoclaw\/tsconfig(?:\.test)?\.json|\.pre-commit-config\.yaml)$/,
+    testsToRun: runTests(
+      "test/automation/lint/config-export-complexity.test.ts",
+      "test/automation/lint/adapters.test.ts",
+      "test/automation/lint/plugin.test.ts",
+      "test/automation/lint/correctness.test.ts",
+    ),
+  },
+  {
+    pattern:
+      /(?:^|\/)(?:oxfmt\.config\.ts|oxc\.ignore-patterns\.ts|package\.json|\.pre-commit-config\.yaml)$/,
+    testsToRun: runTests("test/automation/lint/source-formatting.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)scripts\/lib\/sandbox-init\.sh$/,
     testsToRun: runTests("test/runtime/sandbox/sandbox-init.test.ts"),
   },
@@ -374,6 +389,15 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)ci\/platform-vitest-macos-requirements\.lock$/,
     testsToRun: runTests("test/automation/e2e/platform-vitest-main-workflow.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)tools\/e2e\/full-e2e-timeout-contract\.mts$/,
+    testsToRun: runTests(
+      "test/automation/e2e/e2e-recommendations.test.ts",
+      "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test/e2e/support/security-posture-workflow-boundary.test.ts",
+    ),
   },
   {
     pattern:

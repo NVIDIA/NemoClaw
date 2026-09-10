@@ -275,16 +275,16 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'OPENSHELL_SANDBOX !== "1"' "$issue_4434_patch"
 		grep -Fq 'nemoclaw: #4434 structured unreachable-inference diagnostic' "$issue_4434_patch"
 		grep -Fq 'COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts' Dockerfile
-		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \\' Dockerfile
+		grep -Fq 'node /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \\' Dockerfile
 		grep -Fq 'COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts' Dockerfile
-		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \\' Dockerfile
+		grep -Fq 'node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \\' Dockerfile
 		! grep -Fq 'patch-openclaw-tool-catalog.js' Dockerfile
 		device_self_approval_patch=${JSON.stringify(DEVICE_SELF_APPROVAL_PATCH)}
 		grep -Fq 'nemoclaw: reach gateway for bounded same-device scope approval' "$device_self_approval_patch"
 		grep -Fq 'nemoclaw: bounded same-device scope approval' "$device_self_approval_patch"
 		grep -Fq 'nemoclaw: validate bounded self-approval inside pairing lock' "$device_self_approval_patch"
 		grep -Fq 'COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts' Dockerfile
-		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \\' Dockerfile
+		grep -Fq 'node /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \\' Dockerfile
 	shared_state_permissions_patch=${JSON.stringify(SHARED_STATE_PERMISSIONS_PATCH)}
 	grep -Fq 'nemoclaw: group-shared OpenClaw state' "$shared_state_permissions_patch"
 	grep -Fq 'nemoclaw: group-shared OpenClaw agent state' "$shared_state_permissions_patch"
@@ -294,20 +294,20 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'nemoclaw: group-shared OpenClaw models file' "$shared_state_permissions_patch"
 	grep -Fq 'nemoclaw: ignore legacy OpenClaw update-check state' "$shared_state_permissions_patch"
 	grep -Fq 'COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts' Dockerfile
-	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \\' Dockerfile
+	grep -Fq 'node /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \\' Dockerfile
 	mcp_reliability_patch=${JSON.stringify(MCP_RELIABILITY_PATCH)}
 	grep -Fq 'nemoclaw mcp transient startup recovery (#7958)' "$mcp_reliability_patch"
 	grep -Fq 'nemoClawIsTransientMcpStartFailure' "$mcp_reliability_patch"
 	grep -Fq 'nemoClawCatalogHasStartDiagnostics' "$mcp_reliability_patch"
 	grep -Fq 'COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts' Dockerfile
-	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \\' Dockerfile
+	grep -Fq 'node /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \\' Dockerfile
 	! grep -Fq 'patch-openclaw-mcp-reliability.js' Dockerfile
 	mcp_tools_list_timeout_patch=${JSON.stringify(MCP_TOOLS_LIST_TIMEOUT_PATCH)}
 	grep -Fq 'NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS' "$mcp_tools_list_timeout_patch"
 	grep -Fq 'TOOLS_LIST_TIMEOUT_MIN_MS = 1500' "$mcp_tools_list_timeout_patch"
 	grep -Fq 'TOOLS_LIST_TIMEOUT_MAX_MS = 10_000' "$mcp_tools_list_timeout_patch"
 	grep -Fq 'COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts' Dockerfile
-	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \\' Dockerfile
+	grep -Fq 'node /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \\' Dockerfile
 	! grep -Fq 'patch-openclaw-mcp-tools-list-timeout.js' Dockerfile
 
 	phase_count="$(grep -Ec -- '--phase (runtime-setup|agent-install|post-agent-install)' Dockerfile)"

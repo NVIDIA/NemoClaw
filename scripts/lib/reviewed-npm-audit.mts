@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --experimental-strip-types
+#!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -887,8 +887,7 @@ export function runReviewedNpmAudit(
   const audit = cached
     ? runNpmAuditWithRetry({ run: () => cached.result, wait: () => {}, warn: () => {} })
     : runNpmAuditWithRetry({
-        run: () =>
-          spawnSync("npm", NPM_AUDIT_ARGV, npmAuditProcessOptions(options.directory)),
+        run: () => spawnSync("npm", NPM_AUDIT_ARGV, npmAuditProcessOptions(options.directory)),
       });
   const finishedAt = new Date().toISOString();
   if (!cached && cacheFile && cacheInput && audit.report)

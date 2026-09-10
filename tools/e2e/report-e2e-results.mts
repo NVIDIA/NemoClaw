@@ -394,10 +394,10 @@ export function renderE2eReport(input: {
             : resultsUnavailable
               ? "⚠️ E2E results unavailable"
               : noResultsReported
-              ? "⚠️ No E2E results reported"
-              : skipped.length > 0 && passed.length === 0
-                ? "⚠️ No selected tests ran"
-                : passingStatus;
+                ? "⚠️ No E2E results reported"
+                : skipped.length > 0 && passed.length === 0
+                  ? "⚠️ No selected tests ran"
+                  : passingStatus;
 
   const lines = [
     `### E2E Target Results — ${status}`,

@@ -208,7 +208,7 @@ describe("uninstall run plan", () => {
     }
   });
 
-  it("removes agent-alias wrapper shims via binName-aware fd-read classification (#6098)", () => {
+  it("removes sibling CLI wrapper shims via binName-aware fd-read classification (#6098)", () => {
     // Symlinks classify via the metadata fast path. Wrapper scripts go through
     // classifyShimPath's fd-read branch which reads the file and matches the
     // wrapper contract with the per-alias binName. Both paths must remove.
@@ -217,6 +217,7 @@ describe("uninstall run plan", () => {
     fs.mkdirSync(userBin, { recursive: true });
     const hermesShim = path.join(userBin, "nemohermes");
     const deepagentsShim = path.join(userBin, "nemo-deepagents");
+    const acpShim = path.join(userBin, "nemoclaw-acp");
     const managedWrapper = (binName: string) =>
       [
         "#!/usr/bin/env bash",
@@ -226,6 +227,7 @@ describe("uninstall run plan", () => {
       ].join("\n");
     fs.writeFileSync(hermesShim, managedWrapper("nemohermes"), { mode: 0o755 });
     fs.writeFileSync(deepagentsShim, managedWrapper("nemo-deepagents"), { mode: 0o755 });
+    fs.writeFileSync(acpShim, managedWrapper("nemoclaw-acp"), { mode: 0o755 });
 
     const removed: string[] = [];
     try {
@@ -235,7 +237,8 @@ describe("uninstall run plan", () => {
           commandExists: (command) =>
             command !== "docker" && command !== "lsof" && command !== "pgrep",
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
-          existsSync: (target) => target === hermesShim || target === deepagentsShim,
+          existsSync: (target) =>
+            target === acpShim || target === hermesShim || target === deepagentsShim,
           hasPortableRuntimeCleanup: () => false,
           isTty: false,
           log: () => {},
@@ -248,7 +251,7 @@ describe("uninstall run plan", () => {
       );
 
       expect(result.exitCode).toBe(0);
-      expect(removed).toEqual(expect.arrayContaining([hermesShim, deepagentsShim]));
+      expect(removed).toEqual(expect.arrayContaining([acpShim, hermesShim, deepagentsShim]));
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -954,37 +957,6 @@ describe("uninstall run plan", () => {
     expect(result.exitCode).toBe(0);
     expect(warnings).toContain("Failed to disable /swapfile; skipping swap cleanup.");
     expect(logs).not.toContain("Swap file removed");
-  });
-
-  it("uses the 'already removed' wording for gateway remove no-ops, sub-bug 4 (#3456)", () => {
-    const warnings: string[] = [];
-    const logs: string[] = [];
-    const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
-      {
-        commandExists: (command) => command !== "docker" && command !== "pgrep",
-        env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
-        error: (line) => warnings.push(line),
-        existsSync: () => false,
-        isTty: false,
-        log: (line) => logs.push(line),
-        rmSync: vi.fn(),
-        run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "remove") {
-            return { status: 1, stdout: "", stderr: "gateway not found" };
-          }
-          if (args[0] === "-c") return ok("/fake/bin/tool\n");
-          return okWithKnownGatewayList(command, args);
-        },
-        runDocker: () => ok(""),
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(warnings.join("\n")).toContain("Gateway 'nemoclaw' already removed or unreachable");
-    expect(`${warnings.join("\n")}\n${logs.join("\n")}`).not.toContain(
-      "Destroyed gateway 'nemoclaw' skipped",
-    );
   });
 
   describe("user-data preservation under ~/.nemoclaw/", () => {

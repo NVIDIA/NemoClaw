@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parse } from "yaml";
 
 import { nextPatchReleaseTag } from "../../tools/post-merge-docs/contract.mts";
 import { publishDocumentation, type Request } from "../../tools/post-merge-docs/publish.mts";
@@ -94,7 +95,7 @@ function emptyFixture() {
   return { finalTree: mainTree, mainSha, patch: Buffer.alloc(0), source };
 }
 type Fixture = ReturnType<typeof fixture>;
-function artifact(value: Fixture): string {
+function artifact(value: Fixture, previousSha = ""): string {
   const directory = temporary("docs-artifact");
   fs.writeFileSync(path.join(directory, "docs.patch"), value.patch);
   fs.writeFileSync(
@@ -103,10 +104,11 @@ function artifact(value: Fixture): string {
       mainSha: value.mainSha,
       outcome: "approved",
       patchSha256: createHash("sha256").update(value.patch).digest("hex"),
+      previousSha,
       rangeStartTag,
       repository,
       targetReleaseTag,
-      version: 2,
+      version: 3,
     }),
   );
   return directory;
@@ -118,7 +120,6 @@ class FakeGitHub {
   openPulls: Array<ReturnType<FakeGitHub["pull"]>> = [];
   readonly branch: string;
   readonly commitSha = "c".repeat(40);
-  readonly existingSha = "b".repeat(40);
   readonly initialParent = "a".repeat(40);
   readonly partialSha = "d".repeat(40);
   readonly commits = new Map<string, Record<string, unknown>>();
@@ -132,7 +133,10 @@ class FakeGitHub {
       head: { ...pull.head, sha: headSha },
     }));
   };
-  constructor(readonly value: Fixture) {
+  constructor(
+    readonly value: Fixture,
+    readonly existingSha = "b".repeat(40),
+  ) {
     this.branch = `automation/post-merge-docs-${value.mainSha.slice(0, 12)}`;
     this.liveSha = value.mainSha;
   }
@@ -315,7 +319,11 @@ class FakeGitHub {
     }
   });
 }
-function publish(value: Fixture, api: FakeGitHub, approved = artifact(value)) {
+function publish(
+  value: Fixture,
+  api: FakeGitHub,
+  approved = artifact(value, api.openPulls[0]?.head.sha),
+) {
   return publishDocumentation({
     artifactDirectory: approved,
     expectedMainSha: value.mainSha,
@@ -360,6 +368,7 @@ function runnerFixture(phase: "author" | "review", startTag = rangeStartTag) {
       POST_MERGE_DOCS_CANDIDATE_DIR: candidate,
       POST_MERGE_DOCS_CONFIG_DIR: path.join(root, "config"),
       POST_MERGE_DOCS_PHASE: phase,
+      POST_MERGE_DOCS_PREVIOUS_SHA: "",
       POST_MERGE_DOCS_WORKDIR: path.join(root, "work"),
       RANGE_START_SHA: mainSha,
       RANGE_START_TAG: startTag,
@@ -379,6 +388,8 @@ function runnerTools(
   const sandbox = path.join(root, "sandbox");
   const output = path.join(root, "work/output");
   const state = {
+    author: (repository: string) =>
+      fs.writeFileSync(path.join(repository, "docs/guide.mdx"), "authored\n"),
     agentArgs: [] as readonly string[],
     createArgs: [] as readonly string[],
     deleted: false,
@@ -392,7 +403,7 @@ function runnerTools(
     agent: (args) => {
       state.agentArgs = args;
       const agents = {
-        author: () => fs.writeFileSync(path.join(sandbox, "docs/guide.mdx"), "authored\n"),
+        author: () => state.author(sandbox),
         review: () => {
           const reports = {
             approved: () => undefined,
@@ -420,7 +431,10 @@ function runnerTools(
       fs.copyFileSync(path.join(output, name), path.join(args[4], name));
     },
     list: () => env.SANDBOX_NAME,
-    delete: () => (state.deleted = true),
+    delete: () => {
+      fs.rmSync(sandbox, { recursive: true, force: true });
+      state.deleted = true;
+    },
   };
   const commands: Record<string, string> = { bash: "export", node: "agent" };
   const run: OpenShellTools["run"] = (_command, args, options) => {
@@ -446,6 +460,58 @@ afterEach(() => {
   vi.unstubAllEnvs();
   for (const directory of directories.splice(0))
     fs.rmSync(directory, { force: true, recursive: true });
+});
+
+function selection(pulls: unknown[]) {
+  const workflow = parse(
+    fs.readFileSync(
+      new URL("../../.github/workflows/post-merge-docs.yaml", import.meta.url),
+      "utf8",
+    ),
+  );
+  const root = temporary("docs-selection");
+  const fixture = path.join(root, "pulls.json");
+  const output = path.join(root, "output");
+  fs.writeFileSync(fixture, JSON.stringify(pulls));
+  const run = () =>
+    execFileSync(
+      "bash",
+      ["-c", `gh() { cat "$PULLS_FIXTURE"; }\n${workflow.jobs.gate.steps[0].run}`],
+      {
+        env: {
+          ...process.env,
+          GITHUB_REPOSITORY: repository,
+          GITHUB_OUTPUT: output,
+          PULLS_FIXTURE: fixture,
+        },
+        stdio: "pipe",
+      },
+    );
+  return { run, output };
+}
+
+describe("post-merge documentation selection", () => {
+  it.each(["absent", "draft", "ready"])(
+    "selects the draft baseline when PR state is %s",
+    (state) => {
+      const api = new FakeGitHub(emptyFixture());
+      api.installActive();
+      const pull = api.openPulls[0]!;
+      pull.draft = state !== "ready";
+      const { run, output } = selection(state === "absent" ? [] : [pull]);
+      run();
+      expect(fs.readFileSync(output, "utf8")).toBe(
+        `automate=${state !== "ready"}\nprevious_sha=${state === "absent" ? "" : api.existingSha}\n`,
+      );
+    },
+  );
+  it("stops selection when multiple managed PRs are open", () => {
+    const api = new FakeGitHub(emptyFixture());
+    api.installActive();
+    const { run, output } = selection([...api.openPulls, ...api.openPulls]);
+    expect(run).toThrow();
+    expect(fs.existsSync(output)).toBe(false);
+  });
 });
 
 describe("post-merge documentation publisher", () => {
@@ -536,6 +602,29 @@ describe("post-merge documentation publisher", () => {
     expect(api.branchRef?.object.sha).toBe(api.existingSha);
     expect(writeCount(api)).toBe(0);
   });
+  it.each(["changed", "closed", "appeared"])(
+    "rejects publication when the draft %s after authoring started",
+    async (change) => {
+      const value = fixture();
+      const api = new FakeGitHub(value);
+      api.installActive();
+      const previousSha = change === "appeared" ? "" : api.existingSha;
+      const approved = artifact(value, previousSha);
+      const changes = {
+        closed: () => {
+          api.openPulls = [];
+        },
+        changed: () => api.projectPullHead(api.partialSha),
+        appeared: () => undefined,
+      };
+      changes[change as keyof typeof changes]();
+      await expect(publish(value, api, approved)).rejects.toThrow(
+        "draft changed after authoring started",
+      );
+      expect(writeCount(api)).toBe(0);
+      expect(api.branchRef?.object.sha).toBe(api.existingSha);
+    },
+  );
   it("rejects a patch whose digest was not approved", async () => {
     const value = emptyFixture();
     const approved = artifact(value);
@@ -797,6 +886,107 @@ describe("post-merge documentation publisher", () => {
 });
 
 describe("post-merge documentation runner", () => {
+  it.each(["New guidance.\n", ""])(
+    "preserves the previous draft when the author appends %j",
+    async (additionalText) => {
+      const input = runnerFixture("author");
+      const source = input.env.TRUSTED_CHECKOUT;
+      git(source, ["checkout", "-b", "draft", input.env.GITHUB_SHA]);
+      fs.writeFileSync(path.join(source, "docs/previous.mdx"), "Previously reviewed guidance.\n");
+      git(source, ["add", "."]);
+      git(source, ["commit", "-m", "docs: previous draft"]);
+      input.env.POST_MERGE_DOCS_PREVIOUS_SHA = git(source, ["rev-parse", "HEAD"]);
+      git(source, ["checkout", "main"]);
+      input.env.GITHUB_SHA = git(source, ["rev-parse", "HEAD"]);
+      const { state, tools } = runnerTools(input);
+      state.author = (repository) => {
+        expect(fs.readFileSync(path.join(repository, "docs/previous.mdx"), "utf8")).toBe(
+          "Previously reviewed guidance.\n",
+        );
+        expect(fs.readFileSync(path.join(repository, "docs/guide.mdx"), "utf8")).toBe("later\n");
+        fs.appendFileSync(path.join(repository, "docs/guide.mdx"), additionalText);
+      };
+      executePostMergeDocs(input.env, tools);
+      const patch = fs.readFileSync(path.join(input.root, "artifact/docs.patch"), "utf8");
+      expect(patch).toContain("+Previously reviewed guidance.");
+      expect(patch.includes("+New guidance.")).toBe(Boolean(additionalText));
+      expect(fs.readFileSync(path.join(input.root, "work/repo/docs/previous.mdx"), "utf8")).toBe(
+        "Previously reviewed guidance.\n",
+      );
+      const value: Fixture = {
+        finalTree: git(path.join(input.root, "work/repo"), ["write-tree"]),
+        mainSha: input.env.GITHUB_SHA,
+        patch: Buffer.from(patch),
+        source,
+      };
+      input.env.POST_MERGE_DOCS_PHASE = "review";
+      input.env.POST_MERGE_DOCS_CANDIDATE_DIR = input.env.POST_MERGE_DOCS_ARTIFACT_DIR;
+      input.env.POST_MERGE_DOCS_ARTIFACT_DIR = path.join(input.root, "approved");
+      executePostMergeDocs(input.env, runnerTools(input).tools);
+      const api = new FakeGitHub(value, input.env.POST_MERGE_DOCS_PREVIOUS_SHA);
+      api.installActive();
+      await expect(publish(value, api, input.env.POST_MERGE_DOCS_ARTIFACT_DIR)).rejects.toThrow(
+        "Documentation remains pending",
+      );
+      expect(api.commitBodies[0]).toMatchObject({
+        parents: [input.env.POST_MERGE_DOCS_PREVIOUS_SHA, input.env.GITHUB_SHA],
+        tree: value.finalTree,
+      });
+    },
+  );
+
+  it("stops before authoring when the draft conflicts with newer main changes", () => {
+    const input = runnerFixture("author");
+    const source = input.env.TRUSTED_CHECKOUT;
+    git(source, ["checkout", "-b", "draft", input.env.GITHUB_SHA]);
+    fs.writeFileSync(path.join(source, "docs/guide.mdx"), "Previous draft guidance.\n");
+    git(source, ["commit", "-am", "docs: previous draft"]);
+    input.env.POST_MERGE_DOCS_PREVIOUS_SHA = git(source, ["rev-parse", "HEAD"]);
+    git(source, ["checkout", "main"]);
+    input.env.GITHUB_SHA = git(source, ["rev-parse", "HEAD"]);
+    const { tools } = runnerTools(input);
+    expect(() => executePostMergeDocs(input.env, tools)).toThrow();
+    expect(tools.run).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(input.root, "artifact/docs.patch"))).toBe(false);
+  });
+
+  it("preserves separate main and draft edits to the same page", () => {
+    const input = runnerFixture("author");
+    const source = input.env.TRUSTED_CHECKOUT;
+    const file = path.join(source, "docs/guide.mdx");
+    const original = "Introduction\n\nA\nB\nC\nD\nE\nF\nG\nH\n\nConclusion\n";
+    fs.writeFileSync(file, original);
+    git(source, ["commit", "-am", "docs: initialize shared page"]);
+    git(source, ["checkout", "-b", "draft"]);
+    fs.writeFileSync(file, original.replace("Introduction", "Reviewed introduction"));
+    git(source, ["commit", "-am", "docs: previous draft"]);
+    input.env.POST_MERGE_DOCS_PREVIOUS_SHA = git(source, ["rev-parse", "HEAD"]);
+    git(source, ["checkout", "main"]);
+    fs.writeFileSync(file, original.replace("Conclusion", "Updated conclusion on main"));
+    git(source, ["commit", "-am", "docs: advance main"]);
+    input.env.GITHUB_SHA = git(source, ["rev-parse", "HEAD"]);
+    const { state, tools } = runnerTools(input);
+    state.author = () => undefined;
+    executePostMergeDocs(input.env, tools);
+    expect(fs.readFileSync(path.join(input.root, "work/repo/docs/guide.mdx"), "utf8")).toBe(
+      original
+        .replace("Introduction", "Reviewed introduction")
+        .replace("Conclusion", "Updated conclusion on main"),
+    );
+  });
+
+  it("rejects code changes in the draft before creating a sandbox", () => {
+    const input = runnerFixture("author");
+    const source = input.env.TRUSTED_CHECKOUT;
+    fs.writeFileSync(path.join(source, "unrelated.ts"), "throw new Error('untrusted');\n");
+    git(source, ["add", "."]);
+    git(source, ["commit", "-m", "fix: change code"]);
+    input.env.POST_MERGE_DOCS_PREVIOUS_SHA = git(source, ["rev-parse", "HEAD"]);
+    const { tools } = runnerTools(input);
+    expect(() => executePostMergeDocs(input.env, tools)).toThrow("unsupported path: unrelated.ts");
+    expect(tools.run).not.toHaveBeenCalled();
+  });
+
   it("enables bind mounts before creating a reviewer sandbox", async () => {
     const input = runnerFixture("review");
     const responses = new Map([["which", "/trusted/bin/openshell-sandbox"]]);
@@ -869,10 +1059,11 @@ describe("post-merge documentation runner", () => {
       mainSha: input.env.GITHUB_SHA,
       outcome: "approved",
       patchSha256: createHash("sha256").update("").digest("hex"),
+      previousSha: "",
       rangeStartTag,
       repository,
       targetReleaseTag,
-      version: 2,
+      version: 3,
     });
   });
   it("produces and accepts an exact release target above the safe-integer range", async () => {

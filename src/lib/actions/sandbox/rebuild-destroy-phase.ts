@@ -516,9 +516,7 @@ export async function runRebuildDestroyPhase(
       }
       bail(
         mcpRecoveryFailure
-          ? `Failed to delete sandbox; recovery also failed: ${[
-              mcpRecoveryFailure,
-            ]
+          ? `Failed to delete sandbox; recovery also failed: ${[mcpRecoveryFailure]
               .filter(Boolean)
               .join("; ")}`
           : "Failed to delete sandbox.",
