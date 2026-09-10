@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { inspect } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import { createProviders } from "../../src/lib/adapters/openshell/providers";
@@ -338,10 +339,12 @@ describe.skipIf(!hasSdkArtifact())("released OpenShell policy wire safety", () =
         },
       },
     });
-    await expect(serializeSdkPolicy(policy)).rejects.toMatchObject({
+    const error = await serializeSdkPolicy(policy).catch((reason: unknown) => reason);
+    expect(error).toMatchObject({
       kind: "schema",
       message: "OpenShell read failed (schema).",
     });
+    expect(inspect(error, { depth: null })).not.toContain("credential-canary");
   });
 });
 
