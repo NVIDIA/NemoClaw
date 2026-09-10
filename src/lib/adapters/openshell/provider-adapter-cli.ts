@@ -12,7 +12,6 @@ import {
 import {
   type AttachOpenShellProviderRequest,
   type ConfigureOpenShellProviderRefreshRequest,
-  type CreateOpenShellProviderRequest,
   type DeleteOpenShellProviderRequest,
   type DetachOpenShellProviderRequest,
   type GetOpenShellProviderRequest,
@@ -98,7 +97,7 @@ const TERMINAL_CSI_RE = /(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~]/gu;
 const TERMINAL_CONTROL_RE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/gu;
 const ATTACHED_TO_SANDBOX_RE =
   /attached(?:\s|│)+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+?)(?=\.\s+[a-z]|["\n]|$)/iu;
-const UNCONFIRMED_DETACH_OUTPUT_RE = /^NotAttached$|\bnot\s+attached\b/iu;
+const TOLERATED_DETACH_OUTPUT_RE = /\bNotAttached\b|\bnot\s+attached\b/iu;
 const PROVIDER_GET_DIAGNOSTIC_LIMIT = 64 * 1024;
 const REFRESH_STATUS_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u;
 const NO_PROVIDER_ATTACHMENTS_RE = /^No providers attached to sandbox\b/mu;
@@ -131,14 +130,14 @@ function rawCommandOutput(result: CapturedProviderCommandResult): string {
   const streams = [bufferOrStringToText(result.stderr), bufferOrStringToText(result.stdout)].filter(
     Boolean,
   );
-  return streams.length > 0
-    ? streams.join("\n")
-    : Array.isArray(result.output)
-      ? [result.output[2], result.output[1]]
-          .map((value) => bufferOrStringToText(value as string | Buffer | null | undefined))
-          .filter(Boolean)
-          .join("\n")
-      : bufferOrStringToText(result.output as string | Buffer | null | undefined);
+  if (streams.length > 0) return streams.join("\n");
+  if (Array.isArray(result.output)) {
+    return [result.output[2], result.output[1]]
+      .map((value) => bufferOrStringToText(value as string | Buffer | null | undefined))
+      .filter(Boolean)
+      .join("\n");
+  }
+  return bufferOrStringToText(result.output as string | Buffer | null | undefined);
 }
 
 function commandOutput(result: CapturedProviderCommandResult): string {
@@ -682,24 +681,15 @@ export function createCliOpenShellProviderAdapter(
     );
     const output = commandOutput(result);
     const error = commandError(result);
-    if (error) return failure(error);
-    // OpenShell's successful no-op names both targets. FailedPrecondition also
-    // says "not attached" when a policy still references the provider; it must
-    // retain its error instead of being mistaken for an idempotent detach.
-    if (
-      output ===
-      `Provider ${request.providerName} was not attached to sandbox ${request.sandboxName}.`
-    ) {
+    const confirmedIdempotentDetach =
+      !result.error &&
+      !result.signal &&
+      result.status !== null &&
+      TOLERATED_DETACH_OUTPUT_RE.test(output);
+    if (confirmedIdempotentDetach) {
       return success({ changed: false });
     }
-    if (UNCONFIRMED_DETACH_OUTPUT_RE.test(output)) {
-      return failure({
-        kind: "schema",
-        message:
-          "OpenShell did not confirm idempotent detach for the requested provider and sandbox.",
-      });
-    }
-    return success({ changed: true });
+    return error ? failure(error) : success({ changed: true });
   };
 
   const attachProvider: OpenShellProviderAdapter["attachProvider"] = async (

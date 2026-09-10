@@ -27,12 +27,12 @@ import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuil
 import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
 
 export {
-  clearHermesOperatorConfigHandoff,
   clearRebuildMcpHandoff,
   clearRebuildPolicyHandoff,
   readRebuildMcpHandoff,
-  writeHermesOperatorConfigHandoff,
   writeRebuildMcpHandoff,
+  clearHermesOperatorConfigHandoff,
+  writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "../../state/sandbox";
 
@@ -151,11 +151,7 @@ export async function runRebuildBackupPhase(
   const capturedPolicy =
     input.staleRecovery || preparedRetainedPolicy
       ? null
-      : captureRebuildPolicyDocument(
-          input.sandboxName,
-          input.gatewayName,
-          input.runtimeSelection,
-        );
+      : captureRebuildPolicyDocument(input.sandboxName, input.gatewayName, input.runtimeSelection);
   let backupManifest =
     preparedRecoveryManifest ??
     (await backupStateForRebuild(

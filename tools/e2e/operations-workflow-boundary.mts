@@ -778,33 +778,18 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         name: "Select base and optional managed-image publication",
         if: BASE_PUBLICATION_CONDITION,
         env: {
-          BASE_IMAGE_PUBLICATION_RUN_ID: "${{ inputs.base_image_publication_run_id }}",
-          BASE_SHA: "${{ inputs.base_sha }}",
-          CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
-          CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
           EXPECTED_SHA: "${{ steps.publication_mode.outputs.expected_sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
-          MANAGED_IMAGE_SHA: "${{ inputs.managed_image_revision }}",
-          PR_NUMBER: "${{ inputs.pr_number }}",
           PUBLICATION_HISTORY_ALLOW_NON_HEAD:
             "${{ steps.publication_mode.outputs.allow_non_head }}",
           REQUIRE_MANAGED_IMAGE_PUBLICATION:
             "${{ steps.select_pr_source.outputs.selection == 'candidate-catalog' && '0' || '1' }}",
           SELECT_NEAREST_SUCCESSFUL_PUBLICATION:
             "${{ steps.publication_mode.outputs.select_nearest_successful }}",
-          WORKFLOW_SHA: "${{ github.workflow_sha }}",
         },
         shell: "bash",
         run: [
           "set -euo pipefail",
-          'if [[ -n "$BASE_IMAGE_PUBLICATION_RUN_ID" ]]; then',
-          '  [[ "$REQUIRE_MANAGED_IMAGE_PUBLICATION" == "0" ]] || {',
-          '    echo "::error::PR base publication requires the authenticated candidate managed-image catalog" >&2',
-          "    exit 1",
-          "  }",
-          "  node --experimental-strip-types --no-warnings tools/e2e/pr-base-image-publication.mts",
-          "  exit 0",
-          "fi",
           "export GITHUB_REF=refs/heads/main",
           'export GITHUB_SHA="$EXPECTED_SHA"',
           "wait_seconds=3000",
@@ -953,7 +938,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       !sameMembers(needs(catalogue), [
         "base-image-publication",
         "generate-matrix",
-        ...(jobName === "catalogue-nvidia-inference" ? ["package-openshell-sdk"] : []),
+        "package-openshell-sdk",
       ])
     ) {
       errors.push(`${jobName} must wait for matrix generation and base-image publication`);
@@ -1160,8 +1145,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}" ||
-    requireResults.run !==
-      "node --no-warnings tools/e2e/release-qualification.mts"
+    requireResults.run !== "node --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("relevant-e2e must evaluate planner-selected jobs from needs");
   }
@@ -1203,8 +1187,7 @@ function validateReleaseQualification(errors: string[], workflow: OperationsWork
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.release_required_jobs }}" ||
-    requireResults.run !==
-      "node --no-warnings tools/e2e/release-qualification.mts"
+    requireResults.run !== "node --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("release-qualification must evaluate planner-selected jobs from needs");
   }

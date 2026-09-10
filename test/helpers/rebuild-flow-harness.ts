@@ -29,7 +29,6 @@ export const agentRuntime = requireDist("../../agent/runtime.js");
 export const buildContextFingerprint = requireDist(
   "../../adapters/fs/build-context-fingerprint.js",
 );
-export const configIo = requireDist("../../state/config-io.js");
 export const destroy = requireDist("./destroy.js");
 export const dockerImage = requireDist("../../adapters/docker/image.js");
 export const dockerInspect = requireDist("../../adapters/docker/inspect.js");
@@ -42,11 +41,9 @@ export const gatewayTeardownAuthority = requireDist(
 ) as typeof import("../../src/lib/onboard/gateway-teardown-authority");
 export const hermesProviderAuth = requireDist("../../hermes-provider-auth.js");
 export const mcpBridge = requireDist("./mcp-bridge.js");
-export const mcpBridgePolicy = requireDist("./mcp-bridge-policy.js");
 export const mcpBridgeProvider = requireDist("./mcp-bridge-provider.js");
 export const mcpBridgeProviderInspection = requireDist("./mcp-bridge-provider-inspection.js");
 export const mcpBridgeSource = requireDist("./mcp-bridge-source.js");
-export const mcpBridgeState = requireDist("./mcp-bridge-state.js");
 export const messaging = requireDist("../../messaging/index.js");
 export const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
 export const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");

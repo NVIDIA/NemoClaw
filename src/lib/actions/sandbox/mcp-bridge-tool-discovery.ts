@@ -4,10 +4,10 @@
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { shellQuote } from "../../core/shell-quote";
 import type {
+  McpSourceEntry,
   McpBridgeStatus,
   McpBridgeToolDiscoveryFailedStage,
   McpBridgeToolDiscoveryFailureClass,
-  McpSourceEntry,
 } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";

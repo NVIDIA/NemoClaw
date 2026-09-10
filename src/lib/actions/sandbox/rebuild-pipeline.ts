@@ -24,14 +24,14 @@ import * as onboardSession from "../../state/onboard-session";
 import { load as loadRegistry, REGISTRY_FILE } from "../../state/registry/persistence";
 import {
   captureRebuildPolicyDocument,
-  clearHermesOperatorConfigHandoff,
   clearRebuildMcpHandoff,
+  clearHermesOperatorConfigHandoff,
   clearRebuildPolicyHandoff,
   readRebuildMcpHandoff,
   type RebuildBackupManifest,
   runRebuildBackupPhase,
-  writeHermesOperatorConfigHandoff,
   writeRebuildMcpHandoff,
+  writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
@@ -251,14 +251,6 @@ async function rebuildSandboxUnlocked(
       recoveryManifest = preDeleteRecovery.manifest;
       recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
       const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
-      if (
-        executionOptions.mcpMigration &&
-        (recoveryManifest !== null || activeRecoveryTransaction?.sandboxName === sandboxName)
-      ) {
-        return bail(
-          "An existing rebuild transaction must be recovered before starting MCP migration.",
-        );
-      }
       const retainedMcpHandoff = recoveryManifest ? readRebuildMcpHandoff(recoveryManifest) : null;
       if (
         recoveryManifest?.rebuildMcpHandoff &&
@@ -273,7 +265,6 @@ async function rebuildSandboxUnlocked(
           sandboxEntry,
           recreateOptions.runtimeSelection,
           recoveryManifest === null && activeRecoveryTransaction?.sandboxName !== sandboxName,
-          executionOptions.mcpMigration,
         ));
       const mcpEntries = observedMcp.entries;
       const mcpRuntimeSelectionRequired = mcpEntries.length > 0;

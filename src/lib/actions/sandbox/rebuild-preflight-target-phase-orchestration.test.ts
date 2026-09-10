@@ -83,11 +83,6 @@ describe("prepareRebuildTargetPreflights", () => {
       endpointUrl?: string | null;
       hostLocalInferenceReceipt?: string | null;
     } = {},
-    mcpRuntimeSelection?: {
-      gatewayName: string;
-      localTlsDir: string;
-      workspace: string;
-    },
   ) {
     const resumeConfig = {
       provider,
@@ -141,7 +136,6 @@ describe("prepareRebuildTargetPreflights", () => {
       } as never,
       rebuildAgent: "openclaw",
       autoYes: true,
-      mcpRuntimeSelection,
       log: vi.fn(),
       bail: mocks.bail as never,
     });
@@ -526,25 +520,5 @@ describe("prepareRebuildTargetPreflights", () => {
     });
 
     expect(readinessOptions).not.toHaveProperty("runtimeSelection");
-  });
-
-  it("passes a frozen MCP runtime target into authoritative readiness (#10514)", async () => {
-    const runtimeSelection = {
-      gatewayName: "nemoclaw",
-      localTlsDir: "/authority/tls",
-      workspace: "default",
-    };
-    const readinessOptions = await prepareN1xTarget(
-      "onboard",
-      { bridges: { github: { server: "github" } } },
-      undefined,
-      undefined,
-      null,
-      true,
-      {},
-      runtimeSelection,
-    );
-
-    expect(readinessOptions?.runtimeSelection).toBe(runtimeSelection);
   });
 });

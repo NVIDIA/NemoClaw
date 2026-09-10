@@ -286,9 +286,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(staleRecoveryResult.stderr).toContain("is no longer a directory");
     expect(fs.readFileSync(projectionPath, "utf8")).toBe(validProjection);
     expect(
-      fs
-        .readdirSync(sandboxRoot)
-        .filter((entry) => entry.startsWith(".mcp.json.recovery.")),
+      fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".mcp.json.recovery.")),
     ).toEqual([]);
 
     fs.rmSync(projectionPath);

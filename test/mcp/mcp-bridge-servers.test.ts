@@ -18,7 +18,6 @@ import {
   FAKE_MCP_STATUS_RESULT_TOKEN,
   HERMES_DEFERRED_TOOL_SEARCH_MISS,
   parseTryCloudflareOrigin,
-  probePublicTunnel,
   type StartedHttpServer,
   startCompatibleMock,
   startFakeMcpHttpsServer,
@@ -38,7 +37,6 @@ function progressProbe() {
   );
   return { lines, progress };
 }
-
 type CompatibleToolCallResponse = {
   choices: Array<{
     message: {
@@ -191,28 +189,6 @@ describe("authenticated MCP live fixtures", () => {
     expect(
       parseTryCloudflareOrigin("https://mcp-fixture.trycloudflare.com.attacker.invalid"),
     ).toBeNull();
-  });
-
-  it("keeps the tunnel HEAD request, redirect policy, and five-second timeout on failure", async () => {
-    const failure = new TypeError("private failure");
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(failure);
-    const timeout = vi.spyOn(AbortSignal, "timeout");
-    try {
-      expect(await probePublicTunnel("https://private.invalid", "/mcp", 405)).toEqual({
-        ready: false,
-        diagnostic: "public HEAD probe failed (TypeError; codes=unknown)",
-      });
-      expect(fetchMock).toHaveBeenCalledOnce();
-      expect(fetchMock).toHaveBeenCalledWith("https://private.invalid/mcp", {
-        method: "HEAD",
-        redirect: "manual",
-        signal: expect.any(AbortSignal),
-      });
-      expect(timeout).toHaveBeenCalledWith(5000);
-    } finally {
-      timeout.mockRestore();
-      fetchMock.mockRestore();
-    }
   });
 
   it("requires three consecutive public readiness probes and resets after a failure", async () => {

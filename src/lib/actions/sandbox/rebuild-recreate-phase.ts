@@ -30,10 +30,7 @@ import {
   getRebuildSandboxGpuOverrides,
   type RebuildRecreateOnboardOpts,
 } from "./rebuild-gpu-opt-out";
-import {
-  type McpRebuildPreparation,
-  printMcpRebuildRetryCommand,
-} from "./rebuild-mcp-phase";
+import { type McpRebuildPreparation, printMcpRebuildRetryCommand } from "./rebuild-mcp-phase";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";

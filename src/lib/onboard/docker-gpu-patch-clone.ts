@@ -109,10 +109,7 @@ function pushManagedPortArgs(args: string[], inspect: DockerContainerInspect): v
       throw new Error(`Managed bootstrap Docker bindings for '${port}' are invalid.`);
     }
     for (const entry of entries) {
-      args.push(
-        "--publish",
-        managedPublishedPort(entry?.HostIp, entry?.HostPort, normalizedPort),
-      );
+      args.push("--publish", managedPublishedPort(entry?.HostIp, entry?.HostPort, normalizedPort));
     }
   }
 }

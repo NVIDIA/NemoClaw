@@ -194,10 +194,8 @@ Project and user-defined subagents remain available, but they inherit the manage
 
 MCP servers registered through `nemo-deepagents <sandbox-name> mcp add` remain available through the agent-native `/sandbox/.deepagents/.mcp.json` configuration and OpenShell egress policy.
 Project and user MCP files are never auto-loaded.
-If the sandbox has legacy MCP configuration, preview it with `nemo-deepagents <sandbox-name> mcp migrate`.
-Apply it with `nemo-deepagents <sandbox-name> mcp migrate --apply`; migration rebuilds the sandbox for the native MCP runtime.
-Ordinary rebuild stops while legacy MCP state remains.
-If the older runtime has no legacy MCP state, rebuild before adding native MCP servers.
+Sandboxes with the older managed MCP v1 runtime must rebuild before `mcp add` or `mcp restart`.
+Remove, rebuild, and destroy can still scrub registry-owned legacy entries without claiming unrelated user content.
 Before launch, NemoClaw validates and canonicalizes the complete managed file as HTTPS-only definitions with OpenShell credential placeholders.
 It then gives Deep Agents Code a process-local, integrity-bound snapshot for server starts and restarts.
 It prefers a sealed in-memory file when available.

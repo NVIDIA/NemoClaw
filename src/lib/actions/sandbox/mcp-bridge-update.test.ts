@@ -7,6 +7,7 @@ import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 const mocks = vi.hoisted(() => ({
   applyGeneratedPolicy: vi.fn(),
+  assertGeneratedPolicyMutationSafe: vi.fn(),
   ensureSandboxGatewaySelected: vi.fn().mockResolvedValue(undefined),
   preflightMcpEntryTargets: vi
     .fn()
@@ -24,6 +25,7 @@ vi.mock("../../state/mcp-lifecycle-lock", () => ({
 vi.mock("./mcp-bridge-policy", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-policy")>()),
   applyGeneratedPolicy: mocks.applyGeneratedPolicy,
+  assertGeneratedPolicyMutationSafe: mocks.assertGeneratedPolicyMutationSafe,
   removeGeneratedPolicy: mocks.removeGeneratedPolicy,
 }));
 vi.mock("./mcp-bridge-provider", async (importOriginal) => ({
@@ -39,10 +41,6 @@ vi.mock("./mcp-bridge-state", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-state")>()),
   ensureSandboxGatewaySelected: mocks.ensureSandboxGatewaySelected,
   getSandboxOrThrow: vi.fn(() => ({ name: "alpha", agent: "openclaw" })),
-  resolveMcpOperationTarget: vi.fn(() => ({
-    sandbox: { name: "alpha", agent: "openclaw" },
-    runtimeSelection: { gatewayName: "nemoclaw-9090", workspace: "default" },
-  })),
 }));
 vi.mock("./mcp-bridge-source", () => ({
   inspectSourceBridgeState: mocks.inspectSourceBridgeState,
@@ -75,25 +73,6 @@ beforeEach(() => {
 });
 
 describe("source-backed MCP denied-tool policy updates", () => {
-  it("rejects a conflicting source and live endpoint before mutation or credential recovery", async () => {
-    const conflicted = {
-      ...entry,
-      policyConflict: "Agent URL differs from the live policy endpoint.",
-    };
-    mocks.inspectSourceBridgeState.mockReturnValueOnce({
-      bridges: { github: conflicted },
-      sources: { native: { github: conflicted }, legacy: {} },
-    });
-
-    await expect(updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])).rejects.toThrow(
-      /conflicting live policy/,
-    );
-    expect(mocks.preflightMcpEntryTargets).not.toHaveBeenCalled();
-    expect(mocks.ensureSandboxGatewaySelected).not.toHaveBeenCalled();
-    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
-    expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
-  });
-
   it("removes the old route before applying and publishing the live replacement (#11115)", async () => {
     await updateMcpBridgeDenyTools("alpha", "github", ["submit_*", "delete_repo"]);
 

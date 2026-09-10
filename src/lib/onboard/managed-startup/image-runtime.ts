@@ -518,25 +518,13 @@ function execute(
 function generatorCommand(agent: ManagedStartupAgent): readonly string[] {
   switch (agent) {
     case "openclaw":
-      return [
-        "/usr/local/bin/node",
-        "/scripts/generate-openclaw-config.mts",
-      ];
+      return ["/usr/local/bin/node", "/scripts/generate-openclaw-config.mts"];
     case "hermes":
-      return [
-        "/usr/local/bin/node",
-        "/opt/nemoclaw-hermes-config/generate-config.ts",
-      ];
+      return ["/usr/local/bin/node", "/opt/nemoclaw-hermes-config/generate-config.ts"];
     case "langchain-deepagents-code":
-      return [
-        "/usr/local/bin/node",
-        "/opt/nemoclaw-deepagents-code/generate-config.ts",
-      ];
+      return ["/usr/local/bin/node", "/opt/nemoclaw-deepagents-code/generate-config.ts"];
     case "pi":
-      return [
-        "/usr/local/bin/node",
-        "/opt/nemoclaw-pi/generate-config.ts",
-      ];
+      return ["/usr/local/bin/node", "/opt/nemoclaw-pi/generate-config.ts"];
   }
 }
 
@@ -1149,7 +1137,7 @@ function shellSingleQuote(value: string): string {
   if (value.includes("\0") || /[\r\n]/u.test(value)) {
     fail("runtime environment values must be single-line text");
   }
-  return `'${value.replaceAll("'", `'\"'\"'`)}'`;
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 export function serializeManagedStartupRuntimeEnvironment(

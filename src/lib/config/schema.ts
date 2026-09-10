@@ -15,8 +15,10 @@ import { cloneAndDeepFreeze } from "../core/immutable";
 import { isSandboxPolicyCredentialFree } from "../policy/sandbox-policy-validation";
 import {
   isCredentialEnvironmentReferenceName,
+  EXPORTED_VLLM_CONTEXT_WINDOW,
   NemoClawConfigSchema,
   type NemoClawConfig,
+  type NemoClawInferenceProviderConfig,
   type NemoClawSandboxConfig,
   type ValidatedNemoClawConfig,
 } from "./model";
@@ -93,7 +95,54 @@ function sandboxProblems(
         );
     }
   }
+  problems.push(...webSearchProblems(sandbox, sandboxIndex));
   return problems;
+}
+
+function webSearchProblems(sandbox: NemoClawSandboxConfig, sandboxIndex: number): string[] {
+  const problems: string[] = [];
+  const search = sandbox.integrations?.webSearch;
+  if (search) {
+    const location = `/spec/sandboxes/${sandboxIndex}/integrations/webSearch`;
+    if (
+      !isCredentialEnvironmentReferenceName(search.credential.env) ||
+      search.credential.env !== "BRAVE_API_KEY"
+    ) {
+      problems.push(`${location}/credential/env must reference the Brave credential`);
+    }
+    if (
+      !search.agentRefs.every((name) =>
+        sandbox.agents.some((agent) => agent.name === name && agent.type === "openclaw"),
+      )
+    ) {
+      problems.push(`${location}/agentRefs must reference an OpenClaw agent in this sandbox`);
+    }
+  }
+  return problems;
+}
+
+function managedProviderProblems(
+  config: NemoClawConfig,
+  provider: Extract<NemoClawInferenceProviderConfig, { serving: unknown }>,
+  providerIndex: number,
+): string[] {
+  const matches = config.spec.sandboxes.every((sandbox) =>
+    sandbox.agents.every((agent) =>
+      agent.inference.routes.every(
+        (route) =>
+          route.providerRef !== provider.name ||
+          isDeepStrictEqual(
+            [sandbox.runtime.provider, route.overrides.model, route.overrides.contextWindow],
+            ["docker", provider.serving.model.servedName, EXPORTED_VLLM_CONTEXT_WINDOW],
+          ),
+      ),
+    ),
+  );
+  return matches
+    ? []
+    : [
+        `/spec/inferenceProviders/${providerIndex}/serving does not match the sandbox runtime or route model`,
+      ];
 }
 
 function semanticProblems(config: NemoClawConfig): string[] {
@@ -109,6 +158,10 @@ function semanticProblems(config: NemoClawConfig): string[] {
   ];
   const providers = new Set(config.spec.inferenceProviders.map(({ name }) => name));
   for (const [providerIndex, provider] of config.spec.inferenceProviders.entries()) {
+    if ("serving" in provider) {
+      problems.push(...managedProviderProblems(config, provider, providerIndex));
+      continue;
+    }
     const endpointViolation = unsafeEndpointUrlViolation(provider.endpoint);
     if (endpointViolation)
       problems.push(

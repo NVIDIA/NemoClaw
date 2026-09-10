@@ -46,7 +46,6 @@ on:
       - "scripts/**"
       - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
       - "src/lib/actions/sandbox/mcp-bridge-*.ts"
-      - "src/lib/actions/sandbox/mcp-bridge/**"
       - "src/lib/actions/sandbox/rebuild-post-restore-phase.ts"
       - "src/lib/agent/candidate-authority.ts"
       - "src/lib/extra-agents-validation.ts"

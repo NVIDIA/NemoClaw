@@ -20,19 +20,6 @@ import {
 } from "./mcp-bridge-policy-render";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
-import type { McpOperationTarget } from "./mcp-bridge-state";
-
-export function mcpPolicySourceAuthority(
-  operationTarget?: McpOperationTarget,
-): policies.PolicySourceAuthority | undefined {
-  const liveIdentity = operationTarget?.liveIdentity;
-  if (!liveIdentity || !operationTarget) return undefined;
-  return {
-    sandboxName: operationTarget.sandbox.name,
-    runtimeSelection: operationTarget.runtimeSelection,
-    assertCurrent: () => liveIdentity.assertCurrent(),
-  };
-}
 
 export { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
 export {
@@ -51,10 +38,8 @@ export function applyGeneratedPolicy(
   options: {
     bindCredential?: boolean;
     runtimeSelection: McpProviderInspectionRuntimeSelection;
-    operationTarget?: McpOperationTarget;
   },
 ): void {
-  assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const addresses = assertMcpBridgePolicyTarget(entry, target);
   if (addresses.length === 0) {
     throw new McpBridgeError(
@@ -79,13 +64,7 @@ export function applyGeneratedPolicy(
           entry.providerName ?? "",
           entry.denyTools,
         );
-  applyGeneratedPolicyContent(
-    sandboxName,
-    entry,
-    content,
-    options.runtimeSelection,
-    ...(options.operationTarget ? ([options.operationTarget] as const) : ([] as const)),
-  );
+  applyGeneratedPolicyContent(sandboxName, entry, content, options.runtimeSelection);
 }
 
 function applyGeneratedPolicyContent(
@@ -93,22 +72,14 @@ function applyGeneratedPolicyContent(
   entry: McpSourceEntry,
   content: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-  operationTarget?: McpOperationTarget,
 ): void {
-  const sourceAuthority = mcpPolicySourceAuthority(operationTarget);
   if (
     !policies.applyPresetContent(sandboxName, entry.policyName, content, {
       nonFatal: true,
       runtimeSelection,
-      ...(sourceAuthority ? { sourceAuthority } : {}),
     }) ||
-    policies.getPresetContentGatewayState(
-      sandboxName,
-      content,
-      undefined,
-      runtimeSelection,
-      ...(sourceAuthority ? ([sourceAuthority] as const) : ([] as const)),
-    ) !== "match"
+    policies.getPresetContentGatewayState(sandboxName, content, undefined, runtimeSelection) !==
+      "match"
   ) {
     throw new McpBridgeError(`Failed to activate generated MCP policy '${entry.policyName}'.`);
   }
@@ -164,12 +135,6 @@ export function assertGeneratedPolicyMutationSafe(
   if (entry.policyName !== buildMcpBridgePolicyName(entry.server)) {
     throw new McpBridgeError("Generated MCP policy name does not match its bridge definition.");
   }
-  if (entry.policyConflict) {
-    throw new McpBridgeError(
-      `MCP server '${entry.server}' has conflicting live policy. Reconcile the live policy with the native MCP configuration before retrying.`,
-      2,
-    );
-  }
 }
 
 export function removeGeneratedPolicy(
@@ -178,18 +143,14 @@ export function removeGeneratedPolicy(
   options: {
     bestEffort?: boolean;
     runtimeSelection: McpProviderInspectionRuntimeSelection;
-    operationTarget?: McpOperationTarget;
   },
 ): void {
-  const sourceAuthority = mcpPolicySourceAuthority(options.operationTarget);
-  assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const policyKey = buildMcpBridgePolicyKey(entry.server);
   const content = `network_policies:\n  ${policyKey}: {}\n`;
   const removed = policies.removePreset(sandboxName, entry.policyName, {
     nonFatal: true,
     presetContent: content,
     runtimeSelection: options.runtimeSelection,
-    ...(sourceAuthority ? { sourceAuthority } : {}),
   });
   if (removed) return;
   if (options.bestEffort) return;
@@ -200,9 +161,7 @@ export function getPolicyPresence(
   sandboxName: string,
   entry: McpSourceEntry | undefined,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-  operationTarget?: McpOperationTarget,
 ): boolean | null {
-  const sourceAuthority = mcpPolicySourceAuthority(operationTarget);
   if (!entry) return false;
   try {
     const document = YAML.parse(
@@ -210,7 +169,6 @@ export function getPolicyPresence(
         sandboxName,
         "inspect current MCP policy",
         runtimeSelection,
-        ...(sourceAuthority ? ([sourceAuthority] as const) : ([] as const)),
       ),
     ) as { network_policies?: Record<string, unknown> } | null;
     return Boolean(

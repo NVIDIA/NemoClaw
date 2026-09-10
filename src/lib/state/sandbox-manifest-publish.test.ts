@@ -8,15 +8,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   __test,
-  clearHermesOperatorConfigHandoff,
   clearRebuildMcpHandoff,
   clearRebuildPolicyHandoff,
-  readHermesOperatorConfigHandoff,
   readRebuildMcpHandoff,
   readRebuildPolicyHandoff,
   type RebuildManifest,
-  writeHermesOperatorConfigHandoff,
   writeRebuildMcpHandoff,
+  clearHermesOperatorConfigHandoff,
+  readHermesOperatorConfigHandoff,
+  writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "./sandbox.js";
 
@@ -303,37 +303,6 @@ describe("bounded rebuild MCP handoff", () => {
   };
   const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" as const };
 
-  it("preserves independent Hermes config and source-derived MCP recovery handoffs", () => {
-    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-handoff-"));
-    tempDirs.push(backupPath);
-    const published: RebuildManifest = { ...manifest(backupPath), agentType: "hermes" };
-    const hermesEntry = { ...entry, agent: "hermes", adapter: "hermes-config" as const };
-    const document = '{"version":1,"sandboxName":"alpha","entries":[],"droppedKeys":[]}\n';
-    __test.writeManifest(backupPath, published);
-    writeRebuildMcpHandoff(published, [hermesEntry], runtimeSelection);
-    writeHermesOperatorConfigHandoff(published, document);
-
-    const manifestPath = path.join(backupPath, "rebuild-manifest.json");
-    const retained = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as RebuildManifest;
-    expect(readHermesOperatorConfigHandoff(retained)).toBe(document);
-    expect(clearHermesOperatorConfigHandoff(retained)).toBe(true);
-    expect(readRebuildMcpHandoff(retained)).toEqual({
-      entries: [hermesEntry],
-      runtimeSelection,
-    });
-
-    writeHermesOperatorConfigHandoff(retained, document);
-    expect(clearRebuildMcpHandoff(retained, { retainRetirement: true })).toBe(true);
-    expect(readRebuildMcpHandoff(retained)).toBeNull();
-    expect(readHermesOperatorConfigHandoff(retained)).toBe(document);
-    expect(clearRebuildMcpHandoff(retained)).toBe(true);
-    expect(readHermesOperatorConfigHandoff(retained)).toBe(document);
-    expect(clearHermesOperatorConfigHandoff(retained)).toBe(true);
-    const completed = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as RebuildManifest;
-    expect(completed).not.toHaveProperty("rebuildMcpHandoff");
-    expect(completed).not.toHaveProperty("hermesOperatorConfigHandoff");
-  });
-
   it("persists exact source-derived state for retry and removes it after recovery", () => {
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-handoff-"));
     tempDirs.push(backupPath);
@@ -368,21 +337,21 @@ describe("bounded rebuild MCP handoff", () => {
     expect(published).not.toHaveProperty("rebuildMcpHandoff");
   });
 
-  it.each(["https://api.githubcopilot.com/mcp/?token=opaque", "https://api.githubcopilot.com/mcp/#opaque"])(
-    "rejects an MCP URL with non-authoritative query or fragment state: %s",
-    (url) => {
-      const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-url-"));
-      tempDirs.push(backupPath);
-      const published = manifest(backupPath);
-      __test.writeManifest(backupPath, published);
-      const manifestPath = path.join(backupPath, "rebuild-manifest.json");
-      const originalManifest = fs.readFileSync(manifestPath, "utf8");
+  it.each([
+    "https://api.githubcopilot.com/mcp/?token=opaque",
+    "https://api.githubcopilot.com/mcp/#opaque",
+  ])("rejects an MCP URL with non-authoritative query or fragment state: %s", (url) => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-url-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+    const manifestPath = path.join(backupPath, "rebuild-manifest.json");
+    const originalManifest = fs.readFileSync(manifestPath, "utf8");
 
-      expect(() =>
-        writeRebuildMcpHandoff(published, [{ ...entry, url }], runtimeSelection),
-      ).toThrow("invalid rebuild MCP recovery handoff");
-      expect(fs.readFileSync(manifestPath, "utf8")).toBe(originalManifest);
-      expect(published).not.toHaveProperty("rebuildMcpHandoff");
-    },
-  );
+    expect(() => writeRebuildMcpHandoff(published, [{ ...entry, url }], runtimeSelection)).toThrow(
+      "invalid rebuild MCP recovery handoff",
+    );
+    expect(fs.readFileSync(manifestPath, "utf8")).toBe(originalManifest);
+    expect(published).not.toHaveProperty("rebuildMcpHandoff");
+  });
 });

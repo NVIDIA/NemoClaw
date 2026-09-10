@@ -1,37 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
-
-/** Retain proxy evidence before child cleanup without replacing the primary failure. */
-export async function captureCredentialWindowFailureDiagnostics(
-  host: Pick<HostCliClient, "command" | "openshellCommandPath">,
-  options: {
-    phaseCompleted: boolean;
-    sandboxName: string;
-    artifactName: string;
-    env: NodeJS.ProcessEnv;
-    redactionValues: readonly string[];
-  },
-): Promise<void> {
-  if (options.phaseCompleted) return;
-  try {
-    await host.command(
-      host.openshellCommandPath,
-      ["logs", options.sandboxName, "-n", "500", "--source", "all", "--since", "2m"],
-      {
-        artifactName: options.artifactName,
-        captureLimitBytes: 64 * 1024,
-        env: options.env,
-        redactionValues: [...options.redactionValues],
-        timeoutMs: 30_000,
-      },
-    );
-  } catch {
-    // The assertion stays primary when the sandbox or its logs are unavailable.
-  }
-}
 
 /** OpenShell f27ff150 retains exactly this many revision resolvers. */
 export const OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS = 8;

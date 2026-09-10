@@ -41,7 +41,6 @@ import {
   executePrivilegedSandboxCommand as executeProviderPrivilegedSandboxCommand,
   resolvePrivilegedSandboxTarget,
   withPrivilegedSandboxExecutionLease,
-  type PrivilegedSandboxExecutionContext,
 } from "../../sandbox/privileged-exec";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../state/registry";
@@ -280,13 +279,12 @@ function executeGatewaySupervisorActionPinned(
   action: "restart" | "recover" | "probe",
   timeout: number,
   expectedContainerId?: string,
-  context?: PrivilegedSandboxExecutionContext,
 ): ManagedGatewaySupervisorActionResult | null {
   const nonce = randomBytes(32).toString("hex");
   try {
     return withPrivilegedSandboxExecutionLease(sandboxName, `gateway supervisor ${action}`, () => {
       const targetContainerId =
-        expectedContainerId ?? resolvePrivilegedSandboxTarget(sandboxName, context).resourceHandle;
+        expectedContainerId ?? resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
       const result = executeProviderPrivilegedSandboxCommand(
         sandboxName,
         [MANAGED_GATEWAY_CONTROL_PATH, action, nonce],
@@ -294,7 +292,6 @@ function executeGatewaySupervisorActionPinned(
           sanitizeEnvironment: true,
           expectedResourceHandle: targetContainerId,
           timeout,
-          ...(context ? { context } : {}),
         },
       );
       const status = result.status ?? 1;
@@ -353,22 +350,6 @@ export function executeGatewaySupervisorAction(
   timeout = 210000,
 ): ManagedGatewaySupervisorActionResult | null {
   return executeGatewaySupervisorActionPinned(sandboxName, action, timeout);
-}
-
-/** Retain the controller protocol while using an explicitly qualified live target. */
-export function executeScopedGatewaySupervisorAction(
-  sandboxName: string,
-  action: "restart" | "recover" | "probe",
-  timeout: number | undefined,
-  context: PrivilegedSandboxExecutionContext,
-): ManagedGatewaySupervisorActionResult | null {
-  return executeGatewaySupervisorActionPinned(
-    sandboxName,
-    action,
-    timeout ?? 210000,
-    undefined,
-    context,
-  );
 }
 
 function refuseHostLocalSupervisorForSelectedRuntime(

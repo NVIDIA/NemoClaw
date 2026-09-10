@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -25,7 +24,6 @@ import {
   gatewayIdForStateDir,
   hasStateScopedSandboxNamespace,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
-  openExistingGatewayConfigAuthority,
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
 import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
@@ -34,7 +32,6 @@ import {
   writeDockerDriverGatewayRuntimeMarker,
 } from "./docker-driver-gateway-runtime-marker";
 import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman-runtime-surfaces";
-import { createDockerRuntimeProviderBundle } from "./runtime-provider/docker";
 
 const SCOPED_NAMESPACE_PROOF_DRIVER = path.join(
   process.cwd(),
@@ -61,14 +58,6 @@ function podmanGatewayRuntime(env: Record<string, string>) {
     platform: "linux",
     socketPath: env.OPENSHELL_PODMAN_SOCKET,
   });
-}
-
-function observedDockerGatewayRuntime() {
-  const gateway = createDockerRuntimeProviderBundle().gateway as Extract<
-    ReturnType<typeof createDockerRuntimeProviderBundle>["gateway"],
-    { supported: true }
-  >;
-  return gateway.observeHostRuntime({ environment: {}, platform: process.platform });
 }
 
 function writePreScopedGatewayConfig(
@@ -825,285 +814,6 @@ describe("docker-driver-gateway config TOML", () => {
       ).not.toBeNull();
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("existing gateway config authority", () => {
-  it("retains immutable Docker config identity without invoking state writers or runtime discovery", () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-existing-gateway-"));
-    const runtime = observedDockerGatewayRuntime();
-    const env = writeGatewayConfig(stateDir);
-    const before = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG);
-    const identity = fs.statSync(env.OPENSHELL_GATEWAY_CONFIG);
-    const writers = (
-      ["writeFileSync", "renameSync", "chmodSync", "mkdirSync", "rmSync"] as const
-    ).map((method) =>
-      vi.spyOn(fs, method).mockImplementation(() => {
-        throw new Error("read-only authority attempted a write");
-      }),
-    );
-    const inspect = vi.spyOn(runtime.network, "inspect");
-    const run = vi.spyOn(runtime.network, "run");
-    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
-    try {
-      const authority = openExistingGatewayConfigAuthority(stateDir, runtime);
-      try {
-        expect(authority).toMatchObject({
-          driver: "docker",
-          sandboxNamespace: gatewayIdForStateDir(stateDir),
-          socketPath: null,
-          configPath: env.OPENSHELL_GATEWAY_CONFIG,
-          configSha256: createHash("sha256").update(before).digest("hex"),
-          gatewayId: gatewayIdForStateDir(stateDir),
-        });
-        expect(Object.isFrozen(authority)).toBe(true);
-        expect(Reflect.set(authority, "driver", "podman")).toBe(false);
-        expect(() => authority.assertCurrent()).not.toThrow();
-        expect(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG)).toEqual(before);
-        expect(fs.statSync(env.OPENSHELL_GATEWAY_CONFIG).ino).toBe(identity.ino);
-        expect(inspect).not.toHaveBeenCalled();
-        expect(run).not.toHaveBeenCalled();
-        expect(writers.map((writer) => writer.mock.calls.length)).toEqual([0, 0, 0, 0, 0]);
-      } finally {
-        authority.close();
-      }
-      expect(() => authority.close()).not.toThrow();
-      expect(() => authority.assertCurrent()).toThrow(/authority is closed/);
-    } finally {
-      vi.unstubAllEnvs();
-      inspect.mockRestore();
-      run.mockRestore();
-      writers.forEach((writer) => writer.mockRestore());
-      fs.rmSync(stateDir, { force: true, recursive: true });
-    }
-  });
-
-  it("projects only the validated Podman socket and preserves its omitted namespace", () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-existing-podman-"));
-    try {
-      const env = {
-        ...baseGatewayEnv(stateDir),
-        OPENSHELL_PODMAN_SOCKET: path.join(stateDir, "podman.sock"),
-      };
-      const runtime = podmanGatewayRuntime(env);
-      prepareDockerDriverGatewayConfigEnv(env, stateDir, null, { gatewayRuntime: runtime });
-      const authority = openExistingGatewayConfigAuthority(stateDir, runtime);
-      try {
-        expect(authority).toMatchObject({
-          driver: "podman",
-          sandboxNamespace: null,
-          socketPath: env.OPENSHELL_PODMAN_SOCKET,
-        });
-        expect(() => authority.assertCurrent()).not.toThrow();
-      } finally {
-        authority.close();
-      }
-      expect(() => {
-        const mismatched = openExistingGatewayConfigAuthority(stateDir, {
-          ...runtime,
-          socketPath: path.join(stateDir, "another-podman.sock"),
-        });
-        mismatched.close();
-      }).toThrow(/socket/);
-      expect(() =>
-        openExistingGatewayConfigAuthority(stateDir, observedDockerGatewayRuntime()),
-      ).toThrow();
-    } finally {
-      fs.rmSync(stateDir, { force: true, recursive: true });
-    }
-  });
-
-  it("refuses missing and legacy configuration without creating or replacing state", () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-existing-missing-"));
-    try {
-      const runtime = observedDockerGatewayRuntime();
-      expect(() =>
-        openExistingGatewayConfigAuthority(path.join(stateDir, "absent"), runtime),
-      ).toThrow(/unavailable/);
-      expect(fs.readdirSync(stateDir)).toEqual([]);
-      expect(() => openExistingGatewayConfigAuthority(stateDir, runtime)).toThrow(/unavailable/);
-      expect(fs.readdirSync(stateDir)).toEqual([]);
-      const { configPath } = writePreScopedGatewayConfig(stateDir);
-      const before = fs.readFileSync(configPath);
-      expect(() => openExistingGatewayConfigAuthority(stateDir, runtime)).toThrow(
-        /Legacy gateway config/,
-      );
-      expect(fs.readFileSync(configPath)).toEqual(before);
-    } finally {
-      fs.rmSync(stateDir, { force: true, recursive: true });
-    }
-  });
-
-  it("rejects another owner's state and an unqualified driver", () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-existing-owner-"));
-    const env = writeGatewayConfig(stateDir);
-    const runtime = observedDockerGatewayRuntime();
-    const before = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG);
-    try {
-      const owner = vi.spyOn(process, "getuid").mockReturnValue(fs.statSync(stateDir).uid + 1);
-      try {
-        expect(() => openExistingGatewayConfigAuthority(stateDir, runtime)).toThrow(
-          /owner-controlled/,
-        );
-      } finally {
-        owner.mockRestore();
-      }
-      expect(() =>
-        openExistingGatewayConfigAuthority(stateDir, {
-          ...runtime,
-          openShellDriver: "unqualified",
-        }),
-      ).toThrow(/explicitly observed/);
-      expect(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG)).toEqual(before);
-    } finally {
-      fs.rmSync(stateDir, { force: true, recursive: true });
-    }
-  });
-
-  it.each(["vm", "Docker", ""])(
-    "rejects normalized driver alias %j even in generated TOML",
-    (driver) => {
-      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-existing-alias-"));
-      try {
-        const env = writeGatewayConfig(stateDir);
-        const runtime = { ...observedDockerGatewayRuntime(), openShellDriver: driver };
-        const toml = buildDockerDriverGatewayConfigToml(
-          env,
-          "/usr/bin/openshell-sandbox",
-          jwtBundlePaths(stateDir),
-          gatewayIdForStateDir(stateDir),
-          runtime,
-        );
-        fs.writeFileSync(env.OPENSHELL_GATEWAY_CONFIG, toml);
-        expect(() => {
-          const authority = openExistingGatewayConfigAuthority(stateDir, runtime);
-          authority.close();
-        }).toThrow(/explicitly observed/);
-        expect(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8")).toBe(toml);
-      } finally {
-        fs.rmSync(stateDir, { force: true, recursive: true });
-      }
-    },
-  );
-
-  it("rejects state-directory replacement even when the original config inode is reused", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-existing-directory-"));
-    const stateDir = path.join(root, "gateway");
-    fs.mkdirSync(stateDir, { mode: 0o700 });
-    const env = writeGatewayConfig(stateDir);
-    const authority = openExistingGatewayConfigAuthority(stateDir, observedDockerGatewayRuntime());
-    try {
-      fs.renameSync(stateDir, path.join(root, "prior"));
-      fs.mkdirSync(stateDir, { mode: 0o700 });
-      fs.renameSync(
-        path.join(root, "prior", path.basename(env.OPENSHELL_GATEWAY_CONFIG)),
-        env.OPENSHELL_GATEWAY_CONFIG,
-      );
-      expect(() => authority.assertCurrent()).toThrow(/state directory changed/);
-    } finally {
-      authority.close();
-      fs.rmSync(root, { force: true, recursive: true });
-    }
-  });
-
-  it.each([
-    [
-      "spoofed namespace table",
-      (text: string) =>
-        text.replace(/^sandbox_namespace = .*\n/m, "") +
-        '\n[spoof]\nsandbox_namespace = "default"\n',
-    ],
-    [
-      "foreign namespace",
-      (text: string) =>
-        text.replace(/^sandbox_namespace = .*$/m, 'sandbox_namespace = "other-gateway"'),
-    ],
-    [
-      "misplaced driver table",
-      (text: string) => text.replace("[openshell.drivers.docker]", "[spoof.drivers.docker]"),
-    ],
-    ["duplicate driver table", (text: string) => text + "\n[openshell.drivers.docker]\n"],
-    [
-      "unauthenticated config",
-      (text: string) =>
-        text.replace("allow_unauthenticated_users = false", "allow_unauthenticated_users = true"),
-    ],
-    [
-      "Docker socket override",
-      (text: string) =>
-        text.replace(
-          "[openshell.drivers.docker]",
-          '[openshell.drivers.docker]\nsocket_path = "/tmp/unowned.sock"',
-        ),
-    ],
-  ] as const)("rejects %s without rewriting the config", (_label, change) => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-existing-invalid-"));
-    try {
-      const env = writeGatewayConfig(stateDir);
-      const invalid = change(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8"));
-      fs.writeFileSync(env.OPENSHELL_GATEWAY_CONFIG, invalid);
-      expect(() =>
-        openExistingGatewayConfigAuthority(stateDir, observedDockerGatewayRuntime()),
-      ).toThrow();
-      expect(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8")).toBe(invalid);
-    } finally {
-      fs.rmSync(stateDir, { force: true, recursive: true });
-    }
-  });
-
-  it.each([
-    [
-      "symlink",
-      (file: string) => {
-        fs.renameSync(file, `${file}.saved`);
-        fs.symlinkSync(`${file}.saved`, file);
-      },
-    ],
-    ["hard link", (file: string) => fs.linkSync(file, `${file}.linked`)],
-    ["public config", (file: string) => fs.chmodSync(file, 0o644)],
-    ["public state directory", (file: string) => fs.chmodSync(path.dirname(file), 0o755)],
-  ] as const)("rejects an unsafe %s", (_label, change) => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-existing-unsafe-"));
-    try {
-      const env = writeGatewayConfig(stateDir);
-      change(env.OPENSHELL_GATEWAY_CONFIG);
-      expect(() =>
-        openExistingGatewayConfigAuthority(stateDir, observedDockerGatewayRuntime()),
-      ).toThrow();
-    } finally {
-      fs.rmSync(stateDir, { force: true, recursive: true });
-    }
-  });
-
-  it.each([
-    ["same-inode byte edit", (file: string) => fs.appendFileSync(file, "\n# changed\n")],
-    [
-      "same-byte inode replacement",
-      (file: string) => {
-        fs.copyFileSync(file, `${file}.replacement`);
-        fs.renameSync(`${file}.replacement`, file);
-      },
-    ],
-    ["new hard link", (file: string) => fs.linkSync(file, `${file}.linked`)],
-    ["config permissions", (file: string) => fs.chmodSync(file, 0o400)],
-    ["state-directory permissions", (file: string) => fs.chmodSync(path.dirname(file), 0o750)],
-  ] as const)("rejects %s after opening authority", (_label, change) => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-existing-drift-"));
-    try {
-      const env = writeGatewayConfig(stateDir);
-      const authority = openExistingGatewayConfigAuthority(
-        stateDir,
-        observedDockerGatewayRuntime(),
-      );
-      try {
-        change(env.OPENSHELL_GATEWAY_CONFIG);
-        expect(() => authority.assertCurrent()).toThrow(/changed/);
-      } finally {
-        authority.close();
-      }
-    } finally {
-      fs.rmSync(stateDir, { force: true, recursive: true });
     }
   });
 });

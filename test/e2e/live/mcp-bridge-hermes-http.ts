@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "../../../src/lib/core/shell-quote";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { redactString } from "../fixtures/redaction.ts";
 
 export const HERMES_MCP_HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
@@ -57,73 +55,21 @@ export function buildHermesMcpChatProbeScript(payload: string, resultToken: stri
 }
 
 export function buildHermesMcpRuntimeDiagnosticsScript(): string {
-  const program = String.raw`
-import json, os, re, shlex, stat, subprocess
-
-def read_tail(path, limit):
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    try:
-        before = os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode):
-            raise ValueError("not a regular file")
-        offset = max(0, before.st_size - limit)
-        os.lseek(descriptor, offset, os.SEEK_SET)
-        raw = os.read(descriptor, limit)
-        after = os.fstat(descriptor)
-        stable = (before.st_size, before.st_mtime_ns, before.st_ctime_ns) == (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
-        return raw, offset, stable
-    finally:
-        os.close(descriptor)
-
-try:
-    raw, offset, stable = read_tail("/sandbox/.hermes/.env", 65537)
-    assignment, = re.findall(r"^API_SERVER_KEY=(.*)$", raw.decode("utf-8"), re.MULTILINE)
-    secret, = shlex.split(assignment, comments=False)
-    # Match the managed runtime's canonical key; shell expansions are not literals.
-    if offset or len(raw) > 65536 or not stable or re.fullmatch(r"[0-9a-f]{64}", secret) is None:
-        raise ValueError("unreliable API key")
-except (OSError, ValueError):
-    print("Hermes log capture unavailable: API key redaction input unavailable")
-else:
-    for name in ("/tmp/nemoclaw-start.log", "/tmp/gateway.log"):
-        try:
-            raw, offset, _stable = read_tail(name, 16384)
-            # Discard a partial leading line at the byte-tail boundary.
-            lines = raw.decode("utf-8", errors="replace").splitlines()[bool(offset):]
-            print(json.dumps({"log": name, "tail": "\n".join(lines[-100:]).replace(secret, "[REDACTED]")}))
-        except (OSError, ValueError):
-            print(json.dumps({"log": name, "unavailable": True}))
-
-metadata = subprocess.run(["/bin/sh", "-c", "/usr/bin/ps -eo pid,ppid,uid,stat,comm | /usr/bin/head -n 129 | /usr/bin/head -c 16384; /usr/bin/stat -c '%a %u:%g %s %n' /sandbox/.hermes/runtime/gateway.pid /sandbox/.hermes/runtime/gateway.lock"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=5)
-print(json.dumps({"runtime_metadata": metadata.stdout, "exit_code": metadata.returncode}))
-`.trim();
-  return `/usr/bin/python3 -I -S -c ${shellQuote(program)}`;
-}
-
-export async function captureHermesMcpRestartFailure(options: {
-  adapter: string;
-  result: HermesMcpCommandResult;
-  sandbox: Pick<SandboxClient, "execShell">;
-  sandboxName: string;
-  redactionValues: string[];
-}): Promise<void> {
-  if (options.adapter !== "hermes-config" || options.result.exitCode === 0) return;
-  try {
-    await options.sandbox.execShell(
-      options.sandboxName,
-      trustedSandboxShellScript(buildHermesMcpRuntimeDiagnosticsScript()),
-      {
-        artifactName: "hermes-mcp-restart-failure-diagnostics",
-        env: buildAvailabilityProbeEnv(),
-        redactionValues: options.redactionValues,
-        captureLimitBytes: 65_536,
-        timeoutMs: 15_000,
-      },
-    );
-  } catch {
-    // Evidence collection must preserve the original restart failure.
-    console.error("Hermes MCP restart diagnostics could not be collected.");
-  }
+  return [
+    "set -eu",
+    "set -a",
+    "[ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env",
+    "set +a",
+    "{",
+    'for log in /tmp/nemoclaw-start.log /tmp/gateway.log; do printf \'== %s ==\\n\' "$log"; tail -n 100 "$log" 2>&1 || true; done',
+    "printf '%s\\n' '== permissions =='",
+    "stat -c '%a %U:%G %n' /sandbox /sandbox/.hermes /sandbox/.hermes/logs 2>&1 || true",
+    "printf '%s\\n' '== managed supervisor =='",
+    "cat /run/nemoclaw/gateway-control/status 2>&1 || true",
+    "printf '%s\\n' '== gateway identity =='",
+    "cat /sandbox/.hermes/runtime/gateway.pid 2>&1 || true",
+    `} | /usr/bin/python3 -I -S -c ${shellQuote(FAILURE_BODY_EMITTER)} /dev/stdin`,
+  ].join("\n");
 }
 
 function sanitizedPreview(text: string, explicitValues: Iterable<string>): string {

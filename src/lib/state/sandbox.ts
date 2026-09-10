@@ -43,7 +43,7 @@ import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/comma
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
-import type { AgentStateFile } from "../agent/defs.js";
+import type { AgentMcpAdapter, AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types.js";
 import { GATEWAY_PORT } from "../core/ports.js";
@@ -58,6 +58,7 @@ import {
   SnapshotSanitizerPrerequisiteError,
   sanitizeSnapshotDirectory,
 } from "../security/snapshot-sanitizer.js";
+import { inspectMcpDeniedToolSelectors } from "../security/mcp-denied-tool-selector.js";
 import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
@@ -88,12 +89,6 @@ import type {
 } from "./registry/types.js";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import * as registry from "./registry.js";
-import {
-  isRebuildMcpHandoff,
-  type RebuildMcpHandoff,
-  type RebuildMcpHandoffEntry,
-} from "./rebuild/mcp-handoff.js";
-export type { RebuildMcpHandoffEntry } from "./rebuild/mcp-handoff.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
 import { restoreStateFile } from "./state-file-restore.js";
 import { nemoclawStateRoot } from "./state-root.js";
@@ -150,7 +145,12 @@ export interface RebuildManifest {
     retired?: boolean;
   };
   /** Source-derived MCP state retained only while a rebuild transaction is recoverable. */
-  rebuildMcpHandoff?: RebuildMcpHandoff;
+  rebuildMcpHandoff?: {
+    entries: RebuildMcpHandoffEntry[];
+    runtimeSelection: OpenShellRuntimeSelection;
+    /** Cleanup-only identity; retired handoffs cannot be consumed for recovery. */
+    retired?: boolean;
+  };
   /** Digest-bound Hermes operator config retained only while rebuild recovery is possible. */
   hermesOperatorConfigHandoff?: {
     file: string;
@@ -179,6 +179,21 @@ export interface RebuildManifest {
   instances?: InstanceBackup[];
   // Optional user-provided label for `snapshot restore <name>`.
   name?: string;
+}
+
+export interface RebuildMcpHandoffEntry {
+  server: string;
+  agent: string;
+  adapter?: AgentMcpAdapter;
+  url: string;
+  env: string[];
+  denyTools?: string[];
+  trustedPrivateHost?: string;
+  allowedIps?: string[];
+  providerName?: string;
+  providerId?: string;
+  policyName: string;
+  source?: "native" | "legacy" | "legacy-registry" | "policy";
 }
 
 // Manifest enriched with a virtual version number computed at list time.
@@ -396,6 +411,111 @@ export function hasAuthoritativeOpenClawImagePluginProvenance(value: {
   );
 }
 
+const REBUILD_MCP_ENTRY_KEYS = new Set([
+  "adapter",
+  "agent",
+  "allowedIps",
+  "denyTools",
+  "env",
+  "policyName",
+  "providerId",
+  "providerName",
+  "server",
+  "source",
+  "trustedPrivateHost",
+  "url",
+]);
+const REBUILD_MCP_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+
+function isRebuildMcpHandoffEntry(value: unknown): value is RebuildMcpHandoffEntry {
+  if (
+    !isObjectRecord(value) ||
+    Object.keys(value).some((key) => !REBUILD_MCP_ENTRY_KEYS.has(key)) ||
+    typeof value.server !== "string" ||
+    !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(value.server) ||
+    typeof value.agent !== "string" ||
+    !REBUILD_MCP_NAME_PATTERN.test(value.agent) ||
+    (value.adapter !== undefined &&
+      value.adapter !== "openclaw-config" &&
+      value.adapter !== "hermes-config" &&
+      value.adapter !== "deepagents-config") ||
+    typeof value.url !== "string" ||
+    value.url.length > 4096 ||
+    !Array.isArray(value.env) ||
+    value.env.length > 1 ||
+    !value.env.every((name) => typeof name === "string" && /^[A-Z][A-Z0-9_]{0,127}$/u.test(name)) ||
+    (value.denyTools !== undefined &&
+      (() => {
+        const inspection = inspectMcpDeniedToolSelectors(value.denyTools);
+        return !inspection.ok || !inspection.canonical;
+      })()) ||
+    typeof value.policyName !== "string" ||
+    !REBUILD_MCP_NAME_PATTERN.test(value.policyName) ||
+    (value.trustedPrivateHost !== undefined &&
+      (typeof value.trustedPrivateHost !== "string" ||
+        value.trustedPrivateHost.length > 253 ||
+        /[\r\n\0]/u.test(value.trustedPrivateHost))) ||
+    (value.allowedIps !== undefined &&
+      (!Array.isArray(value.allowedIps) ||
+        value.allowedIps.length > 128 ||
+        !value.allowedIps.every(
+          (address) => typeof address === "string" && address.length > 0 && address.length <= 64,
+        ))) ||
+    (value.providerName !== undefined &&
+      (typeof value.providerName !== "string" ||
+        !REBUILD_MCP_NAME_PATTERN.test(value.providerName))) ||
+    (value.providerId !== undefined &&
+      (typeof value.providerId !== "string" ||
+        !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u.test(value.providerId))) ||
+    (value.source !== undefined &&
+      value.source !== "native" &&
+      value.source !== "legacy" &&
+      value.source !== "legacy-registry" &&
+      value.source !== "policy")
+  ) {
+    return false;
+  }
+  try {
+    const url = new URL(value.url);
+    return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
+function isRebuildMcpRuntimeSelection(value: unknown): value is OpenShellRuntimeSelection {
+  return (
+    isObjectRecord(value) &&
+    Object.keys(value).every(
+      (key) => key === "gatewayName" || key === "workspace" || key === "localTlsDir",
+    ) &&
+    typeof value.gatewayName === "string" &&
+    REBUILD_MCP_NAME_PATTERN.test(value.gatewayName) &&
+    value.workspace === "default" &&
+    (value.localTlsDir === undefined ||
+      (typeof value.localTlsDir === "string" &&
+        path.isAbsolute(value.localTlsDir) &&
+        !/[\r\n\0]/u.test(value.localTlsDir)))
+  );
+}
+
+function isRebuildMcpHandoff(
+  value: unknown,
+): value is NonNullable<RebuildManifest["rebuildMcpHandoff"]> {
+  return (
+    isObjectRecord(value) &&
+    Object.keys(value).every(
+      (key) => key === "entries" || key === "runtimeSelection" || key === "retired",
+    ) &&
+    Array.isArray(value.entries) &&
+    value.entries.length > 0 &&
+    value.entries.length <= 256 &&
+    value.entries.every(isRebuildMcpHandoffEntry) &&
+    new Set(value.entries.map((entry) => entry.server)).size === value.entries.length &&
+    isRebuildMcpRuntimeSelection(value.runtimeSelection) &&
+    (value.retired === undefined || value.retired === true)
+  );
+}
 
 function isRebuildManifest(value: unknown): value is RebuildManifest {
   if (!isObjectRecord(value) || !isStateDirArray(value.stateDirs)) return false;
@@ -3219,7 +3339,8 @@ function readManifest(backupPath: string): RebuildManifest | null {
 // ── Listing ────────────────────────────────────────────────────────
 
 export type RebuildRecoveryManifestValidation =
-  { ok: true; manifest: RebuildManifest } | { ok: false; reason: string };
+  | { ok: true; manifest: RebuildManifest }
+  | { ok: false; reason: string };
 
 function legacyStateFilesArePresent(backupPath: string, manifest: RebuildManifest): boolean {
   if (manifest.backupComplete !== undefined) return true;

@@ -9,14 +9,12 @@ import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-a
 import {
   createRebuildFlowHarness,
   createHarnessTempDir,
-  exerciseFreshProcessMigrationRecovery,
   installRebuildFlowTestHooks,
   originalSandboxName,
   portableAgentLifecycle,
   snapshotEnv,
   tempFiles,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
-import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 
@@ -24,137 +22,6 @@ const enforceRemovedImmutabilityMigrationBoundaryReal = enforceRemovedImmutabili
 
 describe("rebuildSandbox flow: lifecycle", () => {
   installRebuildFlowTestHooks();
-
-  const legacySourceEntry: McpSourceEntry = {
-    server: "legacy",
-    agent: "langchain-deepagents-code",
-    adapter: "deepagents-config",
-    url: "https://mcp.example.test/mcp",
-    env: ["GITHUB_TOKEN"],
-    policyName: "mcp-bridge-legacy",
-    providerName: "alpha-mcp-legacy",
-    providerId: "11111111-2222-4333-8444-555555555555",
-    source: "legacy",
-  };
-  const nativeSourceEntry: McpSourceEntry = {
-    ...legacySourceEntry,
-    server: "native",
-    policyName: "mcp-bridge-native",
-    providerName: "alpha-mcp-native",
-    providerId: "66666666-7777-4888-8999-000000000000",
-    env: ["NATIVE_MCP_TOKEN"],
-    source: "native",
-  };
-
-  it.each<{
-    name: string;
-    native: Record<string, McpSourceEntry>;
-    legacy: Record<string, McpSourceEntry>;
-    registry?: unknown;
-    expectedError?: string;
-  }>([
-    { name: "legacy-only", native: {}, legacy: { legacy: legacySourceEntry } },
-    {
-      name: "mixed native and legacy",
-      native: { native: nativeSourceEntry },
-      legacy: { legacy: legacySourceEntry },
-    },
-    {
-      name: "registry-only",
-      native: {},
-      legacy: {},
-      registry: { sandboxes: { alpha: { mcp: { bridges: { legacy: legacySourceEntry } } } } },
-    },
-    {
-      name: "malformed registry sandbox map",
-      native: {},
-      legacy: {},
-      registry: { sandboxes: [] },
-      expectedError: "Legacy MCP registry structure for 'alpha' is invalid",
-    },
-    {
-      name: "malformed registry MCP state",
-      native: {},
-      legacy: {},
-      registry: { sandboxes: { alpha: { mcp: [] } } },
-      expectedError: "Legacy MCP registry structure for 'alpha' is invalid",
-    },
-    {
-      name: "malformed registry bridge map",
-      native: {},
-      legacy: {},
-      registry: { sandboxes: { alpha: { mcp: { bridges: [] } } } },
-      expectedError: "Legacy MCP registry structure for 'alpha' is invalid",
-    },
-  ])(
-    "refuses an ordinary Deep Agents rebuild with $name sources before backup or deletion",
-    async ({
-      native,
-      legacy,
-      registry,
-      expectedError = "Legacy MCP configuration must be migrated",
-    }) => {
-      const harness = createRebuildFlowHarness({
-        agentName: "langchain-deepagents-code",
-        sandboxEntry: { agent: "langchain-deepagents-code" },
-        mcpSources: { native, legacy },
-        mcpRegistry: registry,
-      });
-
-      await expect(
-        harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
-      ).rejects.toThrow(expectedError);
-
-      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-      expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
-      expect(harness.onboardSpy).not.toHaveBeenCalled();
-      expectNoSandboxDelete(harness.runOpenshellSpy);
-    },
-  );
-
-  it("keeps ordinary OpenClaw legacy rebuild on the existing backup and restore path", async () => {
-    const harness = createRebuildFlowHarness({
-      mcpSources: {
-        native: {},
-        legacy: { legacy: { ...legacySourceEntry, agent: "openclaw", adapter: "openclaw-config" } },
-      },
-    });
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
-    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
-    expect(harness.onboardSpy).toHaveBeenCalledOnce();
-    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledOnce();
-    expect(
-      harness.runOpenshellSpy.mock.calls.filter(
-        ([args]) => args[0] === "sandbox" && args[1] === "delete",
-      ),
-    ).toHaveLength(1);
-  });
-
-  it("resumes explicit legacy migration from a durable handoff in a fresh process", async () => {
-    const entries = [legacySourceEntry, nativeSourceEntry];
-    const proof = await exerciseFreshProcessMigrationRecovery(entries);
-    expect(proof.interruption).toContain("Recreate failed");
-    expect(proof.sourceDeletes).toBe(1);
-    expect(proof.initialPreparation).toEqual([
-      ["alpha", { gatewayName: "nemoclaw", workspace: "default" }, entries],
-    ]);
-    expect(proof.entriesAtDeletion).toEqual(entries);
-    expect(proof.persistedEntries).toEqual(entries);
-    expect(proof.freshPid).not.toBe(proof.originPid);
-    expect(proof.freshEntries).toEqual(entries);
-    expect(proof.recoveryPreparation).toEqual([
-      ["alpha", { gatewayName: "nemoclaw", workspace: "default" }, entries],
-    ]);
-    expect(proof.restoration).toEqual([
-      ["alpha", entries, { gatewayName: "nemoclaw", workspace: "default" }],
-    ]);
-    expect(proof.recoveryDeletes).toBe(0);
-    expect(proof.markerBeforeResume).toBe(true);
-    expect(proof.markerAfterResume).toBe(false);
-    expect(proof.finalManifest).not.toHaveProperty("rebuildMcpHandoff");
-  }, 120_000);
 
   it("rejects schema-5 before rebuild effects and rechecks under the lifecycle lock (#9203)", async () => {
     const guard = vi
@@ -304,9 +171,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
       { gatewayName: "nemoclaw", workspace: "default" },
       [mcpEntry],
     );
-    expect(
-      harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0],
-    ).toBeLessThan(
+    expect(harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.warnUnpreservedUserManagedFilesSpy.mock.invocationCallOrder[0],
     );
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
@@ -353,25 +218,16 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.session.steps.gateway.status).toBe("complete");
     expect(harness.session.steps.preflight.status).toBe("complete");
     expect(harness.session.steps.sandbox.status).toBe("pending");
-    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
-      "alpha",
-      harness.backupPath,
-      {
-        runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-        targetAgentType: "openclaw",
-      },
-    );
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
-      "alpha",
-      [mcpEntry],
-      { gatewayName: "nemoclaw", workspace: "default" },
-    );
-    expect(
-      harness.removeSandboxRegistryEntryWithReceiptSpy,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n"),
-    ).toContain(
+    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith("alpha", harness.backupPath, {
+      runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+      targetAgentType: "openclaw",
+    });
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    });
+    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "Preserving journaled source registry entry across sandbox recreation",
     );
     expect(harness.applyPresetSpy).not.toHaveBeenCalled();
@@ -722,11 +578,10 @@ describe("rebuildSandbox flow: lifecycle", () => {
       expect.objectContaining({ toolDisclosure: "direct" }),
     );
     expect(harness.session.toolDisclosure).toBe("direct");
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
-      "alpha",
-      [mcpEntry],
-      { gatewayName: "nemoclaw", workspace: "default" },
-    );
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    });
     harness.registryUpdateSpy.mock.calls.forEach(([, update]) => {
       expect(update).not.toHaveProperty("toolDisclosure");
     });
@@ -859,11 +714,10 @@ describe("rebuildSandbox flow: lifecycle", () => {
       expect(harness.session.compatibleEndpointReasoningEffort).toBe("high");
       expect(process.env.NEMOCLAW_REASONING).toBe("false");
       expect(process.env.NEMOCLAW_REASONING_EFFORT).toBe("low");
-      expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
-        "alpha",
-        [mcpEntry],
-        { gatewayName: "nemoclaw", workspace: "default" },
-      );
+      expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
+        gatewayName: "nemoclaw",
+        workspace: "default",
+      });
     } finally {
       restoreEnv();
     }

@@ -649,19 +649,22 @@ export async function assertAuthenticatedMcpToolDiscovery(
     `${options.artifactPrefix}-mcp-tool-discovery-diagnostics.json`,
     buildMcpToolDiscoveryDiagnostics(statusJson, discoveryRequests, options.hostSecret),
   );
-  assert.deepStrictEqual({
-    toolDiscovery: statusJson.toolDiscovery,
-    hostSecretRedacted: !completedStatus.stdout.includes(options.hostSecret),
-  }, {
-    toolDiscovery: {
-      ok: true,
-      count: 2,
-      tools: ["fake_echo", "fake_status"],
-      truncated: false,
-      commandStatus: 0,
+  assert.deepStrictEqual(
+    {
+      toolDiscovery: statusJson.toolDiscovery,
+      hostSecretRedacted: !completedStatus.stdout.includes(options.hostSecret),
     },
-    hostSecretRedacted: true,
-  });
+    {
+      toolDiscovery: {
+        ok: true,
+        count: 2,
+        tools: ["fake_echo", "fake_status"],
+        truncated: false,
+        commandStatus: 0,
+      },
+      hostSecretRedacted: true,
+    },
+  );
   const discoveryProtocolRequests = discoveryRequests.filter(
     (request) =>
       (request.method === "POST" || request.method === "DELETE") && request.path === "/mcp",

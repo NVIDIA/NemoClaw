@@ -31,7 +31,6 @@ import {
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
-import { inspectAgentMcpSources } from "./mcp-bridge-source";
 import { assertMcpAdapterTeardownRuntimeCapabilities } from "./mcp-bridge-runtime-capabilities";
 import { ensureSandboxGatewaySelected, getSandboxOrThrow } from "./mcp-bridge-state";
 import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
@@ -207,11 +206,6 @@ export async function prepareMcpBridgesForRebuild(
   const removedPolicies: McpSourceEntry[] = [];
   try {
     for (const entry of entries) {
-      if (
-        (entry.source === "legacy" || entry.source === "legacy-registry") &&
-        !inspectAgentMcpSources(sandbox, providerRuntimeSelection).native[entry.server]
-      )
-        continue;
       // `/sandbox` may be a retained PVC. Scrub before delete so a replacement
       // Hermes/agent cannot boot with a stale placeholder while its provider
       // is intentionally detached during recreate.

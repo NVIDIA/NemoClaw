@@ -30,13 +30,13 @@ import {
   restoreMcpBridgesAfterRebuild as restoreMcpBridgesAfterRebuildLifecycle,
 } from "./mcp-bridge-rebuild";
 import { removeMcpBridge as removeMcpBridgeLifecycle } from "./mcp-bridge-remove";
-import { migrateMcpBridges, type McpMigrationRebuildIntent } from "./mcp-bridge-migration";
+import { migrateMcpBridges } from "./mcp-bridge-migration";
 import { renderMcpBridgeList, renderMcpBridgeStatus } from "./mcp-bridge-render";
 import { credentialResolutionWarning } from "./mcp-bridge-resolution-probe";
 import { restartMcpBridge as restartMcpBridgeLifecycle } from "./mcp-bridge-restart";
 import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import { inspectSourceBridgeState, joinMcpEntriesToOpenShell } from "./mcp-bridge-source";
-import { getSandboxAgent, getSandboxOrThrow, resolveMcpOperationTarget } from "./mcp-bridge-state";
+import { getSandboxAgent, getSandboxOrThrow } from "./mcp-bridge-state";
 import { buildJsonSummary, statusMcpBridge } from "./mcp-bridge-status";
 import { parseMcpAddArgs, parseMcpUpdateArgs } from "./mcp-bridge-validation";
 
@@ -386,9 +386,7 @@ FLAGS
 export async function dispatchMcpBridgeCommand(
   sandboxName: string,
   actionArgs: string[],
-  dependencies: {
-    rebuildForMigration?: (sandboxName: string, intent: McpMigrationRebuildIntent) => Promise<void>;
-  } = {},
+  dependencies: { rebuildForMigration?: (sandboxName: string) => Promise<void> } = {},
 ): Promise<void> {
   const [subcommand = "list", ...rest] = actionArgs;
   try {
@@ -424,11 +422,9 @@ export async function dispatchMcpBridgeCommand(
       case "list": {
         const { json, rest: listRest } = parseJsonFlag(rest);
         requireNoExtraArgs(listRest, "Usage: nemoclaw <sandbox> mcp list [--json]");
-        const target = resolveMcpOperationTarget(sandboxName);
-        const agent = getSandboxAgent(target.sandbox);
-        const statuses = target.liveIdentity
-          ? await statusMcpBridge(sandboxName, undefined, { operationTarget: target })
-          : await statusMcpBridge(sandboxName);
+        const sandbox = getSandboxOrThrow(sandboxName);
+        const agent = getSandboxAgent(sandbox);
+        const statuses = await statusMcpBridge(sandboxName);
         if (json)
           process.stdout.write(
             `${JSON.stringify(buildJsonSummary(sandboxName, agent, statuses), null, 2)}\n`,
@@ -447,10 +443,9 @@ export async function dispatchMcpBridgeCommand(
         if (tools && server === undefined) {
           throw new McpBridgeError("Pass one MCP server name with --tools.", 2);
         }
-        const target = resolveMcpOperationTarget(sandboxName);
-        const agent = getSandboxAgent(target.sandbox);
+        const sandbox = getSandboxOrThrow(sandboxName);
+        const agent = getSandboxAgent(sandbox);
         const statuses = await statusMcpBridge(sandboxName, server, {
-          ...(target.liveIdentity ? { operationTarget: target } : {}),
           probeCredentialResolution: probe === true || (probe !== false && !tools && !!server),
           discoverTools: tools,
         });

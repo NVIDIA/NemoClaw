@@ -234,9 +234,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain(
       "COPY src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts",
     );
-    expect(dockerfile).toContain(
-      "node /opt/nemoclaw-deepagents-code/generate-config.ts",
-    );
+    expect(dockerfile).toContain("node /opt/nemoclaw-deepagents-code/generate-config.ts");
     expect(dockerfile).not.toContain("langchain-deepagents-code-sandbox-base:latest");
     expect(dockerfile).toContain(
       'timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n ""',

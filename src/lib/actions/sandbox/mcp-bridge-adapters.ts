@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { McpOperationTarget } from "./mcp-bridge-state";
 import type { AgentMcpAdapter } from "../../agent/defs";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
@@ -120,29 +119,8 @@ export function assertAgentMcpTeardownRuntimeCapability(
 export async function reloadOpenClawGatewayAfterMcpMutation(
   sandboxName: string,
   adapters: readonly AgentMcpAdapter[],
-  operationTarget?: McpOperationTarget,
 ): Promise<void> {
-  if (adapters.includes("openclaw-config")) {
-    if (operationTarget) await reloadOpenClawGateway(sandboxName, operationTarget);
-    else await reloadOpenClawGateway(sandboxName);
-  }
-}
-
-function assertAdapterOperationTarget(
-  sandboxName: string,
-  runtimeSelection: McpProviderInspectionRuntimeSelection,
-  target?: McpOperationTarget,
-): void {
-  if (!target?.liveIdentity) return;
-  if (
-    target.sandbox.name !== sandboxName ||
-    target.runtimeSelection.gatewayName !== runtimeSelection.gatewayName ||
-    target.runtimeSelection.workspace !== runtimeSelection.workspace ||
-    target.runtimeSelection.localTlsDir !== runtimeSelection.localTlsDir
-  ) {
-    throw new Error("MCP adapter mutation does not match its verified operation target.");
-  }
-  target.liveIdentity.assertCurrent();
+  if (adapters.includes("openclaw-config")) await reloadOpenClawGateway(sandboxName);
 }
 
 export function registerAgentAdapter(
@@ -155,10 +133,8 @@ export function registerAgentAdapter(
     replaceExisting?: boolean;
     teardownRollback?: boolean;
     credentialRevision?: McpAttachedCredentialRevision;
-    operationTarget?: McpOperationTarget;
   } = {},
 ): void {
-  assertAdapterOperationTarget(sandboxName, runtimeSelection, options.operationTarget);
   switch (adapter) {
     case "openclaw-config":
       registerOpenClawAdapter(
@@ -168,7 +144,6 @@ export function registerAgentAdapter(
         envValues,
         options.replaceExisting === true,
         options.credentialRevision,
-        ...(options.operationTarget ? ([options.operationTarget] as const) : []),
       );
       return;
     case "hermes-config":
@@ -203,11 +178,7 @@ export async function registerAgentAdapterAtCurrentCredentialRevision(
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string>,
   initialCredentialRevision: McpAttachedCredentialRevision,
-  options: {
-    replaceExisting?: boolean;
-    teardownRollback?: boolean;
-    operationTarget?: McpOperationTarget;
-  } = {},
+  options: { replaceExisting?: boolean; teardownRollback?: boolean } = {},
 ): Promise<McpAttachedCredentialRevision> {
   const timeoutSeconds = Number.parseInt(
     process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
@@ -224,7 +195,6 @@ export async function registerAgentAdapterAtCurrentCredentialRevision(
       replaceExisting,
       teardownRollback: options.teardownRollback === true,
       credentialRevision,
-      ...(options.operationTarget ? { operationTarget: options.operationTarget } : {}),
     });
     let candidateRevision: McpAttachedCredentialRevision | undefined;
     let stableObservations = 0;
@@ -276,7 +246,6 @@ export function unregisterAgentAdapter(
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
 ): AdapterRemovalOutcome {
-  assertAdapterOperationTarget(sandboxName, runtimeSelection, options.operationTarget);
   switch (adapter) {
     case "openclaw-config":
       unregisterOpenClawAdapter(sandboxName, entry, runtimeSelection, options);

@@ -53,7 +53,6 @@ import {
   inspectLegacyBridgeState,
   inspectPolicyOnlyMcpEntry,
   inspectSourceBridgeState,
-  removeLegacyAgentMcpEntry,
 } from "./mcp-bridge-source";
 
 const sandbox = {
@@ -67,7 +66,6 @@ const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
 describe("source-backed MCP inventory", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.configRoot = "/sandbox";
     mocks.capturePolicy.mockReturnValue(`version: 1
 network_policies:
   mcp_bridge_github:
@@ -94,40 +92,18 @@ network_policies:
   });
 
   it.each([
-    {
-      agent: "langchain-deepagents-code",
-      directory: ".deepagents",
-      serverMap: "mcpServers",
-      file: ".mcp.json",
-      source: "native",
-      usesYaml: false,
-    },
-    {
-      agent: "langchain-deepagents-code",
-      directory: ".deepagents",
-      serverMap: "mcpServers",
-      file: ".nemoclaw-mcp.json",
-      source: "legacy",
-      usesYaml: false,
-    },
-    {
-      agent: "hermes",
-      directory: ".hermes",
-      serverMap: "mcp_servers",
-      file: "config.yaml",
-      source: "native",
-      usesYaml: true,
-    },
+    ["langchain-deepagents-code", ".deepagents", ".mcp.json", "mcpServers", "native"],
+    ["langchain-deepagents-code", ".deepagents", ".nemoclaw-mcp.json", "mcpServers", "legacy"],
+    ["hermes", ".hermes", "config.yaml", "mcp_servers", "native"],
   ])(
-    "reads $agent $source MCP sources from literal filesystem paths",
-    ({ agent, directory, serverMap, file, source, usesYaml }) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nemoclaw-mcp-source-"quoted"-'));
+    "reads %s from literal paths without sandbox Python packages (%s/%s)",
+    (agent, directory, file, serverMap, source) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-source-"quoted"-'));
       mocks.configRoot = root;
       try {
-        const configDir = path.join(root, directory);
-        fs.mkdirSync(configDir);
+        fs.mkdirSync(path.join(root, directory));
         fs.writeFileSync(
-          path.join(configDir, file),
+          path.join(root, directory, file),
           JSON.stringify({
             [serverMap]: {
               github: {
@@ -139,7 +115,7 @@ network_policies:
           { mode: 0o600 },
         );
         mocks.executeSandboxCommand.mockImplementation((_name: string, command: string) => {
-          const program = command.split("<<'PY'\n")[1]?.split("\nPY")[0] ?? "";
+          const program = command.split("<<'PY'\n")[1].split("\nPY")[0];
           const result = spawnSync("python3", ["-I", "-S", "-"], {
             cwd: root,
             input: program,
@@ -148,22 +124,13 @@ network_policies:
           });
           return { status: result.status, stdout: result.stdout, stderr: result.stderr };
         });
-
         const observed = inspectAgentMcpSources({ ...sandbox, agent }, runtimeSelection);
-        expect(observed).toEqual({
-          native: {},
-          legacy: {},
-          [source]: {
-            github: {
-              server: "github",
-              agent,
-              adapter: usesYaml ? "hermes-config" : "deepagents-config",
-              url: "https://api.githubcopilot.com/mcp/",
-              env: ["GITHUB_TOKEN"],
-              policyName: "mcp-bridge-github",
-              source,
-            },
-          },
+        expect(observed[source as "native" | "legacy"].github).toMatchObject({
+          server: "github",
+          agent,
+          source,
+          url: "https://api.githubcopilot.com/mcp/",
+          env: ["GITHUB_TOKEN"],
         });
       } finally {
         mocks.configRoot = "/sandbox";
@@ -171,247 +138,6 @@ network_policies:
       }
     },
   );
-
-  it("reads historical Hermes YAML with no MCP configuration", () => {
-    mocks.executeSandboxCommand.mockReturnValue({
-      status: 0,
-      stdout: "_config_version: 12\nplatforms:\n  discord:\n    enabled: true\n",
-      stderr: "",
-    });
-
-    expect(inspectAgentMcpSources({ ...sandbox, agent: "hermes" }, runtimeSelection)).toEqual({
-      native: {},
-      legacy: {},
-    });
-  });
-
-  it("removes the exact DeepAgents legacy key while preserving unrelated and native configuration", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nemoclaw-mcp-cleanup-"quoted"-'));
-    mocks.configRoot = root;
-    try {
-      const directory = path.join(root, ".deepagents");
-      fs.mkdirSync(directory);
-      const legacyPath = path.join(directory, ".nemoclaw-mcp.json");
-      const nativePath = path.join(directory, ".mcp.json");
-      const retained = { command: "fixture-command", args: ["preserve"] };
-      const nativeText = '{"mcpServers":{"native_server":{"url":"https://native.example/mcp"}}}\n';
-      fs.writeFileSync(
-        legacyPath,
-        JSON.stringify({
-          mcpServers: {
-            "github_tools-1": { url: "https://api.githubcopilot.com/mcp/" },
-            unrelated_server: retained,
-          },
-          unrelated: { preserved: true },
-        }),
-        { mode: 0o600 },
-      );
-      fs.writeFileSync(nativePath, nativeText, { mode: 0o600 });
-      mocks.executeSandboxCommand.mockImplementation((_name: string, command: string) => {
-        const program = command.split("<<'PY'\n")[1]?.split("\nPY")[0] ?? "";
-        const result = spawnSync("python3", ["-I", "-S", "-"], {
-          cwd: root,
-          input: program,
-          encoding: "utf8",
-          timeout: 10_000,
-        });
-        return { status: result.status, stdout: result.stdout, stderr: result.stderr };
-      });
-
-      removeLegacyAgentMcpEntry(
-        { ...sandbox, agent: "langchain-deepagents-code" },
-        {
-          server: "github_tools-1",
-          agent: "langchain-deepagents-code",
-          adapter: "deepagents-config",
-          url: "https://api.githubcopilot.com/mcp/",
-          env: [],
-          policyName: "mcp-bridge-github-tools-1",
-          source: "legacy",
-        },
-        runtimeSelection,
-      );
-
-      expect(JSON.parse(fs.readFileSync(legacyPath, "utf8"))).toEqual({
-        mcpServers: { unrelated_server: retained },
-        unrelated: { preserved: true },
-      });
-      expect(fs.readFileSync(nativePath, "utf8")).toBe(nativeText);
-      expect(fs.statSync(legacyPath).mode & 0o777).toBe(0o600);
-      expect(fs.readdirSync(directory).sort()).toEqual([".mcp.json", ".nemoclaw-mcp.json"]);
-    } finally {
-      mocks.configRoot = "/sandbox";
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("reads Hermes MCP URL and credential references from YAML merge defaults", () => {
-    mocks.executeSandboxCommand.mockReturnValue({
-      status: 0,
-      stdout: `defaults: &defaults
-  url: https://api.githubcopilot.com/mcp/
-  headers:
-    Authorization: Bearer openshell:resolve:env:v42_GITHUB_TOKEN
-mcp_servers:
-  github:
-    <<: *defaults
-`,
-      stderr: "",
-    });
-
-    expect(
-      inspectAgentMcpSources({ ...sandbox, agent: "hermes" }, runtimeSelection).native.github,
-    ).toMatchObject({
-      url: "https://api.githubcopilot.com/mcp/",
-      env: ["GITHUB_TOKEN"],
-      source: "native",
-    });
-  });
-
-  it("rejects unresolved Hermes YAML tags without exposing their contents", () => {
-    const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
-    mocks.executeSandboxCommand.mockReturnValue({
-      status: 0,
-      stdout: `mcp_servers:
-  github: !unresolved-tag-secret
-    url: https://api.githubcopilot.com/mcp/
-    headers:
-      Authorization: Bearer openshell:resolve:env:GITHUB_TOKEN
-`,
-      stderr: "",
-    });
-
-    expect(() => inspectAgentMcpSources({ ...sandbox, agent: "hermes" }, runtimeSelection)).toThrow(
-      /^Hermes MCP source inspection returned invalid YAML\.$/,
-    );
-    expect(warning).not.toHaveBeenCalled();
-  });
-
-  it("preserves Hermes YAML key types before projecting server and header names", () => {
-    mocks.executeSandboxCommand.mockReturnValue({
-      status: 0,
-      stdout: `mcp_servers:
-  false:
-    url: https://boolean.example.com/mcp/
-  null:
-    url: https://null.example.com/mcp/
-  42:
-    url: https://number.example.com/mcp/
-  "true":
-    url: https://api.githubcopilot.com/mcp/
-    headers:
-      false: ignored-boolean-header
-      null: ignored-null-header
-      42: ignored-number-header
-      Authorization: Bearer openshell:resolve:env:v42_GITHUB_TOKEN
-`,
-      stderr: "",
-    });
-
-    const observed = inspectAgentMcpSources({ ...sandbox, agent: "hermes" }, runtimeSelection);
-    expect(Object.keys(observed.native)).toEqual(["true"]);
-    expect(observed.native.true).toMatchObject({
-      url: "https://api.githubcopilot.com/mcp/",
-      env: ["GITHUB_TOKEN"],
-    });
-  });
-
-  it.each([
-    ["Bearer openshell:resolve:env:GITHUB_TOKEN", ["GITHUB_TOKEN"]],
-    ["Bearer openshell:resolve:env:v42_GITHUB_TOKEN", ["GITHUB_TOKEN"]],
-    ["Bearer openshell:resolve:env:v123_lowercase_key", ["lowercase_key"]],
-    ["Bearer openshell:resolve:env:_TOKEN", ["_TOKEN"]],
-    ["Bearer openshell:resolve:env:4TOKEN", []],
-    ["bearer openshell:resolve:env:GITHUB_TOKEN", []],
-    ["Bearer not-a-reference-secret", []],
-  ])("projects only Hermes credential references from %s", (authorization, env) => {
-    mocks.executeSandboxCommand.mockReturnValue({
-      status: 0,
-      stdout: JSON.stringify({
-        mcp_servers: {
-          github: {
-            url: "https://api.githubcopilot.com/mcp/",
-            headers: { aUtHoRiZaTiOn: authorization },
-          },
-        },
-      }),
-      stderr: "",
-    });
-
-    const observed = inspectAgentMcpSources({ ...sandbox, agent: "hermes" }, runtimeSelection);
-    expect(observed.native.github.env).toEqual(env);
-    expect(JSON.stringify(observed)).not.toContain("not-a-reference-secret");
-  });
-
-  it("rejects malformed Hermes YAML without exposing configuration contents", () => {
-    const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
-    mocks.executeSandboxCommand.mockReturnValue({
-      status: 0,
-      stdout: "mcp_servers: {github: [\nprivate_token: malformed-yaml-secret\n",
-      stderr: "",
-    });
-
-    expect(() => inspectAgentMcpSources({ ...sandbox, agent: "hermes" }, runtimeSelection)).toThrow(
-      /^Hermes MCP source inspection returned invalid YAML\.$/,
-    );
-    expect(warning).not.toHaveBeenCalled();
-  });
-
-  it("rejects oversized Hermes output before attempting YAML parsing", () => {
-    mocks.executeSandboxCommand.mockReturnValue({
-      status: 0,
-      stdout: `mcp_servers: [${"oversized-secret".repeat(20_000)}`,
-      stderr: "",
-    });
-
-    expect(() => inspectAgentMcpSources({ ...sandbox, agent: "hermes" }, runtimeSelection)).toThrow(
-      /^Agent MCP source inspection returned oversized output\.$/,
-    );
-  });
-
-  it("bounds Hermes source records before dropping invalid server entries", () => {
-    mocks.executeSandboxCommand.mockReturnValue({
-      status: 0,
-      stdout: JSON.stringify({
-        mcp_servers: Object.fromEntries(
-          Array.from({ length: 65 }, (_, index) => [String(index), { url: "invalid" }]),
-        ),
-      }),
-      stderr: "",
-    });
-
-    expect(() => inspectAgentMcpSources({ ...sandbox, agent: "hermes" }, runtimeSelection)).toThrow(
-      /^Agent MCP source inspection returned an invalid server collection\.$/,
-    );
-  });
-
-  it("does not count unsupported Hermes entries toward the remote server limit", () => {
-    mocks.executeSandboxCommand.mockReturnValue({
-      status: 0,
-      stdout: JSON.stringify({
-        mcp_servers: {
-          ...Object.fromEntries(
-            Array.from({ length: 65 }, (_, index) => [
-              `stdio${index}`,
-              { command: "local-mcp-server" },
-            ]),
-          ),
-          missing: null,
-          nonrecord: "local-mcp-server",
-          invalid: { url: 42 },
-          github: {
-            url: "https://api.githubcopilot.com/mcp/",
-            headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
-          },
-        },
-      }),
-      stderr: "",
-    });
-
-    const observed = inspectAgentMcpSources({ ...sandbox, agent: "hermes" }, runtimeSelection);
-    expect(Object.keys(observed.native)).toEqual(["github"]);
-    expect(observed.native.github.env).toEqual(["GITHUB_TOKEN"]);
-  });
 
   it("joins native agent configuration with live policy and provider state", async () => {
     mocks.executeSandboxCommand.mockReturnValue({
@@ -493,14 +219,7 @@ mcp_servers:
     mocks.executeSandboxCommand.mockImplementation((_name: string, command: string) => ({
       status: 0,
       stdout: command.includes("/sandbox/.hermes/config.yaml")
-        ? JSON.stringify({
-            mcp_servers: {
-              github: {
-                url: "https://api.githubcopilot.com/mcp/",
-                headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
-              },
-            },
-          })
+        ? "mcp_servers:\n  github:\n    url: https://api.githubcopilot.com/mcp/\n    headers:\n      Authorization: Bearer openshell:resolve:env:GITHUB_TOKEN\n"
         : "[]",
       stderr: "",
     }));

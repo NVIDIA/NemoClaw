@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -675,44 +675,6 @@ export function createDockerOperationAuthority(
   });
   bindings.set(authority, binding);
   return authority;
-}
-
-/** Preserve managed config transaction bounds on the same frozen Docker authority. */
-export function captureDockerOperationCommand(
-  authority: DockerOperationAuthority,
-  args: readonly string[],
-  options: { input?: Buffer; timeoutMs: number; maxOutputBytes?: number },
-): SpawnSyncReturns<Buffer> {
-  const binding = bindings.get(authority);
-  const outputBytes = options.maxOutputBytes ?? MAX_DOCKER_OUTPUT_BYTES;
-  if (
-    !binding ||
-    !Number.isSafeInteger(options.timeoutMs) ||
-    options.timeoutMs <= 0 ||
-    !Number.isSafeInteger(outputBytes) ||
-    outputBytes <= 0 ||
-    outputBytes > 2 * 1024 * 1024 ||
-    (options.input !== undefined &&
-      (!Buffer.isBuffer(options.input) || options.input.length > 16 * 1024 * 1024))
-  ) {
-    throw new Error(
-      "Docker operation capture requires owned authority and bounded input, output, and time.",
-    );
-  }
-  const normalized = fixedDockerSpawnArguments(args);
-  authority.assertAuthority();
-  const result = spawnSync(binding.executable, [...binding.endpointArgs, ...normalized], {
-    cwd: binding.cwd,
-    env: fixedDockerSpawnEnvironment(normalized, binding.commandEnvironment, undefined),
-    encoding: null,
-    maxBuffer: outputBytes,
-    shell: false,
-    stdio: [options.input ? "pipe" : "ignore", "pipe", "pipe"],
-    ...(options.input ? { input: Buffer.from(options.input) } : {}),
-    timeout: options.timeoutMs,
-  });
-  authority.assertAuthority();
-  return result;
 }
 
 /** Prefix streamed Docker commands with the endpoint owned by this qualified authority. */

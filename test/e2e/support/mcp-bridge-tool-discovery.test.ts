@@ -565,11 +565,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
 
   it("retries one connection failure before any request reaches the fixture", () => {
     expect(
-      shouldRetryMcpToolDiscoveryTransportFailure(
-        { ok: false, failureClass: "connection" },
-        [],
-        1,
-      ),
+      shouldRetryMcpToolDiscoveryTransportFailure({ ok: false, failureClass: "connection" }, [], 1),
     ).toBe(true);
   });
 
@@ -588,11 +584,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
 
   it("does not retry a classified product or endpoint failure", () => {
     expect(
-      shouldRetryMcpToolDiscoveryTransportFailure(
-        { ok: false, failureClass: "protocol" },
-        [],
-        1,
-      ),
+      shouldRetryMcpToolDiscoveryTransportFailure({ ok: false, failureClass: "protocol" }, [], 1),
     ).toBe(false);
   });
 });
@@ -623,45 +615,48 @@ describe("authenticated MCP discovery restart retry", () => {
     ["metadata-bearing", { sessionId: SESSION_ID, protocolVersion: PROTOCOL_VERSION }],
     ["wrong-path", { path: "/health", responseStatus: 404 }],
     ["body-bearing", { body: "unexpected readiness body" }],
-  ])("does not restart after a %s HEAD request arrived after the offset", async (_case, override) => {
-    const readinessHead: FakeMcpRequest = {
-      method: "HEAD",
-      path: "/mcp",
-      auth: "",
-      body: "",
-      sessionId: "",
-      protocolVersion: "",
-      responseStatus: 405,
-    };
-    const fakeMcp = fakeDiscoveryServer([], [readinessHead, { ...readinessHead, ...override }]);
-    const failure = new Error("discovery failed after observed HEAD request");
-    const assertDiscovery = vi.fn().mockRejectedValueOnce(failure);
-    const restart = vi.fn().mockResolvedValueOnce(undefined);
-    const artifacts = discoveryArtifacts();
+  ])(
+    "does not restart after a %s HEAD request arrived after the offset",
+    async (_case, override) => {
+      const readinessHead: FakeMcpRequest = {
+        method: "HEAD",
+        path: "/mcp",
+        auth: "",
+        body: "",
+        sessionId: "",
+        protocolVersion: "",
+        responseStatus: 405,
+      };
+      const fakeMcp = fakeDiscoveryServer([], [readinessHead, { ...readinessHead, ...override }]);
+      const failure = new Error("discovery failed after observed HEAD request");
+      const assertDiscovery = vi.fn().mockRejectedValueOnce(failure);
+      const restart = vi.fn().mockResolvedValueOnce(undefined);
+      const artifacts = discoveryArtifacts();
 
-    await expect(
-      assertAuthenticatedMcpDiscoveryWithOneRestart(
-        fakeMcp,
-        discoveryRestartOptions(restart, artifacts, { observationOffset: 1 }),
-        { assertDiscovery },
-      ),
-    ).rejects.toBe(failure);
+      await expect(
+        assertAuthenticatedMcpDiscoveryWithOneRestart(
+          fakeMcp,
+          discoveryRestartOptions(restart, artifacts, { observationOffset: 1 }),
+          { assertDiscovery },
+        ),
+      ).rejects.toBe(failure);
 
-    expect(restart).not.toHaveBeenCalled();
-    expect(artifacts.writeJson).toHaveBeenCalledWith(DISCOVERY_RETRY_ARTIFACT, {
-      schemaVersion: 1,
-      attempts: [
-        {
-          attempt: 1,
-          requestCount: 1,
-          classification: "request-observed",
-          restartDecision: "no-restart",
-          outcome: "failed",
-        },
-      ],
-      finalOutcome: "failed-no-restart",
-    });
-  });
+      expect(restart).not.toHaveBeenCalled();
+      expect(artifacts.writeJson).toHaveBeenCalledWith(DISCOVERY_RETRY_ARTIFACT, {
+        schemaVersion: 1,
+        attempts: [
+          {
+            attempt: 1,
+            requestCount: 1,
+            classification: "request-observed",
+            restartDecision: "no-restart",
+            outcome: "failed",
+          },
+        ],
+        finalOutcome: "failed-no-restart",
+      });
+    },
+  );
 
   it("does not retry after the fixture received a request", () => {
     expect(shouldRetryMcpDiscoveryAfterRestart([request("initialize")])).toBe(false);

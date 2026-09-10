@@ -1571,11 +1571,7 @@ async function runSnapshotRestoreUnlocked(
           throw new Error(`target '${targetSandbox}' is no longer registered`);
         }
         const runtimeSelection = getMcpProviderInspectionRuntimeSelection(currentTarget);
-        restoreDeepAgentsNativeMcpConfig(
-          targetSandbox,
-          managedDeepAgentsEntries,
-          runtimeSelection,
-        );
+        restoreDeepAgentsNativeMcpConfig(targetSandbox, managedDeepAgentsEntries, runtimeSelection);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         const recoveryCommand = deepAgentsNativeMcpConfigRecoveryCommand(targetSandbox);

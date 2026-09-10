@@ -62,9 +62,7 @@ export function renderMcpBridgeStatus(
       console.log(`    trusted private host: ${status.trustedPrivateTarget.host}`);
       console.log(`    private address pins: ${status.trustedPrivateTarget.state}`);
     }
-    console.log(
-      `    provider: ${status.provider.name ?? "(none)"}`,
-    );
+    console.log(`    provider: ${status.provider.name ?? "(none)"}`);
     console.log(
       `    provider attached: ${status.provider.attached === null ? "unknown" : status.provider.attached ? "yes" : "no"}`,
     );

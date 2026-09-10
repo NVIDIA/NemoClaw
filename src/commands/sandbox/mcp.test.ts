@@ -25,14 +25,9 @@ const rootDir = process.cwd();
 
 describe("sandbox MCP oclif command", () => {
   it("runs migration rebuild through the typed public command boundary", async () => {
-    const intent = {
-      sandboxName: "alpha",
-      entries: [],
-      runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
-    };
     expect(mocks.moduleLoaded).not.toHaveBeenCalled();
     mocks.dispatchMcpBridgeCommand.mockImplementationOnce(async (name, _args, dependencies) =>
-      dependencies.rebuildForMigration?.(name, intent),
+      dependencies.rebuildForMigration?.(name),
     );
 
     await SandboxMcpCommand.run(["alpha", "migrate", "--apply"], rootDir);
@@ -46,7 +41,7 @@ describe("sandbox MCP oclif command", () => {
     expect(mocks.rebuildSandbox).toHaveBeenCalledWith(
       "alpha",
       { yes: true },
-      { throwOnError: true, mcpMigration: intent },
+      { throwOnError: true },
     );
   });
 });

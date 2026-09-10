@@ -490,8 +490,6 @@ jobs:
 
       - name: Run package-contract and type checks
         uses: ./.trusted-ci-actions/.github/actions/ci-build-typecheck
-        env:
-          NODE_OPTIONS: --max-old-space-size=8192
 
   installer-integration:
     needs: [changes, openshell-sdk-package]

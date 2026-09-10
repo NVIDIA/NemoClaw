@@ -109,5 +109,4 @@ describe("global cli action facade", () => {
 
     expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledWith();
   });
-
 });

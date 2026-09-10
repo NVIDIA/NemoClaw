@@ -24,7 +24,6 @@ import {
   buildCredentialWindowChildScript,
   buildCredentialWindowOneShotScript,
   buildCredentialWindowProviderUpdateArgs,
-  captureCredentialWindowFailureDiagnostics,
   CREDENTIAL_WINDOW_ENV_NAME,
   CREDENTIAL_WINDOW_EXPIRY_DELAY_MS,
   CREDENTIAL_WINDOW_PATHS,
@@ -498,7 +497,6 @@ test(
     );
     let expiryChildRevision = "";
     let expiryChildResult: ShellProbeResult | undefined;
-    let expiryPhaseCompleted = false;
     let restoredRevision = "";
     try {
       expiryChildRevision = await waitForReadyRevision(sandbox);
@@ -573,15 +571,7 @@ test(
           initialSecret,
         ).seen,
       ).toBe(false);
-      expiryPhaseCompleted = true;
     } finally {
-      await captureCredentialWindowFailureDiagnostics(host, {
-        phaseCompleted: expiryPhaseCompleted,
-        sandboxName: SANDBOX_NAME,
-        artifactName: "credential-window-expiry-failure-proxy-logs",
-        env: openshellEnv(),
-        redactionValues: [COMPATIBLE_KEY, ...allSecrets],
-      });
       await writeControl(
         sandbox,
         CREDENTIAL_WINDOW_STEPS.stop,
@@ -641,7 +631,6 @@ test(
     );
     let oldChildRevision = "";
     let oldChildResult: ShellProbeResult | undefined;
-    let rotationPhaseCompleted = false;
     let restartedRevision = "";
     const observedRevisions = [restoredRevision];
     try {
@@ -655,6 +644,7 @@ test(
       }
       expect(new Set(observedRevisions).size).toBe(CREDENTIAL_WINDOW_ROTATION_COUNT + 1);
       const currentRevision = observedRevisions.at(-1)!;
+      expect(currentRevision).not.toBe(oldChildRevision);
       await artifacts.writeJson("credential-window-revisions.json", {
         expiryAtMs,
         expiryRevision,
@@ -689,22 +679,19 @@ test(
         revision: currentRevision,
         status: 200,
       });
-      const freshCredentialEvidence = requestEvidence(fakeMcp, freshAfterEvictionId, rotatedSecret);
-      expect(freshCredentialEvidence).toEqual({
+      const currentCredential = requestEvidence(fakeMcp, freshAfterEvictionId, rotatedSecret);
+      expect(currentCredential).toEqual({
         seen: true,
         credentialRewritten: true,
         placeholderAbsent: true,
       });
-      // OpenShell 0.0.106 retains revision membership for an unchanged provider
-      // identity after its old resolver ages out. The old process must therefore
-      // resolve the same current credential as a fresh process.
       expect(
         requestEvidence(
           fakeMcp,
           credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction),
           rotatedSecret,
         ),
-      ).toEqual(freshCredentialEvidence);
+      ).toEqual(currentCredential);
 
       progress.phase("prove key and bridge removal revoke access");
       await updateProviderCredential(
@@ -795,8 +782,7 @@ test(
       ).toBe(false);
 
       progress.phase("re-add the bridge and keep the old process revoked");
-      // The isolated fixture owns this detached provider. Normal MCP removal
-      // preserves it, so explicitly delete it before creating the replacement.
+      // Replace the detached fixture-owned provider so the new identity revokes the old child.
       const deleteRetainedProvider = await host.command(
         host.openshellCommandPath,
         ["provider", "delete", providerName],
@@ -866,15 +852,7 @@ test(
           restartSecret,
         ).seen,
       ).toBe(false);
-      rotationPhaseCompleted = true;
     } finally {
-      await captureCredentialWindowFailureDiagnostics(host, {
-        phaseCompleted: rotationPhaseCompleted,
-        sandboxName: SANDBOX_NAME,
-        artifactName: "credential-window-rotation-failure-proxy-logs",
-        env: openshellEnv(),
-        redactionValues: [COMPATIBLE_KEY, ...allSecrets],
-      });
       await writeControl(
         sandbox,
         CREDENTIAL_WINDOW_STEPS.stop,

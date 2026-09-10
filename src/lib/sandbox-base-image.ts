@@ -49,8 +49,7 @@ export * from "./sandbox-base-image/types";
 
 const BUILD_FAILURE_DIAGNOSTIC_LIMIT = 8_000;
 const BUILD_FAILURE_TRUNCATED_PREFIX = "[diagnostic truncated]\n";
-const UNSAFE_BUILD_DIAGNOSTIC_CONTROLS =
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu;
+const UNSAFE_BUILD_DIAGNOSTIC_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu;
 
 function stripBuildDiagnosticControls(value: string): string {
   return stripVTControlCharacters(value).replace(UNSAFE_BUILD_DIAGNOSTIC_CONTROLS, "");
@@ -67,9 +66,7 @@ function retainBuildDiagnosticTails(streams: readonly string[]): string {
     budgets[stream.index] = budget;
     remaining -= budget;
   });
-  return streams
-    .map((stream, index) => stream.slice(-budgets[index]!))
-    .join("\n");
+  return streams.map((stream, index) => stream.slice(-budgets[index]!)).join("\n");
 }
 
 /**
@@ -107,9 +104,10 @@ export function formatBuildFailureDiagnostics(buildResult: {
     return diagnostics;
   });
   const diagnostics = stripBuildDiagnosticControls(sanitizedStreams.join("\n"));
-  const retainedDiagnostics = diagnostics.length > BUILD_FAILURE_DIAGNOSTIC_LIMIT
-    ? `${BUILD_FAILURE_TRUNCATED_PREFIX}${retainBuildDiagnosticTails(sanitizedStreams)}`
-    : diagnostics;
+  const retainedDiagnostics =
+    diagnostics.length > BUILD_FAILURE_DIAGNOSTIC_LIMIT
+      ? `${BUILD_FAILURE_TRUNCATED_PREFIX}${retainBuildDiagnosticTails(sanitizedStreams)}`
+      : diagnostics;
   return stripBuildDiagnosticControls(retainedDiagnostics);
 }
 
@@ -589,10 +587,7 @@ export function resolveSandboxBaseImage(
       if (resolved) return finish(resolved);
     }
 
-    if (
-      allowLocalFallback &&
-      baseImageInputsChangedSinceMain(rootDir, env, inputPaths)
-    ) {
+    if (allowLocalFallback && baseImageInputsChangedSinceMain(rootDir, env, inputPaths)) {
       return resolveChangedInputs();
     }
 

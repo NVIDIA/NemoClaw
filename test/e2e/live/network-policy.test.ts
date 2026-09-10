@@ -353,7 +353,7 @@ test(
     const outputPath = path.join(exportDirectory, "config.yaml");
     const exported = await runNemoclaw(
       host,
-      ["config", "export", SANDBOX_NAME, "--output", outputPath],
+      ["config", "export", SANDBOX_NAME, "--output", outputPath, "--json"],
       { artifactName: "config-export-live-success", redactionValues: [apiKey] },
     );
     expect(exported.exitCode, text(exported)).toBe(0);
@@ -364,9 +364,9 @@ test(
     expect(document.spec.sandboxes[0].runtime.image.ref).toBe(
       entry.workload?.kind === "managed-image" ? entry.workload.reference : null,
     );
-    expect(document.spec.inferenceProviders[0].endpoint).toBe(
-      requireHostedInferenceConfig(secrets).endpointUrl,
-    );
+    const exportedProvider = document.spec.inferenceProviders[0];
+    const exportedEndpoint = "endpoint" in exportedProvider ? exportedProvider.endpoint : undefined;
+    expect(exportedEndpoint).toBe(requireHostedInferenceConfig(secrets).endpointUrl);
     expect(document.spec.sandboxes[0].network.policy.explicit).toEqual(
       policy.ok ? YAML.parse(policy.value.document) : null,
     );
@@ -397,7 +397,7 @@ test(
     await artifacts.writeJson("config-export-live-evidence.json", {
       sandboxName: SANDBOX_NAME,
       image: document.spec.sandboxes[0].runtime.image.ref,
-      endpoint: document.spec.inferenceProviders[0].endpoint,
+      endpoint: exportedEndpoint,
       effectivePolicyMatches: true,
       identityDriftPreventedPublication: true,
     });

@@ -9,7 +9,6 @@ import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
-import type { McpMigrationRebuildIntent } from "./mcp-bridge-migration";
 
 export interface RebuildSandboxExecutionOptions {
   throwOnError?: boolean;
@@ -17,8 +16,6 @@ export interface RebuildSandboxExecutionOptions {
   recoveryManifest?: sandboxState.RebuildManifest;
   /** Per-row capability granted only after explicit legacy managed-image confirmation. */
   allowLegacyManagedImageRecovery?: boolean;
-  /** Complete validated input from explicit MCP migration, never a public flag. */
-  mcpMigration?: McpMigrationRebuildIntent;
 }
 
 function failPreparedRecoveryPreDelete(

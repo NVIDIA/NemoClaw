@@ -8,16 +8,11 @@ import {
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
-import {
-  assertGeneratedPolicyMutationSafe,
-  getPolicyPresence,
-  removeGeneratedPolicy,
-} from "./mcp-bridge-policy";
-import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { removeGeneratedPolicy } from "./mcp-bridge-policy";
 import {
   detachProvider,
+  getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
-  inspectMcpProviderAttachments,
   providerMatchesManagedCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
@@ -25,7 +20,7 @@ import {
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
   getSandboxAgent,
-  resolveMcpOperationTarget,
+  getSandboxOrThrow,
 } from "./mcp-bridge-state";
 import { inspectSourceBridgeState } from "./mcp-bridge-source";
 import {
@@ -43,14 +38,9 @@ export async function removeMcpBridge(
     assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:remove");
     validateSandboxName(sandboxName);
     validateMcpServerName(server);
-    const target = resolveMcpOperationTarget(sandboxName);
-    const { sandbox, runtimeSelection } = target;
-    const operationTarget = target.liveIdentity ? target : undefined;
-    const observed = await inspectSourceBridgeState(
-      sandbox,
-      runtimeSelection,
-      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
-    );
+    const sandbox = getSandboxOrThrow(sandboxName);
+    const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+    const observed = await inspectSourceBridgeState(sandbox, runtimeSelection);
     if (Object.keys(observed.sources.legacy).length > 0) {
       throw new McpBridgeError(
         `Legacy MCP agent configuration requires explicit migration. Run \`nemoclaw ${sandboxName} mcp migrate\` first.`,
@@ -68,110 +58,71 @@ export async function removeMcpBridge(
       return;
     }
 
-    assertGeneratedPolicyMutationSafe(sandboxName, entry);
     await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
     const adapter = isAgentMcpAdapter(entry.adapter)
       ? entry.adapter
       : getBridgeAdapter(getSandboxAgent(sandbox));
 
     assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter, runtimeSelection);
-    const envValues = resolvePersistedCredentialEnvForRedaction(entry.env);
-    let preservedProvider: string | undefined;
-    try {
-      let detachExactProvider = false;
-      const policyPresent = getPolicyPresence(
-        sandboxName,
-        entry,
-        runtimeSelection,
-        ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
-      );
-      if (policyPresent === null) {
-        throw new McpBridgeError("Could not prove the current generated MCP policy state.");
-      }
-      // Capture detach authority before removing the policy binding. OpenShell
-      // rejects detach while that policy still references the provider.
-      if (policyPresent && entry.providerName) {
-        const provider = await inspectMcpProvider(entry.providerName, runtimeSelection);
-        const exact =
-          !!entry.providerId &&
-          providerMatchesManagedCredential(provider, entry.env[0], entry.providerId, {
-            allowLegacyGeneric: true,
-          });
-        if (exact) {
-          detachExactProvider = true;
-        } else if (provider.exists !== false) {
-          throw new McpBridgeError(
-            `Provider '${entry.providerName}' could not be proven as the current exact MCP provider and was preserved.`,
-          );
-        }
-        if (provider.exists !== false) preservedProvider = entry.providerName;
-      }
-      if (policyPresent)
-        removeGeneratedPolicy(sandboxName, entry, {
-          runtimeSelection,
-          ...(operationTarget ? { operationTarget } : {}),
-        });
-      if (detachExactProvider) {
-        operationTarget?.liveIdentity?.assertCurrent();
-        const outcome = await detachProvider(sandboxName, entry, {
-          allowLegacyGeneric: true,
-          runtimeSelection,
-        });
-        if (outcome === "unknown") {
-          throw new McpBridgeError(`Provider detach state for '${entry.providerName}' is unknown.`);
-        }
-      }
-      if (entry.env.length > 0) {
-        // Endpointless credentials can be withheld while their provider is
-        // still attached. An interrupted removal must prove both absences,
-        // without adopting an inferred provider after the policy is gone.
-        const inspection = await inspectMcpProviderAttachments(sandboxName, runtimeSelection);
-        if (!inspection.attachments) {
-          throw new McpBridgeError(
-            inspection.error ?? "Could not prove the current provider attachment state.",
-          );
-        }
-        if (
-          inspection.attachments.some((attachment) =>
-            entry.env.some((key) => attachment.credentialKeys.includes(key)),
-          )
-        ) {
-          throw new McpBridgeError(
-            "A provider attachment still carries this MCP credential key. Inspect and detach that attachment explicitly before retrying removal.",
-          );
-        }
-        await waitForDetachedMcpCredential(sandboxName, entry, runtimeSelection);
-      }
-    } catch (error) {
-      const detail = redactBridgeSecretsForDisplay(
-        error instanceof Error ? error.message : String(error),
-        entry,
-        envValues,
-      );
-      throw new McpBridgeError(
-        `MCP cleanup is incomplete; the native server '${server}' was retained. Fix the reported cause and rerun \`nemoclaw ${sandboxName} mcp remove ${server}\`.${detail ? ` ${detail}` : ""}`,
-      );
-    }
-
     const removal = unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
       force: options.force === true,
-      envValues,
+      envValues: resolvePersistedCredentialEnvForRedaction(entry.env),
       teardown: true,
-      ...(operationTarget ? { operationTarget } : {}),
     });
     if (removal === "unowned" && !options.force) {
       throw new McpBridgeError(
         `The native MCP server '${server}' changed before removal. Rerun against the current agent configuration.`,
       );
     }
-    if (preservedProvider) {
-      console.warn(
-        `  Preserved OpenShell provider '${preservedProvider}'. Remove it explicitly after confirming no sandbox uses it.`,
-      );
+
+    const warnings: string[] = [];
+    try {
+      removeGeneratedPolicy(sandboxName, entry, { runtimeSelection });
+    } catch (error) {
+      warnings.push(error instanceof Error ? error.message : String(error));
+    }
+
+    if (entry.providerName) {
+      const provider = await inspectMcpProvider(entry.providerName, runtimeSelection);
+      const exact =
+        !!entry.providerId &&
+        providerMatchesManagedCredential(provider, entry.env[0], entry.providerId, {
+          allowLegacyGeneric: true,
+        });
+      if (exact) {
+        try {
+          const outcome = await detachProvider(sandboxName, entry, {
+            allowLegacyGeneric: true,
+            runtimeSelection,
+          });
+          if (outcome === "unknown") {
+            warnings.push(`Provider detach state for '${entry.providerName}' is unknown.`);
+          } else {
+            await waitForDetachedMcpCredential(sandboxName, entry, runtimeSelection);
+          }
+        } catch (error) {
+          warnings.push(error instanceof Error ? error.message : String(error));
+        }
+      } else if (provider.exists !== false) {
+        warnings.push(
+          `Provider '${entry.providerName}' could not be proven as the current exact MCP provider and was preserved.`,
+        );
+      }
+      if (provider.exists !== false) {
+        console.warn(
+          `  Preserved OpenShell provider '${entry.providerName}'. Remove it explicitly after confirming no sandbox uses it.`,
+        );
+      }
     }
 
     console.log(
       `  Removed MCP server '${server}' from the agent configuration on '${sandboxName}'.`,
     );
+    for (const warning of warnings) console.warn(`  MCP cleanup warning: ${warning}`);
+    if (warnings.length > 0 && !options.allowResidual && !options.force) {
+      throw new McpBridgeError(
+        `The agent registration was removed, but ${String(warnings.length)} conservative cleanup warning(s) remain.`,
+      );
+    }
   });
 }

@@ -24,10 +24,7 @@ import type {
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
-import {
-  classifyDestroySandboxPresence,
-  type DestroySandboxPresence,
-} from "./destroy-presence";
+import { classifyDestroySandboxPresence, type DestroySandboxPresence } from "./destroy-presence";
 import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,

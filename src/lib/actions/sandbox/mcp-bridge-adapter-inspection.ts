@@ -11,7 +11,6 @@ export type AdapterRegistrationInspection =
   | { state: "error"; detail: string };
 
 export type AdapterMutationOptions = {
-  operationTarget?: import("./mcp-bridge-state").McpOperationTarget;
   force?: boolean;
   bestEffort?: boolean;
   envValues?: Record<string, string>;

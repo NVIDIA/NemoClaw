@@ -437,9 +437,9 @@ describe("Deep Agents MCP config adapter registration", () => {
         stderr: "",
       });
 
-    expect(() =>
-      restoreDeepAgentsNativeMcpConfig("alpha", [baseEntry], runtimeSelection),
-    ).toThrow("does not contain native MCP capability v3");
+    expect(() => restoreDeepAgentsNativeMcpConfig("alpha", [baseEntry], runtimeSelection)).toThrow(
+      "does not contain native MCP capability v3",
+    );
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(2);
     expect(executeSandboxCommandMock.mock.calls[1]?.[1]).toBe(
       "/usr/local/bin/deepagents-code --nemoclaw-mcp-capability",

@@ -515,5 +515,4 @@ describe("rebuild policy provider handoff", () => {
     }).toThrow(expected);
     expect(beginDelete).not.toHaveBeenCalled();
   });
-
 });

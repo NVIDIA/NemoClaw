@@ -24,18 +24,12 @@ import { McpBridgeError } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
-import { getAgentConfigDir, type McpOperationTarget } from "./mcp-bridge-state";
-import { openMcpOpenClawControl, type McpOpenClawControl } from "./mcp-bridge/openclaw-control";
+import { getAgentConfigDir } from "./mcp-bridge-state";
 import {
   executeSandboxCommand,
   restartSandboxGateway,
   waitForManagedGatewaySupervisor,
-  executeScopedGatewaySupervisorAction,
-  confirmRecoveredSandboxGatewayManaged,
-  waitForRecoveredSandboxGateway,
 } from "./process-recovery";
-
-import { parseManagedGatewayControlCompletion } from "./gateway-restart";
 
 export const MCPORTER_VERSION = "0.7.3";
 const OPENCLAW_NATIVE_MCP_PLUGIN_ID = "bundle-mcp";
@@ -179,29 +173,17 @@ export function registerOpenClawAdapter(
   envValues: Record<string, string> = {},
   replaceExisting = false,
   credentialRevision?: McpAttachedCredentialRevision,
-  operationTarget?: McpOperationTarget,
 ): void {
   const root = openClawConfigRootForEntry(entry);
-  const control = openMcpOpenClawControl(operationTarget);
   try {
-    if (
-      !(control
-        ? waitForManagedGatewaySupervisor(sandboxName, {
-            requestGatewaySupervisorActionImpl: scopedSupervisorRequest(control),
-          })
-        : waitForManagedGatewaySupervisor(sandboxName))
-    ) {
+    if (!waitForManagedGatewaySupervisor(sandboxName)) {
       throw new Error("OpenClaw managed gateway supervisor is not ready for config mutation");
     }
-    const target = control
-      ? resolveAgentConfig(sandboxName, control.agentConfigDependencies)
-      : resolveAgentConfig(sandboxName);
+    const target = resolveAgentConfig(sandboxName);
     if (target.agentName !== "openclaw" || target.configPath !== openClawConfigPath(root)) {
       throw new Error("OpenClaw MCP config target does not match the registered agent source");
     }
-    const current = control
-      ? readSandboxConfig(sandboxName, target, control.config)
-      : readSandboxConfig(sandboxName, target);
+    const current = readSandboxConfig(sandboxName, target);
     if (
       current.mcp !== undefined &&
       (!current.mcp || typeof current.mcp !== "object" || Array.isArray(current.mcp))
@@ -249,33 +231,7 @@ export function registerOpenClawAdapter(
         ]),
       ],
     };
-    if (control) writeSandboxConfig(sandboxName, target, current, undefined, control.config);
-    else writeSandboxConfig(sandboxName, target, current);
-
-    // Re-read the native definition before reporting success so a raced or
-    // normalized write cannot commit an entry that differs from the URL and
-    // opaque OpenShell placeholder NemoClaw intended.
-    control?.config.privileged.assertCurrent();
-    const verification = executeSandboxCommand(
-      sandboxName,
-      buildStrictOpenClawMcpInspectCommand(entry, true, root, credentialRevision),
-      { runtimeSelection },
-    );
-    control?.config.privileged.assertCurrent();
-    const verificationOutput = redactBridgeSecretsForDisplay(
-      [verification?.stdout, verification?.stderr].filter(Boolean).join("\n").trim(),
-      entry,
-      envValues,
-    );
-    if (
-      !verification ||
-      verification.status !== 0 ||
-      verification.stdout.trim().split(/\r?\n/).at(-1) !== "registered"
-    ) {
-      throw new McpBridgeError(
-        `OpenClaw MCP config verification failed after adding '${entry.server}'${verificationOutput ? `: ${verificationOutput}` : "."}`,
-      );
-    }
+    writeSandboxConfig(sandboxName, target, current);
   } catch (error) {
     const output = redactBridgeSecretsForDisplay(
       error instanceof Error ? error.message : String(error),
@@ -283,58 +239,34 @@ export function registerOpenClawAdapter(
       envValues,
     );
     throw new McpBridgeError(output || `OpenClaw MCP config add failed for '${entry.server}'.`);
-  } finally {
-    control?.close();
   }
-}
 
-function scopedSupervisorRequest(control: McpOpenClawControl) {
-  return (name: string, action: "restart" | "recover" | "probe", timeout?: number) =>
-    executeScopedGatewaySupervisorAction(name, action, timeout, control.config.privileged);
-}
-
-async function reloadLiveOpenClawGateway(
-  sandboxName: string,
-  control: McpOpenClawControl,
-): Promise<void> {
-  const requestSupervisor = scopedSupervisorRequest(control);
-  const result = requestSupervisor(sandboxName, "restart", 210_000);
-  const managedProbe = () =>
-    confirmRecoveredSandboxGatewayManaged(sandboxName, {
-      getSandboxImpl: () => control.config.privileged.sandbox,
-      getSessionAgentImpl: () => control.agent,
-      requestGatewaySupervisorActionImpl: requestSupervisor,
-    });
+  // Re-read the native definition before reporting success so a raced or
+  // normalized write cannot commit an entry that differs from the URL and
+  // opaque OpenShell placeholder NemoClaw intended.
+  const verification = executeSandboxCommand(
+    sandboxName,
+    buildStrictOpenClawMcpInspectCommand(entry, true, root, credentialRevision),
+    { runtimeSelection },
+  );
+  const verificationOutput = redactBridgeSecretsForDisplay(
+    [verification?.stdout, verification?.stderr].filter(Boolean).join("\n").trim(),
+    entry,
+    envValues,
+  );
   if (
-    !parseManagedGatewayControlCompletion(result) ||
-    !(await waitForRecoveredSandboxGateway(sandboxName, {
-      quiet: true,
-      initialManagedHealthPassed: true,
-      requireManagedProbe: true,
-      managedProbeImpl: managedProbe,
-      runtimeSelection: control.config.runtimeSelection,
-    }))
+    !verification ||
+    verification.status !== 0 ||
+    verification.stdout.trim().split(/\r?\n/).at(-1) !== "registered"
   ) {
     throw new McpBridgeError(
-      "OpenClaw gateway did not activate the native MCP configuration on the pinned runtime.",
+      `OpenClaw MCP config verification failed after adding '${entry.server}'${verificationOutput ? `: ${verificationOutput}` : "."}`,
     );
   }
 }
 
 /** Make a verified config mutation visible to the long-lived OpenClaw gateway. */
-export async function reloadOpenClawGatewayAfterMcpMutation(
-  sandboxName: string,
-  operationTarget?: McpOperationTarget,
-): Promise<void> {
-  const control = openMcpOpenClawControl(operationTarget);
-  if (control) {
-    try {
-      await reloadLiveOpenClawGateway(sandboxName, control);
-    } finally {
-      control.close();
-    }
-    return;
-  }
+export async function reloadOpenClawGatewayAfterMcpMutation(sandboxName: string): Promise<void> {
   const result = await restartSandboxGateway(sandboxName, { quiet: true });
   if (result.ok) return;
   throw new McpBridgeError(
@@ -349,17 +281,12 @@ export function unregisterOpenClawAdapter(
   options: AdapterMutationOptions = {},
 ): void {
   const root = openClawConfigRootForEntry(entry);
-  const control = openMcpOpenClawControl(options.operationTarget);
   try {
-    const target = control
-      ? resolveAgentConfig(sandboxName, control.agentConfigDependencies)
-      : resolveAgentConfig(sandboxName);
+    const target = resolveAgentConfig(sandboxName);
     if (target.agentName !== "openclaw" || target.configPath !== openClawConfigPath(root)) {
       throw new Error("OpenClaw MCP config target does not match the registered agent source");
     }
-    const current = control
-      ? readSandboxConfig(sandboxName, target, control.config)
-      : readSandboxConfig(sandboxName, target);
+    const current = readSandboxConfig(sandboxName, target);
     const mcp = current.mcp;
     const servers =
       mcp && typeof mcp === "object" && !Array.isArray(mcp)
@@ -390,8 +317,7 @@ export function unregisterOpenClawAdapter(
     }
     delete entries[entry.server];
     current.mcp = { ...(mcp as ConfigObject), servers: entries };
-    if (control) writeSandboxConfig(sandboxName, target, current, undefined, control.config);
-    else writeSandboxConfig(sandboxName, target, current);
+    writeSandboxConfig(sandboxName, target, current);
   } catch (error) {
     if (options.bestEffort) return;
     const output = redactBridgeSecretsForDisplay(
@@ -400,7 +326,5 @@ export function unregisterOpenClawAdapter(
       options.envValues ?? {},
     );
     throw new McpBridgeError(output || `OpenClaw MCP config remove failed for '${entry.server}'.`);
-  } finally {
-    control?.close();
   }
 }

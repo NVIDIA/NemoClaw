@@ -21,10 +21,7 @@ import { SECRET_PATTERNS } from "../security/secret-patterns";
 import { assertEndpointResolvesPublic } from "../security/trusted-private-endpoint";
 import { withMcpCredentialOwnershipLock } from "../state/mcp-lifecycle-lock/credential-ownership";
 import { ROOT } from "../state/paths";
-import {
-  forgetExtraProvider,
-  recordExtraProvider,
-} from "./global";
+import { forgetExtraProvider, recordExtraProvider } from "./global";
 
 export type CredentialsAddInput = {
   provider: string;

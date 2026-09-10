@@ -219,14 +219,14 @@ describe("OpenClaw managed-route compaction policy (#5468, #4781)", () => {
     ).toBeUndefined();
   });
 
-  it.each([
-    "https://inference.local.evil/v1",
-    "https://inference.local@evil.example/v1",
-  ])("rejects a confusing managed-inference hostname %s (#4781)", (baseUrl) => {
-    expect(
-      buildManagedInferenceSafeguardCompaction("inference", "nvidia-prod", baseUrl),
-    ).toBeUndefined();
-  });
+  it.each(["https://inference.local.evil/v1", "https://inference.local@evil.example/v1"])(
+    "rejects a confusing managed-inference hostname %s (#4781)",
+    (baseUrl) => {
+      expect(
+        buildManagedInferenceSafeguardCompaction("inference", "nvidia-prod", baseUrl),
+      ).toBeUndefined();
+    },
+  );
 
   it("does not enable managed-inference safeguards for another provider key (#4781)", () => {
     expect(

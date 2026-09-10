@@ -30,59 +30,6 @@ const TRUSTED_CALLER_CREDENTIAL_PREDICATE =
   "github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
 const guardedCallerSecret = (name: string): string =>
   `\${{ ${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
-
-const NETWORK_SDK_PRODUCER_IF =
-  "${{ needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix || '[]').*.id, 'network-policy') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs || '[]'), 'external-gateway-health')) }}";
-const NETWORK_SDK_CALLER_IF =
-  "${{ always() && needs.base-image-publication.result == 'success' && needs.generate-matrix.result == 'success' && needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix != '[]' && (needs.package-openshell-sdk.result == 'success' || !contains(fromJSON(needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix || '[]').*.id, 'network-policy')) }}";
-const NETWORK_SDK_STEPS = [
-  {
-    name: "Validate reviewed OpenShell SDK artifact identity",
-    if: "${{ inputs.target_id == 'network-policy' }}",
-    shell: "/bin/bash --noprofile --norc -e -o pipefail {0}",
-    env: {
-      SDK_ARTIFACT_NAME: "${{ inputs.openshell_sdk_artifact_name }}",
-      RUN_ID: "${{ github.run_id }}",
-      RUN_ATTEMPT: "${{ github.run_attempt }}",
-    },
-    run: 'set -euo pipefail\n[[ "$SDK_ARTIFACT_NAME" =~ ^openshell-sdk-e2e-([1-9][0-9]*)-([1-9][0-9]{0,8})$ ]] || exit 1\n[[ "${BASH_REMATCH[1]}" == "$RUN_ID" ]] || exit 1\nproducer_attempt="${BASH_REMATCH[2]}"\n[[ "$RUN_ATTEMPT" =~ ^[1-9][0-9]{0,8}$ ]] || exit 1\n(( producer_attempt <= RUN_ATTEMPT )) || exit 1\n',
-  },
-  {
-    name: "Check out trusted network-policy SDK verifier",
-    if: "${{ inputs.target_id == 'network-policy' }}",
-    uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-    with: {
-      ref: "${{ github.workflow_sha }}",
-      path: ".e2e-sdk-verifier",
-      "persist-credentials": false,
-      "sparse-checkout":
-        "ci/reviewed-npm-audit.json\nscripts/audit-reviewed-npm-graph.mts\nscripts/checks/prepare-ci-npm-install.mts\nscripts/lib/openclaw-npm-remediation.mts\nscripts/lib/reviewed-npm-archive.mts\nscripts/lib/reviewed-npm-audit.mts\nscripts/lib/npm-audit-receipt.mts\nscripts/lib/repository-input-path.mts\n",
-      "sparse-checkout-cone-mode": false,
-    },
-  },
-  {
-    name: "Download reviewed network-policy SDK archive",
-    if: "${{ inputs.target_id == 'network-policy' }}",
-    uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
-    with: {
-      name: "${{ inputs.openshell_sdk_artifact_name }}",
-      path: "${{ runner.temp }}/network-policy-sdk",
-    },
-  },
-  {
-    name: "Install verified network-policy SDK without package credentials",
-    if: "${{ inputs.target_id == 'network-policy' }}",
-    shell: "/bin/bash --noprofile --norc -e -o pipefail {0}",
-    env: {
-      NEMOCLAW_CI_NPM_PACKAGE_MODE: "artifact",
-      NEMOCLAW_CI_TARGET_ROOT: "${{ github.workspace }}",
-      NEMOCLAW_CI_NPM_CACHE: "${{ runner.temp }}/network-policy-sdk-cache",
-      NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY: "${{ runner.temp }}/network-policy-sdk",
-    },
-    run: 'set -euo pipefail\nmkdir -p \"$NEMOCLAW_CI_NPM_CACHE\"\nenv -u NODE_AUTH_TOKEN -u GITHUB_TOKEN node .e2e-sdk-verifier/scripts/checks/prepare-ci-npm-install.mts\nenv -u NODE_AUTH_TOKEN -u GITHUB_TOKEN npm ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$NEMOCLAW_CI_NPM_CACHE"\nenv -u NODE_AUTH_TOKEN -u GITHUB_TOKEN node --input-type=module -e \'await import("@nvidia/openshell-sdk")\'\n',
-  },
-] as const;
-
 const SKILL_AGENT_UPLOAD_PATH = `${[
   "e2e-artifacts/live/skill-agent/evidence-manifest.json",
   "e2e-artifacts/live/skill-agent/*/artifact-summary.json",
@@ -138,6 +85,17 @@ const PROFILE_JOBS = {
   },
 } as const;
 
+const SDK_INSTALL_SCRIPT = [
+  "set -euo pipefail",
+  "mapfile -t archives < <(find \"$RUNNER_TEMP/openshell-sdk\" -maxdepth 1 -type f -name '*.tgz' -print)",
+  'test "${#archives[@]}" -eq 1',
+  "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
+  '  npm install --no-save --package-lock=false --ignore-scripts "${archives[0]}"',
+  "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
+  '  node --input-type=module -e \'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");\'',
+  "",
+].join("\n");
+
 function record(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as WorkflowRecord)
@@ -170,13 +128,10 @@ function requirePinnedAction(errors: string[], step: WorkflowStep | undefined, n
 
 function validateProfileCallers(errors: string[], workflow: WorkflowRecord): void {
   const jobs = record(workflow.jobs);
-  const sdkProducer = record(jobs["package-openshell-sdk"]);
-  if (
-    !isDeepStrictEqual(sdkProducer.needs, ["generate-matrix"]) ||
-    sdkProducer.if !== NETWORK_SDK_PRODUCER_IF
-  ) {
+  const sdkPackage = record(jobs["package-openshell-sdk"]);
+  if (sdkPackage.if !== undefined || record(sdkPackage.permissions).packages !== "read") {
     errors.push(
-      "reviewed SDK producer must follow the selected network-policy or external-health plan",
+      "catalogue profiles require SDK packaging for every E2E run with package-read permission",
     );
   }
   for (const profile of E2E_EXECUTION_PROFILES) {
@@ -190,12 +145,12 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       !isDeepStrictEqual(job.needs, [
         "base-image-publication",
         "generate-matrix",
-        ...(profile === "nvidia-inference" ? ["package-openshell-sdk"] : []),
+        "package-openshell-sdk",
       ]) ||
       job.uses !== PROFILE_WORKFLOW
     ) {
       errors.push(
-        `${contract.job} must call the standard E2E profile after matrix generation and base-image publication`,
+        `${contract.job} must call the standard E2E profile after matrix generation, base-image publication, and SDK packaging`,
       );
     }
     if (job.name !== "${{ matrix.display_name }} (${{ matrix.runtime_provider }})") {
@@ -203,23 +158,12 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     }
     const matrixOutput = `needs.generate-matrix.outputs.${contract.matrix}`;
     if (
-      job.if !==
-        (profile === "nvidia-inference"
-          ? NETWORK_SDK_CALLER_IF
-          : `\${{ ${matrixOutput} != '[]' }}`) ||
+      job.if !== `\${{ ${matrixOutput} != '[]' }}` ||
       record(record(job.strategy).matrix).include !== `\${{ fromJSON(${matrixOutput}) }}`
     ) {
       errors.push(`${contract.job} must use its generated catalogue matrix`);
     }
     const withInputs = record(job.with);
-    if (
-      withInputs.openshell_sdk_artifact_name !==
-      (profile === "nvidia-inference"
-        ? "${{ needs.package-openshell-sdk.outputs.artifact_name }}"
-        : undefined)
-    ) {
-      errors.push(`${contract.job} must preserve the network-only reviewed SDK artifact route`);
-    }
     if (record(job.strategy)["max-parallel"] !== contract.maxParallel) {
       errors.push(
         contract.maxParallel === undefined
@@ -238,6 +182,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       risk_signal_correlation_id:
         "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+      openshell_sdk_artifact_name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
       managed_image_catalog: "${{ needs.base-image-publication.outputs.managed_image_catalog }}",
       managed_image_revision: "${{ needs.base-image-publication.outputs.managed_image_revision }}",
       managed_image_receipt: "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
@@ -292,6 +237,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     risk_signal_expected_sha: "string",
     risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
+    openshell_sdk_artifact_name: "string",
     managed_image_catalog: "string",
     managed_image_revision: "string",
     managed_image_receipt: "string",
@@ -318,23 +264,13 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     trusted_main: "boolean",
   };
   if (
-    Object.keys(inputs).sort().join(",") !==
-      [...Object.keys(requiredInputs), "openshell_sdk_artifact_name"].sort().join(",") ||
+    Object.keys(inputs).sort().join(",") !== Object.keys(requiredInputs).sort().join(",") ||
     Object.entries(requiredInputs).some(
       ([name, type]) =>
         record(inputs[name]).required !== true || record(inputs[name]).type !== type,
     )
   ) {
     errors.push("standard E2E profile must require its exact execution-plan inputs");
-  }
-  if (
-    !isDeepStrictEqual(inputs.openshell_sdk_artifact_name, {
-      required: false,
-      type: "string",
-      default: "",
-    })
-  ) {
-    errors.push("standard E2E profile must default its internal SDK artifact input to empty");
   }
   const acceptedSecrets = [
     "DOCKERHUB_TOKEN",
@@ -400,7 +336,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Authenticate to Docker Hub",
     "Install target host dependencies",
     "Prepare E2E workspace",
-    ...NETWORK_SDK_STEPS.map((step) => step.name),
+    "Download reviewed OpenShell SDK archive",
+    "Install reviewed OpenShell SDK archive without package credentials",
     "Restore exact-commit CLI artifact",
     "Prepare native Podman E2E runtime",
     "Stage immutable stopped-state cleanup helper",
@@ -422,13 +359,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     workflowSteps.some((step, index) => step.name !== expectedStepNames[index])
   ) {
     errors.push("standard E2E profile must keep its reviewed step set and order");
-  }
-  for (const expected of NETWORK_SDK_STEPS) {
-    if (!isDeepStrictEqual(requireStep(errors, workflowSteps, expected.name), expected)) {
-      errors.push(
-        `standard E2E profile must preserve the network-only reviewed SDK boundary: ${expected.name}`,
-      );
-    }
   }
   const executionPlan = requireStep(errors, workflowSteps, "Validate catalogue execution plan");
   const executionPlanRun = String(executionPlan?.run ?? "");
@@ -560,6 +490,35 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     record(prepare?.with)["build-cli"] !== "false"
   ) {
     errors.push("standard E2E profile must prepare once without rebuilding the CLI");
+  }
+  const sdkDownload = requireStep(errors, workflowSteps, "Download reviewed OpenShell SDK archive");
+  if (
+    !isDeepStrictEqual(sdkDownload, {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ inputs.openshell_sdk_artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    })
+  ) {
+    errors.push("standard E2E profile must download the run-scoped reviewed SDK archive");
+  }
+  const sdkInstall = requireStep(
+    errors,
+    workflowSteps,
+    "Install reviewed OpenShell SDK archive without package credentials",
+  );
+  if (
+    !isDeepStrictEqual(sdkInstall, {
+      name: "Install reviewed OpenShell SDK archive without package credentials",
+      shell: "bash",
+      run: SDK_INSTALL_SCRIPT,
+    })
+  ) {
+    errors.push(
+      "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
+    );
   }
   const restore = requireStep(errors, workflowSteps, "Restore exact-commit CLI artifact");
   if (

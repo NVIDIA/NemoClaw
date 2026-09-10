@@ -12,6 +12,7 @@ import {
   createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor,
 } from "../../adapters/openshell/sandbox-command-cli";
 import { resolveSandboxGatewayName } from "../../gateway-runtime-action";
+import { emitPortableOpenClawAlreadyRunningTiming } from "../../onboard/experimental/portable-demo-lifecycle-timing";
 import type { SandboxEntry } from "../../state/registry";
 import {
   completeReadinessQualifiedInteractiveSessionSetup,
@@ -380,6 +381,7 @@ export async function launchSandbox(
       const acceptedDecision = decision;
       const disposition = inspectPortableAgentReceiptDisposition(sandboxName);
       const hermesPortable = disposition.kind === "hermes";
+      if (disposition.kind === "openclaw") emitPortableOpenClawAlreadyRunningTiming();
       acceptedReadinessSetup = () => {
         printInteractiveSessionHints(sandboxName);
         completeReadinessQualifiedInteractiveSessionSetup(

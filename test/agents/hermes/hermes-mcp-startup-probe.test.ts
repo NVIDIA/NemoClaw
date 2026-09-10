@@ -21,8 +21,7 @@ vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
   executeSandboxCommand: vi.fn(),
 }));
 
-vi.mock("../../../src/lib/core/wait", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../../src/lib/core/wait")>()),
+vi.mock("../../../src/lib/core/wait", () => ({
   sleepMs: mocks.sleepMs,
   waitUntil: mocks.waitUntil,
   waitUntilAsync: mocks.waitUntilAsync,

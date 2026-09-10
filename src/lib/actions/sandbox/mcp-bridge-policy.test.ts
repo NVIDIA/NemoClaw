@@ -9,7 +9,6 @@ import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-end
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   applyGeneratedPolicy,
-  assertGeneratedPolicyMutationSafe,
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
   MCP_BRIDGE_ALLOWED_METHODS,
@@ -36,29 +35,6 @@ const runtimeSelection = {
 beforeEach(() => vi.restoreAllMocks());
 
 describe("generated MCP policy", () => {
-  it.each([
-    "Agent URL differs from the live policy endpoint.",
-    "Live policy contains invalid denied-tool selectors.",
-  ])("preserves conflicting live policy: %s", (policyConflict) => {
-    const conflicted = { ...entry, policyConflict };
-    const apply = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
-    const remove = vi.spyOn(policies, "removePreset").mockReturnValue(true);
-    const inspect = vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("match");
-
-    expect(() => assertGeneratedPolicyMutationSafe("alpha", conflicted)).toThrow(
-      /conflicting live policy/,
-    );
-    expect(() =>
-      applyGeneratedPolicy("alpha", conflicted, { addresses: ["8.8.8.8"] }, { runtimeSelection }),
-    ).toThrow(/conflicting live policy/);
-    expect(() =>
-      removeGeneratedPolicy("alpha", conflicted, { runtimeSelection, bestEffort: true }),
-    ).toThrow(/conflicting live policy/);
-    expect(apply).not.toHaveBeenCalled();
-    expect(remove).not.toHaveBeenCalled();
-    expect(inspect).not.toHaveBeenCalled();
-  });
-
   it("renders denied tool names and globs as tools/call deny rules (#11115)", () => {
     const parsed = YAML.parse(
       buildMcpBridgePolicyYaml(

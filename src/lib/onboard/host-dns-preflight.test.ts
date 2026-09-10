@@ -269,9 +269,7 @@ describe("assertHostDnsHealthy (#4784)", () => {
     expect(logs.join("\n")).toContain("Host DNS resolution check skipped");
   });
 
-  it.each(
-    ["ollama", "openai", "anthropic", "vllm", "custom"],
-  )(
+  it.each(["ollama", "openai", "anthropic", "vllm", "custom"])(
     "skips silently (no probe, no exit) when a non-NVIDIA provider is selected (codex P2) [%s]",
     (provider) => {
       const exit = vi.fn();

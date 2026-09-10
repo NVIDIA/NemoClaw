@@ -1473,9 +1473,7 @@ process.exit(0);
       );
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".env"))).toBe(false);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".mcp.json"))).toBe(false);
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".mcp.json"))).toBe(
-        false,
-      );
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".mcp.json"))).toBe(false);
       const loggedCommands = fs.readFileSync(sshLog, "utf-8");
       expect(loggedCommands).not.toContain(".env");
       expect(loggedCommands).not.toContain(".mcp.json");

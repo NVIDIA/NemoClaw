@@ -209,11 +209,13 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ["verifier condition", (value) => (gateSteps(value)[3].if = "${{ always() }}")],
     [
       "base publication selection condition",
-      (value) => (gateStep(value, "Select base and optional managed-image publication").if = "${{ false }}"),
+      (value) =>
+        (gateStep(value, "Select base and optional managed-image publication").if = "${{ false }}"),
     ],
     [
       "base contract download condition",
-      (value) => (gateStep(value, "Download immutable Deep Agents Code base contract").if = "${{ false }}"),
+      (value) =>
+        (gateStep(value, "Download immutable Deep Agents Code base contract").if = "${{ false }}"),
     ],
     [
       "base contract validation condition",
@@ -241,27 +243,6 @@ describe("base-image publication workflow boundary (#7372)", () => {
           "node unreviewed.mts"),
     ],
     [
-      "PR base publication run binding",
-      (value) =>
-        (gateStep(value, "Select base and optional managed-image publication").env![
-          "BASE_IMAGE_PUBLICATION_RUN_ID"
-        ] = "${{ github.run_id }}"),
-    ],
-    [
-      "PR base publication controller binding",
-      (value) =>
-        (gateStep(value, "Select base and optional managed-image publication").env![
-          "WORKFLOW_SHA"
-        ] = "${{ inputs.checkout_sha }}"),
-    ],
-    [
-      "PR base publication catalog requirement",
-      (value) => {
-        const step = gateStep(value, "Select base and optional managed-image publication");
-        step.run = step.run!.replace('[[ "$REQUIRE_MANAGED_IMAGE_PUBLICATION" == "0" ]]', "true");
-      },
-    ],
-    [
       "contract run binding",
       (value) =>
         (gateStep(value, "Download immutable Deep Agents Code base contract").env![
@@ -275,10 +256,7 @@ describe("base-image publication workflow boundary (#7372)", () => {
           "node tools/e2e/dcode-base-image-contract.mts contract.json"),
     ],
     ["step count", (value) => gateSteps(value).push({ name: "Unreviewed step", run: "true" })],
-    [
-      "matrix publication dependency",
-      (value) => (value.jobs["generate-matrix"].needs = []),
-    ],
+    ["matrix publication dependency", (value) => (value.jobs["generate-matrix"].needs = [])],
     ["live publication dependency", (value) => (value.jobs.live.needs = ["generate-matrix"])],
     [
       "live managed-image revision",

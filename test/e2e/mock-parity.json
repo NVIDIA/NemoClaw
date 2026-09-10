@@ -279,7 +279,6 @@
     },
     {
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
-      "liveSources": ["test/e2e/live/openshell-credential-generation-window.ts"],
       "fast": [
         "test/credentials/openshell-credential-generation-window.test.ts",
         "test/mcp/mcp-artifact-secret-scan.test.ts",
@@ -298,8 +297,9 @@
     },
     {
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
-      "liveSources": ["test/e2e/live/dashboard-connect-handoff.ts"],
+      "liveSources": ["test/e2e/live/dashboard-connect-handoff.ts", "test/e2e/live/json-envelope.ts"],
       "fast": [
+        "test/e2e/support/json-envelope.test.ts",
         "test/e2e/support/dashboard-connect-handoff.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts"
       ]
@@ -397,6 +397,8 @@
       "live": "test/e2e/live/brave-search.test.ts",
       "liveSources": ["test/e2e/live/brave-search-helpers.ts"],
       "fast": [
+        "src/lib/adapters/config/live-export-source.test.ts",
+        "src/lib/config/config.test.ts",
         "src/lib/adapters/openshell/sandbox-identity.test.ts",
         "src/lib/actions/sandbox/rebuild-backup-phase.test.ts",
         "src/lib/onboard/machine/handlers/agent-setup.test.ts",
@@ -546,11 +548,13 @@
         "test/agents/hermes/hermes-image-build-probes.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
+        "test/e2e/support/hermes-acp-live.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/hermes-config-export-live.test.ts",
         "test/e2e/support/inference-adapter.test.ts",
         "test/e2e/support/security-posture.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
@@ -627,8 +631,6 @@
         "src/lib/actions/sandbox/mcp-bridge-adapter-teardown.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-input-targets.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-provider.test.ts",
-        "test/mcp/mcp-artifact-secret-scan.test.ts",
-        "test/mcp/mcp-bridge-servers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/e2e-redaction-entry.test.ts",
@@ -725,8 +727,12 @@
     },
     {
       "live": "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
-      "liveSources": ["test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts"],
+      "liveSources": [
+        "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
+        "test/e2e/live/json-envelope.ts"
+      ],
       "fast": [
+        "test/e2e/support/json-envelope.test.ts",
         "test/e2e/support/openclaw-plugin-runtime-exdev-trusted-prebuild.test.ts",
         "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
         "test/automation/pull-requests/pr-risk-plan.test.ts",
@@ -819,6 +825,7 @@
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/hermes-acp-live.test.ts",
         "test/e2e/support/rebuild-hermes-bootstrap.test.ts",
         "test/e2e/support/rebuild-hermes-env.test.ts",
         "test/e2e/support/rebuild-hermes-base-identity.test.ts",
@@ -844,7 +851,9 @@
     },
     {
       "live": "test/e2e/live/sessions-agents-cli.test.ts",
+      "liveSources": ["test/e2e/live/json-envelope.ts"],
       "fast": [
+        "test/e2e/support/json-envelope.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

@@ -8,7 +8,6 @@ import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
-import { isProxy } from "node:util/types";
 
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
@@ -107,48 +106,6 @@ const QUICK_TUNNEL_ATTEMPT_TIMEOUT_MS = 45_000;
 const QUICK_TUNNEL_CONSECUTIVE_READY_PROBES = 3;
 const QUICK_TUNNEL_DISCOVERY_CARRY_LIMIT = 512;
 const OMITTED_CLOUDFLARED_OUTPUT_DIAGNOSTIC = "cloudflared child output omitted from diagnostics";
-const TUNNEL_ERROR_NODE_LIMIT = 8;
-const TUNNEL_ERROR_CLASSES = new Map<object, string>([
-  [TypeError.prototype, "TypeError"],
-  [RangeError.prototype, "RangeError"],
-  [SyntaxError.prototype, "SyntaxError"],
-  [ReferenceError.prototype, "ReferenceError"],
-  [URIError.prototype, "URIError"],
-  [EvalError.prototype, "EvalError"],
-  [AggregateError.prototype, "AggregateError"],
-  [Error.prototype, "Error"],
-  [DOMException.prototype, "DOMException"],
-]);
-const DOM_EXCEPTION_NAME = Object.getOwnPropertyDescriptor(DOMException.prototype, "name")?.get;
-const TUNNEL_NETWORK_ERROR_CODES = new Set([
-  "EAI_AGAIN",
-  "ENOTFOUND",
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "ECONNABORTED",
-  "ENETUNREACH",
-  "EHOSTUNREACH",
-  "ETIMEDOUT",
-  "EPIPE",
-  "ENETDOWN",
-  "EADDRNOTAVAIL",
-  "UND_ERR_CONNECT_TIMEOUT",
-  "UND_ERR_HEADERS_TIMEOUT",
-  "UND_ERR_BODY_TIMEOUT",
-  "UND_ERR_SOCKET",
-  "UND_ERR_ABORTED",
-  "UND_ERR_HEADERS_OVERFLOW",
-  "ERR_TLS_CERT_ALTNAME_INVALID",
-  "DEPTH_ZERO_SELF_SIGNED_CERT",
-  "SELF_SIGNED_CERT_IN_CHAIN",
-  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-  "CERT_HAS_EXPIRED",
-  "CERT_NOT_YET_VALID",
-  "ERR_SSL_WRONG_VERSION_NUMBER",
-  "ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR",
-  "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
-]);
 const CLOUDFLARED_ENV_NAMES = new Set([
   "PATH",
   "TMPDIR",
@@ -356,65 +313,7 @@ export function buildCloudflaredQuickTunnelArgs(port: number): string[] {
   ];
 }
 
-function tunnelErrorDataProperty(value: unknown, key: string): unknown {
-  try {
-    if (typeof value !== "object" || value === null || isProxy(value)) return undefined;
-    // Reading a data descriptor never invokes an error-supplied accessor.
-    return Object.getOwnPropertyDescriptor(value, key)?.value;
-  } catch {
-    return undefined;
-  }
-}
-
-function tunnelErrorClass(error: unknown): string {
-  try {
-    let current = error;
-    for (let depth = 0; depth < 4; depth += 1) {
-      if (typeof current !== "object" || current === null || isProxy(current)) break;
-      current = Object.getPrototypeOf(current);
-      const known = TUNNEL_ERROR_CLASSES.get(current as object);
-      if (known === "DOMException") {
-        const name = DOM_EXCEPTION_NAME?.call(error);
-        return name === "AbortError"
-          ? "AbortError"
-          : name === "TimeoutError"
-            ? "TimeoutError"
-            : known;
-      }
-      if (known) return known;
-    }
-  } catch {
-    // Forged prototypes and unavailable native brands remain unclassified.
-  }
-  return "unknown error";
-}
-
-function describePublicTunnelFailure(error: unknown): string {
-  const pending: unknown[] = [error];
-  const seen = new Set<unknown>();
-  const codes = new Set<string>();
-  for (let index = 0; index < pending.length && index < TUNNEL_ERROR_NODE_LIMIT; index += 1) {
-    const current = pending[index];
-    if (seen.has(current)) continue;
-    seen.add(current);
-    const code = tunnelErrorDataProperty(current, "code");
-    if (typeof code === "string" && code.length <= 64 && TUNNEL_NETWORK_ERROR_CODES.has(code)) {
-      codes.add(code);
-    }
-    const cause = tunnelErrorDataProperty(current, "cause");
-    if (cause !== undefined && pending.length < TUNNEL_ERROR_NODE_LIMIT) pending.push(cause);
-    const errors = tunnelErrorDataProperty(current, "errors");
-    if (!isProxy(errors) && Array.isArray(errors)) {
-      const count = Math.min(errors.length, TUNNEL_ERROR_NODE_LIMIT - pending.length);
-      for (let child = 0; child < count; child += 1) {
-        pending.push(tunnelErrorDataProperty(errors, String(child)));
-      }
-    }
-  }
-  return `${tunnelErrorClass(error)}; codes=${[...codes].join(",") || "unknown"}`;
-}
-
-export async function probePublicTunnel(
+async function probePublicTunnel(
   origin: string,
   readinessPath: string,
   readinessStatus: number,
@@ -436,7 +335,9 @@ export async function probePublicTunnel(
   } catch (error) {
     return {
       ready: false,
-      diagnostic: `public HEAD probe failed (${describePublicTunnelFailure(error)})`,
+      // Avoid reflecting request URLs or child output here. The error class is
+      // enough to distinguish DNS/transport failure without risking headers.
+      diagnostic: `public HEAD ${readinessPath} failed (${error instanceof Error ? error.name : "unknown error"})`,
     };
   }
 }

@@ -82,9 +82,7 @@ export function parseUnsafeDeepAgentsMcpConfigResult(result: {
     const messagePrefix = `${UNSAFE_DEEPAGENTS_MCP_CONFIG_PREFIX}: ${type} at `;
     if (!detail.startsWith(messagePrefix)) continue;
     const configPath = detail.slice(messagePrefix.length);
-    return configPath && !/[\r\n]/u.test(configPath)
-      ? { messagePrefix, path: configPath }
-      : null;
+    return configPath && !/[\r\n]/u.test(configPath) ? { messagePrefix, path: configPath } : null;
   }
   return null;
 }
@@ -328,7 +326,7 @@ export function buildOpenClawMcpInspectCommand(
     "if (!actual) { console.log('absent'); process.exit(0); }",
     'const headers = actual && actual.headers && typeof actual.headers === "object" ? actual.headers : {};',
     openClawHeaderMatcherSource(),
-    'const registered = !!actual && actual.url === expected.url && openClawHeadersMatchExpected(headers, expected.headers);',
+    "const registered = !!actual && actual.url === expected.url && openClawHeadersMatchExpected(headers, expected.headers);",
     'console.log(registered ? "registered" : "mismatch");',
     "if (!registered && expected.failOnMismatch) process.exit(2);",
     "NODE",
