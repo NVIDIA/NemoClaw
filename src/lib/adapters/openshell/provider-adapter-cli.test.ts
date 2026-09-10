@@ -119,7 +119,7 @@ describe("CLI OpenShell provider adapter", () => {
       }),
     ];
 
-    const results = await Promise.all(operations);
+    const results = await Promise.all(operations.map((operation) => Promise.resolve(operation)));
 
     const expectedFailure = {
       ok: false,
