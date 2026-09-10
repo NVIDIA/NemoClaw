@@ -2,9 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncOptions } from "node:child_process";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { buildCheckSpawnInvocation, CHECKS, runChecks } from "../../scripts/checks/run.mts";
+import {
+  buildCheckSpawnInvocation,
+  CHECKS,
+  runChecks,
+  selectChecks,
+} from "../../scripts/checks/run.mts";
 
 const sampleCheck = {
   name: "sample",
@@ -17,52 +23,72 @@ function successfulSpawn(): { status: number | null } {
 }
 
 describe("checks runner", () => {
-  it("registers the source architecture check", () => {
-    expect(CHECKS).toContainEqual({
-      name: "source-architecture",
-      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
-      args: ["scripts/checks/source-architecture.mts"],
-    });
+  it("runs every check when no changed-file selection is supplied", () => {
+    expect(selectChecks(CHECKS)).toEqual(CHECKS);
   });
 
-  it("registers the onboarding entry composition check", () => {
-    expect(CHECKS).toContainEqual({
-      name: "onboard-entry-composition",
-      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
-      args: ["scripts/checks/onboard-entry-composition.mts"],
-    });
+  it("keeps dynamic checks when an unrelated document changes", () => {
+    expect(selectChecks(CHECKS, ["docs/overview.mdx"]).map((check) => check.name)).toEqual([
+      "optimized-build-context-copy-sources",
+      "pi-qualification-receipt-refresh",
+    ]);
   });
 
-  it("registers the test registration boundary check", () => {
-    expect(CHECKS).toContainEqual({
-      name: "test-registration-boundary",
-      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
-      args: ["scripts/checks/test-registration-boundary.mts"],
-    });
+  it("selects source checks without unrelated test and Hermes scans", () => {
+    expect(selectChecks(CHECKS, ["src/commands/status.ts"]).map((check) => check.name)).toEqual([
+      "no-defaulted-dependent-flags",
+      "no-coverage-ignore",
+      "layer-import-boundaries",
+      "source-architecture",
+      "no-test-dist-imports",
+      "test-create-require-budget",
+      "optimized-build-context-copy-sources",
+      "pi-qualification-receipt-refresh",
+      "test-registration-boundary",
+    ]);
   });
 
-  it("registers the live E2E assertion ratchet", () => {
-    expect(CHECKS).toContainEqual({
-      name: "e2e-assertion-census",
-      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
-      args: ["scripts/checks/e2e-assertion-census.mts", "--check"],
-    });
+  it.each([
+    "scripts/checks/run.mts",
+    "scripts/lib/dockerfile-copy-sources.mts",
+    "test/helpers/fixture.ts",
+    "ci/source-architecture-budget.json",
+    "package-lock.json",
+    "nemoclaw/package.json",
+    "vitest.config.ts",
+    "nemoclaw/tsconfig.test.json",
+    ".pre-commit-config.yaml",
+  ])("runs every check when shared input %s changes", (file) => {
+    expect(selectChecks(CHECKS, [file])).toEqual(CHECKS);
   });
 
-  it("registers the defaulted dependent flag check (#8883)", () => {
-    expect(CHECKS).toContainEqual({
-      name: "no-defaulted-dependent-flags",
-      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
-      args: ["scripts/checks/no-defaulted-dependent-flags.mts"],
-    });
+  it.each([
+    ["src/lib/security/credential-env.ts", "direct-credential-env"],
+    ["docs/resources/local-credential-form.html", "local-credential-helper-pin"],
+    ["src/lib/domain/sandbox/connect-env.ts", "hermes-light-skin-boundary"],
+    ["agents/hermes/Dockerfile.base", "dependency-pins"],
+    ["src/lib/onboard.ts", "onboard-entry-composition"],
+    ["src/lib/removed.test.ts", "test-create-require-budget"],
+    ["test/e2e/live/removed.test.ts", "vitest-project-overlap"],
+    ["nemoclaw/src/example.spec.ts", "test-title-style"],
+    ["test/e2e/fixtures/example.ts", "e2e-assertion-census"],
+    [".github/actions/ci-static-checks/action.yaml", "growth-guardrails-workflow-boundary"],
+  ])("selects the owning check for %s", (file, name) => {
+    expect(selectChecks(CHECKS, [file]).map((check) => check.name)).toContain(name);
   });
 
-  it("registers the optimized build-context source check", () => {
-    expect(CHECKS).toContainEqual({
-      name: "optimized-build-context-copy-sources",
-      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
-      args: ["scripts/checks/optimized-build-context-copy-sources.mts"],
+  it("reports the duration and failure before stopping the batch", () => {
+    const spawn = vi.fn().mockReturnValue({ status: 2 });
+    const report = vi.fn();
+    const now = vi.fn().mockReturnValueOnce(10).mockReturnValueOnce(35);
+    const exit = vi.fn((code?: number): never => {
+      throw new Error(`exit ${code}`);
     });
+    expect(() =>
+      runChecks({ checks: [sampleCheck, sampleCheck], spawn, report, now, exit }),
+    ).toThrow("exit 2");
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenLastCalledWith("sample: failed (25 ms)");
   });
 
   it("runs the Pi qualification receipt refresh check", () => {
@@ -73,7 +99,7 @@ describe("checks runner", () => {
     runChecks({ platform: "linux", spawn });
 
     expect(spawn).toHaveBeenCalledWith(
-      "tsx",
+      path.resolve("node_modules/.bin", process.platform === "win32" ? "tsx.cmd" : "tsx"),
       ["scripts/checks/pi-qualification-receipt-refresh.mts"],
       expect.objectContaining({ stdio: "inherit" }),
     );
