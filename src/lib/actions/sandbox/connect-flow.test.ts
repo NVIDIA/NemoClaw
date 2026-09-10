@@ -175,9 +175,7 @@ describe("connectSandbox flow", () => {
     expect(output).toContain("Portable onboarding for 'alpha' is incomplete");
     expect(output).toContain("Resume or rerun onboarding");
     expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
-    expect(harness.spawnSyncSpy.mock.calls.some(([request]) => request.kind === "connect")).toBe(
-      false,
-    );
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });
 
   it.each([255, 129, 141])(
