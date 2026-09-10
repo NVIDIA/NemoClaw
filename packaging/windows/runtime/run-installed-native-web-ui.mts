@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFile, spawn } from "node:child_process";
-import { watchNativeUiSandbox, attemptNativeUiCleanup } from "./native-ui-lifecycle.mts";
+import {
+  watchNativeUiSandbox,
+  attemptNativeUiCleanup,
+  waitForNativeMxcCompletion,
+} from "./native-ui-lifecycle.mts";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import { createServer } from "node:http";
@@ -362,6 +366,45 @@ import { syncBuiltinESMExports } from "node:module";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+function createNativeOpenClawShutdown(timeoutMilliseconds = 30000) {
+  let cleanExitAllowed = false;
+  let failureObserved = false;
+  let stopping;
+  process.once("exit", (code) => {
+    if (code === 0 && (!cleanExitAllowed || failureObserved)) process.exitCode = 1;
+  });
+  return (failed, closeBroker) => {
+    failureObserved ||= failed;
+    stopping ??= (async () => {
+      // The pinned gateway has a 25-second graceful-stop budget. Keep this
+      // timer referenced: an absent or ignoring handler must never look clean.
+      setTimeout(() => {
+        console.error("The owned OpenClaw gateway did not stop before its deadline.");
+        process.exit(1);
+      }, timeoutMilliseconds);
+      try { await closeBroker(); }
+      catch {
+        failureObserved = true;
+        console.error("The native broker transport also failed to close.");
+      }
+      if (process.listenerCount("SIGINT") === 0) {
+        console.error("The owned OpenClaw gateway has no graceful stop handler.");
+        process.exit(1);
+      }
+      cleanExitAllowed = !failureObserved;
+      // Emit only to this process. On Windows process.kill bypasses JS
+      // handlers; SIGTERM can also consume an upstream restart intent.
+      try { process.emit("SIGINT"); }
+      catch {
+        console.error("The owned OpenClaw gateway stop handler failed.");
+        process.exit(1);
+      }
+      await new Promise(() => {});
+    })();
+    return stopping;
+  };
+}
+
 const required = (name) => {
   const value = process.env[name];
   if (!value) throw new Error(name + " is required");
@@ -378,6 +421,7 @@ const relayToken = required("NEMOCLAW_MXC_RELAY_TOKEN");
 const uiPort = Number(required("NEMOCLAW_MXC_UI_PORT"));
 let brokerTunnel = null;
 let agentFailed = false;
+const stopOwnedGateway = createNativeOpenClawShutdown();
 try {
 if (configured) {
   brokerTunnel = await startNativeBrokerTunnel({
@@ -549,21 +593,16 @@ Object.assign(process.env, {
 process.argv = [process.execPath, launcher, "gateway", "run", "--allow-unconfigured", "--port", String(uiPort), "--bind", "loopback", "--auth", "none"];
 const fileTunnelTask = startNativeUiTunnel({ relayRoot, relayToken, uiPort });
 void fileTunnelTask.catch(() => {});
-const agentTask = (async () => {
-  await import(pathToFileURL(launcher).href);
-  await fileTunnelTask;
-})();
-await (brokerTunnel ? Promise.race([agentTask, brokerTunnel.failure]) : agentTask);
+// The gateway import can remain pending for its entire server lifetime. A
+// host Stop must independently reach its graceful handler, without waiting
+// for that import or sandbox deletion to terminate the process first.
+const gatewayFailure = import(pathToFileURL(launcher).href).then(() => new Promise(() => {}));
+await Promise.race([fileTunnelTask, gatewayFailure, ...(brokerTunnel ? [brokerTunnel.failure] : [])]);
 } catch (error) {
   agentFailed = true;
-  throw error;
+  console.error(error instanceof Error ? error.message : "The native OpenClaw session failed.");
 } finally {
-  try {
-    await brokerTunnel?.close();
-  } catch (error) {
-    if (!agentFailed) throw error;
-    console.error("The native broker transport also failed to close.");
-  }
+  await stopOwnedGateway(agentFailed, async () => { await brokerTunnel?.close(); });
 }
 `;
 }
@@ -1228,6 +1267,22 @@ async function main() {
             const closed = new Promise((resolve) => onboarding.server.close(resolve));
             onboarding.server.closeAllConnections();
             await withTimeout(closed, 5000, "Onboarding shutdown");
+          },
+        ],
+        [
+          "MXC execution cleanup",
+          async () => {
+            if (create && gateway) {
+              const completion = await waitForNativeMxcCompletion(
+                openshell,
+                cliEnvironment,
+                sandboxName,
+                gateway,
+                stateSession,
+              );
+              if (completion === "ExecFailed")
+                throw new Error("The native OpenClaw executor failed during shutdown.");
+            }
           },
         ],
         [

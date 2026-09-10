@@ -529,4 +529,18 @@ assert module._session_state_journal_mode(SimpleNamespace(_conn=Connection())) =
       expect(result.stderr).toContain(command);
     },
   );
+
+  it("accepts the checked-in probe through every image build checksum pin", () => {
+    const pins = Array.from(
+      dockerfile.matchAll(/^ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=([a-f0-9]{64})$/gm),
+      (match) => `${match[1]}  ${probes}`,
+    );
+    const result = spawnSync("sha256sum", ["--check", "--status"], {
+      input: `${pins.join("\n")}\n`,
+      encoding: "utf8",
+      timeout: 5000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+  });
 });

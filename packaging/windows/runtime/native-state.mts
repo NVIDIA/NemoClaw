@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
+import { createNativeDiagnosticCapture } from "./native-session-diagnostics.mts";
 
 export async function acquireNativeStateSession(launcher: string, purpose: string) {
   return await acquireStateOwner(launcher, purpose, false);
@@ -28,7 +29,8 @@ async function acquireStateOwner(launcher: string, purpose: string, removal: boo
   let releasing = false;
   let failure: Error | null = null;
   child.stdin.on("error", () => {});
-  child.stderr.resume();
+  const ownerDiagnostics = createNativeDiagnosticCapture(() => []);
+  child.stderr.on("data", (chunk: Buffer) => ownerDiagnostics.write(chunk));
   const completion = new Promise<number>((resolve) => {
     child.once("error", () => {
       failure = new Error("The private Windows state owner could not start.");
@@ -102,6 +104,12 @@ async function acquireStateOwner(launcher: string, purpose: string, removal: boo
     const timeout = setTimeout(() => child.kill(), 5000);
     await completion;
     clearTimeout(timeout);
+    const detail = ownerDiagnostics.finish().trim();
+    if (detail)
+      throw new Error(
+        `${error instanceof Error ? error.message : "Opening private Windows state failed."} ${detail}`,
+        { cause: error },
+      );
     throw error;
   }
   return {
@@ -117,11 +125,13 @@ async function acquireStateOwner(launcher: string, purpose: string, removal: boo
       const timeout = setTimeout(() => child.kill(), 15_000);
       const code = await completion;
       clearTimeout(timeout);
-      if (failure || code !== 0)
-        throw (
-          failure ??
-          new Error("Windows did not restore private access to the agent's retained state.")
-        );
+      if (failure || code !== 0) {
+        const detail = ownerDiagnostics.finish().trim();
+        const message =
+          failure?.message ??
+          "Windows did not restore private access to the agent's retained state.";
+        throw new Error(`${message}${detail ? ` ${detail}` : ""}`, { cause: failure ?? undefined });
+      }
     },
   };
 }

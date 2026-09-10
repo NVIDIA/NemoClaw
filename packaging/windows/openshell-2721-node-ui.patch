@@ -288,3 +288,370 @@ diff --git a/crates/openshell-driver-mxc/src/mxc.rs b/crates/openshell-driver-mx
      }
 
      #[test]
+
+diff --git a/crates/openshell-server/src/compute/mod.rs b/crates/openshell-server/src/compute/mod.rs
+--- a/crates/openshell-server/src/compute/mod.rs
++++ b/crates/openshell-server/src/compute/mod.rs
+@@ -1409,7 +1409,7 @@
+         match self
+             .store
+             .update_message_cas::<Sandbox, _>(&sandbox_id, expected_resource_version, |sandbox| {
+-                apply_driver_snapshot(sandbox, snapshot, session_connected);
++                apply_driver_snapshot(sandbox, snapshot, session_connected, &self.driver_info.name);
+             })
+             .await
+         {
+@@ -1857,7 +1857,14 @@
+                     sandbox_id,
+                     deleting_resource_version,
+                     "reconcile observed backend snapshot",
+-                    |sandbox| apply_driver_snapshot(sandbox, &snapshot, session_connected),
++                    |sandbox| {
++                        apply_driver_snapshot(
++                            sandbox,
++                            &snapshot,
++                            session_connected,
++                            &self.driver_info.name,
++                        );
++                    },
+                 )
+                 .await;
+             }
+@@ -2828,7 +2835,9 @@
+             .update_message_cas::<Sandbox, _>(
+                 &incoming.id,
+                 expected_resource_version,
+-                |sandbox| apply_driver_snapshot(sandbox, &incoming, session_connected),
++                |sandbox| {
++                    apply_driver_snapshot(sandbox, &incoming, session_connected, &self.driver_info.name);
++                },
+             )
+             .await
+             .map_err(|e| match e {
+@@ -3762,7 +3771,12 @@
+     }
+ }
+
+-fn apply_driver_snapshot(sandbox: &mut Sandbox, incoming: &DriverSandbox, session_connected: bool) {
++fn apply_driver_snapshot(
++    sandbox: &mut Sandbox,
++    incoming: &DriverSandbox,
++    session_connected: bool,
++    driver_name: &str,
++) {
+     let old_phase = SandboxPhase::try_from(sandbox.phase()).unwrap_or(SandboxPhase::Unknown);
+     let sandbox_name = &incoming.name;
+
+@@ -3794,7 +3808,7 @@
+             (phase, status)
+         },
+         |incoming_status| {
+-            let composed = ComposedPhase::new(incoming_status, session_connected);
++            let composed = ComposedPhase::new(incoming_status, session_connected, driver_name);
+             let mut status = Some(public_status_from_driver(
+                 incoming_status,
+                 composed.phase,
+@@ -3926,7 +3940,11 @@
+ }
+
+ impl ComposedPhase {
+-    fn new(incoming_status: &DriverSandboxStatus, session_connected: bool) -> Self {
++    fn new(
++        incoming_status: &DriverSandboxStatus,
++        session_connected: bool,
++        driver_name: &str,
++    ) -> Self {
+         let backend_phase = derive_phase(Some(incoming_status));
+         // A live supervisor session is a stronger readiness signal than the backend phase.
+         // set_supervisor_session_state may have already promoted the store record to Ready
+@@ -3935,13 +3953,17 @@
+         let phase = match backend_phase {
+             SandboxPhase::Error | SandboxPhase::Deleting | SandboxPhase::Stopped => backend_phase,
+             _ if session_connected => SandboxPhase::Ready,
++            // The built-in MXC driver owns its native child and has no supervisor.
++            // Only its actual backend Ready condition can complete provisioning.
++            SandboxPhase::Ready if driver_name == "mxc" => SandboxPhase::Ready,
+             _ => SandboxPhase::Provisioning,
+         };
+         Self {
+             phase,
+             session_connected,
+             backend_ready_without_session: backend_phase == SandboxPhase::Ready
+-                && !session_connected,
++                && !session_connected
++                && driver_name != "mxc",
+         }
+     }
+
+@@ -8047,6 +8069,128 @@
+             .status
+             .as_ref()
+             .and_then(|s| s.conditions.iter().find(|c| c.r#type == "Ready"))
++    }
++
++    #[tokio::test]
++    async fn mxc_backend_ready_preserves_native_condition_without_supervisor() {
++        let runtime = test_runtime_for_driver(Arc::new(TestDriver::default()), "mxc").await;
++        let sandbox = sandbox_record("sb-mxc", "native-agent", SandboxPhase::Provisioning);
++        runtime.store.put_message(&sandbox).await.unwrap();
++        let mut snapshot = ready_driver_sandbox("sb-mxc", "native-agent");
++        let condition = &mut snapshot.status.as_mut().unwrap().conditions[0];
++        condition.reason = "AgentRunning".to_string();
++        condition.message = "Agent exec launched: owned-native-agent".to_string();
++
++        runtime.apply_sandbox_update(snapshot).await.unwrap();
++
++        let stored = runtime
++            .store
++            .get_message::<Sandbox>("sb-mxc")
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(
++            SandboxPhase::try_from(stored.phase()).unwrap(),
++            SandboxPhase::Ready
++        );
++        assert!(!runtime.supervisor_sessions.has_session("sb-mxc"));
++        let condition = ready_condition(&stored).unwrap();
++        assert_eq!(condition.status, "True");
++        assert_eq!(condition.reason, "AgentRunning");
++        assert_eq!(condition.message, "Agent exec launched: owned-native-agent");
++    }
++
++    #[tokio::test]
++    async fn advertised_mxc_name_does_not_bypass_configured_driver_supervisor_requirement() {
++        let mut runtime = test_runtime(Arc::new(TestDriver::default())).await;
++        runtime.driver_info.driver_name = "mxc".to_string();
++        let sandbox = sandbox_record("sb-other", "other-agent", SandboxPhase::Provisioning);
++        runtime.store.put_message(&sandbox).await.unwrap();
++
++        runtime
++            .apply_sandbox_update(ready_driver_sandbox("sb-other", "other-agent"))
++            .await
++            .unwrap();
++
++        let stored = runtime
++            .store
++            .get_message::<Sandbox>("sb-other")
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(
++            SandboxPhase::try_from(stored.phase()).unwrap(),
++            SandboxPhase::Provisioning
++        );
++        assert_eq!(
++            ready_condition(&stored).unwrap().reason,
++            "SupervisorNotConnected"
++        );
++    }
++
++    #[test]
++    fn mxc_readiness_still_requires_backend_ready_and_preserves_terminal_priority() {
++        let starting = make_driver_status(DriverCondition {
++            r#type: "Ready".to_string(),
++            status: "False".to_string(),
++            reason: "Starting".to_string(),
++            ..Default::default()
++        });
++        assert_eq!(
++            ComposedPhase::new(&starting, false, "mxc").phase,
++            SandboxPhase::Provisioning
++        );
++        assert_eq!(
++            ComposedPhase::new(&DriverSandboxStatus::default(), false, "mxc").phase,
++            SandboxPhase::Provisioning
++        );
++        let failed = make_driver_status(DriverCondition {
++            r#type: "Ready".to_string(),
++            status: "False".to_string(),
++            reason: "AgentFailed".to_string(),
++            ..Default::default()
++        });
++        let stopped = make_driver_status(DriverCondition {
++            r#type: "Suspended".to_string(),
++            status: "True".to_string(),
++            reason: "AgentStopped".to_string(),
++            ..Default::default()
++        });
++        for connected in [false, true] {
++            for (status, expected) in [
++                (&failed, SandboxPhase::Error),
++                (&stopped, SandboxPhase::Stopped),
++                (&make_deleting_driver_status(), SandboxPhase::Deleting),
++            ] {
++                assert_eq!(ComposedPhase::new(status, connected, "mxc").phase, expected);
++            }
++        }
++    }
++
++    #[tokio::test]
++    async fn mxc_backend_ready_does_not_revive_terminal_or_stopping_records() {
++        let runtime = test_runtime_for_driver(Arc::new(TestDriver::default()), "mxc").await;
++        for phase in [
++            SandboxPhase::Error,
++            SandboxPhase::Stopped,
++            SandboxPhase::Stopping,
++            SandboxPhase::Deleting,
++        ] {
++            let id = format!("sb-{phase:?}");
++            let sandbox = sandbox_record(&id, &id, phase);
++            runtime.store.put_message(&sandbox).await.unwrap();
++            runtime
++                .apply_sandbox_update(ready_driver_sandbox(&id, &id))
++                .await
++                .unwrap();
++            let stored = runtime
++                .store
++                .get_message::<Sandbox>(&id)
++                .await
++                .unwrap()
++                .unwrap();
++            assert_eq!(SandboxPhase::try_from(stored.phase()).unwrap(), phase);
++        }
+     }
+
+     #[tokio::test]
+
+diff --git a/crates/openshell-cli/src/run.rs b/crates/openshell-cli/src/run.rs
+--- a/crates/openshell-cli/src/run.rs
++++ b/crates/openshell-cli/src/run.rs
+@@ -2107,6 +2107,17 @@
+     })
+ }
+
++fn sandbox_ready_condition_to_json(sandbox: &Sandbox) -> serde_json::Value {
++    sandbox
++        .status
++        .as_ref()
++        .and_then(|status| status.conditions.iter().find(|condition| condition.r#type == "Ready"))
++        .filter(|condition| condition.status.len() <= 16 && condition.reason.len() <= 128)
++        .map_or(serde_json::Value::Null, |condition| {
++            serde_json::json!({ "status": condition.status, "reason": condition.reason })
++        })
++}
++
+ fn sandbox_detail_to_json(
+     sandbox: &Sandbox,
+     config: &GetSandboxConfigResponse,
+@@ -2115,6 +2126,10 @@
+     let obj = value
+         .as_object_mut()
+         .expect("sandbox_to_json returns object");
++    obj.insert(
++        "ready_condition".into(),
++        sandbox_ready_condition_to_json(sandbox),
++    );
+
+     let policy_source = if config.policy_source == PolicySource::Global as i32 {
+         "global"
+@@ -8774,6 +8789,109 @@
+         );
+     }
+
++    fn native_mxc_condition_sandbox(kind: &str, status: &str, reason: &str) -> Sandbox {
++        Sandbox {
++            metadata: Some(ObjectMeta {
++                id: "owned-id".into(),
++                name: "owned-agent".into(),
++                ..Default::default()
++            }),
++            status: Some(SandboxStatus {
++                conditions: vec![SandboxCondition {
++                    r#type: kind.into(),
++                    status: status.into(),
++                    reason: reason.into(),
++                    message: "private-command-message-canary".into(),
++                    ..Default::default()
++                }],
++                ..Default::default()
++            }),
++            ..Default::default()
++        }
++    }
++
++    #[test]
++    fn native_mxc_ready_condition_reports_actual_execution_state_without_message() {
++        for (status, reason) in [
++            ("True", "AgentRunning"),
++            ("True", "AgentCompleted"),
++            ("False", "ExecFailed"),
++        ] {
++            let sandbox = native_mxc_condition_sandbox("Ready", status, reason);
++            let value =
++                super::sandbox_detail_to_json(&sandbox, &GetSandboxConfigResponse::default())
++                    .unwrap();
++            assert_eq!(
++                value["ready_condition"],
++                serde_json::json!({"status": status, "reason": reason})
++            );
++            assert!(!value.to_string().contains("private-command-message-canary"));
++            assert!(value["ready_condition"].get("message").is_none());
++        }
++    }
++
++    #[test]
++    fn native_mxc_ready_condition_is_null_without_a_ready_condition() {
++        for sandbox in [
++            Sandbox::default(),
++            Sandbox {
++                status: Some(Default::default()),
++                ..Default::default()
++            },
++            native_mxc_condition_sandbox("Health", "True", "AgentCompleted"),
++        ] {
++            let value =
++                super::sandbox_detail_to_json(&sandbox, &GetSandboxConfigResponse::default())
++                    .unwrap();
++            assert_eq!(value.get("ready_condition"), Some(&serde_json::Value::Null));
++        }
++    }
++
++    #[test]
++    fn native_mxc_ready_condition_rejects_oversize_fields_without_truncation() {
++        let maximum = native_mxc_condition_sandbox("Ready", &"s".repeat(16), &"r".repeat(128));
++        let value =
++            super::sandbox_detail_to_json(&maximum, &GetSandboxConfigResponse::default()).unwrap();
++        assert_eq!(value["ready_condition"]["status"], "s".repeat(16));
++        assert_eq!(value["ready_condition"]["reason"], "r".repeat(128));
++        for sandbox in [
++            native_mxc_condition_sandbox("Ready", &"s".repeat(17), "AgentCompleted"),
++            native_mxc_condition_sandbox("Ready", "True", &"r".repeat(129)),
++            native_mxc_condition_sandbox("Ready", "True", &"é".repeat(65)),
++        ] {
++            let value =
++                super::sandbox_detail_to_json(&sandbox, &GetSandboxConfigResponse::default())
++                    .unwrap();
++            assert!(value["ready_condition"].is_null());
++        }
++    }
++
++    #[test]
++    fn native_mxc_ready_condition_does_not_change_summary_or_existing_detail_fields() {
++        let mut sandbox = native_mxc_condition_sandbox("Ready", "True", "AgentCompleted");
++        sandbox.set_phase(SandboxPhase::Ready as i32);
++        sandbox.set_current_policy_version(7);
++        let summary = super::sandbox_to_json(&sandbox);
++        let detail = super::sandbox_detail_to_json(
++            &sandbox,
++            &GetSandboxConfigResponse {
++                version: 4,
++                ..Default::default()
++            },
++        )
++        .unwrap();
++        for (key, value) in summary.as_object().unwrap() {
++            assert_eq!(&detail[key], value);
++        }
++        assert!(summary.get("ready_condition").is_none());
++        assert_eq!(detail["id"], "owned-id");
++        assert_eq!(detail["name"], "owned-agent");
++        assert_eq!(detail["phase"], "Ready");
++        assert_eq!(detail["current_policy_version"], 7);
++        assert_eq!(detail["revision"], 4);
++        assert!(detail["policy"].is_null());
++    }
++
+     #[test]
+     fn sandbox_detail_to_json_includes_policy_fields() {
+         let mut sandbox = Sandbox {

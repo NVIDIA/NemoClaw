@@ -17,7 +17,7 @@ function fixture(exitCode = 0) {
   const child = Object.assign(new EventEmitter(), {
     stdin: Object.assign(new EventEmitter(), { end: vi.fn() }),
     stdout: new EventEmitter(),
-    stderr: { resume: vi.fn() },
+    stderr: new EventEmitter(),
     kill: vi.fn(),
   });
   child.stdin.end.mockImplementation(() => queueMicrotask(() => child.emit("close", exitCode)));
@@ -99,7 +99,28 @@ describe("native Windows state protocol", () => {
     const pending = acquireNativeStateSession("launcher.exe", "hermes");
     child.stdout.emit("data", Buffer.from(JSON.stringify(receipt) + "\n"));
     const session = await pending;
-    await expect(session.release()).rejects.toThrow("restore private access");
+    child.stderr.emit("data", Buffer.from("Native state permissions contain unexpected grants.\n"));
+    const release = session.release();
+    await expect(release).rejects.toThrow("restore private access");
+    await expect(release).rejects.toThrow("Native state permissions contain unexpected grants.");
+  });
+
+  it("retains the bounded sanitized final state-owner failure", async () => {
+    const child = fixture(2);
+    const pending = acquireNativeStateSession("launcher.exe", "hermes");
+    child.stdout.emit("data", Buffer.from(JSON.stringify(receipt) + "\n"));
+    const session = await pending;
+    child.stderr.emit("data", Buffer.from("owner warning\n".repeat(20000)));
+    child.stderr.emit(
+      "data",
+      Buffer.from("Native state restore failed (Windows 5); api_key=PRIVATE_STATE_CANARY\n"),
+    );
+    const failure = await session.release().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    const message = (failure as Error).message;
+    expect(message).toContain("Native state restore failed (Windows 5)");
+    expect(message).not.toContain("PRIVATE_STATE_CANARY");
+    expect(message.length).toBeLessThan(25 * 1024);
   });
 
   it("refuses to keep using state after its owner exits unexpectedly", async () => {

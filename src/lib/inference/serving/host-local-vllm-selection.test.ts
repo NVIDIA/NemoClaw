@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import supportedReadiness from "../../../../test/fixtures/system-readiness/supported.json" with { type: "json" };
+import type { SystemReadinessReport } from "../../readiness/types.js";
 import { computeCapabilityPreflight, type VllmProfile } from "../vllm.js";
 import {
   HOST_LOCAL_VLLM_LIFECYCLE_REF,
@@ -147,6 +149,12 @@ describe("host-local vLLM selection", () => {
   beforeEach(() => mocks.resolveManagedInferenceServing.mockReset());
 
   it("resolves an explicit preset into the catalog-derived Spark profile", () => {
+    const readinessReports = [
+      {
+        nodeId: "spark-fixture",
+        report: supportedReadiness as SystemReadinessReport,
+      },
+    ];
     const selection = hostLocalSelection();
     const gpuMemoryUtilization = Number(
       selection.recipe.spec.serve.arguments.find(
@@ -155,9 +163,11 @@ describe("host-local vLLM selection", () => {
     );
     mocks.resolveManagedInferenceServing.mockReturnValue(selection);
 
-    const result = resolveHostLocalVllmSelection(baseProfile(), {
-      NEMOCLAW_SERVING_PRESET: selection.preset.metadata.id,
-    });
+    const result = resolveHostLocalVllmSelection(
+      baseProfile(),
+      { NEMOCLAW_SERVING_PRESET: selection.preset.metadata.id },
+      { readinessReports },
+    );
 
     expect(result).toMatchObject({
       kind: "selected",
@@ -185,6 +195,7 @@ describe("host-local vLLM selection", () => {
     expect(mocks.resolveManagedInferenceServing).toHaveBeenCalledOnce();
     expect(mocks.resolveManagedInferenceServing).toHaveBeenCalledWith(
       expect.objectContaining({
+        readinessReports,
         topologyQualifications: [],
         intent: { preset: selection.preset.metadata.id },
       }),

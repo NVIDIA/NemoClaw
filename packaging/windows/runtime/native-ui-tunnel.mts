@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import net, { type Socket } from "node:net";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 function readRelayFile(file: string, maxBytes: number): Buffer | null {
   let descriptor: number;
@@ -39,10 +40,12 @@ export async function startNativeUiTunnel({
   relayRoot,
   relayToken,
   uiPort,
+  signal,
 }: {
   relayRoot: string;
   relayToken: string;
   uiPort: number;
+  signal?: AbortSignal;
 }): Promise<void> {
   if (
     typeof relayRoot !== "string" ||
@@ -52,13 +55,13 @@ export async function startNativeUiTunnel({
     uiPort > 65535
   )
     throw new Error("The contained native UI tunnel identity is invalid.");
-  const sleep = (milliseconds: number) =>
-    new Promise((resolve) => setTimeout(resolve, milliseconds));
+  signal?.throwIfAborted();
   const waitForUi = async () => {
     const deadline = Date.now() + 180_000;
     while (Date.now() < deadline) {
+      signal?.throwIfAborted();
       const connected = await new Promise((resolvePromise) => {
-        const socket = net.createConnection({ host: "127.0.0.1", port: uiPort });
+        const socket = net.createConnection({ host: "127.0.0.1", port: uiPort, signal });
         socket.once("connect", () => {
           socket.destroy();
           resolvePromise(true);
@@ -72,8 +75,9 @@ export async function startNativeUiTunnel({
           resolvePromise(false);
         });
       });
+      signal?.throwIfAborted();
       if (connected) return;
-      await sleep(250);
+      await delay(250, undefined, { signal });
     }
     throw new Error("The agent Web UI did not become ready inside MXC");
   };
@@ -85,6 +89,7 @@ export async function startNativeUiTunnel({
   };
   const startFileTunnel = async () => {
     await waitForUi();
+    signal?.throwIfAborted();
     if (!fs.statSync(relayRoot, { throwIfNoEntry: false })?.isDirectory()) {
       throw new Error("MXC UI relay directory is unavailable");
     }
@@ -102,15 +107,19 @@ export async function startNativeUiTunnel({
     writeRelayFile(join(relayRoot, "ready"), relayToken);
     return new Promise<void>((resolvePromise, reject) => {
       let finished = false;
+      let poll: ReturnType<typeof setInterval> | undefined;
       const finish = (error?: unknown) => {
         if (finished) return;
         finished = true;
         clearInterval(poll);
+        signal?.removeEventListener("abort", onAbort);
         for (const stream of streams.values()) stream.socket.destroy();
         streams.clear();
         if (error !== undefined) reject(error);
         else resolvePromise();
       };
+      const onAbort = () =>
+        finish(signal?.reason ?? new Error("The native UI tunnel was stopped."));
       const pollRelay = () => {
         const shutdown = join(relayRoot, "shutdown");
         const shutdownToken = readNativeUiTunnelMarker(shutdown);
@@ -155,6 +164,7 @@ export async function startNativeUiTunnel({
           socket.once("error", () => {});
           socket.once("close", () => {
             streams.delete(entry);
+            if (finished) return;
             try {
               writeRelayFile(join(streamRoot, "sandbox-close"), Buffer.alloc(0));
             } catch {}
@@ -187,7 +197,7 @@ export async function startNativeUiTunnel({
           }
         }
       };
-      const poll = setInterval(() => {
+      poll = setInterval(() => {
         if (finished) return;
         try {
           pollRelay();
@@ -195,6 +205,8 @@ export async function startNativeUiTunnel({
           finish(error);
         }
       }, 10);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
     });
   };
   return await startFileTunnel();

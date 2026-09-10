@@ -159,7 +159,7 @@ describe("guarded file broker transport", () => {
           outgoing.once("error", reject);
           outgoing.end(payload);
         });
-        expect(output).toEqual(Buffer.concat([Buffer.from("data: first\n\n"), payload]));
+        expect(output.equals(Buffer.concat([Buffer.from("data: first\n\n"), payload]))).toBe(true);
         expect(received).toBe(payload.length);
         expect(receivedHash.digest("hex")).toBe(createHash("sha256").update(payload).digest("hex"));
         expect(host.diagnostics().maximumOutstandingFramesPerConnection).toBeLessThanOrEqual(8);

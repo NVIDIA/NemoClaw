@@ -11,6 +11,7 @@ import { hermesDashboardPythonSource } from "./native-hermes-dashboard.mts";
 import { openNativeUiFileOwner } from "./native-ui-file-owner.mts";
 import { startFileTcpRelay } from "./native-ui-relay.mts";
 import { openNativeWebSession } from "./native-web-session.mts";
+import { waitForNativeMxcCompletion } from "./native-ui-lifecycle.mts";
 import {
   createNativeSessionDiagnostics,
   NativeSessionFailure,
@@ -78,6 +79,15 @@ async function waitForConsoleAgentExit(
         !Number.isInteger(receipt.exitCode)
       )
         fail("the native agent exit receipt is invalid");
+      const completion = await waitForNativeMxcCompletion(
+        openshell,
+        environment,
+        sandboxName,
+        gateway,
+        stateSession,
+      );
+      if (completion === "ExecFailed" && receipt.exitCode === 0)
+        fail("MXC failed after the agent reported its exit status");
       return receipt.exitCode;
     }
     if (gateway.exitCode !== null || gateway.signalCode !== null)
@@ -141,13 +151,68 @@ export function interactiveWorkloadSource() {
   return String.raw`import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { open as openFile } from "node:fs/promises";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 const required = (name) => {
   const value = process.env[name];
   if (!value) throw new Error(name + " is required");
   return value;
 };
+function watchNativeStopRequest(file, sessionId, intervalMilliseconds = 100) {
+  if (!/^[a-f0-9]{10}$/.test(sessionId)) throw new Error("The native session stop identity is invalid.");
+  const expected = Buffer.from(sessionId + "\n", "utf8");
+  const controller = new AbortController();
+  let rejectRequested;
+  const requested = new Promise((_resolve, reject) => { rejectRequested = reject; });
+  requested.catch(() => {});
+  let closed = false;
+  let timer;
+  let active = Promise.resolve();
+  const abort = (message) => {
+    if (closed || controller.signal.aborted) return;
+    const error = Object.assign(new Error(message), { code: "ABORT_ERR" });
+    controller.abort(error);
+    rejectRequested(error);
+  };
+  const poll = async () => {
+    let handle;
+    try {
+      handle = await openFile(file, "r");
+      const stat = await handle.stat();
+      if (stat.isFile() && stat.size === expected.length) {
+        const bytes = Buffer.alloc(expected.length + 1);
+        const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+        if (bytesRead === expected.length && bytes.subarray(0, bytesRead).equals(expected))
+          abort("The host requested this native session to stop.");
+      }
+    } catch (error) {
+      if (!["ENOENT", "EACCES", "EBUSY"].includes(error?.code))
+        abort("The native session stop request could not be read.");
+    } finally {
+      if (handle) {
+        try { await handle.close(); }
+        catch { abort("The native session stop request handle could not be closed."); }
+      }
+    }
+    if (!closed && !controller.signal.aborted) timer = setTimeout(start, intervalMilliseconds);
+  };
+  const start = () => { active = poll(); };
+  start();
+  return {
+    signal: controller.signal,
+    requested,
+    async close() {
+      // Also cancel an active UI tunnel when child or broker failure reaches
+      // cleanup before the host has written its shutdown marker.
+      abort("The native session is closing.");
+      closed = true;
+      clearTimeout(timer);
+      await active;
+    },
+  };
+}
 const agent = required("NEMOCLAW_AGENT_ID");
 const home = required("NEMOCLAW_AGENT_HOME");
 const model = required("NEMOCLAW_AGENT_MODEL");
@@ -155,6 +220,8 @@ const brokerToken = required("NEMOCLAW_AGENT_BROKER_TOKEN");
 const exitReceipt = required("NEMOCLAW_AGENT_EXIT_RECEIPT");
 const hostBrokerPort = Number(required("NEMOCLAW_AGENT_PROXY_PORT"));
 const bootstrapReceipt = required("NEMOCLAW_AGENT_BOOTSTRAP_RECEIPT");
+const stopRequest = required("NEMOCLAW_AGENT_STOP_REQUEST");
+const sessionId = required("NEMOCLAW_AGENT_SESSION_ID");
 const node = required("NEMOCLAW_AGENT_NODE");
 const runtime = required("NEMOCLAW_AGENT_RUNTIME");
 const python = process.env.NEMOCLAW_AGENT_PYTHON;
@@ -164,23 +231,25 @@ let brokerTunnel;
 let bootstrapWritten = false;
 const connectivity = {
   schemaVersion: 1, agent, interface: dashboard ? "dashboard" : "console",
-  sessionId: required("NEMOCLAW_AGENT_SESSION_ID"), transport: "guarded-file-tcp",
+  sessionId, transport: "guarded-file-tcp",
   brokerHost: "127.0.0.1", brokerPort: hostBrokerPort,
   containedHost: "127.0.0.1", containedPort: null,
   contained: { tcpConnected: false, unauthenticatedStatus: null, authenticatedStatus: null, bootstrapConsumedByWorkload: false },
   verdict: "fail", failureStage: "bridge", errorCode: null,
 };
+const stopWatcher = watchNativeStopRequest(stopRequest, sessionId);
 try {
 const { startNativeBrokerTunnel } = await import("./native-broker-tunnel.mts");
 brokerTunnel = await startNativeBrokerTunnel({
   relayRoot: required("NEMOCLAW_BROKER_RELAY_ROOT"), relayToken: required("NEMOCLAW_BROKER_RELAY_TOKEN"),
+  signal: stopWatcher.signal,
 });
 const proxyPort = String(brokerTunnel.port);
 connectivity.containedPort = brokerTunnel.port;
 const baseUrl = "http://127.0.0.1:" + proxyPort + "/v1";
 connectivity.failureStage = "tcp";
 await new Promise((resolve, reject) => {
-  const socket = createConnection({ host: "127.0.0.1", port: brokerTunnel.port });
+  const socket = createConnection({ host: "127.0.0.1", port: brokerTunnel.port, signal: stopWatcher.signal });
   socket.setTimeout(5000);
   socket.once("connect", () => { socket.destroy(); resolve(); });
   socket.once("error", (error) => { socket.destroy(); reject(error); });
@@ -189,14 +258,14 @@ await new Promise((resolve, reject) => {
 connectivity.contained.tcpConnected = true;
 connectivity.failureStage = "unauthenticated-http";
 const denied = await fetch("http://127.0.0.1:" + proxyPort + "/native/bootstrap", {
-  method: "POST", signal: AbortSignal.timeout(15000),
+  method: "POST", signal: AbortSignal.any([AbortSignal.timeout(15000), stopWatcher.signal]),
 });
 connectivity.contained.unauthenticatedStatus = denied.status;
 await denied.body?.cancel();
 if (denied.status !== 403) throw new Error("The local broker did not reject an unauthenticated bootstrap probe.");
 connectivity.failureStage = "authenticated-bootstrap";
 const bootstrapResponse = await fetch("http://127.0.0.1:" + proxyPort + "/native/bootstrap", {
-  method: "POST", headers: { authorization: "Bearer " + brokerToken }, signal: AbortSignal.timeout(15000),
+  method: "POST", headers: { authorization: "Bearer " + brokerToken }, signal: AbortSignal.any([AbortSignal.timeout(15000), stopWatcher.signal]),
 });
 connectivity.contained.authenticatedStatus = bootstrapResponse.status;
 if (!bootstrapResponse.ok) throw new Error("NemoClaw could not supply the selected optional services.");
@@ -329,7 +398,9 @@ if (agent === "pi") {
   executable = python;
   args = dashboard ? [runner] : [runner, "--provider", "custom", "--model", model];
   extraEnvironment = { HERMES_HOME: hermesHome, ...(dashboard ? {
-    HERMES_DESKTOP_READY_FILE: join(home, "dashboard-ready-" + process.env.NEMOCLAW_AGENT_SESSION_ID + ".json"),
+    // Hermes's optional atomic file publication conflicts with the held state
+    // directory guard. Its normal stdout contract reports the live bound port.
+    HERMES_DESKTOP_READY_FILE: "",
     HERMES_DASHBOARD_SESSION_TOKEN: process.env.NEMOCLAW_UI_SESSION_TOKEN,
     HERMES_NODE: node, HERMES_PYTHON: python, HERMES_SKIP_NODE_BOOTSTRAP: "1",
   } : {}) };
@@ -389,13 +460,101 @@ const observe = (process) => new Promise((resolve) => {
   process.once("error", () => resolve(1));
   process.once("close", (code) => resolve(code ?? 1));
 });
+function waitForHermesDashboardReady(child, childExit, timeoutMilliseconds = 180000) {
+  return new Promise((resolve, reject) => {
+    const decoder = new StringDecoder("utf8");
+    let pending = "";
+    let dropping = false;
+    let settled = false;
+    let timer;
+    const finish = (error, port) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.stdout?.off("data", onData);
+      child.stdout?.off("end", onEnd);
+      child.stdout?.off("error", onError);
+      child.off("error", onError);
+      if (error) reject(error); else resolve({ port, processId: child.pid });
+    };
+    const onError = (error) => finish(error);
+    const onEnd = () => finish(new Error("The Hermes dashboard closed stdout before announcing readiness."));
+    const onData = (bytes) => {
+      for (const part of decoder.write(bytes).split(/(\n)/)) {
+        if (settled) return;
+        if (part !== "\n") {
+          if (dropping) continue;
+          pending += part;
+          if (pending.length > 4096) {
+            if (pending.startsWith("HERMES_DASHBOARD_READY")) {
+              finish(new Error("The Hermes dashboard readiness announcement exceeded its limit."));
+              return;
+            }
+            pending = "";
+            dropping = true;
+          }
+          continue;
+        }
+        const line = pending.replace(/\r$/, "");
+        pending = "";
+        if (dropping) { dropping = false; continue; }
+        if (!line.startsWith("HERMES_DASHBOARD_READY")) continue;
+        const match = /^HERMES_DASHBOARD_READY port=([1-9][0-9]{0,4})$/.exec(line);
+        const port = match ? Number(match[1]) : 0;
+        if (!port || port > 65535) {
+          finish(new Error("The Hermes dashboard announced an invalid port."));
+        } else if (child.exitCode !== null || child.signalCode !== null) {
+          finish(new Error("The Hermes dashboard exited before its readiness announcement was accepted."));
+        } else finish(null, port);
+      }
+    };
+    child.stdout?.on("data", onData);
+    child.stdout?.once("end", onEnd);
+    child.stdout?.once("error", onError);
+    child.once("error", onError);
+    childExit.then(
+      () => finish(new Error("The Hermes dashboard exited before becoming ready.")),
+      onError,
+    );
+    if (!Number.isInteger(child.pid) || child.pid <= 0 || !child.stdout) {
+      finish(new Error("The Hermes dashboard process could not start with owned stdout."));
+      return;
+    }
+    timer = setTimeout(() => finish(new Error("The real Hermes dashboard did not become ready.")), timeoutMilliseconds);
+  });
+}
+async function stopOwnedNativeAgent(child, childStopped, timeoutMilliseconds = 10000) {
+  if (!child) return true;
+  if (child.exitCode === null && child.signalCode === null) child.kill();
+  let timer;
+  try {
+    const stopped = await Promise.race([
+      childStopped.then(() => true),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(false), timeoutMilliseconds); }),
+    ]);
+    if (!stopped) {
+      // A descendant can retain the pipes after the direct child exits. Close
+      // only this child's owned streams so Node can exit with failure and MXC
+      // can finish its job teardown; never destroy inherited console handles.
+      child.stdout?.unpipe(process.stdout);
+      child.stderr?.unpipe(process.stderr);
+      child.stdin?.destroy();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      child.unref();
+    }
+    return stopped;
+  } finally { clearTimeout(timer); }
+}
 let messaging;
 let messagingExit;
 let messagingFailure = false;
 let child;
+let childStopped;
 let exitCode = 1;
 const selectedChannels = Object.keys(nativeServices.options.messaging || {});
 try {
+  stopWatcher.signal.throwIfAborted();
   if (agent === "hermes" && selectedChannels.length) {
     console.log("Connecting your selected messaging services…");
     messaging = spawn(python, ["-m", "gateway.run"], {
@@ -408,6 +567,7 @@ try {
     const deadline = Date.now() + 120000;
     let connected = false;
     while (Date.now() < deadline && messaging.exitCode === null && messaging.signalCode === null) {
+      stopWatcher.signal.throwIfAborted();
       let status;
       try { status = JSON.parse(readFileSync(join(extraEnvironment.HERMES_HOME, "gateway_state.json"), "utf8")); } catch {}
       if (status?.pid === messaging.pid && status?.gateway_state === "running" &&
@@ -419,9 +579,12 @@ try {
     if (!connected) throw new Error("A selected messaging service could not connect. Check its bot key, app permissions, and network in NemoClaw Setup.");
     console.log("Messaging connected: " + selectedChannels.join(", ") + ".");
   }
+  stopWatcher.signal.throwIfAborted();
   child = spawn(executable, args, { cwd: home, env: childEnvironment, stdio: dashboard ? ["ignore", "pipe", "pipe"] : "inherit", windowsHide: dashboard });
+  childStopped = observe(child);
+  const childExit = Promise.race([childStopped, brokerTunnel.failure, stopWatcher.requested]);
+  const dashboardReady = dashboard ? waitForHermesDashboardReady(child, childExit) : null;
   if (dashboard) { child.stdout.pipe(process.stdout, { end: false }); child.stderr.pipe(process.stderr, { end: false }); }
-  const childExit = Promise.race([observe(child), brokerTunnel.failure]);
   if (messagingExit) {
     messagingExit.then(() => {
       if (child && child.exitCode === null && child.signalCode === null) {
@@ -431,29 +594,26 @@ try {
     });
   }
   if (dashboard) {
-    let port;
-    const deadline = Date.now() + 180000;
-    while (Date.now() < deadline && child.exitCode === null && child.signalCode === null) {
-      let record;
-      try { record = JSON.parse(readFileSync(extraEnvironment.HERMES_DESKTOP_READY_FILE, "utf8")); } catch {}
-      if (Number.isInteger(record?.port) && record.port > 0 && record.port <= 65535) { port = record.port; break; }
-      await pause(100);
-    }
-    if (!port) throw new Error("The real Hermes dashboard did not become ready.");
+    const { port, processId } = await dashboardReady;
+    if (processId !== child.pid || child.exitCode !== null || child.signalCode !== null)
+      throw new Error("The Hermes dashboard process stopped during readiness.");
     const { startNativeUiTunnel } = await import("./native-ui-tunnel.mts");
     await Promise.race([
-      startNativeUiTunnel({ relayRoot: required("NEMOCLAW_UI_RELAY_ROOT"), relayToken: required("NEMOCLAW_UI_RELAY_TOKEN"), uiPort: port }),
+      startNativeUiTunnel({ relayRoot: required("NEMOCLAW_UI_RELAY_ROOT"), relayToken: required("NEMOCLAW_UI_RELAY_TOKEN"), uiPort: port, signal: stopWatcher.signal }),
       childExit.then(() => { throw new Error("The Hermes dashboard stopped unexpectedly."); }),
     ]);
     // The host subsequently deletes the exact MXC sandbox, which owns every
-    // dashboard ConPTY child. No process-name kill or browser handle is used.
-    child.kill();
-    await childExit;
+    // dashboard ConPTY child. The shared finally block first bounds shutdown
+    // of the exact Python child; no process-name kill or browser handle is used.
     exitCode = 0;
   } else exitCode = await childExit;
 } catch (error) {
   console.error(error instanceof Error ? error.message : "The selected agent could not start.");
 } finally {
+  if (!(await stopOwnedNativeAgent(child, childStopped))) {
+    exitCode = 1;
+    console.error("The owned native agent process did not stop within its cleanup deadline.");
+  }
   if (messaging && messaging.exitCode === null && messaging.signalCode === null) {
     const stop = spawn(python, ["-c", "import sys; from gateway.status import get_running_pid, write_planned_stop_marker; pid=int(sys.argv[1]); sys.exit(0 if get_running_pid()==pid and write_planned_stop_marker(pid) else 1)", String(messaging.pid)], {
       cwd: home, env: childEnvironment, stdio: "ignore", windowsHide: true,
@@ -478,6 +638,7 @@ process.exitCode = exitCode;
   }
   throw error;
 } finally {
+  await stopWatcher.close();
   await brokerTunnel?.close();
 }
 
@@ -750,6 +911,7 @@ async function runNativeConsoleAgentInternal(
         NEMOCLAW_AGENT_ID: agentId,
         NEMOCLAW_AGENT_SESSION_ID: runId,
         NEMOCLAW_AGENT_BOOTSTRAP_RECEIPT: bootstrapPath,
+        NEMOCLAW_AGENT_STOP_REQUEST: path.join(statusRoot, "shutdown"),
         NEMOCLAW_BROKER_RELAY_ROOT: brokerRelayRoot,
         NEMOCLAW_BROKER_RELAY_TOKEN: brokerRelayToken,
         ...(dashboard
@@ -949,7 +1111,8 @@ async function runNativeConsoleAgentInternal(
           diagnostics,
         );
       } catch (error) {
-        await publishBootstrap(false);
+        const bootstrap = await publishBootstrap(false);
+        if (bootstrap?.verdict === "pass") diagnostics.stage(dashboard ? "dashboard" : "agent");
         throw error;
       }
       diagnostics.stage("bootstrap");
@@ -1076,15 +1239,39 @@ async function runNativeConsoleAgentInternal(
       throw error;
     } finally {
       if (!passed) {
-        try {
-          await run(
+        const cleanup = async (label: string, operation: () => Promise<unknown>) => {
+          try {
+            await operation();
+          } catch (error) {
+            diagnostics.cleanupFailed(label);
+            diagnostics.capture(
+              "cleanup.stderr",
+              `${label}: ${error instanceof Error ? (error.stack ?? error.message) : "The cleanup operation failed."}\n`,
+            );
+          }
+        };
+        await cleanup("contained agent stop request", () =>
+          statusFiles.write("shutdown", `${runId}\n`),
+        );
+        await cleanup("dashboard stop signal", async () => {
+          if (relay) await relay.close();
+        });
+        await cleanup("broker stop signal", async () => {
+          if (brokerRelay) await brokerRelay.close();
+        });
+        await cleanup("MXC execution cleanup", () =>
+          waitForNativeMxcCompletion(openshell, cliEnvironment, sandboxName, gateway, stateSession),
+        );
+        await cleanup("native sandbox deletion", () =>
+          run(
             openshell,
             ["sandbox", "delete", sandboxName],
             cliEnvironment,
             "Failure cleanup native sandbox",
             30_000,
-          );
-        } catch {}
+            diagnostics,
+          ),
+        );
       }
       const gatewayStopped = await stopChild(gateway);
       dashboardGatewayStopped = gatewayStopped;
@@ -1130,8 +1317,12 @@ async function runNativeConsoleAgentInternal(
     const attempt = async (label: string, operation: () => Promise<unknown> | unknown) => {
       try {
         await operation();
-      } catch {
+      } catch (error) {
         cleanupFailures.push(label);
+        diagnostics.capture(
+          "cleanup.stderr",
+          `${label}: ${error instanceof Error ? (error.stack ?? error.message) : "The cleanup operation failed."}\n`,
+        );
       }
     };
     // A failed file-boundary owner must not keep the credential-bearing broker,

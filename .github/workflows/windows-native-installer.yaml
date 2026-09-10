@@ -270,7 +270,26 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'The NVIDIA/OpenShell#2721 Node UI compatibility patch no longer applies exactly.' }
           & git apply -- $patch
           if ($LASTEXITCODE -ne 0) { throw 'The NVIDIA/OpenShell#2721 Node UI compatibility patch failed.' }
-          & .\tasks\scripts\windows-msvc.ps1 build aarch64-pc-windows-msvc
+          . .\tasks\scripts\windows-msvc.ps1 build aarch64-pc-windows-msvc
+          Assert-NativeTestTarget 'aarch64-pc-windows-msvc'
+          Invoke-VsCargo `
+            -RustTarget 'aarch64-pc-windows-msvc' `
+            -CargoArgs "cargo test --locked --release --target aarch64-pc-windows-msvc -p openshell-server --lib $Z3ServerFeatures -- compute::tests::mxc_ compute::tests::advertised_mxc_name_ --test-threads=1 --color=never" `
+            -LogName 'test-aarch64-pc-windows-msvc-native-readiness.log'
+          $readinessLog = Join-Path $LogDir 'test-aarch64-pc-windows-msvc-native-readiness.log'
+          $readinessOutput = Get-Content -LiteralPath $readinessLog -Raw
+          if ($readinessOutput -notmatch 'test result: ok\. 4 passed; 0 failed; 0 ignored;') {
+            throw 'The four MXC gateway readiness controls did not all pass.'
+          }
+          Invoke-VsCargo `
+            -RustTarget 'aarch64-pc-windows-msvc' `
+            -CargoArgs 'cargo test --locked --release --target aarch64-pc-windows-msvc -p openshell-cli --lib native_mxc_ready_condition_ -- --test-threads=1 --color=never' `
+            -LogName 'test-aarch64-pc-windows-msvc-native-completion.log'
+          $completionLog = Join-Path $LogDir 'test-aarch64-pc-windows-msvc-native-completion.log'
+          $completionOutput = Get-Content -LiteralPath $completionLog -Raw
+          if ($completionOutput -notmatch 'test result: ok\. 4 passed; 0 failed; 0 ignored;') {
+            throw 'The four MXC completion JSON controls did not all pass.'
+          }
           & .\tasks\scripts\windows-msvc.ps1 artifacts aarch64-pc-windows-msvc
 
       - name: Restore the assembled native NemoClaw runtime payload
