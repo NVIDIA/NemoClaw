@@ -11,7 +11,7 @@ import { appendHermesDashboardEnvArgs, type HermesDashboardOnboardState } from "
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
 
-const STARTUP_COMMAND_TOKEN = /^[A-Za-z0-9_./:=,@%+\-\[\]]+$/u;
+const STARTUP_COMMAND_TOKEN = /^[A-Za-z0-9_./:=,@%+\-[\]]+$/u;
 const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
   "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
   "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",

@@ -99,6 +99,27 @@ describe("export config builder", () => {
     });
   });
 
+  it("emits a verified Brave integration without another inference provider (#10904)", () => {
+    const webSearch = {
+      provider: "brave",
+      agentRefs: ["primary"],
+      credential: { env: "BRAVE_API_KEY" },
+    } as const;
+    const document = buildExportConfig(
+      { ...source, webSearch },
+      {
+        documentName: alphaDocumentName,
+        documentUid: firstUid,
+      },
+    );
+    expect(document.spec.sandboxes[0]!.integrations).toEqual({ webSearch });
+    expect(document.spec.inferenceProviders).toHaveLength(1);
+    expect(
+      buildExportConfig(source, { documentName: alphaDocumentName, documentUid: firstUid }).spec
+        .sandboxes[0],
+    ).not.toHaveProperty("integrations");
+  });
+
   it("uses the supplied identity and keeps derived references deterministic (#10938)", () => {
     const first = buildExportConfig(source, {
       documentName: alphaDocumentName,

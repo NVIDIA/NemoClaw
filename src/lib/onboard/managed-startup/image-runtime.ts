@@ -1156,7 +1156,7 @@ function shellSingleQuote(value: string): string {
   if (value.includes("\0") || /[\r\n]/u.test(value)) {
     fail("runtime environment values must be single-line text");
   }
-  return `'${value.replaceAll("'", `'\"'\"'`)}'`;
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 export function serializeManagedStartupRuntimeEnvironment(

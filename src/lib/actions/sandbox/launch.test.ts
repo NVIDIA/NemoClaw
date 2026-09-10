@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   inspectLaunchReadiness: vi.fn(),
   publishLaunchReadiness: vi.fn(),
   withLaunchReadinessMutationGate: vi.fn(),
+  emitPortableOpenClawAlreadyRunningTiming: vi.fn(),
   inspectPortableReceiptDisposition: vi.fn(),
   recoverPortableLifecycle: vi.fn(),
   qualifyAcceptedReadinessAuthority: vi.fn(),
@@ -78,6 +79,9 @@ vi.mock("./launch-readiness", () => ({
     gatewayPort: 8080,
     epochId: decision.fence?.epochId ?? null,
   }),
+}));
+vi.mock("../../onboard/experimental/portable-demo-lifecycle-timing", () => ({
+  emitPortableOpenClawAlreadyRunningTiming: mocks.emitPortableOpenClawAlreadyRunningTiming,
 }));
 vi.mock("./gateway-state", async () => {
   const lifecycle = await vi.importActual<
@@ -585,6 +589,7 @@ describe("launchSandbox", () => {
       agent: openclaw,
       sb,
     });
+    mocks.inspectPortableReceiptDisposition.mockReturnValue({ kind: "openclaw" });
 
     await launchSandbox("alpha");
 
@@ -605,6 +610,7 @@ describe("launchSandbox", () => {
     );
     expect(mocks.prepareHermesLightTerminalSkin).toHaveBeenCalledBefore(mocks.execSandbox);
     expect(launchedCommand()).toEqual(["bash", "-lc", "openclaw tui"]);
+    expect(mocks.emitPortableOpenClawAlreadyRunningTiming).toHaveBeenCalledOnce();
   });
 
   it("launches accepted Hermes readiness without entering recovery (#9203)", async () => {
