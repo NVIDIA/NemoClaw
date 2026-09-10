@@ -295,10 +295,13 @@ describe("managed clone provider transaction", () => {
 
   it("routes preparation inspection through the injected provider adapter", async () => {
     const runner = providerRunner();
-    const getProvider: OpenShellProviderAdapter["getProvider"] = vi.fn(async () => ({
-      ok: false,
-      error: { kind: "command", reason: "not_found", message: "Provider was not found." },
-    }) as const);
+    const getProvider: OpenShellProviderAdapter["getProvider"] = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          error: { kind: "command", reason: "not_found", message: "Provider was not found." },
+        }) as const,
+    );
 
     const { prepared } = await prepareWithBinding({
       providerAdapter: { getProvider } as OpenShellProviderAdapter,

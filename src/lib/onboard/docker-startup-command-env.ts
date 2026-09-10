@@ -7,10 +7,7 @@ import { formatEnvAssignment } from "../core/url-utils";
 import { isValidProxyHost, isValidProxyPort } from "./dockerfile-patch";
 import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
 import { HERMES_API_PORT_ENV, resolveOnboardHermesApiPort } from "./hermes-api-port";
-import {
-  appendHermesDashboardEnvArgs,
-  type HermesDashboardOnboardState,
-} from "./hermes-dashboard";
+import { appendHermesDashboardEnvArgs, type HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
 

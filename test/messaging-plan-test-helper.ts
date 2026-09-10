@@ -134,9 +134,8 @@ export function buildMessagingPlanB64(
       ...env,
       NEMOCLAW_TEST_MESSAGING_PLAN_AGENT: agent,
       NEMOCLAW_TEST_MESSAGING_PLAN_CHANNELS_JSON: JSON.stringify([...new Set(channels)]),
-      NEMOCLAW_TEST_MESSAGING_CREDENTIAL_AVAILABILITY_JSON: JSON.stringify(
-        credentialAvailability(),
-      ),
+      NEMOCLAW_TEST_MESSAGING_CREDENTIAL_AVAILABILITY_JSON:
+        JSON.stringify(credentialAvailability()),
     },
     timeout: 10_000,
   });

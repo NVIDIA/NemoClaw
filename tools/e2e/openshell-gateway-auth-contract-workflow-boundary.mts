@@ -110,9 +110,7 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   }
   const pinVersion = env.NEMOCLAW_OPENSHELL_PIN_VERSION;
   if (pinVersion !== OPENSHELL_RELEASE_VERSION) {
-    errors.push(
-      `${JOB_NAME} must set NEMOCLAW_OPENSHELL_PIN_VERSION=${OPENSHELL_RELEASE_VERSION}`,
-    );
+    errors.push(`${JOB_NAME} must set NEMOCLAW_OPENSHELL_PIN_VERSION=${OPENSHELL_RELEASE_VERSION}`);
   }
   for (const secret of [
     "DOCKERHUB_USERNAME",

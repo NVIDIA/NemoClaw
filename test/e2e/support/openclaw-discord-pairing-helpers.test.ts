@@ -478,9 +478,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(SLACK_PAIRING_SCRIPT).toContain(
       'function postPairingReply(text, channel) {\n  const host = "host.openshell.internal";',
     );
-    expect(SLACK_PAIRING_SCRIPT).toContain(
-      'parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT")',
-    );
+    expect(SLACK_PAIRING_SCRIPT).toContain('parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT")');
   });
 
   it("uses the stable-handle Slack credential references issued to the sandbox", () => {

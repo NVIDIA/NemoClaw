@@ -42,6 +42,27 @@ it.each([
     rules: [],
   },
   { name: "legacy limits", file: "src/lib/legacy.ts", source: nesting, rules: [] },
+  ...[
+    { file: "src/lib/onboard/machine/handlers/provider-inference.ts", limit: 171 },
+    { file: "src/lib/actions/uninstall/run-plan.ts", limit: 186 },
+    { file: "src/lib/actions/sandbox/process-recovery.ts", limit: 166 },
+    { file: "src/lib/onboard.ts", limit: 119 },
+    { file: "src/lib/onboard/setup-nim-flow.ts", limit: 150 },
+    { file: "src/lib/actions/sandbox/status.ts", limit: 11 },
+  ].flatMap(({ file, limit }) => [
+    {
+      name: `measured complexity ceiling for ${file}`,
+      file,
+      source: `export function read(flags: boolean[]) { ${"if (flags[0]) return 1;".repeat(limit)} return 0; }`,
+      rules: [],
+    },
+    {
+      name: `growth above the measured complexity ceiling for ${file}`,
+      file,
+      source: `export function read(flags: boolean[]) { ${"if (flags[0]) return 1;".repeat(limit + 1)} return 0; }`,
+      rules: ["sonarjs(cognitive-complexity)"],
+    },
+  ]),
   {
     name: "maintained source inside build directories",
     file: "src/lib/messaging/applier/build/example.mts",

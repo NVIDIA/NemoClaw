@@ -116,13 +116,12 @@ describe("resolveDockerGpuRoutePlan", () => {
     })),
   );
 
-  it.each(routingMatrix)("maps $name with control $control to $expected", ({
-    expected,
-    config,
-    options,
-  }) => {
-    expect(resolveDockerGpuRoutePlan(config, options)).toBe(expected);
-  });
+  it.each(routingMatrix)(
+    "maps $name with control $control to $expected",
+    ({ expected, config, options }) => {
+      expect(resolveDockerGpuRoutePlan(config, options)).toBe(expected);
+    },
+  );
 
   it("covers every environment/control pair and every route-plan outcome (#6110)", () => {
     const matrixByKey = new Map(
@@ -141,29 +140,28 @@ describe("resolveDockerGpuRoutePlan", () => {
     expect(matrixByKey.get("non-Linux host:true")).toBe("native-only");
   });
 
-  it.each([
-    "2",
-    "yes",
-    "on",
-  ])("preserves legacy nonzero compatibility routing for $control with a removal warning (#6110)", (control) => {
-    const log = vi.fn();
-    const plan = resolveDockerGpuRoutePlan(GPU_CONFIG, {
-      ...LINUX_DOCKER,
-      env: { NEMOCLAW_DOCKER_GPU_PATCH: control },
-      log,
-    });
+  it.each(["2", "yes", "on"])(
+    "preserves legacy nonzero compatibility routing for $control with a removal warning (#6110)",
+    (control) => {
+      const log = vi.fn();
+      const plan = resolveDockerGpuRoutePlan(GPU_CONFIG, {
+        ...LINUX_DOCKER,
+        env: { NEMOCLAW_DOCKER_GPU_PATCH: control },
+        log,
+      });
 
-    expect(plan).toBe("compatibility-only");
-    expect(log).toHaveBeenCalledWith(expect.stringMatching(/unrecognized.*compatibility-only/i));
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("removed in v0.1.0"));
-    expect(
-      renderSandboxCreateArgsForGpuRoute(
-        ["--from", "sandbox:built", "--policy", "/tmp/native.yaml", "--gpu"],
-        initialDockerGpuRoute(plan),
-        { compatibilityPolicyPath: "/tmp/compatibility.yaml" },
-      ),
-    ).toEqual(["--from", "sandbox:built", "--policy", "/tmp/compatibility.yaml"]);
-  });
+      expect(plan).toBe("compatibility-only");
+      expect(log).toHaveBeenCalledWith(expect.stringMatching(/unrecognized.*compatibility-only/i));
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("removed in v0.1.0"));
+      expect(
+        renderSandboxCreateArgsForGpuRoute(
+          ["--from", "sandbox:built", "--policy", "/tmp/native.yaml", "--gpu"],
+          initialDockerGpuRoute(plan),
+          { compatibilityPolicyPath: "/tmp/compatibility.yaml" },
+        ),
+      ).toEqual(["--from", "sandbox:built", "--policy", "/tmp/compatibility.yaml"]);
+    },
+  );
 
   it("keeps Docker Desktop WSL on compatibility and explains why zero is ignored", () => {
     const log = vi.fn();

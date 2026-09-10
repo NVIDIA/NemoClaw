@@ -272,10 +272,7 @@ function readPlan(planPath: string): HandoffInput {
   if (typeof value.originMainHeadline !== "string" || !value.originMainHeadline) {
     throw new Error("release plan headline must be a nonempty string");
   }
-  if (
-    value.candidateSelection !== "current-main" &&
-    value.candidateSelection !== "historical"
-  ) {
+  if (value.candidateSelection !== "current-main" && value.candidateSelection !== "historical") {
     throw new Error("release plan candidate selection is invalid");
   }
   if (

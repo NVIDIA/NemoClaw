@@ -1279,7 +1279,7 @@ fi
     expect(promotion.run).not.toContain('imagetools create "${consumer_tag_args[@]}"');
     expect(pointer.run).toContain("shipped_agents=(openclaw hermes)");
     expect(pointer.run).toContain(
-      "exact_reference=\"$(jq -er --arg agent \"$agent\" '.agents[$agent].reference'",
+      'exact_reference="$(jq -er --arg agent "$agent" \'.agents[$agent].reference\'',
     );
     expect(pointer.run).toContain('imagetools create "${consumer_tag_args[@]}" "$exact_reference"');
     expect(pointer.run).toContain('cmp -s "$exact_raw" "$alias_raw"');

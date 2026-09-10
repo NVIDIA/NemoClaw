@@ -459,7 +459,9 @@ describe("compiled-test import boundary", () => {
     expect(isScannedTestPath("test/package-contract/example.test.ts")).toBe(false);
     expect(isScannedTestPath("test/e2e/example.test.ts")).toBe(false);
     expect(isScannedTestPath("test/repository/dist-sourcemaps.test.ts")).toBe(false);
-    expect(isScannedTestPath("test/installer-integration/install-managed-cli-reuse.test.ts")).toBe(false);
+    expect(isScannedTestPath("test/installer-integration/install-managed-cli-reuse.test.ts")).toBe(
+      false,
+    );
   });
 });
 

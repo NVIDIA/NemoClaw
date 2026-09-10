@@ -72,8 +72,22 @@ describe("OpenShell provider command runtime", () => {
     expect(parseCliOpenShellProviderNames("  alpha  \r\n\r\nbeta\n")).toEqual(["alpha", "beta"]);
   });
 
-  it("returns no provider names for empty CLI output (#9806)", () => {
-    expect(parseCliOpenShellProviderNames("")).toEqual([]);
+  it.each(["", null, undefined, Buffer.alloc(0)])(
+    "returns no provider names for empty CLI output (%j)",
+    (output) => {
+      expect(parseCliOpenShellProviderNames(output)).toEqual([]);
+    },
+  );
+
+  it.each([123, true, {}, ["alpha"], { toString: () => "alpha" }])(
+    "rejects non-text provider output (%j)",
+    (output) => {
+      expect(parseCliOpenShellProviderNames(output)).toBeNull();
+    },
+  );
+
+  it("parses provider names from a command output buffer", () => {
+    expect(parseCliOpenShellProviderNames(Buffer.from("alpha\nbeta\n"))).toEqual(["alpha", "beta"]);
   });
 
   it.each([

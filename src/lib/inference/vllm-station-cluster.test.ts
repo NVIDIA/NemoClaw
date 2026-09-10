@@ -264,21 +264,20 @@ function runWith(deps: StationClusterProbeDeps, target = "nvidia@station-b") {
 }
 
 describe("probeDualStationVllmCapability", () => {
-  it.each([
-    undefined,
-    "",
-    "   ",
-  ])("does no work when the explicit peer is absent or blank (%s)", (value) => {
-    const deps = fixtureDeps();
-    const env = value === undefined ? {} : { [NEMOCLAW_DGX_STATION_PEER_ENV]: value };
+  it.each([undefined, "", "   "])(
+    "does no work when the explicit peer is absent or blank (%s)",
+    (value) => {
+      const deps = fixtureDeps();
+      const env = value === undefined ? {} : { [NEMOCLAW_DGX_STATION_PEER_ENV]: value };
 
-    expect(probeDualStationVllmCapability({ env, deps })).toEqual({ kind: "not-configured" });
-    expect(deps.calls.sshConfig).not.toHaveBeenCalled();
-    expect(deps.calls.localHost).not.toHaveBeenCalled();
-    expect(deps.calls.peerHost).not.toHaveBeenCalled();
-    expect(deps.calls.localConnectivity).not.toHaveBeenCalled();
-    expect(deps.calls.peerConnectivity).not.toHaveBeenCalled();
-  });
+      expect(probeDualStationVllmCapability({ env, deps })).toEqual({ kind: "not-configured" });
+      expect(deps.calls.sshConfig).not.toHaveBeenCalled();
+      expect(deps.calls.localHost).not.toHaveBeenCalled();
+      expect(deps.calls.peerHost).not.toHaveBeenCalled();
+      expect(deps.calls.localConnectivity).not.toHaveBeenCalled();
+      expect(deps.calls.peerConnectivity).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     "ssh://station-b",
@@ -405,23 +404,22 @@ describe("probeDualStationVllmCapability", () => {
     expect(deps.calls.localHost).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    "station-b",
-    "nvidia@station-b",
-    "_svc@192.168.50.20",
-  ])("returns the qualified binding for %s", (target) => {
-    const result = runWith(fixtureDeps(), target);
-    expect(result).toMatchObject({
-      kind: "ready",
-      peerModelSnapshot: "ready",
-      plan: { peerSshBinding: { peerTarget: target } },
-    });
-    expect(result.kind).toBe("ready");
-    const ready = result as Extract<typeof result, { kind: "ready" }>;
-    expect(buildRemoteVllmDockerEnv(ready.plan.peerSshBinding, {}).DOCKER_HOST).toBe(
-      `ssh://${ready.plan.peerSshBinding.sshUser}@${ready.plan.peerSshBinding.resolvedHost}`,
-    );
-  });
+  it.each(["station-b", "nvidia@station-b", "_svc@192.168.50.20"])(
+    "returns the qualified binding for %s",
+    (target) => {
+      const result = runWith(fixtureDeps(), target);
+      expect(result).toMatchObject({
+        kind: "ready",
+        peerModelSnapshot: "ready",
+        plan: { peerSshBinding: { peerTarget: target } },
+      });
+      expect(result.kind).toBe("ready");
+      const ready = result as Extract<typeof result, { kind: "ready" }>;
+      expect(buildRemoteVllmDockerEnv(ready.plan.peerSshBinding, {}).DOCKER_HOST).toBe(
+        `ssh://${ready.plan.peerSshBinding.sshUser}@${ready.plan.peerSshBinding.resolvedHost}`,
+      );
+    },
+  );
 
   it("returns a deterministic two-rail Ray PP2 plan and permits one auxiliary non-GB300 GPU", () => {
     const deps = fixtureDeps();
@@ -727,8 +725,16 @@ describe("probeDualStationVllmCapability", () => {
     const peer = hostFixture("peer");
     setRailAddress(local.rails[0], "192.168.100.1", 24);
     setRailAddress(local.rails[1], "192.168.101.1", 24);
-    setRailAddress(peer.rails.find((item) => item.rdmaDevice === "mlx5_0")!, "192.168.100.2", 24);
-    setRailAddress(peer.rails.find((item) => item.rdmaDevice === "mlx5_1")!, "192.168.101.2", 24);
+    setRailAddress(
+      peer.rails.find((item) => item.rdmaDevice === "mlx5_0")!,
+      "192.168.100.2",
+      24,
+    );
+    setRailAddress(
+      peer.rails.find((item) => item.rdmaDevice === "mlx5_1")!,
+      "192.168.101.2",
+      24,
+    );
 
     expect(runWith(fixtureDeps(local, peer))).toMatchObject({
       kind: "unavailable",
@@ -741,8 +747,16 @@ describe("probeDualStationVllmCapability", () => {
     const peer = hostFixture("peer");
     setRailAddress(local.rails[0], "203.0.113.1", 30);
     setRailAddress(local.rails[1], "198.51.100.5", 30);
-    setRailAddress(peer.rails.find((item) => item.rdmaDevice === "mlx5_0")!, "203.0.113.2", 30);
-    setRailAddress(peer.rails.find((item) => item.rdmaDevice === "mlx5_1")!, "198.51.100.6", 30);
+    setRailAddress(
+      peer.rails.find((item) => item.rdmaDevice === "mlx5_0")!,
+      "203.0.113.2",
+      30,
+    );
+    setRailAddress(
+      peer.rails.find((item) => item.rdmaDevice === "mlx5_1")!,
+      "198.51.100.6",
+      30,
+    );
 
     expect(runWith(fixtureDeps(local, peer))).toMatchObject({
       kind: "unavailable",

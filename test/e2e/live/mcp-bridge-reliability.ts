@@ -60,15 +60,18 @@ export const DEEPAGENTS_MCP_DENIED_TOOL_PROBE = {
   toolName: `fake_${MCP_BRIDGE_DENIED_TOOL_NAME}`,
 };
 
-export async function runDeniedMcpToolCall(host: HostCliClient, options: {
-  agent: "openclaw" | "hermes" | "langchain-deepagents-code";
-  artifactName: string;
-  deniedTool?: string;
-  sandbox: SandboxClient;
-  sandboxName: string;
-  serverName: string;
-  requests: ReadonlyArray<{ rpcMethod?: string }>;
-}): Promise<{ after: number; before: number; policyDenied: boolean; result: ShellProbeResult }> {
+export async function runDeniedMcpToolCall(
+  host: HostCliClient,
+  options: {
+    agent: "openclaw" | "hermes" | "langchain-deepagents-code";
+    artifactName: string;
+    deniedTool?: string;
+    sandbox: SandboxClient;
+    sandboxName: string;
+    serverName: string;
+    requests: ReadonlyArray<{ rpcMethod?: string }>;
+  },
+): Promise<{ after: number; before: number; policyDenied: boolean; result: ShellProbeResult }> {
   const countToolCalls = () =>
     options.requests.filter((request) => request.rpcMethod === "tools/call").length;
   const readDenialAuditEvents = async (artifactName: string): Promise<string[] | null> => {
@@ -144,8 +147,7 @@ export async function runDeniedMcpToolCall(host: HostCliClient, options: {
     const denialAuditAfter = await readDenialAuditEvents(
       `${options.artifactName}-audit-after-${String(attempt)}`,
     );
-    policyDenied =
-      denialAuditAfter?.some((event) => !priorDenialAuditEvents.has(event)) ?? false;
+    policyDenied = denialAuditAfter?.some((event) => !priorDenialAuditEvents.has(event)) ?? false;
     if (policyDenied) break;
     if (attempt < MCP_DENIAL_AUDIT_ATTEMPTS) {
       await new Promise((resolve) => setTimeout(resolve, MCP_DENIAL_AUDIT_RETRY_MS));
