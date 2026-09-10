@@ -86,6 +86,19 @@ function exportNames(syntax: Syntax, file: string, text: string) {
   }
   return names;
 }
+export function normalizeWindowsNativePluginRequire(relative: string, text: string) {
+  if (relative !== "dist/plugin-module-loader-cache-uqaaAPup.js") return text;
+  if (sha256(text) !== "af5dc41aba74bb7eab264d1544d16a86906401bfe1c24a0ad53ae25bb8f1d2ac")
+    throw new Error("The reviewed native plugin loader changed.");
+  const original = "return withNativeRequireAliases(aliasMap, () => nodeRequire(modulePath));";
+  if (text.split(original).length !== 2) throw new Error("The native plugin require seam changed.");
+  // Windows callers use file URLs for ESM/Jiti. Native require needs the
+  // corresponding filesystem path; ordinary specifiers and all guards stay intact.
+  return text.replace(
+    original,
+    'return withNativeRequireAliases(aliasMap, () => nodeRequire(process.platform === "win32" && typeof modulePath === "string" && modulePath.startsWith("file:") ? fileURLToPath(modulePath) : modulePath));',
+  );
+}
 export function compiledPluginPlan(source: string, syntax: Syntax, compiler: Transformer) {
   const entryFiles = filesBelow(path.join(source, "dist", "extensions")).filter(
     (file) =>
@@ -129,7 +142,10 @@ Object.defineProperty(globalThis,Symbol.for("nemoclaw.compiled-openclaw.plugins.
     setup(build) {
       build.onLoad({ filter: /\.[cm]?js$/ }, async (args) => {
         if (!args.path.startsWith(source + path.sep)) return;
-        const text = fs.readFileSync(args.path, "utf8");
+        const text = normalizeWindowsNativePluginRequire(
+          portablePath(path.relative(source, args.path)),
+          fs.readFileSync(args.path, "utf8"),
+        );
         if (
           !text.includes("import.meta") &&
           !text.includes("__dirname") &&

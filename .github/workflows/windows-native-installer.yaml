@@ -78,6 +78,13 @@ jobs:
             --output "$env:RUNNER_TEMP\compiled-windows-app\inputs" `
             --cache "$env:RUNNER_TEMP\compiled-windows-app\downloads"
           if ($LASTEXITCODE -ne 0) { throw 'Application build inputs failed verification.' }
+      - name: Verify Windows native plugin file URL loading
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\compiled-windows-app\node\node.exe" `
+            --experimental-strip-types packaging/windows/app/test-windows-plugin-file-url.mts `
+            --source-root "$env:RUNNER_TEMP\compiled-windows-app\inputs\openclaw"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows native plugin loading controls failed.' }
       - name: Compile the OpenClaw application unit
         shell: pwsh
         run: |
