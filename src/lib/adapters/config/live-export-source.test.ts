@@ -187,6 +187,20 @@ async function exportLiveSource() {
   return { result, writeStdout, publish };
 }
 
+function expectExportRefusal(
+  exported: Awaited<ReturnType<typeof exportLiveSource>>,
+  finding: Readonly<{ field?: string; category: string }>,
+) {
+  expect(exported.result).toMatchObject({
+    ok: false,
+    failure: {
+      kind: "observation",
+      findings: expect.arrayContaining([expect.objectContaining(finding)]),
+    },
+  });
+  expect(exported.writeStdout).not.toHaveBeenCalled();
+  expect(exported.publish).not.toHaveBeenCalled();
+}
 function nativeNvidiaProvider() {
   return { ...provider().provider, type: "nvidia", profileWorkspace: "", config: {} };
 }
@@ -1385,7 +1399,6 @@ describe("attached Ollama export pipeline", () => {
     );
     expect(publish).not.toHaveBeenCalled();
   });
-
   it("sanitizes a failed or legacy proxy observation and publishes nothing (#11435)", async () => {
     mockOllamaSource();
     vi.mocked(createOllamaExportProbe).mockImplementation(() => {
@@ -1398,47 +1411,41 @@ describe("attached Ollama export pipeline", () => {
   });
 
   it.each([
-    { endpointUrl: "http://host.openshell.internal:11435/v1" },
-    { credentialEnv: "OTHER_TOKEN" },
-    { agent: "hermes" },
-    { sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=all" },
-  ])("refuses unsupported or drifted local route intent %# (#11435)", async (change) => {
+    [
+      { endpointUrl: "http://host.openshell.internal:11435/v1" },
+      { field: "spec.inferenceProviders[].endpoint", category: "drifted" },
+    ],
+    [
+      { credentialEnv: "OTHER_TOKEN" },
+      { field: "source.live", category: "live-verification-failed" },
+    ],
+    [{ agent: "hermes" }, { field: "spec.inferenceProviders[].serving", category: "drifted" }],
+    [
+      { sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=all" },
+      { field: "spec.sandboxes[].runtime.gpu", category: "unsupported" },
+    ],
+  ])("refuses unsupported or drifted local route intent %# (#11435)", async (change, finding) => {
     const { source } = mockOllamaSource();
     Object.assign(source, change);
-    const { result, writeStdout } = await exportLiveSource();
-    expect(result).toMatchObject({ ok: false });
-    expect(writeStdout).not.toHaveBeenCalled();
+    expectExportRefusal(await exportLiveSource(), finding);
   });
-
   it("refuses an absent provider attachment (#11435)", async () => {
     mockOllamaSource();
     raw.getSandbox.mockResolvedValue(inventory());
-    const { result, writeStdout } = await exportLiveSource();
-    expect(result).toMatchObject({ ok: false });
-    expect(writeStdout).not.toHaveBeenCalled();
+    expectExportRefusal(await exportLiveSource(), {
+      field: "spec.inferenceProviders[].serving",
+      category: "drifted",
+    });
   });
-
   it("refuses a continuously changing active proxy identity (#11435)", async () => {
     const { observed } = mockOllamaSource();
     let pid = observed.pid;
     vi.mocked(createOllamaExportProbe).mockImplementation(() =>
       ollamaProbe({ ...observed, pid: ++pid }),
     );
-    const { result, writeStdout, publish } = await exportLiveSource();
-    expect(result).toMatchObject({
-      ok: false,
-      failure: {
-        kind: "observation",
-        findings: expect.arrayContaining([
-          expect.objectContaining({ category: "unstable-source" }),
-        ]),
-      },
-    });
-    expect(writeStdout).not.toHaveBeenCalled();
-    expect(publish).not.toHaveBeenCalled();
+    expectExportRefusal(await exportLiveSource(), { category: "unstable-source" });
   });
 });
-
 describe("dashboard export observation", () => {
   it("projects registered dashboard and direct tools through complete live observation (#10904)", async () => {
     const sourceEntry = dashboardSource();
@@ -1480,19 +1487,14 @@ describe("dashboard export observation", () => {
     });
   });
 
-  it("retains dashboard registry changes in both complete snapshots (#10904)", async () => {
+  it("refuses dashboard registry changes without publishing (#10904)", async () => {
     mockSupportedLiveSource();
     let reads = 0;
     vi.mocked(loadRegistry).mockImplementation(() => ({
       sandboxes: { alpha: { ...entry, dashboardPort: reads++ % 2 === 0 ? 18789 : 19000 } },
       defaultSandbox: null,
     }));
-    const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
-    expect(result).toMatchObject({
-      ok: false,
-      attempts: 2,
-      findings: [expect.objectContaining({ category: "unstable-source" })],
-    });
-    expect(loadRegistry).toHaveBeenCalledTimes(4);
+    const exported = await exportLiveSource();
+    expectExportRefusal(exported, { category: "unstable-source" });
   });
 });
