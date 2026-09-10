@@ -57,6 +57,7 @@ function sha(value: string, name: string): string {
 }
 type Approval = {
   patch: Buffer;
+  previousSha: string;
   rangeStartTag: string;
   targetReleaseTag: string;
 };
@@ -74,12 +75,14 @@ function approvedPatch(directory: string, repository: string, mainSha: string): 
   const review = value as Record<string, unknown>;
   if (
     Object.keys(review).sort().join() !==
-      "mainSha,outcome,patchSha256,rangeStartTag,repository,targetReleaseTag,version" ||
-    review.version !== 2 ||
+      "mainSha,outcome,patchSha256,previousSha,rangeStartTag,repository,targetReleaseTag,version" ||
+    review.version !== 3 ||
     review.repository !== repository ||
     review.mainSha !== mainSha ||
     review.patchSha256 !== createHash("sha256").update(patch).digest("hex") ||
     review.outcome !== "approved" ||
+    typeof review.previousSha !== "string" ||
+    (review.previousSha !== "" && !SHA.test(review.previousSha)) ||
     typeof review.rangeStartTag !== "string" ||
     typeof review.targetReleaseTag !== "string" ||
     nextPatchReleaseTag(
@@ -90,6 +93,7 @@ function approvedPatch(directory: string, repository: string, mainSha: string): 
     fail("review does not approve the exact patch and release target for this main commit");
   return {
     patch,
+    previousSha: review.previousSha,
     rangeStartTag: review.rangeStartTag,
     targetReleaseTag: review.targetReleaseTag,
   };
@@ -482,6 +486,8 @@ export async function publishDocumentation(input: {
   const title = pullTitle(target);
   const active = await checkpoint(repository, mainSha, request);
   if (active && !active.draft) return;
+  if ((active?.head.sha ?? "") !== approval.previousSha)
+    fail("managed documentation draft changed after authoring started");
   const temporary = fs.mkdtempSync(path.join(tmpdir(), "nemoclaw-docs-publish-"));
   try {
     const destination = path.join(temporary, "repository");
