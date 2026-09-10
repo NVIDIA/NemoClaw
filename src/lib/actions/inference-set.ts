@@ -1226,7 +1226,7 @@ async function runInferenceSetWithoutHostLock(
     }
 
     if (probeDirectSandboxBridge) {
-      let probe: ReturnType<InferenceSetSandboxRouteProbe>;
+      let probe: Awaited<ReturnType<InferenceSetSandboxRouteProbe>>;
       try {
         probe = await probeInferenceSetSandboxRouteUntilConverged(
           {
@@ -1594,7 +1594,7 @@ export async function runInferenceSet(
     // Retain the outer sandbox lifecycle lock so another process cannot replace
     // this sandbox between the committed write, an optional restart, and
     // device-scope convergence.
-    completeInferencePostCommit(mutation, deps);
+    await completeInferencePostCommit(mutation, deps);
     if (mutation.result.dashboardConverged === false) {
       throw new InferenceSetError(
         `Inference route and main Hermes config were updated for '${mutation.result.sandboxName}', ` +

@@ -114,7 +114,7 @@ export async function upsertMcpProvider(
     allowExisting: boolean;
     expectedProviderId?: string;
     requireExisting?: boolean;
-    prepareMutation?: (action: "create" | "update") => void;
+    prepareMutation?: (action: "create" | "update") => void | Promise<void>;
     runtimeSelection: McpProviderInspectionRuntimeSelection;
     providerAdapter?: OpenShellProviderAdapter;
   },
@@ -184,7 +184,7 @@ export async function upsertMcpProvider(
   // Let callers establish policy and revision proofs only after the actual
   // mutation kind is known. The immediate reinspection below closes races
   // that occur while those fail-closed prerequisites are being prepared.
-  options.prepareMutation?.(action);
+  await options.prepareMutation?.(action);
   // invalidState: another OpenShell client replaces a mutable provider name
   // between inspection and mutation. sourceBoundary: OpenShell owns provider
   // compare-and-swap; v0.0.99 uses the version read inside the server but its
@@ -396,8 +396,7 @@ export async function deleteProvider(
       return;
     if (options.bestEffort) return;
     throw new McpBridgeError(
-      result.error.message ||
-        `Failed to delete MCP provider '${entry.providerName}'.`,
+      result.error.message || `Failed to delete MCP provider '${entry.providerName}'.`,
     );
   }
   const after = await inspectMcpProvider(
