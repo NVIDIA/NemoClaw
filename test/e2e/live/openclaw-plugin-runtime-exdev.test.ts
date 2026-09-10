@@ -8,11 +8,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve.ts";
+import { isLocalForwardReachable } from "../../../src/lib/actions/sandbox/forward-health.ts";
+import { DASHBOARD_PORT } from "../../../src/lib/core/ports.ts";
+import { waitUntil } from "../../../src/lib/core/wait.ts";
 import { pullAndResolveBaseImageDigest } from "../../../src/lib/onboard/base-image.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { terminateProcessIfRunning } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
@@ -86,6 +90,7 @@ function liveEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     ...extra,
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    NEMOCLAW_DASHBOARD_PORT: String(DASHBOARD_PORT),
   };
 }
 
@@ -371,6 +376,7 @@ test(
         `test-only driver config mounts tmpfs at ${EXDEV_TMPFS_MOUNT}`,
         `sandbox proves ${EXDEV_TMPFS_SOURCE} and the OpenClaw extension target are distinct devices`,
         "OpenClaw installs the weather plugin across that boundary before restart",
+        "the restarted dashboard forward is owned by canonical OpenShell, not the test wrapper",
       ],
       selector: "current-lifecycle",
       nemoclawSource: "current-checkout",
@@ -433,6 +439,11 @@ test(
       host,
       path.join(REPO_ROOT, "scripts", "install-openshell.sh"),
     );
+    await host.resolveOpenShellCommandPath({
+      artifactName: "resolve-canonical-openshell-for-exdev-listener",
+      env: liveEnv(),
+      timeoutMs: PROBE_TIMEOUT_MS,
+    });
     const openshellWrapper = createOpenShellTrustedImageWrapper({
       driverConfigJson: EXDEV_TMPFS_DRIVER_CONFIG,
       realOpenshellPath: openshell.cli,
@@ -527,10 +538,15 @@ test(
       timeoutMs: PROBE_TIMEOUT_MS,
     });
     const crossDeviceInstallText = resultText(crossDeviceInstall);
-    expect(crossDeviceInstall.exitCode, crossDeviceInstallText).toBe(0);
     const [, sourceDevice, targetDevice] =
       /source_device=(\d+) target_device=(\d+)/.exec(crossDeviceInstallText) ?? [];
-    expect(sourceDevice, crossDeviceInstallText).not.toBe(targetDevice);
+    expect(
+      crossDeviceInstall.exitCode === 0 &&
+        sourceDevice !== undefined &&
+        targetDevice !== undefined &&
+        sourceDevice !== targetDevice,
+      crossDeviceInstallText,
+    ).toBe(true);
 
     progress.phase("restart the gateway and confirm the installed payload");
     const restart = await host.command(
@@ -538,11 +554,22 @@ test(
       [CLI_ENTRYPOINT, SANDBOX_NAME, "gateway", "restart"],
       {
         artifactName: "openclaw-weather-plugin-gateway-restart",
-        env: sandboxEnv,
+        env: { ...sandboxEnv, NEMOCLAW_OPENSHELL_BIN: openshell.cli },
         timeoutMs: 180_000,
       },
     );
-    expect(restart.exitCode, resultText(restart)).toBe(0);
+    const listenerAfterRestart = await host.inspectOpenShellForwardListener(
+      String(DASHBOARD_PORT),
+      SANDBOX_NAME,
+      {
+        artifactName: "openclaw-weather-plugin-listener-after-restart",
+        env: liveEnv(),
+      },
+    );
+    expect(
+      restart.exitCode === 0 && listenerAfterRestart.valid,
+      `${resultText(restart)}\n${listenerAfterRestart.output}`,
+    ).toBe(true);
     const weatherAfterRestart = await assertWeatherPluginRuntime(
       sandbox,
       "after-restart",
@@ -565,6 +592,11 @@ test(
       version: "v2",
     });
     openshellWrapper.selectImage(pluginImageV2);
+    terminateProcessIfRunning(listenerAfterRestart.pid!, "SIGKILL");
+    expect(
+      waitUntil(() => !isLocalForwardReachable(DASHBOARD_PORT, 100), 5, 50),
+      `verified dashboard listener still owns port ${DASHBOARD_PORT} after termination`,
+    ).toBe(true);
     const recreate = await runOpenClawPluginWithFailureEvidence({
       operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
       captureDiagnostics: capturePairingDiagnostics,
