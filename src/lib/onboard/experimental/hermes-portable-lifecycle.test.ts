@@ -1261,23 +1261,32 @@ describe("Hermes portable lifecycle", () => {
     expect(openshellMutationCalls(captureOpenShell, "stop")).toHaveLength(0);
   });
 
-  it("times out an already-stopped container when OpenShell remains Ready (#11248)", () => {
+  it("reconciles an already-stopped container whose OpenShell phase remains Ready (#11248)", () => {
     const receipt = activeReceipt();
     const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, false);
     const defaultCapture = captureOpenShell.getMockImplementation()!;
-    captureOpenShell.mockImplementation((args: readonly string[]) =>
-      args.slice(0, 2).join(":") === "sandbox:list"
-        ? { status: 0, stdout: sandboxListJson(SANDBOX_ID, "Ready"), stderr: "" }
-        : defaultCapture(args),
+    let stopRequested = false;
+    captureOpenShell.mockImplementation((args: readonly string[]) => {
+      const operation = args.slice(0, 2).join(":");
+      if (operation === "sandbox:list") {
+        return {
+          status: 0,
+          stdout: sandboxListJson(SANDBOX_ID, stopRequested ? "Error" : "Ready"),
+          stderr: "",
+        };
+      }
+      if (operation === "sandbox:stop") stopRequested = true;
+      return defaultCapture(args);
+    });
+    const beforeStop = vi.fn();
+    const result = withMcpLifecycleLockSync(
+      SANDBOX,
+      () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), beforeStop, deps),
+      { stateDir: path.join(stateDir, "state") },
     );
-    expect(() =>
-      withMcpLifecycleLockSync(
-        SANDBOX,
-        () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), deps),
-        { stateDir: path.join(stateDir, "state") },
-      ),
-    ).toThrow("OpenShell sandbox did not settle in Error or Stopped after exact container exit");
-    expect(openshellMutationCalls(captureOpenShell, "stop")).toHaveLength(0);
+    expect(result).toEqual({ kind: "already-stopped" });
+    expect(beforeStop).not.toHaveBeenCalled();
+    expect(openshellMutationCalls(captureOpenShell, "stop")).toHaveLength(1);
   });
 
   it("times out a stopped container when OpenShell identity remains incomplete (#11302)", () => {

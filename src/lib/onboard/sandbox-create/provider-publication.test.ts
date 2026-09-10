@@ -291,6 +291,7 @@ describe("sandbox provider preparation", () => {
         transactionBoundInferenceProvider: "ollama-local",
         messagingProviders: [],
         messagingProviderRequests: [],
+        extraProviders: ["ollama-local"],
       }),
       harness.deps,
     );

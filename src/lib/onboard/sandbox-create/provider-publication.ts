@@ -178,11 +178,13 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
       ...input.messagingProviders.filter((name) => !expectedBindings.has(name)),
     ].filter((provider): provider is string => Boolean(provider)),
   );
-  const attachedProviders = new Set([
-    ...providersRequiringExistenceProbe,
-    ...input.messagingProviders,
-    ...input.extraProviders,
-  ]);
+  const attachedProviders = new Set(
+    [
+      ...providersRequiringExistenceProbe,
+      ...input.messagingProviders,
+      ...input.extraProviders,
+    ].filter((provider) => provider !== input.transactionBoundInferenceProvider),
+  );
   const adapter = resolveProviderAdapter(deps);
   const target = namedOpenShellGateway(input.gatewayName);
   for (const attachedProvider of attachedProviders) {
