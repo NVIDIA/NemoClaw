@@ -120,7 +120,8 @@ env:
 
 jobs:
   package-openshell-sdk:
-    if: ${{ github.event_name == 'workflow_dispatch' && contains(format(',{0},', inputs.jobs), ',external-gateway-health,') }}
+    needs: [generate-matrix]
+    if: ${{ needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix || '[]').*.id, 'network-policy') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs || '[]'), 'external-gateway-health')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -3168,8 +3169,8 @@ jobs:
 
   catalogue-nvidia-inference:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
-    if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix != '[]' }}
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
+    if: ${{ always() && needs.base-image-publication.result == 'success' && needs.generate-matrix.result == 'success' && needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix != '[]' && (needs.package-openshell-sdk.result == 'success' || !contains(fromJSON(needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix || '[]').*.id, 'network-policy')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -3188,6 +3189,7 @@ jobs:
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
       credential_boundary: NVIDIA inference API key
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}

@@ -21,10 +21,14 @@ const mocks = vi.hoisted(() => ({
   inspectMcpProvider: vi.fn(),
   inspectMcpProviderAttachments: vi.fn(),
   inspectSourceBridgeState: vi.fn(),
+  inspectAgentMcpSources: vi.fn(),
+  assertMcpProviderRecoverable: vi.fn(),
+  assertNoProviderCredentialCollisions: vi.fn(),
   getPolicyPresence: vi.fn(),
   detachProvider: vi.fn(),
   waitForDetachedMcpCredential: vi.fn(),
   assertAgentMcpTeardownRuntimeCapability: vi.fn(),
+  assertMcpAdapterTeardownRuntimeCapabilities: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
   removeGeneratedPolicy: vi.fn(),
   registerAgentAdapterAtCurrentCredentialRevision: vi.fn(),
@@ -49,8 +53,8 @@ vi.mock("./mcp-bridge-provider-readiness", () => ({
   observeMcpCredentialRevision: mocks.observeMcpCredentialRevision,
 }));
 vi.mock("./mcp-bridge-provider", async (importOriginal) => ({
-  assertMcpProviderRecoverable: vi.fn(),
-  assertNoProviderCredentialCollisions: vi.fn(),
+  assertMcpProviderRecoverable: mocks.assertMcpProviderRecoverable,
+  assertNoProviderCredentialCollisions: mocks.assertNoProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions: vi.fn(),
   detachProvider: mocks.detachProvider,
   getMcpProviderInspectionRuntimeSelection: mocks.getMcpProviderInspectionRuntimeSelection,
@@ -63,6 +67,7 @@ vi.mock("./mcp-bridge-provider", async (importOriginal) => ({
 }));
 vi.mock("./mcp-bridge-source", () => ({
   inspectSourceBridgeState: mocks.inspectSourceBridgeState,
+  inspectAgentMcpSources: mocks.inspectAgentMcpSources,
 }));
 vi.mock("./mcp-bridge-destroy-preflight", () => ({
   cloneMcpSourceEntry: vi.fn((candidate: McpSourceEntry) => ({
@@ -86,7 +91,7 @@ vi.mock("./mcp-bridge-restart", () => ({
   restoreExistingMcpBridgeRuntime: mocks.restoreExistingMcpBridgeRuntime,
 }));
 vi.mock("./mcp-bridge-runtime-capabilities", () => ({
-  assertMcpAdapterTeardownRuntimeCapabilities: vi.fn(),
+  assertMcpAdapterTeardownRuntimeCapabilities: mocks.assertMcpAdapterTeardownRuntimeCapabilities,
 }));
 vi.mock("./mcp-bridge-state", () => ({
   ensureSandboxGatewaySelected: mocks.ensureSandboxGatewaySelected,
@@ -147,6 +152,67 @@ describe("MCP adapter teardown rollback", () => {
     mocks.registerAgentAdapterAtCurrentCredentialRevision.mockReset();
     mocks.restoreExistingMcpBridgeRuntime.mockReset();
     mocks.unregisterAgentAdapter.mockReset().mockReturnValue("removed");
+    mocks.assertMcpProviderRecoverable.mockReset();
+    mocks.assertNoProviderCredentialCollisions.mockReset();
+    mocks.inspectAgentMcpSources.mockReset();
+    mocks.assertMcpAdapterTeardownRuntimeCapabilities.mockReset();
+  });
+
+  it("retains all enforcement guards when explicit legacy migration has no native adapter", async () => {
+    const legacy = {
+      ...entry,
+      agent: "langchain-deepagents-code",
+      adapter: "deepagents-config" as const,
+      source: "legacy" as const,
+    };
+    const legacySandbox = { ...sandbox, name: "alpha", agent: legacy.agent };
+    mocks.getSandboxOrThrow.mockReturnValue(legacySandbox);
+    mocks.inspectAgentMcpSources.mockReturnValue({ native: {}, legacy: { github: legacy } });
+    await expect(prepareMcpBridgesForRebuild("alpha", [legacy])).rejects.toThrow(
+      "forced lifecycle failure after adapter scrub",
+    );
+    expect(mocks.assertMcpAdapterTeardownRuntimeCapabilities).toHaveBeenCalledWith(
+      "alpha",
+      legacySandbox,
+      [legacy],
+      runtimeSelection,
+    );
+    expect(mocks.assertMcpProviderRecoverable).toHaveBeenCalledWith(legacy, runtimeSelection);
+    expect(mocks.assertNoProviderCredentialCollisions).toHaveBeenCalledWith(
+      "alpha",
+      [legacy],
+      runtimeSelection,
+    );
+    expect(mocks.removeGeneratedPolicy).toHaveBeenCalled();
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+  });
+
+  it("scrubs and rolls back a native adapter that exists beside the explicit legacy source", async () => {
+    const legacy = { ...entry, source: "legacy" as const };
+    mocks.inspectAgentMcpSources.mockReturnValue({
+      native: { github: { ...entry, source: "native" } },
+      legacy: { github: legacy },
+    });
+    await expect(prepareMcpBridgesForRebuild("alpha", [legacy])).rejects.toThrow(
+      "forced lifecycle failure after adapter scrub",
+    );
+    expect(mocks.unregisterAgentAdapter).toHaveBeenCalledOnce();
+    expect(mocks.registerAgentAdapterAtCurrentCredentialRevision).toHaveBeenCalledOnce();
+  });
+
+  it("refuses changed provider identity before any legacy migration teardown", async () => {
+    const legacy = { ...entry, source: "legacy" as const };
+    mocks.assertMcpProviderRecoverable.mockRejectedValueOnce(
+      new Error("provider identity changed"),
+    );
+    await expect(prepareMcpBridgesForRebuild("alpha", [legacy])).rejects.toThrow(
+      "provider identity changed",
+    );
+    expect(mocks.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
+    expect(mocks.inspectAgentMcpSources).not.toHaveBeenCalled();
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
   });
 
   it("restores the fresh revision observed after a later rebuild step fails (#10155)", async () => {

@@ -30,7 +30,7 @@ import {
   restoreMcpBridgesAfterRebuild as restoreMcpBridgesAfterRebuildLifecycle,
 } from "./mcp-bridge-rebuild";
 import { removeMcpBridge as removeMcpBridgeLifecycle } from "./mcp-bridge-remove";
-import { migrateMcpBridges } from "./mcp-bridge-migration";
+import { migrateMcpBridges, type McpMigrationRebuildIntent } from "./mcp-bridge-migration";
 import { renderMcpBridgeList, renderMcpBridgeStatus } from "./mcp-bridge-render";
 import { credentialResolutionWarning } from "./mcp-bridge-resolution-probe";
 import { restartMcpBridge as restartMcpBridgeLifecycle } from "./mcp-bridge-restart";
@@ -386,7 +386,9 @@ FLAGS
 export async function dispatchMcpBridgeCommand(
   sandboxName: string,
   actionArgs: string[],
-  dependencies: { rebuildForMigration?: (sandboxName: string) => Promise<void> } = {},
+  dependencies: {
+    rebuildForMigration?: (sandboxName: string, intent: McpMigrationRebuildIntent) => Promise<void>;
+  } = {},
 ): Promise<void> {
   const [subcommand = "list", ...rest] = actionArgs;
   try {

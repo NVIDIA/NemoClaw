@@ -158,7 +158,12 @@ export GITHUB_MCP_TOKEN='replacement-value'
 $$nemoclaw my-sandbox mcp remove github
 ```
 
-`remove` detaches the exact managed provider and preserves the provider object. After confirming no sandbox uses that provider, delete it using the exact name reported by `remove`:
+`remove` preserves the provider object for explicit cleanup.
+If `remove` reports a retained provider name, use that name for inspection.
+A retry after policy removal can finish without reporting a provider name.
+If no name is reported, inspect OpenShell state to identify the provider.
+Do not infer ownership from a provider name.
+Delete only a provider whose identity you have verified and that no sandbox uses:
 
 ```bash
 openshell provider delete PROVIDER_NAME
@@ -257,7 +262,13 @@ After this check, rebuild removes adapter entries and exact owned policies, then
 NemoClaw revalidates the prepared Deep Agents replacement after MCP preparation and before stopping inference or deleting the old sandbox.
 If that check fails, it restores prior MCP attachment and adapter state and keeps the old sandbox.
 
-For a legacy Deep Agents image, explicit MCP migration uses rebuild to carry the observed legacy servers into native `.deepagents/.mcp.json`. Other native servers and unrelated top-level content remain unchanged.
+An ordinary Deep Agents rebuild stops before deletion if legacy entries remain in agent configuration or the old registry.
+This includes configurations that also contain native entries.
+Preview the entries with `$$nemoclaw my-sandbox mcp migrate`, then apply them with `$$nemoclaw my-sandbox mcp migrate --apply`.
+Explicit migration carries the validated legacy servers through rebuild into native `.deepagents/.mcp.json`.
+Other native servers and unrelated top-level content remain unchanged.
+If a rebuild is already incomplete, follow [Continue an Interrupted Replacement](../operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
+Use the printed `rebuild --yes` recovery command before starting migration again.
 
 The replacement image must expose native MCP capability v3 before NemoClaw restores MCP runtime state.
 
@@ -271,7 +282,13 @@ Run `$$nemoclaw my-sandbox rebuild --yes` to resume restoration into the accepte
 
 ## Destroy a Sandbox with MCP State
 
-Destroy reads the current agent and OpenShell sources before deletion but does not scrub a separate MCP registry or write destroy markers. OpenShell deletes the sandbox-scoped policy and attachments with the sandbox. NemoClaw preserves workspace-level MCP providers and prints their exact names for later inspection. An interrupted destroy is retried from current sandbox presence; no local MCP marker authorizes cleanup.
+Destroy reads the current agent and OpenShell sources before deletion but does not scrub a separate MCP registry or write destroy markers.
+OpenShell deletes the sandbox-scoped policy and attachments with the sandbox.
+NemoClaw preserves workspace-level MCP providers and reports names available from source inspection.
+If the source inventory is unavailable, destroy continues without reporting provider names.
+Before explicit cleanup, verify each provider's identity and confirm that no sandbox uses it.
+Do not infer ownership from a provider name.
+An interrupted destroy is retried from current sandbox presence; no local MCP marker authorizes cleanup.
 
 ## Respect the Lifecycle Lock
 

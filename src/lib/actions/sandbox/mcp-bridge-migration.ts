@@ -66,6 +66,73 @@ export type McpMigrationPlan = {
   applied: boolean;
 };
 
+/** Explicit migration input for the existing bounded rebuild transaction. */
+export interface McpMigrationRebuildIntent {
+  readonly sandboxName: string;
+  readonly entries: readonly McpSourceEntry[];
+  readonly runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>;
+}
+
+function migrationRegistration(entry: McpSourceEntry) {
+  return {
+    server: entry.server,
+    agent: entry.agent,
+    source: entry.source === "legacy-registry" ? "legacy-registry" : "legacy-agent",
+    url: entry.url,
+    credentialEnv: entry.env[0] ?? null,
+    policyName: entry.policyName,
+    providerName: entry.providerName ?? null,
+    deniedTools: entry.denyTools ?? [],
+  };
+}
+
+/** Re-read the complete preview before an explicit migration may replace its source. */
+export async function validateMcpMigrationRebuildIntent(
+  sandboxName: string,
+  intent: McpMigrationRebuildIntent,
+  runtimeSelection: McpMigrationRebuildIntent["runtimeSelection"],
+): Promise<void> {
+  const { isRebuildMcpHandoff } = await import("../../state/sandbox");
+  const currentTarget = resolveMcpOperationTarget(sandboxName);
+  if (
+    intent.sandboxName !== sandboxName ||
+    currentTarget.sandbox.name !== sandboxName ||
+    !isDeepStrictEqual(currentTarget.runtimeSelection, runtimeSelection) ||
+    !isDeepStrictEqual(intent.runtimeSelection, runtimeSelection) ||
+    !isRebuildMcpHandoff({ entries: intent.entries, runtimeSelection }) ||
+    intent.entries.some(
+      (entry) =>
+        entry.agent !== "langchain-deepagents-code" ||
+        entry.adapter !== "deepagents-config" ||
+        (entry.source !== "legacy" && entry.source !== "legacy-registry"),
+    )
+  ) {
+    throw new McpBridgeError("MCP migration rebuild intent is invalid or targets another sandbox.");
+  }
+  const current = await migrateMcpBridges(sandboxName);
+  const actual = current.items.map(
+    ({ server, agent, source, url, credentialEnv, policyName, providerName, deniedTools }) => ({
+      server,
+      agent,
+      source,
+      url,
+      credentialEnv,
+      policyName,
+      providerName,
+      deniedTools,
+    }),
+  );
+  const expected = [...intent.entries]
+    .sort((left, right) => left.server.localeCompare(right.server))
+    .map(migrationRegistration);
+  if (!isDeepStrictEqual(actual, expected)) {
+    throw new McpBridgeError(
+      "MCP migration sources changed or the rebuild intent omits legacy entries. Preview migration again before retrying.",
+    );
+  }
+  await preflightMigrationOpenShellState(sandboxName, intent.entries, runtimeSelection);
+}
+
 function sameRegistration(left: McpSourceEntry, right: McpSourceEntry): boolean {
   return (
     left.server === right.server && left.url === right.url && isDeepStrictEqual(left.env, right.env)
@@ -76,7 +143,7 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readCommittedLegacyRegistryEntries(
+export function readCommittedLegacyRegistryEntries(
   sandboxName: string,
   currentAgent: string,
   currentAdapter: McpSourceEntry["adapter"],
@@ -264,7 +331,7 @@ export async function migrateMcpBridges(
   sandboxName: string,
   options: {
     apply?: boolean;
-    rebuildSandbox?: (sandboxName: string) => Promise<void>;
+    rebuildSandbox?: (sandboxName: string, intent: McpMigrationRebuildIntent) => Promise<void>;
   } = {},
 ): Promise<McpMigrationPlan> {
   return withMcpLifecycleLock(sandboxName, async () => {
@@ -377,7 +444,11 @@ export async function migrateMcpBridges(
       if (!options.rebuildSandbox) {
         throw new McpBridgeError("Deep Agents MCP migration requires the rebuild coordinator.");
       }
-      await options.rebuildSandbox(sandboxName);
+      await options.rebuildSandbox(sandboxName, {
+        sandboxName,
+        entries: entries.map((entry) => structuredClone(entry)),
+        runtimeSelection: { ...runtimeSelection },
+      });
       const rebuilt = registry.getSandbox(sandboxName);
       if (!rebuilt) {
         throw new McpBridgeError(

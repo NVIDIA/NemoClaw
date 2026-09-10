@@ -508,7 +508,9 @@ function isRebuildMcpRuntimeSelection(value: unknown): value is OpenShellRuntime
   );
 }
 
-function isRebuildMcpHandoff(value: unknown): value is NonNullable<RebuildManifest["rebuildMcpHandoff"]> {
+export function isRebuildMcpHandoff(
+  value: unknown,
+): value is NonNullable<RebuildManifest["rebuildMcpHandoff"]> {
   return (
     isObjectRecord(value) &&
     Object.keys(value).every(

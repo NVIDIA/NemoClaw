@@ -20,7 +20,15 @@ To replace the credential, follow the conservative remove and re-add procedure:
 ```bash
 export <CREDENTIAL_ENV>='replacement-value'
 $$nemoclaw <sandbox> mcp remove <server>
-# Confirm no sandbox uses the retained provider named by remove, then delete it.
+```
+
+If `remove` reports a retained provider name, use that name for inspection.
+A retry after policy removal can finish without reporting a provider name.
+If no name is reported, inspect OpenShell state to identify the provider.
+Do not infer ownership from a provider name.
+Delete only a provider whose identity you have verified and that no sandbox uses:
+
+```bash
 openshell provider delete <PROVIDER_NAME>
 $$nemoclaw <sandbox> mcp add <server> --url <MCP_URL> --env <CREDENTIAL_ENV>
 unset <CREDENTIAL_ENV>
@@ -84,7 +92,11 @@ If the re-add still cannot prove the revision, repair the reported OpenShell pro
 If `mcp add` is interrupted, inspect the native source and live status first. If no native registration exists, rerun the original command with the same URL, environment-variable name, and any `--deny-tool` options. If the native registration exists, remove it and then re-add it after re-exporting the credential.
 
 To abandon the transaction, run `mcp remove <server> --force`.
-NemoClaw disables the native agent entry first and cleans only live resources whose ownership it can prove. It preserves the workspace provider and reports any residual policy or attachment cleanup.
+NemoClaw removes the generated policy before detaching the verified provider.
+It then proves that no attachment carries the MCP credential key and that fresh sandbox processes no longer receive it.
+Only after these checks does it remove the native entry.
+If cleanup cannot be proven, it retains the native entry, including with `--force`.
+The workspace provider is preserved for explicit cleanup.
 
 ## Agent MCP Capability Is Missing
 

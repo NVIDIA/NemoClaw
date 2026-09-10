@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import type { McpSourceEntry } from "../../src/lib/actions/sandbox/mcp-bridge-contracts";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import {
   agentDefs,
@@ -27,6 +30,7 @@ import {
   listHarnessRebuildBackups,
   loadRebuildSandbox,
   mcpBridge,
+  mcpBridgeProvider,
   mcpBridgeProviderInspection,
   mcpBridgeSource,
   messaging,
@@ -87,7 +91,12 @@ function expectPolicyCaptureOptions() {
   };
 }
 
-export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
+type SourceBackedRebuildOverrides = RebuildFlowOverrides & {
+  mcpRegistry?: unknown;
+  mcpSources?: { native: Record<string, McpSourceEntry>; legacy: Record<string, McpSourceEntry> };
+};
+
+export function createRebuildFlowHarness(overrides: SourceBackedRebuildOverrides = {}): RebuildFlowHarness {
   purgeRebuildModule();
 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -975,14 +984,19 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     gatewayName: "nemoclaw",
     workspace: "default",
   });
+  if (overrides.mcpRegistry !== undefined) {
+    const configIo = sourceRequire("../../src/lib/state/config-io.ts");
+    vi.spyOn(configIo, "readConfigFile").mockReturnValue(overrides.mcpRegistry);
+  }
   const nativeMcpSources = Object.fromEntries(
     mcpSourceEntries.map((entry) => [String(entry.server), structuredClone(entry)]),
   );
-  vi.spyOn(mcpBridgeSource, "inspectAgentMcpSources").mockReturnValue({
-    native: nativeMcpSources,
-    legacy: {},
-  });
-  vi.spyOn(mcpBridgeSource, "joinMcpEntriesToOpenShell").mockReturnValue(nativeMcpSources);
+  vi.spyOn(mcpBridgeSource, "inspectAgentMcpSources").mockReturnValue(
+    overrides.mcpSources ?? { native: nativeMcpSources, legacy: {} },
+  );
+  vi.spyOn(mcpBridgeSource, "joinMcpEntriesToOpenShell").mockImplementation(
+    (...args: unknown[]) => structuredClone(args[1] as Record<string, McpSourceEntry>),
+  );
   const defaultMcpPreparation = (
     runtimeSelection?: Parameters<typeof mcpBridge.prepareMcpBridgesForRebuild>[1],
   ) => {
@@ -1091,4 +1105,182 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     finalizePreparedImageSpy,
     session,
   };
+}
+
+const migrationRuntime = { gatewayName: "nemoclaw", workspace: "default" };
+const recoveryTestTitle =
+  "resumes explicit legacy migration from a durable handoff in a fresh process";
+const sourceRequire = createRequire(import.meta.url);
+
+function prepareExplicitMigrationObservation(entries: readonly McpSourceEntry[]) {
+  const state = sourceRequire("../../src/lib/actions/sandbox/mcp-bridge-state.ts");
+  const policy = sourceRequire("../../src/lib/actions/sandbox/mcp-bridge-policy.ts");
+  const configIo = sourceRequire("../../src/lib/state/config-io.ts");
+  vi.spyOn(configIo, "readConfigFile").mockReturnValue({ sandboxes: {} });
+  const native = Object.fromEntries(
+    entries.filter((entry) => entry.source === "native").map((entry) => [entry.server, entry]),
+  );
+  const legacy = Object.fromEntries(
+    entries.filter((entry) => entry.source === "legacy").map((entry) => [entry.server, entry]),
+  );
+  vi.spyOn(state, "getSandboxAgent").mockReturnValue({
+    name: "langchain-deepagents-code",
+    mcpCapability: { support: "bridge", adapter: "deepagents-config" },
+  });
+  vi.spyOn(state, "getBridgeAdapter").mockReturnValue("deepagents-config");
+  vi.spyOn(mcpBridgeSource, "inspectLegacyBridgeState").mockResolvedValue({
+    bridges: legacy,
+    sources: { native, legacy },
+  });
+  vi.spyOn(policy, "getPolicyPresence").mockResolvedValue(true);
+  vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("match");
+  vi.spyOn(mcpBridgeProvider, "providerAttached").mockResolvedValue(true);
+  vi.spyOn(mcpBridgeProvider, "assertMcpProviderRecoverable").mockResolvedValue({ exists: true });
+  vi.spyOn(mcpBridgeProvider, "preflightMcpEntryTargets").mockResolvedValue(
+    new Map(entries.map((entry) => [entry.server, { addresses: ["8.8.8.8"] }])),
+  );
+}
+
+function preparationFromObservedEntries(
+  _name: string,
+  runtimeSelection: typeof migrationRuntime,
+  entries: readonly McpSourceEntry[],
+) {
+  return {
+    entries: [...entries],
+    detachedProviderEntries: [],
+    scrubbedAdapterEntries: [],
+    runtimeSelection,
+  };
+}
+
+async function resumeMigrationInFreshProcess(receiptPath: string) {
+  const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+  const manifest = JSON.parse(fs.readFileSync(receipt.manifestPath, "utf8"));
+  const handoff = sandboxState.readRebuildMcpHandoff(manifest);
+  const recoveryMarker = path.join(manifest.backupPath, ".nemoclaw-rebuild-recovery.json");
+  const markerBeforeResume = fs.existsSync(recoveryMarker);
+  const resumed = createRebuildFlowHarness({
+    agentName: "langchain-deepagents-code",
+    sandboxEntry: { agent: "langchain-deepagents-code" },
+    staleRecovery: true,
+    captureOpenshell: () => ({ status: 1, output: "", stderr: "Error: sandbox alpha not found" }),
+  });
+  resumed.prepareMcpBridgesForAbsentSandboxRebuildSpy.mockImplementation(
+    preparationFromObservedEntries,
+  );
+  resumed.session.checkpoint = receipt.checkpoint;
+  await resumed.rebuildSandbox("alpha", ["--yes"], {
+    throwOnError: true,
+    recoveryManifest: manifest,
+  });
+  const finalManifest = JSON.parse(fs.readFileSync(receipt.manifestPath, "utf8"));
+  const proof = {
+    ...receipt.proof,
+    freshPid: process.pid,
+    freshEntries: handoff?.entries,
+    recoveryPreparation: resumed.prepareMcpBridgesForAbsentSandboxRebuildSpy.mock.calls,
+    restoration: resumed.restoreMcpBridgesAfterRebuildSpy.mock.calls,
+    recoveryDeletes: resumed.runOpenshellSpy.mock.calls.filter(
+      ([args]) => args[0] === "sandbox" && args[1] === "delete",
+    ).length,
+    markerBeforeResume,
+    markerAfterResume: fs.existsSync(recoveryMarker),
+    finalManifest,
+  };
+  fs.writeFileSync(`${receiptPath}.result.json`, JSON.stringify(proof));
+  return proof;
+}
+
+export async function exerciseFreshProcessMigrationRecovery(entries: readonly McpSourceEntry[]) {
+  const resumedReceipt = process.env.NEMOCLAW_TEST_MCP_REBUILD_RESUME;
+  if (resumedReceipt) return resumeMigrationInFreshProcess(resumedReceipt);
+  const native = Object.fromEntries(
+    entries.filter((entry) => entry.source === "native").map((entry) => [entry.server, entry]),
+  );
+  const legacy = Object.fromEntries(
+    entries.filter((entry) => entry.source === "legacy").map((entry) => [entry.server, entry]),
+  );
+  let entriesAtDeletion: unknown;
+  const interrupted = createRebuildFlowHarness({
+    agentName: "langchain-deepagents-code",
+    sandboxEntry: { agent: "langchain-deepagents-code" },
+    mcpSources: { native, legacy },
+    runOpenshell: (args) => {
+      if (sourceSandboxGateway(args, "delete")) {
+        const saved = JSON.parse(fs.readFileSync(
+          path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8",
+        ));
+        entriesAtDeletion = sandboxState.readRebuildMcpHandoff(saved)?.entries;
+      }
+      return undefined;
+    },
+    onboard: () => {
+      throw new Error("replacement create failed");
+    },
+  });
+  prepareExplicitMigrationObservation(entries);
+  interrupted.prepareMcpBridgesForRebuildSpy.mockImplementation(preparationFromObservedEntries);
+  let interruption = "";
+  try {
+    await interrupted.rebuildSandbox("alpha", ["--yes"], {
+      throwOnError: true,
+      mcpMigration: {
+        sandboxName: "alpha",
+        entries: Object.values(legacy),
+        runtimeSelection: migrationRuntime,
+      },
+    });
+  } catch (error) {
+    interruption = error instanceof Error ? error.message : "unknown interruption";
+  }
+  const manifestPath = path.join(interrupted.backupPath, "rebuild-manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const receiptPath = path.join(interrupted.backupPath, "fresh-process-receipt.json");
+  fs.writeFileSync(
+    receiptPath,
+    JSON.stringify({
+      manifestPath,
+      checkpoint: interrupted.session.checkpoint,
+      proof: {
+        originPid: process.pid,
+        interruption,
+        entriesAtDeletion,
+        persistedEntries: sandboxState.readRebuildMcpHandoff(manifest)?.entries,
+        initialPreparation: interrupted.prepareMcpBridgesForRebuildSpy.mock.calls,
+        sourceDeletes: interrupted.runOpenshellSpy.mock.calls.filter(
+          ([args]) => args[0] === "sandbox" && args[1] === "delete",
+        ).length,
+      },
+    }),
+  );
+  const result = spawnSync(
+    process.execPath,
+    [
+      "node_modules/vitest/vitest.mjs",
+      "run",
+      "--project",
+      "cli",
+      "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
+      "-t",
+      recoveryTestTitle,
+      "--maxWorkers=2",
+      "--coverage=false",
+    ],
+    {
+      cwd: process.cwd(),
+      env: {
+        HOME: process.env.HOME,
+        PATH: process.env.PATH,
+        CI: "1",
+        NEMOCLAW_TEST_MCP_REBUILD_RESUME: receiptPath,
+      },
+      encoding: "utf8",
+      timeout: 90_000,
+      maxBuffer: 1024 * 1024,
+    },
+  );
+  if (result.status !== 0)
+    throw new Error(`Fresh-process recovery failed: ${result.stderr}\n${result.stdout}`);
+  return JSON.parse(fs.readFileSync(`${receiptPath}.result.json`, "utf8"));
 }

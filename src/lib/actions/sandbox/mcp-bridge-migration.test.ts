@@ -94,7 +94,11 @@ vi.mock("./mcp-bridge-state", () => ({
   }),
 }));
 
-import { migrateMcpBridges } from "./mcp-bridge-migration";
+import {
+  migrateMcpBridges,
+  validateMcpMigrationRebuildIntent,
+  type McpMigrationRebuildIntent,
+} from "./mcp-bridge-migration";
 
 describe("explicit MCP migration", () => {
   beforeEach(() => {
@@ -328,7 +332,11 @@ describe("explicit MCP migration", () => {
     await expect(
       migrateMcpBridges("alpha", { apply: true, rebuildSandbox }),
     ).resolves.toMatchObject({ applied: true });
-    expect(rebuildSandbox).toHaveBeenCalledWith("alpha");
+    expect(rebuildSandbox).toHaveBeenCalledWith("alpha", {
+      sandboxName: "alpha",
+      entries: [deepEntry],
+      runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+    });
     expect(mocks.removeLegacy).toHaveBeenCalledWith(
       expect.objectContaining({ agent: deepEntry.agent }),
       deepEntry,
@@ -571,5 +579,134 @@ describe("explicit MCP migration", () => {
     expect(legacyRegistry).toEqual({ sandboxes: { alpha: {} } });
     expect(mocks.discoverTools).toHaveBeenCalledOnce();
     expect(mocks.unregister).not.toHaveBeenCalled();
+  });
+
+  describe("explicit rebuild intent", () => {
+    const deepEntry = {
+      ...entry,
+      agent: "langchain-deepagents-code",
+      adapter: "deepagents-config" as const,
+    };
+    const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
+    const intent: McpMigrationRebuildIntent = {
+      sandboxName: "alpha",
+      entries: [deepEntry],
+      runtimeSelection,
+    };
+
+    beforeEach(() => {
+      mocks.getSandbox.mockReturnValue({ name: "alpha", agent: deepEntry.agent });
+      mocks.getAgent.mockReturnValue({
+        name: deepEntry.agent,
+        displayName: "Deep Agents Code",
+        mcpCapability: { support: "bridge", adapter: deepEntry.adapter },
+      });
+      mocks.getAdapter.mockReturnValue(deepEntry.adapter);
+      mocks.inspectLegacy.mockReturnValue({
+        bridges: { github: deepEntry },
+        sources: { native: {}, legacy: { github: deepEntry } },
+      });
+      mocks.assertProviderRecoverable.mockReset().mockResolvedValue({ exists: true });
+    });
+
+    it("revalidates the complete legacy plan and live enforcement without changing sources", async () => {
+      await expect(
+        validateMcpMigrationRebuildIntent("alpha", intent, runtimeSelection),
+      ).resolves.toBeUndefined();
+      expect(mocks.assertProviderRecoverable).toHaveBeenCalledWith(deepEntry, runtimeSelection);
+      expect(mocks.getPolicyState).toHaveBeenCalledOnce();
+      expect(mocks.register).not.toHaveBeenCalled();
+      expect(mocks.removeLegacy).not.toHaveBeenCalled();
+      expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    });
+
+    it("qualifies registry-only legacy intent before transferring it to the rebuild handoff", async () => {
+      const registryEntry = { ...deepEntry, source: "legacy-registry" as const };
+      mocks.inspectLegacy.mockReturnValue({
+        bridges: {},
+        sources: { native: {}, legacy: {} },
+      });
+      mocks.readConfig.mockReturnValue({
+        sandboxes: { alpha: { mcp: { bridges: { github: registryEntry } } } },
+      });
+      await expect(
+        validateMcpMigrationRebuildIntent(
+          "alpha",
+          { ...intent, entries: [registryEntry] },
+          runtimeSelection,
+        ),
+      ).resolves.toBeUndefined();
+      expect(mocks.assertProviderRecoverable).toHaveBeenCalledWith(registryEntry, runtimeSelection);
+      expect(mocks.register).not.toHaveBeenCalled();
+      expect(mocks.removeLegacy).not.toHaveBeenCalled();
+      expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["missing legacy source", {}],
+      ["changed legacy URL", { github: { ...deepEntry, url: "https://changed.example.test/mcp" } }],
+      ["omitted legacy entry", { github: deepEntry, second: { ...deepEntry, server: "second" } }],
+    ])("refuses %s before any rebuild mutation", async (_label, bridges) => {
+      mocks.inspectLegacy.mockReturnValue({ bridges, sources: { native: {}, legacy: bridges } });
+      await expect(
+        validateMcpMigrationRebuildIntent("alpha", intent, runtimeSelection),
+      ).rejects.toThrow("MCP migration sources changed");
+      expect(mocks.assertProviderRecoverable).not.toHaveBeenCalled();
+      expect(mocks.register).not.toHaveBeenCalled();
+      expect(mocks.removeLegacy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["wrong sandbox", { ...intent, sandboxName: "other" }],
+      ["empty inventory", { ...intent, entries: [] }],
+      ["non-legacy intent", { ...intent, entries: [{ ...deepEntry, source: "native" as const }] }],
+      [
+        "another gateway",
+        { ...intent, runtimeSelection: { ...runtimeSelection, gatewayName: "other" } },
+      ],
+      [
+        "another workspace",
+        { ...intent, runtimeSelection: { ...runtimeSelection, workspace: "other" } },
+      ],
+      [
+        "another TLS scope",
+        { ...intent, runtimeSelection: { ...runtimeSelection, localTlsDir: "/other" } },
+      ],
+      [
+        "literal credential",
+        { ...intent, entries: [{ ...deepEntry, env: ["private-credential-value"] }] },
+      ],
+      [
+        "raw header",
+        {
+          ...intent,
+          entries: [{ ...deepEntry, headers: { Authorization: "private-header-value" } }],
+        },
+      ],
+      [
+        "stdio command",
+        { ...intent, entries: [{ ...deepEntry, command: "untrusted-command", args: [] }] },
+      ],
+    ])("refuses %s as migration rebuild authority", async (_label, candidate) => {
+      await expect(
+        validateMcpMigrationRebuildIntent("alpha", candidate, runtimeSelection),
+      ).rejects.toThrow("MCP migration rebuild intent is invalid");
+      expect(mocks.inspectLegacy).not.toHaveBeenCalled();
+      expect(mocks.register).not.toHaveBeenCalled();
+      expect(mocks.removeLegacy).not.toHaveBeenCalled();
+    });
+
+    it("retains live provider and policy refusals before source replacement", async () => {
+      mocks.assertProviderRecoverable.mockRejectedValueOnce(new Error("provider identity changed"));
+      await expect(
+        validateMcpMigrationRebuildIntent("alpha", intent, runtimeSelection),
+      ).rejects.toThrow("provider identity changed");
+      mocks.getPolicyState.mockReturnValueOnce("drift");
+      await expect(
+        validateMcpMigrationRebuildIntent("alpha", intent, runtimeSelection),
+      ).rejects.toThrow("does not match");
+      expect(mocks.register).not.toHaveBeenCalled();
+      expect(mocks.removeLegacy).not.toHaveBeenCalled();
+    });
   });
 });

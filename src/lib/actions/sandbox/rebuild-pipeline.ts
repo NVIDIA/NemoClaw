@@ -251,6 +251,14 @@ async function rebuildSandboxUnlocked(
       recoveryManifest = preDeleteRecovery.manifest;
       recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
       const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+      if (
+        executionOptions.mcpMigration &&
+        (recoveryManifest !== null || activeRecoveryTransaction?.sandboxName === sandboxName)
+      ) {
+        return bail(
+          "An existing rebuild transaction must be recovered before starting MCP migration.",
+        );
+      }
       const retainedMcpHandoff = recoveryManifest ? readRebuildMcpHandoff(recoveryManifest) : null;
       if (
         recoveryManifest?.rebuildMcpHandoff &&
@@ -265,6 +273,7 @@ async function rebuildSandboxUnlocked(
           sandboxEntry,
           recreateOptions.runtimeSelection,
           recoveryManifest === null && activeRecoveryTransaction?.sandboxName !== sandboxName,
+          executionOptions.mcpMigration,
         ));
       const mcpEntries = observedMcp.entries;
       const mcpRuntimeSelectionRequired = mcpEntries.length > 0;

@@ -26,6 +26,168 @@ describe("standard E2E execution profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it.each([
+    ["current producer", "openshell-sdk-e2e-123-3", "3", 0],
+    ["earlier producer", "openshell-sdk-e2e-123-1", "3", 0],
+    ["missing name", "", "3", 1],
+    ["wrong run", "openshell-sdk-e2e-124-1", "3", 1],
+    ["future producer", "openshell-sdk-e2e-123-4", "3", 1],
+    ["zero producer", "openshell-sdk-e2e-123-0", "3", 1],
+    ["noncanonical producer", "openshell-sdk-e2e-123-01", "3", 1],
+    ["oversize producer", "openshell-sdk-e2e-123-99999999999999999999999", "3", 1],
+    ["untrusted suffix", "openshell-sdk-e2e-123-1; false", "3", 1],
+    ["invalid consumer attempt", "openshell-sdk-e2e-123-1", "03", 1],
+  ])("checks the real SDK artifact guard: %s", (_label, artifact, attempt, status) => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    );
+    const guard = profile.jobs.run.steps.find(
+      (step: { name?: string }) =>
+        step.name === "Validate reviewed OpenShell SDK artifact identity",
+    );
+    const result = spawnSync(
+      "/bin/bash",
+      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", guard.run],
+      {
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH,
+          RUN_ID: "123",
+          RUN_ATTEMPT: String(attempt),
+          SDK_ARTIFACT_NAME: String(artifact),
+        },
+        timeout: 5_000,
+      },
+    );
+    expect(result.status).toBe(status);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+  });
+
+  it.each([
+    [
+      "package-openshell-sdk",
+      "${{ github.event_name == 'workflow_dispatch' }}",
+      "reviewed SDK producer must follow the selected network-policy or external-health plan",
+    ],
+    [
+      "catalogue-nvidia-inference",
+      "${{ needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix != '[]' }}",
+      "catalogue-nvidia-inference must use its generated catalogue matrix",
+    ],
+  ])("rejects SDK dependency scheduling drift in %s", (job, condition, error) => {
+    const workflow = readWorkflow() as { jobs: Record<string, { if: string }> };
+    workflow.jobs[job]!.if = condition;
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(error);
+  });
+
+  it("rejects routing an unbound SDK artifact into the inference caller", () => {
+    const workflow = readWorkflow() as { jobs: Record<string, { with: Record<string, string> }> };
+    workflow.jobs["catalogue-nvidia-inference"]!.with.openshell_sdk_artifact_name = "unbound";
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
+      "catalogue-nvidia-inference must preserve the network-only reviewed SDK artifact route",
+    );
+  });
+
+  it.each([
+    "Validate reviewed OpenShell SDK artifact identity",
+    "Check out trusted network-policy SDK verifier",
+    "Download reviewed network-policy SDK archive",
+    "Install verified network-policy SDK without package credentials",
+  ])("rejects broadening the network-only boundary of %s", (name) => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    );
+    const step = profile.jobs.run.steps.find(
+      (candidate: { name?: string }) => candidate.name === name,
+    );
+    step.if = "${{ always() }}";
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-sdk-profile-"));
+    try {
+      const profilePath = path.join(directory, "profile.yaml");
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
+        `standard E2E profile must preserve the network-only reviewed SDK boundary: ${name}`,
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
+    ["Check out trusted network-policy SDK verifier", "with", "ref", "${{ inputs.candidate_sha }}"],
+    ["Download reviewed network-policy SDK archive", "with", "name", ""],
+    [
+      "Install verified network-policy SDK without package credentials",
+      "env",
+      "NODE_AUTH_TOKEN",
+      "${{ github.token }}",
+    ],
+  ])("rejects SDK identity or credential drift in %s", (name, field, key, value) => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    );
+    const step = profile.jobs.run.steps.find(
+      (candidate: { name?: string }) => candidate.name === name,
+    );
+    step[field][key] = value;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-sdk-profile-"));
+    try {
+      const profilePath = path.join(directory, "profile.yaml");
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
+        `standard E2E profile must preserve the network-only reviewed SDK boundary: ${name}`,
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("creates a fresh reviewed SDK cache before invoking its verifier", () => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    );
+    const step = profile.jobs.run.steps.find(
+      (candidate: { name?: string }) =>
+        candidate.name === "Install verified network-policy SDK without package credentials",
+    );
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-sdk-install-"));
+    const cache = path.join(directory, "network-policy-sdk-cache");
+    const log = path.join(directory, "commands.log");
+    try {
+      const executableSource =
+        '#!/bin/sh\ntest -d "$NEMOCLAW_CI_NPM_CACHE" || exit 71\ntest -z "${NODE_AUTH_TOKEN:-}${GITHUB_TOKEN:-}" || exit 72\nprintf "%s\\n" "$*" >> "$SDK_COMMAND_LOG"\n';
+      fs.writeFileSync(path.join(directory, "node"), executableSource, { mode: 0o700 });
+      fs.writeFileSync(path.join(directory, "npm"), executableSource, { mode: 0o700 });
+      expect(fs.existsSync(cache)).toBe(false);
+      const result = spawnSync(
+        "/bin/bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", step.run],
+        {
+          cwd: directory,
+          encoding: "utf8",
+          env: {
+            PATH: `${directory}:/usr/bin:/bin`,
+            NEMOCLAW_CI_NPM_CACHE: cache,
+            SDK_COMMAND_LOG: log,
+            NODE_AUTH_TOKEN: "fixture-package-credential",
+            GITHUB_TOKEN: "fixture-workflow-credential",
+          },
+          timeout: 5_000,
+        },
+      );
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(fs.readFileSync(log, "utf8").split("\n").filter(Boolean)).toEqual([
+        ".e2e-sdk-verifier/scripts/checks/prepare-ci-npm-install.mts",
+        `ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${cache}`,
+        '--input-type=module -e await import("@nvidia/openshell-sdk")',
+      ]);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("reserves the standard full-E2E setup, test, and artifact envelope", () => {
     expect(catalogueTarget("full-e2e").timeoutMinutes).toBe(
       FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,

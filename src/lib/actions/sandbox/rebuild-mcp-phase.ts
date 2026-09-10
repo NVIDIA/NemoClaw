@@ -19,6 +19,11 @@ import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provide
 import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import { inspectAgentMcpSources, joinMcpEntriesToOpenShell } from "./mcp-bridge-source";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
+import {
+  type McpMigrationRebuildIntent,
+  readCommittedLegacyRegistryEntries,
+  validateMcpMigrationRebuildIntent,
+} from "./mcp-bridge-migration";
 
 export type McpRebuildPreparation = Awaited<ReturnType<typeof prepareMcpBridgesForRebuild>>;
 
@@ -26,21 +31,62 @@ export async function observeMcpStateForRebuild(
   sandbox: RebuildSandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection | undefined,
   inspectCurrentSource: boolean,
+  migration?: McpMigrationRebuildIntent,
 ): Promise<{
   entries: McpSourceEntry[];
   runtimeSelection?: McpProviderInspectionRuntimeSelection;
 }> {
-  if (!inspectCurrentSource) return { entries: [] };
-  const sourceRuntime = runtimeSelection ?? {
-    gatewayName: resolveSandboxGatewayName(sandbox),
-    workspace: OPENSHELL_DEFAULT_WORKSPACE,
-  };
+  if (!inspectCurrentSource) {
+    if (migration) {
+      throw new Error(
+        "An existing rebuild transaction must be recovered before starting MCP migration.",
+      );
+    }
+    return { entries: [] };
+  }
+  const sourceRuntime =
+    runtimeSelection ??
+    (migration
+      ? getMcpProviderInspectionRuntimeSelection(sandbox)
+      : {
+          gatewayName: resolveSandboxGatewayName(sandbox),
+          workspace: OPENSHELL_DEFAULT_WORKSPACE,
+        });
   const sources = inspectAgentMcpSources(sandbox, sourceRuntime);
-  if (Object.keys(sources.native).length === 0) return { entries: [] };
-  const selectedRuntime = runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
-  const entries = Object.values(
-    await joinMcpEntriesToOpenShell(sandbox, sources.native, selectedRuntime),
-  );
+  // DeepAgents legacy agent files and retired registry intent are outside its
+  // declared backup inventory. Inspect the old registry only to refuse loss;
+  // it never authorizes an ordinary rebuild mutation. OpenClaw's Mcporter
+  // source remains covered by the existing workspace backup.
+  if (
+    !migration &&
+    sandbox.agent === "langchain-deepagents-code" &&
+    (Object.keys(sources.legacy).length > 0 ||
+      Object.keys(
+        readCommittedLegacyRegistryEntries(
+          sandbox.name,
+          "langchain-deepagents-code",
+          "deepagents-config",
+        ),
+      ).length > 0)
+  ) {
+    throw new Error(
+      `Legacy MCP configuration must be migrated before rebuilding '${sandbox.name}'. Run \`${CLI_NAME} ${sandbox.name} mcp migrate\` to preview it, then apply the migration explicitly.`,
+    );
+  }
+  if (Object.keys(sources.native).length === 0 && !migration) return { entries: [] };
+  const selectedRuntime = migration
+    ? sourceRuntime
+    : (runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox));
+  if (migration) {
+    await validateMcpMigrationRebuildIntent(sandbox.name, migration, selectedRuntime);
+  }
+  const native = await joinMcpEntriesToOpenShell(sandbox, sources.native, selectedRuntime);
+  const entries = Object.values({
+    ...Object.fromEntries(
+      migration?.entries.map((entry) => [entry.server, structuredClone(entry)]) ?? [],
+    ),
+    ...native,
+  });
   return {
     entries,
     ...(entries.length > 0 ? { runtimeSelection: selectedRuntime } : {}),
