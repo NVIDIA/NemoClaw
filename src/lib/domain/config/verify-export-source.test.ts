@@ -12,6 +12,7 @@ import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
+import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import {
@@ -201,6 +202,33 @@ function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): ObservedExpo
   };
 }
 
+function braveSnapshot(): ObservedExportSnapshot {
+  const value = snapshot();
+  return {
+    ...value,
+    registry: entry({
+      webSearchEnabled: true,
+      webSearchProvider: "brave",
+      workload: managedWorkload(
+        profileInput({ webSearch: { fetchEnabled: true, provider: "brave" } }),
+      ),
+    }),
+    sandbox: { ...value.sandbox, providerNames: ["alpha-brave-search"] },
+    webSearchProvider: {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      name: "alpha-brave-search",
+      id: "brave-provider-id",
+      resourceVersion: "4",
+      type: "brave",
+      profileWorkspace: "default",
+      profile: { id: "brave", source: "user", scope: "workspace", resourceVersion: "4" },
+      credentialKeys: ["BRAVE_API_KEY"],
+      configKeys: [],
+    },
+  };
+}
+
 function hermesSnapshot(registryOverrides: Partial<SandboxEntry> = {}): ObservedExportSnapshot {
   const workload = managedWorkload(hermesProfileInput(), hermesImageRef);
   return snapshot({
@@ -260,6 +288,64 @@ async function exportSnapshots(sequence: readonly ObservedExportSnapshot[]) {
   return { outcome, read, writeStdout, publish };
 }
 
+const tunedEnvironment = {
+  NEMOCLAW_CONTEXT_WINDOW: "65536",
+  NEMOCLAW_MAX_TOKENS: "8192",
+  NEMOCLAW_REASONING: "true",
+  NEMOCLAW_REASONING_EFFORT: "high",
+  NEMOCLAW_AGENT_TIMEOUT: "900",
+  NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m",
+};
+
+function tunedSnapshot(environment: NodeJS.ProcessEnv = tunedEnvironment) {
+  return snapshot({
+    registry: entry({ workload: managedWorkload(profileInput({ environment })) }),
+  });
+}
+
+function compatibleSnapshot(
+  environment: NodeJS.ProcessEnv,
+  registryOverrides: Partial<SandboxEntry>,
+) {
+  const base = profileInput({ environment });
+  const route = resolveManagedStartupInferenceRoute(
+    "openclaw",
+    "compatible-endpoint",
+    "gpt-5",
+    "openai-completions",
+  );
+  const input = {
+    ...base,
+    inference: {
+      ...base.inference,
+      routeProvider: route.providerKey,
+      upstreamProvider: "compatible-endpoint",
+      api: "openai-completions" as const,
+      routedBaseUrl: route.inferenceBaseUrl,
+      primaryModelRef: route.primaryModelRef,
+      compatibility: route.inferenceCompat ?? {},
+    },
+  };
+  const observed = snapshot();
+  return snapshot({
+    registry: entry({
+      provider: "compatible-endpoint",
+      preferredInferenceApi: "openai-completions",
+      workload: managedWorkload(input),
+      ...registryOverrides,
+    }),
+    inference: {
+      ...observed.inference,
+      provider: "compatible-endpoint",
+      api: "openai-completions",
+      endpointEvidence: {
+        ...observed.inference.endpointEvidence!,
+        provider: { ...observed.inference.endpointEvidence!.provider, name: "compatible-endpoint" },
+      },
+    },
+  });
+}
+
 function proxySnapshot(
   environment = { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
 ) {
@@ -270,6 +356,98 @@ function proxySnapshot(
 }
 
 describe("config export source verification (#10938)", () => {
+  it.each([false, true])(
+    "verifies Brave with optional inference attachment %s (#10904)",
+    (attached) => {
+      const value = braveSnapshot();
+      const providers = attached
+        ? [value.inference.provider, "alpha-brave-search"]
+        : ["alpha-brave-search"];
+      const result = verify({ ...value, sandbox: { ...value.sandbox, providerNames: providers } });
+      expect(verifiedSource(result).webSearch).toEqual({
+        provider: "brave",
+        agentRefs: ["primary"],
+        credential: { env: "BRAVE_API_KEY" },
+      });
+    },
+  );
+
+  it.each([
+    [],
+    ["foreign-brave-search"],
+    ["alpha-brave-search", "alpha-brave-search"],
+    ["alpha-brave-search", "extra"],
+    ["alpha-brave-search", "openai-api", "openai-api"],
+  ])("rejects missing or unexpected Brave attachments %j (#10904)", (...providerNames) => {
+    const value = braveSnapshot();
+    expect(
+      findings(verify({ ...value, sandbox: { ...value.sandbox, providerNames } })),
+    ).toContainEqual(
+      expect.objectContaining({ field: "source.sandbox.providers", category: "unsupported" }),
+    );
+  });
+
+  it.each([
+    { gatewayName: "foreign" },
+    { workspace: "foreign" },
+    { name: "foreign-brave-search" },
+    { id: "" },
+    { resourceVersion: "" },
+    { resourceVersion: "0" },
+    { type: "generic" },
+    { credentialKeys: ["TAVILY_API_KEY"] },
+    { credentialKeys: ["BRAVE_API_KEY", "OTHER_KEY"] },
+    { configKeys: ["BASE_URL"] },
+    { profileWorkspace: "foreign" },
+    { profileWorkspace: undefined },
+    { profile: undefined },
+    { profile: { id: "other", source: "builtin", scope: "", resourceVersion: "0" } },
+    { profile: { id: "brave", source: "user", scope: "platform", resourceVersion: "1" } },
+    { profile: { id: "brave", source: "builtin", scope: "workspace", resourceVersion: "0" } },
+    { profile: { id: "brave", source: "builtin", scope: "", resourceVersion: "1" } },
+  ])("rejects mismatched Brave metadata %j (#10904)", (change) => {
+    const value = braveSnapshot();
+    expect(
+      findings(verify({ ...value, webSearchProvider: { ...value.webSearchProvider!, ...change } })),
+    ).toContainEqual(expect.objectContaining({ field: "source.webSearch", category: "drifted" }));
+  });
+
+  it("requires Brave metadata and matching startup intent (#10904)", () => {
+    const value = braveSnapshot();
+    expect(findings(verify({ ...value, webSearchProvider: undefined }))).toContainEqual(
+      expect.objectContaining({ field: "source.webSearch", category: "missing-provenance" }),
+    );
+    expect(
+      findings(verify({ ...value, registry: { ...value.registry, workload: managedWorkload() } })),
+    ).toContainEqual(
+      expect.objectContaining({ field: "source.workload.startupProfile", category: "unsupported" }),
+    );
+    expect(
+      findings(verify({ ...value, registry: { ...value.registry, webSearchProvider: "tavily" } })),
+    ).toContainEqual(
+      expect.objectContaining({
+        field: "spec.sandboxes[].integrations.webSearch",
+        category: "unsupported",
+      }),
+    );
+  });
+
+  it("retains OpenClaw execution settings with Brave enabled (#10904)", () => {
+    const value = braveSnapshot();
+    const workload = managedWorkload(
+      profileInput({
+        webSearch: { fetchEnabled: true, provider: "brave" },
+        environment: { NEMOCLAW_AGENT_TIMEOUT: "900" },
+      }),
+    );
+    expect(
+      verifiedSource(verify({ ...value, registry: { ...value.registry, workload } })),
+    ).toMatchObject({
+      execution: { timeoutSeconds: 900 },
+      webSearch: { provider: "brave" },
+    });
+  });
+
   it("qualifies and verifies two equal snapshots through the observer", async () => {
     const observed = snapshot();
     const result = await observeStableExportSource("alpha", {
@@ -283,6 +461,213 @@ describe("config export source verification (#10938)", () => {
     });
   });
 
+  it("exports retained tuning and execution settings through the complete action", async () => {
+    const observed = tunedSnapshot();
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.read).toHaveBeenCalledTimes(2);
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    const config = validateNemoClawConfig(YAML.parse(yaml));
+    const agent = config.spec.sandboxes[0]!.agents[0]!;
+    expect(agent.inference.routes[0]!.overrides).toEqual({
+      model: "gpt-5",
+      contextWindow: 65536,
+      maxTokens: 8192,
+      reasoning: true,
+      reasoningEffort: "high",
+    });
+    expect(agent.execution).toEqual({ timeoutSeconds: 900, heartbeatEvery: "30m" });
+    expect(config.spec.sandboxes[0]!.network.policy.explicit).toEqual(canonicalPolicy);
+    expect(config.spec.inferenceProviders[0]).toEqual(
+      expect.objectContaining({ credential: { env: "OPENAI_API_KEY" } }),
+    );
+    const verifiedInference = verifiedSource(verify(observed)).inference;
+    expect("overrides" in verifiedInference).toBe(true);
+    const hostedInference = verifiedInference as Extract<
+      typeof verifiedInference,
+      { readonly endpoint: string }
+    >;
+    expect(Object.isFrozen(hostedInference.overrides)).toBe(true);
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
+  it("preserves canonical output when all six settings use their defaults", async () => {
+    const baseline = await exportSnapshots([snapshot()]);
+    const explicit = await exportSnapshots([
+      tunedSnapshot({
+        NEMOCLAW_CONTEXT_WINDOW: "131072",
+        NEMOCLAW_MAX_TOKENS: "4096",
+        NEMOCLAW_REASONING: "false",
+        NEMOCLAW_REASONING_EFFORT: "default",
+        NEMOCLAW_AGENT_TIMEOUT: "600",
+      }),
+    ]);
+    expect(explicit.outcome.ok).toBe(true);
+    expect(explicit.writeStdout.mock.calls).toEqual(baseline.writeStdout.mock.calls);
+    const config = validateNemoClawConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
+    expect(config.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides).toEqual({
+      model: "gpt-5",
+    });
+    expect(config.spec.sandboxes[0]!.agents[0]).not.toHaveProperty("execution");
+  });
+
+  it("retains an explicit zero heartbeat duration", async () => {
+    const result = await exportSnapshots([tunedSnapshot({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" })]);
+    expect(result.outcome.ok).toBe(true);
+    const config = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
+    expect(config.spec.sandboxes[0]!.agents[0]!.execution).toEqual({ heartbeatEvery: "0m" });
+  });
+
+  it.each(Object.entries(tunedEnvironment))(
+    "rejects unstable retained setting %s before publication",
+    async (key, value) => {
+      const changed = tunedSnapshot({ [key]: value });
+      const result = await exportSnapshots([snapshot(), changed, snapshot(), changed]);
+      expect(result.outcome).toMatchObject({
+        ok: false,
+        failure: { findings: [expect.objectContaining({ category: "unstable-source" })] },
+      });
+      expect(result.read).toHaveBeenCalledTimes(4);
+      expect(result.writeStdout).not.toHaveBeenCalled();
+      expect(result.publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it("exports a stable tuning observation after one changed pair", async () => {
+    const changed = tunedSnapshot();
+    const result = await exportSnapshots([snapshot(), changed, changed, changed]);
+    expect(result.outcome.ok).toBe(true);
+    expect(result.read).toHaveBeenCalledTimes(4);
+    expect(
+      validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])).spec.sandboxes[0]!
+        .agents[0]!.execution?.timeoutSeconds,
+    ).toBe(900);
+  });
+
+  it.each([
+    ["true", "high"],
+    ["false", undefined],
+  ] as const)("exports consistent compatible endpoint reasoning %s", async (reasoning, effort) => {
+    const observed = compatibleSnapshot(
+      { NEMOCLAW_REASONING: reasoning, ...(effort ? { NEMOCLAW_REASONING_EFFORT: effort } : {}) },
+      { compatibleEndpointReasoning: reasoning, compatibleEndpointReasoningEffort: effort ?? null },
+    );
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome.ok).toBe(true);
+    const route = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])).spec
+      .sandboxes[0]!.agents[0]!.inference.routes[0]!;
+    expect(route.overrides).toEqual(
+      reasoning === "true"
+        ? { model: "gpt-5", reasoning: true, reasoningEffort: "high" }
+        : { model: "gpt-5" },
+    );
+  });
+
+  it.each([
+    {},
+    { compatibleEndpointReasoning: null, compatibleEndpointReasoningEffort: null },
+    { compatibleEndpointReasoning: "false" },
+    { compatibleEndpointReasoning: false },
+    { compatibleEndpointReasoningEffort: "low" },
+    { compatibleEndpointReasoning: "credential-canary" },
+  ])("rejects inconsistent reasoning evidence without publication", async (change) => {
+    const observed = compatibleSnapshot(tunedEnvironment, change as Partial<SandboxEntry>);
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: { findings: [expect.objectContaining({ category: "drifted" })] },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+    expect(JSON.stringify(result.outcome)).not.toContain("credential-canary");
+  });
+
+  it("rejects enabled registry reasoning when the receipt retains false", async () => {
+    const result = await exportSnapshots([
+      compatibleSnapshot({}, { compatibleEndpointReasoning: "true" }),
+    ]);
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: { findings: [expect.objectContaining({ category: "drifted" })] },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale compatible endpoint reasoning on another provider", async () => {
+    const observed = tunedSnapshot();
+    const result = await exportSnapshots([
+      { ...observed, registry: { ...observed.registry, compatibleEndpointReasoning: "true" } },
+    ]);
+    expect(result.outcome.ok).toBe(false);
+    expect(result.writeStdout).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["tuning", { contextWindow: 4194305 }],
+    ["tuning", { maxTokens: 1000000001 }],
+    ["tuning", { reasoning: null }],
+    ["tuning", { reasoningEffort: "credential-canary" }],
+    ["tuning", { unexpected: "credential-canary" }],
+    ["agentConfig", { agentTimeoutSeconds: 1000000001 }],
+    ["agentConfig", { heartbeatEvery: "3".repeat(256) + "m" }],
+    ["agentConfig", { heartbeatEvery: "30m\n" }],
+    ["agentConfig", { minimalBootstrap: true }],
+    [
+      "agentConfig",
+      {
+        otel: {
+          enabled: true,
+          endpointUrl: "http://host.openshell.internal:4318",
+          serviceName: "openclaw-gateway",
+          sampleRate: 1,
+        },
+      },
+    ],
+    ["tools", { disclosure: "direct" }],
+    ["inference", { inputModalities: ["text", "image"] }],
+  ] as const)(
+    "rejects unrepresentable %s settings alongside valid tuning",
+    async (section, change) => {
+      const workload = managedWorkload(profileInput({ environment: tunedEnvironment }));
+      const profile = JSON.parse(
+        Buffer.from(workload.encodedProfile, "base64url").toString("utf8"),
+      );
+      Object.assign(profile[section], change);
+      const encodedProfile = Buffer.from(JSON.stringify(profile)).toString("base64url");
+      const observed = snapshot({
+        registry: entry({
+          workload: {
+            ...workload,
+            encodedProfile,
+            startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+          },
+        }),
+      });
+      const result = await exportSnapshots([observed]);
+      expect(result.outcome.ok).toBe(false);
+      expect(result.writeStdout).not.toHaveBeenCalled();
+      expect(result.publish).not.toHaveBeenCalled();
+      expect(JSON.stringify(result.outcome)).not.toContain("credential-canary");
+    },
+  );
+
+  it("rejects a tuned source with a mismatched receipt hash", async () => {
+    const observed = tunedSnapshot();
+    const workload = observed.registry.workload!;
+    const result = await exportSnapshots([
+      {
+        ...observed,
+        registry: {
+          ...observed.registry,
+          workload: { ...workload, startupProfileSha256: "c".repeat(64) } as SandboxWorkloadReceipt,
+        },
+      },
+    ]);
+    expect(result.outcome.ok).toBe(false);
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
   it("exports retained managed proxy settings through the complete action", async () => {
     const observed = proxySnapshot();
     const result = await exportSnapshots([observed]);
@@ -442,6 +827,7 @@ describe("config export source verification (#10938)", () => {
     { runtime: { provider: "docker", imageRef: "registry/image:latest" } },
     { gateway: { name: "nemoclaw", port: 0 } },
     { inference: { provider: "e\u0301".repeat(257) } },
+    { inference: { provider: "vllm-local" } },
     { inference: { api: "openai-unknown" } },
     { inference: { endpoint: "https://user:secret@api.example.com/v1" } },
     { inference: { endpoint: "https://api.example.com/%0A%" } },

@@ -198,7 +198,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toContain('body = error.read(512).decode("utf-8", "replace")');
     expect(script).not.toContain("urllib.request.ProxyHandler({})");
     expect(script).not.toContain("os.environ.pop");
-    expect(script).toMatch(/\"\$CLI\" \"\$SANDBOX_NAME\" exec -- \\\n\s+\/opt\/venv\/bin\/python3/);
+    expect(script).toMatch(/"\$CLI" "\$SANDBOX_NAME" exec -- \\\n\s+\/opt\/venv\/bin\/python3/);
     expect(script).not.toContain("env -u ALL_PROXY");
     expect(script.match(/--noproxy '\*'/g)).toHaveLength(2);
     expect(script).toContain("/usr/bin/curl --fail-with-body -sS");
