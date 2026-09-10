@@ -251,12 +251,12 @@ describe("isGatewayHealthy", () => {
     expect(isGatewayHealthy("", GW_INFO_NAMED, wrongName)).toBe(false);
   });
 
-  it.each(["Starting OpenShell gateway...", "Starting OpenShell gateway via managed service..."])(
-    "does not treat startup progress as gateway health: %s",
-    (startupMessage) => {
-      expect(isGatewayHealthy(startupMessage, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(false);
-    },
-  );
+  it.each([
+    "  Starting OpenShell gateway...",
+    "  Starting OpenShell gateway via managed service...",
+  ])("does not treat startup progress as gateway health: %s", (startupMessage) => {
+    expect(isGatewayHealthy(startupMessage, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(false);
+  });
 
   it("returns false for Disconnected status (regression)", () => {
     // Disconnected is non-empty, so fallback must not trigger

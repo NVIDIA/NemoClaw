@@ -582,7 +582,7 @@ describe("managed inference serving catalog compiler", () => {
     [
       "environment expansion",
       "    chatTemplate: nemotron-v3-embedded",
-      "    chatTemplate: \${HOME}",
+      "    chatTemplate: ${HOME}",
     ],
     [
       "an unsupported protocol",

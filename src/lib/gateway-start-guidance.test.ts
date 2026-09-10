@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import { describe, expect, it, vi } from "vitest";
 
 import { gatewayStartGuidance, resolveGatewayLauncher } from "./gateway-start-guidance";
 import type { GatewayManagementDeclaration } from "./onboard/gateway-management";
@@ -70,5 +71,19 @@ describe("gatewayStartGuidance", () => {
     expect(gatewayStartGuidance("nemoclaw")).toBe(
       gatewayStartGuidance("nemoclaw", resolveGatewayLauncher({ gatewayName: "nemoclaw" })),
     );
+  });
+
+  it("returns selector guidance when an unselected host declaration blocks recovery (#11347)", () => {
+    const lstat = vi.spyOn(fs, "lstatSync").mockReturnValue({} as fs.Stats);
+    try {
+      const guidance = gatewayStartGuidance("nemoclaw-18080");
+
+      expect(guidance).toContain(
+        "NEMOCLAW_GATEWAY_MANAGEMENT=/etc/nemoclaw/gateway-management.json",
+      );
+      expect(guidance).not.toContain("Start the gateway");
+    } finally {
+      lstat.mockRestore();
+    }
   });
 });

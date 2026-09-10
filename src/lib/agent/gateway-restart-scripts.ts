@@ -78,7 +78,7 @@ function escapeEre(value: string): string {
 }
 
 function escapeCharClass(value: string): string {
-  return value.replace(/[\\\]\[\^\-]/g, "\\$&");
+  return value.replace(/[\\\][^-]/g, "\\$&");
 }
 
 function selfSafeGatewayProcessPattern(command: string): string {
