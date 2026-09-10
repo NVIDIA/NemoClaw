@@ -36,8 +36,6 @@ import {
   assertCurrentHermesPortableContainer,
   createHermesPortableContainerInspectionTiming,
   observeHermesPortableAuthenticatedHealth,
-  startHermesPortableContainer,
-  stopHermesPortableContainer,
   type HermesPortableContainerDeps,
   type HermesPortableContainerInspection,
   type HermesPortablePodmanResult,
@@ -73,6 +71,7 @@ import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readines
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 const COMMAND_TIMEOUT_MS = 5_000;
+const OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS = 60_000;
 const EXEC_READY_TIMEOUT_MS = 90_000;
 const EXEC_READY_POLL_INTERVAL_MS = 100;
 const STOP_SETTLEMENT_TIMEOUT_MS = 30_000;
@@ -1013,6 +1012,13 @@ function openshellExecArgs(receipt: HermesPortableConfiguredReceipt, command: re
   ];
 }
 
+function openshellLifecycleMutationArgs(
+  receipt: HermesPortableConfiguredReceipt,
+  operation: "start" | "stop",
+) {
+  return ["sandbox", operation, "-g", receipt.gatewayName, receipt.sandboxName];
+}
+
 function waitFor(
   timeoutMs: number,
   deps: HermesPortableLifecycleDeps,
@@ -1080,11 +1086,12 @@ function rollbackStartedHermesPortableRecovery(
       qualified.assertTransactionCurrent();
     }
     failureClass = "container-stop-settlement";
-    stopHermesPortableContainer(qualified.receipt, {
-      ...qualified.containerDeps,
-      ...(deps.now ? { now: deps.now } : {}),
-      ...(deps.sleep ? { sleep: deps.sleep } : {}),
-    });
+    captureRetainedLifecycleCommand(
+      qualified,
+      timing,
+      openshellLifecycleMutationArgs(qualified.receipt, "stop"),
+      OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS,
+    );
     failureClass = "openshell-terminal-settlement";
     settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified, timing);
   } catch (error) {
@@ -1117,14 +1124,10 @@ function settleStoppedHermesPortableLifecycle(
         authority.containerDeps,
       );
       authority.assertTransactionCurrent();
-      if (container.authority.running || container.status !== "exited") {
-        fail("exact container changed after stop settlement");
-      }
+      if (container.authority.running || container.status !== "exited") return false;
       return false;
     }
-    if (current.container.authority.running || current.container.status !== "exited") {
-      fail("exact container changed after stop settlement");
-    }
+    if (current.container.authority.running || current.container.status !== "exited") return false;
     if (current.openShellPhase === "Error" || current.openShellPhase === "Stopped") {
       stopped = current;
       return true;
@@ -1419,11 +1422,15 @@ export function recoverHermesPortableSandboxLifecycle(
           qualified.assertTransactionCurrent();
         }
         timing.increment("containerStart");
-        startedByRecovery = timing.measure(
-          "containerStart",
-          () =>
-            startHermesPortableContainer(qualified.receipt, qualified.containerDeps) === "started",
+        const startResult = timing.measure("containerStart", () =>
+          captureRetainedLifecycleCommand(
+            qualified,
+            timing,
+            openshellLifecycleMutationArgs(qualified.receipt, "start"),
+            OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS,
+          ),
         );
+        startedByRecovery = startResult.status === 0 && !startResult.error;
         primaryFailureClass = "post-start-authority";
         if (qualified.hasTransactionAuthority) {
           timing.increment("transactionCurrentness");
@@ -1457,6 +1464,11 @@ export function recoverHermesPortableSandboxLifecycle(
           currentnessTiming,
         ),
       );
+      startedByRecovery =
+        qualified.container.authority.running && qualified.container.status === "running";
+      if (!startedByRecovery) {
+        fail("OpenShell start did not start the receipt-owned container");
+      }
     }
     primaryFailureClass = "openshell-exec-readiness";
     const commandEnv = deps.env ?? process.env;
@@ -1970,6 +1982,12 @@ export function stopHermesPortableSandboxLifecycle(
 ): PortableDemoLifecycleStopResult {
   let qualified = qualify(sandboxName, context, deps, undefined, ["Ready", "Error", "Stopped"]);
   if (!qualified.container.authority.running && qualified.container.status === "exited") {
+    if (qualified.openShellPhase === "Ready") {
+      qualified.capture(
+        openshellLifecycleMutationArgs(qualified.receipt, "stop"),
+        OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS,
+      );
+    }
     settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified);
     return { kind: "already-stopped" };
   }
@@ -1985,13 +2003,12 @@ export function stopHermesPortableSandboxLifecycle(
   if (qualified.container.authority.running && qualified.openShellPhase === "Stopped") {
     fail("OpenShell Stopped phase disagrees with the running receipt container");
   }
-  const result = stopHermesPortableContainer(qualified.receipt, {
-    ...qualified.containerDeps,
-    ...(deps.now ? { now: deps.now } : {}),
-    ...(deps.sleep ? { sleep: deps.sleep } : {}),
-  });
+  qualified.capture(
+    openshellLifecycleMutationArgs(qualified.receipt, "stop"),
+    OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS,
+  );
   settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified);
-  return { kind: result };
+  return { kind: "stopped" };
 }
 
 export const hermesPortableLifecycleInternals = {

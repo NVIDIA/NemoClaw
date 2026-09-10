@@ -15,7 +15,6 @@ import {
   parseNemoClawConfigDocumentUid,
   type NemoClawConfig,
 } from "../../config/model";
-import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
@@ -32,38 +31,16 @@ import {
   managedWorkload,
   entry,
   snapshot,
-  hermesSnapshot,
-  hermesManagedAuthSnapshot,
   verify,
   changeRetainedProfile,
+  braveSnapshot,
+  hermesSnapshot,
+  hermesManagedAuthSnapshot,
+  tunedEnvironment,
+  tunedSnapshot,
+  compatibleSnapshot,
+  proxySnapshot,
 } from "./export-source-test-fixture";
-
-function braveSnapshot(): ObservedExportSnapshot {
-  const value = snapshot();
-  return {
-    ...value,
-    registry: entry({
-      webSearchEnabled: true,
-      webSearchProvider: "brave",
-      workload: managedWorkload(
-        profileInput({ webSearch: { fetchEnabled: true, provider: "brave" } }),
-      ),
-    }),
-    sandbox: { ...value.sandbox, providerNames: ["alpha-brave-search"] },
-    webSearchProvider: {
-      gatewayName: "nemoclaw",
-      workspace: "default",
-      name: "alpha-brave-search",
-      id: "brave-provider-id",
-      resourceVersion: "4",
-      type: "brave",
-      profileWorkspace: "default",
-      profile: { id: "brave", source: "user", scope: "workspace", resourceVersion: "4" },
-      credentialKeys: ["BRAVE_API_KEY"],
-      configKeys: [],
-    },
-  };
-}
 
 function findings(result: ReturnType<typeof verifyExportSource>) {
   return result.kind === "verified" ? [] : result.findings;
@@ -78,73 +55,6 @@ function primaryOpenClawAgent(config: NemoClawConfig) {
   const agent = config.spec.sandboxes[0]!.agents[0]!;
   expect(agent.type).toBe("openclaw");
   return agent as Extract<typeof agent, { type: "openclaw" }>;
-}
-
-const tunedEnvironment = {
-  NEMOCLAW_CONTEXT_WINDOW: "65536",
-  NEMOCLAW_MAX_TOKENS: "8192",
-  NEMOCLAW_REASONING: "true",
-  NEMOCLAW_REASONING_EFFORT: "high",
-  NEMOCLAW_AGENT_TIMEOUT: "900",
-  NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m",
-};
-
-function tunedSnapshot(environment: NodeJS.ProcessEnv = tunedEnvironment) {
-  return snapshot({
-    registry: entry({ workload: managedWorkload(profileInput({ environment })) }),
-  });
-}
-
-function compatibleSnapshot(
-  environment: NodeJS.ProcessEnv,
-  registryOverrides: Partial<SandboxEntry>,
-) {
-  const base = profileInput({ environment });
-  const route = resolveManagedStartupInferenceRoute(
-    "openclaw",
-    "compatible-endpoint",
-    "gpt-5",
-    "openai-completions",
-  );
-  const input = {
-    ...base,
-    inference: {
-      ...base.inference,
-      routeProvider: route.providerKey,
-      upstreamProvider: "compatible-endpoint",
-      api: "openai-completions" as const,
-      routedBaseUrl: route.inferenceBaseUrl,
-      primaryModelRef: route.primaryModelRef,
-      compatibility: route.inferenceCompat ?? {},
-    },
-  };
-  const observed = snapshot();
-  return snapshot({
-    registry: entry({
-      provider: "compatible-endpoint",
-      preferredInferenceApi: "openai-completions",
-      workload: managedWorkload(input),
-      ...registryOverrides,
-    }),
-    inference: {
-      ...observed.inference,
-      provider: "compatible-endpoint",
-      api: "openai-completions",
-      endpointEvidence: {
-        ...observed.inference.endpointEvidence!,
-        provider: { ...observed.inference.endpointEvidence!.provider, name: "compatible-endpoint" },
-      },
-    },
-  });
-}
-
-function proxySnapshot(
-  environment = { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
-) {
-  return {
-    ...snapshot(),
-    registry: { ...entry(), workload: managedWorkload(profileInput({ environment })) },
-  } satisfies ObservedExportSnapshot;
 }
 
 describe("config export source verification (#10938)", () => {

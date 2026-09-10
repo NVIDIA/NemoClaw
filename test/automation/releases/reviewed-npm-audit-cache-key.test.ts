@@ -34,7 +34,7 @@ function copyGraphInputs(targetRoot: string, directory: string) {
   );
 }
 
-describe("reviewed npm audit cache identity", () => {
+describe("npm audit cache identity", () => {
   it("rejects a target input symbolic link before emitting a cache identity", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-audit-cache-key-"));
     const targetRoot = path.join(root, "target");
@@ -57,7 +57,7 @@ describe("reviewed npm audit cache identity", () => {
         ),
       ) as CompositeAction;
       const cacheBucketStep = action.runs.steps?.find(
-        (step) => step.name === "Resolve reviewed npm audit cache buckets",
+        (step) => step.name === "Resolve npm audit cache buckets",
       );
       const result = spawnSync("bash", ["-c", cacheBucketStep?.run ?? ""], {
         cwd: REPO_ROOT,

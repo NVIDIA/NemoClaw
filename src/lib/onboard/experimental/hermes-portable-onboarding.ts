@@ -45,6 +45,22 @@ import {
 import { isPortableExperimentalProfile } from "./portable-profile";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 export { defaultPortableDemoStateDir as defaultHermesPortableStateDir };
+
+type McpLifecycleLock = <R>(
+  sandboxName: string,
+  operation: () => Promise<R> | R,
+  options?: { readonly stateDir?: string },
+) => Promise<R>;
+
+/** Bind Portable onboarding mutations to the host-scoped receipt state. */
+export function bindHermesPortableOnboardingLifecycleLock(
+  withMcpLifecycleLock: McpLifecycleLock,
+  env: NodeJS.ProcessEnv = process.env,
+): <R>(sandboxName: string, operation: () => Promise<R>) => Promise<R> {
+  const stateDir = path.join(defaultPortableDemoStateDir(env), "state");
+  return async <R>(sandboxName: string, operation: () => Promise<R>): Promise<R> =>
+    await withMcpLifecycleLock(sandboxName, operation, { stateDir });
+}
 import {
   assertCurrentHermesPortableContainer,
   configureHermesPortableRestartPolicy,
