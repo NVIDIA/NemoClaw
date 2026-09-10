@@ -593,24 +593,42 @@ describe("pull request and main workflow contracts", () => {
       "Advisor runtime",
       requiredWorkflowStep(advisorWorkflow.jobs["build-advisor-runtime"], "Install locked runtime"),
     ],
-  ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
-    // Both callers delegate source isolation to the shared installer, which
-    // pins apt to /etc/apt/sources.list.d/ubuntu.sources and disables source
-    // fragments before either updating metadata or installing packages.
-    expect(installStep.run).toContain("ci-install-pinned-ubuntu-packages.sh");
-    expect(installStep.run).not.toContain("apt-get update");
-  });
+  ])(
+    "uses the configured ubuntu.sources file without source fragments for %s",
+    (_name, installStep) => {
+      // Both callers delegate source selection to the shared installer, which
+      // selects /etc/apt/sources.list.d/ubuntu.sources and disables source
+      // fragments before either updating metadata or installing packages.
+      expect(installStep.run).toContain("ci-install-pinned-ubuntu-packages.sh");
+      expect(installStep.run).not.toContain("apt-get update");
+    },
+  );
 
-  it("limits CLI shard package installation to Ubuntu archive sources", () => {
+  // source-shape-contract: security -- The trusted CLI shard checkout must include the helper invoked by the base-controlled composite action
+  it("limits CLI shard package installation to the configured ubuntu.sources file", () => {
+    const trustedCheckout = requiredWorkflowStep(
+      prWorkflow.jobs["cli-test-shards"],
+      "Checkout trusted CI actions",
+    );
+    expect(trustedCheckout.uses).toBe(trustedCheckoutAction);
+    expect(trustedCheckout.with).toMatchObject({
+      ref: "${{ github.event.pull_request.base.sha }}",
+      path: ".trusted-ci-actions",
+    });
+    expect(String(trustedCheckout.with?.["sparse-checkout"])).toContain(
+      ".github/actions/ci-install-pinned-ubuntu-packages.sh",
+    );
+
     const temp = mkdtempSync(join(tmpdir(), "nemoclaw-cli-shard-apt-"));
     const fakeBin = join(temp, "bin");
     const actionPath = join(temp, "actions", "ci-cli-coverage-shard");
     const aptTrace = join(temp, "apt-trace");
     const binaryTrace = join(temp, "binary-trace");
-    const aptLists = join(temp, "apt-lists");
+    const runnerTemp = join(temp, "runner");
     const ubuntuSources = join(temp, "ubuntu.sources");
     mkdirSync(fakeBin);
     mkdirSync(actionPath, { recursive: true });
+    mkdirSync(runnerTemp, { mode: 0o700 });
     const packageInstaller = readFileSync(
       join(process.cwd(), ".github/actions/ci-install-pinned-ubuntu-packages.sh"),
       "utf8",
@@ -630,16 +648,15 @@ describe("pull request and main workflow contracts", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'printf "%s\\n" "$*" >> "$APT_TRACE"',
-        'if [ "${1:-}" = "mktemp" ]; then',
-        '  printf "%s\\n" "$APT_LISTS_DIR"',
-        "  exit 0",
-        "fi",
         'if [ "${1:-}" = "apt-get" ] && [ "${FAIL_APT_INSTALL:-0}" = "1" ] && [[ " $* " == *" install "* ]]; then',
         "  exit 42",
         "fi",
       ].join("\n"),
       { mode: 0o755 },
     );
+    writeFileSync(join(fakeBin, "stat"), '#!/usr/bin/env bash\nprintf "700\\n"\n', {
+      mode: 0o755,
+    });
     writeFileSync(
       join(fakeBin, "dpkg-query"),
       [
@@ -672,21 +689,22 @@ describe("pull request and main workflow contracts", () => {
       const runInstall = (extraEnv: Record<string, string> = {}) =>
         runWorkflowShellStep(installStep, {
           APT_TRACE: aptTrace,
-          APT_LISTS_DIR: aptLists,
           BINARY_TRACE: binaryTrace,
           GITHUB_ACTION_PATH: actionPath,
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          RUNNER_TEMP: runnerTemp,
           ...extraEnv,
         });
       const result = runInstall();
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toEqual([
-        "mktemp -d /var/lib/apt/nemoclaw-lists.XXXXXXXX",
-        `chmod 0755 ${aptLists}`,
-        `install -d -o _apt -g root -m 0700 ${aptLists}/partial`,
-        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${aptLists} update -qq`,
-        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${aptLists} install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1`,
+        `chmod o+x ${runnerTemp}`,
+        `install -d -m 0755 ${runnerTemp}/nemoclaw-apt-lists`,
+        `install -d -o _apt -g root -m 0700 ${runnerTemp}/nemoclaw-apt-lists/partial`,
+        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${runnerTemp}/nemoclaw-apt-lists update -qq`,
+        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${runnerTemp}/nemoclaw-apt-lists install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1`,
+        `chmod 700 ${runnerTemp}`,
       ]);
       expect(readFileSync(binaryTrace, "utf8").trim().split("\n")).toEqual(["fdfind", "rg"]);
 
@@ -695,7 +713,7 @@ describe("pull request and main workflow contracts", () => {
       rmSync(binaryTrace);
       const missingSourceResult = runInstall();
       expect(missingSourceResult.status).not.toBe(0);
-      expect(missingSourceResult.stdout).toContain("Required Ubuntu APT source is unavailable");
+      expect(missingSourceResult.stdout).toContain("Configured APT source list is unavailable");
       expect(existsSync(aptTrace)).toBe(false);
       expect(existsSync(binaryTrace)).toBe(false);
 
@@ -710,7 +728,7 @@ describe("pull request and main workflow contracts", () => {
 
       const unavailablePackageResult = runInstall({ FAIL_APT_INSTALL: "1" });
       expect(unavailablePackageResult.status).not.toBe(0);
-      expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toHaveLength(5);
+      expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toHaveLength(6);
       expect(existsSync(binaryTrace)).toBe(false);
     } finally {
       rmSync(temp, { force: true, recursive: true });
