@@ -42,6 +42,7 @@ on:
           - components
           - python
           - runtime
+          - host-prerequisites
 
 permissions:
   actions: read
@@ -55,12 +56,12 @@ concurrency:
 jobs:
   windows-host-prerequisite-proof:
     name: Isolated Windows directory permission proof (ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && (inputs.official_hermes_phase == 'python' || inputs.official_hermes_phase == 'host-prerequisites') }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 10
     steps:
       - name: Check out the Windows packaging controls
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Exercise permission handling on disposable directories
@@ -871,7 +872,7 @@ jobs:
 
   official-hermes-components:
     name: Official Hermes ${{ inputs.official_hermes_phase || 'components' }} probe (Windows ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: ${{ inputs.official_hermes_phase == 'runtime' && 180 || 90 }}
     steps:

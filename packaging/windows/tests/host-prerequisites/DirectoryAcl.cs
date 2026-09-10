@@ -71,20 +71,21 @@ internal sealed class DirectoryAcl : IDisposable
             }
             if (!found) missing.Add(new CommonAce(AceFlags.None, AceQualifier.AccessAllowed, MetadataMask, new SecurityIdentifier(sid), false, null));
         }
-        if (missing.Count == 0) return new(false, 0, before.Sha256, before.Sha256, before.Owner, before.Group, before.Control);
+        if (missing.Count == 0) return new(false, 0, before.Sha256, before.Sha256, before.Owner, before.Group, before.Control, before.ControlValue, before.ControlValue, AclControlTransition.Unchanged.ToString());
         var updated = InsertExplicit(acl, missing);
         LastAttempt = new { beforeSha256 = before.Sha256, beforeOwner = before.Owner, beforeGroup = before.Group, beforeControl = before.Control, expectedAces = AceBytes(updated).ToArray() };
         var watch = Stopwatch.StartNew();
         Write(updated);
         var milliseconds = watch.Elapsed.TotalMilliseconds;
         var after = Read();
-        LastAttempt = new { beforeSha256 = before.Sha256, afterSha256 = after.Sha256, beforeOwner = before.Owner, afterOwner = after.Owner, beforeGroup = before.Group, afterGroup = after.Group, beforeControl = before.Control, afterControl = after.Control, expectedAces = AceBytes(updated).ToArray(), actualAces = AceBytes(after.Descriptor.DiscretionaryAcl!).ToArray(), writeMilliseconds = milliseconds };
-        if (before.Owner != after.Owner || before.Group != after.Group || before.Control != after.Control)
-            throw new IOException("The ACL operation changed an original owner, group or descriptor control field.");
+        var transition = AclControlPolicy.AfterDaclWrite(before.ControlValue, after.ControlValue);
+        LastAttempt = new { beforeSha256 = before.Sha256, afterSha256 = after.Sha256, beforeOwner = before.Owner, afterOwner = after.Owner, beforeGroup = before.Group, afterGroup = after.Group, beforeControl = before.Control, afterControl = after.Control, beforeControlValue = before.ControlValue, afterControlValue = after.ControlValue, controlTransition = transition.ToString(), expectedAces = AceBytes(updated).ToArray(), actualAces = AceBytes(after.Descriptor.DiscretionaryAcl!).ToArray(), expectedAclRevision = updated.Revision, actualAclRevision = after.Descriptor.DiscretionaryAcl!.Revision, writeMilliseconds = milliseconds };
+        if (before.Owner != after.Owner || before.Group != after.Group || transition == AclControlTransition.Forbidden)
+            throw new IOException("The ACL operation changed an owner, group or control bit beyond recording DACL inheritance-model conversion.");
         var expected = AceBytes(updated);
-        if (!expected.SequenceEqual(AceBytes(after.Descriptor.DiscretionaryAcl!)))
+        if (updated.Revision != after.Descriptor.DiscretionaryAcl!.Revision || !expected.SequenceEqual(AceBytes(after.Descriptor.DiscretionaryAcl!)))
             throw new IOException("The resulting DACL differs from the original ACE sequence plus the exact additions.");
-        return new(true, milliseconds, before.Sha256, after.Sha256, after.Owner, after.Group, after.Control);
+        return new(true, milliseconds, before.Sha256, after.Sha256, after.Owner, after.Group, after.Control, before.ControlValue, after.ControlValue, transition.ToString());
     }
 
     internal void Write(RawAcl acl)
@@ -126,8 +127,9 @@ internal sealed class DirectoryAcl : IDisposable
         internal string? Owner => Descriptor.Owner?.Value;
         internal string? Group => Descriptor.Group?.Value;
         internal string Control => Descriptor.ControlFlags.ToString();
+        internal ushort ControlValue => (ushort)Descriptor.ControlFlags;
     }
-    internal sealed record Result(bool WroteDacl, double WriteMilliseconds, string BeforeSha256, string AfterSha256, string? Owner, string? Group, string Control);
+    internal sealed record Result(bool WroteDacl, double WriteMilliseconds, string BeforeSha256, string AfterSha256, string? Owner, string? Group, string Control, ushort BeforeControlValue, ushort AfterControlValue, string ControlTransition);
     public void Dispose() => handle.Dispose();
 
     [StructLayout(LayoutKind.Sequential)] private struct FileInformation
