@@ -541,6 +541,57 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(failure?.message).not.toContain("0.0.0.0/0");
   });
 
+  it("probes the private loopback bridge from the host process when the lifecycle selects it", () => {
+    const fixture = dockerFixture();
+    const hostLoopbackProbe = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    createLifecycle(
+      { ...options(fixture), loopbackProbe: "host-process" },
+      { hostLoopbackProbe },
+    ).start(receiptWriter());
+
+    expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:8081/health", 30);
+    const commands = fixture.capture.mock.calls.map(([argv]) => argv as readonly string[]);
+    expect(
+      commands.filter(
+        (argv) => argv[0] === "run" && argv[argv.indexOf("--network") + 1] === "host",
+      ),
+    ).toEqual([]);
+    expect(commands).toContainEqual(
+      expect.arrayContaining([
+        "--network",
+        "openshell-docker",
+        "http://host.openshell.internal:8081/health",
+      ]),
+    );
+  });
+
+  it("fails onboarding when the host-process private loopback bridge probe is refused", () => {
+    const fixture = dockerFixture();
+    const store = journalStore();
+    const hostLoopbackProbe = vi.fn(() => ({
+      status: 7,
+      stdout: "",
+      stderr: "connection refused",
+    }));
+
+    let failure: Error | undefined;
+    try {
+      createLifecycle(
+        { ...options(fixture, store), loopbackProbe: "host-process" },
+        { hostLoopbackProbe },
+      ).start(receiptWriter());
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+
+    expect(failure?.message).toBe(
+      "Docker llama.cpp private loopback bridge probe failed (exit 7).",
+    );
+    expect(failure?.message).not.toContain("test-only-secret");
+    expect(store.list()).toEqual([]);
+    expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
+  });
+
   it("resumes an already-running receipt without creating or starting resources (#8144)", () => {
     const fixture = dockerFixture();
     const lifecycle = controller(fixture);
