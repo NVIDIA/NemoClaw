@@ -33,6 +33,22 @@ it.each([
     args: [],
   },
   {
+    name: "unnecessary escapes in CLI code",
+    file: "src/lib/example.ts",
+    source: String.raw`export const value = /\!/;`,
+    diagnostic: "eslint(no-useless-escape)",
+    exitCode: 1,
+    args: [],
+  },
+  {
+    name: "necessary escapes in CLI code",
+    file: "src/lib/example.ts",
+    source: String.raw`export const value = /\./;`,
+    diagnostic: "",
+    exitCode: 0,
+    args: [],
+  },
+  {
     name: "browser globals in CLI code",
     file: "src/lib/example.ts",
     source: "export const read = () => window.location.href;",

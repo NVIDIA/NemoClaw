@@ -483,6 +483,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: ["test/e2e/live/brave-search-helpers.ts"],
     environment: {
       ...hostedInference,
       ...nonInteractive,
