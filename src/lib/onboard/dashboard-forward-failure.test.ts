@@ -15,6 +15,8 @@ type LauncherDeps = Parameters<typeof createOnboardDashboardHelpers>[0];
 
 const WIDE_URL = "https://dashboard.example.test:18789";
 const LOOPBACK_URL = "http://127.0.0.1:18789";
+/** The production Hermes shape: a dashboard port plus a declared API port. */
+const HERMES_AGENT = { name: "hermes", forwardPort: 18789, forward_ports: [18789, 8642] };
 
 /** A launcher whose forward service behaves as `launch` says, with the sandbox kept (no rollback). */
 function launcherWith(
@@ -60,7 +62,9 @@ describe("the dashboard launcher records the bind of the forward it starts (#108
     const launch = vi.fn();
     const helpers = launcherWith(launch, record);
 
-    expect(helpers.ensureDashboardForward("hm", WIDE_URL)).toBe(18789);
+    expect(helpers.ensureDashboardForward("hm", WIDE_URL, { recordDashboardBind: true })).toBe(
+      18789,
+    );
 
     expect(record.mock.calls).toEqual([["hm", "0.0.0.0"]]);
     expect(record.mock.invocationCallOrder[0]).toBeLessThan(
@@ -86,7 +90,9 @@ describe("the dashboard launcher records the bind of the forward it starts (#108
       },
     );
 
-    expect(helpers.ensureDashboardForward("hm", WIDE_URL)).toBe(18789);
+    expect(helpers.ensureDashboardForward("hm", WIDE_URL, { recordDashboardBind: true })).toBe(
+      18789,
+    );
 
     expect(record.mock.calls).toEqual([
       ["hm", "0.0.0.0"],
@@ -105,7 +111,9 @@ describe("the dashboard launcher records the bind of the forward it starts (#108
       throw new Error("forward service exited");
     }, record);
 
-    expect(helpers.ensureDashboardForward("hm", WIDE_URL)).toBe(18789);
+    expect(helpers.ensureDashboardForward("hm", WIDE_URL, { recordDashboardBind: true })).toBe(
+      18789,
+    );
 
     expect(record.mock.calls).toEqual([
       ["hm", "0.0.0.0"],
@@ -130,7 +138,9 @@ describe("the dashboard launcher records the bind of the forward it starts (#108
       const launch = vi.fn();
       const helpers = launcherWith(launch, vi.fn(write));
 
-      expect(helpers.ensureDashboardForward("hm", WIDE_URL)).toBe(18789);
+      expect(helpers.ensureDashboardForward("hm", WIDE_URL, { recordDashboardBind: true })).toBe(
+        18789,
+      );
 
       expect(launch).not.toHaveBeenCalled();
       expect(warn).toHaveBeenCalledWith(
@@ -138,6 +148,10 @@ describe("the dashboard launcher records the bind of the forward it starts (#108
           "Refusing to start the dashboard forward for 'hm' on all interfaces",
         ),
       );
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("Repair the sandbox registry and re-run onboarding."),
+      );
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("Reconnect after"));
     },
   );
 
@@ -152,12 +166,18 @@ describe("the dashboard launcher records the bind of the forward it starts (#108
       }),
     });
 
-    expect(helpers.ensureDashboardForward("hm", LOOPBACK_URL)).toBe(18789);
+    expect(helpers.ensureDashboardForward("hm", LOOPBACK_URL, { recordDashboardBind: true })).toBe(
+      18789,
+    );
 
     expect(launch).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("on loopback: the registry still records a bind on 0.0.0.0"),
     );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Repair the sandbox registry and re-run onboarding."),
+    );
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("Reconnect after"));
   });
 
   it("starts a loopback forward over a loopback record when the write fails, and says so", () => {
@@ -165,7 +185,9 @@ describe("the dashboard launcher records the bind of the forward it starts (#108
     const launch = vi.fn();
     const helpers = launcherWith(launch, () => false);
 
-    expect(helpers.ensureDashboardForward("hm", LOOPBACK_URL)).toBe(18789);
+    expect(helpers.ensureDashboardForward("hm", LOOPBACK_URL, { recordDashboardBind: true })).toBe(
+      18789,
+    );
 
     expect(launch).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be recorded"));
@@ -188,7 +210,10 @@ describe("the dashboard launcher records the bind of the forward it starts (#108
     });
 
     expect(
-      helpers.ensureDashboardForward("hm", WIDE_URL, { reuseExistingOpenClawForward: true }),
+      helpers.ensureDashboardForward("hm", WIDE_URL, {
+        recordDashboardBind: true,
+        reuseExistingOpenClawForward: true,
+      }),
     ).toBe(18789);
 
     expect(launch).not.toHaveBeenCalled();
@@ -418,5 +443,43 @@ describe("a fresh agent forward that does not start leaves no record behind (#10
     ).resolves.toBe(18789);
 
     expect(record.mock.calls).toEqual([["hm", "0.0.0.0"]]);
+  });
+
+  it("records only the dashboard forward's bind when the agent declares more ports", async () => {
+    vi.stubEnv("CHAT_UI_URL", WIDE_URL);
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const record = vi.fn(() => true);
+    const launch = vi.fn();
+    const helpers = launcherWith(launch, record, {
+      getSandbox: () => ({ gatewayName: "nemoclaw", gatewayPort: 8080, hermesApiPort: 8642 }),
+    });
+
+    await expect(helpers.ensureFinalizationAgentDashboardForward("hm", HERMES_AGENT)).resolves.toBe(
+      18789,
+    );
+
+    expect(launch.mock.calls.map(([target]) => target.localPort)).toEqual([18789, 8642]);
+    expect(record.mock.calls).toEqual([["hm", "0.0.0.0"]]);
+  });
+
+  it("starts the declared API forward when the dashboard forward is refused", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubEnv("CHAT_UI_URL", WIDE_URL);
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const record = vi.fn(() => false);
+    const launch = vi.fn();
+    const helpers = launcherWith(launch, record, {
+      getSandbox: () => ({ gatewayName: "nemoclaw", gatewayPort: 8080, hermesApiPort: 8642 }),
+    });
+
+    await expect(helpers.ensureFinalizationAgentDashboardForward("hm", HERMES_AGENT)).resolves.toBe(
+      18789,
+    );
+
+    expect(record.mock.calls).toEqual([["hm", "0.0.0.0"]]);
+    expect(launch.mock.calls.map(([target]) => target.localPort)).toEqual([8642]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Refusing to start the dashboard forward for 'hm' on all interfaces"),
+    );
   });
 });

@@ -6,6 +6,12 @@ export interface DashboardForwardOptions {
   gatewayName?: string;
   allowPortReallocation?: boolean;
   reuseExistingOpenClawForward?: boolean;
+  /**
+   * Record the bind of the forward this call starts as the sandbox's
+   * dashboard bind (#10861). Only the dashboard callers set this. Declared
+   * agent ports share the launcher and must not write that field.
+   */
+  recordDashboardBind?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;
 }
 

@@ -502,22 +502,29 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     parsedUrl.port = String(actualPort);
     const actualTarget = getDashboardForwardTarget(parsedUrl.toString());
     const actualGateway = resolveForwardServiceGateway(sandboxName, options);
-    // The registry record must describe the forward this launch creates
-    // (#10861): a wide bind is never started undisclosed, and a loopback bind
-    // replacing a recorded wide one must not leave that record standing.
-    // Either is refused when the write fails. A loopback bind over a loopback
-    // or absent record proceeds; the next launch writes the record again.
+    // The registry record must describe the dashboard forward (#10861): a
+    // wide bind is never started undisclosed, and a loopback bind replacing a
+    // recorded wide one must not leave that record standing. Either is
+    // refused when the write fails. A loopback bind over a loopback or absent
+    // record proceeds; the next launch writes the record again. Only the
+    // dashboard callers opt in; declared agent ports share this launcher and
+    // never touch the record.
+    const recordsBind = options.recordDashboardBind === true;
     const bindAddress = actualTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1";
-    const previousBind = getSandbox?.(sandboxName)?.dashboardBindAddress ?? null;
-    const bindRecorded = recordBind(sandboxName, bindAddress);
+    const previousBind = recordsBind
+      ? (getSandbox?.(sandboxName)?.dashboardBindAddress ?? null)
+      : null;
+    const bindRecorded = recordsBind ? recordBind(sandboxName, bindAddress) : null;
     let fwdOk = false;
     let fwdDiagnostic = "";
+    let bindRefusal: string | null = null;
     if (bindRecorded === false && (bindAddress === "0.0.0.0" || previousBind === "0.0.0.0")) {
-      fwdDiagnostic = dashboardBindRecordRefusal(sandboxName, bindAddress, previousBind);
+      bindRefusal = dashboardBindRecordRefusal(sandboxName, bindAddress, previousBind);
+      fwdDiagnostic = bindRefusal;
     } else if (actualGateway) {
       if (bindRecorded === false) {
         console.warn(
-          `  Warning: the dashboard bind for '${sandboxName}' could not be recorded; \`dashboard-url\` and \`list\` report no recorded bind until the next forward launch.`,
+          `  Warning: the dashboard bind for '${sandboxName}' could not be recorded; the registry keeps its previous value until the next forward launch.`,
         );
       }
       try {
@@ -544,11 +551,14 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
             ? `Failed to start dashboard forward on port ${actualPort} — the host port ` +
                 `is held by another process. Free it and run \`${deps.cliName()} onboard\` again, ` +
                 `or pass \`--control-ui-port <N>\` to pick a different dashboard port.`
-            : `Failed to start dashboard forward on port ${actualPort}: ${fwdDiagnostic.slice(0, 240)}`,
+            : `Failed to start dashboard forward on port ${actualPort}: ${bindRefusal ?? fwdDiagnostic.slice(0, 240)}`,
         );
         rollbackSandboxAndExit(sandboxName, err, options.gatewayName);
       }
-      if (looksLikePortConflict) {
+      if (bindRefusal !== null) {
+        // The refusal carries its own remedy; print it whole.
+        console.warn(`! Port ${actualPort} forward did not start: ${bindRefusal}`);
+      } else if (looksLikePortConflict) {
         console.warn(
           `! Port ${actualPort} forward did not start — port may be in use by another process.`,
         );
@@ -602,6 +612,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
     const actualPort = ensureDashboardForward(sandboxName, requestedUrl, {
       allowPortReallocation: false,
+      recordDashboardBind: true,
       reuseExistingOpenClawForward: true,
       ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
     });
