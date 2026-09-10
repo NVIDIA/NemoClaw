@@ -157,6 +157,19 @@ describe("staging Brev Launchable identity workflow boundary", () => {
     expect(validateE2eWorkflow(value)).toContain(expected);
   });
 
+  it("rejects the Inference Hub secret for public NVIDIA Launchable onboarding", () => {
+    const value = workflow();
+    const run = step(value, "Build, deploy, verify, test, and clean up", "staging-brev-launchable");
+    run.env!.NVIDIA_INFERENCE_API_KEY = String(run.env!.NVIDIA_INFERENCE_API_KEY).replace(
+      "secrets.NVIDIA_API_KEY",
+      "secrets.NVIDIA_INFERENCE_API_KEY",
+    );
+
+    expect(validateE2eWorkflow(value)).toContain(
+      "staging-brev-launchable NVIDIA_INFERENCE_API_KEY must use the trusted-run secret guard",
+    );
+  });
+
   it("rejects identity-only mode for staging-brev-launchable (#9925)", () => {
     const value = workflow();
     const strictStep = step(

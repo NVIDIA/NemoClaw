@@ -1421,8 +1421,10 @@ The job reads these credentials from repository Actions secrets:
 - `NEMOCLAW_IMAGE_DISPATCH_TOKEN` is exposed as `GH_TOKEN` only to the trusted
   host controller. The controller uses it to list successful producer runs in
   `brevdev/nemoclaw-image` and download the selected staging handoff artifact.
-- `NVIDIA_INFERENCE_API_KEY` is exported into the Brev guest for the full E2E
-  process. Code in the baked candidate checkout can read and use it.
+- `NVIDIA_API_KEY` supplies the public NVIDIA endpoint credential. The workflow
+  exports it as `NVIDIA_INFERENCE_API_KEY` into the Brev guest for full E2E.
+  The preinstalled suite selects `build` for `brev-quickstart` and probes the
+  public endpoint. Code in the baked candidate checkout can read and use the key.
 
 `brev login` writes `BREV_API_KEY` and `BREV_ORG_ID` to
 `$HOME/.brev/credentials.json` on the GitHub-hosted runner. Later trusted steps
