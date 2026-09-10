@@ -51,7 +51,7 @@ describe("rebuild post-restore phase", () => {
       return { status: 0, stdout: "", stderr: "" };
     });
     vi.spyOn(sessionModels, "reconcileStalePinnedSessionModelsAfterRebuild").mockImplementation(
-      () => {
+      async () => {
         order.push("reconcile");
       },
     );
@@ -63,14 +63,16 @@ describe("rebuild post-restore phase", () => {
     vi.spyOn(
       rebuildConfigHash,
       "refreshMutableOpenClawConfigHashAfterPostRestoreWrites",
-    ).mockImplementation(() => {
+    ).mockImplementation(async () => {
       order.push("config-hash");
       return true;
     });
-    vi.spyOn(rebuildConfigHash, "verifyFinalMutableOpenClawConfigHash").mockImplementation(() => {
-      order.push("config-hash-final");
-      return true;
-    });
+    vi.spyOn(rebuildConfigHash, "verifyFinalMutableOpenClawConfigHash").mockImplementation(
+      async () => {
+        order.push("config-hash-final");
+        return true;
+      },
+    );
     vi.spyOn(mutableConfigPerms, "repairMutableConfigPerms").mockImplementation(() => {
       order.push("permissions");
       return {
@@ -395,7 +397,7 @@ describe("rebuild post-restore phase", () => {
     });
     vi.mocked(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
-    ).mockImplementation(() => {
+    ).mockImplementation(async () => {
       configHashValid = true;
       return true;
     });
@@ -406,7 +408,7 @@ describe("rebuild post-restore phase", () => {
       },
     );
     vi.mocked(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).mockImplementation(
-      () => configHashValid,
+      async () => configHashValid,
     );
     const args = input();
 
@@ -987,7 +989,7 @@ describe("rebuild post-restore phase", () => {
   it("prints every incomplete OpenClaw recovery report in a fixed order (#8283)", async () => {
     vi.mocked(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
-    ).mockReturnValue(false);
+    ).mockResolvedValue(false);
     vi.mocked(mutableConfigPerms.repairMutableConfigPerms).mockReturnValue({
       applied: true,
       verified: false,
