@@ -62,8 +62,8 @@ function runHermesOllamaOnboard(
   const ollamaProxyPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
   );
-  const localInferenceTopologyPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
+  const localInferencePath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "inference", "local.ts"),
   );
 
   fs.mkdirSync(fakeBin, { recursive: true });
@@ -130,8 +130,8 @@ const ollamaProxy = require(${ollamaProxyPath});
 ollamaProxy.startOllamaAuthProxy = () => true;
 ollamaProxy.ensureOllamaAuthProxy = () => {};
 ollamaProxy.isProxyHealthy = () => true;
-const localInferenceTopology = require(${localInferenceTopologyPath});
-localInferenceTopology.shouldFrontOllamaWithProxy = () => false;
+const localInference = require(${localInferencePath});
+localInference.shouldFrontOllamaWithProxy = () => false;
 
 const httpProbe = require(${httpProbePath});
 const successfulOpenAiProbe = () => ({

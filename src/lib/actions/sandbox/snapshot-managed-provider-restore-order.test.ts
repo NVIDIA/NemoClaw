@@ -76,6 +76,10 @@ vi.mock("./snapshot/dependencies", () => ({
   backupSandboxStateWithManagedAuthority: vi.fn(),
   captureSandboxRuntimeSnapshot: vi.fn(),
   confirmSandboxRuntimeRestore: providerRestore.confirmSandboxRuntimeRestore,
+  getMcpProviderInspectionRuntimeSelection: vi.fn(() => ({
+    gatewayName: "nemoclaw",
+    workspace: "default",
+  })),
   prepareManagedSnapshotProfileRestore: providerRestore.prepareManagedSnapshotProfileRestore,
   prepareSandboxRuntimeRestore: providerRestore.prepareSandboxRuntimeRestore,
   readManagedSnapshotProfileAuthority: providerRestore.readManagedSnapshotProfileAuthority,

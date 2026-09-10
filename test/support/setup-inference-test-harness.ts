@@ -20,8 +20,8 @@ const onboardProviderHelpers = require("../../src/lib/onboard/providers") as {
     baseUrl: string | null,
     env: Record<string, string | undefined>,
     runOpenshell: DirectRunOpenshell,
-  ) => { ok: boolean; status?: number; message?: string };
-  providerExistsInGateway: (name: string, runOpenshell: DirectRunOpenshell) => boolean;
+  ) => Promise<{ ok: boolean; status?: number; message?: string }>;
+  providerExistsInGateway: (name: string, runOpenshell: DirectRunOpenshell) => Promise<boolean>;
 };
 const localInferenceModule =
   require("../../src/lib/inference/local") as typeof import("../../src/lib/inference/local.js");
@@ -117,6 +117,17 @@ fs.appendFileSync(${JSON.stringify(commandLogPath)}, JSON.stringify({ argv, env:
 if (argv[0] === "inference" && argv[1] === "get") {
   process.stdout.write(${JSON.stringify(
     `Gateway inference:\n  Provider: ${options.provider}\n  Model: ${options.model}\n`,
+  )});
+}
+if (argv[0] === "provider" && argv[1] === "get") {
+  process.stdout.write(${JSON.stringify(
+    [
+      `Name: ${options.provider}`,
+      `Type: ${options.provider === "nvidia-prod" ? "nvidia" : "openai"}`,
+      `Credential keys: ${options.credentialEnv}`,
+      `Config keys: ${options.provider === "nvidia-prod" ? "<none>" : "OPENAI_BASE_URL"}`,
+      "",
+    ].join("\n"),
   )});
 }
 process.exit(0);
@@ -289,7 +300,18 @@ export function createDirectSetupInferenceHarnessFactory(
         ignoreError: runOptions.ignoreError,
       });
       const routed = options.runOpenshell?.(args, runOptions, commands);
-      if (routed !== undefined) return directRunResult(routed);
+      if (routed !== undefined) {
+        if (args[0] === "provider" && args[1] === "get") {
+          const providerName = args.at(-1) ?? "provider";
+          if (routed.status === 1 && !routed.stdout && !routed.stderr) {
+            return directRunResult({
+              ...routed,
+              stderr: `provider '${providerName}' not found`,
+            });
+          }
+        }
+        return directRunResult(routed);
+      }
       if (
         args[0] === "provider" &&
         args[1] === "profile" &&
@@ -297,6 +319,13 @@ export function createDirectSetupInferenceHarnessFactory(
         args.includes("openai")
       ) {
         return directRunResult({ status: 0, stdout: OPENAI_ENDPOINTLESS_PROFILE });
+      }
+      if (args[0] === "provider" && args[1] === "get") {
+        const providerName = args.at(-1) ?? "provider";
+        return directRunResult({
+          status: 1,
+          stderr: `provider '${providerName}' not found`,
+        });
       }
       return directRunResult();
     };
@@ -311,7 +340,7 @@ export function createDirectSetupInferenceHarnessFactory(
       step: () => {},
       getGatewayName: () => "nemoclaw",
       runOpenshell,
-      upsertProvider: (
+      upsertProvider: async (
         name: string,
         type: string,
         credentialEnv: string,
@@ -319,7 +348,7 @@ export function createDirectSetupInferenceHarnessFactory(
         env: Record<string, string | undefined> | undefined,
         gatewayName: string,
       ) =>
-        onboardProviderHelpers.upsertProvider(
+        await onboardProviderHelpers.upsertProvider(
           name,
           type,
           credentialEnv,

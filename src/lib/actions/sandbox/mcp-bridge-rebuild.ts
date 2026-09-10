@@ -7,6 +7,7 @@ import YAML from "yaml";
 
 import type { McpBridgeEntry } from "../../state/registry";
 import * as policies from "../../policy";
+import { parseNetworkPolicies } from "../../policy/preset-parsing";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import {
   rollbackScrubbedMcpAdapters,
@@ -23,6 +24,7 @@ import {
   assertGeneratedPolicyMutationSafe,
   assertGeneratedPolicyRegistrationMutationSafe,
   buildMcpBridgePolicyKey,
+  materializePendingMcpDenyTools,
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
 import {
@@ -42,6 +44,7 @@ import {
   bridgeState,
   ensureSandboxGatewaySelected,
   getSandboxOrThrow,
+  nowIso,
   setBridgeState,
 } from "./mcp-bridge-state";
 import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
@@ -65,6 +68,30 @@ function policyDocumentsMatch(left: string, right: string): boolean {
     return isDeepStrictEqual(YAML.parse(left), YAML.parse(right));
   } catch {
     return false;
+  }
+}
+
+function assertMcpRebuildPolicyMatchesRegisteredIntent(
+  sandboxName: string,
+  policyHandoff: string,
+  entries: readonly McpBridgeEntry[],
+): void {
+  const current = parseNetworkPolicies(policyHandoff);
+  for (const entry of entries) {
+    const expectedPolicy = assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
+    const expected = parseNetworkPolicies(expectedPolicy.content);
+    const key = buildMcpBridgePolicyKey(entry.server);
+    if (
+      !current ||
+      !expected ||
+      !Object.hasOwn(current, key) ||
+      !Object.hasOwn(expected, key) ||
+      !isDeepStrictEqual(current[key], expected[key])
+    ) {
+      throw new McpBridgeError(
+        `MCP server '${entry.server}' generated policy does not match its registered intent. Run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` before rebuilding the sandbox.`,
+      );
+    }
   }
 }
 
@@ -97,6 +124,36 @@ function assertMcpTeardownPolicyUnchanged(
 }
 
 export { prepareMcpBridgesForExecUnavailableRebuild } from "./mcp-bridge-rebuild-exec-unavailable";
+
+function persistMcpRebuildEntryUpgrades(
+  sandboxName: string,
+  entries: readonly McpBridgeEntry[],
+  targets: Awaited<ReturnType<typeof preflightMcpEntryTargets>>,
+): McpBridgeEntry[] {
+  let changed = false;
+  const strengthened = entries.map((entry) => {
+    const materialized = materializePendingMcpDenyTools(entry);
+    if (entry.pendingDenyTools !== undefined) changed = true;
+    if (materialized.trustedPrivateHost || (materialized.allowedIps?.length ?? 0) > 0) {
+      return materialized;
+    }
+    const target = targets.get(materialized.server);
+    if (!target || target.addresses.length === 0) {
+      throw new McpBridgeError(
+        `MCP server '${materialized.server}' has no validated public address pins for rebuild.`,
+      );
+    }
+    changed = true;
+    return { ...materialized, allowedIps: [...target.addresses], updatedAt: nowIso() };
+  });
+  if (changed) {
+    setBridgeState(
+      sandboxName,
+      Object.fromEntries(strengthened.map((entry) => [entry.server, entry])),
+    );
+  }
+  return strengthened;
+}
 
 async function getCompleteMcpRebuildEntries(
   sandboxName: string,
@@ -145,9 +202,9 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation> {
-  const { entries, runtimeSelection: providerRuntimeSelection } =
+  const { entries: storedEntries, runtimeSelection: providerRuntimeSelection } =
     await getCompleteMcpRebuildEntries(sandboxName, { sandboxAbsent: true, runtimeSelection });
-  if (entries.length === 0) {
+  if (storedEntries.length === 0) {
     return {
       entries: [],
       detachedProviderEntries: [],
@@ -158,13 +215,14 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   if (!providerRuntimeSelection) {
     throw new McpBridgeError(`Could not resolve MCP runtime authority for '${sandboxName}'.`);
   }
-  await preflightMcpEntryTargets(entries);
+  const targets = await preflightMcpEntryTargets(storedEntries);
+  const entries = persistMcpRebuildEntryUpgrades(sandboxName, storedEntries, targets);
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   for (const entry of entries) {
     assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
   }
-  for (const entry of entries) assertMcpProviderRecoverable(entry, providerRuntimeSelection);
-  assertNoRegisteredProviderCredentialCollisions(entries, {
+  for (const entry of entries) await assertMcpProviderRecoverable(entry, providerRuntimeSelection);
+  await assertNoRegisteredProviderCredentialCollisions(entries, {
     runtimeSelection: providerRuntimeSelection,
   });
   return {
@@ -180,9 +238,9 @@ export async function prepareMcpBridgesForRebuild(
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation> {
   const sandbox = getSandboxOrThrow(sandboxName);
-  const { entries, runtimeSelection: providerRuntimeSelection } =
+  const { entries: storedEntries, runtimeSelection: providerRuntimeSelection } =
     await getCompleteMcpRebuildEntries(sandboxName, { runtimeSelection });
-  if (entries.length === 0) {
+  if (storedEntries.length === 0) {
     return {
       entries: [],
       detachedProviderEntries: [],
@@ -193,7 +251,8 @@ export async function prepareMcpBridgesForRebuild(
   if (!providerRuntimeSelection) {
     throw new McpBridgeError(`Could not resolve MCP runtime authority for '${sandboxName}'.`);
   }
-  await preflightMcpEntryTargets(entries);
+  const targets = await preflightMcpEntryTargets(storedEntries);
+  const entries = persistMcpRebuildEntryUpgrades(sandboxName, storedEntries, targets);
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   assertMcpAdapterTeardownRuntimeCapabilities(
@@ -202,8 +261,8 @@ export async function prepareMcpBridgesForRebuild(
     entries,
     providerRuntimeSelection,
   );
-  for (const entry of entries) assertMcpProviderRecoverable(entry, providerRuntimeSelection);
-  assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
+  for (const entry of entries) await assertMcpProviderRecoverable(entry, providerRuntimeSelection);
+  await assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
   // This is the bounded replacement handoff, not a durable NemoClaw policy
   // record. Capture OpenShell immediately before the internal teardown
   // mutations so the replacement receives the complete operator-owned
@@ -224,6 +283,7 @@ export async function prepareMcpBridgesForRebuild(
       `Cannot prepare the MCP rebuild policy handoff for sandbox '${sandboxName}' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.`,
     );
   }
+  assertMcpRebuildPolicyMatchesRegisteredIntent(sandboxName, policyHandoff, entries);
   const expectedTeardownPolicy = policyWithoutManagedMcpEntries(policyHandoff, entries);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];
@@ -234,7 +294,7 @@ export async function prepareMcpBridgesForRebuild(
       // Hermes/agent cannot boot with a stale placeholder while its provider
       // is intentionally detached during recreate.
       scrubbedAdapters.push(
-        scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry, providerRuntimeSelection),
+        await scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry, providerRuntimeSelection),
       );
     }
     for (const entry of entries) {
@@ -249,11 +309,11 @@ export async function prepareMcpBridgesForRebuild(
     for (const entry of entries) {
       // Keep the provider and its host-only credentials for the replacement
       // sandbox, but detach it before OpenShell deletes the old attachment.
-      inspectExactMcpDestroyProvider(entry, {
+      await inspectExactMcpDestroyProvider(entry, {
         allowMissing: false,
         runtimeSelection: providerRuntimeSelection,
       });
-      const detachOutcome = detachProvider(sandboxName, entry, {
+      const detachOutcome = await detachProvider(sandboxName, entry, {
         runtimeSelection: providerRuntimeSelection,
       });
       if (detachOutcome === "unknown") {
@@ -261,7 +321,7 @@ export async function prepareMcpBridgesForRebuild(
           `Could not prove provider detach for MCP server '${entry.server}'.`,
         );
       }
-      waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+      await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
       // A binding already absent on retry was still detached by this rebuild
       // transaction (possibly before a prior process died), so it must be
       // reattached if sandbox deletion later aborts.
@@ -286,12 +346,12 @@ export async function prepareMcpBridgesForRebuild(
     }
     if (!runtimeRestored) {
       rollbackFailures.push(
-        ...rollbackScrubbedMcpAdapters(
+        ...(await rollbackScrubbedMcpAdapters(
           sandboxName,
           sandbox,
           scrubbedAdapters,
           providerRuntimeSelection,
-        ),
+        )),
       );
     }
     const detail = error instanceof Error ? error.message : String(error);
@@ -350,12 +410,12 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   }
   if (!runtimeRestored) {
     failures.push(
-      ...rollbackScrubbedMcpAdapters(
+      ...(await rollbackScrubbedMcpAdapters(
         sandboxName,
         sandbox,
         scrubbedAdapterEntries,
         providerRuntimeSelection,
-      ),
+      )),
     );
   }
   if (failures.length > 0) {
@@ -370,6 +430,7 @@ export async function restoreMcpBridgesAfterRebuild(
 ): Promise<void> {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
+  const committedEntries = entries.map(materializePendingMcpDenyTools);
   const bridges = Object.fromEntries(
     entries.map((entry) => [entry.server, cloneMcpBridgeEntry(entry)]),
   );
@@ -379,8 +440,16 @@ export async function restoreMcpBridgesAfterRebuild(
   // Sandbox creation already received the complete pre-rebuild OpenShell
   // policy. Restore providers and adapters without regenerating or overwriting
   // policy entries that an operator may have edited independently.
-  await restoreExistingMcpBridgeRuntime(sandboxName, entries, {
+  await restoreExistingMcpBridgeRuntime(sandboxName, committedEntries, {
     applyPolicy: false,
     ...(runtimeSelection ? { runtimeSelection } : {}),
   });
+  if (entries.some((entry) => entry.pendingDenyTools !== undefined)) {
+    setBridgeState(
+      sandboxName,
+      Object.fromEntries(
+        committedEntries.map((entry) => [entry.server, cloneMcpBridgeEntry(entry)]),
+      ),
+    );
+  }
 }

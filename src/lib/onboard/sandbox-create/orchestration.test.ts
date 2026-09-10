@@ -47,7 +47,9 @@ describe("created Hermes credential environment reconciliation", () => {
         events.push("registration:complete");
         return { sandboxName: "alpha" };
       },
-      () => events.push("credentials:reconcile"),
+      async () => {
+        events.push("credentials:reconcile");
+      },
     );
 
     expect(events).toEqual([
@@ -57,11 +59,11 @@ describe("created Hermes credential environment reconciliation", () => {
     ]);
   });
 
-  it("restarts and rechecks the managed gateway after changing the env file", () => {
+  it("restarts and rechecks the managed gateway after changing the env file", async () => {
     const events: string[] = [];
     const restart = { status: 0, stdout: "managed completion", stderr: "" };
 
-    reconcileCreatedHermesCredentialEnvironment(
+    await reconcileCreatedHermesCredentialEnvironment(
       { sandboxName: "alpha", plan },
       {
         revalidateSandboxIdentity: (operation) => events.push(`identity:${operation}`),
@@ -77,7 +79,7 @@ describe("created Hermes credential environment reconciliation", () => {
           events.push("parse");
           return result === restart ? {} : null;
         },
-        waitForGateway: () => {
+        waitForGateway: async () => {
           events.push("wait");
           return true;
         },
@@ -96,11 +98,11 @@ describe("created Hermes credential environment reconciliation", () => {
     ]);
   });
 
-  it("does not restart when the env file was already reconciled", () => {
+  it("does not restart when the env file was already reconciled", async () => {
     const restartGateway = vi.fn();
     const waitForGateway = vi.fn();
 
-    reconcileCreatedHermesCredentialEnvironment(
+    await reconcileCreatedHermesCredentialEnvironment(
       { sandboxName: "alpha", plan },
       {
         revalidateSandboxIdentity: vi.fn(),
@@ -116,7 +118,7 @@ describe("created Hermes credential environment reconciliation", () => {
     expect(waitForGateway).not.toHaveBeenCalled();
   });
 
-  it("refuses a same-name replacement at the credential mutation edge (#9833)", () => {
+  it("refuses a same-name replacement at the credential mutation edge (#9833)", async () => {
     const expectedIdentity = "identity-a";
     let liveIdentity = expectedIdentity;
     const mutations: string[] = [];
@@ -128,7 +130,7 @@ describe("created Hermes credential environment reconciliation", () => {
       liveIdentity = "identity-b";
     });
 
-    expect(() =>
+    await expect(
       reconcileCreatedHermesCredentialEnvironment(
         { sandboxName: "alpha", plan },
         {
@@ -144,13 +146,13 @@ describe("created Hermes credential environment reconciliation", () => {
         },
         vi.fn(),
       ),
-    ).toThrow(/sandbox identity changed/u);
+    ).rejects.toThrow(/sandbox identity changed/u);
     expect(mutations).toEqual([]);
   });
 
-  it("fails onboarding when the changed gateway cannot prove restart completion", () => {
+  it("fails onboarding when the changed gateway cannot prove restart completion", async () => {
     const recordRecovery = vi.fn();
-    expect(() =>
+    await expect(
       reconcileCreatedHermesCredentialEnvironment(
         { sandboxName: "alpha", plan },
         {
@@ -162,7 +164,7 @@ describe("created Hermes credential environment reconciliation", () => {
         },
         recordRecovery,
       ),
-    ).toThrow("managed gateway restart did not complete");
+    ).rejects.toThrow("managed gateway restart did not complete");
     expect(recordRecovery).toHaveBeenCalledOnce();
   });
 });
@@ -523,7 +525,7 @@ describe("deferred provider effect authority", () => {
         cleanupCreateSources: vi.fn(),
       },
       runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: (revalidate) => {
+      activateDeferredProviderEffects: async (revalidate) => {
         revalidate("cleaning up providers for sandbox 'alpha'");
         return ["first", "second"];
       },
@@ -544,11 +546,12 @@ describe("deferred provider effect authority", () => {
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain(
-      "Do not delete it by mutable sandbox name. Ask an OpenShell administrator to remove the retained sandbox through an identity-bound procedure.",
+      "Do not delete it by mutable sandbox name. Run 'nemoclaw alpha destroy'.",
     );
     expect((error as Error).message).toContain(
-      "After OpenShell confirms the retained sandbox is absent, run 'nemoclaw alpha destroy --yes' to reconcile its verified Docker containers and recovery record.",
+      "can reconcile verified residual resources and the recovery record only after OpenShell confirms absence",
     );
+    expect((error as Error).message).not.toContain("administrator");
 
     expect(runOpenshell).not.toHaveBeenCalledWith(
       expect.arrayContaining(["sandbox", "provider", "attach"]),
@@ -579,7 +582,7 @@ describe("deferred provider effect authority", () => {
         cleanupCreateSources: vi.fn(),
       },
       runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: () => [],
+      activateDeferredProviderEffects: async () => [],
       revalidateSandboxIdentityBeforeCreate: vi.fn(),
     });
     const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
@@ -678,8 +681,8 @@ describe("sandbox recreate registry authority", () => {
 describe("managed DCode sandbox create selection", () => {
   it.each([null, "https://openrouter.ai/api/v1"])(
     "passes the selected endpoint to live drift validation: %s (#9555)",
-    (endpointUrl) => {
-      const readDcodeSelectionDrift = vi.fn(() => ({
+    async (endpointUrl) => {
+      const readDcodeSelectionDrift = vi.fn(async () => ({
         changed: false,
         providerChanged: false,
         modelChanged: false,
@@ -688,7 +691,7 @@ describe("managed DCode sandbox create selection", () => {
         unknown: false,
       }));
 
-      readManagedDcodeCreateSelectionDrift(
+      await readManagedDcodeCreateSelectionDrift(
         {
           sandboxName: "saved",
           provider: "compatible-endpoint",
@@ -851,7 +854,7 @@ describe("sandbox create identity checks", () => {
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).message).toMatch(
       new RegExp(
-        `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
+        `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*Inspection is diagnostic only and does not authorize deletion`,
         "u",
       ),
     );
@@ -860,7 +863,7 @@ describe("sandbox create identity checks", () => {
         expect.objectContaining({
           message: expect.stringMatching(
             new RegExp(
-              `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
+              `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*Inspection is diagnostic only and does not authorize deletion`,
               "u",
             ),
           ),
@@ -1076,7 +1079,7 @@ describe("sandbox create identity checks", () => {
         cleanupCreateSources: vi.fn(),
       },
       runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: () => ["credential-provider"],
+      activateDeferredProviderEffects: async () => ["credential-provider"],
       revalidateSandboxIdentityBeforeCreate: vi.fn(),
     });
     const error = await runSandboxCreateWithIdentityVerification({
@@ -1388,7 +1391,7 @@ describe("sandbox create identity checks", () => {
 
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).message).toMatch(
-      /left sandbox 'alpha' in place.*did not return a durable sandbox identity fingerprint.*Do not delete the sandbox by mutable sandbox name.*identity-bound recovery or removal procedure/u,
+      /left sandbox 'alpha' in place.*did not return a durable sandbox identity fingerprint.*Do not delete the sandbox by mutable sandbox name.*Inspection is diagnostic only and does not authorize deletion/u,
     );
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([

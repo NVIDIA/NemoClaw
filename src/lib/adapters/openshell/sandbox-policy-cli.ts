@@ -18,7 +18,11 @@ import {
 import { isValidName } from "../../sandbox-name-contract";
 import { stripCredentials } from "../../security/credential-filter";
 import { stripAnsi } from "./client";
-import { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary } from "./command-argv";
+import {
+  openshellNotFoundDiagnosticLines,
+  tryResolveOpenshellBinary,
+  withSelectedOpenShellCommandOptions,
+} from "./command-argv";
 import { captureSanitizedResolvedOpenshell } from "./sanitized-capture";
 import type { OpenShellSandboxResult } from "./sandbox-observer";
 import {
@@ -31,7 +35,6 @@ import type {
   OpenShellSandboxPolicyRead,
   OpenShellSandboxPolicyReader,
   OpenShellSandboxPolicyRevisionRead,
-  OpenShellSandboxPolicySetOutcome,
   OpenShellSandboxPolicySetSubmission,
   OpenShellSandboxPolicyWriter,
   ReadOpenShellSandboxPolicyRequest,
@@ -121,11 +124,18 @@ export function redactOpenShellSandboxPolicyReadForDisplay(input: {
 
 function assertPolicyRequest(request: {
   readonly sandboxName: string;
+  readonly runtimeSelection?: ReadOpenShellSandboxPolicyRequest["runtimeSelection"];
   readonly target: ReadOpenShellSandboxPolicyRequest["target"];
 }): void {
   if (!isValidName(request.sandboxName)) throw new Error("Invalid OpenShell sandbox name");
   if (request.target.kind !== "named") return;
   if (!isValidName(request.target.gatewayName)) throw new Error("Invalid OpenShell gateway name");
+  if (request.runtimeSelection) {
+    if (request.runtimeSelection.gatewayName !== request.target.gatewayName) {
+      throw new Error("OpenShell runtime selection does not match the sandbox policy target");
+    }
+    return;
+  }
   assertNoOpenShellGatewayEndpointOverride();
 }
 
@@ -157,14 +167,23 @@ const policyRevisionArgs = (request: ReadOpenShellSandboxPolicyRevisionRequest) 
     revision: request.revision,
   });
 
-function captureOptions(timeoutMs?: number, defaultTimeoutMs?: number) {
-  return {
-    ignoreError: true,
-    includeStderr: true,
-    includeStreams: true,
-    maxBuffer: POLICY_READ_MAX_BYTES,
-    timeout: timeoutMs ?? defaultTimeoutMs ?? DEFAULT_POLICY_READ_TIMEOUT_MS,
-  } as const;
+function captureOptions(
+  request: {
+    readonly runtimeSelection?: ReadOpenShellSandboxPolicyRequest["runtimeSelection"];
+    readonly timeoutMs?: number;
+  },
+  defaultTimeoutMs?: number,
+) {
+  return withSelectedOpenShellCommandOptions(
+    {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      maxBuffer: POLICY_READ_MAX_BYTES,
+      timeout: request.timeoutMs ?? defaultTimeoutMs ?? DEFAULT_POLICY_READ_TIMEOUT_MS,
+    } as const,
+    request.runtimeSelection,
+  );
 }
 
 function capturedOutput(captured: CapturedOpenShellCommandResult): string {
@@ -243,7 +262,7 @@ export function createCliOpenShellSandboxPolicyRead(
   return async (request) => {
     const captured = await deps.capture(
       policyReadArgs(request),
-      captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
+      captureOptions(request, deps.defaultTimeoutMs),
     );
     const result = parsePolicyRead(captured);
     return {
@@ -264,7 +283,7 @@ export function createCliOpenShellSandboxPolicyReader(
         request,
         await deps.capture(
           policyInspectionArgs(request),
-          captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
+          captureOptions(request, deps.defaultTimeoutMs),
         ),
       ),
     readSandboxPolicyRevision: async (request) =>
@@ -274,7 +293,7 @@ export function createCliOpenShellSandboxPolicyReader(
             request,
             await deps.capture(
               policyRevisionArgs(request),
-              captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
+              captureOptions(request, deps.defaultTimeoutMs),
             ),
           ),
   };
@@ -286,18 +305,12 @@ export function createSyncCliOpenShellSandboxPolicyReader(
   return {
     readSandboxPolicy: (request) =>
       parsePolicyRead(
-        deps.capture(
-          policyReadArgs(request),
-          captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
-        ),
+        deps.capture(policyReadArgs(request), captureOptions(request, deps.defaultTimeoutMs)),
       ),
     inspectSandboxPolicy: (request) =>
       parsePolicyInspection(
         request,
-        deps.capture(
-          policyInspectionArgs(request),
-          captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
-        ),
+        deps.capture(policyInspectionArgs(request), captureOptions(request, deps.defaultTimeoutMs)),
       ),
     readSandboxPolicyRevision: (request) =>
       !Number.isSafeInteger(request.revision) || request.revision < 1
@@ -306,7 +319,7 @@ export function createSyncCliOpenShellSandboxPolicyReader(
             request,
             deps.capture(
               policyRevisionArgs(request),
-              captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
+              captureOptions(request, deps.defaultTimeoutMs),
             ),
           ),
   };
@@ -319,10 +332,7 @@ export function createCliOpenShellSandboxPolicyWriter(
     setSandboxPolicy: async (request) => {
       assertPolicyRequest(request);
       return parsePolicySet(
-        await deps.capture(
-          policySetArgs(request),
-          captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
-        ),
+        await deps.capture(policySetArgs(request), captureOptions(request, deps.defaultTimeoutMs)),
       );
     },
   };
@@ -335,10 +345,7 @@ export function createSyncCliOpenShellSandboxPolicyWriter(
     setSandboxPolicy: (request) => {
       assertPolicyRequest(request);
       return parsePolicySet(
-        deps.capture(
-          policySetArgs(request),
-          captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
-        ),
+        deps.capture(policySetArgs(request), captureOptions(request, deps.defaultTimeoutMs)),
       );
     },
   };

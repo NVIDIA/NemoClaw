@@ -265,18 +265,35 @@ describe("Deep Agents Code published base runtime evidence", () => {
     ).toThrow(/cannot consume published base-image authority/);
   });
 
-  it("requires publication evidence for the GitHub Actions target", () => {
+  it("requires publication evidence when GitHub execution selects a base override", () => {
     expect(() =>
+      loadDcodeBaseImagePublicationEvidence(
+        DCODE_BASE_IMAGE_TARGET_ID,
+        `/missing-dcode-base-evidence-${process.pid}.json`,
+        {
+          GITHUB_ACTIONS: "true",
+          [DCODE_BASE_IMAGE_ENV]: DCODE_BASE_IMAGE_AMD64_REFERENCE,
+        },
+      ),
+    ).toThrow(/GitHub Actions run is missing published base evidence/);
+  });
+
+  it.each([
+    ["published cohort", ""],
+    ["candidate catalog", '{"langchain-deepagents-code":{}}'],
+  ])("uses the %s without a base override contract (#11305)", (_source, catalog) => {
+    expect(
       loadDcodeBaseImagePublicationEvidence(
         DCODE_BASE_IMAGE_TARGET_ID,
         `/missing-dcode-base-evidence-${process.pid}.json`,
         {
           E2E_WORKLOAD_SOURCE: "managed-image",
           GITHUB_ACTIONS: "true",
-          [DCODE_BASE_IMAGE_ENV]: DCODE_BASE_IMAGE_AMD64_REFERENCE,
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: catalog,
+          [DCODE_BASE_IMAGE_ENV]: "",
         },
       ),
-    ).toThrow(/GitHub Actions run is missing published base evidence/);
+    ).toBeUndefined();
   });
 
   it.each([

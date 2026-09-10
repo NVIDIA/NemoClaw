@@ -121,9 +121,13 @@ function hostFixture(side: "local" | "peer"): StationHostProbe {
   const isLocal = side === "local";
   const home = isLocal ? LOCAL_HOME : PEER_HOME;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     hostname: isLocal ? "station-a" : "station-b",
     productName: "NVIDIA DGX Station GB300",
+    productFamily: "",
+    boardName: "",
+    deviceTreeModel: "",
+    stationGb300PciGpu: true,
     architecture: "aarch64",
     home,
     uid: isLocal ? 1000 : 1001,
@@ -533,17 +537,55 @@ describe("probeDualStationVllmCapability", () => {
     });
   });
 
-  it.each([
-    "DGX-Station",
-    "P3830",
-    "NVIDIA Station GB300",
-  ])("accepts an existing Station firmware product identifier: %s", (productName) => {
+  it("accepts a bounded Station GB300 firmware product identifier", () => {
     const peer = hostFixture("peer");
-    peer.productName = productName;
+    peer.productName = "NVIDIA Station GB300";
 
     expect(runWith(fixtureDeps(hostFixture("local"), peer))).toMatchObject({
       kind: "ready",
       peerModelSnapshot: "ready",
+    });
+  });
+
+  it("accepts local and peer Station GB300 product-family identities (#10928)", () => {
+    const local = hostFixture("local");
+    const peer = hostFixture("peer");
+    local.productName = "Generic ARM workstation";
+    local.productFamily = "NVIDIA DGX Station GB300";
+    peer.productName = "Generic ARM workstation";
+    peer.productFamily = "NVIDIA DGX Station GB300";
+
+    expect(runWith(fixtureDeps(local, peer))).toMatchObject({ kind: "ready" });
+  });
+
+  it("rejects conflicting peer firmware identity (#10928)", () => {
+    const peer = hostFixture("peer");
+    peer.productName = "NVIDIA DGX Spark";
+    peer.productFamily = "NVIDIA DGX Station GB300";
+
+    expect(runWith(fixtureDeps(hostFixture("local"), peer))).toMatchObject({
+      kind: "unavailable",
+      code: "peer-not-station",
+    });
+  });
+
+  it("rejects Station firmware without exact GB300 PCI identity (#10928)", () => {
+    const peer = hostFixture("peer");
+    peer.stationGb300PciGpu = false;
+
+    expect(runWith(fixtureDeps(hostFixture("local"), peer))).toMatchObject({
+      kind: "unavailable",
+      code: "peer-not-station",
+    });
+  });
+
+  it.each(["DGX-Station", "P3830"])("does not admit unqualified Station identifier %s", (value) => {
+    const peer = hostFixture("peer");
+    peer.productName = value;
+
+    expect(runWith(fixtureDeps(hostFixture("local"), peer))).toMatchObject({
+      kind: "unavailable",
+      code: "peer-not-station",
     });
   });
 
@@ -916,16 +958,40 @@ describe("probe command boundary", () => {
     );
     createStationClusterProbeDeps(recordingSpawn).probeLocalHost();
     const python = resolveStationFixturePython();
+    const dmiRoot = path.join(root, "dmi");
+    const modelPath = path.join(root, "model");
+    const pciRoot = path.join(root, "pci");
+    const pciDevice = path.join(pciRoot, "0000:01:00.0");
+    fs.mkdirSync(dmiRoot, { recursive: true });
+    fs.mkdirSync(pciDevice, { recursive: true });
+    fs.writeFileSync(path.join(dmiRoot, "product_name"), "Generic ARM workstation\n");
+    fs.writeFileSync(path.join(dmiRoot, "product_family"), "NVIDIA DGX Station GB300\n");
+    fs.writeFileSync(path.join(dmiRoot, "board_name"), "Generic board\n");
+    fs.writeFileSync(modelPath, "Generic device tree\0");
+    fs.writeFileSync(path.join(pciDevice, "vendor"), "0x10de\n");
+    fs.writeFileSync(path.join(pciDevice, "device"), "0x31c2\n");
+    fs.writeFileSync(path.join(pciDevice, "class"), "0x030000\n");
+    const identityProbeScript = probeScript.replace(
+      "**station_identity_payload(),",
+      `**station_identity_payload(dmi_root=${JSON.stringify(dmiRoot)}, device_tree_model_path=${JSON.stringify(modelPath)}, pci_devices_path=${JSON.stringify(pciRoot)}),`,
+    );
 
     try {
       const executed = spawnSync(python, ["-"], {
         encoding: "utf8",
         env: { ...process.env, HOME: home, PATH: bin },
-        input: probeScript,
+        input: identityProbeScript,
         timeout: 20_000,
       });
       expect(executed.status, executed.stderr).toBe(0);
-      const observed = JSON.parse(executed.stdout) as StationHostProbe;
+      const observed = parseStationHostProbe(executed.stdout);
+      expect(observed).toMatchObject({
+        productName: "Generic ARM workstation",
+        productFamily: "NVIDIA DGX Station GB300",
+        boardName: "Generic board",
+        deviceTreeModel: "Generic device tree",
+        stationGb300PciGpu: true,
+      });
       expect(observed.modelSnapshot).toMatchObject({
         complete: false,
         shardCount: 113,
@@ -1256,7 +1322,7 @@ subprocess.run = fixture_run
 
 describe("parseStationHostProbe", () => {
   it("rejects unsupported schemas and unsafe device names", () => {
-    const unsupported = { ...hostFixture("local"), schemaVersion: 2 };
+    const unsupported = { ...hostFixture("local"), schemaVersion: 3 };
     expect(() => parseStationHostProbe(JSON.stringify(unsupported))).toThrow(/schema version/);
 
     const unsafe = hostFixture("local");

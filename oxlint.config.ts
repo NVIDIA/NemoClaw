@@ -23,6 +23,18 @@ const strictComplexityFiles = [
   "src/lib/onboard/command-support.ts",
 ];
 
+const configExportFiles = [
+  "src/commands/config/**/*.ts",
+  "src/lib/actions/config/**/*.ts",
+  "src/lib/adapters/config/**/*.ts",
+  "src/lib/domain/config/**/*.ts",
+  "src/lib/config/**/*.ts",
+  "src/lib/core/endpoint-url-safety.ts",
+  "src/lib/cli/config-export-*.ts",
+  "src/lib/adapters/fs/config-export-*.ts",
+  "src/lib/adapters/openshell/{providers,sandboxes,sandbox-config,sdk-read,sdk-read-schema}.ts",
+];
+
 export default defineConfig({
   categories: {
     correctness: "off",
@@ -74,6 +86,42 @@ export default defineConfig({
       files: strictComplexityFiles,
       rules: {
         "sonarjs/cognitive-complexity": ["error", 10],
+      },
+    },
+    {
+      files: configExportFiles,
+      excludeFiles: ["**/*.test.ts"],
+      rules: {
+        "sonarjs/cognitive-complexity": ["error", 10],
+        complexity: ["error", 10],
+        "max-lines-per-function": ["error", { max: 60, skipBlankLines: true, skipComments: true }],
+        "no-nested-ternary": "error",
+      },
+    },
+    {
+      files: ["src/lib/adapters/**/*.ts"],
+      rules: {
+        "no-unused-vars": "error",
+        "no-debugger": "error",
+        eqeqeq: "error",
+        "typescript/no-explicit-any": "error",
+        "typescript/consistent-type-exports": "error",
+        "typescript/consistent-type-imports": [
+          "error",
+          {
+            disallowTypeAnnotations: false,
+            fixStyle: "separate-type-imports",
+            prefer: "type-imports",
+          },
+        ],
+      },
+    },
+    {
+      files: ["src/lib/adapters/**/*.ts"],
+      excludeFiles: ["**/*.test.ts"],
+      rules: {
+        "no-nested-ternary": "error",
+        "typescript/no-non-null-assertion": "error",
       },
     },
     // Pin the migration-baseline SonarJS scores for existing hotspots so later changes cannot increase them.

@@ -103,7 +103,7 @@ export async function setupHermesProviderInference(
     (credentialEnv === HERMES_NOUS_API_KEY_CREDENTIAL_ENV
       ? HERMES_AUTH_METHOD_API_KEY
       : HERMES_AUTH_METHOD_OAUTH);
-  const providerStore = checkHermesProviderStoreReachable(runOpenshell);
+  const providerStore = await checkHermesProviderStoreReachable(runOpenshell);
   if (!providerStore.ok) {
     error("  ✗ OpenShell provider storage is unreachable.");
     error(`    ${providerStore.message}`);
@@ -111,11 +111,11 @@ export async function setupHermesProviderInference(
     if (isNonInteractive()) return exitProcess(1);
     return { retry: "selection" };
   }
-  const providerRegistered = hermesProviderAuth.isHermesProviderRegistered(runOpenshell);
+  const providerRegistered = await hermesProviderAuth.isHermesProviderRegistered(runOpenshell);
   const toolGatewayProviderRegistered =
     hermesToolGateways.length === 0
       ? true
-      : providerExistsInGateway(
+      : await providerExistsInGateway(
           getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
         );
   const hasFreshNousApiKey =

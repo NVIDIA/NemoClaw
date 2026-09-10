@@ -10,7 +10,9 @@ import {
   ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
+import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { parseSandboxPhase } from "../../../src/lib/state/gateway.ts";
+import { OPENSHELL_GATEWAY_START_LINE } from "../../helpers/openshell-gateway-start-output.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
@@ -107,6 +109,14 @@ function markSessionInProgress(file: string): void {
   fs.writeFileSync(file, JSON.stringify(session, null, 2), "utf8");
 }
 
+function registeredDashboardPort(): string {
+  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+    sandboxes?: Record<string, { dashboardPort?: unknown }>;
+  };
+  const port = registry.sandboxes?.[SANDBOX_NAME]?.dashboardPort;
+  return typeof port === "number" ? String(port) : "";
+}
+
 function interruptedSessionSummary(session: SessionStateInterrupted): Record<string, unknown> {
   return {
     status: session.status,
@@ -192,6 +202,7 @@ test(
         "resume proves recreated sandbox provider attachments are selectively reconciled",
         "host trust-store anchor corporate CA source is baked and merged after resume",
         "an unreachable committed route pauses at final verification and completes after repair",
+        "non-recreate resume retains the Ready sandbox, dashboard port, and exact forward listener",
         "implicit resume is detected and --fresh suppresses that auto-resume",
       ],
     });
@@ -503,7 +514,7 @@ test(
     // still prints phase headings before the resume-skip decisions, so assert
     // the skip evidence and absence of redo-only success strings instead of
     // rejecting headings that now frame the skipped phases.
-    expect(resumeText).not.toContain("Starting OpenShell Docker-driver gateway...");
+    expect(resumeText).not.toMatch(OPENSHELL_GATEWAY_START_LINE);
     const reconciledExtraProviders = readExtraProviders();
     expect(reconciledExtraProviders).toContain(LIVE_EXTRA_PROVIDER);
     expect(reconciledExtraProviders).not.toContain(STALE_EXTRA_PROVIDER);
@@ -577,6 +588,23 @@ test(
     // re-probe and complete without recreating the sandbox.
     // ──────────────────────────────────────────────────────────────────
     progress.phase("retry final verification after route repair");
+    const sandboxBeforeRouteFailure = await sandbox.openshell(
+      ["sandbox", "get", SANDBOX_NAME],
+      {
+        artifactName: "phase-3-5-sandbox-before-route-failure",
+        env: probeEnv,
+        timeoutMs: 30_000,
+      },
+    );
+    const sandboxIdBeforeRouteFailure = parseOpenShellSandboxId(
+      resultText(sandboxBeforeRouteFailure),
+    );
+    const dashboardPortBeforeRouteFailure = registeredDashboardPort();
+    const listenerBeforeRouteFailure = await host.inspectOpenShellForwardListener(
+      dashboardPortBeforeRouteFailure,
+      SANDBOX_NAME,
+      { artifactName: "phase-3-5-listener-before-route-failure", env: probeEnv },
+    );
     markSessionInProgress(SESSION_FILE);
     await fake.close();
 
@@ -591,7 +619,15 @@ test(
       },
     );
     const unavailableResumeText = `${unavailableResumeRun.stdout}\n${unavailableResumeRun.stderr}`;
-    expect(unavailableResumeRun.exitCode, unavailableResumeText).not.toBe(0);
+    const listenerAfterRouteFailure = await host.inspectOpenShellForwardListener(
+      dashboardPortBeforeRouteFailure,
+      SANDBOX_NAME,
+      { artifactName: "phase-3-5-listener-after-route-failure", env: probeEnv },
+    );
+    expect(
+      `${unavailableResumeRun.exitCode !== 0}:${listenerBeforeRouteFailure.valid}:${listenerAfterRouteFailure.valid}:${listenerBeforeRouteFailure.identity === listenerAfterRouteFailure.identity}`,
+      `${unavailableResumeText}\n${listenerBeforeRouteFailure.output}\n${listenerAfterRouteFailure.output}`,
+    ).toBe("true:true:true:true");
     expect(unavailableResumeText).toContain("Compatible endpoint sandbox smoke check failed");
     expect(unavailableResumeText).toContain("inference.local");
     expect(unavailableResumeText).not.toContain(
@@ -632,7 +668,39 @@ test(
       },
     );
     const repairedResumeText = `${repairedResumeRun.stdout}\n${repairedResumeRun.stderr}`;
-    expect(repairedResumeRun.exitCode, repairedResumeText).toBe(0);
+    const sandboxAfterRouteRepair = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+      artifactName: "phase-3-5-sandbox-after-route-repair",
+      env: probeEnv,
+      timeoutMs: 30_000,
+    });
+    const dashboardPortAfterRouteRepair = registeredDashboardPort();
+    const listenerAfterRouteRepair = await host.inspectOpenShellForwardListener(
+      dashboardPortAfterRouteRepair,
+      SANDBOX_NAME,
+      { artifactName: "phase-3-5-listener-after-route-repair", env: probeEnv },
+    );
+    const dashboardAfterRouteRepair = await host.command(
+      "curl",
+      [
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--output",
+        "/dev/null",
+        "--max-time",
+        "5",
+        `http://127.0.0.1:${dashboardPortAfterRouteRepair}/`,
+      ],
+      {
+        artifactName: "phase-3-5-dashboard-after-route-repair",
+        env: probeEnv,
+        timeoutMs: 15_000,
+      },
+    );
+    expect(
+      `${repairedResumeRun.exitCode}:${parseOpenShellSandboxId(resultText(sandboxAfterRouteRepair)) === sandboxIdBeforeRouteFailure}:${dashboardPortAfterRouteRepair === dashboardPortBeforeRouteFailure}:${listenerAfterRouteRepair.valid}:${listenerAfterRouteRepair.identity === listenerBeforeRouteFailure.identity}:${dashboardAfterRouteRepair.exitCode}:${repairedResumeText.includes("cannot be reallocated or adopted")}`,
+      `${repairedResumeText}\n${resultText(sandboxBeforeRouteFailure)}\n${resultText(sandboxAfterRouteRepair)}\n${listenerBeforeRouteFailure.output}\n${listenerAfterRouteRepair.output}\n${resultText(dashboardAfterRouteRepair)}`,
+    ).toBe("0:true:true:true:true:0:false");
     expect(repairedResumeText).toContain("is ready");
     expect(repairedResumeText).not.toContain(`Deleting and recreating sandbox '${SANDBOX_NAME}'`);
     expect(repairedResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);

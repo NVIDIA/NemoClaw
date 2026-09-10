@@ -117,6 +117,48 @@ describe("shared gateway inference route compatibility", () => {
     });
   });
 
+  it.each([
+    {
+      label: "providerless",
+      peers: [
+        sandbox("create-only", {
+          provider: null,
+          model: null,
+          pendingRouteReservation: true,
+        }),
+      ],
+      requiredModel: null,
+    },
+    {
+      label: "complete",
+      peers: [sandbox("reserved-peer", { pendingRouteReservation: true })],
+      requiredModel: "nvidia/model-a",
+    },
+    {
+      label: "mixed providerless and complete",
+      peers: [
+        sandbox("create-only", {
+          provider: null,
+          model: null,
+          pendingRouteReservation: true,
+        }),
+        sandbox("reserved-peer", { pendingRouteReservation: true }),
+      ],
+      requiredModel: "nvidia/model-a",
+    },
+  ])(
+    "handles $label create reservations consistently in discovery and compatibility",
+    ({ peers, requiredModel }) => {
+      expect(discover(discoveryRoute("nvidia-prod"), peers)).toEqual({
+        ok: true,
+        requiredModel,
+        requiredEndpointUrl: null,
+        requiredInferenceApi: null,
+      });
+      expect(check(route("nvidia-prod", "nvidia/model-a"), peers)).toEqual({ ok: true });
+    },
+  );
+
   it("constrains custom discovery to the durable endpoint and API family (#6315)", () => {
     expect(
       discover(discoveryRoute("compatible-endpoint"), [

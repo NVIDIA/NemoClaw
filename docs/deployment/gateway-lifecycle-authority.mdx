@@ -34,9 +34,18 @@ The installer verifies that identity and the gateway version before NemoClaw use
 It does not parse a static package unit as the effective service identity.
 
 If the systemd user manager reports a recognized unavailable condition, the installer can keep the existing standalone gateway lifecycle.
-This fallback requires no `.wants`, `.requires`, or `.upholds` activation link for either gateway service in the standard systemd user unit paths.
+When `NEMOCLAW_GATEWAY_PORT` selects port `8080` and neither gateway service has a `.wants`, `.requires`, or `.upholds` activation link, the standalone gateway keeps port `8080`.
 The installer stops when `SYSTEMD_UNIT_PATH` overrides those paths because it cannot verify the activation state.
-An activation path stops installation until you restore the user manager or resolve the competing service through its owner.
+When `NEMOCLAW_GATEWAY_PORT` is unset, one qualified package-service activation can make the installer move the standalone NemoClaw gateway to a port from `8990` through `9005`.
+Qualification requires one canonical `openshell-gateway.service` link, a trusted package unit without drop-ins, and an effective `OPENSHELL_SERVER_PORT=8080` setting.
+The installer rejects reserved or configured service ports, existing listeners, gateway registrations, and port-scoped NemoClaw state.
+It also rejects a candidate when no supported listener probe can conclusively confirm that the port is unused.
+Installation stops when no candidate passes.
+It exports the selected port and writes a pending port identity before onboarding runs or is deferred.
+Successful installer-driven or direct CLI onboarding promotes that identity to the completed marker. Deferred or interrupted onboarding keeps the pending identity so a later installer or CLI process can reach the same state.
+Later NemoClaw commands restore either recorded identity when `NEMOCLAW_GATEWAY_PORT` is unset, while an explicit supported value remains authoritative.
+A supported explicit non-default port remains authoritative and uses its detached lifecycle without automatic selection.
+An explicit port of `8080`, an ambiguous activation, or an unqualified service still stops installation until you restore the user manager or resolve the service through its owner.
 Other service query errors, malformed metadata, untrusted paths, executable failures, and version mismatches stop installation.
 
 ## Declare the mode
