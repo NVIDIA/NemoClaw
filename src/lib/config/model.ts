@@ -354,7 +354,6 @@ export const NemoClawOpenClawObservabilitySchema = Type.Object(
 
 const nemoClawAgentFields = {
   name: LocalResourceNameSchema,
-  execution: Type.Optional(NemoClawAgentExecutionSchema),
   inference: Type.Object(
     { routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }) },
     { additionalProperties: false },
@@ -366,6 +365,7 @@ const NemoClawAgentConfigSchema = Type.Union([
     {
       ...nemoClawAgentFields,
       type: Type.Literal("openclaw"),
+      execution: Type.Optional(NemoClawAgentExecutionSchema),
       observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
     },
     { additionalProperties: false },
