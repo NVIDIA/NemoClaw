@@ -67,7 +67,7 @@ if [ "$SCENARIO" = "terminal-layer-depth" ]; then
   exit 1
 fi
 if [ "$SCENARIO" = "modern-transient-then-success" ] && [ "$count" -eq 1 ]; then
-  echo "Error response from daemon: failed to resolve reference \"$EXPECTED_REFERENCE\": $EXPECTED_REFERENCE: not found" >&2
+  echo "Error response from daemon: failed to resolve reference "$EXPECTED_REFERENCE": $EXPECTED_REFERENCE: not found" >&2
   exit 44
 fi
 if [ "$SCENARIO" = "permanent-status-one" ]; then

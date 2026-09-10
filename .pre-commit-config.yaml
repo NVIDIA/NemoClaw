@@ -135,15 +135,7 @@ repos:
         name: Oxlint type-aware rules
         entry: npx oxlint --fix --type-aware --no-error-on-unmatched-pattern
         language: system
-        files: ^nemoclaw/src/.*\.(cts|mts|ts|tsx)$
-        pass_filenames: true
-        priority: 6
-
-      - id: oxlint-adapters-type-aware
-        name: Oxlint adapter type-aware rules
-        entry: npx oxlint --fix --type-aware --no-error-on-unmatched-pattern
-        language: system
-        files: ^src/lib/adapters/.*\.(cts|mts|ts|tsx)$
+        files: ^(src/lib/adapters/|nemoclaw/src/).*\.(cts|mts|ts|tsx)$
         pass_filenames: true
         priority: 6
 
