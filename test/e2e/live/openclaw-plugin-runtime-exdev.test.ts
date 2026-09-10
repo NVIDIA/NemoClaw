@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { terminateForwardServiceProcessTree } from "../../../src/lib/adapters/openshell/forward-service.ts";
 import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve.ts";
 import { DASHBOARD_PORT } from "../../../src/lib/core/ports.ts";
 import { pullAndResolveBaseImageDigest } from "../../../src/lib/onboard/base-image.ts";
@@ -562,19 +563,11 @@ test(
       restart.exitCode === 0 && listenerAfterRestart.valid,
       `${resultText(restart)}\n${listenerAfterRestart.output}`,
     ).toBe(true);
+    terminateForwardServiceProcessTree({ pid: listenerAfterRestart.pid!, unref() {} });
     const weatherAfterRestart = await assertWeatherPluginRuntime(
       sandbox,
       "after-restart",
       "v1-exdev",
-    );
-    await host.cleanupForward(
-      DASHBOARD_PORT,
-      {
-        artifactName: "openclaw-weather-plugin-forward-before-recreate",
-        env: liveEnv(),
-        timeoutMs: PROBE_TIMEOUT_MS,
-      },
-      { gatewayName: "nemoclaw", sandboxName: SANDBOX_NAME },
     );
 
     // Change an actual build-context input so recreation must produce a distinct

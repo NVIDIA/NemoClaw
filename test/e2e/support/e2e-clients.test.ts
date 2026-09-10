@@ -243,6 +243,7 @@ describe("E2E fixture clients", () => {
 
       await expect(host.inspectOpenShellForwardListener("18789", "alpha")).resolves.toMatchObject({
         valid: expected,
+        ...(expected ? { pid: 4321 } : {}),
       });
     },
   );
@@ -453,10 +454,7 @@ describe("E2E fixture clients", () => {
 
     await host.cleanupSandbox("assistant", options);
     await host.cleanupGatewayRegistration("nemoclaw-18080", options);
-    await host.cleanupForward(18789, options, {
-      gatewayName: "nemoclaw-18080",
-      sandboxName: "assistant",
-    });
+    await host.cleanupForward(18789, options);
 
     expect(runner.calls).toEqual([
       {
@@ -476,7 +474,7 @@ describe("E2E fixture clients", () => {
       },
       {
         command: "/opt/openshell/bin/openshell",
-        args: ["forward", "stop", "18789", "assistant", "--gateway", "nemoclaw-18080"],
+        args: ["forward", "stop", "18789"],
         options,
       },
     ]);
