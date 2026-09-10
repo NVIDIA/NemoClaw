@@ -176,9 +176,15 @@ describe("assessHost Docker authority conflict (#10622)", () => {
 });
 
 describe("resolveDockerAuthorityConflictObserver (#10622)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("wires the real observer when the assessment probes the local host itself", () => {
-    expect(resolveDockerAuthorityConflictObserver({})).toBe(
-      platform.observeDockerAuthorityConflict,
+    vi.spyOn(platform, "observeDockerAuthorityConflict").mockReturnValue(CONFLICT);
+
+    expect(resolveDockerAuthorityConflictObserver({})?.({ env: {}, platform: "linux" })).toEqual(
+      CONFLICT,
     );
   });
 
@@ -194,10 +200,12 @@ describe("resolveDockerAuthorityConflictObserver (#10622)", () => {
   });
 
   it("prefers an injected observer over the default", () => {
-    const observe = vi.fn(() => CONFLICT);
+    vi.spyOn(platform, "observeDockerAuthorityConflict").mockReturnValue(null);
 
     expect(
-      resolveDockerAuthorityConflictObserver({ observeDockerAuthorityConflictImpl: observe }),
-    ).toBe(observe);
+      resolveDockerAuthorityConflictObserver({
+        observeDockerAuthorityConflictImpl: () => CONFLICT,
+      })?.({ env: {}, platform: "linux" }),
+    ).toEqual(CONFLICT);
   });
 });
