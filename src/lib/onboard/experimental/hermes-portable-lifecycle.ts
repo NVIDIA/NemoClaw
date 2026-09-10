@@ -137,7 +137,7 @@ const OPENSHELL_V0116_STOP_ASSIST_PROGRAM = [
   "        if (",
   "            candidate_ppid == 1",
   "            and current_ppid == candidate_ppid",
-  "            candidate_pgrp == pgrp",
+  "            and candidate_pgrp == pgrp",
   "            and current_pgrp == pgrp",
   "            and current_pgrp == pid",
   "            and current_starttime == starttime",
