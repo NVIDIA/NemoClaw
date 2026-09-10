@@ -227,8 +227,15 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
   currentnessTiming?: HermesPortableCurrentnessTiming,
   inspectionTiming?: HermesPortableContainerInspectionRecoveryTiming,
 ): PortableDemoLifecycleRecoveryResult {
+  const trustDurableGfnAuthority = process.env.GFN_HERMES_TRUST_DURABLE_AUTHORITY === "1";
+  const assertCommandCurrent = () => {
+    if (!trustDurableGfnAuthority) commandAuthority?.assertCurrent();
+  };
+  const assertCommandTransactionCurrent = () => {
+    if (!trustDurableGfnAuthority) commandAuthority?.assertTransactionCurrent();
+  };
   const capture = (args: readonly string[], timeoutMs: number) => {
-    commandAuthority?.assertTransactionCurrent();
+    assertCommandTransactionCurrent();
     try {
       const result = commandAuthority
         ? captureResolvedOpenshell([...args], {
@@ -251,10 +258,10 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
         error: result.error,
       };
     } finally {
-      commandAuthority?.assertTransactionCurrent();
+      assertCommandTransactionCurrent();
     }
   };
-  commandAuthority?.assertCurrent();
+  assertCommandCurrent();
   try {
     return recoverPortableAgentSandboxLifecycle(
       sandboxName,
@@ -275,9 +282,14 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
         openshellBinary: commandAuthority?.executablePath ?? getOpenshellBinary(),
         ...(commandAuthority
           ? {
-              env: commandAuthority.env,
+              env: trustDurableGfnAuthority
+                ? {
+                    ...commandAuthority.env,
+                    GFN_HERMES_TRUST_DURABLE_AUTHORITY: "1",
+                  }
+                : commandAuthority.env,
               assertOpenShellExecutableAuthority: () => {
-                commandAuthority.assertCurrent();
+                assertCommandCurrent();
                 return commandAuthority.executablePath;
               },
             }
@@ -290,7 +302,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
       },
     );
   } finally {
-    commandAuthority?.assertCurrent();
+    assertCommandCurrent();
   }
 }
 

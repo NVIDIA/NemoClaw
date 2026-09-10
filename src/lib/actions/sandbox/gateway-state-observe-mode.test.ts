@@ -147,6 +147,7 @@ describe("Hermes Portable inference recovery gateway", () => {
 describe("Hermes Portable lifecycle recovery command authority", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("uses transaction currentness for intermediate captures and full currentness at recovery boundaries", () => {
@@ -236,5 +237,49 @@ describe("Hermes Portable lifecycle recovery command authority", () => {
       ),
     ).toThrow("transaction authority changed");
     expect(assertCurrent).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains the explicit GFN gate without repeating command-authority checks", () => {
+    vi.stubEnv("GFN_HERMES_TRUST_DURABLE_AUTHORITY", "1");
+    const assertCurrent = vi.fn();
+    const assertTransactionCurrent = vi.fn();
+    vi.spyOn(openshellRuntime, "captureResolvedOpenshell").mockReturnValue({
+      status: 0,
+      output: "",
+      stdout: "",
+      stderr: "",
+    } as never);
+    const recover = vi
+      .spyOn(portableAgentLifecycle, "recoverPortableAgentSandboxLifecycle")
+      .mockImplementation((_sandboxName, _context, deps) => {
+        expect(deps?.env).toMatchObject({ GFN_HERMES_TRUST_DURABLE_AUTHORITY: "1" });
+        deps?.captureOpenshell?.(["sandbox", "exec", "--", "true"], 1_000);
+        deps?.assertOpenShellExecutableAuthority?.({} as never, {}, {});
+        return { kind: "recovered" };
+      });
+
+    expect(
+      recoverPortableDemoSandboxLifecycleForConnect(
+        "alpha",
+        {
+          name: "alpha",
+          agent: "hermes",
+          gatewayName: "nemoclaw",
+          openshellDriver: "docker",
+        } as never,
+        "nemoclaw",
+        {
+          assertCurrent,
+          assertTransactionCurrent,
+          receipt: {} as never,
+          env: { HOME: "/home/test" },
+          executablePath: "/usr/bin/openshell",
+        },
+      ),
+    ).toEqual({ kind: "recovered" });
+
+    expect(recover).toHaveBeenCalledOnce();
+    expect(assertCurrent).not.toHaveBeenCalled();
+    expect(assertTransactionCurrent).not.toHaveBeenCalled();
   });
 });
