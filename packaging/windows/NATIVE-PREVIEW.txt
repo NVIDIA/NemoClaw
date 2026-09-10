@@ -1,0 +1,54 @@
+NemoClaw Native Windows Candidate Preview
+
+This package contains the NemoClaw CLI and authentic OpenClaw, Hermes Agent,
+Deep Agents Code, Pi, and NemoCUA runtime paths. Pi and NemoCUA are experimental.
+The MSI installs native ARM64 Node.js, Python, OpenShell, and Microsoft MXC
+ProcessContainer components. WSL, Docker, Linux virtual machines, and unused
+MXC backend sidecars are not part of this package.
+
+Setup and onboarding share one native WPF window. Choose an agent once, select
+inference and supported optional services, and follow the named install phases.
+The Personal profile enables outbound network access while keeping host settings
+outside the agent filesystem. Setup adds a NemoClaw Setup desktop shortcut and
+a shortcut with the selected agent's icon. OpenClaw and Hermes open their web
+interfaces in the default browser; terminal agents open a Windows console.
+A native control window stops each web session and cleans up its sandbox.
+
+Run NemoClaw Setup again to change settings or, when installed, uninstall.
+Uninstall retains personal data by default. Its explicit data-removal selection
+removes only the chosen agent's owned state, settings, and scoped stored keys.
+Shared on-device model files are separate from agent data.
+
+Inference keys are stored in Windows Credential Manager, bound to the agent,
+provider, and endpoint. The inference key stays in the host broker. Optional
+service keys use separate per-agent bindings and enter only the selected
+agent's process environment. Keys are not written into setup JSON or passed as
+process arguments. Native state ownership and the UI relay's native file owner
+protect their filesystem boundaries through shutdown.
+
+The OpenShell binary is built from NVIDIA/OpenShell#2721 merge commit
+bcd517bbe08cc80860c9be57699390cd32e8445f with the installed, hash-recorded
+OPENSHELL-NODE-UI-COMPATIBILITY.patch. That derivative supports contained Node
+initialization, explicit host-console sharing, and the selected Personal network
+mode. It does not establish production LPAC or governed network-policy parity.
+
+Microsoft MXC's native elevated system-drive and null-device preparation runs
+before MSI installation. Windows resets the null-device preparation at reboot;
+persistent production gateway-service ownership remains a separate gate.
+
+On RTX Spark N1X, eligible Windows ARM64 machines may select native on-device
+Express. Pinned llama.cpp/CUDA and Qwen model downloads require compatible
+drivers, sufficient memory/storage, complete GPU offload, and an authenticated
+real model response before Ready. This is an agent-independent local service;
+it does not run the Linux or WSL recipes. Generic ARM64 CI is not physical N1X
+qualification.
+
+Qualification must exercise the actual native setup, all five packaged agent
+paths, configured Hermes interactive console and dashboard, desktop links,
+repair/reinstall, default data preservation, explicit tester reset, and cleanup.
+Deterministic local inference proves runtime and transport behavior, not live
+commercial-provider or messaging-account qualification. Actual Windows screen
+captures and receipts identify the exact candidate being tested.
+
+This is an unsigned PR preview, not a production release. Production signing,
+broader host/runtime qualification, and governed deployment remain separate.

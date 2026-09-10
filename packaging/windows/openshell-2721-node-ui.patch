@@ -1,0 +1,657 @@
+diff --git a/crates/openshell-driver-mxc/src/driver.rs b/crates/openshell-driver-mxc/src/driver.rs
+--- a/crates/openshell-driver-mxc/src/driver.rs
++++ b/crates/openshell-driver-mxc/src/driver.rs
+@@ -92,6 +92,14 @@
+     command: Vec<String>,
+     #[serde(default)]
+     cwd: String,
++    #[serde(default)]
++    host_loopback: bool,
++    #[serde(default)]
++    windows_ui: bool,
++    #[serde(default)]
++    host_console: bool,
++    #[serde(default)]
++    personal_network: bool,
+ }
+
+ // ── Registry entry ────────────────────────────────────────────────────────────
+@@ -634,6 +642,10 @@
+         denied_paths: Vec::new(),
+     };
+     let command_line = encode_windows_command_line(&sandbox_config.command);
++    let host_loopback = sandbox_config.host_loopback;
++    let windows_ui = sandbox_config.windows_ui;
++    let host_console = sandbox_config.host_console;
++    let personal_network = sandbox_config.personal_network;
+     let process = MxcProcess {
+         command_line: command_line.clone(),
+         cwd: sandbox_config.cwd,
+@@ -700,6 +712,10 @@
+             let process_container = MxcProcessContainer {
+                 least_privilege: config.pc_least_privilege,
+                 capabilities: config.pc_capabilities.clone(),
++                host_loopback,
++                windows_ui,
++                host_console,
++                personal_network,
+             };
+             match invoker
+                 .run_oneshot(&sandbox_id, filesystem, process_container, process, None)
+diff --git a/crates/openshell-driver-mxc/src/mxc.rs b/crates/openshell-driver-mxc/src/mxc.rs
+--- a/crates/openshell-driver-mxc/src/mxc.rs
++++ b/crates/openshell-driver-mxc/src/mxc.rs
+@@ -10,6 +10,7 @@
+ use base64::Engine as _;
+ use serde::{Deserialize, Serialize};
+ use std::collections::HashMap;
++use std::io::IsTerminal;
+ use std::net::SocketAddr;
+ use std::path::PathBuf;
+ use std::sync::{Mutex, OnceLock};
+@@ -78,6 +79,15 @@
+     pub least_privilege: bool,
+     /// `AppContainer` capabilities to grant (e.g. `internetClient`).
+     pub capabilities: Vec<String>,
++    /// Opt in to legacy host-loopback ingress for a host-rendered UI.
++    /// False preserves the NVIDIA/OpenShell#2721 network posture exactly.
++    pub host_loopback: bool,
++    /// Explicit Win32k compatibility for packaged Node workloads; false keeps UI disabled.
++    pub windows_ui: bool,
++    /// Opt in to the dedicated gateway's existing native console.
++    pub host_console: bool,
++    /// Explicit Personal-preview outbound-open networking; false stays default-deny.
++    pub personal_network: bool,
+ }
+
+ /// Process config for the exec phase.
+@@ -162,8 +172,12 @@
+
+     let mut pc_json = serde_json::Map::new();
+     pc_json.insert("leastPrivilege".into(), pc.least_privilege.into());
+-    if !pc.capabilities.is_empty() {
+-        pc_json.insert("capabilities".into(), pc.capabilities.clone().into());
++    let mut capabilities = pc.capabilities.clone();
++    if pc.personal_network && !capabilities.iter().any(|value| value == "internetClient") {
++        capabilities.push("internetClient".into());
++    }
++    if !capabilities.is_empty() {
++        pc_json.insert("capabilities".into(), capabilities.into());
+     }
+
+     let mut config = serde_json::json!({
+@@ -177,10 +191,26 @@
+             "timeout": process.timeout,
+         },
+         "processContainer": serde_json::Value::Object(pc_json),
++        "ui": { "disable": !pc.windows_ui },
+         "filesystem": serde_json::Value::Object(filesystem_json),
+     });
+     if let Some(network) = network {
++        debug_assert!(!pc.host_loopback && !pc.personal_network);
+         config["network"] = network_json(network);
++    } else if pc.personal_network {
++        config["network"] = serde_json::json!({
++            "defaultPolicy": "allow",
++            "allowedHosts": [],
++            "blockedHosts": [],
++            "allowLocalNetwork": true,
++        });
++    } else if pc.host_loopback {
++        config["network"] = serde_json::json!({
++            "defaultPolicy": "block",
++            "allowedHosts": [],
++            "blockedHosts": [],
++            "allowLocalNetwork": true,
++        });
+     }
+     config
+ }
+@@ -280,6 +310,18 @@
+             }
+         }
+     }
++}
++
++fn require_host_console(requested: bool, terminal_handles: [bool; 3]) -> Result<(), InvokerError> {
++    if requested && !terminal_handles.into_iter().all(|terminal| terminal) {
++        return Err(InvokerError::Mxc {
++            code: "host_console_unavailable".into(),
++            message:
++                "host_console requires a dedicated gateway with terminal stdin, stdout, and stderr"
++                    .into(),
++        });
++    }
++    Ok(())
+ }
+
+ // ── Invoker ───────────────────────────────────────────────────────────────────
+@@ -588,13 +630,26 @@
+             return Self::mock_spawn_with_grants(&process, &grants);
+         }
+
++        require_host_console(
++            pc.host_console,
++            [
++                std::io::stdin().is_terminal(),
++                std::io::stdout().is_terminal(),
++                std::io::stderr().is_terminal(),
++            ],
++        )?;
++
+         let json = serde_json::to_string(&config)?;
+         let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
+
+         let mut cmd = Command::new(&self.exec_path);
+         cmd.arg("--config-base64")
+             .arg(&b64)
+-            .stdin(std::process::Stdio::null())
++            .stdin(if pc.host_console {
++                std::process::Stdio::inherit()
++            } else {
++                std::process::Stdio::null()
++            })
+             .stdout(std::process::Stdio::inherit())
+             .stderr(std::process::Stdio::inherit())
+             .kill_on_drop(true);
+@@ -648,6 +703,81 @@
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++
++    #[test]
++    fn personal_network_is_explicit_and_does_not_expand_filesystem_grants() {
++        let filesystem = MxcFilesystem {
++            readwrite_paths: vec!["C:\\NemoClawData\\agent".into()],
++            ..Default::default()
++        };
++        let process = MxcProcess {
++            command_line: "cmd /c exit 0".into(),
++            cwd: "C:\\NemoClawData\\agent".into(),
++            env: Vec::new(),
++            timeout: 0,
++        };
++        let personal = MxcProcessContainer {
++            personal_network: true,
++            capabilities: vec!["privateNetworkClientServer".into()],
++            ..Default::default()
++        };
++        let enabled = oneshot_config_json("personal", &filesystem, &personal, &process, None);
++        assert_eq!(enabled["network"]["defaultPolicy"], "allow");
++        assert_eq!(enabled["network"]["allowLocalNetwork"], true);
++        assert_eq!(
++            enabled["processContainer"]["capabilities"],
++            serde_json::json!(["privateNetworkClientServer", "internetClient"])
++        );
++        let already_enabled = MxcProcessContainer {
++            capabilities: vec!["privateNetworkClientServer".into(), "internetClient".into()],
++            personal_network: true,
++            ..Default::default()
++        };
++        assert_eq!(
++            oneshot_config_json("existing", &filesystem, &already_enabled, &process, None)["processContainer"]
++                ["capabilities"],
++            enabled["processContainer"]["capabilities"]
++        );
++
++        assert_eq!(
++            enabled["filesystem"]["readwritePaths"],
++            serde_json::json!(["C:\\NemoClawData\\agent"])
++        );
++        let default = oneshot_config_json(
++            "default",
++            &filesystem,
++            &MxcProcessContainer::default(),
++            &process,
++            None,
++        );
++        assert!(default.get("network").is_none());
++        assert!(default["processContainer"].get("capabilities").is_none());
++        assert_eq!(enabled["filesystem"], default["filesystem"]);
++        let loopback = MxcProcessContainer {
++            host_loopback: true,
++            ..Default::default()
++        };
++        let restricted = oneshot_config_json("loopback", &filesystem, &loopback, &process, None);
++        assert_eq!(restricted["network"]["defaultPolicy"], "block");
++    }
++
++    #[test]
++    fn host_console_gate_preserves_noninteractive_default() {
++        assert!(require_host_console(false, [false; 3]).is_ok());
++        assert!(require_host_console(true, [true; 3]).is_ok());
++    }
++
++    #[test]
++    fn host_console_gate_rejects_each_redirected_standard_handle() {
++        for missing in 0..3 {
++            let mut handles = [true; 3];
++            handles[missing] = false;
++            assert!(matches!(
++                require_host_console(true, handles),
++                Err(InvokerError::Mxc { code, .. }) if code == "host_console_unavailable"
++            ));
++        }
++    }
+
+     #[test]
+     fn provision_envelope_parse_success() {
+@@ -810,6 +940,51 @@
+         let config = oneshot_config_json("sb-1", &filesystem, &pc, &process, None);
+
+         assert!(config.get("network").is_none());
++        assert_eq!(config["ui"]["disable"], true);
++        let requested = MxcProcessContainer {
++            windows_ui: true,
++            ..Default::default()
++        };
++        let enabled = oneshot_config_json("node-ui", &filesystem, &requested, &process, None);
++        assert_eq!(enabled["ui"]["disable"], false);
++        assert_eq!(enabled["filesystem"], config["filesystem"]);
++        assert_eq!(enabled.get("network"), config.get("network"));
++    }
++
++    #[test]
++    fn oneshot_host_loopback_uses_legacy_ingress_with_blocked_egress() {
++        let filesystem = MxcFilesystem {
++            readwrite_paths: vec!["C:\\work\\demo".into()],
++            readonly_paths: Vec::new(),
++            denied_paths: Vec::new(),
++        };
++        let pc = MxcProcessContainer {
++            host_loopback: true,
++            ..Default::default()
++        };
++        let process = MxcProcess {
++            command_line: "cmd /c exit 0".into(),
++            cwd: "C:\\work\\demo".into(),
++            env: Vec::new(),
++            timeout: 0,
++        };
++        let config = oneshot_config_json("sb-ui", &filesystem, &pc, &process, None);
++
++        assert_eq!(config["version"], MXC_SCHEMA_VERSION);
++        assert_eq!(config["network"]["defaultPolicy"], "block");
++        assert_eq!(config["network"]["allowLocalNetwork"], true);
++        assert!(
++            config["network"]["allowedHosts"]
++                .as_array()
++                .unwrap()
++                .is_empty()
++        );
++        assert!(
++            config["network"]["blockedHosts"]
++                .as_array()
++                .unwrap()
++                .is_empty()
++        );
+     }
+
+     #[test]
+
+diff --git a/crates/openshell-server/src/compute/mod.rs b/crates/openshell-server/src/compute/mod.rs
+--- a/crates/openshell-server/src/compute/mod.rs
++++ b/crates/openshell-server/src/compute/mod.rs
+@@ -1409,7 +1409,7 @@
+         match self
+             .store
+             .update_message_cas::<Sandbox, _>(&sandbox_id, expected_resource_version, |sandbox| {
+-                apply_driver_snapshot(sandbox, snapshot, session_connected);
++                apply_driver_snapshot(sandbox, snapshot, session_connected, &self.driver_info.name);
+             })
+             .await
+         {
+@@ -1857,7 +1857,14 @@
+                     sandbox_id,
+                     deleting_resource_version,
+                     "reconcile observed backend snapshot",
+-                    |sandbox| apply_driver_snapshot(sandbox, &snapshot, session_connected),
++                    |sandbox| {
++                        apply_driver_snapshot(
++                            sandbox,
++                            &snapshot,
++                            session_connected,
++                            &self.driver_info.name,
++                        );
++                    },
+                 )
+                 .await;
+             }
+@@ -2828,7 +2835,9 @@
+             .update_message_cas::<Sandbox, _>(
+                 &incoming.id,
+                 expected_resource_version,
+-                |sandbox| apply_driver_snapshot(sandbox, &incoming, session_connected),
++                |sandbox| {
++                    apply_driver_snapshot(sandbox, &incoming, session_connected, &self.driver_info.name);
++                },
+             )
+             .await
+             .map_err(|e| match e {
+@@ -3762,7 +3771,12 @@
+     }
+ }
+
+-fn apply_driver_snapshot(sandbox: &mut Sandbox, incoming: &DriverSandbox, session_connected: bool) {
++fn apply_driver_snapshot(
++    sandbox: &mut Sandbox,
++    incoming: &DriverSandbox,
++    session_connected: bool,
++    driver_name: &str,
++) {
+     let old_phase = SandboxPhase::try_from(sandbox.phase()).unwrap_or(SandboxPhase::Unknown);
+     let sandbox_name = &incoming.name;
+
+@@ -3794,7 +3808,7 @@
+             (phase, status)
+         },
+         |incoming_status| {
+-            let composed = ComposedPhase::new(incoming_status, session_connected);
++            let composed = ComposedPhase::new(incoming_status, session_connected, driver_name);
+             let mut status = Some(public_status_from_driver(
+                 incoming_status,
+                 composed.phase,
+@@ -3926,7 +3940,11 @@
+ }
+
+ impl ComposedPhase {
+-    fn new(incoming_status: &DriverSandboxStatus, session_connected: bool) -> Self {
++    fn new(
++        incoming_status: &DriverSandboxStatus,
++        session_connected: bool,
++        driver_name: &str,
++    ) -> Self {
+         let backend_phase = derive_phase(Some(incoming_status));
+         // A live supervisor session is a stronger readiness signal than the backend phase.
+         // set_supervisor_session_state may have already promoted the store record to Ready
+@@ -3935,13 +3953,17 @@
+         let phase = match backend_phase {
+             SandboxPhase::Error | SandboxPhase::Deleting | SandboxPhase::Stopped => backend_phase,
+             _ if session_connected => SandboxPhase::Ready,
++            // The built-in MXC driver owns its native child and has no supervisor.
++            // Only its actual backend Ready condition can complete provisioning.
++            SandboxPhase::Ready if driver_name == "mxc" => SandboxPhase::Ready,
+             _ => SandboxPhase::Provisioning,
+         };
+         Self {
+             phase,
+             session_connected,
+             backend_ready_without_session: backend_phase == SandboxPhase::Ready
+-                && !session_connected,
++                && !session_connected
++                && driver_name != "mxc",
+         }
+     }
+
+@@ -8047,6 +8069,128 @@
+             .status
+             .as_ref()
+             .and_then(|s| s.conditions.iter().find(|c| c.r#type == "Ready"))
++    }
++
++    #[tokio::test]
++    async fn mxc_backend_ready_preserves_native_condition_without_supervisor() {
++        let runtime = test_runtime_for_driver(Arc::new(TestDriver::default()), "mxc").await;
++        let sandbox = sandbox_record("sb-mxc", "native-agent", SandboxPhase::Provisioning);
++        runtime.store.put_message(&sandbox).await.unwrap();
++        let mut snapshot = ready_driver_sandbox("sb-mxc", "native-agent");
++        let condition = &mut snapshot.status.as_mut().unwrap().conditions[0];
++        condition.reason = "AgentRunning".to_string();
++        condition.message = "Agent exec launched: owned-native-agent".to_string();
++
++        runtime.apply_sandbox_update(snapshot).await.unwrap();
++
++        let stored = runtime
++            .store
++            .get_message::<Sandbox>("sb-mxc")
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(
++            SandboxPhase::try_from(stored.phase()).unwrap(),
++            SandboxPhase::Ready
++        );
++        assert!(!runtime.supervisor_sessions.has_session("sb-mxc"));
++        let condition = ready_condition(&stored).unwrap();
++        assert_eq!(condition.status, "True");
++        assert_eq!(condition.reason, "AgentRunning");
++        assert_eq!(condition.message, "Agent exec launched: owned-native-agent");
++    }
++
++    #[tokio::test]
++    async fn advertised_mxc_name_does_not_bypass_configured_driver_supervisor_requirement() {
++        let mut runtime = test_runtime(Arc::new(TestDriver::default())).await;
++        runtime.driver_info.driver_name = "mxc".to_string();
++        let sandbox = sandbox_record("sb-other", "other-agent", SandboxPhase::Provisioning);
++        runtime.store.put_message(&sandbox).await.unwrap();
++
++        runtime
++            .apply_sandbox_update(ready_driver_sandbox("sb-other", "other-agent"))
++            .await
++            .unwrap();
++
++        let stored = runtime
++            .store
++            .get_message::<Sandbox>("sb-other")
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(
++            SandboxPhase::try_from(stored.phase()).unwrap(),
++            SandboxPhase::Provisioning
++        );
++        assert_eq!(
++            ready_condition(&stored).unwrap().reason,
++            "SupervisorNotConnected"
++        );
++    }
++
++    #[test]
++    fn mxc_readiness_still_requires_backend_ready_and_preserves_terminal_priority() {
++        let starting = make_driver_status(DriverCondition {
++            r#type: "Ready".to_string(),
++            status: "False".to_string(),
++            reason: "Starting".to_string(),
++            ..Default::default()
++        });
++        assert_eq!(
++            ComposedPhase::new(&starting, false, "mxc").phase,
++            SandboxPhase::Provisioning
++        );
++        assert_eq!(
++            ComposedPhase::new(&DriverSandboxStatus::default(), false, "mxc").phase,
++            SandboxPhase::Provisioning
++        );
++        let failed = make_driver_status(DriverCondition {
++            r#type: "Ready".to_string(),
++            status: "False".to_string(),
++            reason: "AgentFailed".to_string(),
++            ..Default::default()
++        });
++        let stopped = make_driver_status(DriverCondition {
++            r#type: "Suspended".to_string(),
++            status: "True".to_string(),
++            reason: "AgentStopped".to_string(),
++            ..Default::default()
++        });
++        for connected in [false, true] {
++            for (status, expected) in [
++                (&failed, SandboxPhase::Error),
++                (&stopped, SandboxPhase::Stopped),
++                (&make_deleting_driver_status(), SandboxPhase::Deleting),
++            ] {
++                assert_eq!(ComposedPhase::new(status, connected, "mxc").phase, expected);
++            }
++        }
++    }
++
++    #[tokio::test]
++    async fn mxc_backend_ready_does_not_revive_terminal_or_stopping_records() {
++        let runtime = test_runtime_for_driver(Arc::new(TestDriver::default()), "mxc").await;
++        for phase in [
++            SandboxPhase::Error,
++            SandboxPhase::Stopped,
++            SandboxPhase::Stopping,
++            SandboxPhase::Deleting,
++        ] {
++            let id = format!("sb-{phase:?}");
++            let sandbox = sandbox_record(&id, &id, phase);
++            runtime.store.put_message(&sandbox).await.unwrap();
++            runtime
++                .apply_sandbox_update(ready_driver_sandbox(&id, &id))
++                .await
++                .unwrap();
++            let stored = runtime
++                .store
++                .get_message::<Sandbox>(&id)
++                .await
++                .unwrap()
++                .unwrap();
++            assert_eq!(SandboxPhase::try_from(stored.phase()).unwrap(), phase);
++        }
+     }
+
+     #[tokio::test]
+
+diff --git a/crates/openshell-cli/src/run.rs b/crates/openshell-cli/src/run.rs
+--- a/crates/openshell-cli/src/run.rs
++++ b/crates/openshell-cli/src/run.rs
+@@ -2107,6 +2107,17 @@
+     })
+ }
+
++fn sandbox_ready_condition_to_json(sandbox: &Sandbox) -> serde_json::Value {
++    sandbox
++        .status
++        .as_ref()
++        .and_then(|status| status.conditions.iter().find(|condition| condition.r#type == "Ready"))
++        .filter(|condition| condition.status.len() <= 16 && condition.reason.len() <= 128)
++        .map_or(serde_json::Value::Null, |condition| {
++            serde_json::json!({ "status": condition.status, "reason": condition.reason })
++        })
++}
++
+ fn sandbox_detail_to_json(
+     sandbox: &Sandbox,
+     config: &GetSandboxConfigResponse,
+@@ -2115,6 +2126,10 @@
+     let obj = value
+         .as_object_mut()
+         .expect("sandbox_to_json returns object");
++    obj.insert(
++        "ready_condition".into(),
++        sandbox_ready_condition_to_json(sandbox),
++    );
+
+     let policy_source = if config.policy_source == PolicySource::Global as i32 {
+         "global"
+@@ -8774,6 +8789,109 @@
+         );
+     }
+
++    fn native_mxc_condition_sandbox(kind: &str, status: &str, reason: &str) -> Sandbox {
++        Sandbox {
++            metadata: Some(ObjectMeta {
++                id: "owned-id".into(),
++                name: "owned-agent".into(),
++                ..Default::default()
++            }),
++            status: Some(SandboxStatus {
++                conditions: vec![SandboxCondition {
++                    r#type: kind.into(),
++                    status: status.into(),
++                    reason: reason.into(),
++                    message: "private-command-message-canary".into(),
++                    ..Default::default()
++                }],
++                ..Default::default()
++            }),
++            ..Default::default()
++        }
++    }
++
++    #[test]
++    fn native_mxc_ready_condition_reports_actual_execution_state_without_message() {
++        for (status, reason) in [
++            ("True", "AgentRunning"),
++            ("True", "AgentCompleted"),
++            ("False", "ExecFailed"),
++        ] {
++            let sandbox = native_mxc_condition_sandbox("Ready", status, reason);
++            let value =
++                super::sandbox_detail_to_json(&sandbox, &GetSandboxConfigResponse::default())
++                    .unwrap();
++            assert_eq!(
++                value["ready_condition"],
++                serde_json::json!({"status": status, "reason": reason})
++            );
++            assert!(!value.to_string().contains("private-command-message-canary"));
++            assert!(value["ready_condition"].get("message").is_none());
++        }
++    }
++
++    #[test]
++    fn native_mxc_ready_condition_is_null_without_a_ready_condition() {
++        for sandbox in [
++            Sandbox::default(),
++            Sandbox {
++                status: Some(Default::default()),
++                ..Default::default()
++            },
++            native_mxc_condition_sandbox("Health", "True", "AgentCompleted"),
++        ] {
++            let value =
++                super::sandbox_detail_to_json(&sandbox, &GetSandboxConfigResponse::default())
++                    .unwrap();
++            assert_eq!(value.get("ready_condition"), Some(&serde_json::Value::Null));
++        }
++    }
++
++    #[test]
++    fn native_mxc_ready_condition_rejects_oversize_fields_without_truncation() {
++        let maximum = native_mxc_condition_sandbox("Ready", &"s".repeat(16), &"r".repeat(128));
++        let value =
++            super::sandbox_detail_to_json(&maximum, &GetSandboxConfigResponse::default()).unwrap();
++        assert_eq!(value["ready_condition"]["status"], "s".repeat(16));
++        assert_eq!(value["ready_condition"]["reason"], "r".repeat(128));
++        for sandbox in [
++            native_mxc_condition_sandbox("Ready", &"s".repeat(17), "AgentCompleted"),
++            native_mxc_condition_sandbox("Ready", "True", &"r".repeat(129)),
++            native_mxc_condition_sandbox("Ready", "True", &"é".repeat(65)),
++        ] {
++            let value =
++                super::sandbox_detail_to_json(&sandbox, &GetSandboxConfigResponse::default())
++                    .unwrap();
++            assert!(value["ready_condition"].is_null());
++        }
++    }
++
++    #[test]
++    fn native_mxc_ready_condition_does_not_change_summary_or_existing_detail_fields() {
++        let mut sandbox = native_mxc_condition_sandbox("Ready", "True", "AgentCompleted");
++        sandbox.set_phase(SandboxPhase::Ready as i32);
++        sandbox.set_current_policy_version(7);
++        let summary = super::sandbox_to_json(&sandbox);
++        let detail = super::sandbox_detail_to_json(
++            &sandbox,
++            &GetSandboxConfigResponse {
++                version: 4,
++                ..Default::default()
++            },
++        )
++        .unwrap();
++        for (key, value) in summary.as_object().unwrap() {
++            assert_eq!(&detail[key], value);
++        }
++        assert!(summary.get("ready_condition").is_none());
++        assert_eq!(detail["id"], "owned-id");
++        assert_eq!(detail["name"], "owned-agent");
++        assert_eq!(detail["phase"], "Ready");
++        assert_eq!(detail["current_policy_version"], 7);
++        assert_eq!(detail["revision"], 4);
++        assert!(detail["policy"].is_null());
++    }
++
+     #[test]
+     fn sandbox_detail_to_json_includes_policy_fields() {
+         let mut sandbox = Sandbox {
