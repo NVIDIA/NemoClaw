@@ -57,6 +57,30 @@ def read_json(path):
     return result, sha(data)
 
 
+def compare_node_acl(before, after, before_attributes, after_attributes):
+    """Only exact text or the observed one-way regular-file D: -> D:AI change."""
+    regular = all(
+        type(value) is int and value >= 0 and value & 0x410 == 0
+        for value in (before_attributes, after_attributes)
+    )
+    text = type(before) is str and type(after) is str and bool(before)
+    exact = regular and text and before == after
+    added = False
+    if (
+        regular
+        and text
+        and not exact
+        and re.fullmatch(r"O:[^:()]+G:[^:()]+D:(?:\([^()]+\))+", before)
+    ):
+        offset = before.index("D:(") + 2
+        added = after == before[:offset] + "AI" + before[offset:]
+    return {
+        "restored": exact or added,
+        "exactRestored": exact,
+        "metadataChange": "dacl-auto-inherited-added" if added else None,
+    }
+
+
 def verify(
     helper, build_receipt, proof_directory, source_root, source_revision, node_path
 ):
@@ -192,10 +216,17 @@ def verify(
         ),
         "Actual contained Node read/deny/write controls did not pass.",
     )
+    node_comparison = compare_node_acl(
+        proof.get("nodeSddlBefore"),
+        proof.get("nodeSddlAfter"),
+        proof.get("nodeFileAttributesBefore"),
+        proof.get("nodeFileAttributesAfter"),
+    )
     require(
         proof.get("nodeAclRestored") is True
-        and bool(proof.get("nodeSddlBefore"))
-        and proof.get("nodeSddlBefore") == proof.get("nodeSddlAfter")
+        and proof.get("nodeFileKind") == "regular-file"
+        and node_comparison["restored"]
+        and proof.get("nodeAclComparison") == node_comparison
         and bool(proof.get("rootSddlAfterPreparation"))
         and proof.get("rootSddlAfterPreparation") == proof.get("rootSddlAfterMxc")
         and proof.get("mxcStopped") is True
@@ -234,6 +265,7 @@ def verify(
             read_file(owner / "test-system-root-mxc.ps1", 1024 * 1024)
         ),
         "requestProfile": proof["requestProfile"],
+        "nodeAclComparison": node_comparison,
         "proofCommands": [
             {key: row[key] for key in ("label", "exitCode", "elapsedMilliseconds")}
             for row in commands

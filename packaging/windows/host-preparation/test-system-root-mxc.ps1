@@ -31,6 +31,30 @@ $receipt = [ordered]@{schemaVersion=1;classification='actual-system-root-and-mxc
     status='failed';systemDriveRoot=$root;commands=$commands;cleanupErrors=$cleanupErrors;admissionAllowed=$false;
     requestProfile='existing-personal-node-compatibility';stdio='explicit-pipes-with-closed-input';networkAccessTested=$false}
 
+# Proof-only: the observed regular Node file can gain only SE_DACL_AUTO_INHERITED.
+# Owner/group, every ACE byte/order/flag and all protection text remain exact.
+function Compare-ProofNodeAcl {
+    param([string]$Before, [string]$After, [int]$BeforeAttributes, [int]$AfterAttributes)
+    $regular = $BeforeAttributes -ge 0 -and $AfterAttributes -ge 0 -and
+        ($BeforeAttributes -band 0x410) -eq 0 -and ($AfterAttributes -band 0x410) -eq 0
+    $exact = $regular -and $Before.Length -gt 0 -and $Before -ceq $After
+    $added = $false
+    if ($regular -and -not $exact -and $Before -cmatch '^O:[^:()]+G:[^:()]+D:(?:\([^()]+\))+$') {
+        $index = $Before.IndexOf('D:(', [StringComparison]::Ordinal)
+        $added = $index -ge 0 -and $After -ceq $Before.Insert($index + 2, 'AI')
+    }
+    return [pscustomobject]@{ restored = ($exact -or $added); exactRestored = $exact;
+        metadataChange = $(if ($added) { 'dacl-auto-inherited-added' } else { $null }) }
+}
+
+function Get-ProofNodeAttributes([string]$Path) {
+    $file = Get-Item -LiteralPath $Path -Force
+    if ($file -isnot [IO.FileInfo] -or ($file.Attributes -band 0x410) -ne 0) {
+        throw 'The proof Node input must remain an ordinary non-reparse file.'
+    }
+    return [int]$file.Attributes
+}
+
 function Invoke-ProofProcess {
     param([string]$Executable,[string[]]$Arguments,[string]$Label,[int]$Seconds=30)
     $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=$Executable
@@ -102,6 +126,8 @@ try {
     $receipt.first=$first;$receipt.repeat=$second;$receipt.rootSddlAfterPreparation=(Get-Acl -LiteralPath $root).Sddl
     $null=Invoke-ProofProcess $nullPrep @('prepare-null-device','--json') 'upstream-null-device'
     [IO.Directory]::CreateDirectory($work)|Out-Null
+    $receipt.nodeFileKind='regular-file'
+    $receipt.nodeFileAttributesBefore=Get-ProofNodeAttributes $NodePath
     $nodeAcl=(Get-Acl -LiteralPath $NodePath).Sddl
     $receipt.nodeSddlBefore=$nodeAcl
     $denied=Join-Path $output 'not-granted.txt';[IO.File]::WriteAllText($denied,'not granted')
@@ -151,7 +177,9 @@ console.log('NEMOCLAW_SYSTEM_METADATA_MXC_OK');
     if($mxcLog -match 'Win32k mitigation applied to child process'){throw 'The existing Personal Node UI compatibility setting was not honored.'}
     $receipt.guest=$guest
     $receipt.nodeSddlAfter=(Get-Acl -LiteralPath $NodePath).Sddl
-    $receipt.nodeAclRestored=$receipt.nodeSddlAfter  -ceq  $nodeAcl
+    $receipt.nodeFileAttributesAfter=Get-ProofNodeAttributes $NodePath
+    $receipt.nodeAclComparison=Compare-ProofNodeAcl $nodeAcl $receipt.nodeSddlAfter $receipt.nodeFileAttributesBefore $receipt.nodeFileAttributesAfter
+    $receipt.nodeAclRestored=$receipt.nodeAclComparison.restored
     $receipt.rootSddlAfterMxc=(Get-Acl -LiteralPath $root).Sddl
     if(  -not  $receipt.nodeAclRestored  -or  $receipt.rootSddlAfterMxc  -cne  $receipt.rootSddlAfterPreparation){throw 'MXC cleanup changed the prepared root or input executable ACL.'}
     $receipt.status='pass'

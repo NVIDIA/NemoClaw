@@ -5,6 +5,7 @@
 import copy
 import importlib.util
 import json
+import shutil
 import struct
 import subprocess
 import sys
@@ -16,6 +17,12 @@ MODULE = Path(__file__).with_name("verify-system-drive-proof.py")
 SPEC = importlib.util.spec_from_file_location("system_drive_gate", MODULE)
 gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
+
+
+# Exact raw Node SDDL from verified artifact10174112763, source8dfce157.
+# The original receipt remains failed; these controls do not relabel it.
+NODE_8DF_BEFORE = "O:BAG:S-1-5-21-3786388951-2809471854-1607369026-513D:(A;ID;0x1301bf;;;AU)(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)"
+NODE_8DF_AFTER = "O:BAG:S-1-5-21-3786388951-2809471854-1607369026-513D:AI(A;ID;0x1301bf;;;AU)(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)"
 
 
 class SystemDriveProofTests(unittest.TestCase):
@@ -126,6 +133,14 @@ class SystemDriveProofTests(unittest.TestCase):
                 "ownedWrite": True,
             },
             "nodeAclRestored": True,
+            "nodeFileKind": "regular-file",
+            "nodeFileAttributesBefore": 32,
+            "nodeFileAttributesAfter": 32,
+            "nodeAclComparison": {
+                "restored": True,
+                "exactRestored": True,
+                "metadataChange": None,
+            },
             "nodeSddlBefore": "O:SYD:AI",
             "nodeSddlAfter": "O:SYD:AI",
             "rootSddlAfterPreparation": "O:SYD:",
@@ -340,6 +355,130 @@ class SystemDriveProofTests(unittest.TestCase):
         self.save()
         with self.assertRaisesRegex(ValueError, "filesystem grants"):
             self.verify()
+
+    def test_actual_8df_node_metadata_requires_explicit_nonexact_annotation(self):
+        self.proof["nodeSddlBefore"] = NODE_8DF_BEFORE
+        self.proof["nodeSddlAfter"] = NODE_8DF_AFTER
+        self.save()
+        with self.assertRaisesRegex(ValueError, "owned cleanup"):
+            self.verify()
+        self.proof["nodeAclComparison"] = {
+            "restored": True,
+            "exactRestored": False,
+            "metadataChange": "dacl-auto-inherited-added",
+        }
+        self.save()
+        self.assertEqual(
+            self.verify()["nodeAclComparison"], self.proof["nodeAclComparison"]
+        )
+        self.proof["rootSddlAfterMxc"] += "AI"
+        self.save()
+        with self.assertRaisesRegex(ValueError, "owned cleanup"):
+            self.verify()
+
+    def test_node_metadata_refuses_reverse_access_owner_flags_and_file_kind_changes(
+        self,
+    ):
+        changes = [
+            (NODE_8DF_AFTER, NODE_8DF_BEFORE, 32, 32),
+            (NODE_8DF_BEFORE, NODE_8DF_AFTER.replace("O:BA", "O:SY"), 32, 32),
+            (
+                NODE_8DF_BEFORE,
+                NODE_8DF_AFTER.replace("G:S-1-5-21", "G:S-1-5-22"),
+                32,
+                32,
+            ),
+            (NODE_8DF_BEFORE, NODE_8DF_AFTER.replace("0x1301bf", "FA"), 32, 32),
+            (NODE_8DF_BEFORE, NODE_8DF_AFTER.replace(";ID;", ";;", 1), 32, 32),
+            (NODE_8DF_BEFORE, NODE_8DF_AFTER.replace("D:AI", "D:PAI"), 32, 32),
+            (NODE_8DF_BEFORE, NODE_8DF_AFTER.replace("D:AI", "D:ARAI"), 32, 32),
+            (
+                NODE_8DF_BEFORE,
+                NODE_8DF_AFTER.replace(
+                    "(A;ID;FA;;;SY)(A;ID;FA;;;BA)", "(A;ID;FA;;;BA)(A;ID;FA;;;SY)"
+                ),
+                32,
+                32,
+            ),
+            (NODE_8DF_BEFORE, NODE_8DF_AFTER, 16, 32),
+            (NODE_8DF_BEFORE, NODE_8DF_AFTER, 32, 16),
+            (NODE_8DF_BEFORE, NODE_8DF_AFTER, 32, 1024),
+        ]
+        for before, after, prior_attributes, attributes in changes:
+            with self.subTest(after=after, attributes=attributes):
+                self.assertFalse(
+                    gate.compare_node_acl(before, after, prior_attributes, attributes)[
+                        "restored"
+                    ]
+                )
+        self.proof["nodeFileKind"] = "directory"
+        self.save()
+        with self.assertRaisesRegex(ValueError, "owned cleanup"):
+            self.verify()
+
+    def test_actual_powershell_comparator_and_regular_file_check(self):
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe")
+        self.assertIsNotNone(
+            powershell, "These controls require the available PowerShell runtime."
+        )
+        producer = MODULE.parent.parent / "host-preparation/test-system-root-mxc.ps1"
+        cases = [
+            [NODE_8DF_BEFORE, NODE_8DF_AFTER, 32, 32],
+            [NODE_8DF_BEFORE, NODE_8DF_BEFORE, 32, 32],
+            [NODE_8DF_AFTER, NODE_8DF_BEFORE, 32, 32],
+            [NODE_8DF_BEFORE, NODE_8DF_AFTER.replace("O:BA", "O:SY"), 32, 32],
+            [NODE_8DF_BEFORE, NODE_8DF_AFTER.replace(";ID;", ";;", 1), 32, 32],
+            [NODE_8DF_BEFORE, NODE_8DF_AFTER.replace("D:AI", "D:PAI"), 32, 32],
+            [NODE_8DF_BEFORE, NODE_8DF_AFTER, 16, 32],
+            [NODE_8DF_BEFORE, NODE_8DF_AFTER, 32, 1024],
+        ]
+        cases_path = self.root / "cases.json"
+        cases_path.write_text(json.dumps(cases))
+        link = self.root / "node-link.exe"
+        link.symlink_to(self.helper)
+        script = self.root / "compare.ps1"
+        script.write_text(r"""param([string]$Source,[string]$Cases,[string]$File,[string]$Directory,[string]$Link)
+$ErrorActionPreference='Stop'
+$tokens=$null;$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($Source,[ref]$tokens,[ref]$errors)
+if($errors.Count){throw 'The actual producer did not parse.'}
+foreach($name in @('Compare-ProofNodeAcl','Get-ProofNodeAttributes')) {
+  $function=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+  if($function.Count -ne 1){throw 'The exact producer function is missing.'}
+  . ([ScriptBlock]::Create($function[0].Extent.Text))
+}
+$rows=@(Get-Content -LiteralPath $Cases -Raw|ConvertFrom-Json)
+$results=@(foreach($row in $rows){Compare-ProofNodeAcl $row[0] $row[1] $row[2] $row[3]})
+$attributes=Get-ProofNodeAttributes $File
+$directoryRejected=$false;$linkRejected=$false
+try{$null=Get-ProofNodeAttributes $Directory}catch{$directoryRejected=$true}
+try{$null=Get-ProofNodeAttributes $Link}catch{$linkRejected=$true}
+@{results=$results;fileAttributes=$attributes;directoryRejected=$directoryRejected;linkRejected=$linkRejected}|ConvertTo-Json -Depth 6
+""")
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-File",
+                str(script),
+                str(producer),
+                str(cases_path),
+                str(self.helper),
+                str(self.root),
+                str(link),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        actual = json.loads(result.stdout)
+        self.assertEqual(
+            actual["results"], [gate.compare_node_acl(*row) for row in cases]
+        )
+        self.assertTrue(actual["directoryRejected"])
+        self.assertTrue(actual["linkRejected"])
+        self.assertEqual(actual["fileAttributes"] & 0x410, 0)
 
     def test_failure_never_overwrites_existing_gate_receipt(self):
         output = self.root / "gate.json"
