@@ -146,6 +146,9 @@ export function createInitialOnboardFlowPhases<
       if (externalComponent && (context.resume || options.recreateSandbox())) {
         throw new ExternalComponentContractError("lifecycle_unsupported");
       }
+      if (externalComponent) {
+        options.gatewayDeps.assertExternalComponentFreshSandbox(context.requestedSandboxName);
+      }
       const preflightResult = await handlePreflightState({
         resume: context.resume,
         session: context.session,

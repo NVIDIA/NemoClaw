@@ -618,10 +618,13 @@ describe("docker-driver gateway runtime helpers", () => {
     }
   });
 
-  it("reuses a systemd-owned gateway without detached cleanup identity (#6903)", () => {
+  it("reuses a systemd-owned gateway with a legacy unset component identity (#11340)", () => {
     const pid = 12_350;
     const gatewayBin = "/usr/bin/openshell-gateway";
-    const desiredEnv = { OPENSHELL_DRIVERS: "docker" };
+    const desiredEnv = {
+      OPENSHELL_DRIVERS: "docker",
+      [NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]: "none",
+    };
     const { helpers } = makeHelpers({
       runCapture: vi.fn(() => gatewayBin),
     });

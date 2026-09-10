@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../../state/onboard-session";
+import type { PreparedExternalComponent } from "../external-component";
 import { resolveGatewayOwner } from "../gateway-ownership";
 import {
   createInitialOnboardFlowPhases,
@@ -130,10 +131,15 @@ describe("initial onboard flow phases", () => {
     const gpu: Gpu = { type: "nvidia", platform: "linux" };
     let preflightFailure: Error | null = null;
     const commitSelectedAgentTransition = vi.fn(async () => createSession());
-    const prepareExternalComponent = vi.fn(() => null);
+    const prepareExternalComponent = vi.fn<() => PreparedExternalComponent | null>(() => null);
     const runPreflight = vi.fn(async () =>
       preflightFailure ? Promise.reject(preflightFailure) : gpu,
     );
+    const startPreflight = vi.fn();
+    const completePreflight = vi.fn(async () => createSession());
+    const assertGatewayReadiness = vi.fn(async () => undefined);
+    const assertExternalComponentFreshSandbox = vi.fn();
+    const configureExternalComponentGateway = vi.fn();
     const phases = createInitialOnboardFlowPhases({
       explicitSandboxGpuFlag: null,
       sandboxGpuDevice: null,
@@ -157,15 +163,15 @@ describe("initial onboard flow phases", () => {
         validateSandboxGpuPreflight: vi.fn(),
         skippedStepMessage: vi.fn(),
         recordStateSkipped: async () => createSession(),
-        startRecordedStep: vi.fn(),
-        recordStepComplete: async () => createSession(),
+        startRecordedStep: startPreflight,
+        recordStepComplete: completePreflight,
         updateSession: (mutator) => {
           const next = createSession();
           return mutator(next) ?? next;
         },
       },
       getInitialGatewayReuseState: () => "healthy",
-      assertGatewayReadiness: vi.fn(async () => undefined),
+      assertGatewayReadiness,
       prepareExternalComponent,
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
@@ -189,8 +195,8 @@ describe("initial onboard flow phases", () => {
           listenerExecPath: null,
           listenerSupervisorMatch: null,
         }),
-        assertExternalComponentFreshSandbox: vi.fn(),
-        configureExternalComponentGateway: vi.fn(),
+        assertExternalComponentFreshSandbox,
+        configureExternalComponentGateway,
         refreshDockerDriverGatewayReuseState: async (state) => state,
         gatewayCliSupportsLifecycleCommands: () => false,
         verifyGatewayContainerRunning: () => "running",
@@ -262,6 +268,38 @@ describe("initial onboard flow phases", () => {
       "invalid external component declaration",
     );
     expect(runPreflight).not.toHaveBeenCalled();
+
+    const component: PreparedExternalComponent = {
+      declaration: {
+        schemaVersion: 1,
+        componentId: "policy-governance",
+        interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
+        activationSocketPath: "/run/user/1000/component/activation.sock",
+      },
+      revalidateBeforeGateway: vi.fn(),
+      revalidateBeforeActivation: vi.fn(),
+    };
+    prepareExternalComponent.mockReturnValue(component);
+    assertExternalComponentFreshSandbox.mockImplementation(() => {
+      throw new Error("sandbox is not fresh");
+    });
+    startPreflight.mockClear();
+    completePreflight.mockClear();
+    runPreflight.mockClear();
+    assertGatewayReadiness.mockClear();
+    commitSelectedAgentTransition.mockClear();
+    configureExternalComponentGateway.mockClear();
+
+    await expect(
+      phases[0].run(context({ requestedSandboxName: "component-sandbox" })),
+    ).rejects.toThrow("sandbox is not fresh");
+    expect(assertExternalComponentFreshSandbox).toHaveBeenCalledWith("component-sandbox");
+    expect(startPreflight).not.toHaveBeenCalled();
+    expect(runPreflight).not.toHaveBeenCalled();
+    expect(completePreflight).not.toHaveBeenCalled();
+    expect(assertGatewayReadiness).not.toHaveBeenCalled();
+    expect(commitSelectedAgentTransition).not.toHaveBeenCalled();
+    expect(configureExternalComponentGateway).not.toHaveBeenCalled();
   });
 
   it("repairs preflight before strict gateway entry", async () => {

@@ -37,6 +37,7 @@ const LEGACY_DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 3600;
 const PRE_AUTH_DOCKER_DRIVER_GATEWAY_VERSION = "0.0.44";
 export const NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV =
   "NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY";
+export const NO_EXTERNAL_COMPONENT_GATEWAY_IDENTITY = "none";
 export const NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV = "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE";
 
 interface FileIdentity {
@@ -1063,7 +1064,7 @@ export function prepareDockerDriverGatewayConfigEnv(
   // An explicit absence lets the existing runtime comparison detect removal.
   gatewayEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV] = externalComponent
     ? externalComponentGatewayIdentity(externalComponent)
-    : "none";
+    : NO_EXTERNAL_COMPONENT_GATEWAY_IDENTITY;
   if (runtime.gatewayConfig.sandboxNamespace === "omitted") {
     delete gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
   } else {
