@@ -126,6 +126,8 @@ function readRuntimeReceipt(stateDir: string): unknown {
     const stat = fs.fstatSync(fd);
     if (
       !stat.isFile() ||
+      stat.size < 2 ||
+      stat.size > 64 * 1024 ||
       (stat.mode & 0o077) !== 0 ||
       (typeof process.getuid === "function" && stat.uid !== process.getuid())
     ) {

@@ -5,7 +5,7 @@ import os from "node:os";
 import { isDeepStrictEqual } from "node:util";
 import { isValidNemoClawPort } from "../../config/model";
 
-import { createProviders } from "../openshell/providers";
+import { createProviders, type Provider } from "../openshell/providers";
 import { createSandboxes, type Sandbox } from "../openshell/sandboxes";
 import { createSandboxConfig } from "../openshell/sandbox-config";
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
@@ -18,12 +18,15 @@ import type {
   ObservedExportGateway,
   ObservedExportInference,
   ObservedExportWebSearchProvider,
+  ObservedManagedVllmRuntime,
   ObservedExportEndpointEvidence,
   ObservedExportRegistry,
   ObservedExportSandboxIdentity,
   RawExportSnapshot,
 } from "../../domain/config/export-evidence";
 import { getLiveGatewayInference } from "../../inference/live";
+import { VLLM_LOCAL_CREDENTIAL_ENV } from "../../inference/serving/vllm-credential-contract";
+import { observeManagedVllmForExport } from "../../inference/serving/vllm-export-runtime";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { resolveGatewayName } from "../../onboard/gateway-binding/identity";
 import {
@@ -123,22 +126,52 @@ function providerContract(api: string | null | undefined) {
   return { type, configKey: "OPENAI_BASE_URL" } as const;
 }
 
+function providerIdentity(provider: Provider, gatewayName: string, managed: boolean) {
+  return {
+    gatewayName,
+    workspace: provider.workspace,
+    name: provider.name,
+    id: provider.id,
+    resourceVersion: provider.resourceVersion,
+    ...(managed
+      ? { profileWorkspace: provider.profileWorkspace, managedProfile: provider.managedProfile }
+      : {}),
+  };
+}
+
+function expectedCredentialKeys(credentialEnv: string | null, managed: boolean): string[] {
+  if (managed) return [VLLM_LOCAL_CREDENTIAL_ENV];
+  return credentialEnv === null ? [] : [credentialEnv];
+}
+
+function inferenceTopology(
+  entry: Readonly<SandboxEntry>,
+  managed: boolean,
+): ObservedExportInference["topology"] {
+  if (managed) return "managed";
+  return entry.hostLocalInferenceReceipt || entry.hostLocalInferenceProvenance || entry.nimContainer
+    ? "local"
+    : "hosted";
+}
+
 async function readProviderEvidence(
   normalized: ReturnType<typeof normalizeInferenceSelection>,
   routeProvider: string,
   gatewayName: string,
   signal: AbortSignal,
+  managedServing?: ObservedManagedVllmRuntime,
 ): Promise<ObservedExportEndpointEvidence> {
   const { type, configKey } = providerContract(normalized.preferredInferenceApi);
   const provider = await createProviders().get({
     target: namedOpenShellGateway(gatewayName),
     workspace: "default",
     name: routeProvider,
+    ...(managedServing ? { profileContract: "openai" as const } : {}),
     configKeys: [configKey],
     signal,
   });
   if (!provider) throw new Error("The live inference provider is missing.");
-  const credentialKeys = normalized.credentialEnv === null ? [] : [normalized.credentialEnv];
+  const credentialKeys = expectedCredentialKeys(normalized.credentialEnv, !!managedServing);
   const builtin = provider.builtinInferenceEndpoint !== undefined;
   if (
     type === null ||
@@ -150,13 +183,7 @@ async function readProviderEvidence(
     throw new Error("The live inference provider metadata does not match the registry.");
   }
   return {
-    provider: {
-      gatewayName,
-      workspace: provider.workspace,
-      name: provider.name,
-      id: provider.id,
-      resourceVersion: provider.resourceVersion,
-    },
+    provider: providerIdentity(provider, gatewayName, !!managedServing),
     endpoint: provider.builtinInferenceEndpoint ?? provider.config[configKey] ?? "",
     source: builtin
       ? { kind: "builtin-profile", profileId: "nvidia" }
@@ -168,6 +195,7 @@ async function inferenceFor(
   entry: Readonly<SandboxEntry>,
   beforeProviderRead: () => void,
   signal: AbortSignal,
+  managedServing?: ObservedManagedVllmRuntime,
 ): Promise<ObservedExportInference> {
   const normalized = normalizeInferenceSelection(entry);
   const gateway = resolveGatewayBinding(entry);
@@ -178,18 +206,17 @@ async function inferenceFor(
     live.provider,
     gateway.name,
     signal,
+    managedServing,
   );
   return {
-    topology:
-      entry.hostLocalInferenceReceipt || entry.hostLocalInferenceProvenance || entry.nimContainer
-        ? "local"
-        : "hosted",
+    topology: inferenceTopology(entry, !!managedServing),
     provider: live.provider,
     model: live.model,
     api: normalized.preferredInferenceApi ?? "",
     endpoint: normalized.endpointUrl ?? "",
     endpointEvidence,
     credentialEnv: normalized.credentialEnv,
+    ...(managedServing ? { managedServing } : {}),
   };
 }
 
@@ -270,6 +297,11 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
     if (!row) throw new Error("The live sandbox is missing.");
     stage = "sandbox-identity";
     const sandbox = sandboxIdentity(row);
+    stage = "managed-serving";
+    const managedServing =
+      entry.provider === "vllm-local" && entry.servingProfileProvenance
+        ? observeManagedVllmForExport(entry.servingProfileProvenance)
+        : undefined;
     stage = "inference-route";
     const inference = await inferenceFor(
       entry,
@@ -277,6 +309,7 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
         stage = "provider-metadata";
       },
       signal,
+      managedServing,
     );
     let webSearchProvider: ObservedExportWebSearchProvider | undefined;
     if (entry.webSearchEnabled === true && entry.webSearchProvider === "brave") {
