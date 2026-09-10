@@ -6,16 +6,14 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 
+import {
+  compiledPluginPlan,
+  publishPluginFacades,
+  stagePublishedResources,
+  resourceInventory,
+} from "./openclaw-app-resources.mts";
+
 const require = createRequire(import.meta.url);
-type Import = { path: string; kind: string; external?: boolean };
-type Metafile = {
-  inputs: Record<string, { bytes: number; imports: Import[] }>;
-  outputs: Record<string, { bytes: number; imports: Import[] }>;
-};
-type Compiler = {
-  version: string;
-  build(options: Record<string, unknown>): Promise<{ metafile?: Metafile; warnings: unknown[] }>;
-};
 const external = [
   "@opentelemetry/api",
   "@lydell/node-pty",
@@ -44,8 +42,35 @@ if (
   (process.platform !== "win32" || process.arch !== "arm64" || process.versions.node !== "22.23.2")
 )
   throw new Error("Windows application compilation requires canonical Node 22.23.2 ARM64.");
-const compiler = require(path.join(toolRoot, "node_modules", "esbuild")) as Compiler;
+const compiler = require(
+  path.join(toolRoot, "node_modules", "esbuild"),
+) as typeof import("esbuild");
 if (compiler.version !== "0.27.4") throw new Error("The reviewed compiler is esbuild 0.27.4.");
+const materializationBytes = fs.readFileSync(
+  path.join(path.dirname(source), "materialization-receipt.json"),
+);
+const materialization = JSON.parse(materializationBytes.toString("utf8")) as {
+  classification: string;
+  source: { sha256: string };
+  additionalPackages: {
+    package: string;
+    version: string;
+    sha256: string;
+    integrity: string;
+    bytes: number;
+  }[];
+};
+if (
+  materialization.classification !== "verified-application-build-inputs" ||
+  materialization.source.sha256 !==
+    "67ad539d9915efb63d5f294beeb9290b7172d23c92d8052110a9c8355f783458" ||
+  !materialization.additionalPackages?.some(
+    (item) =>
+      item.package === "@openclaw/brave-plugin" &&
+      item.sha256 === "f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c",
+  )
+)
+  throw new Error("The verified complete application input receipt is required.");
 const metadata = JSON.parse(fs.readFileSync(path.join(source, "package.json"), "utf8")) as {
   name: string;
   version: string;
@@ -60,7 +85,11 @@ fs.mkdirSync(app);
 fs.mkdirSync(diagnostics);
 const sha256 = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
 const entry = path.join(source, "dist", "cli", "run-main.js");
-const adapter = `export async function runCli(argv = process.argv) {
+const syntaxApi = require(
+  path.join(source, "node_modules", "typescript"),
+) as typeof import("typescript");
+const pluginPlan = compiledPluginPlan(source, syntaxApi, compiler);
+const adapter = `${pluginPlan.prelude}export async function runCli(argv = process.argv) {
   __nemoPrepareAssetRoot();
   const upstream = await import(${JSON.stringify(entry.replaceAll("\\", "/"))});
   return await upstream.runCli(argv);
@@ -70,7 +99,7 @@ if (typeof require !== "undefined" && require.main === module) {
   runCli().catch(error => { console.error(error instanceof Error ? error.stack ?? error.message : String(error)); process.exitCode = 1; });
 }
 `;
-const banner = `let __nemoAssetDir, __nemoFilename, __nemoModuleUrl;
+const banner = `${pluginPlan.banner}\nlet __nemoAssetDir, __nemoFilename, __nemoModuleUrl;
 function __nemoPrepareAssetRoot() {
   const path = require("node:path");
   const root = process.env.OPENCLAW_COMPILED_ASSET_ROOT;
@@ -100,11 +129,9 @@ try {
     target: "node22.23",
     define: {
       __OPENCLAW_VERSION__: JSON.stringify(metadata.version),
-      "import.meta.url": "__nemoModuleUrl",
-      __dirname: "__nemoAssetDir",
-      __filename: "__nemoFilename",
     },
     banner: { js: banner },
+    plugins: [pluginPlan.plugin],
     external,
     metafile: true,
     sourcemap: "external",
@@ -170,6 +197,35 @@ try {
   const bridge = '"use strict"; module.exports = specifier => import(specifier);\n';
   fs.writeFileSync(path.join(app, "openclaw-dynamic-import.cjs"), bridge, { flag: "wx" });
   const code = Buffer.from(codeText);
+  publishPluginFacades(app, pluginPlan.entries);
+  const admittedPackages = stagePublishedResources(source, app);
+  const workerResult = await compiler.build({
+    entryPoints: [path.join(source, "dist/audit/audit-event-writer.worker.js")],
+    outfile: path.join(app, "dist/audit/audit-event-writer.worker.js"),
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    target: "node22.23",
+    external,
+    metafile: true,
+    define: { "import.meta.url": "__workerUrl" },
+    banner: { js: 'const __workerUrl=require("node:url").pathToFileURL(__filename).href;' },
+  });
+  fs.writeFileSync(
+    path.join(app, "dist/audit/package.json"),
+    JSON.stringify({ type: "commonjs" }) + "\n",
+    { flag: "wx" },
+  );
+  fs.writeFileSync(
+    path.join(diagnostics, "plugin-registry.json"),
+    JSON.stringify(pluginPlan.entries, null, 2) + "\n",
+    { flag: "wx" },
+  );
+  fs.writeFileSync(
+    path.join(diagnostics, "audit-worker-metafile.json"),
+    JSON.stringify(workerResult.metafile, null, 2) + "\n",
+    { flag: "wx" },
+  );
   fs.writeFileSync(
     path.join(output, "build-receipt.json"),
     JSON.stringify(
@@ -177,6 +233,7 @@ try {
         schemaVersion: 1,
         classification: "compiled-openclaw-code-unit",
         sourceVersion: metadata.version,
+        materializationReceiptSha256: sha256(materializationBytes),
         sourcePackageSha256: sha256(fs.readFileSync(path.join(source, "package.json"))),
         sourceLockSha256: sha256(fs.readFileSync(path.join(source, "npm-shrinkwrap.json"))),
         entrySourceSha256: sha256(fs.readFileSync(entry)),
@@ -201,7 +258,7 @@ try {
         externalPackages: external,
         optionalUninstalledPeer: "@opentelemetry/api",
         resourceContract:
-          "Module URLs resolve at the compiled app root; dynamic file/plugin/resource consumers require separate closure controls.",
+          "Original module-relative resource URLs are preserved under the sealed asset root; one shared compiled registry backs canonical plugin facades. Remaining tool/browser execution qualification stays separate.",
         runtimeClosureProven: false,
         windowsQualified: false,
         seaPrepared: false,
@@ -215,6 +272,52 @@ try {
     ) + "\n",
     { flag: "wx" },
   );
+  const resourceReceipt = {
+    schemaVersion: 1,
+    classification: "compiled-openclaw-resource-closure",
+    package: {
+      name: metadata.name,
+      version: metadata.version,
+      sourceArchiveSha256: "67ad539d9915efb63d5f294beeb9290b7172d23c92d8052110a9c8355f783458",
+      shrinkwrapSha256: sha256(fs.readFileSync(path.join(source, "npm-shrinkwrap.json"))),
+    },
+    compiler: {
+      receiptSha256: sha256(fs.readFileSync(path.join(output, "build-receipt.json"))),
+      mainSha256: sha256(code),
+      bridgeSha256: sha256(bridge),
+      pluginRegistryModuleCount: pluginPlan.entries.length,
+    },
+    files: resourceInventory(
+      app,
+      pluginPlan.entries.map((entry) => entry.path),
+    ),
+    controlUiRoot: "dist/control-ui",
+    canonicalPluginEntries: pluginPlan.entries,
+    admittedPackages,
+    additionalInputArchives: materialization.additionalPackages.map(
+      ({ package: name, version, sha256, integrity, bytes }) => ({
+        name,
+        version,
+        sha256,
+        integrity,
+        bytes,
+      }),
+    ),
+    absentOptionalPeers: ["@opentelemetry/api", "bufferutil", "utf-8-validate", "supports-color"],
+    closureAdmitted: false,
+    closureAdmissionMeaning:
+      "Reviewed selected gateway composition with no customer build/install fallback; independent of execution qualification. Pending final sidecar/tool and Windows checks.",
+    qualification: {
+      portableGatewayObserved: false,
+      windowsGatewayObserved: false,
+      modelTools: false,
+    },
+  };
+  fs.writeFileSync(
+    path.join(app, "openclaw-resource-closure.json"),
+    JSON.stringify(resourceReceipt, null, 2) + "\n",
+    { flag: "wx" },
+  );
   console.log(
     JSON.stringify({
       compiledInputs: Object.keys(result.metafile.inputs).length,
@@ -224,16 +327,20 @@ try {
     }),
   );
 } catch (error) {
-  fs.writeFileSync(
-    path.join(output, "build-failure.json"),
-    JSON.stringify(
-      {
-        classification: "application-compiler-failure",
-        error: error instanceof Error ? error.message : "Compilation failed.",
-      },
-      null,
-      2,
-    ) + "\n",
-  );
+  try {
+    fs.writeFileSync(
+      path.join(output, "build-failure.json"),
+      JSON.stringify(
+        {
+          classification: "application-compiler-failure",
+          error: error instanceof Error ? error.message : "Compilation failed.",
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  } catch {
+    /* Failure evidence must not replace the original compiler exception. */
+  }
   throw error;
 }

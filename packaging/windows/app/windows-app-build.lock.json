@@ -35,5 +35,16 @@
     "platform": "win32",
     "architecture": "arm64"
   },
-  "dependencyLifecycleScripts": "not executed by materializer; native build admission remains separate"
+  "dependencyLifecycleScripts": "not executed by materializer; native build admission remains separate",
+  "additionalPackages": [
+    {
+      "package": "@openclaw/brave-plugin",
+      "version": "2026.7.1",
+      "target": "plugins/brave",
+      "url": "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz",
+      "integrity": "sha512-7Z+GZ/6K6a8LlkTsWVnAZ1hv8EarORzHQvFHD7ekcg033FGJOXYPEZSbvvE3qR9vM+vnoZplNjMZ7vFMRcvQgw==",
+      "sha256": "f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c",
+      "bytes": 8149
+    }
+  ]
 }

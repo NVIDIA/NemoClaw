@@ -135,7 +135,14 @@ def main():
         archive = fetch(item, args.cache, deadline)
         inventory = extract(archive["archive"], args.output / "tools" / "node_modules" / item["package"])
         compiler.append({**archive, "package": item["package"], **inventory})
-    receipt = {"schemaVersion": 1, "classification": "verified-application-build-inputs", "portableProof": args.portable_proof, "source": source, "sourceInventory": source_inventory, "dependencyArchives": archives, "dependencies": dependencies, "compiler": compiler, "lifecycleScriptsExecuted": False, "runtimeReady": False, "lockSha256": hashlib.sha256(args.lock.read_bytes()).hexdigest()}
+    additional = []
+    for item in lock.get("additionalPackages", []):
+        target = safe_parts(item["target"])
+        require(target[:1] == ("plugins",), "Additional app inputs require the plugins namespace.")
+        archive = fetch(item, args.cache, deadline)
+        inventory = extract(archive["archive"], args.output.joinpath(*target))
+        additional.append({**archive, "package": item["package"], "version": item["version"], "target": item["target"], **inventory})
+    receipt = {"schemaVersion": 1, "classification": "verified-application-build-inputs", "portableProof": args.portable_proof, "source": source, "sourceInventory": source_inventory, "dependencyArchives": archives, "dependencies": dependencies, "compiler": compiler, "additionalPackages": additional, "lifecycleScriptsExecuted": False, "runtimeReady": False, "lockSha256": hashlib.sha256(args.lock.read_bytes()).hexdigest()}
     (args.output / "materialization-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     print(json.dumps({"packages": len(dependencies), "sourceRoot": str(package), "toolRoot": str(args.output / "tools"), "runtimeReady": False}))
 

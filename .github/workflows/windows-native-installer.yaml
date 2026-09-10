@@ -96,6 +96,22 @@ jobs:
             --app-root "$env:RUNNER_TEMP\compiled-windows-app\build\app" `
             --output "$env:RUNNER_TEMP\compiled-windows-app\controls"
           if ($LASTEXITCODE -ne 0) { throw 'The compiled Windows application controls failed.' }
+      - name: Verify the compiled dashboard and packaged resources in a real browser
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\compiled-windows-app"
+          $browsers = @(
+            "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
+          )
+          $browser = $browsers | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $browser) { throw 'The Windows runner has no preinstalled browser for dashboard validation.' }
+          & "$work\node\node.exe" --experimental-strip-types `
+            packaging/windows/app/test-compiled-openclaw-gateway.mts `
+            --app-root "$work\build\app" --output "$work\gateway-control" `
+            --browser-executable $browser
+          if ($LASTEXITCODE -ne 0) { throw 'The compiled Windows dashboard or resource control failed.' }
       - name: Prepare the pinned executable resource injector
         shell: pwsh
         run: |
@@ -151,6 +167,7 @@ jobs:
           name: compiled-windows-application-diagnostics-${{ github.sha }}
           path: |
             ${{ runner.temp }}/compiled-windows-app/controls/
+            ${{ runner.temp }}/compiled-windows-app/gateway-control/
             ${{ runner.temp }}/compiled-windows-app/workers/build.json
             ${{ runner.temp }}/compiled-windows-app/workers/source-adaptation.json
             ${{ runner.temp }}/compiled-windows-app/executable/*.json

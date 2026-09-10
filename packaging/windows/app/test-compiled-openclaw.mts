@@ -10,7 +10,7 @@ function argument(name: string) {
   if (index < 0 || !process.argv[index + 1]) throw new Error(`Missing ${name}`);
   return path.resolve(process.argv[index + 1]);
 }
-const app = argument("--app-root");
+const inputApp = argument("--app-root");
 const output = argument("--output");
 const portable = process.argv.includes("--portable-proof");
 if (
@@ -19,12 +19,12 @@ if (
 )
   throw new Error("Compiled app controls require the canonical Windows ARM64 Node.");
 assert.equal(fs.existsSync(output), false, "Control output must be fresh.");
-assert.equal(
-  fs.existsSync(path.join(app, "node_modules")),
-  false,
-  "These code-unit controls must not borrow a neighboring dependency tree.",
-);
 fs.mkdirSync(output, { recursive: true });
+const app = path.join(output, "isolated-code-unit");
+fs.mkdirSync(app);
+for (const name of ["openclaw-app.cjs", "openclaw-dynamic-import.cjs"])
+  fs.copyFileSync(path.join(inputApp, name), path.join(app, name), fs.constants.COPYFILE_EXCL);
+assert.equal(fs.existsSync(path.join(app, "node_modules")), false);
 const state = path.join(output, "state");
 fs.mkdirSync(state);
 const entry = path.join(app, "openclaw-app.cjs");
@@ -154,6 +154,8 @@ fs.writeFileSync(
       portableProof: portable,
       neighboringDependencyTreeAbsent: true,
       sourceTreeIsolationVerified: false,
+      originalBuildTreeAccess:
+        "Not asserted by this script; a separate OS-denied control records that boundary.",
       controls: results,
       runtimeClosureProven: false,
       agentResponseQualified: false,
