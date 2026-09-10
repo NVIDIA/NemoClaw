@@ -3,7 +3,6 @@
 
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
@@ -15,6 +14,7 @@ import {
   agentRuntime,
   buildContextFingerprint,
   captureResolvedRebuildFixture,
+  configIo,
   createHarnessTempDir,
   createRebuildFlowSession,
   destroy,
@@ -30,9 +30,11 @@ import {
   listHarnessRebuildBackups,
   loadRebuildSandbox,
   mcpBridge,
+  mcpBridgePolicy,
   mcpBridgeProvider,
   mcpBridgeProviderInspection,
   mcpBridgeSource,
+  mcpBridgeState,
   messaging,
   messagingHostForwardLifecycle,
   mutableConfigPerms,
@@ -986,7 +988,6 @@ export function createRebuildFlowHarness(overrides: SourceBackedRebuildOverrides
     workspace: "default",
   });
   if (overrides.mcpRegistry !== undefined) {
-    const configIo = sourceRequire("../../src/lib/state/config-io.ts");
     vi.spyOn(configIo, "readConfigFile").mockReturnValue(overrides.mcpRegistry);
   }
   const nativeMcpSources = Object.fromEntries(
@@ -1111,12 +1112,8 @@ export function createRebuildFlowHarness(overrides: SourceBackedRebuildOverrides
 const migrationRuntime = { gatewayName: "nemoclaw", workspace: "default" };
 const recoveryTestTitle =
   "resumes explicit legacy migration from a durable handoff in a fresh process";
-const sourceRequire = createRequire(import.meta.url);
 
 function prepareExplicitMigrationObservation(entries: readonly McpSourceEntry[]) {
-  const state = sourceRequire("../../src/lib/actions/sandbox/mcp-bridge-state.ts");
-  const policy = sourceRequire("../../src/lib/actions/sandbox/mcp-bridge-policy.ts");
-  const configIo = sourceRequire("../../src/lib/state/config-io.ts");
   vi.spyOn(configIo, "readConfigFile").mockReturnValue({ sandboxes: {} });
   const native = Object.fromEntries(
     entries.filter((entry) => entry.source === "native").map((entry) => [entry.server, entry]),
@@ -1124,16 +1121,16 @@ function prepareExplicitMigrationObservation(entries: readonly McpSourceEntry[])
   const legacy = Object.fromEntries(
     entries.filter((entry) => entry.source === "legacy").map((entry) => [entry.server, entry]),
   );
-  vi.spyOn(state, "getSandboxAgent").mockReturnValue({
+  vi.spyOn(mcpBridgeState, "getSandboxAgent").mockReturnValue({
     name: "langchain-deepagents-code",
     mcpCapability: { support: "bridge", adapter: "deepagents-config" },
   });
-  vi.spyOn(state, "getBridgeAdapter").mockReturnValue("deepagents-config");
+  vi.spyOn(mcpBridgeState, "getBridgeAdapter").mockReturnValue("deepagents-config");
   vi.spyOn(mcpBridgeSource, "inspectLegacyBridgeState").mockResolvedValue({
     bridges: legacy,
     sources: { native, legacy },
   });
-  vi.spyOn(policy, "getPolicyPresence").mockResolvedValue(true);
+  vi.spyOn(mcpBridgePolicy, "getPolicyPresence").mockResolvedValue(true);
   vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("match");
   vi.spyOn(mcpBridgeProvider, "providerAttached").mockResolvedValue(true);
   vi.spyOn(mcpBridgeProvider, "assertMcpProviderRecoverable").mockResolvedValue({ exists: true });
