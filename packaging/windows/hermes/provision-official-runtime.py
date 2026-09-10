@@ -150,6 +150,20 @@ def artifact_mirror(inputs):
             primary.add_note(f"Artifact mirror cleanup also failed: {error}")
 
 
+def windows_taskkill(environment):
+    # os.environ is case-insensitive on Windows, but its copy() is a plain
+    # dictionary with uppercase keys. Accept the same Windows key identity.
+    roots = {
+        value for name, value in environment.items() if name.upper() == "SYSTEMROOT"
+    }
+    if len(roots) != 1:
+        raise ValueError("Windows process cleanup requires one unambiguous SystemRoot")
+    root = roots.pop()
+    if not root or not Path(root).is_absolute():
+        raise ValueError("Windows process cleanup requires an absolute SystemRoot")
+    return Path(root) / "System32" / "taskkill.exe"
+
+
 def run_owned(executable, args, environment, cwd, evidence, label, timeout=600):
     stdout_path = Path(evidence) / f"{label}.stdout.log"
     stderr_path = Path(evidence) / f"{label}.stderr.log"
@@ -160,6 +174,7 @@ def run_owned(executable, args, environment, cwd, evidence, label, timeout=600):
     started = time.monotonic()
     with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
         try:
+            killer = windows_taskkill(environment) if os.name == "nt" else None
             process = subprocess.Popen(
                 [str(executable), *map(str, args)],
                 env=environment,
@@ -200,11 +215,6 @@ def run_owned(executable, args, environment, cwd, evidence, label, timeout=600):
             if process is not None and process.poll() is None:
                 try:
                     if os.name == "nt":
-                        killer = (
-                            Path(environment["SystemRoot"])
-                            / "System32"
-                            / "taskkill.exe"
-                        )
                         subprocess.run(
                             [str(killer), "/PID", str(process.pid), "/T", "/F"],
                             env=environment,
@@ -224,6 +234,7 @@ def run_owned(executable, args, environment, cwd, evidence, label, timeout=600):
         "executable": str(executable),
         "arguments": list(map(str, args)),
         "elapsedSeconds": time.monotonic() - started,
+        "processId": None if process is None else process.pid,
         "exitCode": None if process is None else process.poll(),
         "stdout": str(stdout_path),
         "stderr": str(stderr_path),

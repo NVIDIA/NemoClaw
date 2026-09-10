@@ -48,11 +48,16 @@ deadlines or the default feasibility probe.
 Node's reported cache directory, exit/output, elapsed time and post-exit cache
 count/bytes/manifest digest are retained per sample. File hashing is outside the
 command timer and warms metadata, so all samples explicitly say `osCold:false`.
+The baseline installed Node reports22.22.3; the build controller uses a separate
+pinned Node version. OpenClaw may respawn once to select its own versioned cache
+subdirectory. The fixed preload observes each process, and command elapsed time
+includes this upstream behavior and exit-time flushing. These self-reported
+observations are not an OS process-tree attestation.
 An enabled directory and existing files do not prove individual V8 cache hits;
 `cacheHitAttributionVerified` stays false without corresponding trace evidence.
 These are command measurements, not dashboard startup or a deployment decision.
 Dashboard A/B still requires the actual immutable launch route. See the exact
-[Node22.23.2 compile-cache contract](https://github.com/nodejs/node/blob/v22.23.2/doc/api/module.md#module-compile-cache);
+[Node22.22.3 compile-cache contract](https://github.com/nodejs/node/blob/v22.22.3/doc/api/module.md#module-compile-cache);
 the newer portable/read-only options are not assumed available in this version.
 
 ## Required CI wiring

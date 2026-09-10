@@ -134,6 +134,7 @@ async function main(): Promise<void> {
   let create: ChildProcess | null = null;
   let environment: NodeJS.ProcessEnv = {};
   let created = false;
+  let workloadResultObserved = false;
   let primaryError: unknown = null;
   const cleanupErrors: unknown[] = [];
   const logHandles: number[] = [];
@@ -413,11 +414,13 @@ async function main(): Promise<void> {
       runtimeBytesCopied: number;
     };
     receipt.workload = result;
+    workloadResultObserved = result.nonce === nonce && result.schemaVersion === 1;
     if (cacheExperiment) {
       const cacheResult = readFixtureRecord(path.join(shareRoot, "compile-cache-result.json")) as {
         passed?: boolean;
         samples?: unknown[];
         runtimeManifestSha256?: string;
+        error?: string;
       };
       receipt.compileCache = cacheResult;
       if (
@@ -426,7 +429,8 @@ async function main(): Promise<void> {
         cacheResult.runtimeManifestSha256 !== cacheManifest
       )
         throw new Error(
-          "The contained cache experiment did not complete all six actual command samples.",
+          cacheResult.error ??
+            "The contained cache experiment did not complete all six actual command samples.",
         );
     }
     if (
@@ -465,6 +469,30 @@ async function main(): Promise<void> {
       }
     }
   } finally {
+    // A failed, nonce-bound workload result still needs its executor teardown
+    // observed before deletion. Keep the workload exception primary.
+    if (
+      created &&
+      workloadResultObserved &&
+      !cleanup.workloadStopped &&
+      gateway &&
+      gateway.exitCode === null &&
+      gateway.signalCode === null
+    ) {
+      try {
+        receipt.completion = await lifecycle.waitForNativeMxcCompletion(
+          openshell,
+          environment,
+          sandboxName,
+          gateway,
+          null,
+          15_000,
+        );
+        cleanup.workloadStopped = true;
+      } catch (error) {
+        cleanupErrors.push({ action: "failed workload completion", ...errorDetail(error) });
+      }
+    }
     if (created) {
       try {
         await checked(["sandbox", "delete", sandboxName], "Deleting the owned component sandbox");

@@ -4,6 +4,7 @@
 """Portable behavior controls; actual Windows/MXC qualification is separate."""
 
 import importlib.util
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ import urllib.error
 import urllib.request
 import zipfile
 import sys
+import types
 
 
 def load(name, filename):
@@ -27,6 +29,7 @@ def load(name, filename):
 
 builder = load("official_builder", "provision-official-runtime.py")
 freezer = load("official_freezer", "official-runtime-inventory.py")
+openssl = load("official_openssl", "prepare-official-openssl.py")
 
 
 class BuildControls(unittest.TestCase):
@@ -107,6 +110,85 @@ class BuildControls(unittest.TestCase):
         self.assertIsNotNone(receipt["exitCode"])
         self.assertLess(receipt["elapsedSeconds"], 5)
         self.assertFalse(receipt["passed"])
+
+    def test_windows_cleanup_uses_copied_environment_and_reaps_real_child(self):
+        # The real Windows lane uses the actual System32 taskkill. The portable
+        # lane executes the same Windows branch with an owned native-script
+        # stand-in; it does not claim Windows API execution on another OS.
+        for module, label in [(builder, "runtime"), (openssl, "openssl")]:
+            with self.subTest(helper=label):
+                root = self.root / label
+                root.mkdir()
+                environment = {key.upper(): value for key, value in os.environ.items()}
+                patcher = contextlib.nullcontext()
+                if os.name != "nt":
+                    system = root / "system"
+                    (system / "System32").mkdir(parents=True)
+                    killer = system / "System32/taskkill.exe"
+                    killer.write_text(
+                        "#!" + sys.executable + "\n"
+                        "import os,signal,sys\n"
+                        "assert sys.argv[1]=='/PID' and sys.argv[3:]==['/T','/F']\n"
+                        "os.kill(int(sys.argv[2]),signal.SIGKILL)\n",
+                        encoding="utf-8",
+                    )
+                    killer.chmod(0o755)
+                    environment["SYSTEMROOT"] = str(system)
+                    patcher = mock.patch.object(
+                        module,
+                        "os",
+                        types.SimpleNamespace(**{**vars(os), "name": "nt"}),
+                    )
+                with patcher, self.assertRaises(TimeoutError):
+                    if label == "runtime":
+                        module.run_owned(
+                            sys.executable,
+                            ["-c", "import time;time.sleep(60)"],
+                            environment,
+                            root,
+                            root,
+                            "uppercase",
+                            timeout=0.1,
+                        )
+                    else:
+                        module.run(
+                            sys.executable,
+                            ["-c", "import time;time.sleep(60)"],
+                            root,
+                            environment,
+                            root,
+                            "uppercase",
+                            timeout=0.1,
+                        )
+                receipt = json.loads((root / "uppercase.process.json").read_text())
+                self.assertIsNotNone(receipt["exitCode"])
+                self.assertFalse(receipt["passed"])
+                self.assertEqual(
+                    receipt.get("cleanupErrors", receipt.get("cleanupFailures")), []
+                )
+                # This exact unlink failed on Windows while the original child
+                # still held stderr. Do not ignore it or lengthen the timeout.
+                (root / "uppercase.stderr.log").unlink()
+
+    def test_windows_cleanup_root_is_case_insensitive_and_unambiguous(self):
+        for module in (builder, openssl):
+            with self.subTest(helper=module.__name__):
+                expected = self.root / "System32/taskkill.exe"
+                self.assertEqual(
+                    module.windows_taskkill({"SYSTEMROOT": str(self.root)}), expected
+                )
+                self.assertEqual(
+                    module.windows_taskkill({"SystemRoot": str(self.root)}), expected
+                )
+                with self.assertRaisesRegex(ValueError, "unambiguous"):
+                    module.windows_taskkill(
+                        {
+                            "SystemRoot": str(self.root),
+                            "SYSTEMROOT": str(self.root / "foreign"),
+                        }
+                    )
+                with self.assertRaisesRegex(ValueError, "unambiguous"):
+                    module.windows_taskkill({})
 
     def test_receipt_write_failure_does_not_replace_actual_child_failure(self):
         with mock.patch.object(

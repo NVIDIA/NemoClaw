@@ -95,3 +95,41 @@ test("a real failed command persists the first failed stage without proceeding t
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("actual Node parent and child cache observations retain the upstream-style respawn cost", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "node-cache-respawn-"));
+  try {
+    const entry = path.join(root, "fixture.mjs");
+    fs.writeFileSync(
+      entry,
+      `import {spawnSync} from "node:child_process";
+import path from "node:path";
+if (process.env.NEMOCLAW_CACHE_FIXTURE_CHILD === "1") process.stdout.write("local\\n");
+else {
+  const env = {...process.env,NEMOCLAW_CACHE_FIXTURE_CHILD:"1"};
+  if (env.NODE_COMPILE_CACHE) env.NODE_COMPILE_CACHE=path.join(env.NODE_COMPILE_CACHE,"package-version");
+  const child=spawnSync(process.execPath,[...process.execArgv,process.argv[1]],{env,stdio:"inherit"});
+  process.exitCode=child.status??1;
+}
+`,
+    );
+    const receipt = await runCompileCacheExperiment({
+      node: process.execPath,
+      entry,
+      home: root,
+      environment: process.env,
+      evidenceRoot: root,
+      runtimeManifestSha256: "f".repeat(64),
+    });
+    assert.equal(receipt.passed, true);
+    assert.equal(receipt.upstreamRespawnOverheadIncluded, true);
+    for (const sample of receipt.samples) {
+      const states = sample.states as { processId: number; parentProcessId: number }[];
+      assert.equal(states.length, 2);
+      assert.equal(sample.preloadObservationCount, 2);
+      assert.equal(states[1]!.parentProcessId, states[0]!.processId);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

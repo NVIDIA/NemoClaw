@@ -94,6 +94,20 @@ def extract(archive, target):
                     raise ValueError("Build archive contains a non-file entry")
 
 
+def windows_taskkill(environment):
+    # os.environ is case-insensitive on Windows, but its copy() is a plain
+    # dictionary with uppercase keys. Accept the same Windows key identity.
+    roots = {
+        value for name, value in environment.items() if name.upper() == "SYSTEMROOT"
+    }
+    if len(roots) != 1:
+        raise ValueError("Windows process cleanup requires one unambiguous SystemRoot")
+    root = roots.pop()
+    if not root or not Path(root).is_absolute():
+        raise ValueError("Windows process cleanup requires an absolute SystemRoot")
+    return Path(root) / "System32" / "taskkill.exe"
+
+
 def run(executable, args, cwd, environment, evidence, label, timeout):
     started = time.monotonic()
     process = None
@@ -104,6 +118,7 @@ def run(executable, args, cwd, environment, evidence, label, timeout):
     print("[OpenSSL prerequisite] " + label, flush=True)
     with stdout.open("xb") as out, stderr.open("xb") as err:
         try:
+            killer = windows_taskkill(environment) if os.name == "nt" else None
             process = subprocess.Popen(
                 [str(executable), *map(str, args)],
                 cwd=cwd,
@@ -151,10 +166,7 @@ def run(executable, args, cwd, environment, evidence, label, timeout):
                     if os.name == "nt":
                         subprocess.run(
                             [
-                                str(
-                                    Path(environment["SystemRoot"])
-                                    / "System32/taskkill.exe"
-                                ),
+                                str(killer),
                                 "/PID",
                                 str(process.pid),
                                 "/T",
@@ -176,6 +188,7 @@ def run(executable, args, cwd, environment, evidence, label, timeout):
         "executable": str(executable),
         "arguments": list(map(str, args)),
         "elapsedSeconds": time.monotonic() - started,
+        "processId": None if process is None else process.pid,
         "exitCode": None if process is None else process.poll(),
         "cleanupFailures": cleanup,
         "passed": primary is None and not cleanup,

@@ -88,7 +88,7 @@ export async function runCompileCacheExperiment(options: {
   const preload = path.join(root, "observe-cache.mjs");
   fs.writeFileSync(
     preload,
-    'import {getCompileCacheDir} from "node:module";\nprocess.stdout.write("NEMOCLAW_CACHE_STATE="+JSON.stringify({nodeVersion:process.version,cacheDirectory:getCompileCacheDir()??null})+"\\n");\n',
+    'import {getCompileCacheDir} from "node:module";\nprocess.stdout.write("NEMOCLAW_CACHE_STATE="+JSON.stringify({nodeVersion:process.version,processId:process.pid,parentProcessId:process.ppid,executable:process.execPath,cacheDirectory:getCompileCacheDir()??null})+"\\n");\n',
     { flag: "wx" },
   );
   const samples: Record<string, unknown>[] = [];
@@ -123,16 +123,23 @@ export async function runCompileCacheExperiment(options: {
       // Cache inventory occurs only after the command has closed and outside its
       // timer. It warms filesystem metadata; every subsequent row is labeled warm.
       const after = result.closed ? inventory(cacheRoot) : null;
-      const marker = result.stdout.match(/^NEMOCLAW_CACHE_STATE=(.+)\r?$/mu);
-      const state = marker
-        ? (JSON.parse(marker[1]!) as { nodeVersion: string; cacheDirectory: string | null })
-        : null;
-      const output = result.stdout.replace(/^NEMOCLAW_CACHE_STATE=.+\r?\n/mu, "").trim();
+      const observations = [...result.stdout.matchAll(/^NEMOCLAW_CACHE_STATE=(.+)\r?$/gmu)];
+      const states: {
+        nodeVersion: string;
+        processId: number;
+        parentProcessId: number;
+        executable: string;
+        cacheDirectory: string | null;
+      }[] = [];
+      // Keep the literal command outcome before parsing observations, including a
+      // malformed record. Upstream's cache-specific respawn is not bypassed.
+      const output = result.stdout.replace(/^NEMOCLAW_CACHE_STATE=.+\r?\n/gmu, "").trim();
       const row = {
         label,
         enabled,
         command: result,
-        state,
+        states,
+        preloadObservationCount: observations.length,
         cacheBefore: before,
         cacheAfter: after,
         cacheReuseVerified: false,
@@ -140,6 +147,27 @@ export async function runCompileCacheExperiment(options: {
         runtimeBytesCopied: 0,
       };
       samples.push(row);
+      if (observations.length < 1 || observations.length > 4)
+        throw new Error(`The cache process observations exceeded their bound during ${label}.`);
+      for (const observation of observations) {
+        const state = JSON.parse(observation[1]!) as (typeof states)[number];
+        if (
+          !state ||
+          !Number.isSafeInteger(state.processId) ||
+          state.processId < 1 ||
+          !Number.isSafeInteger(state.parentProcessId) ||
+          state.parentProcessId < 1 ||
+          typeof state.nodeVersion !== "string" ||
+          typeof state.executable !== "string" ||
+          path.resolve(state.executable).toLowerCase() !==
+            path.resolve(options.node).toLowerCase() ||
+          (state.cacheDirectory !== null && typeof state.cacheDirectory !== "string")
+        )
+          throw new Error(`The cache process observation is invalid during ${label}.`);
+        states.push(state);
+      }
+      if (new Set(states.map((state) => state.processId)).size !== states.length)
+        throw new Error(`A cache process observation was duplicated during ${label}.`);
       if (
         result.exitCode !== 0 ||
         !result.closed ||
@@ -148,25 +176,31 @@ export async function runCompileCacheExperiment(options: {
         result.spawnError ||
         result.observerError ||
         result.outputExceeded ||
-        output !== "local" ||
-        !state
+        output !== "local"
       )
         throw new Error(`The contained compile-cache command failed during ${label}.`);
       if (enabled) {
         if (
-          !state.cacheDirectory ||
-          !path
-            .resolve(state.cacheDirectory)
-            .toLowerCase()
-            .startsWith(path.resolve(cacheRoot).toLowerCase() + path.sep) ||
+          states.some(
+            (state) =>
+              !state.cacheDirectory ||
+              !path
+                .resolve(state.cacheDirectory)
+                .toLowerCase()
+                .startsWith(path.resolve(cacheRoot).toLowerCase() + path.sep),
+          ) ||
           !after?.fileCount
         )
           throw new Error(`Node did not enable and populate the owned cache during ${label}.`);
-      } else if (state.cacheDirectory !== null || JSON.stringify(before) !== JSON.stringify(after))
-        throw new Error(`The disabled sample accessed a compile-cache directory during ${label}.`);
-      if (
-        samples.some((sample) => (sample.state as typeof state)?.nodeVersion !== state.nodeVersion)
+      } else if (
+        states.some((state) => state.cacheDirectory !== null) ||
+        JSON.stringify(before) !== JSON.stringify(after)
       )
+        throw new Error(`The disabled sample accessed a compile-cache directory during ${label}.`);
+      const versions = samples.flatMap((sample) =>
+        (sample.states as typeof states).map((state) => state.nodeVersion),
+      );
+      if (new Set(versions).size !== 1)
         throw new Error("The experiment changed Node versions between samples.");
     }
     if (
@@ -189,6 +223,9 @@ export async function runCompileCacheExperiment(options: {
     samples,
     cacheHitAttributionVerified: false,
     processExitFlushIncluded: true,
+    upstreamRespawnOverheadIncluded: true,
+    processObservations:
+      "self-reported by the same fixed preload; not an OS process-tree attestation",
     preloadAppliedToEverySample: true,
     osCold: false,
     modelRequests: 0,
