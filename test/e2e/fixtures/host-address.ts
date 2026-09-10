@@ -3,7 +3,7 @@
 
 import { isIP } from "node:net";
 
-import { prepareConfiguredGatewayHostRuntime } from "../../../src/lib/onboard/docker-driver-gateway-env.ts";
+import { observeConfiguredGatewayHostRuntime } from "../../../src/lib/onboard/docker-driver-gateway-env.ts";
 import { isPortableExperimentalProfile } from "../../../src/lib/onboard/docker-driver-platform.ts";
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
 import { assertExitZero } from "./clients/command.ts";
@@ -30,7 +30,7 @@ export function configuredRuntimeProviderHostAddress(
   if (!environment.NEMOCLAW_GATEWAY_RUNTIME || isPortableExperimentalProfile(environment)) {
     return null;
   }
-  return prepareConfiguredGatewayHostRuntime({ environment, platform }).sandboxHostAddress;
+  return observeConfiguredGatewayHostRuntime({ environment, platform }).sandboxHostAddress;
 }
 
 export function parseHostAddressProbe(
@@ -65,7 +65,9 @@ export async function discoverHostAddress(
   const runtimeProviderAddress = configuredRuntimeProviderHostAddress(environment, platform);
   if (runtimeProviderAddress !== null) {
     if (isIP(runtimeProviderAddress) !== 4) {
-      throw new Error(`runtime provider returned invalid sandbox host address: ${runtimeProviderAddress}`);
+      throw new Error(
+        `runtime provider returned invalid sandbox host address: ${runtimeProviderAddress}`,
+      );
     }
     return { source: "runtime-provider", address: runtimeProviderAddress, probe: null };
   }

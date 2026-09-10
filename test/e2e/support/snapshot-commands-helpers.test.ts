@@ -120,8 +120,7 @@ describe("snapshot restored-gateway probe classification", () => {
     [
       {
         exitCode: 0,
-        stdout:
-          '{"status":"error","result":{"payloads":[{"text":"secret-output"}],"meta":{}}}',
+        stdout: '{"status":"error","result":{"payloads":[{"text":"secret-output"}],"meta":{}}}',
         stderr: "",
       },
       "invalid-response",
@@ -163,9 +162,9 @@ describe("snapshot restore result classification", () => {
         exitCode: 1,
         stdout: "",
         stderr:
-          "restoring 'source' as 'clone' requires managed-profile clone rebind. Destination 'clone' was not changed. secret-output",
+          "restoring 'source' into 'clone' is not available because 'source' uses a NemoClaw-managed image. Destination 'clone' was not changed. secret-output",
       },
-      "managed-clone-rebind-required",
+      "managed-clone-not-available",
     ],
     [
       {
@@ -187,7 +186,7 @@ describe("snapshot restore result classification", () => {
 
 describe("snapshot clone restore expectation", () => {
   it.each([
-    ["managed-image", "managed-clone-rebind-required"],
+    ["managed-image", "managed-clone-not-available"],
     ["local-dockerfile", "restored"],
   ] as const)("maps the %s setup independently of snapshot output", (source, expected) => {
     expect(expectedSnapshotCloneRestoreResult(source)).toBe(expected);

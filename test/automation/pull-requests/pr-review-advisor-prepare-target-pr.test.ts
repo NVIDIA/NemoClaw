@@ -93,7 +93,7 @@ describe("prepareTargetPr", () => {
     });
   });
 
-  it("fetches, verifies SHAs, and exports env on the pull_request_target path", () => {
+  it("fetches, verifies SHAs, and exports env for an event-bound PR revision", () => {
     const { gitCalls, env, options } = harness({ base: BASE_SHA, head: HEAD_SHA });
 
     const result = prepareTargetPr(

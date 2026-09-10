@@ -271,7 +271,7 @@ export async function setupRemoteProviderInference(
           proxy?.baseUrl ?? gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
         let providerResult;
         if (reuseGatewayCredentialWithoutLocalKey) {
-          providerResult = reuseRegisteredProviderWithGatewayEndpoint({
+          providerResult = await reuseRegisteredProviderWithGatewayEndpoint({
             provider,
             providerType: config.providerType,
             credentialEnv: resolvedCredentialEnv,
@@ -336,7 +336,7 @@ export async function setupRemoteProviderInference(
                 compactText,
               });
               providerResult = replaced.ok
-                ? upsertProvider(
+                ? await upsertProvider(
                     provider,
                     "openai",
                     resolvedCredentialEnv,
@@ -350,7 +350,7 @@ export async function setupRemoteProviderInference(
                   };
             }
           } else {
-            providerResult = upsertProvider(
+            providerResult = await upsertProvider(
               provider,
               config.providerType,
               resolvedCredentialEnv,

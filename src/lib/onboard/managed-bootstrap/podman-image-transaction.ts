@@ -438,7 +438,12 @@ function boundedBootstrapStartLogFailure(
     if (copied.status !== 0 || copied.error) return null;
     descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     const stat = fs.fstatSync(descriptor);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > START_LOG_MAX_BYTES) {
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      stat.nlink !== 1 ||
+      stat.size > START_LOG_MAX_BYTES
+    ) {
       return null;
     }
     const uid = process.getuid?.();

@@ -98,10 +98,7 @@ describe("provider inference review recovery", () => {
         model: "gpt-5",
         credentialEnv: "OPENAI_API_KEY",
       });
-    const prompt = vi
-      .fn()
-      .mockResolvedValueOnce("2")
-      .mockResolvedValueOnce("1");
+    const prompt = vi.fn().mockResolvedValueOnce("2").mockResolvedValueOnce("1");
     const { deps, calls } = createDeps({
       isNonInteractive: () => false,
       prompt,
@@ -139,10 +136,7 @@ describe("provider inference review recovery", () => {
       .fn()
       .mockResolvedValueOnce("first-name")
       .mockResolvedValueOnce("edited-name");
-    const prompt = vi
-      .fn()
-      .mockResolvedValueOnce("3")
-      .mockResolvedValueOnce("1");
+    const prompt = vi.fn().mockResolvedValueOnce("3").mockResolvedValueOnce("1");
     const { deps, calls } = createDeps({
       isNonInteractive: () => false,
       prompt,

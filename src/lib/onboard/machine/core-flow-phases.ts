@@ -6,6 +6,7 @@ import {
   normalizeInferenceEndpointSource,
 } from "../../inference/selection";
 import type { WebSearchConfig } from "../../inference/web-search";
+import { isN1xManagedVllmProviderModel } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
 import type {
@@ -332,7 +333,12 @@ export function createSandboxOnboardFlowPhase<
       gatewayName: options.gatewayName,
       hermesPortableLifecycle: options.hermesPortableLifecycle === true,
       apfInterceptorRequested: options.apfInterceptorRequested === true,
+      externalComponentRegistered:
+        context.externalComponent !== null && context.externalComponent !== undefined,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
+      deferredN1xManagedVllmPreviewIntent:
+        context.deferredN1xManagedVllmPreviewAccepted === true &&
+        isN1xManagedVllmProviderModel(context.provider, context.model),
       deferSandboxEffectsUntilIdentityVerification: options.apfInterceptorRequested === true,
 
       recreateJournalTargetIntentFingerprint: options.recreateJournalTargetIntentFingerprint,

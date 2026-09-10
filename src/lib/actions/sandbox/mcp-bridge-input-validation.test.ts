@@ -8,10 +8,10 @@ import {
   SUBPROCESS_ENV_ALLOWED_PREFIXES,
 } from "../../subprocess-env";
 import {
-  buildMcpBridgeProviderArgs,
   MCP_SERVER_URL_MAX_LENGTH,
   normalizeMcpServerUrl,
   parseMcpAddArgs,
+  parseMcpUpdateArgs,
   resolveCredentialEnv,
 } from "./mcp-bridge";
 import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.106.json";
@@ -48,6 +48,89 @@ describe("MCP CLI input validation", () => {
       url: "https://api.githubcopilot.com/mcp/",
       env: [{ name: "GITHUB_TOKEN" }],
     });
+  });
+
+  it("parses and canonicalizes repeated denied-tool selectors (#11115)", () => {
+    const parsed = parseMcpAddArgs([
+      "doordash",
+      "--url",
+      "https://mcp.example.test/mcp",
+      "--env",
+      "DOORDASH_MCP_TOKEN",
+      "--deny-tool",
+      "doordash_submit_order",
+      "--deny-tool=admin_*",
+    ]);
+
+    expect(parsed.denyTools).toEqual(["admin_*", "doordash_submit_order"]);
+  });
+
+  it.each(["", "tool name", "tool/name", "a".repeat(129)])(
+    "rejects invalid denied-tool selector %# before registration (#11115)",
+    (tool) => {
+      expect(() =>
+        parseMcpAddArgs([
+          "github",
+          "--url",
+          "https://mcp.example.test/mcp",
+          "--env",
+          "GITHUB_TOKEN",
+          "--deny-tool",
+          tool,
+        ]),
+      ).toThrow(/Invalid MCP denied-tool selector/);
+    },
+  );
+
+  it("rejects duplicate denied-tool selectors (#11115)", () => {
+    expect(() =>
+      parseMcpAddArgs([
+        "github",
+        "--url",
+        "https://mcp.example.test/mcp",
+        "--env",
+        "GITHUB_TOKEN",
+        "--deny-tool",
+        "delete_*",
+        "--deny-tool=delete_*",
+      ]),
+    ).toThrow(/Duplicate --deny-tool/);
+  });
+
+  it("bounds the denied-tool selector count (#11115)", () => {
+    expect(() =>
+      parseMcpUpdateArgs([
+        "github",
+        ...Array.from({ length: 501 }, (_, index) => ["--deny-tool", `tool_${index}`]).flat(),
+      ]),
+    ).toThrow(/at most 500 selectors/);
+  });
+
+  it("parses replacement and clear forms for denied-tool updates (#11115)", () => {
+    expect(
+      parseMcpUpdateArgs([
+        "doordash",
+        "--deny-tool",
+        "doordash_submit_order",
+        "--deny-tool=admin_*",
+      ]),
+    ).toEqual({ server: "doordash", denyTools: ["admin_*", "doordash_submit_order"] });
+    expect(parseMcpUpdateArgs(["doordash", "--clear-deny-tools"])).toEqual({
+      server: "doordash",
+      denyTools: [],
+    });
+  });
+
+  it("requires one denied-tool update mode (#11115)", () => {
+    expect(() => parseMcpUpdateArgs(["doordash"])).toThrow(/Usage: nemoclaw.*mcp update/);
+    expect(() =>
+      parseMcpUpdateArgs([
+        "doordash",
+        "--deny-tool",
+        "doordash_submit_order",
+        "--clear-deny-tools",
+      ]),
+    ).toThrow(/not both/);
   });
 
   it("normalizes one exact trusted-private host from a repeated add option (#8267)", () => {
@@ -123,11 +206,6 @@ describe("MCP CLI input validation", () => {
       expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(
         /would be skipped instead of attached/,
       );
-      expect(() =>
-        buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
-          [name]: "host-only-secret",
-        }),
-      ).toThrow(/reserved for OpenShell credential revisions/);
     },
   );
 
@@ -147,11 +225,6 @@ describe("MCP CLI input validation", () => {
         parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", ...envArgs]),
       ).toThrow(error);
       expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(error);
-      expect(() =>
-        buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
-          [name]: "host-only-secret",
-        }),
-      ).toThrow(error);
     },
   );
 
@@ -189,11 +262,6 @@ describe("MCP CLI input validation", () => {
     expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(
       /could alter or prevent agent commands/,
     );
-    expect(() =>
-      buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
-        [name]: "host-only-secret",
-      }),
-    ).toThrow(/reserved for sandbox runtime control/);
   });
 
   it("rejects host stdio commands", () => {

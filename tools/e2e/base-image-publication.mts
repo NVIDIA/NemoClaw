@@ -24,6 +24,7 @@ const MAX_CHANGED_PATHS = 6_000;
 const PAGINATION_ATTEMPTS = 3;
 const REQUEST_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 20_000;
+const MAX_REQUEST_BUDGET_MS = 3_000_000;
 const MAX_RETRY_DELAY_MS = 10_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/u;
@@ -86,14 +87,31 @@ export const REQUIRED_PUBLISHER_JOBS = [
   "Build and push Hermes base image",
   "Build and push Deep Agents Code base image",
 ] as const;
-const PUBLISHER_JOB_ALIASES = new Map<string, (typeof REQUIRED_PUBLISHER_JOBS)[number]>([
+const REQUIRED_MANUAL_MANAGED_IMAGE_JOB =
+  "Publish complete managed images / Promote complete multi-platform managed image cohort";
+type RequiredPublisherJob =
+  | (typeof REQUIRED_PUBLISHER_JOBS)[number]
+  | typeof REQUIRED_MANUAL_MANAGED_IMAGE_JOB;
+const PUBLISHER_JOB_ALIASES = new Map<string, RequiredPublisherJob>([
   ["Build and push OpenClaw base image", "Build and push OpenClaw base image"],
   ["Manifests / OpenClaw", "Build and push OpenClaw base image"],
   ["Build and push Hermes base image", "Build and push Hermes base image"],
   ["Manifests / Hermes", "Build and push Hermes base image"],
   ["Build and push Deep Agents Code base image", "Build and push Deep Agents Code base image"],
   ["Manifests / Deep Agents Code", "Build and push Deep Agents Code base image"],
+  [REQUIRED_MANUAL_MANAGED_IMAGE_JOB, REQUIRED_MANUAL_MANAGED_IMAGE_JOB],
 ]);
+
+class IneligibleManualManagedImagePromotionError extends Error {}
+
+function requiredPublisherIneligibilityError(
+  requiredName: RequiredPublisherJob,
+  message: string,
+): Error {
+  return requiredName === REQUIRED_MANUAL_MANAGED_IMAGE_JOB
+    ? new IneligibleManualManagedImagePromotionError(message)
+    : new Error(message);
+}
 
 type JsonRecord = Record<string, unknown>;
 
@@ -107,6 +125,7 @@ export interface FirstParentHistory {
 export interface PublicationRun {
   id: number;
   attempt: number;
+  event: "push" | "workflow_dispatch";
   workflowId: number;
   headSha: string;
   status: string;
@@ -120,7 +139,7 @@ export type PublicationSelection =
 
 export interface PublicationWaitOptions {
   history: FirstParentHistory;
-  request: (path: string) => Promise<unknown>;
+  request: (path: string, budgetMs?: number) => Promise<unknown>;
   requireWorkflowSuccess?: boolean;
   selectNearestSuccessfulRun?: boolean;
   waitMs: number;
@@ -149,6 +168,7 @@ export interface GithubRequestOptions {
   now?: () => number;
   attempts?: number;
   timeoutMs?: number;
+  budgetMs?: number;
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -427,7 +447,12 @@ export function validateWorkflow(payload: unknown): number {
   return workflowId;
 }
 
-function validateRun(value: unknown, index: number, expectedWorkflowId: number): PublicationRun {
+function validateRun(
+  value: unknown,
+  index: number,
+  expectedWorkflowId: number,
+  allowWorkflowDispatch = false,
+): PublicationRun {
   const run = asRecord(value);
   const id = positiveSafeInteger(run.id, `workflow run ${index} id`);
   const attempt = positiveSafeInteger(run.run_attempt, `workflow run ${index} attempt`);
@@ -437,7 +462,12 @@ function validateRun(value: unknown, index: number, expectedWorkflowId: number):
     throw new Error(`workflow run ${index} workflow id does not match the base-image workflow`);
   }
   const headSha = sha(run.head_sha, `workflow run ${index} head SHA`);
-  exactString(run.event, "push", `workflow run ${index} event`);
+  const event = run.event;
+  if (event !== "push" && !(allowWorkflowDispatch && event === "workflow_dispatch")) {
+    throw new Error(
+      `workflow run ${index} event must be push${allowWorkflowDispatch ? " or workflow_dispatch" : ""}`,
+    );
+  }
   exactString(run.head_branch, MAIN_BRANCH, `workflow run ${index} branch`);
   exactString(run.path, WORKFLOW_PATH, `workflow run ${index} path`);
   trustedWorkflowName(run.name, `workflow run ${index} name`);
@@ -466,6 +496,7 @@ function validateRun(value: unknown, index: number, expectedWorkflowId: number):
   return {
     id,
     attempt,
+    event,
     workflowId: expectedWorkflowId,
     headSha,
     status,
@@ -478,7 +509,11 @@ export function selectPublicationRun(
   payload: unknown,
   history: FirstParentHistory,
   workflowId: number,
-  options: { readonly completedSuccessOnly?: boolean } = {},
+  options: {
+    readonly allowWorkflowDispatch?: boolean;
+    readonly completedSuccessOnly?: boolean;
+    readonly excludedRunIds?: ReadonlySet<number>;
+  } = {},
 ): PublicationSelection {
   positiveSafeInteger(workflowId, "base-image workflow id");
   const response = asRecord(payload);
@@ -493,29 +528,37 @@ export function selectPublicationRun(
   const runs = response.workflow_runs.flatMap((value, index) => {
     const run = asRecord(value);
     return typeof run.head_sha === "string" && history.distanceBySha.has(run.head_sha)
-      ? [validateRun(run, index, workflowId)]
+      ? [validateRun(run, index, workflowId, options.allowWorkflowDispatch === true)]
       : [];
   });
   if (new Set(runs.map((run) => run.id)).size !== runs.length) {
     throw new Error("workflow run listing contains duplicate run ids");
   }
   const eligible = runs.flatMap((run) => {
+    if (options.excludedRunIds?.has(run.id)) return [];
     const distance = history.distanceBySha.get(run.headSha);
     return distance === undefined ? [] : [{ run, distance }];
   });
-  const selectable = options.completedSuccessOnly
-    ? eligible.filter(({ run }) => run.status === "completed" && run.conclusion === "success")
-    : eligible;
+  const selectable = eligible.filter(({ run }) => {
+    if (options.completedSuccessOnly || run.event === "workflow_dispatch") {
+      return run.status === "completed" && run.conclusion === "success";
+    }
+    return true;
+  });
   if (selectable.length === 0) return { state: "missing" };
 
   const nearestDistance = Math.min(...selectable.map(({ distance }) => distance));
   const nearest = selectable.filter(({ distance }) => distance === nearestDistance);
-  if (nearest.length !== 1) {
+  const preferredEvent = nearest.some(({ run }) => run.event === "push")
+    ? "push"
+    : "workflow_dispatch";
+  const preferred = nearest.filter(({ run }) => run.event === preferredEvent);
+  if (preferredEvent === "push" && preferred.length !== 1) {
     throw new Error(
-      `multiple trusted base-image workflow runs match ${nearest[0]?.run.headSha ?? history.relevantSha}`,
+      `multiple trusted ${preferredEvent} base-image workflow runs match ${preferred[0]?.run.headSha ?? history.relevantSha}: ${preferred.map(({ run }) => run.url).join(", ")}`,
     );
   }
-  const run = nearest[0].run;
+  const run = [...preferred].sort((left, right) => right.run.id - left.run.id)[0].run;
   return { state: "selected", run };
 }
 
@@ -564,11 +607,16 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
   }
 
   let pending = false;
-  for (const requiredName of REQUIRED_PUBLISHER_JOBS) {
+  const requiredJobs: readonly RequiredPublisherJob[] =
+    run.event === "workflow_dispatch"
+      ? [...REQUIRED_PUBLISHER_JOBS, REQUIRED_MANUAL_MANAGED_IMAGE_JOB]
+      : REQUIRED_PUBLISHER_JOBS;
+  for (const requiredName of requiredJobs) {
     const current = jobsByName.get(requiredName);
     if (!current) {
       if (run.status === "completed") {
-        throw new Error(
+        throw requiredPublisherIneligibilityError(
+          requiredName,
           `missing required ${requiredName} job in attempt ${run.attempt}; ${run.url}`,
         );
       }
@@ -577,7 +625,8 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
     }
     if (current.status !== "completed") {
       if (run.status === "completed") {
-        throw new Error(
+        throw requiredPublisherIneligibilityError(
+          requiredName,
           `${requiredName} job is not complete in terminal attempt ${run.attempt}; ${run.url}`,
         );
       }
@@ -585,7 +634,8 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
       continue;
     }
     if (current.conclusion !== "success") {
-      throw new Error(
+      throw requiredPublisherIneligibilityError(
+        requiredName,
         `${requiredName} job did not complete successfully in attempt ${run.attempt}; ${run.url}`,
       );
     }
@@ -594,10 +644,16 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
 }
 
 export function validateBoundRun(payload: unknown, expected: PublicationRun): PublicationRun {
-  const actual = validateRun(payload, 0, expected.workflowId);
+  const actual = validateRun(
+    payload,
+    0,
+    expected.workflowId,
+    expected.event === "workflow_dispatch",
+  );
   if (
     actual.id !== expected.id ||
     actual.attempt !== expected.attempt ||
+    actual.event !== expected.event ||
     actual.headSha !== expected.headSha
   ) {
     throw new Error(
@@ -686,6 +742,43 @@ function publicationEvidenceError(error: unknown, run: PublicationRun): Error {
   return new Error([message, ...context].join("; "));
 }
 
+async function resolveCompletedPublicationAttempt(
+  request: (path: string, budgetMs?: number) => Promise<unknown>,
+  latest: PublicationRun,
+  requireWorkflowSuccess: boolean,
+  deadline: number,
+  now: () => number,
+): Promise<PublicationRun> {
+  if (
+    !requireWorkflowSuccess ||
+    latest.status !== "completed" ||
+    latest.conclusion !== "cancelled" ||
+    latest.attempt === 1
+  ) {
+    return latest;
+  }
+
+  for (let attempt = latest.attempt - 1; attempt >= 1; attempt -= 1) {
+    const remainingMs = Math.floor(deadline - now());
+    if (remainingMs < 1) {
+      throw new Error(
+        `timed out validating base-image publication for ${latest.headSha}; ${latest.url}`,
+      );
+    }
+    const previous = validateBoundRun(
+      await request(
+        `/repos/${REPOSITORY}/actions/runs/${latest.id}/attempts/${attempt}`,
+        remainingMs,
+      ),
+      { ...latest, attempt },
+    );
+    if (previous.status === "completed" && previous.conclusion === "success") {
+      return previous;
+    }
+  }
+  return latest;
+}
+
 export async function waitForBaseImagePublication(
   options: PublicationWaitOptions,
 ): Promise<PublicationRun> {
@@ -702,17 +795,30 @@ export async function waitForBaseImagePublication(
   }
 
   const deadline = now() + options.waitMs;
+  const request: PublicationWaitOptions["request"] = async (path, requestedBudgetMs) => {
+    const remainingMs = Math.floor(deadline - now());
+    if (remainingMs < 1) {
+      throw new Error(
+        `timed out waiting for base-image publication covering ${options.history.relevantSha}`,
+      );
+    }
+    return options.request(path, Math.min(requestedBudgetMs ?? remainingMs, remainingMs));
+  };
   const workflowId = validateWorkflow(
-    await options.request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
+    await request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
   );
-  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&event=push&per_page=100`;
+  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&per_page=100`;
   while (true) {
-    const runs = await collectPaginated(options.request, runsPath, "workflow_runs");
-    const selection = selectPublicationRun(runs, options.history, workflowId, {
-      completedSuccessOnly: options.selectNearestSuccessfulRun === true,
-    });
-    if (selection.state === "selected") {
-      const jobsPath = `/repos/${REPOSITORY}/actions/runs/${selection.run.id}/attempts/${selection.run.attempt}/jobs?per_page=100`;
+    const runs = await collectPaginated(request, runsPath, "workflow_runs");
+    const excludedRunIds = new Set<number>();
+    const select = () =>
+      selectPublicationRun(runs, options.history, workflowId, {
+        allowWorkflowDispatch: true,
+        completedSuccessOnly: options.selectNearestSuccessfulRun === true,
+        excludedRunIds,
+      });
+    let selection = select();
+    while (selection.state === "selected") {
       if (now() > deadline) {
         throw new Error(
           `timed out validating base-image publication for ${selection.run.headSha}; ${selection.run.url}`,
@@ -721,13 +827,30 @@ export async function waitForBaseImagePublication(
       let publisherState: "pending" | "ready";
       let validatedRun = selection.run;
       try {
-        const jobs = await collectPaginated(options.request, jobsPath, "jobs");
-        publisherState = validatePublisherJobs(jobs, selection.run);
+        const evidenceRun = await resolveCompletedPublicationAttempt(
+          request,
+          selection.run,
+          options.requireWorkflowSuccess === true,
+          deadline,
+          now,
+        );
+        const jobsPath = `/repos/${REPOSITORY}/actions/runs/${evidenceRun.id}/attempts/${evidenceRun.attempt}/jobs?per_page=100`;
+        const jobs = await collectPaginated(request, jobsPath, "jobs");
+        publisherState = validatePublisherJobs(jobs, evidenceRun);
         if (publisherState === "ready") {
-          const boundRun = validateBoundRun(
-            await options.request(`/repos/${REPOSITORY}/actions/runs/${selection.run.id}`),
+          const latestBound = validateBoundRun(
+            await request(`/repos/${REPOSITORY}/actions/runs/${selection.run.id}`),
             selection.run,
           );
+          const boundRun =
+            evidenceRun.attempt === selection.run.attempt
+              ? latestBound
+              : validateBoundRun(
+                  await request(
+                    `/repos/${REPOSITORY}/actions/runs/${evidenceRun.id}/attempts/${evidenceRun.attempt}`,
+                  ),
+                  evidenceRun,
+                );
           validatedRun = boundRun;
           if (options.requireWorkflowSuccess === true) {
             if (boundRun.status !== "completed") {
@@ -740,6 +863,14 @@ export async function waitForBaseImagePublication(
           }
         }
       } catch (error) {
+        if (
+          selection.run.event === "workflow_dispatch" &&
+          error instanceof IneligibleManualManagedImagePromotionError
+        ) {
+          excludedRunIds.add(selection.run.id);
+          selection = select();
+          continue;
+        }
         throw publicationEvidenceError(error, selection.run);
       }
       if (publisherState === "ready") {
@@ -750,6 +881,7 @@ export async function waitForBaseImagePublication(
         }
         return validatedRun;
       }
+      break;
     }
 
     if (now() >= deadline) {
@@ -761,7 +893,7 @@ export async function waitForBaseImagePublication(
     notice(
       selection.state === "selected"
         ? `Required base image publishers are not complete for ${selection.run.headSha}; selected workflow run status ${selection.run.status}; ${selection.run.url}`
-        : `Waiting for a trusted base-image push run covering ${options.history.relevantSha}`,
+        : `Waiting for a trusted base-image publication run covering ${options.history.relevantSha}`,
     );
     await sleep(Math.min(options.pollMs, Math.max(1, deadline - now())));
   }
@@ -812,6 +944,7 @@ export async function githubRequest(
   const now = options.now ?? Date.now;
   const attempts = options.attempts ?? REQUEST_ATTEMPTS;
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const budgetMs = options.budgetMs;
   const authenticated = options.authenticated ?? true;
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > REQUEST_ATTEMPTS) {
     throw new Error(`request attempts must be between 1 and ${REQUEST_ATTEMPTS}`);
@@ -819,10 +952,31 @@ export async function githubRequest(
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > REQUEST_TIMEOUT_MS) {
     throw new Error(`request timeout must be between 1 and ${REQUEST_TIMEOUT_MS} milliseconds`);
   }
+  if (
+    budgetMs !== undefined &&
+    (!Number.isSafeInteger(budgetMs) || budgetMs < 1 || budgetMs > MAX_REQUEST_BUDGET_MS)
+  ) {
+    throw new Error(`request budget must be between 1 and ${MAX_REQUEST_BUDGET_MS} milliseconds`);
+  }
+  const deadline = budgetMs === undefined ? undefined : now() + budgetMs;
+
+  const remainingBudget = (): number | undefined => {
+    if (deadline === undefined) return undefined;
+    const remainingMs = Math.floor(deadline - now());
+    if (remainingMs < 1) throw new Error("GitHub API request exceeded its time budget");
+    return remainingMs;
+  };
+
+  const boundedSleep = async (milliseconds: number): Promise<void> => {
+    const remainingMs = remainingBudget();
+    await sleep(remainingMs === undefined ? milliseconds : Math.min(milliseconds, remainingMs));
+    remainingBudget();
+  };
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let response: Response;
     try {
+      const remainingMs = remainingBudget();
       response = await fetchImpl(`${API_ROOT}${path}`, {
         headers: {
           Accept: "application/vnd.github+json",
@@ -830,13 +984,16 @@ export async function githubRequest(
           "User-Agent": "NemoClaw-base-image-publication-gate",
           "X-GitHub-Api-Version": "2022-11-28",
         },
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(
+          remainingMs === undefined ? timeoutMs : Math.min(timeoutMs, remainingMs),
+        ),
       });
     } catch {
+      remainingBudget();
       if (attempt === attempts) {
         throw new Error(`GitHub API request failed after ${attempts} attempts`);
       }
-      await sleep(Math.min(attempt * 1000, MAX_RETRY_DELAY_MS));
+      await boundedSleep(Math.min(attempt * 1000, MAX_RETRY_DELAY_MS));
       continue;
     }
 
@@ -848,14 +1005,17 @@ export async function githubRequest(
       if (!transient || attempt === attempts) {
         throw new Error(`GitHub API request failed with HTTP ${response.status}`);
       }
-      await sleep(retryDelay(response, attempt, now));
+      await boundedSleep(retryDelay(response, attempt, now));
       continue;
     }
+    let result: unknown;
     try {
-      return await response.json();
+      result = await response.json();
     } catch {
       throw new Error("GitHub API response was not valid JSON");
     }
+    remainingBudget();
+    return result;
   }
 
   throw new Error("GitHub API request failed unexpectedly");
@@ -935,7 +1095,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   });
   const run = await waitForBaseImagePublication({
     history,
-    request: (path) => githubRequest(path, token),
+    request: (path, budgetMs) => githubRequest(path, token, { budgetMs }),
     requireWorkflowSuccess: requireManagedImagePublication === "1",
     selectNearestSuccessfulRun: selectNearestSuccessfulRun === "1",
     waitMs: waitSeconds * 1000,

@@ -9,6 +9,7 @@ import path from "node:path";
 import { sleepSeconds, waitUntilAsync } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
 import { envInt } from "./env";
+import type { GatewayRecoveryOutput } from "./gateway-recovery";
 import {
   createGatewayHealthWaitOptions,
   formatGatewayHealthWaitLimit,
@@ -38,7 +39,7 @@ export interface OpenShellGatewayUserServiceOptions {
   commandExists?: (command: string) => boolean;
   env?: NodeJS.ProcessEnv;
   existsSync?: (filePath: string) => boolean;
-  /** Test seam for the checksum-verified, temporary formula trust boundary. */
+  /** Runner for the checksum-verified, temporary formula trust boundary. */
   homebrewFormulaOperation?: (args: string[]) => SpawnSyncLikeResult;
   /** Test seam: read the version output of the package-managed gateway binary. */
   getUpstreamGatewayVersion?: (binaryPath: string) => string | null;
@@ -130,6 +131,7 @@ export interface PackageManagedDockerDriverGatewayOptions {
   isDockerDriverGatewayReady?: () => Promise<boolean>;
   managedServiceLogCommand?: string;
   now?: () => number;
+  output?: Pick<GatewayRecoveryOutput, "error" | "log" | "warn">;
   prepareOpenShellGatewayUserServiceEnv?: () => void;
   preparePortForOpenShellGatewayUserServiceStart?: () => void;
   registerDockerDriverGatewayEndpoint: () => boolean;
@@ -151,6 +153,7 @@ export interface PackageManagedDockerDriverGatewayOptions {
 }
 
 interface OpenShellGatewayUserServiceTarget {
+  homebrewServiceProgram?: string;
   logCommand: string;
   manager: "homebrew" | "systemd";
   serviceName: string;
@@ -450,15 +453,8 @@ function homebrewFormulaOperationScript(): string {
   return path.resolve(__dirname, "../../../scripts/install-openshell.sh");
 }
 
-function runTrustedHomebrewFormulaOperation(
-  args: string[],
-  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">> &
-    Pick<OpenShellGatewayUserServiceOptions, "homebrewFormulaOperation">,
-): CommandResult {
-  if (opts.homebrewFormulaOperation) {
-    return commandResult(opts.homebrewFormulaOperation(args));
-  }
-  return runCommand(
+function homebrewFormulaOperationCommand(args: string[]): [string, string[]] {
+  return [
     "bash",
     [
       homebrewFormulaOperationScript(),
@@ -468,8 +464,41 @@ function runTrustedHomebrewFormulaOperation(
       "brew",
       ...args,
     ],
-    opts,
-  );
+  ];
+}
+
+export function createOpenShellHomebrewFormulaOperation(
+  opts: Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl"> = {},
+): NonNullable<OpenShellGatewayUserServiceOptions["homebrewFormulaOperation"]> {
+  const env = opts.env ?? process.env;
+  const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+  return (args) => {
+    try {
+      const [command, commandArgs] = homebrewFormulaOperationCommand(args);
+      return spawnSyncImpl(command, commandArgs, {
+        encoding: "utf-8",
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error : new Error(formatError(error)),
+        status: null,
+      };
+    }
+  };
+}
+
+function runTrustedHomebrewFormulaOperation(
+  args: string[],
+  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">> &
+    Pick<OpenShellGatewayUserServiceOptions, "homebrewFormulaOperation">,
+): CommandResult {
+  if (opts.homebrewFormulaOperation) {
+    return commandResult(opts.homebrewFormulaOperation(args));
+  }
+  const [command, commandArgs] = homebrewFormulaOperationCommand(args);
+  return runCommand(command, commandArgs, opts);
 }
 
 const HOMEBREW_FORMULA_REPAIR_GUIDANCE =
@@ -550,43 +579,46 @@ function hasUpstreamOpenShellGatewayUserService(
   return getOpenShellGatewayUserServicePaths().some(existsSync);
 }
 
-function hasOfficialHomebrewFormula(
+interface OfficialHomebrewFormulaPaths {
+  gatewayBinary: string;
+  serviceProgram: string;
+}
+
+function resolveOfficialHomebrewFormulaPaths(
   opts: Pick<
     OpenShellGatewayUserServiceOptions,
     "commandExists" | "env" | "homebrewFormulaOperation" | "platform" | "spawnSyncImpl"
   >,
-): boolean {
-  if ((opts.platform ?? process.platform) !== "darwin") return false;
+): OfficialHomebrewFormulaPaths | null {
+  if ((opts.platform ?? process.platform) !== "darwin") return null;
   const env = opts.env ?? process.env;
   const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
-  if (!commandExists("brew")) return false;
+  if (!commandExists("brew")) return null;
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
   const operationOptions = {
     env,
     homebrewFormulaOperation: opts.homebrewFormulaOperation,
     spawnSyncImpl,
   };
-  const listed = runTrustedHomebrewFormulaOperation(
-    ["list", "--formula", OPENSHELL_GATEWAY_HOMEBREW_SERVICE],
-    operationOptions,
-  );
-  if (!listed.ok) {
-    if (listed.status === OPENSHELL_HOMEBREW_FORMULA_ABSENT) return false;
-    if (listed.status === OPENSHELL_HOMEBREW_OPERATION_FAILED) {
-      throw new OpenShellGatewayServiceTrustError(HOMEBREW_FORMULA_REPAIR_GUIDANCE);
-    }
-    throwHomebrewFormulaOperationFailure("installation inspection", listed);
-  }
   const info = runTrustedHomebrewFormulaOperation(
     ["info", "--json=v2", OPENSHELL_GATEWAY_HOMEBREW_SERVICE],
     operationOptions,
   );
   if (!info.ok) {
+    if (info.status === OPENSHELL_HOMEBREW_FORMULA_ABSENT) return null;
+    if (info.status === OPENSHELL_HOMEBREW_OPERATION_FAILED) {
+      throw new OpenShellGatewayServiceTrustError(HOMEBREW_FORMULA_REPAIR_GUIDANCE);
+    }
     throwHomebrewFormulaOperationFailure("formula identity inspection", info);
   }
   try {
     const parsed = JSON.parse(info.stdout ?? "") as {
-      formulae?: Array<{ name?: string; tap?: string }>;
+      formulae?: Array<{
+        installed?: unknown[];
+        name?: string;
+        service?: { run?: unknown };
+        tap?: string;
+      }>;
     };
     const formula = parsed.formulae?.find(
       (candidate) => candidate.name === OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
@@ -596,6 +628,29 @@ function hasOfficialHomebrewFormula(
         `OpenShell Homebrew formula must come from ${OPENSHELL_GATEWAY_HOMEBREW_TAP}`,
       );
     }
+    if (!Array.isArray(formula.installed) || formula.installed.length === 0) {
+      throw new OpenShellGatewayServiceTrustError(HOMEBREW_FORMULA_REPAIR_GUIDANCE);
+    }
+    const serviceProgram = formula.service?.run;
+    if (typeof serviceProgram !== "string" || !path.isAbsolute(serviceProgram)) {
+      throw new OpenShellGatewayServiceTrustError(
+        "OpenShell Homebrew formula service command is not one absolute path",
+      );
+    }
+    const normalizedProgram = path.normalize(serviceProgram);
+    const formulaPrefix = path.dirname(path.dirname(normalizedProgram));
+    if (
+      normalizedProgram !==
+      path.join(formulaPrefix, "libexec", "openshell-gateway-homebrew-service")
+    ) {
+      throw new OpenShellGatewayServiceTrustError(
+        "OpenShell Homebrew formula service command is not the expected gateway wrapper",
+      );
+    }
+    return {
+      gatewayBinary: path.join(formulaPrefix, "bin", "openshell-gateway"),
+      serviceProgram: normalizedProgram,
+    };
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new OpenShellGatewayServiceTrustError(
@@ -604,7 +659,6 @@ function hasOfficialHomebrewFormula(
     }
     throw error;
   }
-  return true;
 }
 
 function resolveOpenShellGatewayUserService(
@@ -612,13 +666,15 @@ function resolveOpenShellGatewayUserService(
 ): OpenShellGatewayUserServiceTarget | null {
   const platform = opts.platform ?? process.platform;
   if (platform === "darwin") {
-    return hasOfficialHomebrewFormula(opts)
+    const formula = resolveOfficialHomebrewFormulaPaths(opts);
+    return formula
       ? {
+          homebrewServiceProgram: formula.serviceProgram,
           logCommand: getHomebrewGatewayLogCommand(),
           manager: "homebrew",
           serviceName: OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
           statusCommand: `brew services info ${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`,
-          trustedBinaryPaths: [],
+          trustedBinaryPaths: [formula.gatewayBinary],
           trustedUnitPaths: [],
         }
       : null;
@@ -934,19 +990,39 @@ export interface TrustedActiveOpenShellGatewayUserServiceIdentity {
   executablePath: string | null;
 }
 
-function resolveOfficialHomebrewGatewayBinary(
-  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "existsSync" | "spawnSyncImpl">> &
-    Pick<OpenShellGatewayUserServiceOptions, "homebrewFormulaOperation">,
-): string | null {
-  const prefix = runTrustedHomebrewFormulaOperation(
-    ["--prefix", OPENSHELL_GATEWAY_HOMEBREW_SERVICE],
-    opts,
-  );
-  if (!prefix.ok) return null;
-  const value = prefix.stdout?.trim() ?? "";
-  if (!path.isAbsolute(value)) return null;
-  const gatewayBinary = path.normalize(path.join(value, "bin", "openshell-gateway"));
-  return opts.existsSync(gatewayBinary) ? gatewayBinary : null;
+const OPENSHELL_HOMEBREW_SERVICE_LABELS = [
+  `sh.brew.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`,
+  `homebrew.mxcl.${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`,
+] as const;
+
+function launchctlPrintValue(output: string, key: string): string | null {
+  const prefix = `\t${key} = `;
+  const line = output.split(/\r?\n/).find((candidate) => candidate.startsWith(prefix));
+  return line?.slice(prefix.length).trim() || null;
+}
+
+function getActiveHomebrewGatewayServiceIdentity(
+  service: OpenShellGatewayUserServiceTarget,
+  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "existsSync" | "spawnSyncImpl">>,
+): TrustedActiveOpenShellGatewayUserServiceIdentity | null {
+  const uid = process.getuid?.();
+  const executablePath = service.trustedBinaryPaths[0] ?? null;
+  const expectedProgram = service.homebrewServiceProgram ?? null;
+  if (!Number.isSafeInteger(uid) || uid === undefined || !executablePath || !expectedProgram) {
+    return null;
+  }
+  if (!opts.existsSync(executablePath)) return null;
+
+  const identities: TrustedActiveOpenShellGatewayUserServiceIdentity[] = [];
+  for (const label of OPENSHELL_HOMEBREW_SERVICE_LABELS) {
+    const result = runCommand("launchctl", ["print", `gui/${String(uid)}/${label}`], opts);
+    if (!result.ok || launchctlPrintValue(result.stdout ?? "", "state") !== "running") continue;
+    const program = launchctlPrintValue(result.stdout ?? "", "program");
+    const pid = Number(launchctlPrintValue(result.stdout ?? "", "pid"));
+    if (program !== expectedProgram || !Number.isSafeInteger(pid) || pid <= 0) return null;
+    identities.push({ executablePath, pid });
+  }
+  return identities.length === 1 ? identities[0] : null;
 }
 
 export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
@@ -966,49 +1042,12 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
   }
   if (!service) return null;
   if (service.manager === "homebrew") {
-    if (!commandExists("brew")) return null;
-    const result = runTrustedHomebrewFormulaOperation(
-      ["services", "info", service.serviceName, "--json"],
-      {
-        env,
-        homebrewFormulaOperation: opts.homebrewFormulaOperation,
-        spawnSyncImpl,
-      },
-    );
-    if (!result.ok) return null;
-    try {
-      const records = JSON.parse(result.stdout ?? "") as Array<{
-        loaded?: boolean;
-        name?: string;
-        pid?: number;
-        running?: boolean;
-        service_name?: string;
-      }>;
-      const record = records.find(
-        (candidate) =>
-          candidate.name === service.serviceName &&
-          candidate.service_name === `homebrew.mxcl.${service.serviceName}`,
-      );
-      const pid =
-        record?.running === true &&
-        record.loaded === true &&
-        Number.isSafeInteger(record.pid) &&
-        Number(record.pid) > 0
-          ? Number(record.pid)
-          : null;
-      if (pid === null) return null;
-      return {
-        pid,
-        executablePath: resolveOfficialHomebrewGatewayBinary({
-          env,
-          existsSync: opts.existsSync ?? fs.existsSync,
-          homebrewFormulaOperation: opts.homebrewFormulaOperation,
-          spawnSyncImpl,
-        }),
-      };
-    } catch {
-      return null;
-    }
+    if (!commandExists("launchctl")) return null;
+    return getActiveHomebrewGatewayServiceIdentity(service, {
+      env,
+      existsSync: opts.existsSync ?? fs.existsSync,
+      spawnSyncImpl,
+    });
   }
   if (!commandExists("systemctl")) return null;
   const result = runSystemctlUser(
@@ -1351,6 +1390,7 @@ export async function startPackageManagedDockerDriverGateway({
   isDockerDriverGatewayReady = isDockerDriverGatewayHttpReady,
   managedServiceLogCommand,
   now = Date.now,
+  output,
   prepareOpenShellGatewayUserServiceEnv,
   preparePortForOpenShellGatewayUserServiceStart,
   registerDockerDriverGatewayEndpoint,
@@ -1362,6 +1402,9 @@ export async function startPackageManagedDockerDriverGateway({
   validatePortOwnerForOpenShellGatewayUserServiceStart,
   verifySandboxBridgeGatewayReachableOrExit,
 }: PackageManagedDockerDriverGatewayOptions): Promise<boolean> {
+  const log = output?.log ?? console.log;
+  const warn = output?.warn ?? console.warn;
+  const printError = output?.error ?? console.error;
   const stopBeforeStandaloneFallback = () => {
     try {
       const stopped = stopService();
@@ -1377,7 +1420,7 @@ export async function startPackageManagedDockerDriverGateway({
       }
       if (stopped.attempted && !stopped.stopped) {
         const detail = stopped.reason ? ` (${stopped.reason})` : "";
-        console.warn(
+        warn(
           `  OpenShell gateway managed service could not be stopped${detail}; standalone startup will verify gateway port ownership.`,
         );
       }
@@ -1396,15 +1439,15 @@ export async function startPackageManagedDockerDriverGateway({
     if (!hasService()) return false;
   } catch (error) {
     if (error instanceof OpenShellGatewayServiceTrustError) throw error;
-    console.warn(
+    warn(
       `  OpenShell gateway managed service could not be inspected (${formatError(error)}); using standalone fallback.`,
     );
-    if (managedServiceLogCommand) console.warn(`  Logs: ${managedServiceLogCommand}`);
+    if (managedServiceLogCommand) warn(`  Logs: ${managedServiceLogCommand}`);
     stopBeforeStandaloneFallback();
     return false;
   }
 
-  console.log("  Starting OpenShell Docker-driver gateway via managed service...");
+  log("  Starting OpenShell gateway via managed service...");
   let serviceStart: OpenShellGatewayUserServiceStartResult;
   try {
     serviceStart = startService({
@@ -1419,26 +1462,26 @@ export async function startPackageManagedDockerDriverGateway({
     ) {
       throw error;
     }
-    console.warn(
+    warn(
       `  OpenShell gateway managed service startup failed (${formatError(error)}); using standalone fallback.`,
     );
-    if (managedServiceLogCommand) console.warn(`  Logs: ${managedServiceLogCommand}`);
+    if (managedServiceLogCommand) warn(`  Logs: ${managedServiceLogCommand}`);
     stopBeforeStandaloneFallback();
     return false;
   }
   const reportLogs = () => {
     const logCommand = serviceStart.logCommand ?? managedServiceLogCommand;
-    if (logCommand) console.warn(`  Logs: ${logCommand}`);
+    if (logCommand) warn(`  Logs: ${logCommand}`);
   };
   if (!serviceStart.started) {
     const detail = serviceStart.reason ? ` (${serviceStart.reason})` : "";
     if (serviceStart.standaloneFallbackBlocked || serviceStart.manager === "homebrew") {
       const message = `OpenShell gateway managed service failed to start${detail}.`;
-      console.error(`  ${message}`);
+      printError(`  ${message}`);
       if (exitOnFailure) process.exit(1);
       throw new Error(message);
     }
-    console.warn(
+    warn(
       `  OpenShell gateway managed service failed to start${detail}; using standalone fallback.`,
     );
     reportLogs();
@@ -1475,7 +1518,7 @@ export async function startPackageManagedDockerDriverGateway({
     await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
       skip: skipSandboxBridgeReachability,
     });
-    console.log("  ✓ OpenShell gateway managed service is healthy");
+    log("  ✓ OpenShell gateway managed service is healthy");
     return true;
   }
 
@@ -1483,8 +1526,8 @@ export async function startPackageManagedDockerDriverGateway({
     pollCount,
     pollInterval,
   )}; using standalone fallback.`;
-  console.warn(`  ${message}`);
-  console.warn(
+  warn(`  ${message}`);
+  warn(
     `  Last readiness check: endpoint registered=${lastReadiness.registered ? "yes" : "no"}, OpenShell CLI health=${lastReadiness.cliHealthy ? "yes" : "no"}, direct gRPC health=${lastReadiness.grpcHealthy ? "yes" : "no"}.`,
   );
   reportLogs();

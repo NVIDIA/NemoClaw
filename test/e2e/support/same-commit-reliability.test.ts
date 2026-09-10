@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -24,6 +27,7 @@ const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
 const REPOSITORY = "NVIDIA/NemoClaw";
 const RETRY_WORKFLOW_PATH = ".github/workflows/e2e-main-retry.yaml";
+const REPORTER_PATH = path.resolve("tools/e2e/same-commit-reliability.mts");
 
 function sample(
   runId: number,
@@ -77,6 +81,21 @@ function controllerRun(id: number, overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+describe("same-commit reliability reporter entrypoint", () => {
+  it("loads with the raw Node strip-types runtime used by CI", () => {
+    const result = spawnSync(process.execPath, ["--no-warnings", REPORTER_PATH], {
+      encoding: "utf8",
+      env: { ...process.env, GITHUB_TOKEN: "", SOURCE_RUN_ID: "" },
+      killSignal: "SIGKILL",
+      timeout: 20_000,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("GITHUB_TOKEN is required");
+    expect(result.stderr).not.toContain("ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX");
+  });
+});
 
 function retryEvidence(runId: number, sourceSha: string): Buffer {
   return artifactZip([
@@ -495,6 +514,87 @@ describe("same-commit E2E reliability", () => {
       failureClassEvidence: "complete",
     });
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it.each([
+    {
+      receiptName: "openclaw-plugin-exdev-onboard-retry.json",
+      operation: "openclaw-plugin-runtime-exdev.onboard-pairing",
+    },
+    {
+      receiptName: "openclaw-weather-plugin-recreate-retry.json",
+      operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
+    },
+  ])("consumes the EXDEV retry receipt $receiptName", async ({ receiptName, operation }) => {
+    const dispatch = artifactZip([
+      {
+        name: "dispatch.json",
+        contents: JSON.stringify({
+          kind: "nemoclaw-e2e-dispatch-v2",
+          repository: REPOSITORY,
+          eventName: "workflow_dispatch",
+          workflowRunId: "101",
+          workflowRunAttempt: 1,
+          candidateSha: SHA_A,
+        }),
+      },
+    ]);
+    const evidence = artifactZip([
+      terminalEvidence(SHA_A, "failure"),
+      {
+        name: `e2e-artifacts/live/openclaw-plugin-runtime-exdev/retry/${receiptName}`,
+        contents: JSON.stringify({
+          schemaVersion: 1,
+          operation,
+          owner: "openclaw-plugin-runtime-exdev",
+          idempotence: "reconciled-mutation",
+          maxAttempts: 1,
+          outcome: "failed-no-retry",
+          attempts: [
+            {
+              attempt: 1,
+              outcome: "failed",
+              failureClass: "ambiguous-mutation",
+              retryScheduled: false,
+            },
+          ],
+        }),
+      },
+    ]);
+    const archives = new Map([
+      [1, dispatch],
+      [2, evidence],
+    ]);
+
+    const result = await normalizeReliabilityRun(workflowRun(), {
+      requestJson: async () => ({
+        total_count: 2,
+        artifacts: [
+          {
+            id: 1,
+            name: "e2e-dispatch-101-1",
+            size_in_bytes: dispatch.length,
+            expired: false,
+          },
+          {
+            id: 2,
+            name: "e2e-openclaw-plugin-runtime-exdev",
+            size_in_bytes: evidence.length,
+            expired: false,
+          },
+        ],
+      }),
+      requestArchive: async (artifactId) => archives.get(artifactId)!,
+    });
+
+    expect(result).toMatchObject({
+      candidateSha: SHA_A,
+      source: "manual-qualification",
+      outcome: "failed-first-attempt",
+      failureClasses: ["ambiguous-mutation"],
+      evidence: "complete",
+      failureClassEvidence: "complete",
+    });
   });
 
   it("normalizes a matching workflow dispatch run to the same reliability sample", async () => {

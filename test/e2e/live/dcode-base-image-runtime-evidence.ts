@@ -121,6 +121,9 @@ export function loadDcodeBaseImagePublicationEvidence(
   if (workloadSource !== "" && workloadSource !== "managed-image") {
     throw new Error("Deep Agents Code E2E workload source is invalid");
   }
+  // HostCliClient verifies managed-image digests against the selected cohort or candidate catalog.
+  // Base override metadata belongs to Dockerfile builds.
+  if (workloadSource === "managed-image") return undefined;
   if (!fs.existsSync(evidencePath)) {
     requireDcodeBaseImageReference(environment);
     if (environment.GITHUB_ACTIONS === "true") {

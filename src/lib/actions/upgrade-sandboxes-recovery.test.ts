@@ -119,7 +119,7 @@ function createRecoveryHarness(
   });
   const checkAgentVersionSpy = vi
     .spyOn(sandboxVersion, "checkAgentVersion")
-    .mockImplementation((...args: unknown[]) => {
+    .mockImplementation(async (...args: unknown[]) => {
       const name = String(args[0]);
       return {
         sandboxVersion: options.staleNames?.includes(name) === true ? "2026.5.26" : "2026.5.27",
@@ -548,7 +548,7 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       liveOutput: "other-box Ready",
     });
     vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "0");
-    vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
+    vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({
       sandboxVersion: null,
       expectedVersion: "2026.5.27",
       isStale: false,
@@ -639,7 +639,7 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     const harness = createRecoveryHarness(["unknown-box"], {
       liveOutput: "unknown-box Ready",
     });
-    harness.checkAgentVersionSpy.mockReturnValue({
+    harness.checkAgentVersionSpy.mockResolvedValue({
       sandboxVersion: null,
       expectedVersion: "2026.5.27",
       isStale: false,

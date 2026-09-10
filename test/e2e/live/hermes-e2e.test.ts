@@ -13,6 +13,11 @@ import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
+  HERMES_ACP_LIFECYCLE_BUDGET_MS,
+  type HermesAcpLiveScenario,
+  runHermesAcpLiveScenario,
+} from "../fixtures/hermes-acp-live.ts";
+import {
   assertHermesHasNoRoutingSidecars,
   captureHermesRoutingTopology,
 } from "../fixtures/hermes-routing-topology.ts";
@@ -22,6 +27,7 @@ import {
   securityPostureEnabled,
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
+import { verifyHermesConfigExportLive } from "../fixtures/hermes-config-export-live.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { assertHermesCliAdapterLiveContract } from "./hermes-cli-adapter-live.ts";
 import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
@@ -196,14 +202,6 @@ async function captureDiagnosticsBestEffort(run: () => Promise<unknown>): Promis
   }
 }
 
-async function postDestroyGatewayBestEffort(run: () => Promise<unknown>): Promise<void> {
-  try {
-    await run();
-  } catch {
-    // The explicit sandbox-destroy assertion remains the primary phase-7 contract.
-  }
-}
-
 // source-shape-contract: security -- Live registry absence proves explicit destroy removes the sandbox record without trusting CLI output
 test(
   "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
@@ -211,7 +209,16 @@ test(
     timeout: testTimeout(HERMES_E2E_TEST_TIMEOUT_MS),
     meta: { e2ePhases: HERMES_E2E_PHASES },
   },
-  async ({ artifacts, cleanup, host, inference, progress, runtimeProvider, sandbox }) => {
+  async ({
+    artifacts,
+    cleanup,
+    host,
+    inference,
+    lifecycle,
+    progress,
+    runtimeProvider,
+    sandbox,
+  }) => {
     await artifacts.target.declare({
       id: "hermes-e2e",
       boundary: `install.sh --non-interactive --fresh + Hermes sandbox runtime + ${inference.mode} inference adapter`,
@@ -273,6 +280,7 @@ test(
     };
 
     const cleanupEnv = commandEnv();
+    lifecycle.trackInstallerGatewayUserService();
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-openshell-gateway-destroy",
       env: cleanupEnv,
@@ -323,9 +331,10 @@ test(
             trustedSandboxShellScript(
               String.raw`
                 printf '%s\n' '== pid 1 =='
-                tr '\0' ' ' </proc/1/cmdline 2>/dev/null || true
+                cat /proc/1/comm 2>&1 || true
                 printf '\n%s\n' '== process tree =='
-                ps -eo user=,pid=,ppid=,stat=,args= 2>&1 || true
+                ps -eo user=,pid=,ppid=,stat=,wchan:32=,etime=,comm= 2>&1 || true
+                head -v -n 32 /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.events /sys/fs/cgroup/pids.current /sys/fs/cgroup/pids.max /sys/fs/cgroup/pids.events 2>&1
                 printf '%s\n' '== entrypoint log =='
                 tail -n 300 /tmp/nemoclaw-start.log 2>&1 || true
                 printf '%s\n' '== gateway log =='
@@ -455,21 +464,30 @@ test(
       timeoutMs: 30_000,
     });
     expect(hermesVersion.exitCode, resultText(hermesVersion)).toBe(0);
-    expect(resultText(hermesVersion)).not.toMatch(/MISSING|not found|No such file/i);
+    // The exact executable and version compatibility is exercised through the
+    // packaged ACP adapter below and classified by lower source tests.
 
-    const configProbe = await sandbox.execShell(
+    // Observe the first native diagnostic before editing profiles or repairing
+    // anything. Other doctor findings remain visible for their owning issues.
+    const nativeDoctor = await sandbox.exec(SANDBOX_NAME, ["bash", "-lc", "hermes doctor"], {
+      artifactName: "phase-3-first-native-hermes-doctor",
+      env: commandEnv(),
+      timeoutMs: 180_000,
+    });
+    expect(nativeDoctor.exitCode, resultText(nativeDoctor)).toBe(0);
+
+    const profilesBeforeRecovery = await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
-        "test -f /sandbox/.hermes/config.yaml && test -d /sandbox/.hermes && touch /sandbox/.hermes/test-write && rm -f /sandbox/.hermes/test-write && echo OK",
+        "set -eu; for f in /sandbox/.bashrc /sandbox/.profile; do printf '%s\\n' 'export NEMOCLAW_E2E_PERSONAL_PROFILE=loaded' '[ \"$(id -u)\" -ne 0 ] || touch /tmp/nemoclaw-e2e-root-profile-loaded' >> \"$f\"; done; sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256",
       ),
       {
-        artifactName: "phase-3-hermes-config-state",
+        artifactName: "phase-3-personal-profiles-before-recovery",
         env: commandEnv(),
         timeoutMs: 30_000,
       },
     );
-    expect(configProbe.exitCode, resultText(configProbe)).toBe(0);
-    expect(configProbe.stdout).toContain("OK");
+    expect(profilesBeforeRecovery.exitCode, resultText(profilesBeforeRecovery)).toBe(0);
 
     await assertHermesSkillLifecycle({
       env: commandEnv(),
@@ -745,6 +763,24 @@ test(
       );
     }
 
+    const personalProfiles = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "/usr/bin/env",
+        "-u",
+        "NEMOCLAW_E2E_PERSONAL_PROFILE",
+        "bash",
+        "-lc",
+        'test "$NEMOCLAW_E2E_PERSONAL_PROFILE" = loaded && /usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE bash -ic \'test "$NEMOCLAW_E2E_PERSONAL_PROFILE" = loaded\' && /usr/bin/sha256sum -c /tmp/nemoclaw-e2e-profiles.sha256 && test ! -e /tmp/nemoclaw-e2e-root-profile-loaded',
+      ],
+      {
+        artifactName: "phase-4-personal-profiles-after-recovery",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(personalProfiles.exitCode, resultText(personalProfiles)).toBe(0);
+
     const recoveredHealth = await host.command(
       "curl",
       ["-sf", "--max-time", "10", HERMES_HOST_HEALTH_URL],
@@ -761,14 +797,54 @@ test(
     // OpenClaw launch qualification now reads its structured JSONL session
     // store. Hermes owns a different SQLite contract, so this target must not
     // infer Hermes replies from terminal copy through the OpenClaw helper.
-    progress.phase("exercise hosted and inference.local routes");
-    // Phase 5: live inference through both the external provider and the
-    // sandbox's inference.local route.
+    progress.phase("exercise Hermes ACP lifecycle and inference routes");
+    // Phase 5: exercise the packaged host adapter against the managed Hermes
+    // ACP server, then retain the existing inference route coverage.
+    const acpDeadlineAtMs = Date.now() + HERMES_ACP_LIFECYCLE_BUDGET_MS;
+    const runAcpScenario = (scenario: HermesAcpLiveScenario) =>
+      runHermesAcpLiveScenario({
+        artifacts,
+        deadlineAtMs: acpDeadlineAtMs,
+        env,
+        progress,
+        sandbox,
+        sandboxName: SANDBOX_NAME,
+        scenario,
+      });
+    const exchangePassed = await runAcpScenario("exchange");
+    const remoteExitPassed = await runAcpScenario("remote-exit");
+    const cancellationPassed = await runAcpScenario("cancel");
+    const clientDisconnectPassed = await runAcpScenario("client-disconnect");
+    const gatewayRestartPassed = await runHermesAcpLiveScenario({
+      artifacts,
+      deadlineAtMs: acpDeadlineAtMs,
+      env,
+      progress,
+      restartGateway: async () => {
+        await lifecycle.restartGatewayRuntime({ sandboxName: SANDBOX_NAME });
+        await lifecycle.waitForGatewayConnected();
+      },
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+      scenario: "gateway-restart",
+    });
+    const postRestartInitializePassed = await runAcpScenario("initialize");
+    const acpLifecyclePassed =
+      exchangePassed &&
+      remoteExitPassed &&
+      cancellationPassed &&
+      clientDisconnectPassed &&
+      gatewayRestartPassed &&
+      postRestartInitializePassed;
+
     const directChat = await inference.directChat("Reply with exactly one word: PONG", {
       artifactName: "phase-5-direct-inference-chat",
       maxTokens: 1024,
     });
-    expect(exhaustedReasoningBudget(directChat)).toBe(false);
+    expect(
+      exhaustedReasoningBudget(directChat) || !acpLifecyclePassed,
+      "Hermes ACP lifecycle failed or direct inference exhausted its reasoning budget; inspect the fixed ACP receipts and inference artifact",
+    ).toBe(false);
     expectPong(`${inference.mode} direct chat`, directChat);
 
     const sandboxChat = await sandbox.exec(
@@ -803,7 +879,17 @@ test(
       timeoutMs: 60_000,
     });
     expect(logs.exitCode, resultText(logs)).toBe(0);
-    expect(resultText(logs).trim().length).toBeGreaterThan(0);
+
+    const configExport = await verifyHermesConfigExportLive({
+      artifacts,
+      cleanup,
+      enabled: securityPostureEnabled(),
+      env: commandEnv(),
+      host,
+      redactionValues,
+      sandboxName: SANDBOX_NAME,
+    });
+    expect(configExport.passed).toBe(true);
 
     if (rootSupervisorTopology) {
       expect(recoveredRootGatewayPid).toBeDefined();
@@ -880,13 +966,6 @@ test(
         timeoutMs: 120_000,
       });
       expect(destroy.exitCode, resultText(destroy)).toBe(0);
-      await postDestroyGatewayBestEffort(() =>
-        sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-          artifactName: "phase-7-openshell-gateway-destroy",
-          env: commandEnv(),
-          timeoutMs: 60_000,
-        }),
-      );
       expect(
         registryEntry(SANDBOX_NAME),
         `${SANDBOX_NAME} still in ${REGISTRY_FILE}`,
@@ -904,7 +983,11 @@ test(
         hermesSkillDiscovered: true,
         hermesSkillUsedInFreshSession: true,
         standaloneRoutingSidecarsAbsentAfterRecovery: true,
+        hermesAcpInitializeSessionPromptPong: true,
+        hermesAcpInterruptDisconnectAndRemoteExitClean: true,
+        hermesAcpCleansUpAndReconnectsAfterOpenShellGatewayRestart: true,
         dashboardChecked: hermesDashboardE2eEnabled(),
+        configExportChecked: configExport.checked,
         securityPostureChecked: securityPosture !== null,
       },
       securityPosture,

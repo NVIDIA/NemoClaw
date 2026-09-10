@@ -1,26 +1,38 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
-  MANAGED_IMAGE_REPOSITORIES,
-  SHIPPED_MANAGED_IMAGE_AGENTS,
-} from "../../../src/lib/onboard/managed-image/contract";
-import { validateManagedImageCohort } from "../../../tools/e2e/managed-image-cohort-contract.mts";
+  main,
+  validateManagedImageCohort,
+} from "../../../tools/e2e/managed-image-cohort-contract.mts";
 
 const REVISION = "a".repeat(40);
 const RUN_ID = 32707920950;
-const RUN_ATTEMPT = 1;
+const RUN_ATTEMPT = 2;
 const COHORT = `ghrun-${RUN_ID}-${RUN_ATTEMPT}`;
 const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
+const EXPECTED_AGENT_IMAGES = [
+  { agent: "openclaw", image: "ghcr.io/nvidia/nemoclaw/openclaw-sandbox" },
+  { agent: "hermes", image: "ghcr.io/nvidia/nemoclaw/hermes-sandbox" },
+  {
+    agent: "langchain-deepagents-code",
+    image: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox",
+  },
+] as const;
 type JsonObject = Record<string, unknown>;
 type PlatformPublication = {
+  run: { attempt: number; id: number };
   publicationEvidence: {
     workloadDescriptor: JsonObject;
     attestations: {
       manifestDescriptor: { annotations: JsonObject };
-      slsa: { statement: { bindings: JsonObject; subject: JsonObject } };
+      slsa: { statement: { bindings: JsonObject; builderId: string; subject: JsonObject } };
       spdx: { statement: { subject: JsonObject } };
     };
   };
@@ -30,16 +42,23 @@ function digest(index: number): `sha256:${string}` {
   return `sha256:${(index % 15).toString(16).repeat(64)}`;
 }
 
-function cohortContract(): Record<string, unknown> {
+function cohortContract(
+  options: {
+    cohortAttempt?: number;
+    runAttempt?: number;
+  } = {},
+): Record<string, unknown> {
+  const runAttempt = options.runAttempt ?? RUN_ATTEMPT;
+  const cohortAttempt = options.cohortAttempt ?? runAttempt;
+  const cohort = `ghrun-${RUN_ID}-${cohortAttempt}`;
   return {
     contractVersion: 2,
-    cohort: COHORT,
+    cohort,
     source: { repository: "NVIDIA/NemoClaw", revision: REVISION, release: null },
-    run: { id: RUN_ID, attempt: RUN_ATTEMPT },
+    run: { id: RUN_ID, attempt: runAttempt },
     platforms: PLATFORMS,
     agents: Object.fromEntries(
-      SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, agentIndex) => {
-        const image = MANAGED_IMAGE_REPOSITORIES[agent];
+      EXPECTED_AGENT_IMAGES.map(({ agent, image }, agentIndex) => {
         const manifestDigest = digest(agentIndex + 1);
         return [
           agent,
@@ -48,7 +67,7 @@ function cohortContract(): Record<string, unknown> {
             digest: manifestDigest,
             reference: `${image}@${manifestDigest}`,
             descriptor: { digest: manifestDigest },
-            alias: `${image}:cohort-${COHORT}`,
+            alias: `${image}:cohort-${cohort}`,
             platforms: Object.fromEntries(
               PLATFORMS.map((platform, platformIndex) => {
                 const platformDigest = digest(agentIndex + platformIndex + 4);
@@ -61,6 +80,7 @@ function cohortContract(): Record<string, unknown> {
                     digest: platformDigest,
                     reference: `${image}@${platformDigest}`,
                     baseReference,
+                    run: { id: RUN_ID, attempt: runAttempt },
                     publicationEvidence: {
                       candidateDescriptor: {
                         digest: platformDigest,
@@ -98,12 +118,12 @@ function cohortContract(): Record<string, unknown> {
                             predicateType: "https://slsa.dev/provenance/v1",
                             buildType:
                               "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
-                            builderId: `https://github.com/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}`,
+                            builderId: `https://github.com/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/${runAttempt}`,
                             subject: { name: image, digest: workloadDigest },
                             bindings: {
                               agent,
                               baseReference,
-                              cohort: COHORT,
+                              cohort,
                               platform,
                               revision: REVISION,
                               source: "https://github.com/NVIDIA/NemoClaw",
@@ -143,44 +163,170 @@ function platformPublication(value: Record<string, unknown>): PlatformPublicatio
   return agents.openclaw.platforms["linux/amd64"];
 }
 
+function expectedReceipt(): Record<string, unknown> {
+  return {
+    kind: "nemoclaw-managed-image-cohort-receipt-v1",
+    cohort: COHORT,
+    revision: REVISION,
+    runAttempt: RUN_ATTEMPT,
+    runId: RUN_ID,
+    images: Object.fromEntries(
+      EXPECTED_AGENT_IMAGES.map(({ agent, image }, agentIndex) => [
+        agent,
+        Object.fromEntries(
+          PLATFORMS.map((platform, platformIndex) => [
+            platform,
+            `${image}@${digest(agentIndex + platformIndex + 10)}`,
+          ]),
+        ),
+      ]),
+    ),
+  };
+}
+
 describe("managed-image cohort publication contract", () => {
-  it("binds all shipped agents and architectures to the selected publication", () => {
+  it("binds the literal shipped agents and architectures to the selected publication", () => {
     expect(
       validateManagedImageCohort(cohortContract(), {
         revision: REVISION,
         runAttempt: RUN_ATTEMPT,
         runId: RUN_ID,
       }),
-    ).toEqual({
-      cohort: COHORT,
-      receipt: {
-        kind: "nemoclaw-managed-image-cohort-receipt-v1",
-        cohort: COHORT,
+    ).toEqual(expectedReceipt());
+  });
+
+  it("writes only the receipt and revision outputs for a valid publication", () => {
+    const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cohort-output-"));
+    const cohortPath = path.join(temporaryRoot, "cohort.json");
+    const outputPath = path.join(temporaryRoot, "github-output");
+    try {
+      fs.writeFileSync(cohortPath, JSON.stringify(cohortContract()), "utf8");
+      main([cohortPath], {
+        GITHUB_OUTPUT: outputPath,
+        PUBLICATION_HEAD_SHA: REVISION,
+        PUBLICATION_RUN_ATTEMPT: String(RUN_ATTEMPT),
+        PUBLICATION_RUN_ID: String(RUN_ID),
+      });
+      const outputs = Object.fromEntries(
+        fs
+          .readFileSync(outputPath, "utf8")
+          .trimEnd()
+          .split("\n")
+          .map((line) => {
+            const separator = line.indexOf("=");
+            return [line.slice(0, separator), line.slice(separator + 1)];
+          }),
+      );
+
+      expect(outputs).toEqual({
+        receipt: JSON.stringify(expectedReceipt()),
+        revision: REVISION,
+      });
+    } finally {
+      fs.rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("accepts candidate evidence produced by an earlier rerun attempt", () => {
+    const runAttempt = 2;
+    const value = cohortContract({ runAttempt });
+    const publication = platformPublication(value);
+    publication.run.attempt = 1;
+    publication.publicationEvidence.attestations.slsa.statement.builderId = `https://github.com/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1`;
+
+    expect(
+      validateManagedImageCohort(value, {
+        revision: REVISION,
+        runAttempt,
+        runId: RUN_ID,
+      }),
+    ).toMatchObject({
+      cohort: `ghrun-${RUN_ID}-${runAttempt}`,
+      runAttempt,
+      runId: RUN_ID,
+    });
+  });
+
+  it("accepts a cohort identity from an earlier publication attempt", () => {
+    const runAttempt = 2;
+    const value = cohortContract({ cohortAttempt: 1, runAttempt });
+    const publication = platformPublication(value);
+    publication.run.attempt = 1;
+    publication.publicationEvidence.attestations.slsa.statement.builderId = `https://github.com/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1`;
+
+    expect(
+      validateManagedImageCohort(value, {
+        revision: REVISION,
+        runAttempt,
+        runId: RUN_ID,
+      }),
+    ).toMatchObject({
+      cohort: `ghrun-${RUN_ID}-1`,
+      runAttempt: 1,
+      runId: RUN_ID,
+    });
+  });
+
+  it("rejects a platform producer attempt newer than the selected publication", () => {
+    const runAttempt = 2;
+    const value = cohortContract({ runAttempt });
+    const publication = platformPublication(value);
+    publication.run.attempt = 3;
+    publication.publicationEvidence.attestations.slsa.statement.builderId = `https://github.com/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/3`;
+
+    expect(() =>
+      validateManagedImageCohort(value, {
+        revision: REVISION,
+        runAttempt,
+        runId: RUN_ID,
+      }),
+    ).toThrow("producer attempt must not be newer than the selected publication attempt");
+  });
+
+  it("rejects SLSA provenance from a different attempt than the platform producer", () => {
+    const value = cohortContract();
+    platformPublication(value).run.attempt = 1;
+
+    expect(() =>
+      validateManagedImageCohort(value, {
         revision: REVISION,
         runAttempt: RUN_ATTEMPT,
         runId: RUN_ID,
-        images: Object.fromEntries(
-          SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, agentIndex) => [
-            agent,
-            Object.fromEntries(
-              PLATFORMS.map((platform, platformIndex) => [
-                platform,
-                `${MANAGED_IMAGE_REPOSITORIES[agent]}@${digest(agentIndex + platformIndex + 10)}`,
-              ]),
-            ),
-          ]),
-        ),
-      },
-      revision: REVISION,
-      runAttempt: RUN_ATTEMPT,
-      runId: RUN_ID,
-    });
+      }),
+    ).toThrow("builder must be");
+  });
+
+  it("rejects a cohort identity produced after the selected publication attempt", () => {
+    const runAttempt = 2;
+    const value = cohortContract({ cohortAttempt: 3, runAttempt });
+
+    expect(() =>
+      validateManagedImageCohort(value, {
+        revision: REVISION,
+        runAttempt,
+        runId: RUN_ID,
+      }),
+    ).toThrow("producer attempt must not exceed the selected publication attempt");
   });
 
   it("rejects a cohort that omits one image architecture", () => {
     const value = cohortContract();
     const agents = value.agents as Record<string, { platforms: Record<string, unknown> }>;
     delete agents.hermes.platforms["linux/arm64"];
+
+    expect(() =>
+      validateManagedImageCohort(value, {
+        revision: REVISION,
+        runAttempt: RUN_ATTEMPT,
+        runId: RUN_ID,
+      }),
+    ).toThrow("complete expected set");
+  });
+
+  it("rejects a cohort that omits one literal required agent", () => {
+    const value = cohortContract();
+    const agents = value.agents as Record<string, unknown>;
+    delete agents.hermes;
 
     expect(() =>
       validateManagedImageCohort(value, {
@@ -217,6 +363,22 @@ describe("managed-image cohort publication contract", () => {
         runId: RUN_ID,
       }),
     ).toThrow("revision must be");
+  });
+
+  it("rejects SLSA provenance bound to a different immutable base image", () => {
+    const value = cohortContract();
+    platformPublication(
+      value,
+    ).publicationEvidence.attestations.slsa.statement.bindings.baseReference =
+      `ghcr.io/nvidia/nemoclaw/base@${digest(14)}`;
+
+    expect(() =>
+      validateManagedImageCohort(value, {
+        revision: REVISION,
+        runAttempt: RUN_ATTEMPT,
+        runId: RUN_ID,
+      }),
+    ).toThrow("base reference binding must be");
   });
 
   it.each([

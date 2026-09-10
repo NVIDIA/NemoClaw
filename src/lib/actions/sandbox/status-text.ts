@@ -38,12 +38,14 @@ export interface SandboxStatusTextContext extends Pick<
   | "currentModel"
   | "currentProvider"
   | "routeDrift"
+  | "llamaCpp"
   | "inferenceHealth"
   | "terminalRuntimeHealth"
   | "servingProcessHealth"
 > {
   sandboxName: string;
   statusAgent: SandboxStatusAgentInfo;
+  phase: string | null;
 }
 
 export interface SandboxStatusTextOutcome {
@@ -53,11 +55,14 @@ export interface SandboxStatusTextOutcome {
 /** Returns true when status can validate an agent version against the running sandbox. */
 function shouldProbeSandboxRuntimeVersion(
   lookup: SandboxGatewayState,
+  phase: string | null,
   sandbox: SandboxEntry,
   agentRuntimeKind: string,
 ): boolean {
   return (
-    lookup.state === "present" && (Boolean(sandbox.agentVersion) || agentRuntimeKind === "terminal")
+    phase !== "Stopped" &&
+    lookup.state === "present" &&
+    (Boolean(sandbox.agentVersion) || agentRuntimeKind === "terminal")
   );
 }
 
@@ -224,11 +229,19 @@ function printActiveSessions(sandboxName: string): void {
   }
 }
 
-function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEntry): void {
+async function printAgentVersion(
+  context: SandboxStatusTextContext,
+  sandbox: SandboxEntry,
+): Promise<void> {
   try {
     const { lookup, sandboxName, statusAgent } = context;
-    const shouldProbe = shouldProbeSandboxRuntimeVersion(lookup, sandbox, statusAgent.agentRuntime);
-    const versionCheck = sandboxVersion.checkAgentVersion(sandboxName, {
+    const shouldProbe = shouldProbeSandboxRuntimeVersion(
+      lookup,
+      context.phase,
+      sandbox,
+      statusAgent.agentRuntime,
+    );
+    const versionCheck = await sandboxVersion.checkAgentVersion(sandboxName, {
       forceProbe: shouldProbe,
       skipProbe: !shouldProbe,
     });
@@ -295,7 +308,9 @@ function printInferenceRouteDrift(
 }
 
 /** Render registry-backed sandbox details and return any non-fatal degraded outcome. */
-export function printSandboxDetails(context: SandboxStatusTextContext): SandboxStatusTextOutcome {
+export async function printSandboxDetails(
+  context: SandboxStatusTextContext,
+): Promise<SandboxStatusTextOutcome> {
   const { sb, currentModel, currentProvider, sandboxName } = context;
   if (!sb) return { exitCode: null };
 
@@ -309,6 +324,15 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
     console.log(`    Serving profile: ${provenance.preset.displayName} (${provenance.preset.id})`);
     console.log(`    Serving recipe:  ${provenance.recipe.id}`);
     console.log(`    Catalog digest:  ${provenance.catalogDigest}`);
+  }
+  if (context.llamaCpp) {
+    console.log(`    Llama.cpp: ${context.llamaCpp.kind}`);
+    if (context.llamaCpp.kind === "attached") {
+      console.log(`    Endpoint: ${context.llamaCpp.endpointUrl}`);
+    } else if (context.llamaCpp.kind === "unavailable") {
+      console.log(`    Ownership: ${context.llamaCpp.diagnostic}`);
+      console.log(`    Recovery: ${context.llamaCpp.recovery}`);
+    }
   }
   const reasoningEffort = getEffectiveReasoningEffort(sb);
   if (reasoningEffort) console.log(`    Reasoning effort: ${reasoningEffort}`);
@@ -326,7 +350,7 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   );
   const agentExitCode = printAgentHarness(context);
   printActiveSessions(sandboxName);
-  printAgentVersion(context, sb);
+  await printAgentVersion(context, sb);
   return { exitCode: inferenceExitCode ?? agentExitCode };
 }
 
@@ -369,7 +393,7 @@ async function printGatewayProcessStatus(context: SandboxStatusTextContext): Pro
 
 /** Render the live agent process status after the gateway lookup is shown. */
 export async function printAgentProcessStatus(context: SandboxStatusTextContext): Promise<void> {
-  if (context.lookup.state !== "present") return;
+  if (context.lookup.state !== "present" || context.phase === "Stopped") return;
   if (context.statusAgent.agentRuntime === "gateway") {
     await printGatewayProcessStatus(context);
     return;

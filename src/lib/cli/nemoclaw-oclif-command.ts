@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Command, Flags, type Interfaces } from "@oclif/core";
+import path from "node:path";
 import {
   assertHermesPortableCommandSupported,
   assertHermesPortableCommandUnavailable,
@@ -142,13 +143,19 @@ export abstract class NemoClawCommand extends Command {
       }
       return super._run<T>();
     };
+    const usesHermesPortableHostAuthority =
+      (commandId === "sandbox:start" || this.isProbeOnlyConnect(commandId)) &&
+      hasHermesPortableReceiptCandidate(sandboxName, defaultPortableDemoStateDir(process.env));
     const runWithLifecycleFence = async () => {
-      return await withMcpLifecycleLock(sandboxName, runLocked);
+      return await withMcpLifecycleLock(
+        sandboxName,
+        runLocked,
+        usesHermesPortableHostAuthority
+          ? { stateDir: path.join(defaultPortableDemoStateDir(process.env), "state") }
+          : {},
+      );
     };
-    if (
-      this.isProbeOnlyConnect(commandId) &&
-      hasHermesPortableReceiptCandidate(sandboxName, defaultPortableDemoStateDir(process.env))
-    ) {
+    if (usesHermesPortableHostAuthority) {
       return await withCurrentPortableHostFence(runWithLifecycleFence);
     }
     return await runWithLifecycleFence();
@@ -228,6 +235,11 @@ export abstract class NemoClawCommand extends Command {
     });
 
     return parsed;
+  }
+
+  protected override toErrorJson(error: unknown): unknown {
+    // Error.message is not enumerable, so retain it before JSON redaction.
+    return super.toErrorJson(error instanceof Error ? { ...error, message: error.message } : error);
   }
 
   protected logJson(json: unknown): void {

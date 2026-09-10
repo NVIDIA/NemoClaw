@@ -7,18 +7,19 @@ import type { ConfigValue } from "../security/credential-filter";
 import { normalizeCustomEndpointUrl } from "./inference-set";
 
 describe("custom inference endpoint DNS pinning", () => {
-  it.each([
-    1024, 65535,
-  ])("allows the exact OpenShell bridge exemption at port %i without DNS rewriting", async (port) => {
-    const rewriteUrl = vi.fn(async () => {
-      throw new Error("bridge exemption unexpectedly reached DNS validation");
-    });
+  it.each([1024, 65535])(
+    "allows the exact OpenShell bridge exemption at port %i without DNS rewriting",
+    async (port) => {
+      const rewriteUrl = vi.fn(async () => {
+        throw new Error("bridge exemption unexpectedly reached DNS validation");
+      });
 
-    await expect(
-      normalizeCustomEndpointUrl(`http://host.openshell.internal:${port}/v1/`, rewriteUrl),
-    ).resolves.toBe(`http://host.openshell.internal:${port}/v1`);
-    expect(rewriteUrl).not.toHaveBeenCalled();
-  });
+      await expect(
+        normalizeCustomEndpointUrl(`http://host.openshell.internal:${port}/v1/`, rewriteUrl),
+      ).resolves.toBe(`http://host.openshell.internal:${port}/v1`);
+      expect(rewriteUrl).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["no explicit port", "http://host.openshell.internal/v1"],
@@ -91,16 +92,19 @@ describe("custom inference endpoint DNS pinning", () => {
     ["userinfo", "https://user:secret@public-endpoint.example/v1"],
     ["query", "https://public-endpoint.example/v1?api_key=secret"],
     ["fragment", "https://public-endpoint.example/v1#secret"],
-  ])("rejects a source endpoint with %s instead of silently stripping it", async (_kind, endpointUrl) => {
-    const rewriteUrl = vi.fn(async (value: ConfigValue) => value);
-    const ensureAdapter = vi.fn(async () => "http://host.openshell.internal:11438/route/test");
+  ])(
+    "rejects a source endpoint with %s instead of silently stripping it",
+    async (_kind, endpointUrl) => {
+      const rewriteUrl = vi.fn(async (value: ConfigValue) => value);
+      const ensureAdapter = vi.fn(async () => "http://host.openshell.internal:11438/route/test");
 
-    await expect(
-      normalizeCustomEndpointUrl(endpointUrl, rewriteUrl, ensureAdapter),
-    ).rejects.toThrow("without userinfo, query, or fragment components");
-    expect(rewriteUrl).not.toHaveBeenCalled();
-    expect(ensureAdapter).not.toHaveBeenCalled();
-  });
+      await expect(
+        normalizeCustomEndpointUrl(endpointUrl, rewriteUrl, ensureAdapter),
+      ).rejects.toThrow("without userinfo, query, or fragment components");
+      expect(rewriteUrl).not.toHaveBeenCalled();
+      expect(ensureAdapter).not.toHaveBeenCalled();
+    },
+  );
 
   it("fails closed for DNS-backed HTTPS endpoints until runtime-aware pinning exists", async () => {
     const lookup = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);

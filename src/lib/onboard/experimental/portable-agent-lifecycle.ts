@@ -37,11 +37,12 @@ import {
 } from "./portable-demo-lifecycle";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 
+export { defaultPortableDemoStateDir };
+
 export type PortableAgentLifecycleDeps = PortableDemoLifecycleDeps & HermesPortableLifecycleDeps;
 export type PortableAgentLifecycleStopResult = PortableDemoLifecycleStopResult & {
   readonly portableAgent?: "hermes";
 };
-
 export const HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE =
   "This command is not supported for an experimental Hermes portable sandbox.";
 export const HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE =

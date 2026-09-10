@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
@@ -246,6 +249,25 @@ export class LifecyclePhaseFixture {
     return this.runtimeProvider;
   }
 
+  trackInstallerGatewayUserService(): void {
+    const env = buildAvailabilityProbeEnv();
+    const configured = env.XDG_CONFIG_HOME;
+    const configHome =
+      configured && path.isAbsolute(configured)
+        ? configured
+        : path.join(env.HOME ?? os.homedir(), ".config");
+    const unit = path.join(configHome, "systemd", "user", "nemoclaw-openshell-gateway.service");
+    try {
+      fs.lstatSync(unit);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    this.cleanup.add("lifecycle.remove-installer-gateway-user-service", () =>
+      this.removeStagedOpenShellGatewayUserService(env),
+    );
+  }
+
   /**
    * Ensure OpenShell is installed and stage the OpenShell gateway user service
    * before onboarding. Onboarding must see the service so it writes the
@@ -353,6 +375,7 @@ export class LifecyclePhaseFixture {
           host: this.host,
           sandbox: this.sandbox,
           cleanup: this.cleanup,
+          runtimeProvider: this.requireRuntimeProvider(),
         });
       default: {
         const _exhaustive: never = profile;
@@ -547,13 +570,15 @@ export class LifecyclePhaseFixture {
     return match[1] as UserServiceStageResult;
   }
 
-  private async removeStagedOpenShellGatewayUserService(): Promise<void> {
+  private async removeStagedOpenShellGatewayUserService(
+    env = buildAvailabilityProbeEnv(),
+  ): Promise<void> {
     const result = await this.host.command(
       "sh",
       ["-lc", buildOpenShellGatewayUserServiceRemovalScript()],
       {
         artifactName: "lifecycle-cleanup-gateway-user-service",
-        env: buildAvailabilityProbeEnv(),
+        env,
         timeoutMs: 120_000,
       },
     );

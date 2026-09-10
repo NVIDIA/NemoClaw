@@ -206,7 +206,7 @@ void (async () => {
             },
             agent: {
               name: "hermes",
-              version: "0.19.0",
+              version: "0.20.6",
               configurationFingerprint: digest("4"),
               health: { state: "reachable", statusCode: 200 },
             },
@@ -315,7 +315,7 @@ const observer: OpenShellHermesAgentObserver = {
         },
         agent: {
           name: "hermes",
-          version: "0.19.0",
+          version: "0.20.6",
           configurationFingerprint: digest("4"),
           health: { state: "reachable", statusCode: 200 },
         },
