@@ -58,7 +58,16 @@ runAgentTurnLatencyTest(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, inference, progress, runtimeProvider, sandbox }) => {
+  async ({
+    artifacts,
+    cleanup,
+    host,
+    inference,
+    lifecycle,
+    progress,
+    runtimeProvider,
+    sandbox,
+  }) => {
     const results: Record<string, unknown> = {
       model: inference.model,
       maxTurnSeconds: MAX_TURN_SECONDS,
@@ -70,6 +79,7 @@ runAgentTurnLatencyTest(
       openclawSandbox: OPENCLAW_SANDBOX,
       hermesSandbox: HERMES_SANDBOX,
     });
+    lifecycle.trackInstallerGatewayUserService();
     cleanup.trackDisposable("remove gateway nemoclaw", async () => {
       await host.cleanupGatewayRegistration("nemoclaw", {
         artifactName: "cleanup-gateway-destroy-turn-latency",
@@ -325,7 +335,7 @@ runAgentTurnLatencyTest(
     progress.phase("replace OpenClaw with Hermes sandbox");
     const openclawDestroy = await host.command(
       "node",
-      [CLI, OPENCLAW_SANDBOX, "destroy", "--yes"],
+      [CLI, OPENCLAW_SANDBOX, "destroy", "--yes", "--cleanup-gateway"],
       {
         artifactName: "destroy-openclaw-before-hermes",
         env: env(OPENCLAW_SANDBOX, "openclaw", inference),
