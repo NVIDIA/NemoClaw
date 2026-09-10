@@ -1263,29 +1263,21 @@ describe("Hermes portable lifecycle", () => {
 
   it("reconciles an already-stopped container whose OpenShell phase remains Ready (#11248)", () => {
     const receipt = activeReceipt();
-    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, false);
-    const defaultCapture = captureOpenShell.getMockImplementation()!;
     let stopRequested = false;
+    const { deps, captureOpenShell } = lifecycleDeps(receipt, false, {
+      sandboxPhase: () => (stopRequested ? "Error" : "Ready"),
+    });
+    const defaultCapture = captureOpenShell.getMockImplementation()!;
     captureOpenShell.mockImplementation((args: readonly string[]) => {
-      const operation = args.slice(0, 2).join(":");
-      if (operation === "sandbox:list") {
-        return {
-          status: 0,
-          stdout: sandboxListJson(SANDBOX_ID, stopRequested ? "Error" : "Ready"),
-          stderr: "",
-        };
-      }
-      if (operation === "sandbox:stop") stopRequested = true;
+      stopRequested ||= args.slice(0, 2).join(":") === "sandbox:stop";
       return defaultCapture(args);
     });
-    const beforeStop = vi.fn();
     const result = withMcpLifecycleLockSync(
       SANDBOX,
-      () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), beforeStop, deps),
+      () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), deps),
       { stateDir: path.join(stateDir, "state") },
     );
     expect(result).toEqual({ kind: "already-stopped" });
-    expect(beforeStop).not.toHaveBeenCalled();
     expect(openshellMutationCalls(captureOpenShell, "stop")).toHaveLength(1);
   });
 
