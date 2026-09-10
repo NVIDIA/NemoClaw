@@ -3,6 +3,8 @@
 
 name: CI / Native Windows Installer Candidate
 
+# Legacy runtime assembly and installer publication require explicit dispatch.
+# Onboarding/UI edits must not rebuild the expanded legacy runtime payload.
 on:
   workflow_dispatch:
     inputs:
@@ -40,12 +42,6 @@ on:
           - components
           - python
           - runtime
-  push:
-    branches:
-      - feat/windows-native-installer
-    paths:
-      - packaging/windows/**
-      - .github/workflows/windows-native-installer.yaml
 
 permissions:
   actions: read
@@ -59,7 +55,7 @@ concurrency:
 jobs:
   windows-native-installer:
     name: Windows native installer candidate (ARM64, no WSL)
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.test_native_windows_runtime && !inputs.profile_native_windows && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id == '') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.test_native_windows_runtime && !inputs.profile_native_windows && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id == '' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 240
     steps:

@@ -79,9 +79,11 @@ class GeneratedFinderPaths(unittest.TestCase):
             exec(generated, {"__file__": str(self.finder.parent / ".." / "finder.py")})
 
     def test_foreign_source_mapping_still_refused_before_generation(self):
-        foreign = self.input.replace(
-            str(self.source).encode(), str(self.root / "foreign").encode()
-        )
+        foreign = (
+            "MAPPING: dict[str, str] = "
+            + repr({"hermes_cli": str(self.root / "foreign" / "hermes_cli")})
+            + "\n"
+        ).encode()
         with self.assertRaisesRegex(
             metadata.AdaptationError, "declared source runtime"
         ):
