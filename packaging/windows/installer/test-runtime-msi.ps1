@@ -13,6 +13,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($null -eq [Diagnostics.ProcessStartInfo].GetProperty('StandardInputEncoding')) { throw 'The MSI fixtures require PowerShell Core with explicit stdin encoding support.' }
 if ($env:OS -cne 'Windows_NT' -or ($env:PROCESSOR_ARCHITECTURE -cne 'ARM64' -and $env:PROCESSOR_ARCHITEW6432 -cne 'ARM64') -or $env:GITHUB_ACTIONS -cne 'true') {
     throw 'The connected MSI fixtures require an ephemeral GitHub Windows ARM64 runner.'
 }
@@ -94,13 +95,21 @@ function Start-FixtureLease {
     $start.FileName = $Helper; $start.Arguments = $Arguments
     $start.UseShellExecute = $false; $start.CreateNoWindow = $true
     $start.RedirectStandardInput = $true; $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
-    $process = [Diagnostics.Process]::Start($start)
-    if ($null -eq $process) { throw 'The owned lease helper did not start.' }
-    $stderr = $process.StandardError.ReadToEndAsync()
-    $evidence = [ordered]@{ pid = $process.Id; startedUtc = $process.StartTime.ToUniversalTime().ToString('o');
-        releaseRequested = $false; exitCode = $null; stderr = $null; stderrComplete = $false;
-        observations = [Collections.Generic.List[object]]::new() }
+    $process = $null
     try {
+        if ($null -eq $start.GetType().GetProperty('StandardInputEncoding')) {
+            throw 'The MSI lease fixtures require PowerShell Core with explicit stdin encoding support.'
+        }
+        $start.StandardInputEncoding = [Text.UTF8Encoding]::new($false)
+        $process = [Diagnostics.Process]::Start($start)
+        if ($null -eq $process) { throw 'The owned lease helper did not start.' }
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $evidence = [ordered]@{ pid = $process.Id; startedUtc = $process.StartTime.ToUniversalTime().ToString('o');
+            releaseRequested = $false; exitCode = $null; stderr = $null; stderrComplete = $false;
+            stdinCodePage = $process.StandardInput.Encoding.CodePage;
+            stdinPreambleBytes = $process.StandardInput.Encoding.GetPreamble().Length;
+            observations = [Collections.Generic.List[object]]::new() }
+        if ($evidence.stdinPreambleBytes -ne 0) { throw 'The owned release channel acquired an encoding preamble.' }
         $line = $process.StandardOutput.ReadLineAsync()
         if (-not $line.Wait(15000)) { throw 'The actual package lease did not report readiness.' }
         $ready = $line.GetAwaiter().GetResult() | ConvertFrom-Json
@@ -112,11 +121,13 @@ function Start-FixtureLease {
         return $owned
     } catch {
         $leaseError = $_
-        try {
-            $process.StandardInput.Close()
-            if (-not $process.WaitForExit(5000)) { $process.Kill(); [void]$process.WaitForExit(5000) }
-        } catch { Write-Warning ('Lease startup cleanup failed: ' + $_.Exception.Message) }
-        finally { $process.Dispose() }
+        if ($null -ne $process) {
+            try {
+                $process.StandardInput.Close()
+                if (-not $process.WaitForExit(5000)) { $process.Kill(); [void]$process.WaitForExit(5000) }
+            } catch { Write-Warning ('Lease startup cleanup failed: ' + $_.Exception.Message) }
+            finally { $process.Dispose() }
+        }
         throw $leaseError
     }
 }
@@ -226,7 +237,8 @@ try {
         }
         Assert-FixtureCurrent $first
     }
-    Stop-FixtureLease $lease; $lease = $null
+    $closingLease = $lease; $lease = $null
+    Stop-FixtureLease $closingLease
     $repair = Invoke-FixtureMsi '/fa' $first.msi 'released-direct-repair'; $results.Add($repair)
     if ($repair.exitCode -ne 0 -or (Get-FixtureSnapshot) -cne $snapshot) { throw 'Repair after lease release did not preserve the exact runtime.' }
     foreach ($fixture in @($fixtures[2],$fixtures[3])) {
@@ -255,7 +267,7 @@ try {
     $receipt.status = 'pass'
 } catch { $primary = $_; $receipt.error = $_.Exception.Message }
 finally {
-    try { if ($null -ne $lease) { Stop-FixtureLease $lease; $lease = $null } }
+    try { if ($null -ne $lease) { $closingLease = $lease; $lease = $null; Stop-FixtureLease $closingLease } }
     catch { $cleanupFailures.Add('The owned lease helper could not be released: ' + $_.Exception.Message) }
     if ($null -ne $script:activeMsi) {
         $cleanupFailures.Add('A Windows Installer operation remains active; no overlapping uninstall was attempted.')

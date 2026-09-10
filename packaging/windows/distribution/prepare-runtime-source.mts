@@ -88,9 +88,11 @@ export function prepareRuntimeSource(source: string, patch: string) {
         throw new Error("The static-runtime source does not match its reviewed preimage.");
       }
     }
+    const gitConfig = path.join(work, "empty.gitconfig");
+    fs.writeFileSync(gitConfig, "", { flag: "wx", mode: 0o600 });
     const env = {
       ...process.env,
-      GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+      GIT_CONFIG_GLOBAL: gitConfig,
       GIT_CONFIG_NOSYSTEM: "1",
     };
     execFileSync("git", ["init", "--quiet", work], { env, stdio: "pipe" });

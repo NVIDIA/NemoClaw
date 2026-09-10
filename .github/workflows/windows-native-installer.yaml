@@ -1451,22 +1451,22 @@ jobs:
           }
 
       - name: Build and exercise actual isolated MSI transactions
-        shell: powershell
+        shell: pwsh
         env:
           CARGO_TERM_COLOR: never
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
+          $node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
           & "$env:GITHUB_WORKSPACE\packaging\windows\installer\test-runtime-msi-process.ps1" `
             -SourceRoot $env:GITHUB_WORKSPACE `
-            -ArtifactDirectory (Join-Path $env:RUNNER_TEMP 'windows-msi-lease-process')
+            -ArtifactDirectory (Join-Path $env:RUNNER_TEMP 'windows-msi-lease-process') -NodePath $node
           $tools = Join-Path $env:RUNNER_TEMP 'windows-msi-tools'
           [IO.Directory]::CreateDirectory($tools) | Out-Null
           $config = Join-Path $tools 'NuGet.Config'
           [IO.File]::WriteAllText($config, '<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>', [Text.UTF8Encoding]::new($false))
           & dotnet tool install wix --version 5.0.2 --tool-path $tools --configfile $config
           if ($LASTEXITCODE -ne 0) { throw 'The pinned WiX fixture tool could not be installed.' }
-          $node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
           $python = (Get-Command python.exe -CommandType Application | Select-Object -First 1).Source
           $license = Join-Path (Split-Path -Parent $node) 'LICENSE'
           & "$env:GITHUB_WORKSPACE\packaging\windows\installer\test-runtime-msi.ps1" `
