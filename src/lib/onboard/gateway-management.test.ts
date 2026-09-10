@@ -257,7 +257,7 @@ describe("gateway management declaration loading", () => {
     },
     { kind: "directory", create: (filePath: string) => fs.mkdirSync(filePath) },
   ])(
-    "refuses implicit self-management when the host declaration is a $kind (#11347)",
+    "blocks implicit managed behavior when the host declaration path contains a $kind (#11347)",
     ({ create }) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-declaration-"));
       const declarationPath = path.join(directory, "gateway-management.json");
@@ -275,6 +275,7 @@ describe("gateway management declaration loading", () => {
         expect(result.ok === false && result.reason).toContain(
           "NEMOCLAW_GATEWAY_MANAGEMENT=/etc/nemoclaw/gateway-management.json",
         );
+        expect(result.ok === false && result.reason).toContain("platform owner's procedure");
         expect(readFile).not.toHaveBeenCalled();
       } finally {
         vi.mocked(fs.lstatSync).mockRestore();

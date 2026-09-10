@@ -372,7 +372,7 @@ export function loadGatewayManagementDeclaration(
   if (!configuredPath) {
     try {
       // Inspect the entry without following symlinks or trusting its contents.
-      // A dangling declaration must not authorize a competing gateway.
+      // A dangling entry at the host declaration path must block implicit managed startup.
       fs.lstatSync(HOST_GATEWAY_MANAGEMENT_PATH);
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") {
@@ -386,8 +386,9 @@ export function loadGatewayManagementDeclaration(
     return {
       ok: false,
       reason:
-        `host declaration exists but ${GATEWAY_MANAGEMENT_ENV_VAR} is unset; ` +
-        `set ${GATEWAY_MANAGEMENT_ENV_VAR}=${HOST_GATEWAY_MANAGEMENT_PATH} to select it explicitly`,
+        `${HOST_GATEWAY_MANAGEMENT_PATH} contains an unselected filesystem entry; ` +
+        `if it is a readable declaration file, set ${GATEWAY_MANAGEMENT_ENV_VAR}=${HOST_GATEWAY_MANAGEMENT_PATH}; ` +
+        "otherwise, use the platform owner's procedure to restore access, remove the stale entry, or relocate it before starting a gateway",
     };
   }
 
