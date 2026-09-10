@@ -26,7 +26,7 @@ import {
   SUBPROCESS_ENV_ALLOWED_PREFIXES,
 } from "../../../src/lib/subprocess-env";
 import { testTimeout } from "../../helpers/timeouts";
-import { runLaunchCommand } from "./launch-agent-turn-process.ts";
+import { cleanLaunchState, runLaunchCommand } from "./launch-agent-turn-process.ts";
 import {
   LAUNCH_TURN_SCRIPT,
   OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS,
@@ -493,7 +493,10 @@ exec "$@"
     const launchCommand = invocation?.command ?? "bash";
     const launchArgs = invocation?.args ?? ["-c", LAUNCH_TURN_SCRIPT];
     const launch = (env: NodeJS.ProcessEnv) =>
-      runLaunchCommand(launchCommand, launchArgs, env, invocation?.timeoutMs);
+      runLaunchCommand(launchCommand, launchArgs, env, {
+        onTimeout: () => cleanLaunchState(fixtureRoot, baselinePath, ptyMonitorRoot),
+        timeoutMs: invocation?.timeoutMs,
+      });
     const result = await launch({
       ...process.env,
       ...invocationEnv,
@@ -561,7 +564,6 @@ exec "$@"
       ),
       orphanedMonitorProcessIds: monitorProcessIds.filter((pid) => existsSync(`/proc/${pid}`)),
       orphanedTuiProcessIds: tuiProcessIds.filter((pid) => existsSync(`/proc/${pid}`)),
-      ownedStatePaths: [fixtureRoot, baselinePath, ptyMonitorRoot],
       openshellCalls: readdirSync(openshellCallsRoot)
         .sort()
         .map(
@@ -605,7 +607,7 @@ it.runIf(process.platform === "linux").concurrent(
     expect(fixture.tuiProcessIds.length).toBeGreaterThan(0);
     expect(fixture.monitorProcessIds.length).toBeGreaterThan(0);
     expect([...fixture.orphanedTuiProcessIds, ...fixture.orphanedMonitorProcessIds]).toEqual([]);
-    expect(fixture.ownedStatePaths.every((path) => !existsSync(path))).toBe(true);
+    expect(fixture.result.ownedStateRemoved).toBe(true);
   },
   testTimeout(10_000),
 );
