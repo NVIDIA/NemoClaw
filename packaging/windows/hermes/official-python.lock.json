@@ -88,6 +88,8 @@
   "rustHost": "aarch64-pc-windows-msvc",
   "msvcTarget": "arm64",
   "msvcHost": "arm64",
-  "msvcPinEvidence": "Prior b9 observed Visual Studio18.9.2; this phase measures actual compiler/toolset/SDK hashes and versions. No immutable MSVC pin is claimed.",
+  "msvcToolset": "14.51.36231",
+  "windowsSdk": "10.0.26100.0",
+  "msvcPinEvidence": "Versions observed in Windows ARM64 run34460279691, candidate209ce87ba37adb81d0ce4c56213651e889bbba93. Each attempt records actual tool hashes and signatures; version selection does not assert every SDK file is byte-pinned.",
   "priorObservedVisualStudioProductVersion": "18.9.2"
 }

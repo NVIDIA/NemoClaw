@@ -40,6 +40,21 @@ function Write-PythonPhaseJson {
     [IO.File]::WriteAllText($Path, (($Value | ConvertTo-Json -Depth 14) + "`n"), [Text.UTF8Encoding]::new($false))
 }
 
+function Get-PythonPhaseMsvcTools {
+    param([Parameter(Mandatory)][string]$ToolsRoot)
+    if (-not [IO.Path]::IsPathRooted($ToolsRoot)) { throw 'MSVC tools require an absolute selected installation path.' }
+    $directory = [IO.Path]::GetFullPath((Join-Path $ToolsRoot 'bin/HostARM64/ARM64'))
+    $result = @{}
+    foreach ($entry in @(@('compiler','cl.exe'), @('linker','link.exe'))) {
+        $file = Get-Item -LiteralPath (Join-Path $directory $entry[1]) -ErrorAction Stop
+        if ($file.PSIsContainer -or $file.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+            throw 'A selected MSVC tool must be an ordinary file.'
+        }
+        $result[$entry[0]] = $file.FullName
+    }
+    return [pscustomobject]$result
+}
+
 function Get-PythonPhaseFileIdentity {
     param([Parameter(Mandatory)][string]$Path)
     $item = Get-Item -LiteralPath $Path
@@ -133,17 +148,24 @@ try {
         developerEnvironmentVersion = $env:VSCMD_VER; toolsetVersion = $env:VCToolsVersion
         windowsSdkVersion = $env:WindowsSDKVersion; installationRoot = $env:VSINSTALLDIR
         host = $env:VSCMD_ARG_HOST_ARCH; target = $env:VSCMD_ARG_TGT_ARCH
-        immutableToolsetPin = $false; measurementRequiredBeforePin = $true
+        versionSelectionPinned = $true; executableHashScope = 'Successfully inspected tools in executables; incomplete on failure.'
     }
     if ($env:VSCMD_ARG_TGT_ARCH -cne $phaseLock.msvcTarget -or $env:VSCMD_ARG_HOST_ARCH -cne $phaseLock.msvcHost) {
         throw 'The selected Visual Studio environment is not native ARM64.'
+    }
+    if ($env:VCToolsVersion.TrimEnd('\') -cne $phaseLock.msvcToolset -or
+        $env:WindowsSDKVersion.TrimEnd('\') -cne $phaseLock.windowsSdk) {
+        throw 'The selected MSVC toolset or Windows SDK differs from the recorded version pin.'
     }
     $rustc = [IO.Path]::GetFullPath($RustcPath)
     $cargo = [IO.Path]::GetFullPath($CargoPath)
     $rustBin = Split-Path -Parent $rustc
     if ((Split-Path -Parent $cargo) -cne $rustBin) { throw 'Rust compiler and Cargo must come from the same pinned toolchain.' }
-    $cl = (Get-Command cl.exe -CommandType Application -ErrorAction Stop).Source
-    $link = (Get-Command link.exe -CommandType Application -ErrorAction Stop).Source
+    # Get-Command can return multiple ApplicationInfo objects for one name.
+    # Resolve both tools inside the chosen native toolset, independent of PATH.
+    $msvcTools = Get-PythonPhaseMsvcTools -ToolsRoot $env:VCToolsInstallDir
+    $cl = $msvcTools.compiler
+    $link = $msvcTools.linker
     foreach ($file in @($rustc, $cargo, $cl, $link, (Join-Path $phaseRoot 'bin\uv.exe'),
         (Join-Path $phaseSource '.hermes-runtime\python\cpython-3.11.16-windows-aarch64-none\python.exe'))) {
         $identity = Get-PythonPhaseFileIdentity -Path $file
@@ -155,7 +177,7 @@ try {
         $rustVersion -notmatch '(?m)^host: aarch64-pc-windows-msvc\r?$') { throw 'The selected Rust version or host differs from the pin.' }
     $phaseReceipt['rustVersionOutput'] = $rustVersion
     $allowedBuildRoots = @($rustBin, $env:VSINSTALLDIR, $env:WindowsSdkDir) | Where-Object { $_ }
-    $buildPaths = @($rustBin)
+    $buildPaths = @($rustBin, (Split-Path -Parent $cl))
     foreach ($entry in ($env:PATH -split ';')) {
         if (-not $entry -or -not [IO.Path]::IsPathRooted($entry)) { continue }
         $absolute = [IO.Path]::GetFullPath($entry).TrimEnd('\')
@@ -191,7 +213,11 @@ try {
     Assert-PythonPhaseResult -Result $result
     $phaseReceipt['dependencyReceiptSha256'] = (Get-FileHash -LiteralPath $resultPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $phaseReceipt.status = 'python-provisioned'
-} catch { $phaseFailure = $_; $phaseReceipt['error'] = $_.Exception.Message }
+} catch {
+    $phaseFailure = $_
+    $phaseReceipt['error'] = $_.Exception.Message
+    $phaseReceipt['errorContext'] = @{ type = $_.Exception.GetType().FullName; scriptStackTrace = $_.ScriptStackTrace }
+}
 finally {
     $env:UV_FIND_LINKS = $phaseOriginalFindLinks
     $env:CARGO_HOME = $phaseOriginalCargoHome

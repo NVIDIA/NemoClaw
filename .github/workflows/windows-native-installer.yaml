@@ -866,6 +866,7 @@ jobs:
         run: |
           & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-python.ps1"
           & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-python-process.ps1"
+          & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-msvc-tools.ps1"
 
       - name: Set up pinned native Rust for canonical Hermes Python
         if: ${{ inputs.official_hermes_phase == 'python' }}
@@ -924,6 +925,7 @@ jobs:
           & $node --experimental-strip-types --no-warnings --test `
             "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-components.test.mts" `
             "$env:GITHUB_WORKSPACE\packaging\windows\hermes\portable-git-arguments.test.mts" `
+            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-python-temp.test.mts" `
             "$env:GITHUB_WORKSPACE\packaging\windows\performance\measurement.test.mts"
           if ($LASTEXITCODE -ne 0) { throw 'The component process diagnostic controls failed.' }
 
@@ -942,6 +944,22 @@ jobs:
             --runtime-root $env:HERMES_COMPONENT_ROOT `
             --artifact-directory "$env:RUNNER_TEMP\official-hermes-mxc"
           if ($LASTEXITCODE -ne 0) { throw 'The official Hermes MXC component probe failed.' }
+
+      - name: Check official Python temp permissions before and after the startup adapter
+        if: ${{ !cancelled() && steps.component-baseline.outcome == 'success' && steps.component-controls.outcome == 'success' }}
+        shell: powershell
+        env:
+          HERMES_COMPONENT_ROOT: ${{ steps.hermes-components.outputs.runtime_root }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $installRoot = Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw'
+          & "$installRoot\bin\node.exe" --experimental-strip-types --no-warnings `
+            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-official-python-adapter.mts" `
+            --install-root $installRoot `
+            --runtime-root $env:HERMES_COMPONENT_ROOT `
+            --artifact-directory "$env:RUNNER_TEMP\official-hermes-python-temp"
+          if ($LASTEXITCODE -ne 0) { throw 'The official Python before/after temp adapter control failed.' }
 
       - name: Probe installed runtime access without tree copies
         if: ${{ !cancelled() && steps.component-baseline.outcome == 'success' && steps.component-controls.outcome == 'success' }}
@@ -965,6 +983,7 @@ jobs:
           path: |
             ${{ runner.temp }}/official-hermes-components/
             ${{ runner.temp }}/official-hermes-python/
+            ${{ runner.temp }}/official-hermes-python-temp/
             ${{ runner.temp }}/official-hermes-mxc/
             ${{ runner.temp }}/installed-runtime-readonly/
             !${{ runner.temp }}/official-hermes-components/downloads/
@@ -990,6 +1009,7 @@ jobs:
             ${{ runner.temp }}/official-hermes-baseline/
             ${{ runner.temp }}/official-hermes-components/
             ${{ runner.temp }}/official-hermes-python/
+            ${{ runner.temp }}/official-hermes-python-temp/
             ${{ runner.temp }}/official-hermes-mxc/
             ${{ runner.temp }}/installed-runtime-readonly/
             !${{ runner.temp }}/official-hermes-baseline/baseline-setup.exe

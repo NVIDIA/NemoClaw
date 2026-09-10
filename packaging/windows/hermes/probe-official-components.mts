@@ -28,6 +28,10 @@ async function main(): Promise<void> {
   const installRoot = fs.realpathSync(argument("--install-root"));
   const runtimeRoot = fs.realpathSync(argument("--runtime-root"));
   const evidenceRoot = argument("--artifact-directory");
+  const tempIndex = process.argv.indexOf("--python-temp-control");
+  const tempControl = tempIndex < 0 ? null : process.argv[tempIndex + 1];
+  if (tempControl !== null && tempControl !== "before" && tempControl !== "after")
+    throw new Error("The Python temp control must be before or after.");
   if (!/^[A-Za-z]:\\NemoClawHermesProbe-[a-f0-9]{12}$/u.test(runtimeRoot))
     throw new Error("The official runtime must use its build-owned shallow root.");
   if (fs.existsSync(evidenceRoot)) throw new Error("The probe evidence directory must be fresh.");
@@ -58,7 +62,9 @@ async function main(): Promise<void> {
   const openshell = path.join(installRoot, "bin", "openshell.exe");
   const gatewayExecutable = path.join(installRoot, "bin", "openshell-gateway.exe");
   const node = path.join(launcherRoot, "node.exe");
-  const worker = path.join(launcherRoot, "probe-component-workload.mts");
+  const workerName =
+    tempControl === null ? "probe-component-workload.mts" : "probe-python-temp-workload.mts";
+  const worker = path.join(launcherRoot, workerName);
   const resultPath = path.join(shareRoot, "result.json");
   const sandboxName = componentSandboxName(nonce);
   const gatewayName = `hermes-component-gateway-${id}`;
@@ -72,7 +78,11 @@ async function main(): Promise<void> {
   };
   const receipt: Record<string, unknown> = {
     schemaVersion: 1,
-    classification: "official-hermes-mxc-component-feasibility-only",
+    classification:
+      tempControl === null
+        ? "official-hermes-mxc-component-feasibility-only"
+        : "official-python-temp-control",
+    pythonTempControl: tempControl,
     completeRuntime: false,
     installedAcceptance: false,
     conptyTested: false,
@@ -111,10 +121,11 @@ async function main(): Promise<void> {
       createdRoots.push(root);
     }
     fs.copyFileSync(path.join(installRoot, "bin", "node.exe"), node);
-    fs.copyFileSync(
-      fileURLToPath(new URL("./probe-component-workload.mts", import.meta.url)),
-      worker,
-    );
+    for (const name of new Set(["probe-component-workload.mts", workerName]))
+      fs.copyFileSync(
+        fileURLToPath(new URL("./" + name, import.meta.url)),
+        path.join(launcherRoot, name),
+      );
     receipt.baselineFiles = [
       "bin/node.exe",
       "bin/openshell.exe",
@@ -233,6 +244,7 @@ async function main(): Promise<void> {
             runtimeRoot,
             resultPath,
             nonce,
+            ...(tempControl === null ? [] : [tempControl]),
           ],
           cwd: shareRoot,
           windows_ui: true,
@@ -258,6 +270,11 @@ async function main(): Promise<void> {
     await helpers.waitForNativeTurnResult(resultPath, create, gateway, createFailure, 120_000);
     const result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
     receipt.workload = result;
+    if (
+      tempControl !== null &&
+      (result.classification !== "official-python-temp-control" || result.control !== tempControl)
+    )
+      throw new Error("The Python temp result did not match the requested control.");
     if (
       result.nonce !== nonce ||
       result.schemaVersion !== 1 ||
