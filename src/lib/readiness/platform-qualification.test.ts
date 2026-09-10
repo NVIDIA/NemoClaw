@@ -566,22 +566,24 @@ describe("platform readiness qualification (#7410)", () => {
     expect(result.findings.map(({ id }) => id)).toContain("host.platform.dgx_station_unqualified");
   });
 
-  it("uses the shared Station product qualification contract", () => {
-    const productName = "Custom Station GB300 platform";
-    const result = projectPlatformQualification(
-      input({
-        architecture: "arm64",
-        hasNvidiaGpu: true,
-        nvidiaPlatform: "station",
-        productName,
-        stationProfile: "generic-ubuntu",
-        stationGb300PciGpu: true,
-      }),
-    );
+  it.each(["Custom Station GB300 platform", "GB300 DGX Station"])(
+    "qualifies the Station firmware identifier %s (#11476)",
+    (productName) => {
+      const result = projectPlatformQualification(
+        input({
+          architecture: "arm64",
+          hasNvidiaGpu: true,
+          nvidiaPlatform: "station",
+          productName,
+          stationProfile: "generic-ubuntu",
+          stationGb300PciGpu: true,
+        }),
+      );
 
-    expect(isStationGb300ProductName(productName)).toBe(true);
-    expect(qualification(result, "host.platform.dgx_station")).toBe("qualified");
-  });
+      expect(isStationGb300ProductName(productName)).toBe(true);
+      expect(qualification(result, "host.platform.dgx_station")).toBe("qualified");
+    },
+  );
 
   it("uses a bounded firmware-family value when the product name is generic (#10928)", () => {
     const identity = collectPlatformIdentity({

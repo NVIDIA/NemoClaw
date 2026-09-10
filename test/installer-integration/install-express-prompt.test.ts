@@ -6,21 +6,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { nvidiaFirmwareProductClass } from "../../src/lib/inference/dgx-station-identity";
 import { runInstallerSourced } from "../helpers/installer-express-prompt-harness";
 import { runExpressPromptWithTty } from "../helpers/installer-express-prompt-pty-harness";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
-  const firmwareStates = [
-    [/(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu, "station-gb300"],
-    [/DGX[\s_-]+Spark/iu, "spark"],
-    [/(?:^|[^A-Za-z0-9])P3830(?:$|[^A-Za-z0-9])|DGX[\s_-]+Station/iu, "station-other"],
-    [/Jetson|Tegra|Thor|Orin|Xavier/iu, "jetson"],
-  ] as const;
-  function firmwareStateForProduct(productName: string): string {
-    return firmwareStates.find(([pattern]) => pattern.test(productName))?.[1] ?? "not-station";
-  }
-
   it("carries a declined N1x preview through preflight into ordinary onboarding (#11041)", () => {
     const result = runExpressPromptWithTty("n\n", "pipe", "N1x", {}, "n1x-standard-main");
     const output = `${result.stdout}${result.stderr}`;
@@ -117,7 +108,7 @@ detect_express_platform
             "prepare-dgx-station-host.sh",
           ),
           EXPRESS_PRODUCT_NAME: productName,
-          EXPRESS_FIRMWARE_STATE: firmwareStateForProduct(productName),
+          EXPRESS_FIRMWARE_STATE: nvidiaFirmwareProductClass(productName) ?? "not-station",
           EXPRESS_DGX_RELEASE_PATH: releasePath,
           ...extraEnv,
         },
@@ -1214,15 +1205,17 @@ detect_express_platform
     expect(result.stdout).toBe("Windows WSL");
   });
 
-  it.each(["Dell Pro Max with Station GB300", "NVIDIA DGX Station GB300", "DGX_Station_GB300"])(
-    "recognizes supported Station GB300 firmware as DGX Station: %s",
-    (productName) => {
-      const result = detectExpressPlatformForProductName(productName);
+  it.each([
+    "Dell Pro Max with Station GB300",
+    "NVIDIA DGX Station GB300",
+    "DGX_Station_GB300",
+    "GB300 DGX Station",
+  ])("recognizes supported Station GB300 firmware as DGX Station: %s", (productName) => {
+    const result = detectExpressPlatformForProductName(productName);
 
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(result.stdout).toBe("DGX Station");
-    },
-  );
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  });
 
   it("rejects conflicting NVIDIA firmware identities before platform selection (#10928)", () => {
     const result = detectExpressPlatform("NVIDIA DGX Spark", "", {
@@ -1337,7 +1330,7 @@ detect_express_platform
     ["future OTA version", stockDgxRelease("7.7.0")],
     ["unreviewed no-OTA version", noOtaDgxOs76Release("7.7.0")],
   ])("keeps a Station with %s outside automatic Express handling (#10928)", (_scenario, marker) => {
-    const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", marker);
+    const result = detectExpressPlatformForStockDgxRelease("GB300 DGX Station", marker);
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toBe("Unsupported DGX Station OS");
