@@ -7,14 +7,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { terminateForwardServiceProcessTree } from "../../../src/lib/adapters/openshell/forward-service.ts";
 import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve.ts";
+import { isLocalForwardReachable } from "../../../src/lib/actions/sandbox/forward-health.ts";
 import { DASHBOARD_PORT } from "../../../src/lib/core/ports.ts";
+import { waitUntil } from "../../../src/lib/core/wait.ts";
 import { pullAndResolveBaseImageDigest } from "../../../src/lib/onboard/base-image.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { terminateProcessIfRunning } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
@@ -585,7 +587,8 @@ test(
       version: "v2",
     });
     openshellWrapper.selectImage(pluginImageV2);
-    terminateForwardServiceProcessTree({ pid: listenerAfterRestart.pid!, unref() {} });
+    terminateProcessIfRunning(listenerAfterRestart.pid!, "SIGKILL");
+    waitUntil(() => !isLocalForwardReachable(DASHBOARD_PORT, 100), 5, 50);
     const recreate = await runOpenClawPluginWithFailureEvidence({
       operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
       captureDiagnostics: capturePairingDiagnostics,
