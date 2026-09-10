@@ -307,13 +307,42 @@ function getDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   return [];
 }
 
-function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDetection | null {
+/** One reachable fallback socket that identified itself as a known engine. */
+export interface DockerAuthorityCandidate {
+  readonly socketPath: string;
+  readonly identity: "docker" | "podman";
+}
+
+/**
+ * Two reachable fallback sockets that identify as different engines while the
+ * host default authority refuses to answer. NemoClaw does not choose between
+ * them (#8816, #10253); this record lets preflight explain why (#10622).
+ */
+export interface DockerAuthorityConflict {
+  /** [the candidate selected first, the differing candidate], in probe order. */
+  readonly candidates: readonly [DockerAuthorityCandidate, DockerAuthorityCandidate];
+}
+
+interface DockerAuthoritySelection {
+  selection: DockerHostDetection | null;
+  conflict: DockerAuthorityConflict | null;
+}
+
+/**
+ * Probe the ambient Docker authority and the fallback sockets once, returning
+ * the selection detectDockerHost makes and the engine conflict, if any, that
+ * made it decline. The policy stays fail-closed (#8816, #10253).
+ */
+function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAuthoritySelection {
   const env = opts.env ?? process.env;
   if (env.DOCKER_HOST) {
     return {
-      dockerHost: env.DOCKER_HOST,
-      source: "env",
-      socketPath: null,
+      selection: {
+        dockerHost: env.DOCKER_HOST,
+        source: "env",
+        socketPath: null,
+      },
+      conflict: null,
     };
   }
 
@@ -322,24 +351,44 @@ function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDete
   // Redirect the CLI away from the host's own default authority only after
   // observing that the default refuses to answer. A probe that timed out or
   // never ran is no evidence at all (#10367).
-  if (ambient.reachable || ambient.inconclusive) return null;
+  if (ambient.reachable || ambient.inconclusive) return { selection: null, conflict: null };
 
   const fileExists = opts.existsSync ?? defaultExistsSync;
   let selection: DockerHostDetection | null = null;
-  let selectedIdentity: Exclude<DockerVersionIdentity, "unknown"> | null = null;
+  let selected: DockerAuthorityCandidate | null = null;
   for (const socketPath of getDockerSocketCandidates(opts)) {
     if (!fileExists(socketPath)) continue;
     const dockerHost = `unix://${socketPath}`;
     const observation = probe(dockerHost);
     if (!observation.reachable) continue;
     if (observation.identity === "unknown") continue;
-    if (selectedIdentity && observation.identity !== selectedIdentity) return null;
+    if (selected && observation.identity !== selected.identity) {
+      return {
+        selection: null,
+        conflict: { candidates: [selected, { socketPath, identity: observation.identity }] },
+      };
+    }
     if (selection) continue;
+    selected = { socketPath, identity: observation.identity };
     selection = { dockerHost, source: "socket", socketPath };
-    selectedIdentity = observation.identity;
   }
 
-  return selection;
+  return { selection, conflict: null };
+}
+
+/** Select the Docker authority the CLI should use, or null to keep the host default. */
+function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDetection | null {
+  return selectDockerAuthority(opts).selection;
+}
+
+/**
+ * Report the engine conflict that made detectDockerHost decline to select a
+ * fallback socket, or null when no such conflict was observed.
+ */
+function observeDockerAuthorityConflict(
+  opts: DockerHostDetectionOptions = {},
+): DockerAuthorityConflict | null {
+  return selectDockerAuthority(opts).conflict;
 }
 
 export {
@@ -352,5 +401,6 @@ export {
   getPodmanSocketCandidates,
   inferContainerRuntime,
   isWsl,
+  observeDockerAuthorityConflict,
   shouldPatchCoredns,
 };
