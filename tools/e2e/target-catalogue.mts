@@ -1033,7 +1033,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "credential-free",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
+    owningPaths: [
+      "test/helpers/openshell-gateway-start-output.ts",
+      "tools/e2e/onboard-timeout-contract.mts",
+    ],
     environment: { ...nonInteractive, NEMOCLAW_SANDBOX_NAME: "e2e-resume" },
   }),
   managedRuntimeTarget("openclaw-discord-pairing", {
