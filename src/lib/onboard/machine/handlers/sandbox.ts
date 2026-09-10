@@ -187,6 +187,8 @@ export interface SandboxStateOptions<
   hermesPortableLifecycle?: boolean;
   /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
   apfInterceptorRequested?: boolean;
+  /** A validated external component limits this run to one new sandbox. */
+  externalComponentRegistered?: boolean;
   /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
   authoritativeResumeConfig?: boolean;
   /** Explicit Deferred N1x managed-vLLM choice admitted by preflight. */
@@ -2556,6 +2558,14 @@ class SandboxStateFlow<
       this.applyObservabilityRequest(this.prepareWebSearchSupport()),
     );
     const decision = await this.resolveResumeDecision(initialState);
+    if (
+      this.options.externalComponentRegistered === true &&
+      (this.options.resume || this.options.recreateSandbox(false) || decision.kind !== "create")
+    ) {
+      throw new Error(
+        "External component onboarding requires a new sandbox and cannot resume, reuse, repair, or recreate one.",
+      );
+    }
     const completedState =
       decision.kind === "reuse"
         ? await this.reuseSandbox(initialState)
