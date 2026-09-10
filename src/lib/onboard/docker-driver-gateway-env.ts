@@ -609,7 +609,12 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
     ...options,
     hasOpenShellGatewayUserService:
       options.hasOpenShellGatewayUserService ??
-      (() => hasOpenShellGatewayUserService({ env, home: effectiveHome })),
+      (() =>
+        hasOpenShellGatewayUserService({
+          env,
+          home: effectiveHome,
+          ...(options.output ? { warn: options.output.warn } : {}),
+        })),
     managedServiceLogCommand:
       options.managedServiceLogCommand ?? getOpenShellGatewayManagedServiceLogCommand(),
     prepareOpenShellGatewayUserServiceEnv: () => {
@@ -631,6 +636,7 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
         ...serviceOptions,
         env,
         home: effectiveHome,
+        ...(options.output ? { warn: options.output.warn } : {}),
       }),
     stopOpenShellGatewayUserService:
       options.stopOpenShellGatewayUserService ??

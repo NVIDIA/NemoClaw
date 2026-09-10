@@ -934,7 +934,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     "catalogue-brave-nvidia-inference",
   ]) {
     const catalogue = workflow.jobs[jobName] ?? {};
-    if (!sameMembers(needs(catalogue), ["base-image-publication", "generate-matrix"])) {
+    if (
+      !sameMembers(needs(catalogue), [
+        "base-image-publication",
+        "generate-matrix",
+        "package-openshell-sdk",
+      ])
+    ) {
       errors.push(`${jobName} must wait for matrix generation and base-image publication`);
     }
     if (
