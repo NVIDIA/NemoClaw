@@ -670,6 +670,8 @@ describe("executeSandboxExecCommand", () => {
 
 describe("executeSandboxCommand", () => {
   it("does not forward an MCP credential to the SSH child process", async () => {
+    const resolve = requireSource("../../src/lib/adapters/openshell/resolve.ts");
+    vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("openshell");
     const commandCli = requireSource("../../src/lib/adapters/openshell/sandbox-command-cli.ts");
     const run = vi
       .spyOn(commandCli, "runCliOpenShellBufferedCommand")
