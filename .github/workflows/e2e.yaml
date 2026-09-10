@@ -104,7 +104,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
+  group: e2e-${{ github.ref }}-${{ (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
   cancel-in-progress: ${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
 
 env:
@@ -2586,6 +2586,7 @@ jobs:
       contents: read
     concurrency:
       group: staging-brev-launchable-cpu
+      queue: max
       cancel-in-progress: false
     env:
       CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
@@ -2652,6 +2653,7 @@ jobs:
       contents: read
     concurrency:
       group: staging-brev-launchable-cpu
+      queue: max
       cancel-in-progress: false
     env:
       CANDIDATE_SHA: ${{ github.sha }}
