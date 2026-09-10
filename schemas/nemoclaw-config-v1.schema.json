@@ -307,23 +307,6 @@
                           "maxLength": 63,
                           "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
                         },
-                        "execution": {
-                          "type": "object",
-                          "properties": {
-                            "timeoutSeconds": {
-                              "type": "integer",
-                              "minimum": 1,
-                              "maximum": 1000000000
-                            },
-                            "heartbeatEvery": {
-                              "type": "string",
-                              "maxLength": 256,
-                              "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
-                            }
-                          },
-                          "additionalProperties": false,
-                          "minProperties": 1
-                        },
                         "inference": {
                           "type": "object",
                           "required": ["routes"],
@@ -387,6 +370,23 @@
                           "type": "string",
                           "const": "openclaw"
                         },
+                        "execution": {
+                          "type": "object",
+                          "properties": {
+                            "timeoutSeconds": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1000000000
+                            },
+                            "heartbeatEvery": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "minProperties": 1
+                        },
                         "tools": {
                           "type": "object",
                           "required": ["disclosure"],
@@ -418,23 +418,6 @@
                           "minLength": 1,
                           "maxLength": 63,
                           "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                        },
-                        "execution": {
-                          "type": "object",
-                          "properties": {
-                            "timeoutSeconds": {
-                              "type": "integer",
-                              "minimum": 1,
-                              "maximum": 1000000000
-                            },
-                            "heartbeatEvery": {
-                              "type": "string",
-                              "maxLength": 256,
-                              "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
-                            }
-                          },
-                          "additionalProperties": false,
-                          "minProperties": 1
                         },
                         "inference": {
                           "type": "object",

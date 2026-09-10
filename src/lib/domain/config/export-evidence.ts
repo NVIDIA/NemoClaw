@@ -280,7 +280,8 @@ export const ExportSourceValuesSchema = Type.Refine(
     tools: Type.Optional(NemoClawAgentToolsConfigSchema),
     webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
   }),
-  (value) => value.agent === "openclaw" || value.tools === undefined,
+  (value) =>
+    value.agent === "openclaw" || (value.execution === undefined && value.tools === undefined),
 );
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;
