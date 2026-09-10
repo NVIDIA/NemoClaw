@@ -73,7 +73,9 @@ def authenticated_health_status(port, timeout):
     finally:
         connection.close()
 `;
-const AUTHENTICATED_HEALTH_SCRIPT = HERMES_AUTHENTICATED_HEALTH_PROGRAM + String.raw`
+const AUTHENTICATED_HEALTH_SCRIPT =
+  HERMES_AUTHENTICATED_HEALTH_PROGRAM +
+  String.raw`
 try:
     print(authenticated_health_status(8642, 5))
 except (OSError, http.client.HTTPException):

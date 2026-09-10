@@ -1151,8 +1151,12 @@ exit 96
 
         expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
         expect(JSON.parse(result.stdout)).toMatchObject({ kind: "ready", peerTarget: "10.10.0.2" });
-        expect(fs.readFileSync(path.join(root, "local-probe.py"), "utf8")).toBe(STATION_DISCOVERY_PROBE);
-        expect(fs.readFileSync(path.join(root, "peer-probe.py"), "utf8")).toBe(STATION_DISCOVERY_PROBE);
+        expect(fs.readFileSync(path.join(root, "local-probe.py"), "utf8")).toBe(
+          STATION_DISCOVERY_PROBE,
+        );
+        expect(fs.readFileSync(path.join(root, "peer-probe.py"), "utf8")).toBe(
+          STATION_DISCOVERY_PROBE,
+        );
         expect(fs.existsSync(forbiddenLog)).toBe(false);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });

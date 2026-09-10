@@ -23,6 +23,7 @@ import {
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
+import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "./openshell-gateway-upgrade-fixture.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
@@ -1228,7 +1229,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
-    owningPaths: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
+    owningPaths: [...HERMES_ACP_E2E_OWNING_PATHS, "test/e2e/live/rebuild-hermes-cron-restore.ts"],
     timeoutMinutes: 90,
     installMode: "credential-free",
     installNonInteractive: true,
@@ -1367,6 +1368,14 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: [
       ...SKILL_LIFECYCLE_OWNING_PATHS,
       "agents/hermes/manifest.yaml",
+      "schemas/nemoclaw-config-v1.schema.json",
+      "src/commands/config/export.ts",
+      "src/lib/actions/config/",
+      "src/lib/adapters/config/",
+      "src/lib/adapters/fs/config-export-file.ts",
+      "src/lib/config/",
+      "src/lib/domain/config/",
+      "test/e2e/fixtures/hermes-config-export-live.ts",
       "test/e2e/live/hermes-skill-lifecycle.ts",
     ],
     environment: {

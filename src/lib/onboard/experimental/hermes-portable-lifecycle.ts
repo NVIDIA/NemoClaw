@@ -545,7 +545,9 @@ function fail(message: string): never {
 
 class IncompleteOpenShellIdentityError extends Error {
   constructor() {
-    super("Hermes portable lifecycle OpenShell sandbox identity disagrees with the receipt container");
+    super(
+      "Hermes portable lifecycle OpenShell sandbox identity disagrees with the receipt container",
+    );
     this.name = "IncompleteOpenShellIdentityError";
   }
 }
@@ -1102,11 +1104,18 @@ function settleStoppedHermesPortableLifecycle(
     timing?.increment("qualification");
     let current: QualifiedHermesPortableLifecycle;
     try {
-      current = qualify(sandboxName, context, deps, authority.snapshot, ["Ready", "Error", "Stopped"]);
+      current = qualify(sandboxName, context, deps, authority.snapshot, [
+        "Ready",
+        "Error",
+        "Stopped",
+      ]);
     } catch (error) {
       if (!(error instanceof IncompleteOpenShellIdentityError)) throw error;
       authority.assertTransactionCurrent();
-      const container = assertCurrentHermesPortableContainer(authority.receipt, authority.containerDeps);
+      const container = assertCurrentHermesPortableContainer(
+        authority.receipt,
+        authority.containerDeps,
+      );
       authority.assertTransactionCurrent();
       if (container.authority.running || container.status !== "exited") {
         fail("exact container changed after stop settlement");
@@ -1326,7 +1335,9 @@ function waitForHermesReadiness(
     );
   }
   if (credentialFileUnavailable) {
-    fail("managed startup did not pass authenticated health: Hermes credential file was unavailable or invalid");
+    fail(
+      "managed startup did not pass authenticated health: Hermes credential file was unavailable or invalid",
+    );
   }
   return null;
 }
@@ -1691,7 +1702,10 @@ export function recoverHermesPortableSandboxLifecycle(
         const rollbackFailure =
           rollbackError instanceof HermesPortableRollbackAttemptError
             ? rollbackError
-            : new HermesPortableRollbackAttemptError("openshell-terminal-settlement", rollbackError);
+            : new HermesPortableRollbackAttemptError(
+                "openshell-terminal-settlement",
+                rollbackError,
+              );
         throw new HermesPortableRecoveryRollbackError(
           primaryFailureClass,
           rollbackFailure.failureClass,

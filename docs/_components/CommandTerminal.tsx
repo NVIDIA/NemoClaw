@@ -12,8 +12,7 @@ export function CommandTerminal({ command }: { command: string }) {
         background: "#1a1a2e",
         borderRadius: "8px",
         boxShadow: "0 4px 16px rgb(0 0 0 / 25%)",
-        fontFamily:
-          '"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+        fontFamily: '"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
         fontSize: "0.875rem",
         lineHeight: 1.8,
         margin: "1.5rem 0",

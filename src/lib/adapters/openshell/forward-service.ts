@@ -357,7 +357,7 @@ export function terminateForwardServiceProcessTree(
     throw new Error("OpenShell forward service child PID is unavailable");
   }
 
-  const signalProcess = dependencies.signalProcess ?? process.kill;
+  const signalProcess = dependencies.signalProcess ?? process.kill.bind(process);
   if ((dependencies.platform ?? process.platform) !== "win32") {
     try {
       signalProcess(-Number(pid), "SIGKILL");

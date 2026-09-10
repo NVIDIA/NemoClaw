@@ -237,8 +237,8 @@ export async function stopGatewayRuntime(host: HostCliClient, artifactName: stri
   await preCleanBestEffort(() =>
     host.command(host.openshellCommandPath, ["gateway", "stop", "-g", GATEWAY_NAME], {
       artifactName: `${artifactName}-gateway-stop`,
-        env: commandEnv(),
-        timeoutMs: 90_000,
+      env: commandEnv(),
+      timeoutMs: 90_000,
     }),
   );
   await preCleanBestEffort(() => stopGatewayRuntimeResource(host, artifactName));

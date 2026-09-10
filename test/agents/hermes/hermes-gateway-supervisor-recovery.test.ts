@@ -201,12 +201,7 @@ describe("Hermes PID 1 supervisor recovery", () => {
       prepareStatus: 1 as const,
       healthStatus: 0 as const,
       auxiliariesStatus: 1 as const,
-      expected: [
-        "take-request",
-        "preflight",
-        "fail:secret-boundary-refusal:4242",
-        "handler-rc:1",
-      ],
+      expected: ["take-request", "preflight", "fail:secret-boundary-refusal:4242", "handler-rc:1"],
     },
     {
       label: "reports an unhealthy gateway",
@@ -739,7 +734,9 @@ describe("Hermes supervised auxiliary recovery", () => {
       "failed",
     ]);
     expect(result.stderr).toContain("after 5 consecutive attempts; supervisor exiting");
-    expect(result.stderr).toContain("correct the reported failure, then stop and start the sandbox");
+    expect(result.stderr).toContain(
+      "correct the reported failure, then stop and start the sandbox",
+    );
     expect(result.stderr).not.toContain("quarantin");
     expect(result.stdout).not.toContain("unexpected-");
   });

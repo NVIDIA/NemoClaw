@@ -21,11 +21,7 @@ import {
   type ManagedStateVolumeMount,
 } from "./managed-state-volumes";
 
-export {
-  managedHermesStateVolumeLabels,
-  managedHermesStateVolumeName,
-  MANAGED_HERMES_STATE_ROOT,
-};
+export { managedHermesStateVolumeLabels, managedHermesStateVolumeName, MANAGED_HERMES_STATE_ROOT };
 
 export type ManagedHermesStateVolumeContext = {
   readonly agentName: string | null | undefined;

@@ -27,8 +27,7 @@ const finalDockerfiles = [
 ] as const;
 const copyInstruction =
   "COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts";
-const patchCommand =
-  "node /scripts/lib/patch-bundled-npm-ip-address.mts";
+const patchCommand = "node /scripts/lib/patch-bundled-npm-ip-address.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const hermesTarCacheSeedArguments = [
   ...npmRootArguments,

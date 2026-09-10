@@ -477,7 +477,8 @@ describe("Hermes portable container authority", () => {
 
     expect(podman).toHaveBeenCalledTimes(2);
     expect(authenticatedHealth).toHaveBeenCalledWith(
-      hermesPortableContainerInternals.authenticatedHealthScript, 40_000,
+      hermesPortableContainerInternals.authenticatedHealthScript,
+      40_000,
     );
   });
 
@@ -495,7 +496,6 @@ describe("Hermes portable container authority", () => {
 
     const serializedCalls = JSON.stringify(podman.mock.calls);
     expect(serializedCalls).not.toContain("Bearer " + "a".repeat(64));
-
   });
 
   it("does not accept unauthenticated health status (#9203)", () => {

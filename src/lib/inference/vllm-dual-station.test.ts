@@ -963,29 +963,29 @@ describe("dual DGX Station vLLM install orchestration", () => {
         }),
       expectedCommitCalls: 1,
     },
-  ])("restores legacy state when external $failure fails", async ({
-    configureFailure,
-    expectedCommitCalls,
-  }) => {
-    mocks.startManaged.mockReturnValue({
-      ok: true,
-      baseUrl: HEAD_BASE_URL,
-      headContainerId: HEAD_ID,
-      workerContainerId: WORKER_ID,
-      reusedExisting: false,
-      legacyMigration: LEGACY_MIGRATION,
-    });
-    configureFailure();
-    const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
+  ])(
+    "restores legacy state when external $failure fails",
+    async ({ configureFailure, expectedCommitCalls }) => {
+      mocks.startManaged.mockReturnValue({
+        ok: true,
+        baseUrl: HEAD_BASE_URL,
+        headContainerId: HEAD_ID,
+        workerContainerId: WORKER_ID,
+        reusedExisting: false,
+        legacyMigration: LEGACY_MIGRATION,
+      });
+      configureFailure();
+      const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
 
-    await expect(
-      installVllm(profile!, { hasImage: true, nonInteractive: true, promptFn: vi.fn() }),
-    ).resolves.toEqual({ ok: false });
+      await expect(
+        installVllm(profile!, { hasImage: true, nonInteractive: true, promptFn: vi.fn() }),
+      ).resolves.toEqual({ ok: false });
 
-    expect(mocks.rollbackLegacyMigration).toHaveBeenCalledWith(plan(), LEGACY_MIGRATION);
-    expect(mocks.cleanup).not.toHaveBeenCalled();
-    expect(mocks.commitLegacyMigration).toHaveBeenCalledTimes(expectedCommitCalls);
-  });
+      expect(mocks.rollbackLegacyMigration).toHaveBeenCalledWith(plan(), LEGACY_MIGRATION);
+      expect(mocks.cleanup).not.toHaveBeenCalled();
+      expect(mocks.commitLegacyMigration).toHaveBeenCalledTimes(expectedCommitCalls);
+    },
+  );
 
   it("rolls back a new pair when unauthenticated model inventory is exposed", async () => {
     mocks.runCurlProbe.mockImplementation((args: string[]) => ({

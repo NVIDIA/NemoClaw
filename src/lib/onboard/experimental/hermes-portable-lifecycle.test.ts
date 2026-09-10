@@ -53,7 +53,6 @@ const LABELS = {
   "openshell.ai/sandbox-namespace": "",
   "openshell.ai/sandbox-workspace": "default",
 };
-
 function sandboxListJson(sandboxId: string, phase: string): string {
   return JSON.stringify([
     {
@@ -70,7 +69,6 @@ function sandboxListJson(sandboxId: string, phase: string): string {
 
 let stateDir: string;
 let policyPath: string;
-
 function startupArgv() {
   return [
     "env",
@@ -79,16 +77,13 @@ function startupArgv() {
     "/usr/local/bin/nemoclaw-start",
   ];
 }
-
 function poisonUnexpectedCommand(scope: string, args: readonly string[]): never {
   throw new Error(`unexpected ${scope} command: ${args.join(" ")}`);
 }
-
 function directoryChain(directory: string): string[] {
   const parent = path.dirname(directory);
   return parent === directory ? [directory] : [directory, ...directoryChain(parent)];
 }
-
 function openshellExecutableAuthority(): HermesPortableOpenShellExecutableAuthority {
   return {
     version: "0.0.106",
@@ -112,7 +107,6 @@ function openshellExecutableAuthority(): HermesPortableOpenShellExecutableAuthor
     },
   };
 }
-
 function podmanExecutableAuthority(): HermesPortablePodmanExecutableAuthority {
   const bytes = Buffer.from("podman-5.7.0-test", "utf8");
   return {
@@ -137,7 +131,6 @@ function podmanExecutableAuthority(): HermesPortablePodmanExecutableAuthority {
     },
   };
 }
-
 function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
   const bytes = Buffer.from("podman-5.7.0-test", "utf8");
   const stat = (filePath: string): PodmanExecutableStat => ({
@@ -166,7 +159,6 @@ function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
     realpath: (filePath) => filePath,
   };
 }
-
 function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt {
   const uid = process.getuid!();
   const socketPath = `/run/user/${String(uid)}/podman/podman.sock`;
@@ -252,7 +244,6 @@ function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt 
   });
   return active;
 }
-
 function lifecycleDeps(
   receipt: HermesPortableConfiguredReceipt,
   initiallyRunning = true,
@@ -264,7 +255,8 @@ function lifecycleDeps(
     readonly failPostStartInspectOnce?: boolean;
   } = {},
 ) {
-  let running = initiallyRunning, now = 0;
+  let running = initiallyRunning,
+    now = 0;
   let postStartInspectFailurePending = false;
   const sandboxPhase = () => options.sandboxPhase?.(running) ?? (running ? "Ready" : "Error");
   const podman = vi.fn((args: readonly string[]) => {
@@ -323,7 +315,9 @@ function lifecycleDeps(
       },
       "sandbox:get": {
         status: 0,
-        stdout: options.sandboxIdentity?.(running) ?? `Name: ${SANDBOX}\nID: ${SANDBOX_ID}\nPhase: ${sandboxPhase()}\n`,
+        stdout:
+          options.sandboxIdentity?.(running) ??
+          `Name: ${SANDBOX}\nID: ${SANDBOX_ID}\nPhase: ${sandboxPhase()}\n`,
         stderr: "",
       },
       "sandbox:exec": { status: 0, stdout: sandboxExecOutput, stderr: "" },
@@ -377,7 +371,10 @@ function lifecycleDeps(
         capturePodmanExecutableFileAuthority,
       },
       container: { podman, assertSocketAuthority: vi.fn() },
-      now: () => now, sleep: vi.fn((milliseconds: number) => { now += milliseconds; }),
+      now: () => now,
+      sleep: vi.fn((milliseconds: number) => {
+        now += milliseconds;
+      }),
     },
     podman,
     captureOpenShell,
@@ -390,7 +387,6 @@ function lifecycleDeps(
     capturePodmanExecutableFileAuthority,
   };
 }
-
 function publishSuccessor(): void {
   withMcpLifecycleLockSync(
     SANDBOX,
@@ -398,7 +394,6 @@ function publishSuccessor(): void {
     { stateDir: path.join(stateDir, "state") },
   );
 }
-
 function lifecycleContext() {
   return {
     agent: "hermes",
@@ -429,7 +424,6 @@ describe("Hermes portable lifecycle", () => {
       throw new Error("timing sink unavailable");
     });
     let timingNow = 0;
-
     const result = withMcpLifecycleLockSync(
       SANDBOX,
       () =>
@@ -442,7 +436,6 @@ describe("Hermes portable lifecycle", () => {
         }),
       { stateDir: path.join(stateDir, "state") },
     );
-
     expect(result).toEqual({ kind: "recovered" });
     expect(evidence).toHaveBeenCalledOnce();
     expect(evidence).toHaveBeenCalledWith(
@@ -478,7 +471,6 @@ describe("Hermes portable lifecycle", () => {
     fixture.captureSocketAuthority.mockImplementation(() => {
       throw entryError;
     });
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -512,13 +504,23 @@ describe("Hermes portable lifecycle", () => {
       return started ? { ...socket, inode: "changed-after-start" } : socket;
     });
     let failure: unknown;
-    try { withMcpLifecycleLockSync(
+    try {
+      withMcpLifecycleLockSync(
         SANDBOX,
         () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), fixture.deps),
         { stateDir: path.join(stateDir, "state") },
-      ); } catch (error) { failure = error; }
+      );
+    } catch (error) {
+      failure = error;
+    }
     expect(failure).toBeInstanceOf(AggregateError);
-    expect(failure).toMatchObject({ errors: [expect.any(Error), expect.any(Error)], message: "Hermes portable lifecycle recovery failed (primary=post-start-authority; rollback=pre-stop-authority-unproved)", primaryFailureClass: "post-start-authority", rollbackFailureClass: "pre-stop-authority" });
+    expect(failure).toMatchObject({
+      errors: [expect.any(Error), expect.any(Error)],
+      message:
+        "Hermes portable lifecycle recovery failed (primary=post-start-authority; rollback=pre-stop-authority-unproved)",
+      primaryFailureClass: "post-start-authority",
+      rollbackFailureClass: "pre-stop-authority",
+    });
     expect(fixture.captureOpenShell).not.toHaveBeenCalledWith(
       expect.arrayContaining(["true"]),
       expect.any(Number),
@@ -538,7 +540,6 @@ describe("Hermes portable lifecycle", () => {
     );
     const evidence = vi.fn();
     let now = 0;
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -589,7 +590,6 @@ describe("Hermes portable lifecycle", () => {
         stderr: "",
       })
       .mockImplementation(defaultCapture);
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -597,7 +597,6 @@ describe("Hermes portable lifecycle", () => {
         { stateDir: path.join(stateDir, "state") },
       ),
     ).toThrow("OpenShell sandbox identity disagrees with the receipt container");
-
     expect(fixture.launchOpenShell).not.toHaveBeenCalled();
     expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
     expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
@@ -610,7 +609,6 @@ describe("Hermes portable lifecycle", () => {
     const stableReadRegistry: NonNullable<HermesPortableLifecycleDeps["readRegistry"]> =
       fixture.deps.readRegistry!;
     let registryReads = 0;
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -656,15 +654,16 @@ describe("Hermes portable lifecycle", () => {
         { stateDir: path.join(stateDir, "state") },
       ),
     );
-
-    expect([recovered.kind, (fixture.capturePodmanExecutableAuthority.mock.calls.at(-1) as unknown[] | undefined)?.[2]]).toEqual(["already-current", fixture.deps.env]);
+    expect([
+      recovered.kind,
+      (fixture.capturePodmanExecutableAuthority.mock.calls.at(-1) as unknown[] | undefined)?.[2],
+    ]).toEqual(["already-current", fixture.deps.env]);
     expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor).toBeDefined();
   });
 
   it("rejects successor-publication generation drift between lifecycle snapshots (#10423)", async () => {
     const receipt = activeReceipt(stateDir);
     const fixture = lifecycleDeps(receipt);
-
     await withPortableHostFence(stateDir, () =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -677,7 +676,6 @@ describe("Hermes portable lifecycle", () => {
               },
             }),
           ).toThrow("simulated schema-8 process exit");
-
           expect(() =>
             hermesPortableLifecycleInternals.qualify(
               SANDBOX,
@@ -763,7 +761,6 @@ describe("Hermes portable lifecycle", () => {
         uid: receipt.runtimeAuthority.uid,
       },
     );
-
     expect(container.podman(["container", "inspect", CONTAINER_ID], 5_000)).toMatchObject({
       status: 0,
       stdout: "exact container",
@@ -783,50 +780,57 @@ describe("Hermes portable lifecycle", () => {
     );
   });
 
-  it.each([0, 1])("recovers a stopped container after %i credential-file waits (#9203)", (credentialWaits) => {
-    const receipt = activeReceipt();
-    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, false);
-    const defaultCapture = captureOpenShell.getMockImplementation()!;
-    let unavailable = credentialWaits;
-    captureOpenShell.mockImplementation((args: readonly string[]) =>
-      args.includes(hermesPortableLifecycleInternals.healthWaitProgram) && unavailable-- > 0
-        ? { status: 64, stdout: "", stderr: "" }
-        : defaultCapture(args),
-    );
-    const result = withMcpLifecycleLockSync(
-      SANDBOX,
-      () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
-      { stateDir: path.join(stateDir, "state") },
-    );
-    expect(result).toEqual({ kind: "recovered" });
-    expect(captureOpenShell).toHaveBeenCalledWith(
-      [
-        "sandbox",
-        "exec",
-        "-g",
-        GATEWAY,
-        "--name",
+  it.each([0, 1])(
+    "recovers a stopped container after %i credential-file waits (#9203)",
+    (credentialWaits) => {
+      const receipt = activeReceipt();
+      const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, false);
+      const defaultCapture = captureOpenShell.getMockImplementation()!;
+      let unavailable = credentialWaits;
+      captureOpenShell.mockImplementation((args: readonly string[]) =>
+        args.includes(hermesPortableLifecycleInternals.healthWaitProgram) && unavailable-- > 0
+          ? { status: 64, stdout: "", stderr: "" }
+          : defaultCapture(args),
+      );
+      const result = withMcpLifecycleLockSync(
         SANDBOX,
-        "--no-tty",
-        "--",
-        "python3",
-        "-I",
-        "-c",
-        hermesPortableLifecycleInternals.healthWaitProgram,
-        "8642",
-        "200",
-        "18000",
-        "100",
-      ],
-      20_000,
-    );
-    const commands = captureOpenShell.mock.calls.map(([args]) => args);
-    const waiter = commands.findIndex((args) => args.includes(hermesPortableLifecycleInternals.healthWaitProgram));
-    const observer = commands.findIndex((args) => args.includes(hermesPortableContainerInternals.authenticatedHealthScript));
-    expect(observer).toBeGreaterThan(waiter);
-    expect(deps.now()).toBe(credentialWaits * 1_000);
-    expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
-  });
+        () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
+        { stateDir: path.join(stateDir, "state") },
+      );
+      expect(result).toEqual({ kind: "recovered" });
+      expect(captureOpenShell).toHaveBeenCalledWith(
+        [
+          "sandbox",
+          "exec",
+          "-g",
+          GATEWAY,
+          "--name",
+          SANDBOX,
+          "--no-tty",
+          "--",
+          "python3",
+          "-I",
+          "-c",
+          hermesPortableLifecycleInternals.healthWaitProgram,
+          "8642",
+          "200",
+          "18000",
+          "100",
+        ],
+        20_000,
+      );
+      const commands = captureOpenShell.mock.calls.map(([args]) => args);
+      const waiter = commands.findIndex((args) =>
+        args.includes(hermesPortableLifecycleInternals.healthWaitProgram),
+      );
+      const observer = commands.findIndex((args) =>
+        args.includes(hermesPortableContainerInternals.authenticatedHealthScript),
+      );
+      expect(observer).toBeGreaterThan(waiter);
+      expect(deps.now()).toBe(credentialWaits * 1_000);
+      expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
+    },
+  );
 
   it("starts through the exact OpenShell Stopped phase before proving Ready health (#9203)", () => {
     const receipt = activeReceipt();
@@ -853,13 +857,11 @@ describe("Hermes portable lifecycle", () => {
             }
           : defaultCapture(args);
     });
-
     const result = withMcpLifecycleLockSync(
       SANDBOX,
       () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
       { stateDir: path.join(stateDir, "state") },
     );
-
     expect(result).toEqual({ kind: "recovered" });
     expect(listObservations).toBeGreaterThanOrEqual(3);
     expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
@@ -919,44 +921,57 @@ describe("Hermes portable lifecycle", () => {
   it.each([
     [0, "final health-wait command did not return valid readiness evidence"],
     [64, "Hermes credential file was unavailable or invalid"],
-    [255, "final health-wait command did not return valid readiness evidence; an earlier probe reported an unavailable or invalid Hermes credential file"],
-  ])("rolls back unavailable health with waiter status %i and diagnostic %s (#9211)", (status, diagnostic) => {
-    const receipt = activeReceipt();
-    const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);
-    const defaultCapture = captureOpenShell.getMockImplementation()!;
-    let now = 0;
-    let healthAttempts = 0;
-    captureOpenShell.mockImplementation((args: readonly string[]) =>
-      args.includes("python3")
-        ? { status: status === 255 && healthAttempts++ === 0 ? 64 : status, stdout: "unavailable\n", stderr: "" }
-        : defaultCapture(args),
-    );
-
-    expect(() =>
-      withMcpLifecycleLockSync(
-        SANDBOX,
-        () =>
-          recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
-            ...deps,
-            now: () => now,
-            sleep: (milliseconds) => {
-              now += milliseconds;
-            },
-          }),
-        { stateDir: path.join(stateDir, "state") },
-      ),
-    ).toThrow(diagnostic);
-    expect(now).toBe(90_000);
-    expect(launchOpenShell).toHaveBeenCalledTimes(1);
-    expect(captureOpenShell.mock.calls.some(([args]) =>
-      args.includes(hermesPortableContainerInternals.authenticatedHealthScript),
-    )).toBe(false);
-    expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
-  });
+    [
+      255,
+      "final health-wait command did not return valid readiness evidence; an earlier probe reported an unavailable or invalid Hermes credential file",
+    ],
+  ])(
+    "rolls back unavailable health with waiter status %i and diagnostic %s (#9211)",
+    (status, diagnostic) => {
+      const receipt = activeReceipt();
+      const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);
+      const defaultCapture = captureOpenShell.getMockImplementation()!;
+      let now = 0;
+      let healthAttempts = 0;
+      captureOpenShell.mockImplementation((args: readonly string[]) =>
+        args.includes("python3")
+          ? {
+              status: status === 255 && healthAttempts++ === 0 ? 64 : status,
+              stdout: "unavailable\n",
+              stderr: "",
+            }
+          : defaultCapture(args),
+      );
+      expect(() =>
+        withMcpLifecycleLockSync(
+          SANDBOX,
+          () =>
+            recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
+              ...deps,
+              now: () => now,
+              sleep: (milliseconds) => {
+                now += milliseconds;
+              },
+            }),
+          { stateDir: path.join(stateDir, "state") },
+        ),
+      ).toThrow(diagnostic);
+      expect(now).toBe(90_000);
+      expect(launchOpenShell).toHaveBeenCalledTimes(1);
+      expect(
+        captureOpenShell.mock.calls.some(([args]) =>
+          args.includes(hermesPortableContainerInternals.authenticatedHealthScript),
+        ),
+      ).toBe(false);
+      expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
+    },
+  );
 
   it("preserves startup and terminal-settlement failure classes together (#11248)", () => {
     const receipt = activeReceipt();
-    const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false, { sandboxPhase: () => "Ready" });
+    const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false, {
+      sandboxPhase: () => "Ready",
+    });
     const defaultCapture = captureOpenShell.getMockImplementation()!;
     captureOpenShell.mockImplementation((args: readonly string[]) =>
       args.includes("python3")
@@ -967,13 +982,23 @@ describe("Hermes portable lifecycle", () => {
       throw new Error("startup handoff failed");
     });
     let failure: unknown;
-    try { withMcpLifecycleLockSync(
+    try {
+      withMcpLifecycleLockSync(
         SANDBOX,
         () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
         { stateDir: path.join(stateDir, "state") },
-      ); } catch (error) { failure = error; }
+      );
+    } catch (error) {
+      failure = error;
+    }
     expect(failure).toBeInstanceOf(AggregateError);
-    expect(failure).toMatchObject({ errors: [expect.any(Error), expect.any(Error)], message: "Hermes portable lifecycle recovery failed (primary=startup-launch; rollback=openshell-terminal-settlement-unproved)", primaryFailureClass: "startup-launch", rollbackFailureClass: "openshell-terminal-settlement" });
+    expect(failure).toMatchObject({
+      errors: [expect.any(Error), expect.any(Error)],
+      message:
+        "Hermes portable lifecycle recovery failed (primary=startup-launch; rollback=openshell-terminal-settlement-unproved)",
+      primaryFailureClass: "startup-launch",
+      rollbackFailureClass: "openshell-terminal-settlement",
+    });
     expect(launchOpenShell).toHaveBeenCalledTimes(1);
     expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
@@ -1002,7 +1027,6 @@ describe("Hermes portable lifecycle", () => {
         return entry && execReady && driftPending ? driftLifecycleGeneration(entry) : entry;
       },
     };
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -1025,7 +1049,6 @@ describe("Hermes portable lifecycle", () => {
         ? { status: 1, stdout: "", stderr: "unavailable" }
         : defaultCapture(args),
     );
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -1050,7 +1073,6 @@ describe("Hermes portable lifecycle", () => {
     const { deps, podman } = lifecycleDeps(receipt, false, {
       failPostStartInspectOnce: true,
     });
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -1072,7 +1094,6 @@ describe("Hermes portable lifecycle", () => {
         ? { status: 0, stdout: "unavailable\n", stderr: "" }
         : defaultCapture(args),
     );
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -1096,13 +1117,11 @@ describe("Hermes portable lifecycle", () => {
     const registry = {} satisfies Partial<SandboxEntry>;
     const livePolicy = POLICY;
     const { deps, podman } = lifecycleDeps(receipt, false, { livePolicy, registry });
-
     const result = withMcpLifecycleLockSync(
       SANDBOX,
       () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
       { stateDir: path.join(stateDir, "state") },
     );
-
     expect(result).toEqual({ kind: "recovered" });
     expect(podman.mock.calls.some(([args]) => args[1] === "start")).toBe(true);
   });
@@ -1120,13 +1139,11 @@ describe("Hermes portable lifecycle", () => {
           }
         : defaultCapture(args),
     );
-
     const result = withMcpLifecycleLockSync(
       SANDBOX,
       () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
       { stateDir: path.join(stateDir, "state") },
     );
-
     expect(result).toEqual({ kind: "recovered" });
     expect(captureOpenShell).toHaveBeenCalledWith(
       ["sandbox", "list", "-g", GATEWAY, "-o", "json"],
@@ -1145,7 +1162,6 @@ describe("Hermes portable lifecycle", () => {
       livePolicy,
       registry: { ...finalized },
     });
-
     expect(
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -1163,7 +1179,6 @@ describe("Hermes portable lifecycle", () => {
       ...deps,
       env: { OPENSHELL_GATEWAY_ENDPOINT: "https://ambient.example" },
     };
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -1178,14 +1193,20 @@ describe("Hermes portable lifecycle", () => {
   it("retries an incomplete identity before delayed OpenShell Error after stopping one full ID (#11302)", () => {
     const receipt = activeReceipt();
     let elapsedMs = 0;
-    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, true, { sandboxPhase: (running) => running || elapsedMs < 2_000 ? "Ready" : "Error", sandboxIdentity: (running) => !running && elapsedMs < 1_000 ? `Name: ${SANDBOX}\nPhase: Ready\n` : undefined });
-    deps.now = () => elapsedMs; deps.sleep = vi.fn((milliseconds: number) => { elapsedMs += milliseconds; });
+    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, true, {
+      sandboxPhase: (running) => (running || elapsedMs < 2_000 ? "Ready" : "Error"),
+      sandboxIdentity: (running) =>
+        !running && elapsedMs < 1_000 ? `Name: ${SANDBOX}\nPhase: Ready\n` : undefined,
+    });
+    deps.now = () => elapsedMs;
+    deps.sleep = vi.fn((milliseconds: number) => {
+      elapsedMs += milliseconds;
+    });
     const result = withMcpLifecycleLockSync(
       SANDBOX,
       () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), deps),
       { stateDir: path.join(stateDir, "state") },
     );
-
     expect(result).toEqual({ kind: "stopped" });
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([
       [["container", "stop", CONTAINER_ID], 40_000],
@@ -1201,13 +1222,11 @@ describe("Hermes portable lifecycle", () => {
   it("accepts the exact already-stopped Podman container and OpenShell Error phase without another stop (#9203)", () => {
     const receipt = activeReceipt();
     const { deps, podman } = lifecycleDeps(receipt, false);
-
     const result = withMcpLifecycleLockSync(
       SANDBOX,
       () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), deps),
       { stateDir: path.join(stateDir, "state") },
     );
-
     expect(result).toEqual({ kind: "already-stopped" });
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
   });
@@ -1217,13 +1236,11 @@ describe("Hermes portable lifecycle", () => {
     const { deps, podman } = lifecycleDeps(receipt, false, {
       sandboxPhase: () => "Stopped",
     });
-
     const result = withMcpLifecycleLockSync(
       SANDBOX,
       () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), deps),
       { stateDir: path.join(stateDir, "state") },
     );
-
     expect(result).toEqual({ kind: "already-stopped" });
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
   });
@@ -1234,7 +1251,6 @@ describe("Hermes portable lifecycle", () => {
     const { deps, podman } = lifecycleDeps(receipt, true, {
       sandboxPhase: () => "Stopped",
     });
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -1255,7 +1271,6 @@ describe("Hermes portable lifecycle", () => {
         ? { status: 0, stdout: sandboxListJson(SANDBOX_ID, "Ready"), stderr: "" }
         : defaultCapture(args),
     );
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -1268,8 +1283,9 @@ describe("Hermes portable lifecycle", () => {
 
   it("times out a stopped container when OpenShell identity remains incomplete (#11302)", () => {
     const receipt = activeReceipt();
-    const { deps, podman } = lifecycleDeps(receipt, true, { sandboxIdentity: (running) => running ? undefined : `Name: ${SANDBOX}\nPhase: Error\n` });
-
+    const { deps, podman } = lifecycleDeps(receipt, true, {
+      sandboxIdentity: (running) => (running ? undefined : `Name: ${SANDBOX}\nPhase: Error\n`),
+    });
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -1305,7 +1321,6 @@ describe("Hermes portable lifecycle", () => {
         : poisonUnexpectedCommand("podman", args);
     });
     let now = 0;
-
     const result = withMcpLifecycleLockSync(
       SANDBOX,
       () =>
@@ -1318,7 +1333,6 @@ describe("Hermes portable lifecycle", () => {
         }),
       { stateDir: path.join(stateDir, "state") },
     );
-
     expect(result).toEqual({ kind: "stopped" });
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
   });
@@ -1337,7 +1351,6 @@ describe("Hermes portable lifecycle", () => {
               stderr: "",
             },
     );
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -1361,7 +1374,6 @@ describe("Hermes portable lifecycle", () => {
               stderr: "",
             },
     );
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -1431,7 +1443,6 @@ describe("Hermes portable lifecycle", () => {
             return poisonUnexpectedCommand("OpenShell", args);
         }
       });
-
       withMcpLifecycleLockSync(
         SANDBOX,
         () => {
@@ -1446,7 +1457,6 @@ describe("Hermes portable lifecycle", () => {
               allowAbsent: true,
             }).present,
           ).toBe(false);
-
           replacement = true;
           expect(() =>
             prepareHermesPortableSandboxRemoval(SANDBOX, lifecycleContext(), deps, {
@@ -1461,7 +1471,6 @@ describe("Hermes portable lifecycle", () => {
       ).toHaveLength(1);
     },
   );
-
   it("rejects rendered absence text when the JSON sandbox list is malformed (#9608)", () => {
     const receipt = activeReceipt();
     const { deps, podman } = lifecycleDeps(receipt);
@@ -1476,7 +1485,6 @@ describe("Hermes portable lifecycle", () => {
           return poisonUnexpectedCommand("OpenShell", args);
       }
     });
-
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
