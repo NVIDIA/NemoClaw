@@ -41,11 +41,11 @@ async function runAnalyzer(
   args: string[],
   environment: NodeJS.ProcessEnv,
 ): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync(
-    process.execPath,
-    ["--no-warnings", script, ...args],
-    { cwd: process.cwd(), env: environment, maxBuffer: 10_000_000 },
-  );
+  return execFileAsync(process.execPath, ["--no-warnings", script, ...args], {
+    cwd: process.cwd(),
+    env: environment,
+    maxBuffer: 10_000_000,
+  });
 }
 
 function vitestReport(duration: number, wall: number): object {

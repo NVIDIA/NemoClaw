@@ -20,6 +20,29 @@ function manifest(entries: MockParityManifest["entries"]): MockParityManifest {
 }
 
 describe("changed live E2E mock parity", () => {
+  it.each([
+    ["array", "const values = [1, 2];", "const values = [1, 2,];"],
+    ["call", "check(1, 2);", "check(1, 2,);"],
+    ["parameter", "function check(first: number) {}", "function check(first: number,) {}"],
+    ["object", "const options = { value: 1 };", "const options = { value: 1, };"],
+    ["import", 'import { check } from "./check";', 'import { check, } from "./check";'],
+    ["tuple", "type Values = [number, string];", "type Values = [number, string,];"],
+    ["union", 'type Value = "a" | "b";', 'type Value = | "a" | "b";'],
+    ["intersection", "type Value = A & B;", "type Value = & A & B;"],
+  ])("ignores optional %s separators introduced by formatting", (_kind, base, head) => {
+    expect(isMockParityRelevantSourceChange(base, head)).toBe(false);
+  });
+
+  it.each([
+    ["array hole", "const values = [1,,];", "const values = [1,];"],
+    ["comma operator", "const value = (first(), second());", "const value = second();"],
+    ["runtime operator", "const value = first | second;", "const value = first & second;"],
+    ["union member", 'type Value = "a" | "b";', 'type Value = "a" | "c";'],
+    ["literal content", 'const value = "one,two";', 'const value = "onetwo";'],
+  ])("retains a changed %s after ignoring optional separators", (_kind, base, head) => {
+    expect(isMockParityRelevantSourceChange(base, head)).toBe(true);
+  });
+
   it("retains recognized module-tag changes while ignoring ordinary comments", () => {
     expect(
       isMockParityRelevantSourceChange(

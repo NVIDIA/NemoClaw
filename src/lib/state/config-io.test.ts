@@ -236,12 +236,8 @@ describe("config-io", () => {
     expect(openSpy).toHaveBeenCalledWith(`${file}.tmp.${String(process.pid)}`, "r");
     expect(openSpy).toHaveBeenCalledWith(dir, fs.constants.O_RDONLY);
     expect(syncSpy).toHaveBeenCalledTimes(3);
-    expect(syncSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      linkSpy.mock.invocationCallOrder[0]!,
-    );
-    expect(linkSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      syncSpy.mock.invocationCallOrder[1]!,
-    );
+    expect(syncSpy.mock.invocationCallOrder[0]).toBeLessThan(linkSpy.mock.invocationCallOrder[0]!);
+    expect(linkSpy.mock.invocationCallOrder[0]).toBeLessThan(syncSpy.mock.invocationCallOrder[1]!);
     expect(syncSpy.mock.invocationCallOrder[1]).toBeLessThan(
       renameSpy.mock.invocationCallOrder[0]!,
     );

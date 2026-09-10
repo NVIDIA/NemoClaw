@@ -330,16 +330,12 @@ describe("Docker GPU clone envelope", () => {
         "2222/tcp": [{ HostIp: "0.0.0.0", HostPort: "33513" }],
       },
     });
-    const args = buildDockerGpuCloneRunArgs(
-      inspect,
-      buildDockerGpuMode("startup-command"),
-      {
-        containerName: "openshell-alpha-bootstrap-stage",
-        containerEntrypoint: "/usr/local/bin/nemoclaw-managed-bootstrap",
-        containerCommand: ["--request", "/run/nemoclaw/bootstrap-request.json"],
-        preserveManagedLaunchSpec: true,
-      },
-    );
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+      containerName: "openshell-alpha-bootstrap-stage",
+      containerEntrypoint: "/usr/local/bin/nemoclaw-managed-bootstrap",
+      containerCommand: ["--request", "/run/nemoclaw/bootstrap-request.json"],
+      preserveManagedLaunchSpec: true,
+    });
 
     expect(args.slice(0, 2)).toEqual(["--name", "openshell-alpha-bootstrap-stage"]);
     expect(args).toEqual(
@@ -376,18 +372,16 @@ describe("Docker GPU clone envelope", () => {
     ]);
   });
 
-  it.each([
-    "",
-    "-starts-with-dash",
-    "contains/slash",
-    "a".repeat(254),
-  ])("rejects invalid managed-bootstrap container name %j", (containerName) => {
-    expect(() =>
-      buildDockerGpuCloneRunArgs(inspectFixture(), buildDockerGpuMode("startup-command"), {
-        containerName,
-      }),
-    ).toThrow("Docker clone container name is invalid.");
-  });
+  it.each(["", "-starts-with-dash", "contains/slash", "a".repeat(254)])(
+    "rejects invalid managed-bootstrap container name %j",
+    (containerName) => {
+      expect(() =>
+        buildDockerGpuCloneRunArgs(inspectFixture(), buildDockerGpuMode("startup-command"), {
+          containerName,
+        }),
+      ).toThrow("Docker clone container name is invalid.");
+    },
+  );
 
   it("adds SYS_PTRACE to the GPU clone when the baseline container lacks it", () => {
     const inspect = inspectFixture();
@@ -454,21 +448,22 @@ describe("Docker GPU clone envelope", () => {
   it.each([
     { name: "missing", endpoint: null },
     { name: "unrewritable", endpoint: "http://gateway.example.test:8080/" },
-  ])("fails closed when host networking is requested with a $name OpenShell endpoint (#6110)", ({
-    endpoint,
-  }) => {
-    const inspect = inspectFixture();
-    inspect.Config!.Env = [
-      ...inspect.Config!.Env!.filter((entry) => !entry.startsWith("OPENSHELL_ENDPOINT=")),
-      ...(endpoint === null ? [] : [`OPENSHELL_ENDPOINT=${endpoint}`]),
-    ];
+  ])(
+    "fails closed when host networking is requested with a $name OpenShell endpoint (#6110)",
+    ({ endpoint }) => {
+      const inspect = inspectFixture();
+      inspect.Config!.Env = [
+        ...inspect.Config!.Env!.filter((entry) => !entry.startsWith("OPENSHELL_ENDPOINT=")),
+        ...(endpoint === null ? [] : [`OPENSHELL_ENDPOINT=${endpoint}`]),
+      ];
 
-    expect(() =>
-      buildDockerGpuCloneRunOptions(inspect, {
-        NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host",
-      }),
-    ).toThrow(/NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host requires .*OPENSHELL_ENDPOINT/i);
-  });
+      expect(() =>
+        buildDockerGpuCloneRunOptions(inspect, {
+          NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host",
+        }),
+      ).toThrow(/NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host requires .*OPENSHELL_ENDPOINT/i);
+    },
+  );
 
   it("reports the Docker GPU patch network mode", () => {
     expect(getDockerGpuPatchNetworkMode({})).toBe("preserve");

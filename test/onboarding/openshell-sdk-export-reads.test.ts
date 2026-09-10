@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { inspect } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
@@ -25,6 +26,76 @@ function hasSdkArtifact(): boolean {
 }
 
 describe("released OpenShell SDK export reads", () => {
+  it.skipIf(!hasSdkArtifact()).each(["brave", "openai"] as const)(
+    "qualifies the checked-in %s profile through generated SDK responses (#10904)",
+    async (profileId) => {
+      const sdkPackage = "@nvidia/openshell-sdk/raw";
+      const protobufPackage = "@bufbuild/protobuf";
+      const [raw, { create, fromJson, toBinary, fromBinary }] = await Promise.all([
+        import(sdkPackage),
+        import(protobufPackage),
+      ]);
+      const checkedIn = YAML.parse(
+        readFileSync(
+          new URL(`../../nemoclaw-blueprint/provider-profiles/${profileId}.yaml`, import.meta.url),
+          "utf8",
+        ),
+      );
+      const profile = fromJson(raw.ProviderProfileSchema, {
+        id: checkedIn.id,
+        source: "user",
+        scope: "workspace",
+        resourceVersion: "4",
+        credentials: checkedIn.credentials,
+        endpoints: checkedIn.endpoints,
+        binaries: checkedIn.binaries.map((path: string) => ({ path })),
+        inference_capable: checkedIn.inference_capable,
+      });
+      const roundTrip = (schema: unknown, input: unknown) =>
+        fromBinary(schema, toBinary(schema, create(schema, input)));
+      const client: OpenShellReadClient = {
+        raw: {
+          getProvider: async () =>
+            roundTrip(raw.OpenShell.method.getProvider.output, {
+              provider: {
+                metadata: {
+                  id: "provider-id",
+                  name: "alpha",
+                  workspace: "default",
+                  resourceVersion: 9n,
+                },
+                type: profileId,
+                profileWorkspace: "default",
+              },
+            }),
+          getProviderProfile: async () =>
+            roundTrip(raw.OpenShell.method.getProviderProfile.output, { profile }),
+          getSandbox: async () => {
+            throw new Error("unexpected sandbox read");
+          },
+          getSandboxConfig: async () => {
+            throw new Error("unexpected config read");
+          },
+        },
+      };
+      const result = await createProviders(async () => client).get({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        workspace: "default",
+        name: "alpha",
+        configKeys: [],
+        profileContract: profileId,
+        signal: new AbortController().signal,
+      });
+      expect(result?.managedProfile).toEqual({
+        id: profileId,
+        source: "user",
+        scope: "workspace",
+        resourceVersion: "4",
+      });
+      expect(result?.profileWorkspace).toBe("default");
+    },
+  );
+
   it.skipIf(!hasSdkArtifact()).each(["openai", "nvidia"] as const)(
     "accepts generated %s responses without losing identity or uint64 revisions",
     async (providerType) => {

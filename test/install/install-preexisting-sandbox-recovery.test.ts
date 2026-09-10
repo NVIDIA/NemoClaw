@@ -6,10 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it, onTestFinished } from "vitest";
 
-import {
-  createInstallerCheckout,
-  runInstallerSourcedBody,
-} from "../helpers/installer-run-fixture";
+import { createInstallerCheckout, runInstallerSourcedBody } from "../helpers/installer-run-fixture";
 import { INSTALLER_PAYLOAD } from "../helpers/installer-sourced-env";
 
 /** Represent a completed Station session whose receipt retirement still requires reconciliation. */
@@ -30,10 +27,7 @@ function writePendingStationReceiptRetirement(tmp: string): void {
 function writePersistedDockerContext(tmp: string, currentContext: string): string {
   const dockerConfig = path.join(tmp, "docker-config");
   fs.mkdirSync(dockerConfig);
-  fs.writeFileSync(
-    path.join(dockerConfig, "config.json"),
-    JSON.stringify({ currentContext }),
-  );
+  fs.writeFileSync(path.join(dockerConfig, "config.json"), JSON.stringify({ currentContext }));
   return dockerConfig;
 }
 
@@ -380,6 +374,10 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
 
   it.each([
     ["an explicit remote context", { dockerContext: "remote-context" }],
+    [
+      "a remote context with a local Docker socket",
+      { dockerContext: "remote-context", dockerHost: "unix:///var/run/docker.sock" },
+    ],
     ["a persisted remote context", { persistedDockerContext: "remote-context" }],
   ])("rejects %s before sandbox recovery", (_name, dockerTarget) => {
     const result = runRecoveryBeforeOnboard(2, 0, {
@@ -537,7 +535,9 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
       "host-preflight",
     ]);
-    expect(result.output).toContain("Skipping onboarding until the host prerequisites above are fixed");
+    expect(result.output).toContain(
+      "Skipping onboarding until the host prerequisites above are fixed",
+    );
   });
 
   it("fails interactive DGX Station reconciliation when host admission fails", () => {

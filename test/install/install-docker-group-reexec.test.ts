@@ -168,9 +168,11 @@ describeLinux("install.sh ensure_docker — #4414 non-interactive self re-exec",
     ["an unset", undefined],
     ["an empty", ""],
     ["a non-default", "remote-context"],
-  ] as const)("preserves %s Docker context through the installer group re-execution", (_label, context) => {
-    const { result, output } = runSourcedInstaller(
-      `
+  ] as const)(
+    "preserves %s Docker context through the installer group re-execution",
+    (_label, context) => {
+      const { result, output } = runSourcedInstaller(
+        `
 cat >"$HOME/sg" <<'SG'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -224,17 +226,18 @@ export PATH="$HOME:$PATH"
 export NEMOCLAW_AGENT=hermes
 exec bash "$HOME/staged-install.sh" --non-interactive --yes-i-accept-third-party-software --experimental-profile portable
 `,
-      context === undefined ? {} : { DOCKER_CONTEXT: context },
-    );
+        context === undefined ? {} : { DOCKER_CONTEXT: context },
+      );
 
-    expect(result.status, output).toBe(0);
-    expect(output.match(/^GROUP_REEXEC$/gm)).toHaveLength(1);
-    expect(output.match(/^CLI_CONTEXT_SET=/gm)).toHaveLength(1);
-    expect(output).toContain(`CLI_CONTEXT_SET=${context === undefined ? "" : "x"}\n`);
-    expect(output).toContain(`CLI_CONTEXT=${context ?? ""}\n`);
-    expect(output).toContain("CLI_DOCKER_HOST_SET=\n");
-    expect(output).toContain("CLI_ARGS=onboard --experimental-profile portable");
-  });
+      expect(result.status, output).toBe(0);
+      expect(output.match(/^GROUP_REEXEC$/gm)).toHaveLength(1);
+      expect(output.match(/^CLI_CONTEXT_SET=/gm)).toHaveLength(1);
+      expect(output).toContain(`CLI_CONTEXT_SET=${context === undefined ? "" : "x"}\n`);
+      expect(output).toContain(`CLI_CONTEXT=${context ?? ""}\n`);
+      expect(output).toContain("CLI_DOCKER_HOST_SET=\n");
+      expect(output).toContain("CLI_ARGS=onboard --experimental-profile portable");
+    },
+  );
 
   it("re-execs through 'sg docker' instead of exiting 0 when NEMOCLAW_NON_INTERACTIVE=1", () => {
     // Repro of #4414: on a clean Ubuntu VM, the non-interactive curl|bash
@@ -442,9 +445,7 @@ maybe_offer_express_install
       const output = `${result.stdout}${result.stderr}`;
 
       expect(result.status, output).toBe(0);
-      const resumeCommand = output
-        .split("\n")
-        .find((line) => line.startsWith("RESUME_COMMAND="));
+      const resumeCommand = output.split("\n").find((line) => line.startsWith("RESUME_COMMAND="));
       expect(resumeCommand).toContain("NEMOCLAW_AGENT=openclaw");
       expect(resumeCommand).not.toContain("NEMOCLAW_PROVIDER");
       expect(output).toContain("PHASE=parent MODE=express PROVIDER=install-vllm");
