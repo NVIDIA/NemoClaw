@@ -359,6 +359,12 @@ and transport. It also stops the gateway and removes its temporary state.
 
 ## Catalogue Targets
 
+Every catalogue profile installs the reviewed OpenShell SDK archive before restoring the candidate CLI.
+The shared package job downloads and verifies the pinned SDK with package-read permission.
+Catalogue jobs receive the run-scoped archive without package credentials and reject a missing or ambiguous archive.
+The install disables package scripts and verifies that the SDK connection API loads before running tests.
+This keeps the private optional dependency available for SDK-backed commands such as configuration export.
+
 The `network-policy` target also owns live configuration-export evidence for #10938 and PR #11065.
 After ordinary restricted OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
 It compares the exported sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.

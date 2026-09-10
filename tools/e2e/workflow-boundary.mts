@@ -1309,14 +1309,17 @@ function requireFullShaAction(
   }
 }
 
-function isReviewedLocalHermesPlatformAction(jobName: string, step: WorkflowStep): boolean {
+function isReviewedLocalAction(jobName: string, step: WorkflowStep): boolean {
   return (
     (jobName === "managed-image-multiarch-startup" &&
       step.name === "Resolve reviewed Hermes platform base image" &&
       step.uses === TRUSTED_MULTIARCH_HERMES_PLATFORM_ACTION) ||
     (jobName === "managed-image-protected-runtime" &&
       step.name === "Resolve reviewed Hermes runtime base image" &&
-      step.uses === REVIEWED_HERMES_PLATFORM_ACTION)
+      step.uses === REVIEWED_HERMES_PLATFORM_ACTION) ||
+    (jobName === "managed-image-protected-runtime" &&
+      step.name === "Reuse or refresh reviewed audit evidence before the offline build" &&
+      step.uses === "./.github/actions/ci-reviewed-npm-audit")
   );
 }
 
@@ -1426,7 +1429,7 @@ function validateFreeStandingInventoryBoundary(
     const steps = asSteps(job.steps);
     requireNoDispatchInputInterpolation(errors, steps);
     for (const step of steps) {
-      if (step.uses && !isReviewedLocalHermesPlatformAction(jobName, step)) {
+      if (step.uses && !isReviewedLocalAction(jobName, step)) {
         requireFullShaAction(errors, step, `${jobName} step '${step.name ?? step.uses}'`);
       }
       if (/\$\{\{\s*secrets\./.test(stringValue(step.run))) {
