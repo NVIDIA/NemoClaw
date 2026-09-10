@@ -14,18 +14,24 @@ import {
 describe("managed MCP provider rewrite probe", () => {
   const stableCredentialId = "a".repeat(64);
 
-  it("uses only an exact stable-handle OpenShell placeholder value", () => {
-    const runtimeValue = `openshell:resolve:env:s${stableCredentialId}_FAKE_MCP_SECRET`;
-    expect(
-      buildMcpProviderRewriteAuthorization("FAKE_MCP_SECRET", runtimeValue),
-    ).toBe(`Bearer ${runtimeValue}`);
-  });
+  it.each([
+    "openshell:resolve:env:v0_FAKE_MCP_SECRET",
+    "openshell:resolve:env:v1_FAKE_MCP_SECRET",
+    "openshell:resolve:env:v14429878272859325890_FAKE_MCP_SECRET",
+    `openshell:resolve:env:s${stableCredentialId}_FAKE_MCP_SECRET`,
+  ])(
+    "uses only an exact generation-scoped OpenShell placeholder value [case %#]",
+    (runtimeValue) => {
+      expect(
+        buildMcpProviderRewriteAuthorization("FAKE_MCP_SECRET", runtimeValue),
+      ).toBe(`Bearer ${runtimeValue}`);
+    },
+  );
 
   it.each([
     undefined,
     "raw-secret",
     "openshell:resolve:env:FAKE_MCP_SECRET",
-    "openshell:resolve:env:v1_FAKE_MCP_SECRET",
     "openshell:resolve:env:v_FAKE_MCP_SECRET",
     "openshell:resolve:env:v144298782728593258901_FAKE_MCP_SECRET",
     `openshell:resolve:env:s${"a".repeat(63)}_FAKE_MCP_SECRET`,
@@ -52,20 +58,26 @@ describe("managed MCP provider rewrite probe", () => {
     );
   });
 
-  it("accepts only stable-handle Deep Agents authorization", () => {
-    const value = `Bearer openshell:resolve:env:s${stableCredentialId}_FAKE_MCP_SECRET`;
-    expect(value).toMatch(
-      new RegExp(
-        buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET"),
-        "u",
-      ),
-    );
-  });
+  it.each([
+    "Bearer openshell:resolve:env:v0_FAKE_MCP_SECRET",
+    "Bearer openshell:resolve:env:v1_FAKE_MCP_SECRET",
+    "Bearer openshell:resolve:env:v14429878272859325890_FAKE_MCP_SECRET",
+    `Bearer openshell:resolve:env:s${stableCredentialId}_FAKE_MCP_SECRET`,
+  ])(
+    "accepts only generation-scoped Deep Agents authorization [case %#]",
+    (value) => {
+      expect(value).toMatch(
+        new RegExp(
+          buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET"),
+          "u",
+        ),
+      );
+    },
+  );
 
   it.each([
     "Bearer openshell:resolve:env:FAKE_MCP_SECRET",
     "raw-secret",
-    "Bearer openshell:resolve:env:v1_FAKE_MCP_SECRET",
     "Bearer openshell:resolve:env:v_FAKE_MCP_SECRET",
     `Bearer openshell:resolve:env:s${stableCredentialId}_OTHER_MCP_SECRET`,
     `Bearer openshell:resolve:env:s${"a".repeat(63)}_FAKE_MCP_SECRET`,
