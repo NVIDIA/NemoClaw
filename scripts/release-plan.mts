@@ -215,7 +215,9 @@ function main(): void {
   try {
     run("git", ["merge-base", "--is-ancestor", previousTagCommit, candidateCommit]);
   } catch {
-    throw new Error(`Candidate commit ${candidateCommit} does not follow previous release ${previousTag}`);
+    throw new Error(
+      `Candidate commit ${candidateCommit} does not follow previous release ${previousTag}`,
+    );
   }
   try {
     run("git", ["merge-base", "--is-ancestor", candidateCommit, originMainCommit]);

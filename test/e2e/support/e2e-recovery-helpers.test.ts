@@ -301,11 +301,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-chain-proof-"));
       const proxyEnvPath = path.join(tmp, "proxy-env.sh");
       const opaqueValue = "opaqueMintedGatewayMaterial_7qR2v9XcL4n8";
-      const expectedMarkers = [
-        "nemoclaw-sandbox-safety-net",
-        "-leading",
-        "literal;$(false)",
-      ];
+      const expectedMarkers = ["nemoclaw-sandbox-safety-net", "-leading", "literal;$(false)"];
       const proxyEnv =
         'export NODE_OPTIONS="--require /tmp/nemoclaw-sandbox-safety-net.js ' +
         '-leading literal;$(false)"\n' +

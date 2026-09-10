@@ -474,14 +474,10 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "embedded-agent retry persistence patch preimage count",
         );
 
-        const chatPatch = spawnSync(
-          nodeRuntime.executable,
-          [PATCH_OPENCLAW_CHAT_SEND, dist],
-          {
-            encoding: "utf-8",
-            timeout: PATCH_COMMAND_TIMEOUT_MS,
-          },
-        );
+        const chatPatch = spawnSync(nodeRuntime.executable, [PATCH_OPENCLAW_CHAT_SEND, dist], {
+          encoding: "utf-8",
+          timeout: PATCH_COMMAND_TIMEOUT_MS,
+        });
         requireSpawnSuccess(chatPatch, "apply chat.send compatibility patch");
         requireRuntimeIncludes(
           chatPatch.stdout,

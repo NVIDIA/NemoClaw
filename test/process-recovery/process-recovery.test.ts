@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 function decodeSandboxExecShellPayload(payload: string): string {
-  const match = payload.match(/printf '%s' '([A-Za-z0-9+\/=]+)' \| base64 -d \| sh/);
+  const match = payload.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d \| sh/);
   return match ? Buffer.from(match[1], "base64").toString("utf8") : payload;
 }
 

@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// #4538: the `doctor` "Config permissions" check. Detects (and, with --fix,
-// repairs) a mutable OpenClaw config tree that `openclaw doctor --fix` tightened
-// from the NemoClaw contract (setgid + group-writable 2770/660) back to single-
-// user 700/600 — which blocks the gateway UID from persisting config edits.
+// The config guard owns the runtime's private or shared permission contract.
 //
 // The orchestration is parameterized over inspect/repair helpers so it can be
 // unit-tested without the heavy host-probing imports in ./doctor.ts.
@@ -45,16 +42,23 @@ export function buildConfigPermsCheck(
       hint: `re-run \`${cliName} ${sandboxName} doctor\`, or rebuild with \`${cliName} ${sandboxName} rebuild\``,
     };
   }
-  // `applies: false` is a deliberate skip (non-OpenClaw agent or container not
-  // running), not a probe failure, so render nothing.
-  if (!inspection.applies) return null;
+  if (!inspection.applies) {
+    return inspection.skipReason === "agent"
+      ? null
+      : {
+          group: "Sandbox",
+          label: LABEL,
+          status: "warn",
+          detail: `config posture could not be verified: ${inspection.reason}`,
+        };
+  }
 
   if (inspection.ok) {
     return {
       group: "Sandbox",
       label: LABEL,
       status: "ok",
-      detail: `mutable contract intact (dir ${inspection.dirMode}, ${inspection.configFile} ${inspection.fileMode})`,
+      detail: "runtime config permission contract verified",
     };
   }
 
@@ -64,9 +68,7 @@ export function buildConfigPermsCheck(
       label: LABEL,
       status: "warn",
       detail: inspection.issues.join("; "),
-      hint:
-        `mutable OpenClaw config was tightened (likely \`openclaw doctor --fix\` inside the sandbox); ` +
-        `run \`${cliName} ${sandboxName} doctor --fix\` to restore group-write, or restart the sandbox`,
+      hint: `run \`${cliName} ${sandboxName} doctor --fix\` to restore the runtime config permissions`,
     };
   }
 
@@ -92,34 +94,14 @@ export function buildConfigPermsCheck(
     };
   }
 
-  let after: MutableConfigPermsInspection;
-  try {
-    after = inspect(sandboxName);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    after = {
-      applies: false,
-      skipReason: "unavailable",
-      reason: `re-inspection failed: ${message}`,
-    };
-  }
-  const fixed = repairResult.verified && after.applies && after.ok;
-  // Prefer the post-repair issues; otherwise fall back to the repair errors and
-  // finally the re-inspection failure reason so the only actionable signal is
-  // never dropped to a bare "unknown".
-  const postRepairIssues = after.applies ? after.issues.join("; ") : "";
-  const repairErrors = repairResult.errors.join("; ");
-  const incompleteReason =
-    postRepairIssues ||
-    repairErrors ||
-    (after.applies ? "repair verification failed" : after.reason || "unknown");
+  const fixed = repairResult.verified;
   return {
     group: "Sandbox",
     label: LABEL,
     status: fixed ? "ok" : "fail",
     detail: fixed
-      ? `restored mutable contract (was: ${before})`
-      : `repair incomplete: ${incompleteReason}`,
+      ? `runtime config permissions verified after repair (was: ${before})`
+      : `repair incomplete: ${repairResult.errors.join("; ") || "verification failed"}`,
     hint: fixed
       ? undefined
       : `inspect permissions manually or rebuild with \`${cliName} ${sandboxName} rebuild\``,

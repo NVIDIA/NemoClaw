@@ -39,9 +39,7 @@ function probeEnv(): NodeJS.ProcessEnv {
  * `kernel.yama.ptrace_scope=1` blocks cross-tree environ reads. We mirror
  * that approach here for the same reason.
  */
-const DEFAULT_GUARD_MARKERS: ReadonlyArray<string> = [
-  "nemoclaw-sandbox-safety-net",
-];
+const DEFAULT_GUARD_MARKERS: ReadonlyArray<string> = ["nemoclaw-sandbox-safety-net"];
 const GUARD_CHAIN_PROXY_ENV_PATH = "/tmp/nemoclaw-proxy-env.sh";
 const GUARD_CHAIN_ACTIVE_SENTINEL = "NEMOCLAW_GUARD_CHAIN_ACTIVE";
 const GUARD_CHAIN_FILE_UNAVAILABLE_EXIT_CODE = 20;
@@ -145,10 +143,10 @@ export class GatewayClient {
       "sh",
       [
         "-lc",
-        `pid_file=\"$HOME/${DOCKER_DRIVER_GATEWAY_PID_RELPATH.join("/")}\"; ` +
-          `if [ -f \"$pid_file\" ]; then ` +
-          `pid=\"$(tr -d '[:space:]' <\"$pid_file\" 2>/dev/null || true)\"; ` +
-          `if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then printf '%s\\n' \"$pid\"; exit 0; fi; ` +
+        `pid_file="$HOME/${DOCKER_DRIVER_GATEWAY_PID_RELPATH.join("/")}"; ` +
+          `if [ -f "$pid_file" ]; then ` +
+          `pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"; ` +
+          `if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then printf '%s\\n' "$pid"; exit 0; fi; ` +
           `fi; exit 1`,
       ],
       {
