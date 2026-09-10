@@ -540,7 +540,7 @@ test(
       entry.workload?.kind === "managed-image" ? entry.workload.reference : null,
     );
     const repeatPath = path.join(directory, "repeat.yaml");
-    const repeated = await host.command(
+    await host.command(
       "node",
       [CLI, "config", "export", SANDBOX_NAME, "--output", repeatPath, "--json"],
       { artifactName: "export-ollama-repeat", cwd: REPO_ROOT, env: exportEnv, timeoutMs: 60000 },
