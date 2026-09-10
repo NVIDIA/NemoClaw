@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -179,6 +179,29 @@ export async function run(
       resolve(result);
     });
   });
+}
+
+/** Wait for the owned workload result; a successful create only proves provisioning. */
+export async function waitForNativeTurnResult(
+  resultPath: string,
+  create: Pick<ChildProcess, "exitCode" | "signalCode">,
+  gateway: Pick<ChildProcess, "exitCode" | "signalCode">,
+  createFailure: { error: Error | null },
+  timeout = TIMEOUT_MS,
+): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (createFailure.error !== null) throw createFailure.error;
+    if (create.signalCode !== null || (create.exitCode !== null && create.exitCode !== 0))
+      fail(
+        `OpenShell sandbox request exited ${create.exitCode ?? create.signalCode ?? "unknown"} before publishing a result`,
+      );
+    if (gateway.exitCode !== null || gateway.signalCode !== null)
+      fail("OpenShell MXC gateway stopped before the installed OpenClaw turn published a result");
+    if (fs.existsSync(resultPath)) return;
+    await sleep(Math.min(500, Math.max(0, deadline - Date.now())));
+  }
+  fail("installed OpenClaw turn did not publish a result");
 }
 
 export async function stopChild(child) {
@@ -532,37 +555,17 @@ async function main() {
     for (const [name, value] of Object.entries(sandboxEnvironment))
       createArgs.push("--env", `${name}=${value}`);
     console.log("NEMOCLAW> Creating native MXC OpenClaw sandbox");
-    let createSpawnError = null;
-    let createClosed = false;
+    const createFailure: { error: Error | null } = { error: null };
     create = spawn(openshell, createArgs, {
       env: cliEnvironment,
       stdio: "ignore",
       windowsHide: true,
     });
     create.once("error", (error) => {
-      createSpawnError = error;
-    });
-    create.once("close", () => {
-      createClosed = true;
+      createFailure.error = error;
     });
     console.log("NEMOCLAW> Waiting for the installed OpenClaw agent turn");
-    const deadline = Date.now() + TIMEOUT_MS;
-    while (
-      !fs.existsSync(resultPath) &&
-      Date.now() < deadline &&
-      gateway.exitCode === null &&
-      !createClosed &&
-      createSpawnError === null
-    )
-      await sleep(500);
-    if (!fs.existsSync(resultPath)) {
-      if (createSpawnError !== null) throw createSpawnError;
-      if (createClosed)
-        fail(
-          `OpenShell sandbox request exited ${create.exitCode ?? create.signalCode ?? "unknown"} before publishing a result`,
-        );
-      fail("installed OpenClaw turn did not publish a result");
-    }
+    await waitForNativeTurnResult(resultPath, create, gateway, createFailure);
     createWatcherDetached = create.exitCode === null;
     if (!(await stopChild(create))) fail("OpenShell sandbox request watcher did not stop");
     result = JSON.parse(fs.readFileSync(resultPath, "utf8"));

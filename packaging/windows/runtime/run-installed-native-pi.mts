@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { readOpenedRegularFile, writeNativeGatewayConfig } from "./native-security.mts";
+import { waitForNativeMxcCompletion } from "./native-ui-lifecycle.mts";
 
 import {
   allowlistedWindowsEnvironment,
@@ -20,7 +21,6 @@ import {
   run,
   sanitizedDiagnostic,
   stopChild,
-  waitForFileText,
   waitForPort,
 } from "./run-installed-native-turn.mts";
 
@@ -44,6 +44,36 @@ const DEEP_AGENTS_TURN_PROOFS = [
 
 function fail(message) {
   throw new Error(`Native Windows terminal-agent qualification failed: ${message}`);
+}
+
+async function waitForTerminalAgentResult(
+  resultPath,
+  finalToken,
+  create,
+  gateway,
+  createFailure,
+  agentLabel,
+  timeout = 360_000,
+) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (createFailure.error !== null) throw createFailure.error;
+    if (create.signalCode !== null || (create.exitCode !== null && create.exitCode !== 0))
+      fail(
+        `OpenShell request exited ${create.exitCode ?? create.signalCode ?? "unknown"} before ${agentLabel} finished`,
+      );
+    if (gateway.exitCode !== null || gateway.signalCode !== null)
+      fail(`The native gateway stopped before ${agentLabel} completed`);
+    const result = readOpenedRegularFile(resultPath, {
+      encoding: "utf8",
+      maxBytes: 1024 * 1024,
+    });
+    if (result !== null && result.includes(finalToken)) return result;
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(250, Math.max(0, deadline - Date.now()))),
+    );
+  }
+  fail(`${agentLabel} did not publish its bounded result receipt before the deadline`);
 }
 
 function sha256(file) {
@@ -998,19 +1028,18 @@ async function main() {
       createError = `${createError}${text}`.slice(-128 * 1024);
       process.stderr.write(text);
     });
-    const createFailure = new Promise((_, reject) => {
-      create.once("error", reject);
-      create.once("close", (code) => {
-        if (!fs.existsSync(resultPath))
-          reject(new Error(`OpenShell request exited ${code ?? 1} before ${agentLabel} finished`));
-      });
+    const createFailure = { error: null };
+    create.once("error", (error) => {
+      createFailure.error = error;
     });
-    await Promise.race([waitForFileText(resultPath, finalToken, 360_000), createFailure]);
-    const agentResultText = readOpenedRegularFile(resultPath, {
-      encoding: "utf8",
-      maxBytes: 1024 * 1024,
-    });
-    if (agentResultText === null) fail(`${agentLabel} result disappeared`);
+    const agentResultText = await waitForTerminalAgentResult(
+      resultPath,
+      finalToken,
+      create,
+      gateway,
+      createFailure,
+      agentLabel,
+    );
     const agentResult = JSON.parse(agentResultText);
     const reportedVersion = isHermes
       ? agentResult.hermesVersion
@@ -1025,6 +1054,15 @@ async function main() {
       !turnProofs.every(([, expected], index) => agentResult.turns?.[index]?.expected === expected)
     )
       fail(`${agentLabel} result receipt is incomplete`);
+    const completion = await waitForNativeMxcCompletion(
+      openshell,
+      cliEnvironment,
+      sandboxName,
+      gateway,
+      null,
+    );
+    if (completion === "ExecFailed")
+      fail(`The native ${agentLabel} executor failed during cleanup`);
     await run(
       openshell,
       ["sandbox", "delete", sandboxName],

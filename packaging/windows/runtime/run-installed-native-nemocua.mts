@@ -10,6 +10,7 @@ import path from "node:path";
 
 import { resolveNativeConfiguredInference } from "./native-configured-inference.mts";
 import { startFileTcpTargetRelay, relayWorkloadSource } from "./native-nemocua-relay.mts";
+import { waitForNativeMxcCompletion } from "./native-ui-lifecycle.mts";
 
 import {
   readOpenedRegularFile,
@@ -379,16 +380,31 @@ async function startBrowserBridge(
   }
 }
 
-async function waitForGuardedResult(relay, create, gateway) {
-  const deadline = Date.now() + 360_000;
-  while (Date.now() < deadline) {
-    const result = await relay.readResult();
-    if (result !== null) return result.toString("utf8");
-    if (create.exitCode !== null || create.signalCode !== null)
-      fail("NemoCUA exited without its bounded result receipt");
+async function waitForGuardedResult(
+  relay,
+  create,
+  gateway,
+  createFailure,
+  signal,
+  timeout = 360_000,
+) {
+  const deadline = Date.now() + timeout;
+  const assertRunning = () => {
+    signal?.throwIfAborted();
+    if (createFailure.error !== null) throw createFailure.error;
+    if (create.signalCode !== null || (create.exitCode !== null && create.exitCode !== 0))
+      fail(
+        `OpenShell request exited ${create.exitCode ?? create.signalCode ?? "unknown"} before NemoCUA finished`,
+      );
     if (gateway.exitCode !== null || gateway.signalCode !== null)
       fail("The native gateway stopped before NemoCUA completed");
-    await sleep(100);
+  };
+  while (Date.now() < deadline) {
+    assertRunning();
+    const result = await relay.readResult();
+    assertRunning();
+    if (result !== null) return result.toString("utf8");
+    await sleep(Math.min(100, Math.max(0, deadline - Date.now())));
   }
   fail("NemoCUA did not publish its bounded result receipt before the deadline");
 }
@@ -614,12 +630,25 @@ async function main() {
       const text = chunk.toString("utf8");
       createError = `${createError}${text}`.slice(-128 * 1024);
     });
-    const agentResult = JSON.parse(
-      await Promise.race([
-        waitForGuardedResult(browserRelay, create, gateway),
-        browserRelay.failure,
-      ]),
+    const createFailure = { error: null };
+    create.once("error", (error) => {
+      createFailure.error = error;
+    });
+    const resultMonitoring = new AbortController();
+    const resultWait = waitForGuardedResult(
+      browserRelay,
+      create,
+      gateway,
+      createFailure,
+      resultMonitoring.signal,
     );
+    let agentResult;
+    try {
+      agentResult = JSON.parse(await Promise.race([resultWait, browserRelay.failure]));
+    } finally {
+      resultMonitoring.abort();
+      await resultWait.catch(() => {});
+    }
     const finalState = await bridge.page.evaluate(() => ({
       inputValue: document.querySelector("#task-input")?.value ?? null,
       completed: document.body.dataset.completed === "true",
@@ -640,6 +669,14 @@ async function main() {
       fullPage: false,
     });
     await sleep(3000);
+    const completion = await waitForNativeMxcCompletion(
+      openshell,
+      cliEnvironment,
+      sandboxName,
+      gateway,
+      null,
+    );
+    if (completion === "ExecFailed") fail("The native NemoCUA executor failed during cleanup");
     await run(
       openshell,
       ["sandbox", "delete", sandboxName],
