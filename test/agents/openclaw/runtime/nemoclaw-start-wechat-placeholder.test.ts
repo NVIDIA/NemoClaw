@@ -243,23 +243,33 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
       CANONICAL,
       { WECHAT_BOT_TOKEN: scoped },
       true,
-      ({ configPath }) => {
+      ({ configPath, tmpDir }) => {
+        const normalizer = path.join(tmpDir, "normalizer.py");
+        fs.writeFileSync(
+          normalizer,
+          fs
+            .readFileSync(MUTABLE_CONFIG_NORMALIZER, "utf-8")
+            .replace(
+              'if __name__ == "__main__":',
+              'runtime_config_modes = lambda: (0o2770, 0o660)\n\nif __name__ == "__main__":',
+            ),
+        );
         const normalized = spawnSync(
           "python3",
           [
             "-I",
-            MUTABLE_CONFIG_NORMALIZER,
+            normalizer,
             path.dirname(configPath),
             String(process.getuid?.() ?? 0),
             String(process.getgid?.() ?? 0),
           ],
           { encoding: "utf-8", timeout: 5000 },
         );
+        expect(normalized.status, normalized.stderr).toBe(0);
         expect(
           fs.statSync(path.join(path.dirname(configPath), "openclaw-weixin/accounts/primary.json"))
             .mode & 0o777,
         ).toBe(0o660);
-        expect(process.platform === "linux" ? normalized.status : 0, normalized.stderr).toBe(0);
       },
     );
 

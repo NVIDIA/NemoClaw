@@ -1743,7 +1743,12 @@ For a sandbox that owns managed llama.cpp, `doctor` adds secret-free identity an
 
 <AgentOnly variant="openclaw">
 
-For OpenClaw sandboxes, `doctor` also checks the mutable config permission contract. If `openclaw doctor --fix` was run inside the sandbox, it can tighten `/sandbox/.openclaw` and `openclaw.json` to a single-user `700/600` layout, which stops the gateway from persisting config changes. `doctor` reports this as a `Config permissions` warning; pass `--fix` to restore the group-writable `2770/660` contract without rebuilding. Restarting the sandbox repairs the same drift automatically.
+For OpenClaw sandboxes, `doctor` also checks the mutable config permission contract.
+When the existing config guard verifies a same-user nonroot launch, `/sandbox/.openclaw` uses `0700` and `openclaw.json` uses `0600`.
+Separate gateway identities and unverified layouts retain `2770/0660` for shared access.
+If `openclaw doctor --fix` removes required group access, `doctor` reports a `Config permissions` warning.
+Pass `--fix` to restore the permissions selected by the existing guard without rebuilding.
+Restarting the sandbox repairs the same drift when the config tree passes its safety checks.
 
 ```bash
 $$nemoclaw my-assistant doctor [--json | --fix]
@@ -1752,7 +1757,7 @@ $$nemoclaw my-assistant doctor [--json | --fix]
 | Flag | Description |
 | --- | --- |
 | `--json` | Emit the report as JSON |
-| `--fix` | Restore the mutable OpenClaw config permission contract if it was tightened. Mutually exclusive with `--json` |
+| `--fix` | Restore the mutable OpenClaw config permission contract. Mutually exclusive with `--json` |
 
 </AgentOnly>
 <AgentOnly variant="hermes">
