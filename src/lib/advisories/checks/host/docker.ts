@@ -29,7 +29,13 @@ export const enableDockerDesktopWslIntegration: AdvisoryCheck<HostAssessment> = 
   severity: "blocking",
   resumeSafe: false,
   check(host) {
-    if (host.dockerHostInvalid || !wslDockerBlocksRemainingChecks(host)) return null;
+    if (
+      host.dockerHostInvalid ||
+      host.dockerAuthorityConflict !== undefined ||
+      !wslDockerBlocksRemainingChecks(host)
+    ) {
+      return null;
+    }
     const dockerMissing = !host.dockerInstalled;
     return hostAdvisory(enableDockerDesktopWslIntegration, {
       title: "Enable Docker Desktop WSL integration",
@@ -123,6 +129,45 @@ export const retryDockerProbe: AdvisoryCheck<HostAssessment> = {
   },
 };
 
+/** Quote a value for a POSIX shell so a path with spaces survives `export`. */
+function shellSingleQuoted(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+export const chooseDockerAuthority: AdvisoryCheck<HostAssessment> = {
+  id: "docker_authority_conflict",
+  phase: "preflight.host",
+  severity: "blocking",
+  resumeSafe: false,
+  check(host) {
+    const conflict = host.dockerAuthorityConflict;
+    if (
+      conflict === undefined ||
+      !host.dockerInstalled ||
+      host.dockerHostInvalid ||
+      host.dockerReachable
+    ) {
+      return null;
+    }
+    const [first, second] = conflict.candidates;
+    return hostAdvisory(chooseDockerAuthority, {
+      title: "Choose the Docker authority",
+      kind: "manual",
+      reason:
+        "The default Docker authority did not answer, and two engines answered on discovered sockets: " +
+        `${first.identity} at ${first.socketPath} and ${second.identity} at ${second.socketPath}. ` +
+        "NemoClaw did not choose between them and kept the default authority. " +
+        "It did not diagnose why that authority is unreachable, and it withholds the docker-group and start-Docker remedies while two other engines answer. " +
+        "Set DOCKER_HOST to the socket you want; NemoClaw honours it before any probe. Or repair the default authority.",
+      commands: [
+        `export DOCKER_HOST=${shellSingleQuoted(`unix://${first.socketPath}`)}   # ${first.identity}`,
+        `# or: export DOCKER_HOST=${shellSingleQuoted(`unix://${second.socketPath}`)}   # ${second.identity}`,
+        "nemoclaw onboard",
+      ],
+    });
+  },
+};
+
 export const addUserToDockerGroup: AdvisoryCheck<HostAssessment> = {
   id: "docker_group_permission",
   phase: "preflight.host",
@@ -132,6 +177,7 @@ export const addUserToDockerGroup: AdvisoryCheck<HostAssessment> = {
     if (
       host.dockerHostInvalid ||
       host.dockerProbeIssue !== undefined ||
+      host.dockerAuthorityConflict !== undefined ||
       !host.dockerInstalled ||
       host.dockerReachable ||
       host.isWsl ||
@@ -169,6 +215,7 @@ export const startDocker: AdvisoryCheck<HostAssessment> = {
     if (
       host.dockerHostInvalid ||
       host.dockerProbeIssue !== undefined ||
+      host.dockerAuthorityConflict !== undefined ||
       !host.dockerInstalled ||
       host.dockerReachable ||
       host.isWsl ||
@@ -230,6 +277,7 @@ export const DOCKER_HOST_ADVISORY_CHECKS = Object.freeze([
   installDocker,
   invalidDockerHost,
   retryDockerProbe,
+  chooseDockerAuthority,
   addUserToDockerGroup,
   startDocker,
   dockerDesktopCredentialStoreHeadless,
