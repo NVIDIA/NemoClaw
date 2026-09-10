@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { captureOpenshell } from "../../adapters/openshell/runtime";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { runAgentSmokeCommands } from "../../agent/terminal-smoke";
@@ -12,19 +12,19 @@ export type EnsureTerminalInferenceRoute = (
   options: { quiet: true },
 ) => { routeHealthy: boolean | null };
 
-export function runTerminalAgentConnectProbe({
+export async function runTerminalAgentConnectProbe({
   agent,
   agentName,
-  capture,
+  commandExecutor,
   ensureInferenceRoute,
   sandboxName,
 }: {
   agent: AgentDefinition;
   agentName: string;
-  capture: typeof captureOpenshell;
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   ensureInferenceRoute: EnsureTerminalInferenceRoute;
   sandboxName: string;
-}): void {
+}): Promise<void> {
   const routeResult = ensureInferenceRoute(sandboxName, { quiet: true });
   // Dcode is the terminal runtime whose configured inference.local route is
   // itself part of readiness. Keep this fail-fast agent-scoped so terminal
@@ -43,7 +43,7 @@ export function runTerminalAgentConnectProbe({
     );
     process.exit(1);
   }
-  const smokeResult = runAgentSmokeCommands(sandboxName, agent, capture);
+  const smokeResult = await runAgentSmokeCommands(sandboxName, agent, commandExecutor);
   if (!smokeResult.ok) {
     console.error(
       `  Probe failed: ${agentName} terminal smoke command failed: ${smokeResult.command}`,

@@ -211,7 +211,7 @@ describe("sanitized OpenShell capture", () => {
         'if (argv.includes("--output")) {',
         '  process.stdout.write(JSON.stringify({ scope: "sandbox", sandbox: "runtime-policy", status: "effective", policy_source: "sandbox", hash: `sha256:${activeVersion}`, active_version: activeVersion, policy: JSON.parse(document) }));',
         "} else {",
-        '  process.stdout.write(`Version: ${activeVersion}\\nActive: ${activeVersion}\\n---\\n${document}\\n`);',
+        "  process.stdout.write(`Version: ${activeVersion}\\nActive: ${activeVersion}\\n---\\n${document}\\n`);",
         "}",
       ].join("\n"),
     );
