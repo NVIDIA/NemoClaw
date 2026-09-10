@@ -372,7 +372,7 @@ function runDarwinGatewayServiceStop(
     `#!/usr/bin/env bash
 case "\${2:-}" in
   Label)
-    ${options.trustedLabel === false ? "printf '%s\\n' 'other.service'" : 'basename "\${6:-}" .plist'}
+    ${options.trustedLabel === false ? "printf '%s\\n' 'other.service'" : 'basename "${6:-}" .plist'}
     ;;
   ProgramArguments.0) printf '%s\n' '${
     options.trustedProgram === false ? path.join(tmp, "foreign-gateway") : serviceProgram

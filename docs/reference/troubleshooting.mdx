@@ -2367,6 +2367,10 @@ NODE
 
 Any HTTP status from these probes means the Node.js process reached the endpoint; the exact status can vary by unauthenticated path. A transport error or OpenShell policy denial means the probe failed. If the REST probe works but the Discord channel is still unhealthy, investigate the native gateway path instead of widening the preset. Check the gateway logs and blocked-request output with `openshell term`, and look for `gateway.discord.gg` connection or WebSocket upgrade failures.
 
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+
 ### Messaging bridge appears running but no messages arrive
 
 Telegram `getUpdates` allows only one active poller per bot token. Reusing Discord or Slack credentials can create competing gateway or Socket Mode sessions and unreliable message delivery. `$$nemoclaw status` can still report a bridge as running because the gateway process itself is alive.

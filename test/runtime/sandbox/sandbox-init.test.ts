@@ -936,7 +936,7 @@ EOF
         SANDBOX_CHILD_PIDS=()
         SANDBOX_WAIT_PID=""
         # Override exit so we can test
-        exit() { echo "EXIT_\$1"; }
+        exit() { echo "EXIT_$1"; }
         cleanup_on_signal
       `);
       expect(stdout).toContain("EXIT_0");
