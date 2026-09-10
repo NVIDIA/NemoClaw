@@ -586,7 +586,15 @@ describe("launchSandbox", () => {
       sb,
     });
 
-    await launchSandbox("alpha");
+    let finishProbe!: () => void;
+    const probe = new Promise<void>((resolve) => { finishProbe = resolve; });
+    mocks.printInteractiveSessionHints.mockReturnValueOnce(probe);
+    const launch = launchSandbox("alpha");
+    await vi.waitFor(() => expect(mocks.printInteractiveSessionHints).toHaveBeenCalledOnce());
+    expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).not.toHaveBeenCalled();
+    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    finishProbe();
+    await launch;
 
     expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
     expect(mocks.printInteractiveSessionHints).toHaveBeenCalledWith("alpha");

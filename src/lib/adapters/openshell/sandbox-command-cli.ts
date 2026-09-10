@@ -172,7 +172,7 @@ export const runCliOpenShellBufferedCommand: OpenShellBufferedCommandRunner = as
   try {
     const result = await captureOpenshellCommandAsyncResult(binary, args, {
       cwd: options.hostCwd,
-      environment: options.environment,
+      environment: options.environment ?? buildSubprocessEnv(),
       // Ignored stdin supplies immediate EOF without opening a writable pipe
       // that can race a short-lived child with EPIPE.
       input: options.input,

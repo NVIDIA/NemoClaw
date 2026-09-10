@@ -247,7 +247,7 @@ async function launchAgentWithPortableAuthority(
   command: readonly string[],
   deps: LaunchSandboxDeps,
   acceptedHermesAuthority: HermesPortableLaunchAuthority | null,
-  beforeOrdinaryLaunch?: () => void,
+  beforeOrdinaryLaunch?: () => Promise<void>,
   beforeAgentExec?: () => void,
 ): Promise<void> {
   const runOrdinaryAgent = async (): Promise<void> => {
@@ -296,7 +296,7 @@ async function launchAgentWithPortableAuthority(
       throw new Error("Hermes portable lifecycle authority changed before agent launch.");
     }
     if (current.kind !== "hermes") {
-      beforeOrdinaryLaunch?.();
+      await beforeOrdinaryLaunch?.();
       await runOrdinaryAgent();
       return;
     }
@@ -373,15 +373,15 @@ export async function launchSandbox(
   let decision = inspection.decision;
   let acceptedHermesAuthority = decision.kind === "accepted" ? inspection.hermesAuthority : null;
   let session: Awaited<ReturnType<typeof prepareInteractiveSession>>;
-  let acceptedReadinessSetup: (() => void) | undefined;
+  let acceptedReadinessSetup: (() => Promise<void>) | undefined;
   let readinessAction: LaunchReadinessAction = "prepared";
   while (true) {
     if (decision.kind === "accepted") {
       const acceptedDecision = decision;
       const disposition = inspectPortableAgentReceiptDisposition(sandboxName);
       const hermesPortable = disposition.kind === "hermes";
-      acceptedReadinessSetup = () => {
-        printInteractiveSessionHints(sandboxName);
+      acceptedReadinessSetup = async () => {
+        await printInteractiveSessionHints(sandboxName);
         completeReadinessQualifiedInteractiveSessionSetup(
           sandboxName,
           acceptedDecision.agent,

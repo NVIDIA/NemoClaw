@@ -211,7 +211,7 @@ function createDoctorHarness(
   });
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
+  vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({
     sandboxVersion: "0.1.0",
     expectedVersion: "0.2.0",
     isStale: true,

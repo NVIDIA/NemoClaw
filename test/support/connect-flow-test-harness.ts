@@ -516,7 +516,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     detected: true,
     sessions: [{ pid: 1 }, { pid: 2 }],
   });
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({ isStale: false });
+  vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({ isStale: false });
   vi.spyOn(sandboxVersion, "formatStalenessWarning").mockReturnValue([]);
   const checkAndRecoverSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")

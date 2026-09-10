@@ -2192,10 +2192,10 @@ async function runConnectEntryPreflight(
 }
 
 /** Print version and active-session hints on both interactive launch paths. */
-export function printInteractiveSessionHints(sandboxName: string): void {
+export async function printInteractiveSessionHints(sandboxName: string): Promise<void> {
   // Version staleness check — warn but don't block
   try {
-    const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
+    const versionCheck = await sandboxVersion.checkAgentVersion(sandboxName);
     if (versionCheck.isStale) {
       for (const line of sandboxVersion.formatStalenessWarning(sandboxName, versionCheck)) {
         console.error(line);
@@ -2268,7 +2268,7 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
     probeOnly: false,
     withinLifecycleFence: async ({ hermesPortable, requalify }) => {
       if (!hermesPortable) {
-        printInteractiveSessionHints(sandboxName);
+        await printInteractiveSessionHints(sandboxName);
         const processCheck = await checkAndRecoverSandboxProcesses(sandboxName);
         if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
           const agentName = agentRuntime.getAgentDisplayName(
