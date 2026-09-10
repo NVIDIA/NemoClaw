@@ -22,6 +22,8 @@
 //     → { status, bot_token?, ilink_bot_id?, baseurl?, ilink_user_id?,
 //         redirect_host? }   (long-poll, server holds up to ~30s)
 
+import { redactWechatIlinkDiagnostic } from "./ilink-base-url";
+
 /** Fixed iLink gateway used to mint a fresh QR. Per-account base URLs are
  *  served back via the `scaned_but_redirect` status; pin only the bootstrap
  *  host here. */
@@ -64,15 +66,29 @@ export interface WechatQrStatusResponse {
   redirect_host?: string;
 }
 
+interface FetchResponseLike {
+  ok: boolean;
+  status: number;
+  body?: ReadableStream<Uint8Array> | null;
+  text(): Promise<string>;
+}
+
 /** Minimal fetch contract — covers the global `fetch` and any test fake. */
 export type FetchLike = (
   url: string,
-  init?: { method?: string; headers?: Record<string, string>; signal?: AbortSignal },
-) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+  init?: {
+    method?: string;
+    headers?: Record<string, string>;
+    signal?: AbortSignal;
+    redirect?: "error";
+  },
+) => Promise<FetchResponseLike>;
 
 export interface WechatQrClientOptions {
   /** Override transport; defaults to global `fetch`. */
   fetch?: FetchLike;
+  /** Cancel a pending bootstrap request. */
+  signal?: AbortSignal;
   /** Override bootstrap base URL — useful for offline tests. */
   bootstrapBaseUrl?: string;
   /** Override bot type — defaults to `3` (personal WeChat). */
@@ -83,7 +99,8 @@ export interface WechatQrClientOptions {
   timeoutMs?: number;
 }
 
-const WECHAT_QR_BOOTSTRAP_TIMEOUT_MS = 10_000;
+export const WECHAT_QR_BOOTSTRAP_TIMEOUT_MS = 10_000;
+export const WECHAT_ILINK_MAX_RESPONSE_BYTES = 64 * 1024;
 
 const KNOWN_WECHAT_QR_STATUSES: ReadonlySet<WechatQrStatus> = new Set([
   "wait",
@@ -102,6 +119,111 @@ export class WechatQrError extends Error {
     super(message);
     this.name = "WechatQrError";
   }
+}
+
+function makeAbortError(): Error {
+  const error = new Error("aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function requestBodyReadCancellation(cancel?: () => Promise<void>): void {
+  if (!cancel) return;
+  try {
+    void cancel().catch(() => {
+      // Preserve the request cancellation result.
+    });
+  } catch {
+    // Preserve the request cancellation result.
+  }
+}
+
+function cancelUnreadResponseBody(response: FetchResponseLike): void {
+  const body = response.body;
+  if (!body) return;
+  requestBodyReadCancellation(() => body.cancel());
+}
+
+function rejectBodyReadOnAbort<T>(
+  pending: Promise<T>,
+  signal: AbortSignal,
+  cancel?: () => Promise<void>,
+): Promise<T> {
+  if (signal.aborted) {
+    requestBodyReadCancellation(cancel);
+    return Promise.reject(makeAbortError());
+  }
+  return new Promise((resolve, reject) => {
+    let aborted = false;
+    const onAbort = () => {
+      aborted = true;
+      signal.removeEventListener("abort", onAbort);
+      requestBodyReadCancellation(cancel);
+      reject(makeAbortError());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    void pending.then(
+      (value) => {
+        if (aborted) return;
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (err: unknown) => {
+        if (aborted) return;
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
+async function readBoundedResponseText(
+  response: FetchResponseLike,
+  signal: AbortSignal,
+  label: "init" | "status",
+): Promise<string> {
+  const read = async (): Promise<string> => {
+    if (!response.body) {
+      const text = await rejectBodyReadOnAbort(response.text(), signal);
+      if (new TextEncoder().encode(text).byteLength > WECHAT_ILINK_MAX_RESPONSE_BYTES) {
+        throw new WechatQrError("parse", `WeChat QR ${label} response exceeded the size limit`);
+      }
+      return text;
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await rejectBodyReadOnAbort(reader.read(), signal, async () => {
+          await reader.cancel();
+        });
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > WECHAT_ILINK_MAX_RESPONSE_BYTES) {
+          requestBodyReadCancellation(() => reader.cancel());
+          throw new WechatQrError("parse", `WeChat QR ${label} response exceeded the size limit`);
+        }
+        chunks.push(value);
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        // Preserve the response read result.
+      }
+    }
+    const joined = new Uint8Array(bytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      joined.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(joined);
+  };
+
+  return await read();
 }
 
 /** Encode a SemVer string the way iLink expects: `(major<<16)|(minor<<8)|patch`. */
@@ -124,10 +246,6 @@ function ensureTrailingSlash(url: string): string {
   return url.endsWith("/") ? url : `${url}/`;
 }
 
-function statusPollUrlForDebug(url: URL): string {
-  return `${url.origin}${url.pathname}`;
-}
-
 /** Bootstrap a new QR session against the fixed iLink host. The returned
  *  `qrcode` is the cookie used for subsequent polling; `qrcodeUrl` is what
  *  the operator scans in WeChat. */
@@ -144,36 +262,54 @@ export async function fetchWechatQrSession(
 
   const timeoutMs = opts.timeoutMs ?? WECHAT_QR_BOOTSTRAP_TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Awaited<ReturnType<FetchLike>>;
+  let abortSource: "external" | "timeout" | null = null;
+  const abortRequest = (source: "external" | "timeout") => {
+    if (abortSource !== null) return;
+    abortSource = source;
+    controller.abort();
+  };
+  const abortFromExternalSignal = () => abortRequest("external");
+  if (opts.signal?.aborted) {
+    abortFromExternalSignal();
+  } else {
+    opts.signal?.addEventListener("abort", abortFromExternalSignal, { once: true });
+  }
+  const timer = setTimeout(() => abortRequest("timeout"), timeoutMs);
+  let text: string;
   try {
-    response = await transport(url.toString(), {
+    const response = await transport(url.toString(), {
       method: "GET",
       headers: buildIlinkHeaders(),
       signal: controller.signal,
+      redirect: "error",
     });
+    if (!response.ok) {
+      cancelUnreadResponseBody(response);
+      throw new WechatQrError(
+        "http",
+        `WeChat QR init returned ${response.status}`,
+        response.status,
+      );
+    }
+    text = await readBoundedResponseText(response, controller.signal, "init");
   } catch (err) {
-    if (isAbortError(err)) {
+    if (err instanceof WechatQrError) throw err;
+    if (abortSource === "external") {
+      throw new WechatQrError("network", "WeChat QR init request was cancelled");
+    }
+    if (abortSource === "timeout" || isAbortError(err)) {
       throw new WechatQrError("network", `WeChat QR init request timed out after ${timeoutMs}ms`);
     }
-    throw new WechatQrError("network", `WeChat QR init request failed: ${stringify(err)}`);
+    throw new WechatQrError("network", "WeChat QR init request failed");
   } finally {
     clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", abortFromExternalSignal);
   }
-  if (!response.ok) {
-    const body = await safeText(response);
-    throw new WechatQrError(
-      "http",
-      `WeChat QR init returned ${response.status}: ${body}`,
-      response.status,
-    );
-  }
-  const text = await response.text();
   let parsed: { qrcode?: unknown; qrcode_img_content?: unknown };
   try {
     parsed = JSON.parse(text) as typeof parsed;
-  } catch (err) {
-    throw new WechatQrError("parse", `WeChat QR init returned non-JSON body: ${stringify(err)}`);
+  } catch {
+    throw new WechatQrError("parse", "WeChat QR init returned non-JSON body");
   }
   if (typeof parsed.qrcode !== "string" || typeof parsed.qrcode_img_content !== "string") {
     throw new WechatQrError(
@@ -212,63 +348,62 @@ export async function pollWechatQrStatus(params: {
   const localController = new AbortController();
   const timer = setTimeout(() => localController.abort(), timeoutMs);
   const externalAbort = () => localController.abort();
+  const debug = (event: string): void => {
+    params.onDebug?.(redactWechatIlinkDiagnostic(event));
+  };
   if (params.signal) {
     if (params.signal.aborted) localController.abort();
     else params.signal.addEventListener("abort", externalAbort, { once: true });
   }
 
   try {
-    let response: Awaited<ReturnType<FetchLike>>;
-    params.onDebug?.(`poll request → ${statusPollUrlForDebug(url)}`);
+    let text: string;
+    debug(`poll request → validated iLink endpoint ${url.pathname}`);
     try {
-      response = await transport(url.toString(), {
+      const response = await transport(url.toString(), {
         method: "GET",
         headers: buildIlinkHeaders(),
         signal: localController.signal,
+        redirect: "error",
       });
+      debug(`poll response ← status=${response.status}`);
+      if (!response.ok) {
+        cancelUnreadResponseBody(response);
+        // 5xx gateway hiccups also fall through as `wait` — Cloudflare 524s
+        // are routine on the iLink long-poll path.
+        if (response.status >= 500) {
+          debug(`poll http ${response.status} (treated as wait)`);
+          return { status: "wait" };
+        }
+        throw new WechatQrError(
+          "http",
+          `WeChat QR status returned ${response.status}`,
+          response.status,
+        );
+      }
+      text = await readBoundedResponseText(response, localController.signal, "status");
     } catch (err) {
       // Abort and gateway-timeout-shaped errors fall through as `wait`.
       // Only the orchestrator's overall deadline ends the loop.
       if (isAbortError(err)) {
-        params.onDebug?.(`poll abort (treated as wait)`);
+        debug(`poll abort (treated as wait)`);
         return { status: "wait" };
       }
-      params.onDebug?.(`poll transport error: ${stringify(err)} (treated as wait)`);
+      if (err instanceof WechatQrError) throw err;
+      debug(`poll transport error (treated as wait)`);
       return { status: "wait" };
     }
-    params.onDebug?.(`poll response ← status=${response.status}`);
-    if (!response.ok) {
-      // 5xx gateway hiccups also fall through as `wait` — Cloudflare 524s
-      // are routine on the iLink long-poll path.
-      if (response.status >= 500) {
-        params.onDebug?.(`poll http ${response.status} (treated as wait)`);
-        return { status: "wait" };
-      }
-      const body = await safeText(response);
-      throw new WechatQrError(
-        "http",
-        `WeChat QR status returned ${response.status}: ${body}`,
-        response.status,
-      );
-    }
-    const text = await response.text();
     let parsed: WechatQrStatusResponse;
     try {
       parsed = JSON.parse(text) as WechatQrStatusResponse;
-    } catch (err) {
-      throw new WechatQrError(
-        "parse",
-        `WeChat QR status returned non-JSON body: ${stringify(err)}`,
-      );
+    } catch {
+      throw new WechatQrError("parse", "WeChat QR status returned non-JSON body");
     }
     if (typeof parsed?.status !== "string") {
       throw new WechatQrError("parse", "WeChat QR status response missing 'status' field");
     }
     if (!KNOWN_WECHAT_QR_STATUSES.has(parsed.status as WechatQrStatus)) {
-      throw new WechatQrError(
-        "parse",
-        `WeChat QR status returned unknown status '${parsed.status}'`,
-      );
+      throw new WechatQrError("parse", "WeChat QR status returned an unsupported status");
     }
     return parsed;
   } finally {
@@ -279,17 +414,4 @@ export async function pollWechatQrStatus(params: {
 
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
-}
-
-async function safeText(response: { text(): Promise<string> }): Promise<string> {
-  try {
-    return await response.text();
-  } catch {
-    return "";
-  }
-}
-
-function stringify(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
 }

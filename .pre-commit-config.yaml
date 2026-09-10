@@ -113,7 +113,7 @@ repos:
     hooks:
       - id: oxfmt
         name: Oxfmt
-        entry: bash tools/lint/format-added-files.sh --write
+        entry: npx oxfmt --write --no-error-on-unmatched-pattern
         language: system
         files: \.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$
         pass_filenames: true
@@ -127,6 +127,15 @@ repos:
         entry: npx oxlint --fix --no-error-on-unmatched-pattern
         language: system
         files: \.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$
+        exclude: ^(src/lib/adapters/|nemoclaw/src/)
+        pass_filenames: true
+        priority: 6
+
+      - id: oxlint-type-aware
+        name: Oxlint type-aware rules
+        entry: npx oxlint --fix --type-aware --no-error-on-unmatched-pattern
+        language: system
+        files: ^(src/lib/adapters/|nemoclaw/src/).*\.(cts|mts|ts|tsx)$
         pass_filenames: true
         priority: 6
 
@@ -160,20 +169,20 @@ repos:
 
   - repo: local
     hooks:
-      - id: oxlint-type-aware
-        name: Oxlint type-aware rules
-        entry: npx oxlint --config oxlint.type-aware.config.ts --no-error-on-unmatched-pattern
-        language: system
-        files: ^nemoclaw/src/.*\.ts$
-        pass_filenames: true
-        priority: 10
-
       - id: validate-config-schemas
         name: Validate config files against JSON schemas
         entry: npx tsx scripts/validate-configs.mts
         language: system
         pass_filenames: false
         files: ^(nemoclaw-blueprint/.*\.yaml$|nemoclaw/openclaw\.plugin\.json$|schemas/.*\.json$)
+        priority: 10
+
+      - id: validate-nemoclaw-config-schema
+        name: Validate generated NemoClawConfig schema
+        entry: npm run config-schema:check
+        language: system
+        pass_filenames: false
+        files: ^(package(?:-lock)?\.json|nemoclaw/src/shared/sandbox-name\.cts|schemas/nemoclaw-config-v1\.schema\.json|scripts/config/generate-nemoclaw-config-schema\.mts|src/lib/(?:config/model|core/endpoint-contract|name-validation|sandbox-name-contract)\.ts)$
         priority: 10
 
       - id: validate-managed-inference-catalog
@@ -188,7 +197,7 @@ repos:
         name: Repository checks
         entry: npm run checks:repository
         language: system
-        files: ^(\.pre-commit-config\.yaml$|\.github/workflows/e2e\.yaml$|Dockerfile(?:\.base)?$|agents/openclaw/manifest\.yaml$|agents/hermes/(?:Dockerfile(?:\.base)?|manifest\.yaml|mcp-config-transaction\.py)$|docs/resources/starter-prompt\.md$|nemoclaw-blueprint/blueprint\.yaml$|nemoclaw/package\.json$|package\.json$|scripts/(?:brev-launchable-ci-cpu|check-installer-hash|install-openshell|update-hermes-agent)\.sh$|src/lib/actions/sandbox/openshell-child-visible-credentials\.v[0-9]+\.[0-9]+\.[0-9]+\.json$|bin/.*\.(cjs|js|mjs)$|src/.*\.(cts|mts|ts|tsx)$|scripts/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|test/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|nemoclaw/src/.*\.(cts|mts|ts|tsx)$)
+        files: ^(\.pre-commit-config\.yaml$|\.github/workflows/e2e\.yaml$|Dockerfile(?:\.base)?$|agents/openclaw/manifest\.yaml$|agents/hermes/(?:Dockerfile(?:\.base)?|manifest\.yaml|mcp-config-transaction\.py)$|ci/e2e-assertion-budget\.json$|docs/resources/starter-prompt\.md$|nemoclaw-blueprint/blueprint\.yaml$|nemoclaw/package\.json$|package\.json$|scripts/(?:brev-launchable-ci-cpu|check-installer-hash|install-openshell|update-hermes-agent)\.sh$|src/lib/actions/sandbox/openshell-child-visible-credentials\.v[0-9]+\.[0-9]+\.[0-9]+\.json$|bin/.*\.(cjs|js|mjs)$|src/.*\.(cts|mts|ts|tsx)$|scripts/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|test/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|nemoclaw/src/.*\.(cts|mts|ts|tsx)$)
         pass_filenames: false
         priority: 10
 
@@ -269,7 +278,10 @@ repos:
         pass_filenames: false
         files: ^(agents/hermes|bin|scripts|src|test|tools|nemoclaw-blueprint/scripts)/.*\.(ts|tsx|mts|cts|json)$|^\.agents/skills/nemoclaw-maintainer-day/scripts/(check-gates|shared)\.ts$|^nemoclaw/src/(lib/subprocess-env|blueprint/private-networks)\.ts$|^(package(-lock)?\.json|tsconfig\.cli\.json|vitest\.config\.ts)$
         stages: [pre-push]
-        priority: 10
+        # build:cli now removes all stale dist output. When package or script
+        # inputs select both hooks, run this reader after tsc-js finishes its
+        # clean rebuild instead of racing the deleted output tree.
+        priority: 20
 
   # ── post-merge / post-checkout: warn about stale compiled dist/ ───────────
   # See #1958 — dist/ is gitignored, so git pull / checkout can leave stale
@@ -280,7 +292,7 @@ repos:
     hooks:
       - id: stale-dist-check
         name: Warn if dist/ is older than src/
-        entry: node --experimental-strip-types scripts/check-stale-dist.mts
+        entry: node scripts/check-stale-dist.mts
         language: system
         always_run: true
         pass_filenames: false

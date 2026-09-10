@@ -58,6 +58,10 @@ export type LookupOpenShellSandboxRequest = ListOpenShellSandboxesRequest &
     sandboxName: string;
   }>;
 
+export type OpenShellSandboxReadinessProbe = (
+  request: LookupOpenShellSandboxRequest,
+) => Promise<OpenShellSandboxResult<OpenShellSandboxReadiness>>;
+
 /** Transport-neutral sandbox observation capabilities used by NemoClaw. */
 export interface OpenShellSandboxObserver {
   listSandboxes(

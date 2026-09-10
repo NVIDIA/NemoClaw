@@ -86,6 +86,7 @@ export type PortableLifecycleTimingRecorder = {
   beginOpenClawGatewayStartup(): void;
   measureOpenClawGatewayProbe<T>(operation: () => T): T;
   measureOpenClawGatewaySleep<T>(operation: () => T): T;
+  recordOpenClawGatewayWaitSleep(milliseconds: number): void;
   readOpenClawGatewayStartupTiming(
     operation: () => PortableOpenClawGatewayTimingReadResult,
     maxCorrelationWindowMs: number,
@@ -337,6 +338,13 @@ export function createPortableLifecycleTimingRecorder(
         gatewaySleepMs += elapsed;
       });
     },
+    recordOpenClawGatewayWaitSleep(milliseconds: number): void {
+      // The enclosing OpenShell command is measured as probe time. Reclassify
+      // only the fixed waiter's reported sleep into the existing sleep field.
+      const boundedSleep = Math.min(gatewayProbeMs, boundedGatewayTimingValue(milliseconds));
+      gatewayProbeMs -= boundedSleep;
+      gatewaySleepMs += boundedSleep;
+    },
     readOpenClawGatewayStartupTiming(
       operation: () => PortableOpenClawGatewayTimingReadResult,
       maxCorrelationWindowMs: number,
@@ -418,4 +426,13 @@ export function createPortableLifecycleTimingRecorder(
     },
     finish,
   };
+}
+
+export function emitPortableOpenClawAlreadyRunningTiming(
+  write: (line: string) => void = (line) => console.log(line),
+): void {
+  const timing = createPortableLifecycleTimingRecorder({ now: () => 0, write });
+  timing.setContainerAction("reused");
+  timing.setGatewayAction("reused");
+  timing.finish("already-running");
 }

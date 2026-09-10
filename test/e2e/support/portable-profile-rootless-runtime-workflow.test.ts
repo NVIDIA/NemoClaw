@@ -11,10 +11,41 @@ import { readRepoText, readYaml, type Workflow } from "../../helpers/e2e-workflo
 type PortableProfileWorkflow = Workflow & {
   on: {
     pull_request: { paths: string[]; types: string[] };
+    push: { branches: string[]; paths: string[] };
+    workflow_dispatch: null;
   };
 };
 
+type SandboxPolicy = {
+  filesystem_policy?: { read_only?: string[] };
+  process?: { run_as_user?: string; run_as_group?: string };
+};
+
 describe("portable profile rootless runtime workflow", () => {
+  // source-shape-contract: security -- The rootless-linux install must skip redundant advisory requests on automated runs while manual dispatches retain an explicit audit without a reviewed prerequisite
+  it("routes rootless job dependency auditing by workflow trigger (#11028)", () => {
+    const workflow = readYaml<PortableProfileWorkflow>(
+      ".github/workflows/portable-profile-e2e.yaml",
+    );
+    const install = workflow.jobs["rootless-linux"]?.steps?.find(
+      (step) => step.name === "Install root dependencies",
+    );
+    const auditedInstall = workflow.jobs["rootless-linux"]?.steps?.find(
+      (step) => step.name === "Install root dependencies with audit",
+    );
+
+    expect(Object.keys(workflow.on).sort()).toEqual(["pull_request", "push", "workflow_dispatch"]);
+    expect(workflow.on.push.branches).toEqual(["main"]);
+    expect(install).toMatchObject({
+      if: "github.event_name != 'workflow_dispatch'",
+      run: "npm ci --ignore-scripts --no-audit --no-fund",
+    });
+    expect(auditedInstall).toMatchObject({
+      if: "github.event_name == 'workflow_dispatch'",
+      run: "npm ci --ignore-scripts --audit --no-fund",
+    });
+  });
+
   // source-shape-contract: compatibility -- The workflow and live fixture must keep the accepted OS, Podman, AppArmor, and HTTP local-registry authorities aligned before live E2E
   it("keeps live E2E on the accepted rootless runtime and local registry authority (#9006)", () => {
     const actionlint = readYaml<{ "self-hosted-runner"?: { labels?: string[] } }>(
@@ -27,6 +58,9 @@ describe("portable profile rootless runtime workflow", () => {
       "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "utf-8",
     );
+    const hermesPolicy = readYaml<SandboxPolicy>(
+      "test/e2e/live/hermes-portable-lifecycle-policy.yaml",
+    );
     const job = workflow.jobs["rootless-linux"];
     const steps = job?.steps ?? [];
     const provision = steps.find(
@@ -37,6 +71,9 @@ describe("portable profile rootless runtime workflow", () => {
     )?.run;
     const dependencyInstallIndex = steps.findIndex(
       (step) => step.name === "Install root dependencies",
+    );
+    const auditedDependencyInstallIndex = steps.findIndex(
+      (step) => step.name === "Install root dependencies with audit",
     );
     const catalogueCompileIndex = steps.findIndex((step) => step.run === "npm run catalog:compile");
     const provisionIndex = steps.findIndex(
@@ -57,14 +94,25 @@ describe("portable profile rootless runtime workflow", () => {
     expect(workflow.on.pull_request.paths).toEqual(
       expect.arrayContaining([
         "agents/hermes/Dockerfile",
+        "agents/hermes/dashboard-external-host.patch",
+        "agents/hermes/start.sh",
+        "src/lib/actions/sandbox/forward-recovery.ts",
+        "src/lib/actions/sandbox/probe/hermes-portable-forward-recovery.ts",
+        "src/lib/actions/sandbox/start.ts",
+        "src/lib/adapters/openshell/forward-service.ts",
+        "src/lib/onboard/experimental/hermes-portable-build-context-files.ts",
         "src/lib/onboard/experimental/hermes-portable-build-context.ts",
+        "src/lib/onboard/experimental/hermes-portable-contract.ts",
+        "src/lib/onboard/experimental/hermes-portable-lifecycle.ts",
+        "src/lib/onboard/runtime-provider/docker.ts",
       ]),
     );
     expect(Array.isArray(actionlintLabels)).toBe(true);
     expect(actionlintLabels).toContain("ubuntu-26.04");
     expect(job?.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
     expect(dependencyInstallIndex).toBeGreaterThanOrEqual(0);
-    expect(catalogueCompileIndex).toBeGreaterThan(dependencyInstallIndex);
+    expect(auditedDependencyInstallIndex).toBeGreaterThan(dependencyInstallIndex);
+    expect(catalogueCompileIndex).toBeGreaterThan(auditedDependencyInstallIndex);
     expect(provisionIndex).toBeGreaterThan(catalogueCompileIndex);
     expect(policyIndex).toBeGreaterThan(provisionIndex);
     expect(liveTestIndex).toBeGreaterThan(policyIndex);
@@ -90,6 +138,17 @@ describe("portable profile rootless runtime workflow", () => {
     );
     expect(liveTest).toContain("preparePortableExperimentalHost(process.env, { home });");
     expect(liveTest).toContain("createHermesPortableBuildContextPlan(");
+    expect(liveTest).toContain('"test/e2e/live/hermes-portable-lifecycle-policy.yaml"');
+    expect(liveTest).toContain('".hermes-policy.yaml"');
+    expect(liveTest).toContain('flag: "wx"');
+    expect(liveTest).toContain("mode: 0o600");
+    expect(liveTest).toContain("await streamSandboxCreate(");
+    expect(liveTest).toContain("waitForReadyTermination: true");
+    expect(hermesPolicy.filesystem_policy?.read_only).toContain("/opt/hermes");
+    expect(hermesPolicy.process).toEqual({
+      run_as_user: "sandbox",
+      run_as_group: "sandbox",
+    });
     expect(liveTest).toContain('buildId: "hermes-rootless-e2e"');
     expect(liveTest).toContain("hermesContextPlan.retire(hermesContextInput)");
     expect(liveTest).toContain("assert.equal(prepared?.authority.configHome, configHome);");
@@ -226,6 +285,8 @@ ${serviceIdentityCheck}`,
     const revisionExpression = "${{ github.event.pull_request.head.sha || github.sha }}";
 
     expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
+    expect(workflow.on.push.paths).toContain("tools/e2e/full-e2e-timeout-contract.mts");
+    expect(workflow.on.pull_request.paths).not.toContain("tools/e2e/full-e2e-timeout-contract.mts");
     expect(workflow.on.pull_request.paths).toEqual(
       expect.arrayContaining([
         "src/lib/onboard/experimental/portable-host-preparation.ts",
@@ -241,6 +302,7 @@ ${serviceIdentityCheck}`,
     expect(upload?.if).toBe("always()");
     expect(upload?.with?.name).toContain(revisionExpression);
     expect(workflow.jobs["portable-launch"]?.if).toBe("${{ github.ref == 'refs/heads/main' }}");
+    expect(workflow.jobs["portable-launch"]?.["timeout-minutes"]).toBe(135);
     expect(liveSource).toContain('run("git", ["rev-parse", "HEAD"])');
     expect(liveSource).toContain('"network", "rm", disposableNetworkId');
     expect(liveSource).not.toContain('"network", "rm", "--force"');

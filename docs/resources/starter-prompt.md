@@ -50,7 +50,9 @@ Set `NEMOCLAW_AGENT=langchain-deepagents-code` for Deep Agents, or use `nemo-dee
 - Check distribution, architecture, product and firmware identity, GPU and memory, NVIDIA driver, Container Toolkit, Docker, Node.js, disk space, existing NemoClaw, Ollama, vLLM, relevant ports, and administrator access.
 - Classify the computer as DGX Spark, DGX Station, NVIDIA GB300, another NVIDIA computer, ordinary macOS/Linux, or unknown.
 - Do not identify DGX Spark from the GPU name alone; combine product, firmware, architecture, and GPU evidence.
-- Classify a system as DGX Station only when its detected platform matches a supported DGX Station GB300 mapping. Do not load Station instructions for unsupported hardware or release profiles.
+- Treat DGX Station GB300 hardware as confirmed only when the Station hardware qualification passes. Do not load Station instructions for unsupported or inconclusive hardware.
+- If Station hardware is confirmed but its software profile is unqualified, load Station instructions only for the documented explicit validation-only recovery. This does not authorize Station Express onboarding.
+- Treat the host as qualified for Station Express only when the combined Station qualification passes.
 - A confirmed NVIDIA GB300 can independently qualify for expanded local-runtime choices.
 - If uncertain, explain that and let NemoClaw's official preflight make the final platform decision.
 
@@ -79,26 +81,27 @@ Set `NEMOCLAW_AGENT=langchain-deepagents-code` for Deep Agents, or use `nemo-dee
 
 After the readiness check, load exactly one matching instruction asset before provider selection:
 
-- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/6e1a29a1fb0fbbcd25b3fe2d4523ffa71e814010/docs/resources/prompt-assets/dgx-spark.md).
-- Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/6e1a29a1fb0fbbcd25b3fe2d4523ffa71e814010/docs/resources/prompt-assets/dgx-station.md).
-- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/6e1a29a1fb0fbbcd25b3fe2d4523ffa71e814010/docs/resources/prompt-assets/windows-wsl.md).
+- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/6d73400f8f1d1f731b6a30a7c5c1fe684213b31f/docs/resources/prompt-assets/dgx-spark.md).
+- Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/508ad9d135c56df42ce6b1f9335bcaa7fc90c6e5/docs/resources/prompt-assets/dgx-station.md).
+- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/9ae697aca7eb77049511f09914d3eec075a8fbd3/docs/resources/prompt-assets/windows-wsl.md).
 
 Read the matching raw Markdown file completely and follow it before continuing.
 Do not load a platform asset for any other computer.
 
 ## Runtime and Provider Selection
 
-If the readiness check confirms N1x, do not show the generic provider menu.
-Offer only the Deferred managed-vLLM preview with `NEMOCLAW_PROVIDER=install-vllm`.
+If the Windows WSL platform asset applies, follow that asset's provider selection and skip the native-N1x branch below.
+If the readiness check confirms native N1x (not Windows WSL), offer the Deferred managed-vLLM preview before the generic provider menu.
+If the user accepts, set `NEMOCLAW_PROVIDER=install-vllm`.
 Explain that N1x remains outside the supported-platform set pending complete physical NemoClaw Express E2E validation, accepting this path is explicit preview intent, and the preview uses one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
-Do not offer or reuse an existing vLLM server on N1x.
-If the configured vLLM port, `${NEMOCLAW_VLLM_PORT:-8000}`, is occupied, stop and ask the user to stop that server before trying the Deferred preview again.
-If the user declines the preview, stop before installation.
+If the user declines, continue to the provider question below and explain that each provider retains its existing requirements.
+Do not offer local NVIDIA NIM on native N1x.
+If the user selects managed vLLM and the configured port, `${NEMOCLAW_VLLM_PORT:-8000}`, is occupied, stop and ask the user to stop that server before trying the Deferred preview again.
 
-For a computer other than N1x, if no platform asset applies or its offered install path is declined, ask: "Which inference runtime or provider would you like?"
+If no platform asset applies or its offered install path is declined, ask: "Which inference runtime or provider would you like?"
 Choices:
 
-1. Existing vLLM, only when the computer is not N1x and a ready server is detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`.
+1. Existing vLLM, when a ready server is detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`; native N1x requires explicit standard-onboarding intent.
 2. Managed vLLM, optimized local inference with a large download.
 3. Local Ollama, only when the selected agent and platform support it.
 4. NVIDIA Endpoints, which requires an NVIDIA API key.
@@ -152,8 +155,8 @@ Before collecting secrets, determine every environment-variable name and the com
 Do not generate, rewrite, or redesign the helper or form.
 Use this reviewed pair without modification:
 
-- Helper: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/scripts/local-credential-helper.mts` (SHA-256 `1a42bbe8dbc9003cb79d4e641b53760571aacd85293671aee97c09c0746fef33`).
-- Form: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/docs/resources/local-credential-form.html` (SHA-256 `5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8`).
+- Helper: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/15bd0dd25b185eafae02a067532fe18718b2be23/scripts/local-credential-helper.mts` (SHA-256 `f7c255120735307c93767c348bfcd54e7c7008275f9f5215f249e4c1a9daa9be`).
+- Form: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/15bd0dd25b185eafae02a067532fe18718b2be23/docs/resources/local-credential-form.html` (SHA-256 `cdd85dc6a0b31a8b9773e7ddaacb38a4e8162b0a13b70bebef3dc297ae7a6c44`).
 
 - Treat the two immutable URL and digest pairs as one reviewed trust boundary; before executing the helper, compute the SHA-256 digest of both downloaded files and compare each result with its pinned digest.
 - If either digest differs, do not execute the helper; delete both temporary files and stop.
@@ -168,7 +171,7 @@ Use this reviewed pair without modification:
 - Never omit the literal `--`.
 - Never use a relative, alias-only, or PATH-only approved executable.
 - Never put credentials in argv.
-- Command shape: `node --experimental-strip-types <helper> --execution-profile <profile> --form <form> --field NAME:secret -- <absolute-executable> <approved-args...>`.
+- Command shape: `node <helper> --execution-profile <profile> --form <form> --field NAME:secret -- <absolute-executable> <approved-args...>`.
 - Use **Preview Credentials**, **Edit**, then **Confirm and Run Approved Command**.
 - If the outcome is unknown, check whether the command ran; do not retry or resubmit blindly.
 - Keep secrets in memory only long enough to start the command.
@@ -190,8 +193,8 @@ Use this provider mapping for non-interactive setup:
 - OpenAI-compatible: `NEMOCLAW_PROVIDER=custom`, endpoint, model, `COMPATIBLE_API_KEY`.
 - Anthropic-compatible: `NEMOCLAW_PROVIDER=anthropicCompatible`, endpoint, model, `COMPATIBLE_ANTHROPIC_API_KEY`.
 - Ollama: `NEMOCLAW_PROVIDER=ollama`, optional `NEMOCLAW_MODEL`.
-- Existing vLLM: `NEMOCLAW_PROVIDER=vllm`; unavailable on N1x.
-- Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; this is the only admitted N1x provider and requires explicit Deferred preview intent there. Use an approved optional model override only when the selected platform supports it.
+- Existing vLLM: `NEMOCLAW_PROVIDER=vllm`; on native N1x, this value supplies explicit standard-onboarding intent, but the route remains unvalidated.
+- Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; on native N1x, this value supplies explicit Deferred preview intent. Qualifying N1x WSL hosts instead follow the Windows WSL asset's managed llama.cpp path. Use an approved optional model override only when the selected platform supports it.
 
 Do not offer Hermes Provider for OpenClaw or Deep Agents.
 
@@ -220,7 +223,7 @@ Choices:
 ## Messaging During Initial Onboarding
 
 For OpenClaw or Hermes, ask before the first sandbox build: "Do you want to configure a messaging channel during onboarding?"
-Choices: No, Telegram, Discord, Slack, WhatsApp, WeChat (experimental).
+Before offering choices, read the selected agent's current **Enable Channels During Onboarding** page and present every channel in that picker; do not rely on a copied channel list.
 Skip messaging for Deep Agents.
 Configure one channel at a time, then ask whether to add another.
 Collect messaging before policy selection so the first image includes channel configuration and matching network presets.
@@ -230,9 +233,12 @@ Collect messaging before policy selection so the first image includes channel co
 - Slack requires `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`; optional settings include allowed users and channels.
 - WhatsApp uses documented allowed IDs for non-interactive selection, followed by QR pairing after startup.
 - WeChat requires an interactive QR handshake; explain the limitation before installation and never leave an unsupported UI waiting.
+- Microsoft Teams is experimental and requires `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, and `MSTEAMS_TENANT_ID`, plus a public HTTPS messaging endpoint ending in `/api/messages`; optional settings include an Entra user allowlist, webhook port, and mention mode.
+- Google Chat is experimental and requires service-account JSON. Follow the selected agent's setup page: OpenClaw uses an interactive public `/googlechat` webhook enrollment, while Hermes requires a Google Cloud project ID, complete Pub/Sub subscription name, and email sender allowlist.
 
 Collect messaging secrets through the reviewed helper and URL-specific SSH flow.
-Do not manually set `NEMOCLAW_MESSAGING_CHANNELS_B64`; let NemoClaw generate it.
+Do not manually set `NEMOCLAW_MESSAGING_PLAN_B64`; NemoClaw compiles the selected messaging configuration into this derived sandbox image build artifact and removes the full plan from the runtime environment.
+The plan contains OpenShell credential placeholders instead of raw messaging credentials.
 Use `channels add` and rebuild only for channels omitted from initial onboarding or changed later.
 
 ## Policy, Approval, and Verification

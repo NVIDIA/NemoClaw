@@ -126,6 +126,7 @@ const {
   setupHarness,
   resetHarness,
 } = createGpuFlowTestHarness(mocks);
+const READY_CHECK_ARGS = ["sandbox", "list", "-g", "nemoclaw"];
 
 beforeEach(setupHarness);
 afterEach(resetHarness);
@@ -254,6 +255,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
                   }),
             bootstrapIdentity: "e".repeat(64),
             code: "mxc-recovery-retry",
+            blockingScope: "sandbox",
             retryable: true,
             detail,
           }),
@@ -343,15 +345,18 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
         manifestDigest: `sha256:${"d".repeat(64)}`,
       },
       agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+      workspaceRoot: { uid: 1000, gid: 1000, mode: 0o755 },
+      managedStateRoots: [],
       intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
       expectedSupervisorArgv: ["/mxc/supervisor"],
     };
-    const deps = createDeps();
+    const sandboxId = "mxc-alpha";
+    const deps = createDeps(sandboxId);
     const adapterOverride = {} as never;
     deps.createManagedBootstrapAdapter = vi.fn(() => adapterOverride);
-    deps.runOpenshell = vi.fn(() => readySandboxGetResult("alpha-sandbox-id"));
+    deps.runOpenshell = vi.fn(() => readySandboxGetResult(sandboxId));
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-      args[1] === "get" ? "ID: alpha-sandbox-id\n" : "alpha Ready",
+      args[1] === "get" ? `ID: ${sandboxId}\n` : "alpha Ready",
     );
     recoverUnfinished.mockRejectedValueOnce(new Error("unfinished recovery failed"));
 
@@ -401,11 +406,9 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
         ([options]) => options.stableReadyPolls,
       ),
     ).toEqual([2, 2]);
-
     vi.mocked(deps.runCaptureOpenshell).mockClear();
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], READY_CHECK_OPTIONS);
-
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(READY_CHECK_ARGS, READY_CHECK_OPTIONS);
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
     );
@@ -416,13 +419,12 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     prepareNetwork.mockClear();
     mocks.streamSandboxCreate.mockClear();
     mockExit();
-
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
     expect(prepareNetwork).not.toHaveBeenCalled();
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
     expect(errorOutput()).toContain("recovery stopped before sandbox 'alpha' was created");
     expect(errorOutput()).toContain("Transaction");
-    expect(errorOutput()).toContain("durable sandbox ID mxc-alpha");
+    expect(errorOutput()).toContain(`durable sandbox ID ${sandboxId}`);
     expect(errorOutput()).toContain("OpenShell's sandbox get command");
     expect(errorOutput()).toContain("never delete a runtime by mutable sandbox name");
     expect(errorOutput()).toContain("Authorization: Bearer <REDACTED>");
@@ -431,6 +433,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
 
   it("reports the terminal phase when an incomplete managed create cannot become ready (#9819)", async () => {
     const input = createInput();
+    input.gatewayName = "nemoclaw-18080";
     const bootstrapIdentity = "e".repeat(64);
     input.managedBootstrap = {
       bootstrapIdentity,
@@ -471,11 +474,14 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       reason: "terminal_failure_phase",
       failurePhase: "Failed",
     });
-
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
       "Sandbox 'alpha' entered Failed phase before it became ready (waited up to 60s).",
     );
-    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledOnce();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: input.gatewayName },
+      }),
+    );
   });
 });
 describe("runSandboxGpuCreateFlow proof authorization", () => {
@@ -616,10 +622,9 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       expect(args[3].readyCheck()).toBe(true);
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
-
     const result = await runSandboxGpuCreateFlow(createInput(), deps);
     expect(result).toMatchObject({ route: "native" });
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], READY_CHECK_OPTIONS);
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(READY_CHECK_ARGS, READY_CHECK_OPTIONS);
   });
 
   it("defers restart-safe no-GPU recreation until the create process exits (#8720)", async () => {
@@ -706,15 +711,16 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
-        ["sandbox get alpha", [readySandboxGetResult(), readySandboxGetResult()]],
-        [
-          "sandbox exec --name alpha -- true",
-          [{ status: 1, stdout: "", stderr: "permission denied" }],
-        ],
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult(), readySandboxGetResult()]],
       ]),
     );
-    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce((options) => {
-      expect(options.checkReadyIdentity?.()).toBe("probe_failed");
+    vi.mocked(deps.commandExecutor.runBuffered).mockResolvedValueOnce({
+      outcome: { kind: "completed", exitCode: 1, signal: null },
+      stdout: "",
+      stderr: "permission denied",
+    });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce(async (options) => {
+      await expect(options.checkReadyIdentity?.()).resolves.toBe("probe_failed");
       return {
         ready: false,
         reason: "identity_probe_failed",
@@ -759,27 +765,27 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
         [
-          "sandbox get alpha",
+          "sandbox get -g nemoclaw alpha",
           [readySandboxGetResult(), readySandboxGetResult(), readySandboxGetResult()],
-        ],
-        [
-          "sandbox exec --name alpha -- true",
-          [
-            {
-              status: 1,
-              stdout: "",
-              stderr:
-                `Error:   × code: 'The system is not in a state required for the operation's\n` +
-                '  │ execution\', message: "sandbox is not ready"\n',
-            },
-            { status: 0, stdout: "", stderr: "" },
-          ],
         ],
       ]),
     );
-    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce((options) => {
-      expect(options.checkReadyIdentity?.()).toBe("not_ready");
-      expect(options.checkReadyIdentity?.()).toBe("ready");
+    vi.mocked(deps.commandExecutor.runBuffered)
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 1, signal: null },
+        stdout: "",
+        stderr:
+          `Error:   × code: 'The system is not in a state required for the operation's\n` +
+          '  │ execution\', message: "sandbox is not ready"\n',
+      })
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0, signal: null },
+        stdout: "",
+        stderr: "",
+      });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce(async (options) => {
+      await expect(options.checkReadyIdentity?.()).resolves.toBe("not_ready");
+      await expect(options.checkReadyIdentity?.()).resolves.toBe("ready");
       return { ready: true, reason: "ready", failurePhase: null };
     });
 
@@ -787,11 +793,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       route: "none",
     });
 
-    expect(
-      vi
-        .mocked(deps.runOpenshell)
-        .mock.calls.filter(([args]) => args.join(" ") === "sandbox exec --name alpha -- true"),
-    ).toHaveLength(2);
+    expect(deps.commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
     expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
@@ -963,7 +965,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
     expect(mocks.verifyGpuSandboxAccessAfterReady).not.toHaveBeenCalled();
     expect(deps.runOpenshell).not.toHaveBeenCalled();
-    expect(errorOutput()).toContain("Verify the sandbox identity before manual cleanup");
+    expect(errorOutput()).toContain("Recovery remains blocked while this sandbox exists");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
   });
 
@@ -1377,7 +1379,7 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(deps.runOpenshell).not.toHaveBeenCalled();
     expect(output).toContain("left sandbox 'alpha' in place");
-    expect(output).toContain("Verify the sandbox identity before manual cleanup");
+    expect(output).toContain("Recovery remains blocked while this sandbox exists");
     expect(output).not.toContain("openshell sandbox delete");
     expect(output).not.toContain("Retry: nemoclaw onboard");
   });
@@ -1394,7 +1396,7 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(deps.runOpenshell).not.toHaveBeenCalled();
     expect(output).toContain("left sandbox 'alpha' in place");
-    expect(output).toContain("Verify the sandbox identity before manual cleanup");
+    expect(output).toContain("Recovery remains blocked while this sandbox exists");
     expect(output).not.toContain("Retry: nemoclaw onboard");
   });
 

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { checkOpenAiInferenceProviderProfile } from "../../adapters/openshell/provider-profile";
+import { checkOpenAiInferenceProviderProfile } from "../../adapters/openshell/provider-profile-registration";
 import { ensureConfigDir, rejectSymlinksOnPath } from "../../state/config-io";
 import { parseGatewayProviderMetadata } from "../gateway-provider-metadata";
 import type { HostLocalInferenceReceiptWriter } from "../runtime-provider/host-local-inference";
@@ -257,7 +257,7 @@ type GatewayProviderJournalPhase =
 type GatewayProviderJournalIntent = Readonly<{
   transactionId: string;
   targetSha256: string;
-  gatewayName: "nemoclaw";
+  gatewayName: string;
   sandboxName: string;
   provider: "ollama-local";
   model: string;
@@ -470,9 +470,7 @@ function gatewayCommandText(result: GatewayCommandResult): string {
 function gatewayReportsProviderAbsent(output: string, provider: string): boolean {
   const escaped = provider.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   return (
-    new RegExp(`provider\\s+['\"\`]${escaped}['\"\`]\\s+(?:was\\s+)?not found`, "iu").test(
-      output,
-    ) ||
+    new RegExp(`provider\\s+['"\`]${escaped}['"\`]\\s+(?:was\\s+)?not found`, "iu").test(output) ||
     (/code:\s*['"]some requested entity was not found['"]/iu.test(output) &&
       /message:\s*['"]provider not found['"]/iu.test(output))
   );
@@ -519,6 +517,7 @@ function observeExactGatewayProvider(
 
 function exactGatewayMutation(
   runGatewayOpenshell: HermesPortableOllamaGatewayRunner,
+  expectedGatewayName: string,
   expectedModel: string,
   expectedSandboxName: string,
   expectedCredentialEnv: string,
@@ -617,7 +616,7 @@ function exactGatewayMutation(
   const prepareGatewayMutation: HostLocalInferenceStartupSelection["prepareGatewayMutation"] =
     async (input) => {
       if (
-        input.gatewayName !== "nemoclaw" ||
+        input.gatewayName !== expectedGatewayName ||
         input.sandboxName !== expectedSandboxName ||
         input.provider !== "ollama-local" ||
         input.model !== expectedModel ||
@@ -829,6 +828,7 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
   readonly directory: string;
   readonly transactionId: string;
   readonly targetSha256: string;
+  readonly gatewayName: string;
   readonly sandboxName: string;
   readonly model: string;
   readonly credentialEnv: string;
@@ -858,7 +858,7 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
     Object.freeze({
       transactionId,
       targetSha256: options.targetSha256,
-      gatewayName: "nemoclaw",
+      gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
       provider: "ollama-local",
       model: options.model,
@@ -886,6 +886,7 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
   }
   const gatewayMutation = exactGatewayMutation(
     options.runGatewayOpenshell,
+    options.gatewayName,
     options.model,
     options.sandboxName,
     options.credentialEnv,
@@ -905,12 +906,85 @@ export interface HermesPortableOllamaPublishedInferenceAuthority {
   readonly receipt: ReturnType<typeof parseHostLocalInferenceReceipt>;
   readonly serializedReceipt: string;
   readonly receiptWriter: HostLocalInferenceReceiptWriter;
+  readonly assertTransactionCurrent: () => void;
   readonly assertCurrent: () => void;
+}
+
+export interface HermesPortableOllamaPublishedReceiptAuthority {
+  readonly receipt: ReturnType<typeof parseHostLocalInferenceReceipt>;
+  readonly serializedReceipt: string;
+  readonly assertCurrent: () => void;
+}
+
+/** Bind the committed private receipt and journal without repeating the live provider observation. */
+export function prepareHermesPortableOllamaPublishedReceiptAuthority(options: {
+  readonly directory: string;
+  readonly gatewayName: string;
+  readonly sandboxName: string;
+  readonly credentialEnv: string;
+}): HermesPortableOllamaPublishedReceiptAuthority {
+  if (!SAFE_CREDENTIAL_ENV.test(options.credentialEnv)) {
+    throw new Error("Hermes Portable Ollama credential authority is invalid.");
+  }
+  const receiptState = openPrivateStateFile(
+    options.directory,
+    "portable-inference.json",
+    "receipt",
+  );
+  const serializedReceipt = receiptState.readExact();
+  if (serializedReceipt === null) {
+    throw new Error("Hermes Portable Ollama published receipt is missing.");
+  }
+  const receipt = parseHostLocalInferenceReceipt(serializedReceipt);
+  if (
+    serializeHostLocalInferenceReceipt(receipt) !== serializedReceipt ||
+    receipt.service !== "ollama" ||
+    receipt.inference === undefined ||
+    receipt.publication === undefined
+  ) {
+    throw new Error("Hermes Portable Ollama published receipt authority is inconsistent.");
+  }
+  const transactionId = receipt.publication.transactionId;
+  const providerCredentialEnv = `${options.credentialEnv}_${transactionId.toUpperCase()}`;
+  if (providerCredentialEnv.length > 128 || !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv)) {
+    throw new Error("Hermes Portable Ollama transaction credential authority is invalid.");
+  }
+  const journalStore = createGatewayProviderJournalStore(
+    options.directory,
+    Object.freeze({
+      transactionId,
+      targetSha256: receipt.publication.targetSha256,
+      gatewayName: options.gatewayName,
+      sandboxName: options.sandboxName,
+      provider: "ollama-local" as const,
+      model: receipt.inference.model,
+      type: "openai" as const,
+      credentialEnv: options.credentialEnv,
+      providerCredentialEnv,
+      baseUrl: "http://host.openshell.internal:11434/v1" as const,
+    }),
+    "open-existing",
+  );
+  const journal = journalStore.load();
+  if (journal?.phase !== "committed" || journal.providerAuthority === null) {
+    throw new Error("Hermes Portable Ollama gateway publication is not committed.");
+  }
+  const assertCurrent = (): void => {
+    if (receiptState.readExact() !== serializedReceipt) {
+      throw new Error("Hermes Portable Ollama published receipt authority changed.");
+    }
+    if (!isDeepStrictEqual(journalStore.load(), journal)) {
+      throw new Error("Hermes Portable Ollama gateway publication journal changed.");
+    }
+  };
+  assertCurrent();
+  return Object.freeze({ receipt, serializedReceipt, assertCurrent });
 }
 
 /** Re-prove an already committed Ollama publication without opening a mutation path. */
 export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: {
   readonly directory: string;
+  readonly gatewayName: string;
   readonly sandboxName: string;
   readonly credentialEnv: string;
   readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
@@ -945,7 +1019,7 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
   const intent = Object.freeze({
     transactionId,
     targetSha256,
-    gatewayName: "nemoclaw" as const,
+    gatewayName: options.gatewayName,
     sandboxName: options.sandboxName,
     provider: "ollama-local" as const,
     model: receipt.inference.model,
@@ -975,7 +1049,7 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
   ) {
     throw new Error("Hermes Portable Ollama gateway publication authority changed.");
   }
-  const assertCurrent = (): void => {
+  const assertTransactionCurrent = (): void => {
     if (receiptState.readExact() !== serializedReceipt) {
       throw new Error("Hermes Portable Ollama published receipt authority changed.");
     }
@@ -983,6 +1057,9 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
     if (!isDeepStrictEqual(currentJournal, journal)) {
       throw new Error("Hermes Portable Ollama gateway publication journal changed.");
     }
+  };
+  const assertCurrent = (): void => {
+    assertTransactionCurrent();
     const currentProvider = observeExactGatewayProvider(
       options.runGatewayOpenshell,
       "ollama-local",
@@ -1003,7 +1080,13 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
       return serializedReceipt;
     },
   });
-  return Object.freeze({ receipt, serializedReceipt, receiptWriter, assertCurrent });
+  return Object.freeze({
+    receipt,
+    serializedReceipt,
+    receiptWriter,
+    assertTransactionCurrent,
+    assertCurrent,
+  });
 }
 
 export interface PreparedHermesPortableOllamaProviderRetirement {
@@ -1017,11 +1100,12 @@ export interface PreparedHermesPortableOllamaProviderRetirement {
   readonly verifyAbsent: () => void;
 }
 
-/** Bind and retire only the exact committed schema-5 gateway provider authority. */
+/** Bind and retire only the exact committed schema-7 gateway provider authority. */
 export function prepareHermesPortableOllamaProviderRetirement(options: {
   readonly directory: string;
   readonly transactionId: string;
   readonly targetSha256: string;
+  readonly gatewayName: string;
   readonly sandboxName: string;
   readonly model: string;
   readonly credentialEnv: string;
@@ -1037,7 +1121,7 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
     Object.freeze({
       transactionId: options.transactionId,
       targetSha256: options.targetSha256,
-      gatewayName: "nemoclaw",
+      gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
       provider: "ollama-local",
       model: options.model,

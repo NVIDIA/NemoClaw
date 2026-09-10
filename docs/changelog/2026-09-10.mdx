@@ -1,0 +1,48 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.122
+
+NemoClaw v0.0.122 improves host detection and local inference selection for Docker, DGX Station, and N1x WSL.
+It also strengthens interrupted onboarding, Hermes Portable lifecycle recovery, configuration export, remote dashboard access, and uninstall failure reporting.
+
+- Host readiness now runs Docker probes with the environment that later Docker commands use.
+  It respects the selected Docker context and configuration, rejects unsafe explicit endpoints, and can select the rootless Linux socket after an unreachable default authority.
+  DGX Station checks now separate GB300 hardware identity from the qualified software profile and apply the same classifier during host preparation and onboarding.
+  Related changes: [PR #10379](https://github.com/NVIDIA/NemoClaw/pull/10379) and [PR #10914](https://github.com/NVIDIA/NemoClaw/pull/10914).
+  For more information, refer to [System Readiness](/user-guide/openclaw/reference/system-readiness) and [Prepare a DGX Station](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation).
+- A CUDA-qualified N1x WSL host now selects the managed Qwen llama.cpp profile instead of falling back to the smaller Ollama profile.
+  A resumed preset-driven managed vLLM installation verifies the recorded model and serving preset before it changes runtime state.
+  A mismatch stops onboarding and directs you to restart with `nemoclaw onboard --fresh`.
+  Related changes: [PR #11078](https://github.com/NVIDIA/NemoClaw/pull/11078) and [PR #11271](https://github.com/NVIDIA/NemoClaw/pull/11271).
+  For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server), [Set Up llama.cpp](/user-guide/openclaw/inference/local-inference/set-up-llama-cpp), and [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
+- Interrupted onboarding now releases its process lock and abandons an uncommitted inference-route reservation before a later resume.
+  Final handoff keeps incomplete sandbox identity available for recovery and does not report success when replacement onboarding exits nonzero.
+  The global `nemoclaw doctor` command remains available without a sandbox name, including when a registered sandbox is named `doctor`.
+  Related changes: [PR #11140](https://github.com/NVIDIA/NemoClaw/pull/11140), [PR #11205](https://github.com/NVIDIA/NemoClaw/pull/11205), [PR #11218](https://github.com/NVIDIA/NemoClaw/pull/11218), and [PR #11296](https://github.com/NVIDIA/NemoClaw/pull/11296).
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Hermes Portable onboarding now records the selected OpenShell gateway for later recovery and uninstall operations.
+  Start and recovery repair the receipt-owned host forwards before reporting readiness, while stop retries an incomplete identity observation within its bounded settlement policy.
+  Upgrade recovery preserves the Portable lifecycle and forward identities instead of replacing them with ambient gateway state.
+  Related changes: [PR #11034](https://github.com/NVIDIA/NemoClaw/pull/11034), [PR #11266](https://github.com/NVIDIA/NemoClaw/pull/11266), and [PR #11312](https://github.com/NVIDIA/NemoClaw/pull/11312).
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and the [NemoClaw CLI Commands Reference](/user-guide/hermes/reference/commands).
+- `nemoclaw config export` now supports native NVIDIA hosted inference only when the gateway uses the built-in `nvidia-prod` profile, its default endpoint, and no provider configuration overrides.
+  Missing or inconsistent provider evidence stops the export without writing a configuration document.
+  Related changes: [PR #11065](https://github.com/NVIDIA/NemoClaw/pull/11065) and [PR #11318](https://github.com/NVIDIA/NemoClaw/pull/11318).
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Neutral managed OpenClaw images no longer declare the uninstalled Tavily plugin.
+  This removes recurring `plugin not installed: tavily` warnings when Tavily Search was not selected, while explicitly selected Tavily configuration remains unchanged.
+  Related change: [PR #10331](https://github.com/NVIDIA/NemoClaw/pull/10331).
+  For more information, refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Remote dashboard access now keeps an external `CHAT_UI_URL` separate from the host forward bind.
+  A reverse proxy or tunnel can reach the loopback forward while the URL configures the browser origin and Host-header validation.
+  Direct access on a non-WSL host requires `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before onboarding and for later `nemohermes <sandbox> connect` calls.
+  Protect the dashboard and API ingress before exposing either service.
+  Related change: [PR #10931](https://github.com/NVIDIA/NemoClaw/pull/10931).
+  For more information, refer to [Quickstart with Hermes](/user-guide/hermes/get-started/quickstart) and [Gateway Authentication Controls](/user-guide/hermes/security/security-controls/gateway-authentication-controls).
+- The installer now refuses an implicit NemoClaw CLI downgrade and reports the installed and requested versions before it changes the installation.
+  Uninstall exits nonzero when it cannot remove the gateway registration, so automation does not treat partial cleanup as success.
+  Related changes: [PR #11209](https://github.com/NVIDIA/NemoClaw/pull/11209) and [PR #9860](https://github.com/NVIDIA/NemoClaw/pull/9860).
+  For more information, refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes) and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).

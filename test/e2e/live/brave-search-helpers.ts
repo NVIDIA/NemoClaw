@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import YAML from "yaml";
+import { validateNemoClawConfig } from "../../../src/lib/config/schema.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -12,11 +14,13 @@ import {
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { execTimeout } from "../../helpers/timeouts.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-brave-search";
 validateSandboxName(SANDBOX_NAME);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
+const ONBOARD_TIMEOUT_MS = execTimeout(20 * 60_000);
 const PLACEHOLDER_PATTERN = /^openshell:resolve:env:(?:v[0-9]+_)?BRAVE_API_KEY$/;
 
 export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -82,61 +86,6 @@ export async function cleanupBraveNemoClawSandbox(host: HostCliClient): Promise<
   ).toBe(true);
 }
 
-function firstJsonObject(output: string): unknown {
-  for (let start = output.indexOf("{"); start >= 0; start = output.indexOf("{", start + 1)) {
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let index = start; index < output.length; index += 1) {
-      const char = output[index];
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (char === "\\") escaped = true;
-        else if (char === '"') inString = false;
-        continue;
-      }
-      if (char === '"') inString = true;
-      else if (char === "{") depth += 1;
-      else if (char === "}") {
-        depth -= 1;
-        if (depth === 0) {
-          try {
-            return JSON.parse(output.slice(start, index + 1));
-          } catch {
-            break;
-          }
-        }
-      }
-    }
-  }
-  return undefined;
-}
-
-function collectAssistantText(value: unknown): string[] {
-  if (typeof value === "string" && value.trim()) return [value.trim()];
-  if (!value || typeof value !== "object") return [];
-  if (Array.isArray(value)) return value.flatMap(collectAssistantText);
-  const record = value as Record<string, unknown>;
-  const texts: string[] = [];
-  for (const key of [
-    "result",
-    "payloads",
-    "messages",
-    "choices",
-    "message",
-    "delta",
-    "content",
-    "text",
-  ]) {
-    if (key in record) texts.push(...collectAssistantText(record[key]));
-  }
-  return texts;
-}
-
-export function extractOpenClawAgentText(output: string): string {
-  return collectAssistantText(firstJsonObject(output))[0] ?? "";
-}
-
 export function assertDockerAvailable(
   result: ShellProbeResult,
   skip: (note?: string) => never,
@@ -179,7 +128,7 @@ export async function onboardBrave(
           NVIDIA_INFERENCE_API_KEY: inferenceKey,
         }),
         redactionValues,
-        timeoutMs: 20 * 60_000,
+        timeoutMs: ONBOARD_TIMEOUT_MS,
       },
     );
     const retry =
@@ -192,6 +141,58 @@ export async function onboardBrave(
   }
   if (!onboard) throw new Error("onboard command did not run");
   return onboard;
+}
+
+export async function reuseBraveSandboxWithWebSearchDisabled(
+  host: HostCliClient,
+  inferenceKey: string,
+): Promise<ShellProbeResult> {
+  return await host.command(
+    "node",
+    [
+      CLI_ENTRYPOINT,
+      "onboard",
+      "--fresh",
+      "--non-interactive",
+      "--yes-i-accept-third-party-software",
+    ],
+    {
+      artifactName: "phase-5-reonboard-brave-disabled-reuse",
+      cwd: REPO_ROOT,
+      env: commandEnv({
+        NEMOCLAW_RECREATE_SANDBOX: "0",
+        NVIDIA_INFERENCE_API_KEY: inferenceKey,
+      }),
+      redactionValues: [inferenceKey],
+      timeoutMs: ONBOARD_TIMEOUT_MS,
+    },
+  );
+}
+
+export async function exportBraveConfig(
+  host: HostCliClient,
+  outputPath: string,
+  artifactName: string,
+  redactionValues: string[],
+): Promise<ShellProbeResult> {
+  return await host.command(
+    "node",
+    [CLI_ENTRYPOINT, "config", "export", SANDBOX_NAME, "--output", outputPath, "--json"],
+    { artifactName, cwd: REPO_ROOT, env: commandEnv(), redactionValues, timeoutMs: 60_000 },
+  );
+}
+
+/** Validate private export output before retaining only public spec evidence. */
+export function assertBraveExport(raw: string, credentialValues: readonly string[]) {
+  for (const value of credentialValues) {
+    expect(raw.includes(value), "Export must omit credential values").toBe(false);
+  }
+  const document = validateNemoClawConfig(YAML.parse(raw));
+  const webSearch = document.spec.sandboxes[0]?.integrations?.webSearch;
+  expect(webSearch?.provider).toBe("brave");
+  expect(webSearch?.agentRefs).toEqual(["primary"]);
+  expect(webSearch?.credential.env).toBe("BRAVE_API_KEY");
+  return document.spec;
 }
 
 export function assertBraveConfig(configText: string): string {
@@ -306,12 +307,4 @@ esac`,
     { artifactName: "phase-4c-shell-credential-boundary", timeoutMs: 60_000, redactionValues },
   );
   expect(probe.exitCode, "BRAVE_API_KEY is raw in the sandbox login shell environment").toBe(0);
-}
-
-export function assertBraveResponse(body: string): void {
-  const status = body.match(/HTTP_STATUS:(\d{3})/)?.[1];
-  expect(status, body).toBe("200");
-  const json = body.replace(/\n?HTTP_STATUS:\d{3}\s*$/u, "");
-  const braveResponse = JSON.parse(json) as { web?: { results?: unknown[] } };
-  expect(braveResponse.web?.results?.length ?? 0, json.slice(0, 500)).toBeGreaterThan(0);
 }

@@ -54,6 +54,7 @@ import type { McpBridgeEntry } from "../../state/registry";
 import { authorizationValue } from "./mcp-bridge-adapter-status";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { observeMcpCredentialRevision } from "./mcp-bridge-provider";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type {
   McpAttachedCredentialRevision,
   McpCredentialRevisionObservation,
@@ -383,13 +384,14 @@ export function credentialResolutionWarning(
   return `Credential resolution could not be verified: a placeholder-bearing MCP initialize probe and a deliberately-unresolvable control probe were rejected identically (HTTP ${probe.httpStatus}). If the stored credential is confirmed valid, the OpenShell host is not rewriting the '${placeholder}' placeholder on egress and agent runtimes will hit the same auth failure and skip this MCP server (see NVIDIA/OpenShell issue 2161). Otherwise, rotate the credential with mcp restart and re-run mcp status.`;
 }
 
-export function probeCredentialResolution(
+export async function probeCredentialResolution(
   sandboxName: string,
   entry: McpBridgeEntry,
   adapter: AgentMcpAdapter | undefined,
   readiness: CredentialResolutionProbeReadiness,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   observedCredentialRevision?: McpCredentialRevisionObservation,
-): CredentialResolutionProbe {
+): Promise<CredentialResolutionProbe> {
   if (!adapter) return { ok: null, detail: "MCP adapter is not declared" };
   if (entry.addState) return { ok: null, detail: "add transaction incomplete" };
   const readinessSkipDetail = credentialResolutionReadinessSkipDetail(readiness);
@@ -406,7 +408,7 @@ export function probeCredentialResolution(
   let credentialRevision = observedCredentialRevision;
   if (credentialRevision === undefined) {
     try {
-      credentialRevision = observeMcpCredentialRevision(sandboxName, entry);
+      credentialRevision = await observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
     } catch {
       return {
         ok: null,
@@ -429,6 +431,8 @@ export function probeCredentialResolution(
   }
   const probeCommand = buildCredentialResolutionProbeCommand(entry, adapter, credentialRevision);
   if (!probeCommand) return { ok: null, detail: "no credential binding or safe endpoint to probe" };
-  const result = executeSandboxCommand(sandboxName, probeCommand.command);
+  const result = await executeSandboxCommand(sandboxName, probeCommand.command, {
+    runtimeSelection,
+  });
   return classifyCredentialResolutionProbe(result, entry, probeCommand.resultMarker);
 }

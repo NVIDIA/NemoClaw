@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import type { OpenShellSandboxBufferedCommandRequest } from "../adapters/openshell/sandbox-command";
 import type { AgentDefinition } from "./defs";
 import { loadAgent } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
@@ -14,7 +15,11 @@ import {
   recordUnverifiedDeepAgentsRuntimeCall,
 } from "./onboard-terminal-fixtures";
 
-type RunCaptureOpenshell = OnboardContext["runCaptureOpenshell"];
+type RunCaptureOpenshell = (
+  args: string[],
+  options?: { ignoreError?: boolean; includeStderr?: boolean; timeout?: number },
+) => string | null;
+type StructuredCapture = (args: string[]) => { status: number | null; output: string };
 
 function makeDeepAgentsCodeAgent(): AgentDefinition {
   return loadAgent("langchain-deepagents-code");
@@ -24,19 +29,48 @@ function makeNemoCuaAgent(): AgentDefinition {
   return loadAgent("nemocua", { NEMOCLAW_CUA_ENABLED: "1" });
 }
 
+function requestAsLegacyArgs(request: OpenShellSandboxBufferedCommandRequest): string[] {
+  const targetArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+  const ttyArgs = request.tty === false ? ["--no-tty"] : [];
+  const args = ["sandbox", "exec", "-n", request.sandboxName, ...targetArgs, ...ttyArgs];
+  for (const [key, value] of Object.entries(request.sandboxEnvironment ?? {})) {
+    args.push("--env", `${key}=${value}`);
+  }
+  return [...args, "--", ...request.command];
+}
+
 function createAgentSetupContext(
   runCaptureOpenshell: RunCaptureOpenshell = vi.fn((_args: string[]) => ""),
-  captureOpenshell: NonNullable<OnboardContext["captureOpenshell"]> = vi.fn((args, opts) => ({
-    status: 0,
-    output: runCaptureOpenshell(args, opts) ?? "",
-  })),
+  captureOpenshell?: StructuredCapture,
+  timing: Pick<OnboardContext, "sleepSeconds"> = {},
 ) {
+  const runBuffered = vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+    const isScript = request.command[0] === "/bin/bash" && request.command[1] === "-s";
+    const args = requestAsLegacyArgs(request);
+    const captured = captureOpenshell?.(args);
+    const output = captured ? captured.output : runCaptureOpenshell(args, { ignoreError: true });
+    const capturedCompletion =
+      output === null
+        ? {
+            outcome: {
+              kind: "failed" as const,
+              error: { kind: "invocation" as const, message: "unobservable" },
+            },
+            stdout: "",
+            stderr: "",
+          }
+        : {
+            outcome: { kind: "completed" as const, exitCode: captured?.status ?? 0 },
+            stdout: output,
+            stderr: "",
+          };
+    return isScript
+      ? { outcome: { kind: "completed" as const, exitCode: 0 }, stdout: "", stderr: "" }
+      : capturedCompletion;
+  });
   return {
     step: vi.fn((_current: number, _total: number, _message: string) => undefined),
-    runCaptureOpenshell,
-    captureOpenshell,
-    openshellShellCommand: vi.fn(() => "openshell sandbox connect deepagents-code"),
-    openshellBinary: "/usr/bin/openshell",
+    sandboxCommandExecutor: { runBuffered },
     startRecordedStep: vi.fn(async (_stepName: string, _updates: Record<string, unknown>) => {
       return undefined;
     }),
@@ -47,6 +81,7 @@ function createAgentSetupContext(
       return undefined;
     }),
     skippedStepMessage: vi.fn((_stepName: string, _sandboxName: string) => undefined),
+    ...timing,
   };
 }
 
@@ -92,15 +127,48 @@ describe("NemoCUA terminal onboard acceptance", () => {
       model: "model-x",
     });
     expect(context.recordStepFailed).not.toHaveBeenCalled();
-    expect(calls.filter((args) => args.join(" ").includes("NEMOCLAW_AGENT_SMOKE_BEGIN"))).toHaveLength(
-      3,
-    );
+    expect(
+      calls.filter((args) => args.join(" ").includes("NEMOCLAW_AGENT_SMOKE_BEGIN")),
+    ).toHaveLength(3);
     expect(calls.some((args) => args.includes("curl"))).toBe(false);
     expect(JSON.stringify(context.recordStepComplete.mock.calls)).not.toContain("cuaRuntime");
   });
 });
 
 describe("Deep Agents Code terminal onboard acceptance", () => {
+  it("retries only unobservable binary execs while a newly Ready sandbox settles", async () => {
+    const calls: string[] = [];
+    const runCaptureOpenshell = vi
+      .fn<RunCaptureOpenshell>((args: string[]) =>
+        recordSuccessfulDeepAgentsRuntimeCall(args, calls),
+      )
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(null);
+    const sleepSeconds = vi.fn();
+    const context = createAgentSetupContext(runCaptureOpenshell, undefined, { sleepSeconds });
+
+    await handleAgentSetup(
+      "deepagents-code",
+      "model-x",
+      "provider-x",
+      makeDeepAgentsCodeAgent(),
+      false,
+      null,
+      context,
+    );
+
+    expect(
+      runCaptureOpenshell.mock.calls.filter(([args]) =>
+        args.join(" ").includes("NEMOCLAW_AGENT_BINARY_CHECK"),
+      ),
+    ).toHaveLength(3);
+    expect(sleepSeconds).toHaveBeenCalledTimes(2);
+    expect(sleepSeconds).toHaveBeenNthCalledWith(1, 1);
+    expect(sleepSeconds).toHaveBeenNthCalledWith(2, 1);
+    expect(context.recordStepFailed).not.toHaveBeenCalled();
+    expect(context.recordStepComplete).toHaveBeenCalledOnce();
+  });
+
   it("runs terminal smoke checks on fresh setup without gateway probes", async () => {
     const calls: string[] = [];
     const runCaptureOpenshell = vi.fn((args: string[]) =>
@@ -356,10 +424,12 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
     const runCaptureOpenshell = vi.fn((args: string[]) =>
       recordSuccessfulDeepAgentsRuntimeCall(args, calls),
     );
-    const captureOpenshell = vi.fn(() => ({
-      status: 97,
-      output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0",
-    }));
+    const captureOpenshell = vi
+      .fn(() => ({
+        status: 97,
+        output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0",
+      }))
+      .mockReturnValueOnce({ status: 0, output: "NEMOCLAW_AGENT_BINARY_CHECK:ok" });
     const context = createAgentSetupContext(runCaptureOpenshell, captureOpenshell);
 
     await expectSetupExit(() =>

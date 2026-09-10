@@ -3,9 +3,30 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createSession } from "../../../state/onboard-session";
+import { createSession, type SessionUpdates } from "../../../state/onboard-session";
+import type { ServingProfileProvenance } from "../../../inference/serving/types";
 import { handleProviderInferenceState } from "./provider-inference";
-import { baseOptions, createDeps } from "./provider-inference.test-support";
+import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
+
+const llamaCppProfile: ServingProfileProvenance = {
+  schemaVersion: 1,
+  catalogDigest: `sha256:${"a".repeat(64)}`,
+  preset: {
+    id: "llama-cpp.n1x.qwen",
+    digest: `sha256:${"b".repeat(64)}`,
+    displayName: "N1x Qwen",
+    supportState: "experimental",
+  },
+  recipe: {
+    id: "llama-cpp.qwen.n1x.v1",
+    digest: `sha256:${"c".repeat(64)}`,
+    backend: "install-llama-cpp",
+  },
+  model: { id: "nvidia/Qwen", revision: "revision-1" },
+  runtimeImage: "example.invalid/llama.cpp@sha256:fixture",
+  estimatedImageDownloadBytes: 2048,
+  estimatedModelDownloadBytes: 1024,
+};
 
 describe("handleProviderInferenceState managed llama.cpp resume", () => {
   it.each([
@@ -43,11 +64,7 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
       });
 
       expect(recoverManagedLlamaCpp).toHaveBeenCalledOnce();
-      expect(recoverManagedLlamaCpp).toHaveBeenCalledWith(
-        "llama-cpp-local",
-        "spark-agent",
-        expect.any(Function),
-      );
+      expect(recoverManagedLlamaCpp).toHaveBeenCalledWith("llama-cpp-local", "spark-agent");
       expect(recoverManagedLlamaCpp.mock.invocationCallOrder[0]).toBeLessThan(
         calls.recoverProvider.mock.invocationCallOrder[0]!,
       );
@@ -64,54 +81,38 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     },
   );
 
-  it("stops after managed runtime verification before resume recovery effects (#9833)", async () => {
-    const session = createSession({
-      sandboxName: "spark-agent",
-      provider: "llama-cpp-local",
-      model: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-GGUF",
-      endpointUrl: "http://host.openshell.internal:8081/v1",
-      credentialEnv: "LLAMA_CPP_API_KEY",
-      preferredInferenceApi: "openai-completions",
-    });
-    session.steps.provider_selection.status = "complete";
-    const ensureManagedLlamaCppResumeReady = vi.fn(
-      async (
-        _provider: string | null | undefined,
-        _sandboxName: string | null | undefined,
-        revalidatePolicyRequirements?: (operation: string) => void,
-      ) => {
-        await Promise.resolve();
-        revalidatePolicyRequirements?.("activate the verified managed llama.cpp runtime");
-        return true;
-      },
-    );
-    const refusal = () => {
-      throw new Error("external policy authority must supply the managed llama.cpp entry");
-    };
-    const actions = new Map<string, () => void>([
-      ["activate the verified managed llama.cpp runtime", refusal],
-    ]);
-    const preflightPolicyRequirements = vi.fn((input: { operation: string }) =>
-      actions.get(input.operation)?.(),
-    );
+  it("persists a fresh managed llama.cpp recipe through provider and inference completion", async () => {
     const { deps, calls } = createDeps({
-      ensureManagedLlamaCppResumeReady,
-      preflightPolicyRequirements,
-      isInferenceRouteReady: vi.fn(() => true),
+      setupNim: vi.fn(async () => ({
+        ...baseSelection,
+        provider: "llama-cpp-local",
+        model: "qwen3.6-35b-a3b",
+        endpointUrl: "http://host.openshell.internal:8081/v1",
+        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        preferredInferenceApi: "openai-completions",
+        servingProfileProvenance: llamaCppProfile,
+      })),
     });
 
-    await expect(
-      handleProviderInferenceState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "spark-agent",
-      }),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    await handleProviderInferenceState({
+      ...baseOptions(deps, createSession()),
+      sandboxName: "n1x-agent",
+    });
 
-    expect(ensureManagedLlamaCppResumeReady).toHaveBeenCalledOnce();
-    expect(calls.recoverProvider).not.toHaveBeenCalled();
-    expect(calls.skipped).not.toHaveBeenCalled();
-    expect(calls.recordSkip).not.toHaveBeenCalled();
-    expect(calls.setupInference).not.toHaveBeenCalled();
+    const persistedUpdates = calls.complete.mock.calls.map(
+      ([, updates]) => updates as SessionUpdates,
+    );
+    expect(persistedUpdates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: "llama-cpp-local",
+          model: "qwen3.6-35b-a3b",
+          servingProfileProvenance: llamaCppProfile,
+        }),
+      ]),
+    );
+    expect(persistedUpdates.at(-1)).toMatchObject({
+      servingProfileProvenance: llamaCppProfile,
+    });
   });
 });

@@ -58,7 +58,6 @@ function writeAgentRegistry(sandboxName: string, agent: string): void {
           model: "m",
           provider: "p",
           gpuEnabled: false,
-          policies: [],
           agent,
         },
       },
@@ -130,34 +129,39 @@ describe("snapshot state-directory authorization", () => {
           "Backup state directories are not declared by target agent 'openclaw': workspace-research/nested",
       },
     ],
-  ])("authorizes only a top-level concrete match for a dynamic state prefix: %s (#8006)", (stateDir, expected) => {
-    const manifest = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
-      stateDirs: [stateDir],
-      backedUpDirs: [],
-      failedBackupDirs: [stateDir],
-    });
-    writeAgentRegistry("test-sandbox", "openclaw");
+  ])(
+    "authorizes only a top-level concrete match for a dynamic state prefix: %s (#8006)",
+    (stateDir, expected) => {
+      const manifest = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+        stateDirs: [stateDir],
+        backedUpDirs: [],
+        failedBackupDirs: [stateDir],
+      });
+      writeAgentRegistry("test-sandbox", "openclaw");
 
-    const restore = sandboxState.restoreSandboxState("test-sandbox", String(manifest.backupPath));
+      const restore = sandboxState.restoreSandboxState("test-sandbox", String(manifest.backupPath));
 
-    expect(restore).toMatchObject(expected);
-  });
+      expect(restore).toMatchObject(expected);
+    },
+  );
 
   it.each([
     ["hermes", "hermes"],
     ["deepagents", "langchain-deepagents-code"],
-  ])("keeps optional exact-directory discovery successful for %s when no state directory exists (#8006)", (sandboxName, agentName) => {
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exact-dir-discovery-"));
-    const oldPath = process.env.PATH;
-    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
-    try {
-      const binDir = path.join(fixture, "bin");
-      const discoveryLog = path.join(fixture, "discovery.json");
-      fs.mkdirSync(binDir, { recursive: true });
-      const openshell = writeFakeOpenshell(binDir);
-      writeExecutable(
-        path.join(binDir, "ssh"),
-        `#!/usr/bin/env node
+  ])(
+    "keeps optional exact-directory discovery successful for %s when no state directory exists (#8006)",
+    (sandboxName, agentName) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exact-dir-discovery-"));
+      const oldPath = process.env.PATH;
+      const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+      try {
+        const binDir = path.join(fixture, "bin");
+        const discoveryLog = path.join(fixture, "discovery.json");
+        fs.mkdirSync(binDir, { recursive: true });
+        const openshell = writeFakeOpenshell(binDir);
+        writeExecutable(
+          path.join(binDir, "ssh"),
+          `#!/usr/bin/env node
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const cmd = process.argv[process.argv.length - 1] || "";
@@ -169,23 +173,24 @@ if (cmd.startsWith("{ ")) {
 }
 process.exit(1);
 `,
-      );
-      writeAgentRegistry(sandboxName, agentName);
-      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}:${oldPath || ""}`;
+        );
+        writeAgentRegistry(sandboxName, agentName);
+        process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+        process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      sandboxState.backupSandboxState(sandboxName);
+        sandboxState.backupSandboxState(sandboxName);
 
-      const discovery = JSON.parse(fs.readFileSync(discoveryLog, "utf8")) as {
-        cmd: string;
-        status: number;
-      };
-      expect(discovery.status).toBe(0);
-      expect(discovery.cmd).toMatch(/; :; } 2>\/dev\/null$/);
-    } finally {
-      restoreEnv("PATH", oldPath);
-      restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
-  });
+        const discovery = JSON.parse(fs.readFileSync(discoveryLog, "utf8")) as {
+          cmd: string;
+          status: number;
+        };
+        expect(discovery.status).toBe(0);
+        expect(discovery.cmd).toMatch(/; :; } 2>\/dev\/null$/);
+      } finally {
+        restoreEnv("PATH", oldPath);
+        restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
 });

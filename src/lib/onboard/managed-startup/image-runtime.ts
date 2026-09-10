@@ -95,14 +95,12 @@ interface ManagedStartupApplyMessagingConstructionActionBase {
   readonly mode: "apply" | "clear";
 }
 
-export interface ManagedStartupApplyMessagingRuntimeConstructionAction
-  extends ManagedStartupApplyMessagingConstructionActionBase {
+export interface ManagedStartupApplyMessagingRuntimeConstructionAction extends ManagedStartupApplyMessagingConstructionActionBase {
   readonly phase: "runtime-setup";
   readonly runAs: "root";
 }
 
-export interface ManagedStartupApplyMessagingConfigConstructionAction
-  extends ManagedStartupApplyMessagingConstructionActionBase {
+export interface ManagedStartupApplyMessagingConfigConstructionAction extends ManagedStartupApplyMessagingConstructionActionBase {
   readonly phase: "post-agent-install";
   readonly runAs: "sandbox";
 }
@@ -520,29 +518,13 @@ function execute(
 function generatorCommand(agent: ManagedStartupAgent): readonly string[] {
   switch (agent) {
     case "openclaw":
-      return [
-        "/usr/local/bin/node",
-        "--experimental-strip-types",
-        "/scripts/generate-openclaw-config.mts",
-      ];
+      return ["/usr/local/bin/node", "/scripts/generate-openclaw-config.mts"];
     case "hermes":
-      return [
-        "/usr/local/bin/node",
-        "--experimental-strip-types",
-        "/opt/nemoclaw-hermes-config/generate-config.ts",
-      ];
+      return ["/usr/local/bin/node", "/opt/nemoclaw-hermes-config/generate-config.ts"];
     case "langchain-deepagents-code":
-      return [
-        "/usr/local/bin/node",
-        "--experimental-strip-types",
-        "/opt/nemoclaw-deepagents-code/generate-config.ts",
-      ];
+      return ["/usr/local/bin/node", "/opt/nemoclaw-deepagents-code/generate-config.ts"];
     case "pi":
-      return [
-        "/usr/local/bin/node",
-        "--experimental-strip-types",
-        "/opt/nemoclaw-pi/generate-config.ts",
-      ];
+      return ["/usr/local/bin/node", "/opt/nemoclaw-pi/generate-config.ts"];
   }
 }
 
@@ -553,7 +535,6 @@ function messagingCommand(
 ): readonly string[] {
   return [
     "/usr/local/bin/node",
-    "--experimental-strip-types",
     "/src/lib/messaging/applier/build/messaging-build-applier.mts",
     "--agent",
     agent,
@@ -855,9 +836,6 @@ export function installHermesManagedPolicy(
  * Restore the mutable Hermes image contract after its sandbox-side generator
  * atomically replaces config.yaml or .env with mode 0600. The mode transition
  * is performed through the already-authenticated descriptor, never by path.
- *
- * Shields-up turns these files into root:root 0444 trust anchors. That state is
- * valid on an already-committed replay and must not be made mutable again.
  */
 export function normalizeHermesManagedConfigDescriptor(
   target: string,
@@ -889,13 +867,12 @@ export function normalizeHermesManagedConfigDescriptor(
       before.uid === BigInt(sandboxIdentity.uid) &&
       before.gid === BigInt(sandboxIdentity.gid) &&
       (beforeMode === 0o600 || beforeMode === 0o640);
-    const shielded = before.uid === 0n && before.gid === 0n && beforeMode === 0o444;
-    if (!before.isFile() || before.nlink !== 1n || (!mutable && !shielded)) {
+    if (!before.isFile() || before.nlink !== 1n || !mutable) {
       fail(`refusing unexpected Hermes managed config descriptor ${target}`);
     }
 
-    const expectedMode = mutable ? 0o640 : 0o444;
-    if (mutable && beforeMode === 0o600) {
+    const expectedMode = 0o640;
+    if (beforeMode === 0o600) {
       try {
         fs.fchmodSync(descriptor, expectedMode);
       } catch {
@@ -910,8 +887,8 @@ export function normalizeHermesManagedConfigDescriptor(
     } catch {
       fail(`Hermes managed config descriptor disappeared during normalization: ${target}`);
     }
-    const expectedUid = mutable ? BigInt(sandboxIdentity.uid) : 0n;
-    const expectedGid = mutable ? BigInt(sandboxIdentity.gid) : 0n;
+    const expectedUid = BigInt(sandboxIdentity.uid);
+    const expectedGid = BigInt(sandboxIdentity.gid);
     if (
       !after.isFile() ||
       after.nlink !== 1n ||
@@ -1053,10 +1030,7 @@ function managedSystemCaAnchorNames(): readonly string[] {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     fail("could not inspect the managed system CA anchor directory");
   }
-  requireRootOwnedDirectory(
-    MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY,
-    ROOT_OWNED_DIRECTORY_MODE,
-  );
+  requireRootOwnedDirectory(MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY, ROOT_OWNED_DIRECTORY_MODE);
   try {
     return (fs.readdirSync(MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY) as string[])
       .filter((name) => MANAGED_STARTUP_SYSTEM_CA_ANCHOR_RE.test(name))
@@ -1182,7 +1156,7 @@ function shellSingleQuote(value: string): string {
   if (value.includes("\0") || /[\r\n]/u.test(value)) {
     fail("runtime environment values must be single-line text");
   }
-  return `'${value.replaceAll("'", `'\"'\"'`)}'`;
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 export function serializeManagedStartupRuntimeEnvironment(
@@ -1501,8 +1475,7 @@ export async function applyManagedStartupImageProfile(
     fail(`mapped ${mapped.agent} environment for ${result.application.profile.agent}`);
   }
   if (expectedAgent === "hermes" && !result.adapterApplied) {
-    // Committed startup replays still repair generator-created 0600 files,
-    // while the descriptor guard preserves root-owned shields-up files.
+    // Committed startup replays still repair generator-created 0600 files.
     normalizeHermesManagedConfiguration();
   }
   let corporateCaMerged: boolean;

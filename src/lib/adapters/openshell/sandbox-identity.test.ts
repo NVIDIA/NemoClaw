@@ -12,6 +12,7 @@ import {
   isOpenShellSandboxId,
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
+  observeOpenShellSandboxId,
   parseOpenShellSandboxId,
   resolveCreatedOpenShellSandboxId,
   settleCreatedOpenShellSandboxId,
@@ -48,10 +49,42 @@ describe("OpenShell sandbox identity parsing", () => {
     );
   });
 
+  it("preserves the durable ID across mutable sandbox state (#10404)", () => {
+    const beforeReuse = parseOpenShellSandboxId(
+      "Name: alpha\nId: sandbox-alpha\nPhase: Ready\nPolicy version: 6\n",
+    );
+    const afterReuse = parseOpenShellSandboxId(
+      "Name: alpha\nId: sandbox-alpha\nPhase: Ready\nPolicy version: 7\n",
+    );
+    const replacement = parseOpenShellSandboxId(
+      "Name: alpha\nId: sandbox-bravo\nPhase: Ready\nPolicy version: 7\n",
+    );
+
+    expect(beforeReuse).toBe("sandbox-alpha");
+    expect(afterReuse).toBe(beforeReuse);
+    expect(replacement).not.toBe(beforeReuse);
+  });
+
   it("rejects ambiguous or non-canonical IDs", () => {
     expect(parseOpenShellSandboxId("ID: first\nID: second\n")).toBeNull();
     expect(parseOpenShellSandboxId("ID: sandbox/alpha\n")).toBeNull();
     expect(parseOpenShellSandboxId("id: sandbox-alpha\n")).toBeNull();
+  });
+
+  it("distinguishes an absent ID from invalid identity evidence (#11302)", () => {
+    expect(observeOpenShellSandboxId("Name: alpha\nPhase: Error\n")).toEqual({ kind: "absent" });
+    expect(observeOpenShellSandboxId("Name: alpha\nID:\nPhase: Error\n")).toEqual({
+      kind: "invalid",
+    });
+    expect(observeOpenShellSandboxId("Name: alpha\nID:\nsandbox-alpha\n")).toEqual({
+      kind: "invalid",
+    });
+    expect(observeOpenShellSandboxId("ID: first\nID: second\n")).toEqual({ kind: "invalid" });
+    expect(observeOpenShellSandboxId("ID: sandbox/alpha\n")).toEqual({ kind: "invalid" });
+    expect(observeOpenShellSandboxId("ID: sandbox-alpha\n")).toEqual({
+      kind: "present",
+      id: "sandbox-alpha",
+    });
   });
 
   it("fingerprints only one bounded durable ID (#9203)", () => {

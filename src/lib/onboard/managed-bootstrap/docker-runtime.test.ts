@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
 import {
   dockerEnv,
@@ -14,7 +15,7 @@ import {
   makePollingOptions,
 } from "../../sandbox/create-stream-test-fixtures";
 import { getReadyCheckOutputPatternsForAgent } from "../../sandbox/create-stream-ready-gate";
-import type { DockerGpuPatchDeps } from "../docker-gpu-patch-types";
+import type { DockerGpuPatchDeps, DockerGpuPatchModeAttempt } from "../docker-gpu-patch-types";
 
 const dockerAdapterMocks = vi.hoisted(() => ({
   imageInspect: vi.fn(),
@@ -86,6 +87,16 @@ import type { ManagedBootstrapRuntimeCreateLifecycleInput } from "./runtime-crea
 
 const temporaryStateRoots: string[] = [];
 
+function successfulCommandExecutor(): OpenShellSandboxBufferedCommandExecutor {
+  return {
+    runBuffered: vi.fn(async () => ({
+      outcome: { kind: "completed" as const, exitCode: 0 },
+      stdout: "",
+      stderr: "",
+    })),
+  };
+}
+
 function compatibilityLifecycleInput(
   seed: ReturnType<typeof authority>,
   dependencies: ManagedBootstrapRuntimeCreateLifecycleInput["dependencies"] & DockerGpuPatchDeps,
@@ -94,11 +105,18 @@ function compatibilityLifecycleInput(
   temporaryStateRoots.push(stateRoot);
   return {
     providerId: "docker",
+    environment: {},
     stateRoot,
     bootstrapIdentity: IDENTITY,
     request: seed.request,
     image: seed.plan.image,
     agentIdentity: seed.plan.agentIdentity,
+    workspaceRoot: {
+      uid: seed.plan.agentIdentity.uid,
+      gid: seed.plan.agentIdentity.gid,
+      mode: 0o755,
+    },
+    managedStateRoots: seed.plan.managedStateRoots,
     intendedWorkloadArgv: seed.plan.intendedWorkloadArgv,
     expectedSupervisorArgv: seed.plan.expectedSupervisorArgv,
     launchArgv: ["openshell", "sandbox", "create", "--name", "alpha"],
@@ -127,8 +145,9 @@ function compatibilityLifecycleInput(
       inferenceProvider: "openai",
       gatewayUsesContainerBridge: true,
       gatewayPort: 8080,
+      reverifyBridgeReachability: vi.fn(),
     },
-    dependencies,
+    dependencies: { commandExecutor: successfulCommandExecutor(), ...dependencies },
   };
 }
 
@@ -165,6 +184,7 @@ function gpuModeDependencies() {
   return {
     dockerRun,
     dependencies: {
+      commandExecutor: successfulCommandExecutor(),
       dockerCapture: vi.fn(() => ""),
       dockerRun,
       dockerRm: vi.fn(() => ({ status: 0 })),
@@ -262,6 +282,15 @@ describe("Docker managed-bootstrap pre-create GPU fallback", () => {
   });
 });
 
+/** A failed `--gpus all` probe attempt carrying the given Docker error text. */
+function failedGpuModeAttempt(error: string): DockerGpuPatchModeAttempt {
+  return {
+    mode: { kind: "gpus", label: "--gpus all", device: "all", args: ["--gpus", "all"] },
+    ok: false,
+    error,
+  };
+}
+
 describe("Docker managed-bootstrap GPU probe diagnostics", () => {
   it("includes each failed mode without exposing credentials", () => {
     const details = formatDockerGpuModeFailureDetails([
@@ -280,6 +309,75 @@ describe("Docker managed-bootstrap GPU probe diagnostics", () => {
     expect(details).toContain("--gpus all");
     expect(details).toContain("token=<REDACTED>");
     expect(details).not.toContain("secret-value");
+  });
+
+  it("keeps the Docker reason when digest-pinned image references fill the old budget (#11197)", () => {
+    const digest = "41eb2663a761897dec9cd999d938f7aae8a97698f041739c7aee7344c1a24c08";
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${digest}`;
+    const details = formatDockerGpuModeFailureDetails([
+      failedGpuModeAttempt(
+        `Unable to find image '${reference}' locally\n${reference}: Error response from daemon: manifest unknown: manifest for ${reference} not found`,
+      ),
+    ]);
+
+    expect(details).toContain("Error response from daemon: manifest unknown");
+    expect(details).toContain("@sha256:41eb2663a761...");
+    expect(details).not.toContain(digest);
+    expect(details).not.toContain("\n");
+    expect(details).not.toContain("characters omitted");
+  });
+
+  it("says how much of an over-long Docker error was cut and keeps its ending (#11197)", () => {
+    const details = formatDockerGpuModeFailureDetails([
+      failedGpuModeAttempt(
+        `${"context ".repeat(120)}Error response from daemon: unauthorized: authentication required`,
+      ),
+    ]);
+
+    expect(details).toMatch(/ \.\.\. \[\d+ characters omitted\] \.\.\. /u);
+    expect(details).toContain("unauthorized: authentication required");
+    expect(details.length).toBeLessThanOrEqual(" Attempts: --gpus all: ".length + 400);
+  });
+
+  it("throws the preserved Docker reason from the lifecycle when every probe rejects (#11197)", () => {
+    const { dependencies, dockerRun } = gpuModeDependencies();
+    const seed = authority("openclaw");
+    const input = compatibilityLifecycleInput(seed, dependencies);
+    const digest = "41eb2663a761897dec9cd999d938f7aae8a97698f041739c7aee7344c1a24c08";
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${digest}`;
+    dockerRun.mockReturnValue({
+      status: 1,
+      stderr: `Unable to find image '${reference}' locally\n${reference}: Error response from daemon: unauthorized: token=secret-value`,
+    });
+
+    let thrown = "";
+    try {
+      createDockerManagedBootstrapSurface().createLifecycle(input);
+    } catch (error) {
+      thrown = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(thrown).toContain(
+      "Docker did not accept a compatibility GPU mode for managed bootstrap.",
+    );
+    expect(thrown).toContain("Error response from daemon: unauthorized");
+    expect(thrown).toContain("@sha256:41eb2663a761...");
+    expect(thrown).not.toContain(digest);
+    expect(thrown).toContain("token=<REDACTED>");
+    expect(thrown).not.toContain("secret-value");
+    expect(dockerRun.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps the joined attempt detail within its budget and keeps its ending (#11197)", () => {
+    const details = formatDockerGpuModeFailureDetails(
+      Array.from({ length: 6 }, (_, index) =>
+        failedGpuModeAttempt(`attempt ${index} ${"context ".repeat(40)}reason ${index}`),
+      ),
+    );
+
+    expect(details.length).toBeLessThanOrEqual(1_600);
+    expect(details).toContain("characters omitted");
+    expect(details).toContain("reason 5");
   });
 });
 
@@ -514,11 +612,18 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
     });
     const lifecycle = createDockerManagedBootstrapSurface().createLifecycle({
       providerId: "docker",
+      environment: {},
       stateRoot,
       bootstrapIdentity: IDENTITY,
       request: seed.request,
       image: seed.plan.image,
       agentIdentity: seed.plan.agentIdentity,
+      workspaceRoot: {
+        uid: seed.plan.agentIdentity.uid,
+        gid: seed.plan.agentIdentity.gid,
+        mode: 0o755,
+      },
+      managedStateRoots: seed.plan.managedStateRoots,
       intendedWorkloadArgv: seed.plan.intendedWorkloadArgv,
       expectedSupervisorArgv: seed.plan.expectedSupervisorArgv,
       launchArgv: ["openshell", "sandbox", "create", "--name", "alpha"],
@@ -544,8 +649,9 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         inferenceProvider: "openai",
         gatewayUsesContainerBridge: false,
         gatewayPort: 0,
+        reverifyBridgeReachability: () => undefined,
       },
-      dependencies: {},
+      dependencies: { commandExecutor: successfulCommandExecutor() },
     });
     const child = new FakeChild();
     let ready = false;
@@ -612,11 +718,18 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
     });
     const lifecycle = createDockerManagedBootstrapSurface().createLifecycle({
       providerId: "docker",
+      environment: {},
       stateRoot,
       bootstrapIdentity: IDENTITY,
       request: seed.request,
       image: seed.plan.image,
       agentIdentity: seed.plan.agentIdentity,
+      workspaceRoot: {
+        uid: seed.plan.agentIdentity.uid,
+        gid: seed.plan.agentIdentity.gid,
+        mode: 0o755,
+      },
+      managedStateRoots: seed.plan.managedStateRoots,
       intendedWorkloadArgv: seed.plan.intendedWorkloadArgv,
       expectedSupervisorArgv: seed.plan.expectedSupervisorArgv,
       launchArgv: ["openshell", "sandbox", "create", "--name", "alpha"],
@@ -643,8 +756,9 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         inferenceProvider: "openai",
         gatewayUsesContainerBridge: false,
         gatewayPort: 0,
+        reverifyBridgeReachability: () => undefined,
       },
-      dependencies: {},
+      dependencies: { commandExecutor: successfulCommandExecutor() },
     });
 
     await expect(

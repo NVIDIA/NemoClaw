@@ -67,7 +67,7 @@ export type ChannelHealthCommandRunner = (
   sandboxName: string,
   command: string,
   timeoutMs: number,
-) => ChannelHealthCommandResult | null | undefined;
+) => Promise<ChannelHealthCommandResult | null | undefined>;
 
 /**
  * Options a channel-health status hook accepts. `executeSandboxCommand` is a
@@ -90,7 +90,7 @@ export interface ChannelHealthProbeFacts {
   readonly agent: string;
   readonly probedAt: string;
   readonly channelEnabledInRegistry: boolean;
-  readonly presetInRegistry: boolean;
+  readonly presetApplied: boolean;
   readonly presetOnGateway: boolean | null;
 }
 
@@ -103,7 +103,7 @@ export function channelHealthProbeInputs(
     agent: facts.agent,
     probedAt: facts.probedAt,
     channelEnabledInRegistry: facts.channelEnabledInRegistry,
-    presetInRegistry: facts.presetInRegistry,
+    presetApplied: facts.presetApplied,
     presetOnGateway: facts.presetOnGateway,
   };
 }

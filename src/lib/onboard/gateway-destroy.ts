@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { Buffer } from "node:buffer";
+
 import { GATEWAY_PORT } from "../core/ports";
 import { listSandboxes as listRegisteredSandboxes } from "../state/registry";
 import { releaseManagedGatewayPort } from "../tunnel/gateway-port-release";
@@ -8,13 +10,18 @@ import { resolveGatewayName, resolveSandboxGatewayName } from "./gateway-binding
 import { isExternallySupervised } from "./gateway-ownership";
 import {
   GatewayAuthorityError,
+  removeGatewayRegistrationWithPolicy,
   resolveGatewayTeardownAuthority,
 } from "./gateway-teardown-authority";
 
 export type RunOpenshell = (
   args: string[],
   opts: { ignoreError: true },
-) => { status: number | null };
+) => {
+  status: number | null;
+  stdout?: string | Buffer;
+  stderr?: string | Buffer;
+};
 
 export type RemoveVolumesByPrefix = (prefix: string, opts: { ignoreError: true }) => unknown;
 
@@ -195,18 +202,11 @@ export function destroyGatewayWithVolumeCleanup({
   const lifecycleCommands = hasLifecycleCommands();
   const gatewayRemoved = dockerDriver
     ? removeDockerDriverGatewayRegistration()
-    : (() => {
-        const removeResult = runOpenshell(["gateway", "remove", gatewayName], {
-          ignoreError: true,
-        });
-        if (removeResult.status === 0) return true;
-        // Pre-0.0.44 builds exposed `gateway destroy` instead of `gateway remove`.
-        if (!lifecycleCommands) return false;
-        return (
-          runOpenshell(["gateway", "destroy", "-g", gatewayName], { ignoreError: true }).status ===
-          0
-        );
-      })();
+    : removeGatewayRegistrationWithPolicy({
+        allowLegacyDestroy: true,
+        gatewayLabel: gatewayName,
+        run: (args) => runOpenshell(args, { ignoreError: true }),
+      }).ok;
 
   if (gatewayRemoved) {
     clearRegistry();

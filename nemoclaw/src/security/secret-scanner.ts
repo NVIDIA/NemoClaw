@@ -144,7 +144,6 @@ export function scanForSecrets(content: string): SecretMatch[] {
 // These are inherent limitations of content-based scanning.
 const MEMORY_PATH_SEGMENTS = [
   "/.openclaw/memory/",
-  "/.openclaw/workspace/",
   "/.openclaw/agents/",
   "/.openclaw/skills/",
   "/.openclaw/hooks/",
@@ -158,6 +157,12 @@ const MEMORY_PATH_SEGMENTS = [
   "/.openclaw/openclaw.json",
   "/.nemoclaw/",
 ];
+
+/**
+ * Default and named OpenClaw workspaces hold persistent agent state. Anchoring
+ * on `/.openclaw/` keeps unrelated project directories out.
+ */
+const WORKSPACE_SEGMENT = /\/\.openclaw\/workspace(?:-[^/]+)?\//;
 
 /**
  * Canonical OpenClaw workspace files — these basenames are always treated as
@@ -238,6 +243,7 @@ export function isMemoryPath(filePath: unknown): boolean {
   const normalizedPath = normalizePathForMemoryClassification(filePath);
   const normalizedRelativePath = dropLeadingParentSegments(normalizedPath);
   if (MEMORY_PATH_SEGMENTS.some((segment) => normalizedPath.includes(segment))) return true;
+  if (WORKSPACE_SEGMENT.test(normalizedPath)) return true;
   if (MEMORY_BASENAMES.has(basenameOf(normalizedPath))) return true;
   if (MEMORY_RELATIVE_PREFIXES.some((prefix) => normalizedRelativePath.startsWith(prefix))) {
     return true;

@@ -44,9 +44,9 @@ export default async function monitor_nemoclaw_e2e_run_group(input: {
   const workflow = input.workflow ?? "e2e.yaml";
   const branch = input.branch ?? "main";
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must be owner/name");
-  if (!/^[A-Za-z0-9_.\/-]+\.ya?ml$/.test(workflow))
+  if (!/^[A-Za-z0-9_./-]+\.ya?ml$/.test(workflow))
     throw new Error("workflow must be a YAML workflow path or filename");
-  if (!/^[A-Za-z0-9_.\/-]+$/.test(branch)) throw new Error("branch is invalid");
+  if (!/^[A-Za-z0-9_./-]+$/.test(branch)) throw new Error("branch is invalid");
   if (!/^[0-9a-f]{40}$/.test(input.candidateSha))
     throw new Error("candidateSha must be a full lowercase commit SHA");
   const runIds = [...new Set(input.runIds)];

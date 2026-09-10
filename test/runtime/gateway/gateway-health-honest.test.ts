@@ -3,7 +3,6 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { expect, test } from "vitest";
@@ -39,15 +38,16 @@ function stopGatewayProcess(pid: number | null): void {
   }
 }
 
+// source-shape-contract: compatibility -- Executes the real gateway start path to prove crashed drivers are reported honestly to users
 test("reports a crashed Docker-driver gateway instead of reporting it healthy (#3111)", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-health-honest-"));
+  const root = fs.mkdtempSync(path.join(REPO_ROOT, "nemoclaw-gateway-health-honest-"));
   const binDir = path.join(root, "bin");
   const stateDir = path.join(root, "state");
   const gatewayBin = path.join(binDir, "openshell-gateway-sabotage");
   const openshellBin = path.join(binDir, "openshell");
   const dockerBin = path.join(binDir, "docker");
   fs.mkdirSync(binDir);
-  fs.mkdirSync(stateDir);
+  fs.mkdirSync(stateDir, { mode: 0o700 });
   writeExecutable(
     gatewayBin,
     `#!/usr/bin/env bash

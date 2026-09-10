@@ -24,6 +24,17 @@ const INTEGRATION_POLICY_SOURCE = "network-policy/integration-policy-examples.md
 const GMAIL_SOURCE = "network-policy/set-up-gmail-with-an-app-password.mdx";
 const APPROVAL_LINK_TEXT = "Approve or Deny Agent Network Requests";
 const GMAIL_LINK_TEXT = "Set Up Gmail With an App Password";
+const CUSTOMIZE_SHARED_WORKFLOWS = [
+  "Change the Baseline Network Policy",
+  "Apply Policy Presets",
+  "Create Custom Policy Presets",
+  "Replace the Live Network Policy",
+  "Approve or Deny Network Requests",
+] as const;
+const CUSTOMIZE_AGENT_WORKFLOWS = [
+  "Configure Raw TLS Passthrough",
+  "Explain Network Policy to Agents",
+] as const;
 const SHARED_CONFIGURATION_SOURCES = [
   BASELINE_POLICY_SOURCE,
   APPLY_PRESETS_SOURCE,
@@ -140,6 +151,35 @@ describe("shared Network Policies published routes", () => {
 
     expect(findBrokenPublishedRoutes(CUSTOMIZE_POLICY_SOURCE, index)).toEqual([]);
   });
+
+  it.each([
+    ["openclaw", true],
+    ["hermes", true],
+    ["deepagents", false],
+  ] as const)(
+    "keeps the customize decision table contiguous for %s",
+    (variant, includesAgentWorkflows) => {
+      const rendered = renderAgentVariantPage(readDoc(CUSTOMIZE_POLICY_SOURCE), variant);
+      const tableLines =
+        rendered
+          .match(/\| Goal \| Use this workflow \|\n(?:\|[^\n]+\|\n)+/)?.[0]
+          .trimEnd()
+          .split("\n") ?? [];
+      const expectedWorkflows = includesAgentWorkflows
+        ? [...CUSTOMIZE_SHARED_WORKFLOWS, ...CUSTOMIZE_AGENT_WORKFLOWS]
+        : CUSTOMIZE_SHARED_WORKFLOWS;
+
+      expect(tableLines).toHaveLength(expectedWorkflows.length + 2);
+      expect(tableLines.slice(2)).toEqual(
+        expect.arrayContaining(
+          expectedWorkflows.map((workflow) => expect.stringContaining(`[${workflow}]`)),
+        ),
+      );
+      expect(
+        tableLines.slice(2).every((row) => /^\| [^|\n]+ \| \[[^\]\n]+\]\([^)]+\) \|$/.test(row)),
+      ).toBe(true);
+    },
+  );
 
   it.each(DEEPAGENTS_POLICY_ROUTES)("publishes the Deep Agents policy route %s", (route) => {
     const index = buildPublishedRouteIndex();

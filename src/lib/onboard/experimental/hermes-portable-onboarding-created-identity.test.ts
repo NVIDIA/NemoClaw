@@ -53,6 +53,51 @@ describe("Hermes Portable created-identity capture", () => {
     expect(capture).toHaveBeenCalledExactlyOnceWith(args);
   });
 
+  it("accepts the observer's exact named-gateway readiness list (#9803)", () => {
+    const capture = vi.fn(() => ({
+      status: 0,
+      stdout: Buffer.from("alpha Ready"),
+      stderr: Buffer.alloc(0),
+    }));
+    const run = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
+    const args = ["sandbox", "list", "-g", "nemoclaw"];
+
+    expect(run(args).status).toBe(0);
+    expect(capture).toHaveBeenCalledExactlyOnceWith(args);
+  });
+
+  it("accepts the exact named-gateway readiness exec (#9803)", () => {
+    const capture = vi.fn(() => ({
+      status: 0,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    }));
+    const run = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
+    const args = ["sandbox", "exec", "-g", "nemoclaw", "--name", "alpha", "--", "true"];
+
+    expect(run(args).status).toBe(0);
+    expect(capture).toHaveBeenCalledExactlyOnceWith(args);
+  });
+
+  it.each([
+    ["another gateway", ["sandbox", "exec", "-g", "other", "--name", "alpha", "--", "true"]],
+    ["another sandbox", ["sandbox", "exec", "-g", "nemoclaw", "--name", "beta", "--", "true"]],
+  ])("rejects a readiness exec for %s before capture (#9803)", (_case, args) => {
+    const capture = vi.fn();
+    const run = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
+
+    expect(() => run(args)).toThrow("unsupported OpenShell command");
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("rejects a readiness list for another gateway before capture (#9803)", () => {
+    const capture = vi.fn();
+    const run = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
+
+    expect(() => run(["sandbox", "list", "-g", "other"])).toThrow("unsupported OpenShell command");
+    expect(capture).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["wrong gateway", ["sandbox", "get", "-g", "other", "alpha"]],
     ["wrong sandbox", ["sandbox", "get", "-g", "nemoclaw", "beta"]],

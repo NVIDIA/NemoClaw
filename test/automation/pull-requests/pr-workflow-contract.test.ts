@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
   type CompositeAction,
@@ -60,6 +61,7 @@ type TypeScriptConfig = {
 
 const sharedActionPaths = {
   staticChecks: "./.github/actions/ci-static-checks",
+  compileArtifacts: "./.github/actions/ci-compile-artifacts",
   buildTypecheck: "./.github/actions/ci-build-typecheck",
   cliCoverageShard: "./.github/actions/ci-cli-coverage-shard",
   cliCoverageMerge: "./.github/actions/ci-cli-coverage-merge",
@@ -69,6 +71,7 @@ const sharedActionPaths = {
 
 const trustedPrActionPaths = {
   staticChecks: "./.trusted-ci-actions/.github/actions/ci-static-checks",
+  compileArtifacts: "./.trusted-ci-actions/.github/actions/ci-compile-artifacts",
   buildTypecheck: "./.trusted-ci-actions/.github/actions/ci-build-typecheck",
   cliCoverageShard: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard",
   cliCoverageMerge: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge",
@@ -81,6 +84,7 @@ const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc
 const trustedActionDirs = [
   ".github/actions/ci-static-checks",
   ".github/actions/ci-build-typecheck",
+  ".github/actions/ci-compile-artifacts",
   ".github/actions/ci-cli-coverage-shard",
   ".github/actions/ci-cli-coverage-merge",
   ".github/actions/ci-plugin-coverage",
@@ -447,6 +451,7 @@ describe("pull request and main workflow contracts", () => {
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+  const advisorWorkflow = readYaml<CiWorkflow>(".github/workflows/pr-review-advisor.yaml");
   const sdkPackageWorkflow = readYaml<SdkPackageWorkflow>(
     ".github/workflows/openshell-sdk-package-pr.yaml",
   );
@@ -462,6 +467,7 @@ describe("pull request and main workflow contracts", () => {
   ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
+    compileArtifacts: readYaml<CompositeAction>(".github/actions/ci-compile-artifacts/action.yaml"),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
     cliCoverageShard: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
@@ -480,6 +486,36 @@ describe("pull request and main workflow contracts", () => {
     ["main", mainWorkflow],
   ] as const)("keeps the %s CLI coverage shard budget aligned", (_workflowName, workflow) => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
+  });
+
+  // source-shape-contract: security -- Credential-free workflow structure prevents pull request code from receiving Hugging Face or checkout credentials
+  it("verifies changed Hugging Face catalog references without credentials", () => {
+    const job = prWorkflow.jobs["hugging-face-models"];
+    const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
+    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<string, string[]>;
+    const huggingFaceModelFilters = filters.hugging_face_models ?? [];
+
+    expect(
+      huggingFaceModelFilters.some((pattern) =>
+        pattern.includes("src/lib/inference/serving/catalog-loader.ts"),
+      ),
+    ).toBe(true);
+    expect(
+      huggingFaceModelFilters.some((pattern) =>
+        pattern.includes("src/lib/inference/serving/generate-catalog.ts"),
+      ),
+    ).toBe(true);
+    expect(job.needs).toBe("changes");
+    expect(job.if).toBe("needs.changes.outputs.hugging_face_models == 'true'");
+    expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
+    expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
+    expect(requiredWorkflowStep(job, "Install dependencies").run).toBe(
+      "npm ci --ignore-scripts --no-audit --no-fund",
+    );
+    expect(requiredWorkflowStep(job, "Verify Hugging Face model references").run).toBe(
+      "npm run catalog:verify-hugging-face",
+    );
+    expect(JSON.stringify(job)).not.toMatch(/HF_TOKEN|HUGGING_FACE_HUB_TOKEN|secrets\./u);
   });
 
   // source-shape-contract: security -- Pull request jobs must never receive the GitHub Packages credential
@@ -502,6 +538,7 @@ describe("pull request and main workflow contracts", () => {
       ["build-typecheck", "read"],
       ["cli-test-shards", "read"],
       ["cli-tests", "read"],
+      ["compile-artifacts", "read"],
       ["installer-integration", "read"],
       ["plugin-tests", "read"],
       ["static-checks", "read"],
@@ -512,7 +549,7 @@ describe("pull request and main workflow contracts", () => {
   it("provides the package token only to trusted main dependency installation", () => {
     const actions = [
       sharedActions.staticChecks,
-      sharedActions.buildTypecheck,
+      sharedActions.compileArtifacts,
       sharedActions.cliCoverageMerge,
       sharedActions.installerIntegration,
       sharedActions.cliCoverageShard,
@@ -529,9 +566,67 @@ describe("pull request and main workflow contracts", () => {
         NODE_AUTH_TOKEN: "${{ github.event_name == 'push' && github.token || '' }}",
       })),
     );
-    expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual(
-      actions.map(() => 'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"'),
+    expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual([
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" none',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" production',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+    ]);
+  });
+
+  // source-shape-contract: security -- The trusted split must retain test-config coverage after compiling candidate production code
+  it.each([
+    ["pull request", prWorkflow],
+    ["main", mainWorkflow],
+  ] as const)(
+    "keeps %s plugin test typechecking after the trusted production build",
+    (_name, workflow) => {
+      expect([workflow.jobs["build-typecheck"].needs].flat()).toContain("compile-artifacts");
+      expect(requiredStep(sharedActions.buildTypecheck, "Typecheck plugin tests").run).toBe(
+        "npm --prefix nemoclaw exec -- tsc --noEmit -p nemoclaw/tsconfig.test.json",
+      );
+      expect(stepRuns(sharedActions.buildTypecheck)).not.toContain(
+        "npm --prefix nemoclaw run typecheck",
+      );
+    },
+  );
+  it.each([
+    ["CLI shards", requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools")],
+    [
+      "Advisor runtime",
+      requiredWorkflowStep(advisorWorkflow.jobs["build-advisor-runtime"], "Install locked runtime"),
+    ],
+  ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-ubuntu-apt-sources-"));
+    const fakeBin = join(temp, "bin");
+    const aptArgs = join(temp, "apt-args");
+    mkdirSync(fakeBin);
+    writeFileSync(
+      join(fakeBin, "sudo"),
+      '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$APT_ARGS"\nexit 86\n',
+      { mode: 0o755 },
     );
+
+    try {
+      const result = runWorkflowShellStep(installStep, {
+        APT_ARGS: aptArgs,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      });
+      expect(result.status).toBe(86);
+      expect(readFileSync(aptArgs, "utf8").trim().split("\n")).toEqual([
+        "apt-get",
+        "update",
+        "-qq",
+        "-o",
+        "Dir::Etc::sourcelist=sources.list.d/ubuntu.sources",
+        "-o",
+        "Dir::Etc::sourceparts=-",
+      ]);
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
+    }
   });
 
   // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
@@ -881,11 +976,10 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(fetch.env).toEqual({
       NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: "${{ runner.temp }}/openshell-sdk",
+      NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
-    expect(fetch.run).toContain(
-      "node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts",
-    );
+    expect(fetch.run).toContain("node scripts/checks/package-openshell-sdk-for-pr.mts");
     expect(fetch.run).toContain("artifact_path=");
     expect(
       (sdkPackageJob.steps ?? [])
@@ -1004,7 +1098,6 @@ describe("pull request and main workflow contracts", () => {
       });
 
       expect(validShard.status).toBe(0);
-      expect(readFileSync(output, "utf8")).toContain("upload_build_artifact=false");
       expect(invalidShard.status).not.toBe(0);
       expect(invalidShard.stdout).toContain("Invalid CLI shard");
       expect(invalidRange.status).not.toBe(0);
@@ -1017,12 +1110,33 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
+  it.each([
+    ["cli-build-output", "required=true\n"],
+    ["compiled-test-inputs", ""],
+  ])("uploads the legacy coverage artifact only when the base reads %s", (artifact, expected) => {
+    const root = mkdtempSync(join(tmpdir(), "coverage-artifact-rollout-"));
+    const actionDirectory = join(root, ".trusted-ci-actions/.github/actions/ci-cli-coverage-merge");
+    const output = join(root, "output");
+    try {
+      mkdirSync(actionDirectory, { recursive: true });
+      writeFileSync(join(actionDirectory, "action.yaml"), `with:\n  name: ${artifact}\n`);
+      writeFileSync(output, "");
+      const result = runWorkflowShellStep(
+        requiredWorkflowStep(
+          prWorkflow.jobs["compile-artifacts"],
+          "Detect legacy coverage artifact reader",
+        ),
+        { GITHUB_OUTPUT: output },
+        root,
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toBe(expected);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   const coverageEntrypointCases = [
-    {
-      action: sharedActions.cliCoverageShard,
-      step: "Build CLI for coverage shard",
-      stem: "scripts/check-dist-sourcemaps",
-    },
     {
       action: sharedActions.cliCoverageMerge,
       step: "Verify compiled CLI artifact",
@@ -1170,6 +1284,8 @@ describe("pull request and main workflow contracts", () => {
       CLI_TESTS_RESULT: "success",
       CODE_CHANGED: "true",
       DOCS_ONLY_RESULT: "skipped",
+      HF_MODELS_CHANGED: "true",
+      HF_MODELS_RESULT: "success",
       INSTALLER_INTEGRATION_RESULT: "success",
       OPEN_SHELL_SDK_PACKAGE_RESULT: "success",
       PLUGIN_TESTS_RESULT: "success",
@@ -1184,7 +1300,7 @@ describe("pull request and main workflow contracts", () => {
       PLUGIN_TESTS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
       REAL_OPENCLAW_DIST_HARNESS_RESULT: "success",
-      SANDBOX_IMAGES_E2E_RESULT: "success",
+      SANDBOX_IMAGE_CONTRACTS_RESULT: "success",
       STATIC_RESULT: "success",
       WECHAT_RUNTIME_AUDIT_RESULT: "success",
     };
@@ -1194,12 +1310,14 @@ describe("pull request and main workflow contracts", () => {
       prGate,
       {
         ...successfulCode,
+        HF_MODELS_RESULT: "failure",
         PLUGIN_TESTS_RESULT: "cancelled",
         STATIC_RESULT: "failure",
       },
       workflowJobListing([
         workflowJob(201, "static-checks", "failure"),
         workflowJob(202, "plugin-tests", "cancelled"),
+        workflowJob(203, "hugging-face-models", "failure"),
       ]),
     );
     const docsOnlySuccess = runWorkflowShellStep(prGate, {
@@ -1208,6 +1326,8 @@ describe("pull request and main workflow contracts", () => {
       CLI_TESTS_RESULT: "skipped",
       CODE_CHANGED: "false",
       DOCS_ONLY_RESULT: "success",
+      HF_MODELS_CHANGED: "false",
+      HF_MODELS_RESULT: "skipped",
       INSTALLER_INTEGRATION_RESULT: "skipped",
       OPEN_SHELL_SDK_PACKAGE_RESULT: "skipped",
       PLUGIN_TESTS_RESULT: "skipped",
@@ -1220,9 +1340,9 @@ describe("pull request and main workflow contracts", () => {
       mainGate,
       {
         ...successfulMain,
-        SANDBOX_IMAGES_E2E_RESULT: "failure",
+        SANDBOX_IMAGE_CONTRACTS_RESULT: "failure",
       },
-      workflowJobListing([workflowJob(302, "sandbox-images-and-e2e", "failure")]),
+      workflowJobListing([workflowJob(302, "sandbox-image-contracts", "failure")]),
     );
     const malformedFailure = runWorkflowShellStepWithJobs(
       prGate,
@@ -1245,10 +1365,14 @@ describe("pull request and main workflow contracts", () => {
     expect(codeFailure.stdout).toContain(
       "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/202",
     );
+    expect(codeFailure.stdout).toContain("hugging-face-models failed");
+    expect(codeFailure.stdout).toContain(
+      "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/203",
+    );
     expect(docsOnlySuccess.status).toBe(0);
     expect(mainSuccess.status).toBe(0);
     expect(mainFailure.status).not.toBe(0);
-    expect(mainFailure.stdout).toContain("sandbox-images-and-e2e failed");
+    expect(mainFailure.stdout).toContain("sandbox-image-contracts failed");
     expect(mainFailure.stdout).toContain(
       "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/302",
     );

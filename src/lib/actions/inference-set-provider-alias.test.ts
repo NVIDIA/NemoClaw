@@ -31,7 +31,6 @@ import {
 } from "./inference-set.test-support";
 import type { EnsureHttpsPinRuntimeAdapterOptions } from "./inference-set-route-containment";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const onboardProviders: any =
   (onboardProvidersNs as unknown as { default?: unknown }).default ?? onboardProvidersNs;
 
@@ -44,7 +43,6 @@ function expectNoInferenceMutation(calls: ReturnType<typeof createDeps>["calls"]
   expect(calls.writeSandboxConfig).not.toHaveBeenCalled();
   expect(calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
   expect(calls.updateSession).not.toHaveBeenCalled();
-  expect(calls.appendAuditEntry).not.toHaveBeenCalled();
   expect(calls.restartSandboxGateway).not.toHaveBeenCalled();
 }
 

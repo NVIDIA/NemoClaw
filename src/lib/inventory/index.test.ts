@@ -89,7 +89,6 @@ describe("inventory commands", () => {
             model: "configured-alpha",
             provider: "configured-provider",
             gpuEnabled: true,
-            policies: ["pypi"],
             agent: "openclaw",
           },
         ],
@@ -126,7 +125,7 @@ describe("inventory commands", () => {
           sandboxGpuDevice: null,
           openshellDriver: null,
           openshellVersion: null,
-          policies: ["pypi"],
+          policies: [],
           agent: "openclaw",
           isDefault: true,
           activeSessionCount: 1,
@@ -636,7 +635,6 @@ describe("inventory commands", () => {
             model: "nvidia/nemotron-3-super-120b-a12b",
             provider: "nvidia-prod",
             gpuEnabled: true,
-            policies: ["pypi"],
           },
         ],
         defaultSandbox: "alpha",
@@ -644,6 +642,7 @@ describe("inventory commands", () => {
         recoveredFromGateway: 1,
       }),
       getLiveInference: () => null,
+      getPolicyPresets: () => ["pypi"],
       loadLastSession: () => null,
       log: (message = "") => lines.push(message),
     });
@@ -666,7 +665,6 @@ describe("inventory commands", () => {
             model: "nvidia/nemotron-3-super-120b-a12b",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
             agent: "hermes",
           },
         ],
@@ -692,14 +690,12 @@ describe("inventory commands", () => {
             model: "configured-alpha",
             provider: "configured-provider",
             gpuEnabled: true,
-            policies: [],
           },
           {
             name: "beta",
             model: "configured-beta",
             provider: "beta-provider",
             gpuEnabled: false,
-            policies: [],
           },
         ],
         defaultSandbox: "alpha",
@@ -737,7 +733,6 @@ describe("inventory commands", () => {
             model: "configured-alpha",
             provider: "configured-provider",
             gpuEnabled: true,
-            policies: [],
           },
         ],
         defaultSandbox: "alpha",
@@ -763,7 +758,6 @@ describe("inventory commands", () => {
             model: "configured-alpha",
             provider: "configured-provider",
             gpuEnabled: true,
-            policies: [],
           },
         ],
         defaultSandbox: "alpha",
@@ -789,7 +783,6 @@ describe("inventory commands", () => {
             model: "configured-alpha",
             provider: "configured-provider",
             gpuEnabled: true,
-            policies: [],
           },
         ],
         defaultSandbox: "alpha",
@@ -818,7 +811,6 @@ describe("inventory commands", () => {
             model: "configured-alpha",
             provider: "configured-provider",
             gpuEnabled: true,
-            policies: [],
           },
         ],
         defaultSandbox: "alpha",
@@ -1306,8 +1298,10 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("      Inference: nvidia-prod / nvidia/nemotron-3-super-120b-a12b");
-    expect(lines).toContain("      Inference: ollama-local / qwen3.5:9b");
+    expect(lines).toContain(
+      "      Inference (configured): nvidia-prod / nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(lines).toContain("      Inference (configured): ollama-local / qwen3.5:9b");
   });
 
   it("prefers live gateway provider for the default sandbox in the Inference line (#2604)", () => {
@@ -1322,7 +1316,7 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("      Inference: live-provider / live-model");
+    expect(lines).toContain("      Inference (configured): live-provider / live-model");
   });
 
   it("emits an SSH sessions line per sandbox when getActiveSessionCount is provided (#2604)", () => {

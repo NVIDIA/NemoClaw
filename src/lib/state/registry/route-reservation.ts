@@ -5,8 +5,8 @@ import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
 import { isWebSearchProvider } from "../../inference/web-search/provider";
-import { normalizePendingSandboxPolicyVerification } from "./pending-policy-verification";
-import type { PendingSandboxPolicyVerification, SandboxEntry } from "./types";
+import { normalizePendingSandboxCreateIdentity } from "./pending-create-identity";
+import type { PendingSandboxCreateIdentity, SandboxEntry } from "./types";
 
 const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "credentialEnv",
@@ -23,11 +23,8 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "name",
   "openshellDriver",
   "pendingRouteReservation",
-  "pendingPolicyVerification",
+  "pendingCreateIdentity",
   "preferredInferenceApi",
-  "policies",
-  "policyPresetsFinalized",
-  "policyTier",
   "provider",
   "reservationSessionId",
   "webSearchEnabled",
@@ -41,7 +38,7 @@ function verifiedCreateCheckpointClass(
 ): "absent" | "valid" | "malformed" | "sandbox-authority" {
   let checkpoint;
   try {
-    checkpoint = normalizePendingSandboxPolicyVerification(entry.pendingPolicyVerification);
+    checkpoint = normalizePendingSandboxCreateIdentity(entry.pendingCreateIdentity);
   } catch {
     return "malformed";
   }
@@ -59,14 +56,14 @@ function verifiedCreateCheckpointClass(
 
 function withVerifiedCreateCheckpoint(
   entry: SandboxEntry,
-  checkpoint: PendingSandboxPolicyVerification,
+  checkpoint: PendingSandboxCreateIdentity,
 ): SandboxEntry {
   return {
     ...entry,
     gatewayPort: checkpoint.gatewayPort,
     lifecycleGeneration: checkpoint.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
-    pendingPolicyVerification: checkpoint,
+    pendingCreateIdentity: checkpoint,
   };
 }
 
@@ -77,31 +74,6 @@ function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
     (!Number.isSafeInteger(entry.dashboardPort) ||
       entry.dashboardPort < 1 ||
       entry.dashboardPort > 65_535)
-  ) {
-    return false;
-  }
-  if (
-    entry.policies !== undefined &&
-    (!Array.isArray(entry.policies) ||
-      entry.policies.some(
-        (value) => typeof value !== "string" || value.length === 0 || CONTROL_CHARACTER.test(value),
-      ) ||
-      new Set(entry.policies).size !== entry.policies.length)
-  ) {
-    return false;
-  }
-  if (
-    entry.policyPresetsFinalized !== undefined &&
-    typeof entry.policyPresetsFinalized !== "boolean"
-  ) {
-    return false;
-  }
-  if (
-    entry.policyTier !== undefined &&
-    entry.policyTier !== null &&
-    (typeof entry.policyTier !== "string" ||
-      entry.policyTier.length === 0 ||
-      CONTROL_CHARACTER.test(entry.policyTier))
   ) {
     return false;
   }
@@ -204,6 +176,23 @@ export function isRouteOnlySandboxReservation(entry: {
 /** True only for a completed registry entry available to normal sandbox consumers. */
 export function isPublishedSandboxRegistration(entry: { pendingRouteReservation?: true }): boolean {
   return entry.pendingRouteReservation !== true;
+}
+
+/** True when an entry participates in the inference route shared by its gateway. */
+export function isSharedGatewayRouteParticipant(entry: {
+  pendingRouteReservation?: true;
+  createdAt?: string;
+  provider?: string | null;
+  model?: string | null;
+}): boolean {
+  if (isPublishedSandboxRegistration(entry)) return true;
+  return (
+    isRouteOnlySandboxReservation(entry) &&
+    typeof entry.provider === "string" &&
+    entry.provider.trim().length > 0 &&
+    typeof entry.model === "string" &&
+    entry.model.trim().length > 0
+  );
 }
 
 /** Return true only when the pending inference route reservation belongs to the exact onboarding session. */
@@ -318,11 +307,11 @@ export function isCurrentSandboxInferenceRouteReservation(
   let checkpoint;
   let admittedCheckpoint;
   try {
-    checkpoint = normalizePendingSandboxPolicyVerification(
-      current.reservation.entry.pendingPolicyVerification,
+    checkpoint = normalizePendingSandboxCreateIdentity(
+      current.reservation.entry.pendingCreateIdentity,
     );
-    admittedCheckpoint = normalizePendingSandboxPolicyVerification(
-      reservation.entry.pendingPolicyVerification,
+    admittedCheckpoint = normalizePendingSandboxCreateIdentity(
+      reservation.entry.pendingCreateIdentity,
     );
   } catch {
     return false;

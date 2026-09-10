@@ -7,6 +7,7 @@ import {
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
 } from "../../scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts";
 import * as importedProtectedManagedImageContract from "../../scripts/checks/protected-managed-image-contract.ts";
+import { HERMES_ACP_E2E_OWNING_PATHS } from "../e2e/hermes-acp-owning-paths.mts";
 
 // The root TypeScript package is exposed as CJS under the exact
 // `node --import tsx` workflow execution mode, but as an ESM namespace under
@@ -21,7 +22,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 19 as const;
+export const RISK_PLAN_VERSION = 22 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -75,6 +76,8 @@ const MANAGED_STARTUP_E2E_JOB_IDS = [
   "openclaw-inference-switch",
 ] as const;
 const HERMES_CLI_ADAPTER_E2E_JOB_IDS = ["channels-stop-start", "mcp-bridge"] as const;
+const HERMES_ACP_E2E_JOB_IDS = ["hermes-e2e", "rebuild-hermes"] as const;
+const HERMES_ACP_RUNTIME_FILES = new Set<string>(HERMES_ACP_E2E_OWNING_PATHS);
 const HERMES_CLI_ADAPTER_RUNTIME_FILES = new Set([
   "agents/hermes/hermes-cli-adapter-v1.json",
   "agents/hermes/hermes-wrapper.py",
@@ -93,7 +96,6 @@ const HERMES_MANAGED_POLICY_E2E_JOB_IDS = [
   "dashboard-remote-bind",
   "hermes-e2e",
   "hermes-inference-switch",
-  "hermes-shields-config",
   "security-posture",
 ] as const;
 const HERMES_MANAGED_POLICY_FILES = new Set([
@@ -105,6 +107,49 @@ const HERMES_MANAGED_POLICY_FILES = new Set([
   "agents/hermes/start.sh",
   "src/lib/hermes-managed-route.ts",
 ]);
+const SHARED_MESSAGING_RUNTIME_E2E_JOB_IDS = [
+  "channels-add-remove",
+  "channels-stop-start",
+  "hermes-discord",
+  "messaging-providers",
+  "openclaw-discord-pairing",
+  "openclaw-slack-pairing",
+] as const;
+const HERMES_MESSAGING_RUNTIME_E2E_JOB_IDS = [
+  "channels-stop-start",
+  "hermes-discord",
+  "messaging-providers",
+] as const;
+const OPENCLAW_MESSAGING_RUNTIME_E2E_JOB_IDS = [
+  "channels-stop-start",
+  "messaging-providers",
+  "openclaw-discord-pairing",
+  "openclaw-slack-pairing",
+] as const;
+const MESSAGING_RUNTIME_FILES = new Set([
+  "src/lib/actions/sandbox/rebuild-backup-phase.ts",
+  "src/lib/actions/sandbox/rebuild-target-runtime.ts",
+  "src/lib/onboard/credential-provider-registration.ts",
+  "src/lib/onboard/extra-placeholder-keys.ts",
+  "src/lib/onboard/gateway-provider-metadata.ts",
+  "src/lib/onboard/messaging-policy-presets.ts",
+  "src/lib/onboard/messaging-prep.ts",
+  "src/lib/onboard/policy-preset-reconciliation.ts",
+  "src/lib/onboard/policy-selection.ts",
+  "src/lib/onboard/providers.ts",
+  "src/lib/onboard/sandbox-create-plan-materialization.ts",
+  "src/lib/onboard/sandbox-create/provider-publication.ts",
+  "src/lib/onboard/sandbox-messaging-preflight.ts",
+]);
+const MESSAGING_RUNTIME_PREFIXES = [
+  "src/lib/actions/sandbox/policy-channel",
+  "src/lib/messaging/",
+] as const;
+const HERMES_STARTUP_RUNTIME_FILES = new Set([
+  "agents/hermes/runtime-config-guard.py",
+  "agents/hermes/start.sh",
+]);
+const OPENCLAW_STARTUP_RUNTIME_FILES = new Set(["scripts/nemoclaw-start.sh"]);
 const MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION =
   "ci/protected-managed-image-runtime-activation-v1.json";
 const MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime" as const;
@@ -136,6 +181,7 @@ const MANAGED_IMAGE_MULTIARCH_INPUTS = new Set([
   ".github/workflows/managed-images.yaml",
   "Dockerfile",
   "ci/npm-audit-exceptions.json",
+  "src/lib/extra-agents-validation.ts",
   "src/lib/core/json-types.ts",
   "src/lib/core/ports.ts",
   "src/lib/onboard/managed-bootstrap/envelope.ts",
@@ -226,7 +272,7 @@ const MUTATION_FILE = /(?:upgrade|rebuild|snapshot|backup|restore)/;
 const INSTALL_SCRIPT = /^(?:install\.sh|scripts\/(?:install|setup|dev-setup)[^/]*\.(?:sh|js|ts))$/;
 const INFERENCE_POLICY_FILE = /(?:^|[/.-])(?:inference|network-policy)(?:[/.-]|$)/;
 const CREDENTIAL_SECURITY_FILE =
-  /(?:^|[/.-])(?:credential|credentials|secret|secrets|redact|redaction|ssrf|shields|security)(?:[/.-]|$)/i;
+  /(?:^|[/.-])(?:credential|credentials|secret|secrets|redact|redaction|ssrf|security)(?:[/.-]|$)/i;
 const E2E_CONTROL_PLANE_FILES = new Set([
   ".github/workflows/e2e.yaml",
   ".github/workflows/pr.yaml",
@@ -238,14 +284,14 @@ const E2E_CONTROL_PLANE_FILES = new Set([
   "tools/advisors/risk-plan.mts",
   "vitest.config.ts",
 ]);
-// These checked-in paths and directories are the source boundary for private-network,
-// policy, and shields enforcement but are not all covered by the token heuristics above.
+// These checked-in paths and directories are the source boundary for private-network
+// and policy enforcement but are not all covered by the token heuristics above.
 // Keep the explicit floor until a machine-readable security-owner catalog replaces it.
 const PRIVATE_NETWORK_BOUNDARY_FILES = new Set([
   "nemoclaw-blueprint/private-networks.yaml",
   "nemoclaw/src/blueprint/private-networks.ts",
 ]);
-const POLICY_SECURITY_FILE = /^src\/lib\/(?:policy|shields)\//;
+const POLICY_SECURITY_FILE = /^src\/lib\/policy\//;
 // Ordinary tests do not raise the runtime floor. These files either define a live
 // platform contract or produce the evidence consumed by the trusted PR gate.
 const RISK_RELEVANT_TEST_FILES = new Set([
@@ -328,6 +374,9 @@ export function focusedPrE2eJobsForChangedFiles(
       (file) => HERMES_CLI_ADAPTER_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
+  const hermesAcpRuntimeFiles = stableUnique(
+    changedFiles.filter((file) => HERMES_ACP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file)),
+  );
   const hermesCronRestoreFiles = stableUnique(
     changedFiles.filter(
       (file) => HERMES_CRON_RESTORE_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
@@ -338,6 +387,24 @@ export function focusedPrE2eJobsForChangedFiles(
       (file) =>
         (file.startsWith("agents/hermes/config/") || HERMES_MANAGED_POLICY_FILES.has(file)) &&
         isRuntimeRelevant(file),
+    ),
+  );
+  const messagingRuntimeFiles = stableUnique(
+    changedFiles.filter(
+      (file) =>
+        (MESSAGING_RUNTIME_FILES.has(file) ||
+          MESSAGING_RUNTIME_PREFIXES.some((prefix) => file.startsWith(prefix))) &&
+        isRuntimeRelevant(file),
+    ),
+  );
+  const hermesMessagingRuntimeFiles = stableUnique(
+    changedFiles.filter(
+      (file) => HERMES_STARTUP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
+    ),
+  );
+  const openClawMessagingRuntimeFiles = stableUnique(
+    changedFiles.filter(
+      (file) => OPENCLAW_STARTUP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
   return [
@@ -357,6 +424,10 @@ export function focusedPrE2eJobsForChangedFiles(
       id,
       matchedFiles: hermesCliAdapterFiles,
     })),
+    ...HERMES_ACP_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesAcpRuntimeFiles,
+    })),
     ...HERMES_CRON_RESTORE_E2E_JOB_IDS.map((id) => ({
       id,
       matchedFiles: hermesCronRestoreFiles,
@@ -364,6 +435,18 @@ export function focusedPrE2eJobsForChangedFiles(
     ...HERMES_MANAGED_POLICY_E2E_JOB_IDS.map((id) => ({
       id,
       matchedFiles: hermesManagedPolicyFiles,
+    })),
+    ...SHARED_MESSAGING_RUNTIME_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: messagingRuntimeFiles,
+    })),
+    ...HERMES_MESSAGING_RUNTIME_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesMessagingRuntimeFiles,
+    })),
+    ...OPENCLAW_MESSAGING_RUNTIME_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: openClawMessagingRuntimeFiles,
     })),
   ].filter((selection) => selection.matchedFiles.length > 0);
 }

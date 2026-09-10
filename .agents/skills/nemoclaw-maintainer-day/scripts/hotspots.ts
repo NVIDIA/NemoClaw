@@ -7,7 +7,7 @@
  * Combines 30-day git churn on main with open PR file overlap to rank
  * the files causing the most merge pain. Outputs structured JSON.
  *
- * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/hotspots.ts [--days N] [--repo OWNER/REPO]
+ * Usage: node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/hotspots.ts [--days N] [--repo OWNER/REPO]
  */
 
 import { isRiskyFile, run, parseStringArg, parseIntArg } from "./shared.ts";

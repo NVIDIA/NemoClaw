@@ -36,9 +36,12 @@ import { spawnSync } from "child_process";
 
 import {
   captureSandboxSshConfigCommand,
+  isOpenShellSandboxPolicyCredentialFree,
   resolveOpenshellSandboxSshHost,
 } from "../adapters/openshell/client.js";
+import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
@@ -46,6 +49,7 @@ import { isObjectRecord, type UnknownRecord } from "../core/json-types.js";
 import { GATEWAY_PORT } from "../core/ports.js";
 import {
   BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
+  BACKUP_FAILURE_PERMISSION_DENIED,
   classifyFailedDirsFromTarStderr,
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
@@ -83,7 +87,6 @@ import type {
   SandboxWorkloadReceipt,
 } from "./registry/types.js";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
-import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
 import { restoreStateFile } from "./state-file-restore.js";
@@ -94,6 +97,7 @@ const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(nemoclawStateRoot(HOME_DIR, GATEWAY_PORT), "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
+export const STATE_DIRECTORY_CAPTURE_MAX_BYTES = 256 * 1024 * 1024;
 export const OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR =
   "custom-image OpenClaw plugin provenance is missing or invalid";
 export const MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR =
@@ -123,6 +127,8 @@ export interface RebuildManifest {
   backedUpDirs?: string[];
   /** Declared directories that could not be backed up. Absent on older manifests. */
   failedBackupDirs?: string[];
+  /** False when the retained files are incomplete and must not be selected for restore. */
+  backupComplete?: boolean;
   stateFiles?: StateFileSpec[];
   /** Single config/state directory */
   dir: string;
@@ -130,16 +136,22 @@ export interface RebuildManifest {
   writableDir?: string;
   backupPath: string;
   blueprintDigest: string | null;
-  policyPresets?: string[];
-  /**
-   * Custom policy presets applied via `--from-file`/`--from-dir`, captured with
-   * full content so they can be re-applied on restore without the source file.
-   * Like `policyPresets`, these live in the gateway policy engine and are
-   * otherwise lost on destroy/recreate. Always present on snapshots created since
-   * this field was added (possibly an empty array, so restore can reconcile a
-   * zero-custom snapshot); absent only on legacy manifests.
-   */
-  customPolicies?: CustomPolicyEntry[];
+  /** Bounded live-policy handoff retained only while a rebuild transaction is recoverable. */
+  rebuildPolicyHandoff?: {
+    file: string;
+    sha256: string;
+    /** Cleanup-only identity; retired handoffs cannot be consumed for recovery. */
+    retired?: boolean;
+  };
+  /** Digest-bound Hermes operator config retained only while rebuild recovery is possible. */
+  hermesOperatorConfigHandoff?: {
+    file: string;
+    sha256: string;
+    /** Keys captured or classified as dropped before the handoff was written. */
+    keys?: string[];
+    /** Cleanup-only identity; retired handoffs cannot be consumed for recovery. */
+    retired?: boolean;
+  };
   /** Allowlisted non-secret environment assignments captured for image recreation. */
   preservedEnv?: PreservedEnvFile[];
   /**
@@ -184,6 +196,12 @@ export interface BackupOptions {
    * identity, and stable-read constraints before returning bytes.
    */
   captureStateFile?: StateFileCapture;
+  /**
+   * Internal privileged retry for state directories that the restricted tar
+   * path classified as permission denied. The state layer owns the temporary
+   * archive fd and validates the returned archive before publishing it.
+   */
+  captureStateDirectories?: StateDirectoryCapture;
 }
 
 export interface InstanceBackup {
@@ -212,7 +230,23 @@ export type StateFileCaptureResult =
   | { outcome: "missing" }
   | { outcome: "failed"; error?: string; unreachable?: boolean };
 
+export interface StateDirectoryCaptureRequest {
+  sandboxName: string;
+  dir: string;
+  dirs: readonly string[];
+  /** Maximum archive bytes the privileged producer may write to the owned fd. */
+  maxArchiveBytes: number;
+}
+
+export type StateDirectoryCaptureResult =
+  | { outcome: "backed_up" }
+  | { outcome: "failed"; error?: string; unreachable?: boolean };
+
 export type StateFileCapture = (request: StateFileCaptureRequest) => StateFileCaptureResult | null;
+export type StateDirectoryCapture = (
+  request: StateDirectoryCaptureRequest,
+  archiveFd: number,
+) => StateDirectoryCaptureResult | null;
 
 export interface BackupResult {
   success: boolean;
@@ -272,6 +306,8 @@ export interface RecreatedSandboxRestoreOptions extends SnapshotRestoreOptions {
   allowCustomImageWholeStateFileRestore?: true;
   /** Pre-captured baseline avoids a second remote read during onboarding finalization. */
   freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
+  /** Exact OpenShell target frozen by the enclosing rebuild transaction. */
+  runtimeSelection?: OpenShellRuntimeSelection;
 }
 
 interface InternalRestoreOptions {
@@ -279,6 +315,7 @@ interface InternalRestoreOptions {
   allowCustomImageWholeStateFileRestore?: true;
   discoverFreshOpenClawImagePluginInstalls?: true;
   freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
+  runtimeSelection?: OpenShellRuntimeSelection;
   authority?: SnapshotRestoreAuthority;
   validateBeforeMutation?: () => void;
 }
@@ -317,14 +354,13 @@ function isInstanceBackup(value: unknown): value is InstanceBackup {
   );
 }
 
-function isCustomPolicyEntryArray(value: unknown): value is CustomPolicyEntry[] {
-  if (!Array.isArray(value)) return false;
-  if (value.length === 0) return true;
-  try {
-    return registry.normalizeCustomPolicyEntries(value) !== undefined;
-  } catch {
-    return false;
-  }
+function isHermesOperatorConfigInventoryKey(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 512 &&
+    !/[\u0000-\u001f\u007f]/u.test(value)
+  );
 }
 
 function cloneOpenClawImagePluginInstalls(
@@ -391,6 +427,7 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     (value.backedUpDirs === undefined || isBackedUpDirArray(value.backedUpDirs, value.stateDirs)) &&
     (value.failedBackupDirs === undefined ||
       isBackedUpDirArray(value.failedBackupDirs, value.stateDirs)) &&
+    (value.backupComplete === undefined || typeof value.backupComplete === "boolean") &&
     typeof dir === "string" &&
     (value.openclawImagePluginInstalls === undefined ||
       parseOpenClawImagePluginInstalls(value.openclawImagePluginInstalls, dir).ok) &&
@@ -404,8 +441,29 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     (value.blueprintDigest === undefined ||
       value.blueprintDigest === null ||
       typeof value.blueprintDigest === "string") &&
-    (value.policyPresets === undefined || isStringArray(value.policyPresets)) &&
-    (value.customPolicies === undefined || isCustomPolicyEntryArray(value.customPolicies)) &&
+    (value.rebuildPolicyHandoff === undefined ||
+      (isObjectRecord(value.rebuildPolicyHandoff) &&
+        typeof value.rebuildPolicyHandoff.file === "string" &&
+        typeof value.rebuildPolicyHandoff.sha256 === "string" &&
+        /^[a-f0-9]{64}$/.test(value.rebuildPolicyHandoff.sha256) &&
+        (value.rebuildPolicyHandoff.retired === undefined ||
+          value.rebuildPolicyHandoff.retired === true) &&
+        value.rebuildPolicyHandoff.file ===
+          `rebuild-policy-handoff.${value.rebuildPolicyHandoff.sha256}.yaml`)) &&
+    (value.hermesOperatorConfigHandoff === undefined ||
+      (value.agentType === "hermes" &&
+        isObjectRecord(value.hermesOperatorConfigHandoff) &&
+        typeof value.hermesOperatorConfigHandoff.file === "string" &&
+        typeof value.hermesOperatorConfigHandoff.sha256 === "string" &&
+        /^[a-f0-9]{64}$/.test(value.hermesOperatorConfigHandoff.sha256) &&
+        (value.hermesOperatorConfigHandoff.keys === undefined ||
+          (Array.isArray(value.hermesOperatorConfigHandoff.keys) &&
+            value.hermesOperatorConfigHandoff.keys.length <= 4096 &&
+            value.hermesOperatorConfigHandoff.keys.every(isHermesOperatorConfigInventoryKey))) &&
+        (value.hermesOperatorConfigHandoff.retired === undefined ||
+          value.hermesOperatorConfigHandoff.retired === true) &&
+        value.hermesOperatorConfigHandoff.file ===
+          `hermes-operator-config-handoff.${value.hermesOperatorConfigHandoff.sha256}.json`)) &&
     (value.preservedEnv === undefined ||
       (value.agentType === "hermes" &&
         validatePreservedEnvFiles(value.preservedEnv, HERMES_PRESERVED_ENV_INVENTORY))) &&
@@ -699,16 +757,36 @@ export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string):
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-export function getSshConfig(sandboxName: string): string | null {
+export function getSshConfig(
+  sandboxName: string,
+  runtimeOptions: {
+    env?: NodeJS.ProcessEnv;
+    gatewayName?: string;
+    replaceEnv?: boolean;
+  } = {},
+): string | null {
   const openshellBinary = resolveOpenshell();
   if (!openshellBinary) return null;
 
   const result = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
+    ...runtimeOptions,
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (result.status !== 0) return null;
   return result.output;
+}
+
+function selectedSshConfigOptions(
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Parameters<typeof getSshConfig>[1] {
+  return runtimeSelection
+    ? {
+        env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+        gatewayName: runtimeSelection.gatewayName,
+        replaceEnv: true,
+      }
+    : undefined;
 }
 
 export function sshArgs(configFile: string, sandboxName: string): string[] {
@@ -769,7 +847,10 @@ export function sanitizeBackupDirectory(
   dirPath: string,
   overrides: Partial<BackupSanitizationOperations> = {},
 ): void {
-  const operations = { ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS, ...overrides };
+  const operations = {
+    ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS,
+    ...overrides,
+  };
 
   try {
     operations.sanitizeDirectory(dirPath);
@@ -811,27 +892,6 @@ export function sanitizeBackupDirectory(
       },
     );
   }
-}
-
-export interface IncompleteSnapshotRemoval {
-  readonly removed: boolean;
-  readonly error?: string;
-}
-
-export function removeIncompleteSnapshot(
-  backupPath: string,
-  overrides: Partial<Pick<BackupSanitizationOperations, "removeBackup" | "backupExists">> = {},
-): IncompleteSnapshotRemoval {
-  const operations = { ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS, ...overrides };
-  try {
-    operations.removeBackup(backupPath);
-  } catch (error) {
-    return { removed: false, error: error instanceof Error ? error.message : String(error) };
-  }
-  if (operations.backupExists(backupPath)) {
-    return { removed: false, error: "the snapshot directory still exists after removal" };
-  }
-  return { removed: true };
 }
 
 // ── Logging ────────────────────────────────────────────────────────
@@ -977,6 +1037,37 @@ function normalizeStateFileSpecs(
   return normalized;
 }
 
+/** Check privileged snapshot requests against the owning agent manifest. */
+export function isDeclaredAgentStateFile(
+  agentName: string,
+  dir: string,
+  spec: StateFileSpec,
+): boolean {
+  const agent = loadAgent(agentName);
+  return (
+    dir === agent.configPaths.dir &&
+    ((agentName === "hermes" && spec.path === ".env" && spec.strategy === "copy") ||
+      agent.stateFiles.some(
+        (entry) => entry.path === spec.path && entry.strategy === spec.strategy,
+      ))
+  );
+}
+
+/** Check privileged directory requests against the owning agent manifest. */
+export function areDeclaredAgentStateDirectories(
+  agentName: string,
+  dir: string,
+  names: readonly string[],
+): boolean {
+  if (names.length === 0) return false;
+  const agent = loadAgent(agentName);
+  const allowed = new Set(agent.backupStateDirs);
+  return (
+    dir === agent.configPaths.dir &&
+    names.every((name) => allowed.has(name) && /^[A-Za-z0-9._-]+$/.test(name))
+  );
+}
+
 function stateFileRemotePath(dir: string, filePath: string): string {
   return `${dir.replace(/\/+$/, "")}/${filePath}`;
 }
@@ -1005,6 +1096,7 @@ export function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): s
       `src=${quotedRemotePath}`,
       '[ ! -e "$src" ] && exit 2',
       '[ -f "$src" ] && [ ! -L "$src" ] || { echo "unsafe sqlite state file: $src" >&2; exit 10; }',
+      '[ -r "$src" ] || { echo "permission denied: $src" >&2; exit 1; }',
       'hardlink_count="$(find "$src" -maxdepth 0 -type f -links +1 -print 2>/dev/null | wc -l | tr -d " ")"',
       '[ "${hardlink_count:-0}" = "0" ] || { echo "hard-linked sqlite state file rejected: $src" >&2; exit 11; }',
       'tmp="$(mktemp /tmp/nemoclaw-sqlite-backup.XXXXXX)"',
@@ -1040,7 +1132,12 @@ function capturePreservedEnvFile(
   sandboxName: string,
   dir: string,
   inventory: PreservedEnvInventory,
-): { outcome: StateFileBackupOutcome; file?: PreservedEnvFile; unreachable: boolean } {
+  captureFallback?: StateFileCapture,
+): {
+  outcome: StateFileBackupOutcome;
+  file?: PreservedEnvFile;
+  unreachable: boolean;
+} {
   const command = buildStateFileBackupCommand(dir, {
     path: inventory.path,
     strategy: "copy",
@@ -1052,16 +1149,48 @@ function capturePreservedEnvFile(
     maxBuffer: 1024 * 1024,
   });
   if (result.status === 2) return { outcome: "missing", unreachable: false };
-  if (result.status !== 0 || result.error || result.signal || !result.stdout) {
+  let captured: StateFileCaptureResult | null = null;
+  if (
+    result.status === 1 &&
+    !result.error &&
+    !result.signal &&
+    /permission denied/i.test(result.stderr?.toString() ?? "") &&
+    captureFallback !== undefined
+  ) {
+    try {
+      captured = captureFallback({
+        sandboxName,
+        dir,
+        spec: { path: inventory.path, strategy: "copy" },
+      });
+    } catch (error) {
+      captured = {
+        outcome: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  if (captured?.outcome === "missing") return { outcome: "missing", unreachable: false };
+  const data = captured?.outcome === "backed_up" ? captured.data : null;
+  if ((result.status !== 0 || result.error || result.signal || !result.stdout) && data === null) {
     const detail =
+      (captured?.outcome === "failed" ? captured.error : undefined) ||
       (result.stderr?.toString() || "").trim() ||
       result.error?.message ||
       (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
     _log(`FAILED: preserved environment capture ${inventory.path}: ${detail.substring(0, 200)}`);
-    return { outcome: "failed", unreachable: isSshTransportFailure(result) };
+    return {
+      outcome: "failed",
+      unreachable:
+        (captured?.outcome === "failed" && captured.unreachable === true) ||
+        isSshTransportFailure(result),
+    };
   }
   try {
-    const assignments = extractPreservedEnvAssignments(result.stdout.toString("utf8"), inventory);
+    const assignments = extractPreservedEnvAssignments(
+      (data ?? result.stdout).toString("utf8"),
+      inventory,
+    );
     _log(
       `Captured ${assignments.length} preserved environment ${assignments.length === 1 ? "key" : "keys"} from ${inventory.path}`,
     );
@@ -1083,12 +1212,19 @@ function capturePreservedEnvFiles(
   sandboxName: string,
   dir: string,
   inventories: readonly PreservedEnvInventory[],
+  captureFallback?: StateFileCapture,
 ): { files: PreservedEnvFile[]; failedPaths: string[]; unreachable: boolean } {
   const files: PreservedEnvFile[] = [];
   const failedPaths: string[] = [];
   let unreachable = false;
   for (const inventory of inventories) {
-    const result = capturePreservedEnvFile(configFile, sandboxName, dir, inventory);
+    const result = capturePreservedEnvFile(
+      configFile,
+      sandboxName,
+      dir,
+      inventory,
+      captureFallback,
+    );
     if (result.outcome === "backed_up" && result.file) {
       files.push(result.file);
     } else if (result.outcome === "failed") {
@@ -1106,6 +1242,7 @@ function captureAgentPreservedEnvFiles(
   dir: string,
   manifest: RebuildManifest,
   failedFiles: string[],
+  captureFallback?: StateFileCapture,
 ): boolean {
   if (agentName !== "hermes") return false;
   const preserved = capturePreservedEnvFiles(
@@ -1113,6 +1250,7 @@ function captureAgentPreservedEnvFiles(
     sandboxName,
     dir,
     HERMES_PRESERVED_ENV_INVENTORY,
+    captureFallback,
   );
   manifest.preservedEnv = preserved.files;
   failedFiles.push(...preserved.failedPaths);
@@ -1138,7 +1276,13 @@ function backupStateFile(
   if (result.status === 2) return { outcome: "missing", unreachable: false };
   const emptySqliteBackup = spec.strategy === "sqlite_backup" && result.stdout?.length === 0;
   let captured: StateFileCaptureResult | null = null;
-  if (result.status === 1 && !result.error && !result.signal && captureFallback !== undefined) {
+  if (
+    result.status === 1 &&
+    !result.error &&
+    !result.signal &&
+    (dir === "/sandbox/.openclaw" || /permission denied/i.test(result.stderr?.toString() ?? "")) &&
+    captureFallback !== undefined
+  ) {
     try {
       captured = captureFallback({ sandboxName, dir, spec });
     } catch (error) {
@@ -1182,6 +1326,95 @@ function backupStateFile(
   return { outcome: "backed_up", unreachable: false };
 }
 
+function retryPermissionDeniedDirectories(
+  captureFallback: StateDirectoryCapture | undefined,
+  sandboxName: string,
+  dir: string,
+  backupPath: string,
+  failedDirs: string[],
+  backedUpDirs: string[],
+  failedDirReasons: Record<string, string>,
+): void {
+  if (!captureFallback) return;
+  const denied = failedDirs.filter(
+    (name) => failedDirReasons[name] === BACKUP_FAILURE_PERMISSION_DENIED,
+  );
+  if (denied.length === 0) return;
+  let stagingDir: string | undefined;
+  let archivePath = "";
+  let archiveFd: number | undefined;
+  try {
+    stagingDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-privileged-"));
+    archivePath = path.join(stagingDir, "archive.tar");
+    archiveFd = openSync(archivePath, "wx", 0o600);
+    const capture = captureFallback(
+      {
+        sandboxName,
+        dir,
+        dirs: denied,
+        maxArchiveBytes: STATE_DIRECTORY_CAPTURE_MAX_BYTES,
+      },
+      archiveFd,
+    );
+    closeSync(archiveFd);
+    archiveFd = undefined;
+    const archiveBytes = statSync(archivePath).size;
+    if (
+      capture?.outcome !== "backed_up" ||
+      archiveBytes === 0 ||
+      archiveBytes > STATE_DIRECTORY_CAPTURE_MAX_BYTES
+    ) {
+      const detail =
+        archiveBytes > STATE_DIRECTORY_CAPTURE_MAX_BYTES
+          ? `archive exceeded the ${String(STATE_DIRECTORY_CAPTURE_MAX_BYTES)}-byte snapshot limit`
+          : capture?.outcome === "failed"
+            ? (capture.error ?? "failed")
+            : "no archive";
+      _log(`FAILED: privileged state directory capture: ${detail}`);
+      return;
+    }
+    const allowedTopLevelEntries = new Set(denied);
+    const archiveValidation = validateTarEntries({ filePath: archivePath }, backupPath);
+    const undeclaredEntry = archiveValidation.entries.find((entry) => {
+      const normalized = entry.replace(/^\.\/+/, "");
+      const topLevel = normalized.split("/", 1)[0];
+      return !topLevel || !allowedTopLevelEntries.has(topLevel);
+    });
+    if (!archiveValidation.safe || undeclaredEntry) {
+      const detail = undeclaredEntry
+        ? `undeclared archive entry: ${undeclaredEntry}`
+        : archiveValidation.violations.join("; ");
+      _log(`FAILED: privileged state directory capture: ${detail}`);
+      return;
+    }
+    for (const name of denied) {
+      const target = path.join(backupPath, name);
+      rejectSymlinksOnPath(target);
+      rmSync(target, { recursive: true, force: true });
+    }
+    const extracted = safeTarExtract({ filePath: archivePath }, backupPath);
+    if (!extracted.success) {
+      _log(`FAILED: privileged state directory capture: ${extracted.error}`);
+      return;
+    }
+    const recovered = new Set(existingBackupDirs(backupPath, denied));
+    for (const name of denied) {
+      if (!recovered.has(name)) continue;
+      const index = failedDirs.indexOf(name);
+      if (index >= 0) failedDirs.splice(index, 1);
+      delete failedDirReasons[name];
+      if (!backedUpDirs.includes(name)) backedUpDirs.push(name);
+    }
+  } catch (error) {
+    _log(
+      `FAILED: privileged state directory capture: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  } finally {
+    if (archiveFd !== undefined) closeSync(archiveFd);
+    if (stagingDir) rmSync(stagingDir, { recursive: true, force: true });
+  }
+}
+
 // ── Backup ─────────────────────────────────────────────────────────
 
 /**
@@ -1215,7 +1448,9 @@ function normalizeSnapshotBackupAuthority(options: BackupOptions): {
     options.hostLocalInferenceProvenance,
   );
   if (options.runtimeSnapshot !== undefined && runtimeSnapshot === undefined) {
-    return { error: "snapshot runtime state is invalid or cannot be represented" };
+    return {
+      error: "snapshot runtime state is invalid or cannot be represented",
+    };
   }
   if (options.workload !== undefined && workload === undefined) {
     return { error: "snapshot workload authority is invalid" };
@@ -1427,18 +1662,6 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   // a symlink swapped in between the first check and mkdirSync is caught here.
   rejectSymlinksOnPath(backupPath);
 
-  // Capture applied policy presets from the registry so they can be
-  // re-applied after rebuild. Presets live in the gateway policy engine,
-  // not on the sandbox filesystem, so they are lost on destroy/recreate.
-  const policyPresets: string[] = sb?.policies && sb.policies.length > 0 ? [...sb.policies] : [];
-  _log(`policyPresets from registry: [${policyPresets.join(",")}]`);
-  // Custom presets (--from-file/--from-dir) also live only in the gateway policy
-  // engine, so capture their full content for replay. Always record the field
-  // (even empty) so restore can tell a zero-custom snapshot (reconcile, remove
-  // any stale custom presets on the target) from a legacy snapshot (skip).
-  const customPolicies: CustomPolicyEntry[] = sb?.customPolicies ? [...sb.customPolicies] : [];
-  _log(`customPolicies from registry: [${customPolicies.map((c) => c.name).join(",")}]`);
-
   const manifest: RebuildManifest = {
     version: MANIFEST_VERSION,
     sandboxName,
@@ -1454,12 +1677,11 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       : {}),
     stateDirs,
     failedBackupDirs: [],
+    backupComplete: false,
     stateFiles,
     dir,
     backupPath,
     blueprintDigest: computeBlueprintDigest(),
-    policyPresets,
-    customPolicies,
     ...(agentName === "hermes" ? { preservedEnv: [] } : {}),
     ...snapshotAuthority,
     ...(providedName !== null ? { name: providedName } : {}),
@@ -1485,8 +1707,16 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         error: publicationError,
       };
     }
+    manifest.backupComplete = true;
     writeManifest(backupPath, manifest);
-    return { success: true, manifest, backedUpDirs, failedDirs, backedUpFiles, failedFiles };
+    return {
+      success: true,
+      manifest,
+      backedUpDirs,
+      failedDirs,
+      backedUpFiles,
+      failedFiles,
+    };
   }
 
   // SSH+tar single-roundtrip download
@@ -1808,10 +2038,28 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
             failedDirs.push(...existingDirs);
           }
         } else {
-          failedDirs.push(...existingDirs);
+          const tarFailedDirs = classifyFailedDirsFromTarStderr(
+            result.stderr?.toString() || "",
+            existingDirs,
+          );
+          for (const name of existingDirs) {
+            failedDirs.push(name);
+            const reason = tarFailedDirs.get(name);
+            if (reason !== undefined) failedDirReasons[name] = reason;
+          }
         }
       }
     }
+
+    retryPermissionDeniedDirectories(
+      options.captureStateDirectories,
+      sandboxName,
+      dir,
+      backupPath,
+      failedDirs,
+      backedUpDirs,
+      failedDirReasons,
+    );
 
     for (const spec of stateFiles) {
       const result = backupStateFile(
@@ -1841,6 +2089,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         dir,
         manifest,
         failedFiles,
+        options.captureStateFile,
       ) || unreachable;
   } finally {
     try {
@@ -1868,6 +2117,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
     manifest.stateDirs.includes(failedDir),
   );
+  manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
 
   const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
   if (publicationError) {
@@ -2012,9 +2262,9 @@ export function captureSnapshotRestoreAuthority(
   }
 }
 
-function validateSnapshotRestoreMutation(
+export function validateSnapshotRestoreMutation(
   backupPath: string,
-  options: Pick<InternalRestoreOptions, "authority" | "validateBeforeMutation">,
+  options: Pick<SnapshotRestoreOptions, "authority" | "validateBeforeMutation">,
 ): string | null {
   if (options.authority) {
     const current = captureSnapshotRestoreAuthority(backupPath);
@@ -2079,6 +2329,7 @@ export function restoreRecreatedSandboxState(
       ? { discoverFreshOpenClawImagePluginInstalls: true }
       : {}),
     freshOpenClawImagePluginInstalls: options.freshOpenClawImagePluginInstalls,
+    ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
     ...(options.authority ? { authority: options.authority } : {}),
     ...(options.validateBeforeMutation
       ? { validateBeforeMutation: options.validateBeforeMutation }
@@ -2092,6 +2343,9 @@ function restoreSandboxStateInternal(
   options: InternalRestoreOptions,
 ): RestoreResult {
   _log(`restoreSandboxState: sandbox=${sandboxName}, backupPath=${backupPath}`);
+  const selectedSshEnv = options.runtimeSelection
+    ? buildSelectedOpenShellSubprocessEnv(options.runtimeSelection)
+    : undefined;
   const manifest = readManifest(backupPath);
   if (!manifest) {
     _log("FAILED: Could not read rebuild-manifest.json");
@@ -2265,7 +2519,12 @@ function restoreSandboxStateInternal(
   } else if (options.discoverFreshOpenClawImagePluginInstalls === true) {
     const discovery = discoverFreshOpenClawImagePluginInstalls(
       sandboxName,
-      { getSshConfig, sshArgs },
+      {
+        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
+        getSshConfig: (name) =>
+          getSshConfig(name, selectedSshConfigOptions(options.runtimeSelection)),
+        sshArgs,
+      },
       targetAgent.configPaths.dir,
     );
     if (!discovery.ok) {
@@ -2284,11 +2543,17 @@ function restoreSandboxStateInternal(
       return failRestoreContract(mutationAuthorityError);
     }
     _log("No dirs or files to restore");
-    return { success: true, restoredDirs, failedDirs, restoredFiles, failedFiles };
+    return {
+      success: true,
+      restoredDirs,
+      failedDirs,
+      restoredFiles,
+      failedFiles,
+    };
   }
 
   _log("Getting SSH config for restore");
-  const sshConfig = getSshConfig(sandboxName);
+  const sshConfig = getSshConfig(sandboxName, selectedSshConfigOptions(options.runtimeSelection));
   if (!sshConfig) {
     _log("FAILED: Could not get SSH config for restore");
     return {
@@ -2394,6 +2659,7 @@ function restoreSandboxStateInternal(
       );
       _log(`Cleaning target dirs before restore: ${rmCmd}`);
       const rmResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), rmCmd], {
+        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 30000,
       });
@@ -2417,6 +2683,7 @@ function restoreSandboxStateInternal(
     if (restoreTar !== undefined) {
       const extractCmd = `tar --no-same-owner -xf - -C ${shellQuote(dir)}`;
       const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
+        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
         input: restoreTar,
         stdio: ["pipe", "pipe", "pipe"],
         timeout: 120000,
@@ -2432,6 +2699,7 @@ function restoreSandboxStateInternal(
         const chownCmd = `chown -R sandbox:sandbox -- ${restoredPaths.map(shellQuote).join(" ")} 2>/dev/null || true`;
         _log(`Best-effort ownership repair: ${chownCmd}`);
         const chownResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), chownCmd], {
+          ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 30000,
         });
@@ -2455,6 +2723,7 @@ function restoreSandboxStateInternal(
           "ssh",
           [...sshArgs(configFile, sandboxName), usabilityCmd],
           {
+            ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
             stdio: ["ignore", "pipe", "pipe"],
             timeout: 30000,
           },
@@ -2491,6 +2760,7 @@ function restoreSandboxStateInternal(
           _log,
           configFreshOpenClawImagePluginInstalls,
           previousOpenClawImagePluginInstalls,
+          selectedSshEnv,
         )
       ) {
         restoredFiles.push(spec.path);
@@ -2540,7 +2810,10 @@ function writeManifest(
   try {
     // A snapshot becomes recoverable only after its complete, private manifest
     // is atomically renamed into place.
-    ops.write(tempPath, JSON.stringify(manifest, null, 2), { mode: 0o600, flag: "wx" });
+    ops.write(tempPath, JSON.stringify(manifest, null, 2), {
+      mode: 0o600,
+      flag: "wx",
+    });
     ops.rename(tempPath, manifestPath);
     published = true;
   } finally {
@@ -2555,6 +2828,253 @@ function writeManifest(
 }
 
 export const __test = { writeManifest };
+
+function readBoundRebuildHandoff(filePath: string): string | null {
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const before = fstatSync(descriptor, { bigint: true });
+    const uid = process.getuid?.();
+    if (
+      !before.isFile() ||
+      before.nlink !== 1n ||
+      (uid !== undefined && before.uid !== BigInt(uid)) ||
+      (before.mode & 0o777n) !== 0o600n ||
+      before.size > 8n * 1024n * 1024n
+    ) {
+      return null;
+    }
+    const content = readFileSync(descriptor, "utf8");
+    const after = fstatSync(descriptor, { bigint: true });
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.uid !== after.uid ||
+      before.mode !== after.mode ||
+      before.nlink !== after.nlink ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs
+    ) {
+      return null;
+    }
+    return content;
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+  }
+}
+
+/** Publish or replace the transaction-bound policy handoff beside its rebuild backup. */
+export function writeRebuildPolicyHandoff(
+  manifest: RebuildManifest,
+  policyDocument: string,
+): RebuildManifest {
+  if (!policyDocument.trim()) throw new Error("Cannot persist an empty rebuild policy handoff");
+  if (!isOpenShellSandboxPolicyCredentialFree(policyDocument)) {
+    throw new Error("Cannot persist a credential-bearing rebuild policy handoff");
+  }
+  const sha256 = createHash("sha256").update(policyDocument).digest("hex");
+  const file = `rebuild-policy-handoff.${sha256}.yaml`;
+  const filePath = path.join(manifest.backupPath, file);
+  let created = false;
+  let published = false;
+  try {
+    try {
+      writeFileSync(filePath, policyDocument, {
+        encoding: "utf8",
+        mode: 0o600,
+        flag: "wx",
+      });
+      created = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = readBoundRebuildHandoff(filePath);
+      if (existing !== policyDocument) {
+        throw new Error("Existing rebuild policy handoff does not match its content identity");
+      }
+    }
+    const next = {
+      ...manifest,
+      rebuildPolicyHandoff: { file, sha256 },
+    };
+    writeManifest(manifest.backupPath, next);
+    const previousFile = manifest.rebuildPolicyHandoff?.file;
+    Object.assign(manifest, next);
+    published = true;
+    if (previousFile && previousFile !== file) {
+      rmSync(path.join(manifest.backupPath, previousFile), { force: true });
+    }
+    return next;
+  } catch (error) {
+    // Roll back only a file that never became authoritative. Once the manifest
+    // is published, removing the new file would strand recovery on a dangling
+    // content identity if cleanup of the superseded handoff fails.
+    if (created && !published) rmSync(filePath, { force: true });
+    throw error;
+  }
+}
+
+/** Read a transaction-bound policy only when its exact published digest still matches. */
+export function readRebuildPolicyHandoff(manifest: RebuildManifest): string | null {
+  const handoff = manifest.rebuildPolicyHandoff;
+  if (!handoff || handoff.retired === true) return null;
+  const content = readBoundRebuildHandoff(path.join(manifest.backupPath, handoff.file));
+  if (content === null) return null;
+  return createHash("sha256").update(content).digest("hex") === handoff.sha256 ? content : null;
+}
+
+/** Retire recovery authority, retain cleanup identity, then delete the handoff artifact. */
+export function clearRebuildPolicyHandoff(
+  manifest: RebuildManifest,
+  ops: {
+    write?: typeof writeManifest;
+    remove?: typeof rmSync;
+    retainRetirement?: boolean;
+  } = {},
+): boolean {
+  const handoff = manifest.rebuildPolicyHandoff;
+  if (!handoff) return true;
+  const write = ops.write ?? writeManifest;
+  const remove = ops.remove ?? rmSync;
+  if (handoff.retired !== true) {
+    const retired = {
+      ...manifest,
+      rebuildPolicyHandoff: { ...handoff, retired: true as const },
+    };
+    try {
+      write(manifest.backupPath, retired);
+    } catch {
+      return false;
+    }
+    Object.assign(manifest, retired);
+  }
+  try {
+    remove(path.join(manifest.backupPath, handoff.file), { force: true });
+  } catch {
+    return false;
+  }
+  if (ops.retainRetirement === true) return true;
+  const cleared = { ...manifest };
+  delete cleared.rebuildPolicyHandoff;
+  try {
+    write(manifest.backupPath, cleared);
+  } catch {
+    return false;
+  }
+  delete manifest.rebuildPolicyHandoff;
+  return true;
+}
+
+/** Publish or replace the transaction-bound Hermes operator config beside its rebuild backup. */
+export function writeHermesOperatorConfigHandoff(
+  manifest: RebuildManifest,
+  document: string,
+  keys: readonly string[] = [],
+): RebuildManifest {
+  if (manifest.agentType !== "hermes") {
+    throw new Error("Hermes operator config handoff requires a Hermes rebuild manifest");
+  }
+  if (!document.trim()) throw new Error("Cannot persist an empty Hermes operator config handoff");
+  if (Buffer.byteLength(document, "utf8") > 8 * 1024 * 1024) {
+    throw new Error("Hermes operator config handoff exceeds the bounded 8 MiB limit");
+  }
+  const sha256 = createHash("sha256").update(document).digest("hex");
+  const file = `hermes-operator-config-handoff.${sha256}.json`;
+  const keyInventory = [...new Set(keys)].sort();
+  if (
+    keyInventory.length > 4096 ||
+    keyInventory.some((key) => !isHermesOperatorConfigInventoryKey(key))
+  ) {
+    throw new Error("Hermes operator config key inventory is invalid or exceeds its bound");
+  }
+  const filePath = path.join(manifest.backupPath, file);
+  let created = false;
+  let published = false;
+  try {
+    try {
+      writeFileSync(filePath, document, {
+        encoding: "utf8",
+        mode: 0o600,
+        flag: "wx",
+      });
+      created = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = readBoundRebuildHandoff(filePath);
+      if (existing !== document) {
+        throw new Error(
+          "Existing Hermes operator config handoff does not match its content identity",
+        );
+      }
+    }
+    const next = {
+      ...manifest,
+      hermesOperatorConfigHandoff: { file, sha256, keys: keyInventory },
+    };
+    writeManifest(manifest.backupPath, next);
+    const previousFile = manifest.hermesOperatorConfigHandoff?.file;
+    Object.assign(manifest, next);
+    published = true;
+    if (previousFile && previousFile !== file) {
+      rmSync(path.join(manifest.backupPath, previousFile), { force: true });
+    }
+    return next;
+  } catch (error) {
+    if (created && !published) rmSync(filePath, { force: true });
+    throw error;
+  }
+}
+
+/** Read Hermes operator config only when its exact published digest still matches. */
+export function readHermesOperatorConfigHandoff(manifest: RebuildManifest): string | null {
+  const handoff = manifest.hermesOperatorConfigHandoff;
+  if (!handoff || handoff.retired === true) return null;
+  const content = readBoundRebuildHandoff(path.join(manifest.backupPath, handoff.file));
+  if (content === null) return null;
+  return createHash("sha256").update(content).digest("hex") === handoff.sha256 ? content : null;
+}
+
+/** Retire recovery authority, then delete the Hermes operator config handoff. */
+export function clearHermesOperatorConfigHandoff(
+  manifest: RebuildManifest,
+  ops: {
+    write?: typeof writeManifest;
+    remove?: typeof rmSync;
+  } = {},
+): boolean {
+  const handoff = manifest.hermesOperatorConfigHandoff;
+  if (!handoff) return true;
+  const write = ops.write ?? writeManifest;
+  const remove = ops.remove ?? rmSync;
+  if (handoff.retired !== true) {
+    const retired = {
+      ...manifest,
+      hermesOperatorConfigHandoff: { ...handoff, retired: true as const },
+    };
+    try {
+      write(manifest.backupPath, retired);
+    } catch {
+      return false;
+    }
+    Object.assign(manifest, retired);
+  }
+  try {
+    remove(path.join(manifest.backupPath, handoff.file), { force: true });
+  } catch {
+    return false;
+  }
+  const cleared = { ...manifest };
+  delete cleared.hermesOperatorConfigHandoff;
+  try {
+    write(manifest.backupPath, cleared);
+  } catch {
+    return false;
+  }
+  delete manifest.hermesOperatorConfigHandoff;
+  return true;
+}
 
 function readManifestPayload(backupPath: string): unknown | null {
   const manifestPath = path.join(backupPath, "rebuild-manifest.json");
@@ -2579,7 +3099,10 @@ function readManifest(backupPath: string): RebuildManifest | null {
   try {
     const parsed = readManifestPayload(backupPath);
     if (!isRebuildManifest(parsed)) return null;
-    const manifest = parsed as RebuildManifest & { dir?: string; writableDir?: string };
+    const manifest = parsed as RebuildManifest & {
+      dir?: string;
+      writableDir?: string;
+    };
     const dir = manifest.dir ?? manifest.writableDir;
     if (!dir) return null;
     const runtimeSnapshot =
@@ -2616,6 +3139,17 @@ function readManifest(backupPath: string): RebuildManifest | null {
 export type RebuildRecoveryManifestValidation =
   | { ok: true; manifest: RebuildManifest }
   | { ok: false; reason: string };
+
+function legacyStateFilesArePresent(backupPath: string, manifest: RebuildManifest): boolean {
+  if (manifest.backupComplete !== undefined) return true;
+  return (manifest.stateFiles ?? []).every((spec) => {
+    try {
+      return lstatSync(path.join(backupPath, spec.path)).isFile();
+    } catch {
+      return false;
+    }
+  });
+}
 
 /**
  * Remove one completed rebuild backup without allowing a caller-controlled
@@ -2675,7 +3209,10 @@ export function validateRebuildRecoveryManifest(
 
   const persisted = readManifest(candidateBackupPath);
   if (!persisted || persisted.version !== MANIFEST_VERSION) {
-    return { ok: false, reason: "latest backup manifest is missing, malformed, or unsupported" };
+    return {
+      ok: false,
+      reason: "latest backup manifest is missing, malformed, or unsupported",
+    };
   }
   if (persisted.sandboxName !== sandboxName) {
     return {
@@ -2693,7 +3230,10 @@ export function validateRebuildRecoveryManifest(
     persisted.timestamp !== candidate.timestamp ||
     path.resolve(persisted.backupPath) !== candidateBackupPath
   ) {
-    return { ok: false, reason: "persisted backup identity changed during validation" };
+    return {
+      ok: false,
+      reason: "persisted backup identity changed during validation",
+    };
   }
 
   return { ok: true, manifest: persisted };
@@ -2749,8 +3289,16 @@ export function listBackups(sandboxName: string): SnapshotEntry[] {
 
   const manifests: RebuildManifest[] = [];
   for (const entry of rawEntries) {
-    const m = readManifest(path.join(dir, entry.name));
-    if (m) manifests.push(m);
+    const backupPath = path.join(dir, entry.name);
+    const m = readManifest(backupPath);
+    if (
+      m &&
+      m.backupComplete !== false &&
+      (m.failedBackupDirs?.length ?? 0) === 0 &&
+      legacyStateFilesArePresent(backupPath, m)
+    ) {
+      manifests.push(m);
+    }
   }
 
   // Assign version numbers by timestamp-ascending position (v1 = oldest).

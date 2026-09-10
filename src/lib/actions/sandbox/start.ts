@@ -31,15 +31,9 @@ function verifyGateway(sandboxName: string): Promise<void> {
 
 type SandboxStartupRecoveryResult = import("./connect").SandboxStartupRecoveryResult;
 
-function restoreProcessState(sandboxName: string): SandboxStartupRecoveryResult {
+function restoreProcessState(sandboxName: string): Promise<SandboxStartupRecoveryResult> {
   const { restoreSandboxStartupState } = require("./connect") as typeof import("./connect");
   return restoreSandboxStartupState(sandboxName);
-}
-
-function restoreLockedStartupAccess(sandboxName: string): void {
-  const { restoreLockedStateDirStartupAccess } =
-    require("../../shields") as typeof import("../../shields");
-  restoreLockedStateDirStartupAccess(sandboxName);
 }
 
 /** Wait for a just-started sandbox while tolerating its bounded transient Error phase. */
@@ -60,21 +54,16 @@ async function waitForSandboxReady(
 }
 
 export interface SandboxStartupStateDeps {
-  agent?: SandboxEntry["agent"];
-  restoreLockedStartupAccess?: (sandboxName: string) => void;
   waitForSandboxReady?: (sandboxName: string) => void | Promise<void>;
-  restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
+  restoreProcessState?: (sandboxName: string) => Promise<SandboxStartupRecoveryResult>;
 }
 
 export async function restoreStoppedSandboxStartupState(
   sandboxName: string,
   deps: SandboxStartupStateDeps = {},
 ): Promise<SandboxStartupRecoveryResult> {
-  if ((deps.agent ?? "openclaw") === "openclaw") {
-    (deps.restoreLockedStartupAccess ?? restoreLockedStartupAccess)(sandboxName);
-  }
   await (deps.waitForSandboxReady ?? waitForSandboxReady)(sandboxName);
-  return (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
+  return await (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
 }
 
 export interface SandboxStartDeps {
@@ -82,12 +71,10 @@ export interface SandboxStartDeps {
   observer?: OpenShellSandboxObserver;
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
-  restoreLockedStartupAccess?: (sandboxName: string) => void;
-  restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
+  updateSandbox?: typeof registry.updateSandbox;
+  restoreProcessState?: (sandboxName: string) => Promise<SandboxStartupRecoveryResult>;
   runtimeProviders?: RuntimeProviderBundleRegistry;
-  restoreStartupState?: (
-    sandboxName: string,
-  ) => SandboxStartupRecoveryResult | Promise<SandboxStartupRecoveryResult>;
+  restoreStartupState?: (sandboxName: string) => Promise<SandboxStartupRecoveryResult>;
   waitForManagedGatewaySupervisor?: (sandboxName: string) => boolean;
   verifyGateway?: (sandboxName: string) => Promise<void>;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
@@ -111,9 +98,6 @@ function startupRecoveryFailure(check: SandboxStartupRecoveryResult): string | n
   if ("runtime" in check && check.runtime === "terminal") return null;
   if ("secretBoundaryRefused" in check && check.secretBoundaryRefused) {
     return `secret-boundary refusal: ${String(check.secretBoundaryReason)}`;
-  }
-  if ("mcpReconciliationRefused" in check && check.mcpReconciliationRefused) {
-    return `MCP reconciliation refusal: ${String(check.mcpReconciliationReason)}`;
   }
   if ("forwardRecoveryFailed" in check && check.forwardRecoveryFailed) {
     return String(check.forwardRecoveryFailureDetail);
@@ -143,18 +127,18 @@ function startupRecoveryError(sandboxName: string, detail: unknown): Error {
  * provider or no model has nothing to request, so start skips the request
  * instead of failing.
  */
-function checkStartedSandboxInference(
+async function checkStartedSandboxInference(
   sandboxName: string,
   sandbox: SandboxEntry,
   deps: SandboxStartDeps,
   log: (message: string) => void,
-): SandboxInferenceInvocationResult | null {
+): Promise<SandboxInferenceInvocationResult | null> {
   const model = (sandbox.model ?? "").trim();
   const provider = (sandbox.provider ?? "").trim();
   if (!model || !provider) return null;
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
   log("  Checking that the sandbox serves an agent request…");
-  return (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
+  return await (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
     {
       sandboxName,
       gatewayName,
@@ -206,7 +190,21 @@ async function startSandboxWithinLifecycleFence(
   if (preflight) return preflight;
   const result = resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
+  if (
+    resolved.sandbox.stopped === true &&
+    !registry.recordSandboxStopIntent(
+      sandboxName,
+      false,
+      deps.updateSandbox ?? registry.updateSandbox,
+    )
+  ) {
+    throw new Error(
+      `Sandbox '${sandboxName}' started, but NemoClaw could not clear its intentional-stop record. Run '${cliName()} ${sandboxName} status' before another lifecycle command.`,
+    );
+  }
   if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
+    log("  Checking gateway health and host forwards…");
+    await (deps.verifyGateway ?? verifyGateway)(sandboxName);
     return { exitCode: 0 };
   }
 
@@ -217,8 +215,6 @@ async function startSandboxWithinLifecycleFence(
       deps.restoreStartupState ??
       ((sandboxNameToRestore: string) =>
         restoreStoppedSandboxStartupState(sandboxNameToRestore, {
-          agent: resolved.sandbox.agent,
-          restoreLockedStartupAccess: deps.restoreLockedStartupAccess,
           restoreProcessState: deps.restoreProcessState,
           waitForSandboxReady: (readyName) =>
             waitForSandboxReady(readyName, deps.observer, deps.allowDockerRuntimeInspection),
@@ -253,7 +249,7 @@ async function startSandboxWithinLifecycleFence(
     if (failure) throw startupRecoveryError(name, failure);
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
-    readiness.inference = checkStartedSandboxInference(name, resolved.sandbox, deps, log);
+    readiness.inference = await checkStartedSandboxInference(name, resolved.sandbox, deps, log);
   });
   if (readiness.inference && !readiness.inference.ok) {
     log(`  The sandbox started but inference is not usable: ${readiness.inference.detail}.`);

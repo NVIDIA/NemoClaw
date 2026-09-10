@@ -148,7 +148,7 @@ describe("validation recovery credential prompt", () => {
     expectHelpBeforeSelectionReturn(log);
   });
 
-  it("rechecks policy authority after recovery input before credential persistence (#9833)", async () => {
+  it("rechecks sandbox identity after recovery input before credential persistence (#9833)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "sk-existing");
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const { helpers, prompt } = createRecoveryPrompt(["retry", "sk-replacement"]);
@@ -160,10 +160,10 @@ describe("validation recovery credential prompt", () => {
         "OPENAI_API_KEY",
         null,
         () => {
-          throw new Error("external policy authority must supply the selected route");
+          throw new Error("live sandbox identity changed before the selected route");
         },
       ),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    ).rejects.toThrow(/live sandbox identity changed before/u);
 
     expect(prompt).toHaveBeenCalledTimes(2);
     expect(process.env.OPENAI_API_KEY).toBe("sk-existing");

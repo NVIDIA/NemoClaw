@@ -11,10 +11,6 @@ import { type DependencyNode, findDependency } from "../fixtures/dependency-grap
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const runtimeDirectory = path.join(repoRoot, "agents", "openclaw", "mcporter-runtime");
-const dependencyReview = fs.readFileSync(
-  path.join(repoRoot, "agents", "openclaw", "dependency-review.md"),
-  "utf8",
-);
 const dockerfiles = ["Dockerfile.base", "Dockerfile"].map((name) => ({
   name,
   contents: fs.readFileSync(path.join(repoRoot, name), "utf8"),
@@ -28,14 +24,15 @@ const expectedHonoNodeServerTarball =
   "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
 const expectedHonoVersion = "4.12.34";
 const expectedHonoTarball = "https://registry.npmjs.org/hono/-/hono-4.12.34.tgz";
-const expectedFastUriVersion = "3.1.5";
-const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz";
+const expectedFastUriVersion = "3.1.6";
+const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz";
 const expectedIpAddressVersion = "10.3.1";
 const expectedIpAddressTarball = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 const reviewedAuditConfig = JSON.parse(
   fs.readFileSync(path.join(repoRoot, "ci", "reviewed-npm-audit.json"), "utf8"),
 ) as {
+  npmVersion: string;
   lockedGraphs: Array<{
     directory: string;
     id: string;
@@ -45,6 +42,7 @@ const reviewedAuditConfig = JSON.parse(
     tarballUrl: string;
   }>;
 };
+const expectedReviewedNpmVersion = reviewedAuditConfig.npmVersion;
 const reviewedAuditDriver = fs.readFileSync(
   path.join(repoRoot, "scripts", "audit-reviewed-npm-graph.mts"),
   "utf8",
@@ -53,8 +51,7 @@ const reviewedAuditDriver = fs.readFileSync(
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
   const start = contents.indexOf(startMarker);
-  const helperMarker =
-    "node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only";
+  const helperMarker = "node /scripts/lib/reviewed-npm-archive.mts --verify-only";
   const helperStart = contents.indexOf(helperMarker, start);
   const helperEndMarker = '--label "mcporter ${MCPORTER_VERSION}"';
   const helperEnd = contents.indexOf(helperEndMarker, helperStart) + helperEndMarker.length;
@@ -70,6 +67,19 @@ function extractIntegrityGate(contents: string): string {
     .trim();
 }
 
+function extractAuditReceiptInvocation(contents: string): string {
+  const startMarker = "node /scripts/lib/npm-audit-receipt.mts";
+  const endMarker = "--legacy-audit true";
+  const start = contents.indexOf(startMarker);
+  const end = contents.indexOf(endMarker, start);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return contents
+    .slice(start, end + endMarker.length)
+    .replace(/\\\s*\n/g, " ")
+    .replace(/\s+/g, " ");
+}
+
 function runIntegrityGate(contents: string, version: string) {
   const script = [
     "set -euo pipefail",
@@ -78,14 +88,14 @@ function runIntegrityGate(contents: string, version: string) {
     `MCPORTER_0_7_3_TARBALL=${JSON.stringify(expectedTarball)}`,
     `npm() { printf '%s\\n' ${JSON.stringify(expectedIntegrity)}; }`,
     "node() {",
-    '  [ "$#" -eq 11 ] && [ "${1:-}" = "--experimental-strip-types" ] || return 81',
-    '  [ "${2:-}" = "/scripts/lib/reviewed-npm-archive.mts" ] && [ "${3:-}" = "--verify-only" ] || return 82',
-    '  [ "${4:-}" = "--package-spec" ] && [ "${5:-}" = "mcporter@${MCPORTER_VERSION}" ] || return 83',
-    '  [ "${6:-}" = "--integrity" ] && [ "${7:-}" = ' +
+    '  [ "$#" -eq 10 ] || return 81',
+    '  [ "${1:-}" = "/scripts/lib/reviewed-npm-archive.mts" ] && [ "${2:-}" = "--verify-only" ] || return 82',
+    '  [ "${3:-}" = "--package-spec" ] && [ "${4:-}" = "mcporter@${MCPORTER_VERSION}" ] || return 83',
+    '  [ "${5:-}" = "--integrity" ] && [ "${6:-}" = ' +
       `${JSON.stringify(expectedIntegrity)} ] || return 84`,
-    '  [ "${8:-}" = "--tarball-url" ] && [ "${9:-}" = ' +
+    '  [ "${7:-}" = "--tarball-url" ] && [ "${8:-}" = ' +
       `${JSON.stringify(expectedTarball)} ] || return 85`,
-    '  [ "${10:-}" = "--label" ] && [ "${11:-}" = "mcporter ${MCPORTER_VERSION}" ] || return 86',
+    '  [ "${9:-}" = "--label" ] && [ "${10:-}" = "mcporter ${MCPORTER_VERSION}" ] || return 86',
     "}",
     extractIntegrityGate(contents),
     "printf 'gate-passed\\n'",
@@ -94,25 +104,6 @@ function runIntegrityGate(contents: string, version: string) {
 }
 
 describe("mcporter image supply-chain controls", () => {
-  it("records the patched transitive dependency review boundaries", () => {
-    expect(dependencyReview).toContain("a manifest override, or the locked graph changes");
-    expect(dependencyReview).toContain(
-      "`2.0.5` is the first patched release for `GHSA-frvp-7c67-39w9`",
-    );
-    expect(dependencyReview).toContain("any version other than exact `2.0.11`");
-    expect(dependencyReview).toContain("the `/vercel` adapter");
-    expect(dependencyReview).toContain("`fast-uri@3.1.5`");
-    expect(dependencyReview).toContain("`GHSA-v2hh-gcrm-f6hx`");
-    expect(dependencyReview).toContain("`GHSA-7p8r-x3mc-p8w7`");
-    expect(dependencyReview).toContain("exact `3.1.5`");
-    expect(dependencyReview).toContain("`hono@4.12.34`");
-    expect(dependencyReview).toContain("`GHSA-54fx-42gc-7vw4`");
-    expect(dependencyReview).toContain("exact `4.12.34`");
-    expect(dependencyReview).toContain("`ip-address@10.3.1`");
-    expect(dependencyReview).toContain("`GHSA-mwp4-54f8-5fhr`");
-    expect(dependencyReview).toContain("exact `10.3.1`");
-  });
-
   it("resolves the committed production graph through npm's lockfile boundary", () => {
     const result = spawnSync(
       "npm",
@@ -199,8 +190,9 @@ describe("mcporter image supply-chain controls", () => {
 
   it.each(dockerfiles)("audits the committed dependency graph in $name", ({ contents }) => {
     const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+    const auditReceiptInvocation = extractAuditReceiptInvocation(contents);
     expect(contents).toContain(
-      "COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json",
+      "COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/",
     );
     expect(
       flattenedContents.includes(
@@ -211,14 +203,42 @@ describe("mcporter image supply-chain controls", () => {
         ),
     ).toBe(true);
     expect(flattenedContents).toContain(
-      "node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
+      "node /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
     );
+    expect(contents).toContain("ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=");
+    expect(contents).toContain(
+      "--mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false",
+    );
+    expect(contents).toContain(
+      "--mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false",
+    );
+    expect(flattenedContents).toContain("node /scripts/lib/npm-audit-receipt.mts --receipt");
+    expect(flattenedContents).toContain(
+      "--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json --raw-report",
+    );
+    expect(auditReceiptInvocation).toContain(
+      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json --registry https://registry.yarnpkg.com --threshold high --legacy-audit true",
+    );
+    expect(expectedReviewedNpmVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
+    expect(auditReceiptInvocation).not.toContain("--npm-version");
+    expect(contents).not.toContain("--raw-copy");
+    expect(auditReceiptInvocation).not.toMatch(/\bnpm\s+--version\b/);
+    expect(auditReceiptInvocation).not.toMatch(/\$\(|`/);
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
     expect(contents).not.toContain(`${runtimePrefix} audit signatures`);
     expect(flattenedContents).toContain(
       `${runtimePrefix} ls --omit=dev --all @hono/node-server @modelcontextprotocol/sdk hono mcporter`,
     );
     expect(contents).toContain("StreamableHTTPServerTransport");
+  });
+
+  it("copies the cached base-image audit report only after receipt verification succeeds", () => {
+    const contents = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf8");
+    const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+
+    expect(flattenedContents).toContain(
+      '--result /tmp/mcporter-npm-audit-policy.json && cp "$MCPORTER_RAW_REPORT" /tmp/mcporter-npm-audit.json;',
+    );
   });
 
   it("verifies the exact committed dependency graph signatures in trusted CI (#8925)", () => {
@@ -234,8 +254,6 @@ describe("mcporter image supply-chain controls", () => {
 
     const lockfile = fs.readFileSync(path.join(runtimeDirectory, "package-lock.json"));
     expect(createHash("sha256").update(lockfile).digest("hex")).toBe(graph?.lockSha256);
-    expect(reviewedAuditDriver).toContain(
-      'run("npm", ["audit", "signatures", "--omit=dev"], directory);',
-    );
+    expect(reviewedAuditDriver).toContain("NPM_AUDIT_SIGNATURE_ARGV");
   });
 });

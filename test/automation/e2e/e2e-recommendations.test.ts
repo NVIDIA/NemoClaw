@@ -76,9 +76,12 @@ describe("E2E recommendation normalizer", () => {
       expect.arrayContaining([
         "bedrock-runtime-compatible-anthropic",
         "channels-stop-start",
+        "openclaw-skill-cli",
         "security-posture",
       ]),
     );
+    expect(inventory.allowedJobIds).toContain("openclaw-skill-cli");
+    expect(inventory.manualOnlyJobIds).not.toContain("openclaw-skill-cli");
 
     const channels = normalizeE2eTargetAdvisorResult(
       { required: [], optional: [], confidence: "high" },
@@ -125,7 +128,11 @@ describe("E2E recommendation normalizer", () => {
         "tools/advisors/risk-plan.mts",
         "tools/e2e/credential-free-tests.mts",
         "tools/e2e/execution-coverage.mts",
+        "tools/e2e/full-e2e-timeout-contract.mts",
+        "tools/e2e/gateway-runtime.mts",
+        "tools/e2e/hermes-acp-owning-paths.mts",
         "tools/e2e/onboard-timeout-contract.mts",
+        "tools/e2e/openshell-gateway-upgrade-fixture.mts",
         "tools/e2e/selector-aliases.mts",
         "tools/e2e/target-catalogue.mts",
         "scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts",
@@ -145,15 +152,11 @@ describe("E2E recommendation normalizer", () => {
         path.join(tmp, "tools/advisors/e2e-recommendations.mts"),
       ).href;
       const script = `const module = await import(${JSON.stringify(moduleUrl)}); const inventory = module.trustedE2eRecommendationInventory(); if (!inventory.allowedJobIds.includes("onboard-resume") || !inventory.allowedJobIds.includes("vllm-docker-storage")) process.exit(2);`;
-      const result = spawnSync(
-        process.execPath,
-        ["--experimental-strip-types", "--input-type=module", "--eval", script],
-        {
-          cwd: tmp,
-          encoding: "utf8",
-          env: { PATH: process.env.PATH ?? "" },
-        },
-      );
+      const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: { PATH: process.env.PATH ?? "" },
+      });
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(fs.existsSync(path.join(tmp, "node_modules"))).toBe(false);
     } finally {

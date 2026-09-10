@@ -19,6 +19,9 @@ const { ensureSandboxPortForwardForPort } = requireSource(
 const { createProbeTimingRecorder } = requireSource(
   "../../src/lib/actions/sandbox/probe/timing.ts",
 ) as typeof import("../../src/lib/actions/sandbox/probe/timing.js");
+const forwardService = requireSource(
+  "../../src/lib/adapters/openshell/forward-service.ts",
+) as typeof import("../../src/lib/adapters/openshell/forward-service.js");
 
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -33,7 +36,7 @@ afterEach(() => {
 });
 
 function decodeSandboxExecShellPayload(payload: string): string {
-  const match = payload.match(/printf '%s' '([A-Za-z0-9+\/=]+)' \| base64 -d \| sh/);
+  const match = payload.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d \| sh/);
   return match ? Buffer.from(match[1], "base64").toString("utf8") : payload;
 }
 
@@ -42,14 +45,22 @@ function getSandboxExecShellCommand(rawArgs: unknown): string {
   return decodeSandboxExecShellPayload(String(args.at(-1) ?? ""));
 }
 
-function withFakeOpenshellBinary<T>(fn: () => T): T {
+function expectBoundedGatewayRecoveryCall(request: unknown): void {
+  expect(request).toHaveBeenCalledOnce();
+  expect(request).toHaveBeenCalledWith("hermes-box", "recover", expect.any(Number));
+  const timeout = (request as { mock: { calls: unknown[][] } }).mock.calls[0]?.[2];
+  expect(timeout).toBeGreaterThan(0);
+  expect(timeout).toBeLessThanOrEqual(210_000);
+}
+
+async function withFakeOpenshellBinary<T>(fn: () => T | Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
   const bin = path.join(dir, "openshell");
   const previous = process.env.NEMOCLAW_OPENSHELL_BIN;
   fs.writeFileSync(bin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   process.env.NEMOCLAW_OPENSHELL_BIN = bin;
   try {
-    return fn();
+    return await fn();
   } finally {
     if (previous === undefined) {
       delete process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -99,369 +110,45 @@ function compactTeamsMessagingPlan(port = "3978") {
 }
 
 describe("checkAndRecoverSandboxProcesses", () => {
-  it("does not attempt gateway recovery for terminal agents", () => {
+  it("does not attempt gateway recovery for terminal agents", async () => {
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
       runtime: { kind: "terminal" },
     } as never);
 
-    expect(checkAndRecoverSandboxProcesses("terminal-box", { quiet: true })).toEqual({
-      checked: true,
-      wasRunning: null,
-      recovered: false,
-      forwardRecovered: false,
-      runtime: "terminal",
-    });
-  });
-
-  it("scopes forward stop to the target sandbox when restarting a dead forward", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
-    const deadForward = `SANDBOX  BIND  PORT  PID  STATUS
-beta  127.0.0.1  18789  12345  dead`;
-    const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
-beta  127.0.0.1  18789  12345  running`;
-    let forwardStarted = false;
-    let postStartListCalls = 0;
-    const timingLines: string[] = [];
-    const probeTiming = createProbeTimingRecorder({ write: (line) => timingLines.push(line) });
-
-    vi.spyOn(childProcess, "spawnSync").mockImplementation(
-      (_command: unknown, rawArgs: unknown) => {
-        const shellCommand = getSandboxExecShellCommand(rawArgs);
-        if (shellCommand.includes("validate-hermes-env-secret-boundary.py")) {
-          return {
-            status: 0,
-            stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSECRET_BOUNDARY_OK\n",
-            stderr: "",
-          } as never;
-        }
-        return {
-          status: 0,
-          stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
-          stderr: "",
-        } as never;
+    await expect(checkAndRecoverSandboxProcesses("terminal-box", { quiet: true })).resolves.toEqual(
+      {
+        checked: true,
+        wasRunning: null,
+        recovered: false,
+        forwardRecovered: false,
+        runtime: "terminal",
       },
     );
-    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "beta",
-      agent: "openclaw",
-      dashboardPort: 18789,
-    });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => forwardStarted);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation((rawArgs: unknown) => {
-      const args = Array.isArray(rawArgs) ? rawArgs : [];
-      expect(args).toEqual(["forward", "list"]);
-      postStartListCalls += Number(forwardStarted);
-      return {
-        status: 0,
-        output: forwardStarted && postStartListCalls >= 2 ? runningForward : deadForward,
-      };
-    });
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockImplementation((rawArgs: unknown) => {
-        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        forwardStarted = forwardStarted || (args[0] === "forward" && args[1] === "start");
-        return { status: 0 } as never;
-      });
-
-    expect(
-      withFakeOpenshellBinary(() =>
-        checkAndRecoverSandboxProcesses("beta", { probeTiming, quiet: true }),
-      ),
-    ).toEqual({
-      checked: true,
-      wasRunning: true,
-      recovered: false,
-      forwardRecovered: true,
-    });
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "beta"], {
-      ignoreError: true,
-      stdio: "ignore",
-    });
-    expect(
-      runOpenshell.mock.calls.some(
-        ([args]) =>
-          Array.isArray(args) && args[0] === "forward" && args[1] === "stop" && args.length === 3,
-      ),
-    ).toBe(false);
-    probeTiming.finish("ready");
-    expect(timingLines[0]).toContain("forwardAction=restored");
-    expect(timingLines[0]).toContain("result=ready");
   });
 
-  it.each([
-    { dashboardBind: "0.0.0.0", isWsl: false, requirement: "remote bind" },
-    { dashboardBind: "", isWsl: true, requirement: "WSL" },
-  ])(
-    "restarts a loopback forward when $requirement requires all interfaces (#6024)",
-    ({ dashboardBind, isWsl }) => {
-      const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-      const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
-      const registry = requireSource("../../src/lib/state/registry.js");
-      const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-      const childProcess = requireSource("node:child_process");
-      let forwardStarted = false;
-
-      vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", dashboardBind);
-      vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-      vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-        status: 0,
-        stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
-        stderr: "",
-      } as never);
-      vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
-      vi.spyOn(registry, "getSandbox").mockReturnValue({
-        name: "beta",
-        agent: "openclaw",
-        dashboardPort: 18789,
-        dashboardRemoteBindPrepared: true,
-      });
-      vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-      vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
-        status: 0,
-        output:
-          "SANDBOX  BIND  PORT  PID  STATUS\n" +
-          `beta  ${forwardStarted ? "0.0.0.0" : "127.0.0.1"}  18789  12345  running`,
-      }));
-      const runOpenshell = vi
-        .spyOn(openshellRuntime, "runOpenshell")
-        .mockImplementation((rawArgs: unknown) => {
-          const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-          forwardStarted ||= args[0] === "forward" && args[1] === "start";
-          return { status: 0 } as never;
-        });
-
-      expect(
-        withFakeOpenshellBinary(() =>
-          checkAndRecoverSandboxProcesses("beta", { isWsl, quiet: true }),
-        ),
-      ).toEqual({
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: true,
-      });
-      expect(runOpenshell).toHaveBeenCalledWith(
-        ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
-        { ignoreError: true, stdio: "ignore" },
-      );
-    },
-  );
-
-  it("waits for a stopped forward listener to release before starting its replacement", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const events: string[] = [];
-    let staleListenerProbes = 2;
-    let forwardStarted = false;
-
-    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "1000");
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
-      status: 0,
-      output: forwardStarted
-        ? "SANDBOX  BIND  PORT  PID  STATUS\nbeta  127.0.0.1  8642  23456  running"
-        : "",
-    }));
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => {
-      const staleListenerReachable = !forwardStarted && staleListenerProbes > 0;
-      staleListenerProbes -= Number(staleListenerReachable);
-      forwardStarted || events.push(staleListenerReachable ? "stale-listener" : "released");
-      return forwardStarted || staleListenerReachable;
-    });
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockImplementation((rawArgs: unknown) => {
-        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        const startingForward = args[0] === "forward" && args[1] === "start";
-        startingForward && events.push("start");
-        forwardStarted ||= startingForward;
-        return { status: 0 } as never;
-      });
-
-    expect(ensureSandboxPortForwardForPort("beta", 8642)).toBe(true);
-    expect(events).toEqual(["stale-listener", "stale-listener", "released", "start"]);
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "8642", "beta"],
-      { ignoreError: true, stdio: "ignore" },
-    );
-  });
-
-  it("fails closed after start reconciliation when a listener remains unowned", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-
-    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "25");
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({ status: 0, output: "" });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockImplementation((rawArgs: unknown) => {
-        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        return { status: Number(args[0] === "forward" && args[1] === "start") } as never;
-      });
-
-    expect(ensureSandboxPortForwardForPort("beta", 8642)).toBe(false);
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "8642", "beta"],
-      { ignoreError: true, stdio: "ignore" },
-    );
-  });
-
-  it("checkAndRecoverSandboxProcesses re-establishes an active Teams messaging host forward from a compact plan when the dashboard forward is healthy", () => {
+  it("waits for stopped Hermes recovery after managed OpenShell control succeeds", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
     const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
-    const dashboardForward = `SANDBOX  BIND  PORT  PID  STATUS
-beta  127.0.0.1  18789  12345  running`;
-    const timingLines: string[] = [];
-    const probeTiming = createProbeTimingRecorder({ write: (line) => timingLines.push(line) });
-    const dashboardAndTeamsForwards = `${dashboardForward}
-beta  127.0.0.1  3978  12346  running`;
-    let teamsForwardStarted = false;
-
-    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 0,
-      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
-      stderr: "",
-    } as never);
-    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "beta",
-      agent: "openclaw",
-      dashboardPort: 18789,
-      messaging: { schemaVersion: 1, plan: compactTeamsMessagingPlan() },
-    });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(
-      (port: unknown) => Number(port) === 18789 || teamsForwardStarted,
-    );
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
-      status: 0,
-      output: teamsForwardStarted ? dashboardAndTeamsForwards : dashboardForward,
-    }));
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockImplementation((rawArgs: unknown) => {
-        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        teamsForwardStarted =
-          teamsForwardStarted ||
-          (args[0] === "forward" &&
-            args[1] === "start" &&
-            args.includes("--background") &&
-            args.includes("3978") &&
-            args.includes("beta"));
-        return { status: 0 } as never;
-      });
-
-    expect(
-      withFakeOpenshellBinary(() =>
-        checkAndRecoverSandboxProcesses("beta", { probeTiming, quiet: true }),
-      ),
-    ).toEqual({
-      checked: true,
-      wasRunning: true,
-      recovered: false,
-      forwardRecovered: true,
-    });
-    expect(teamsForwardStarted).toBe(true);
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "3978", "beta"], {
-      ignoreError: true,
-      stdio: "ignore",
-    });
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "3978", "beta"],
-      { ignoreError: true, stdio: "ignore" },
-    );
-    probeTiming.finish("ready");
-    expect(timingLines[0]).toContain("forwardAction=restored");
-    expect(timingLines[0]).toContain("result=ready");
-  });
-
-  it("checkAndRecoverSandboxProcesses reports messaging webhook recovery failure without claiming forwardRecovered", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
-    const dashboardForward = `SANDBOX  BIND  PORT  PID  STATUS
-beta  127.0.0.1  18789  12345  running`;
-    const timingLines: string[] = [];
-    const probeTiming = createProbeTimingRecorder({ write: (line) => timingLines.push(line) });
-
-    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 0,
-      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
-      stderr: "",
-    } as never);
-    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "beta",
-      agent: "openclaw",
-      dashboardPort: 18789,
-      messaging: { schemaVersion: 1, plan: compactTeamsMessagingPlan() },
-    });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(
-      (port: unknown) => Number(port) === 18789,
-    );
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-      status: 0,
-      output: dashboardForward,
-    });
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockImplementation((rawArgs: unknown) => {
-        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        return {
-          status: args[0] === "forward" && args[1] === "start" && args.includes("3978") ? 1 : 0,
-        } as never;
-      });
-
-    expect(
-      withFakeOpenshellBinary(() =>
-        checkAndRecoverSandboxProcesses("beta", { probeTiming, quiet: true }),
-      ),
-    ).toEqual({
-      checked: true,
-      wasRunning: true,
-      recovered: false,
-      forwardRecovered: false,
-      forwardRecoveryFailed: true,
-      forwardRecoveryFailureDetail:
-        "the messaging webhook host forward could not be re-established",
-    });
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "3978", "beta"],
-      { ignoreError: true, stdio: "ignore" },
-    );
-    probeTiming.finish("failed", "forward");
-    expect(timingLines[0]).toContain("forwardAction=failed");
-    expect(timingLines[0]).toContain("result=failed failedStage=forward");
-  });
-
-  it("waits for stopped Hermes recovery after managed OpenShell control succeeds", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
 hermes-box  127.0.0.1  18789  12345  running`;
     const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
     const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
     const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
-    const commands: string[] = [];
-    let restarted = false;
-    const requestGatewaySupervisorAction = vi.fn(() => {
-      restarted = true;
-      return { status: 0, stdout: "GATEWAY_PID=4242\n", stderr: "" };
-    });
+    const requestGatewaySupervisorAction = vi.fn(() => ({
+      status: 0,
+      stdout: "GATEWAY_PID=4242\n",
+      stderr: "",
+    }));
+    const commandExecutor = {
+      runBuffered: vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: 0 },
+        stdout: "",
+        stderr: "",
+      })),
+    };
 
     // The gateway retry is under test; host-forward readiness is fully mocked.
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
@@ -470,18 +157,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
     process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
 
     try {
-      vi.spyOn(childProcess, "spawnSync").mockImplementation(
-        (command: unknown, rawArgs: unknown) => {
-          const shellCommand = getSandboxExecShellCommand(rawArgs);
-          const isHealthProbe = shellCommand.includes("HTTP_CODE=$(curl");
-          const probeStatus = restarted ? "RUNNING" : "STOPPED";
-          const stdout = isHealthProbe
-            ? `__NEMOCLAW_SANDBOX_EXEC_STARTED__\n${probeStatus}\n`
-            : "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n";
-          commands.push(String(command));
-          return { status: 0, stdout, stderr: "" } as never;
-        },
-      );
       vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
         name: "hermes",
         displayName: "Hermes Agent",
@@ -503,23 +178,32 @@ hermes-box  127.0.0.1  18789  12345  running`;
         dashboardPort: 18789,
       });
       vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+      vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
         output: runningForward,
       });
       vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
 
-      const result = withFakeOpenshellBinary(() =>
+      const result = await withFakeOpenshellBinary(() =>
         checkAndRecoverSandboxProcesses("hermes-box", {
           quiet: true,
           requestGatewaySupervisorAction,
+          isSandboxGatewayRunningImpl: async () => false,
+          commandExecutor,
         }),
       );
       expect(result.recovered).toBe(true);
       expect(result.wasRunning).toBe(false);
-      expect(commands).not.toContain("ssh");
-      expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-      expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
+      expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
+      expect(commandExecutor.runBuffered).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sandboxName: "hermes-box",
+          target: { kind: "selected" },
+          command: ["true"],
+        }),
+      );
+      expectBoundedGatewayRecoveryCall(requestGatewaySupervisorAction);
     } finally {
       previousWaitSeconds === undefined
         ? delete process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS
@@ -544,7 +228,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
     ["a non-exact self-recovery marker", "", "prefix SUPERVISOR_UNAVAILABLE suffix"],
     ["an extra self-recovery error", "", "SUPERVISOR_UNAVAILABLE\nGATEWAY_FAILED"],
     ["a self-recovery marker on stdout", "SUPERVISOR_UNAVAILABLE", ""],
-  ])("does not accept %s for Hermes", (_label, stdout, stderr) => {
+  ])("does not accept %s for Hermes", async (_label, stdout, stderr) => {
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
     const childProcess = requireSource("node:child_process");
@@ -585,24 +269,24 @@ hermes-box  127.0.0.1  18789  12345  running`;
       dashboardPort: 18789,
     });
 
-    expect(
+    await expect(
       withFakeOpenshellBinary(() =>
         checkAndRecoverSandboxProcesses("hermes-box", {
           quiet: true,
           requestGatewaySupervisorAction,
+          isSandboxGatewayRunningImpl: async () => false,
         }),
       ),
-    ).toEqual({
+    ).resolves.toEqual({
       checked: true,
       wasRunning: false,
       recovered: false,
       forwardRecovered: false,
     });
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
+    expectBoundedGatewayRecoveryCall(requestGatewaySupervisorAction);
   });
 
-  it("leaves enabled Hermes dashboard recovery to the PID 1 supervisor", () => {
+  it("leaves enabled Hermes dashboard recovery to the PID 1 supervisor", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
@@ -665,30 +349,29 @@ hermes-box  127.0.0.1  18789  12345  running`;
         hermesDashboardInternalPort: 19119,
       });
       vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+      vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
-        output:
-          "SANDBOX  BIND  PORT  PID  STATUS\n" +
-          "hermes-box  127.0.0.1  18789  12345  running\n" +
-          "hermes-box  127.0.0.1  9119  12346  running",
+        output: "SANDBOX  BIND  PORT  PID  STATUS",
       });
       vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
 
-      expect(
+      await expect(
         withFakeOpenshellBinary(() =>
           checkAndRecoverSandboxProcesses("hermes-box", {
             quiet: true,
             requestGatewaySupervisorAction,
+            isSandboxGatewayRunningImpl: async () => false,
+            waitForRecreatedSandboxOpenShellReadyImpl: async () => true,
           }),
         ),
-      ).toEqual({
+      ).resolves.toEqual({
         checked: true,
         wasRunning: false,
         recovered: true,
         forwardRecovered: true,
       });
-      expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-      expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
+      expectBoundedGatewayRecoveryCall(requestGatewaySupervisorAction);
       expect(sshCommands).toHaveLength(0);
     } finally {
       previousWaitSeconds === undefined
@@ -703,7 +386,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
     }
   });
 
-  it("keeps quiet stopped-Hermes recovery failures off stderr", () => {
+  it("keeps quiet stopped-Hermes recovery failures off stderr", async () => {
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
     const childProcess = requireSource("node:child_process");
@@ -721,282 +404,16 @@ hermes-box  127.0.0.1  18789  12345  running`;
       name: "hermes-box",
     });
 
-    withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("hermes-box", { quiet: true }));
+    await withFakeOpenshellBinary(() =>
+      checkAndRecoverSandboxProcesses("hermes-box", {
+        quiet: true,
+        isSandboxGatewayRunningImpl: async () => false,
+      }),
+    );
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it("re-establishes manifest-declared non-primary forward ports when only the primary is healthy", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
-    const onlyPrimaryForward = `SANDBOX  BIND  PORT  PID  STATUS
-hermes-box  127.0.0.1  18789  12345  running`;
-    const bothForwards = `SANDBOX  BIND  PORT  PID  STATUS
-hermes-box  127.0.0.1  18789  12345  running
-hermes-box  127.0.0.1  8642  12346  running`;
-    let secondaryStarted = false;
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    }));
-
-    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 0,
-      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
-      stderr: "",
-    } as never);
-    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
-      name: "hermes",
-      forwardPort: 18789,
-      forward_ports: [18789, 8642],
-    });
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "hermes-box",
-      agent: "hermes",
-      dashboardPort: 18789,
-    });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation((port: unknown) => {
-      if (Number(port) === 18789) return true;
-      if (Number(port) === 8642) return secondaryStarted;
-      return false;
-    });
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
-      status: 0,
-      output: secondaryStarted ? bothForwards : onlyPrimaryForward,
-    }));
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockImplementation((rawArgs: unknown) => {
-        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        if (args[0] === "forward" && args[1] === "start" && args.includes("8642")) {
-          secondaryStarted = true;
-        }
-        return { status: 0 } as never;
-      });
-
-    expect(
-      withFakeOpenshellBinary(() =>
-        checkAndRecoverSandboxProcesses("hermes-box", {
-          quiet: true,
-          requestGatewaySupervisorAction,
-        }),
-      ),
-    ).toEqual({
-      checked: true,
-      wasRunning: true,
-      recovered: false,
-      forwardRecovered: true,
-    });
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
-
-    const startedNonPrimary = runOpenshell.mock.calls.some(([rawArgs]) => {
-      const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-      return (
-        args[0] === "forward" &&
-        args[1] === "start" &&
-        args.includes("--background") &&
-        args.includes("8642") &&
-        args.includes("hermes-box")
-      );
-    });
-    expect(startedNonPrimary).toBe(true);
-
-    const startedPrimary = runOpenshell.mock.calls.some(([rawArgs]) => {
-      const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-      return (
-        args[0] === "forward" &&
-        args[1] === "start" &&
-        args.includes("--background") &&
-        args.includes("18789") &&
-        args.includes("hermes-box")
-      );
-    });
-    expect(startedPrimary).toBe(false);
-  });
-
-  it("leaves a non-primary forward owned by another sandbox alone instead of taking it over", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
-    const occupiedForwardList = `SANDBOX  BIND  PORT  PID  STATUS
-hermes-box  127.0.0.1  18789  12345  running
-sibling-box  127.0.0.1  8642  99999  running`;
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    }));
-
-    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 0,
-      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
-      stderr: "",
-    } as never);
-    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
-      name: "hermes",
-      forwardPort: 18789,
-      forward_ports: [18789, 8642],
-    });
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "hermes-box",
-      agent: "hermes",
-      dashboardPort: 18789,
-    });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(
-      (port: unknown) => Number(port) === 18789,
-    );
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-      status: 0,
-      output: occupiedForwardList,
-    });
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockReturnValue({ status: 0 } as never);
-
-    const result = withFakeOpenshellBinary(() =>
-      checkAndRecoverSandboxProcesses("hermes-box", {
-        quiet: true,
-        requestGatewaySupervisorAction,
-      }),
-    );
-    expect(result.checked).toBe(true);
-    expect(result.wasRunning).toBe(true);
-    expect(result.forwardRecovered).toBe(false);
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-
-    const touchedSecondary = runOpenshell.mock.calls.some(([rawArgs]) => {
-      const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-      return args[0] === "forward" && args.includes("8642");
-    });
-    expect(touchedSecondary).toBe(false);
-  });
-
-  it("ignores invalid forward_ports entries and never invokes openshell forward start for them", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
-    const primaryOnlyForward = `SANDBOX  BIND  PORT  PID  STATUS
-hermes-box  127.0.0.1  18789  12345  running`;
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    }));
-
-    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 0,
-      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
-      stderr: "",
-    } as never);
-    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
-      name: "hermes",
-      forwardPort: 18789,
-      forward_ports: [18789, 0, -1, 1.5, 1023, 70000, "8642" as unknown as number],
-    });
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "hermes-box",
-      agent: "hermes",
-      dashboardPort: 18789,
-    });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-      status: 0,
-      output: primaryOnlyForward,
-    });
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockReturnValue({ status: 0 } as never);
-
-    withFakeOpenshellBinary(() =>
-      checkAndRecoverSandboxProcesses("hermes-box", {
-        quiet: true,
-        requestGatewaySupervisorAction,
-      }),
-    );
-
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-    const issuedForwardStart = runOpenshell.mock.calls.some(([rawArgs]) => {
-      const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-      return args[0] === "forward" && args[1] === "start";
-    });
-    expect(issuedForwardStart).toBe(false);
-  });
-
-  it("reports forward recovery failure when one declared secondary recovers and another fails", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
-    const partialForward = `SANDBOX  BIND  PORT  PID  STATUS
-hermes-box  127.0.0.1  18789  12345  running
-hermes-box  127.0.0.1  8642  12346  running`;
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    }));
-
-    // Forward visibility is fixed by mocks, so the production settle window is unnecessary.
-    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 0,
-      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
-      stderr: "",
-    } as never);
-    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
-      name: "hermes",
-      forwardPort: 18789,
-      forward_ports: [18789, 8642, 9100],
-    });
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "hermes-box",
-      agent: "hermes",
-      dashboardPort: 18789,
-    });
-    let port9100Started = false;
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation((port: unknown) => {
-      if (Number(port) === 18789) return true;
-      if (Number(port) === 8642) return true;
-      if (Number(port) === 9100) return port9100Started;
-      return false;
-    });
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-      status: 0,
-      output: partialForward,
-    });
-    vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((rawArgs: unknown) => {
-      const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-      if (args[0] === "forward" && args[1] === "start" && args.includes("9100")) {
-        return { status: 0 } as never;
-      }
-      return { status: 0 } as never;
-    });
-
-    const result = withFakeOpenshellBinary(() =>
-      checkAndRecoverSandboxProcesses("hermes-box", {
-        quiet: true,
-        requestGatewaySupervisorAction,
-      }),
-    );
-    void port9100Started;
-    expect(result.checked).toBe(true);
-    expect(result.wasRunning).toBe(true);
-    expect(result.forwardRecovered).toBe(false);
-    expect(result.forwardRecoveryFailed).toBe(true);
-    expect(result.forwardRecoveryFailureDetail).toContain("agent-declared host forwards");
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-  });
-
-  it("refuses recovery of a running Hermes gateway when /sandbox/.hermes/.env contains raw secret-shaped values", () => {
+  it("refuses recovery of a running Hermes gateway when /sandbox/.hermes/.env contains raw secret-shaped values", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
@@ -1046,10 +463,11 @@ hermes-box  127.0.0.1  8642  12346  running`;
       .spyOn(openshellRuntime, "runOpenshell")
       .mockReturnValue({ status: 0 } as never);
 
-    const result = withFakeOpenshellBinary(() =>
+    const result = await withFakeOpenshellBinary(() =>
       checkAndRecoverSandboxProcesses("hermes-box", {
         quiet: true,
         requestGatewaySupervisorAction,
+        isSandboxGatewayRunningImpl: async () => true,
       }),
     );
     expect(result).toEqual({
@@ -1077,7 +495,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     expect(errorOutput).toContain("[SECURITY] TELEGRAM_BOT_TOKEN (line 3)");
   });
 
-  it("fails safe on a running Hermes sandbox when the agent definition cannot be loaded", () => {
+  it("fails safe on a running Hermes sandbox when the agent definition cannot be loaded", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
@@ -1116,10 +534,11 @@ hermes-box  127.0.0.1  8642  12346  running`;
       });
     vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
 
-    const result = withFakeOpenshellBinary(() =>
+    const result = await withFakeOpenshellBinary(() =>
       checkAndRecoverSandboxProcesses("hermes-box", {
         quiet: true,
         requestGatewaySupervisorAction,
+        isSandboxGatewayRunningImpl: async () => true,
       }),
     );
     expect(result).toEqual({
@@ -1144,7 +563,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     ["OpenShell managed controller", { status: 0, stdout: "GATEWAY_PID=4242\n", stderr: "" }],
   ])(
     "falls through when the Hermes $label reports a healthy gateway",
-    (_label, supervisorResult) => {
+    async (_label, supervisorResult) => {
       const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
       const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
       const registry = requireSource("../../src/lib/state/registry.js");
@@ -1168,15 +587,17 @@ hermes-box  127.0.0.1  8642  12346  running`;
         dashboardPort: 18789,
       });
       vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+      vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
-        output: `SANDBOX  BIND  PORT  PID  STATUS\nhermes-box  127.0.0.1  8642  12346  running\nhermes-box  127.0.0.1  18789  12345  running`,
+        output: "SANDBOX  BIND  PORT  PID  STATUS",
       });
       vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
-      const result = withFakeOpenshellBinary(() =>
+      const result = await withFakeOpenshellBinary(() =>
         checkAndRecoverSandboxProcesses("hermes-box", {
           quiet: true,
           requestGatewaySupervisorAction,
+          isSandboxGatewayRunningImpl: async () => true,
         }),
       );
       expect(result).toEqual({
@@ -1190,78 +611,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     },
   );
 
-  it("falls through to the forward-refresh path when the Hermes secret-boundary check passes", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
-    let forwardStarted = false;
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    }));
-
-    vi.spyOn(childProcess, "spawnSync").mockImplementation(
-      (_command: unknown, rawArgs: unknown) => {
-        const shellCommand = getSandboxExecShellCommand(rawArgs);
-        if (shellCommand.includes("HTTP_CODE=$(curl")) {
-          return {
-            status: 0,
-            stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
-            stderr: "",
-          } as never;
-        }
-        return { status: 0, stdout: "", stderr: "" } as never;
-      },
-    );
-    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
-      name: "hermes",
-      forwardPort: 18789,
-      displayName: "Hermes Agent",
-    });
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "hermes-box",
-      agent: "hermes",
-      dashboardPort: 18789,
-    });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => forwardStarted);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
-      status: 0,
-      output: `SANDBOX  BIND  PORT  PID  STATUS\nhermes-box  127.0.0.1  18789  12345  ${forwardStarted ? "running" : "dead"}`,
-    }));
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockImplementation((rawArgs: unknown) => {
-        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        if (args[0] === "forward" && args[1] === "start" && args.includes("18789")) {
-          forwardStarted = true;
-        }
-        return { status: 0 } as never;
-      });
-
-    const result = withFakeOpenshellBinary(() =>
-      checkAndRecoverSandboxProcesses("hermes-box", {
-        quiet: true,
-        requestGatewaySupervisorAction,
-      }),
-    );
-    expect(result).toEqual({
-      checked: true,
-      wasRunning: true,
-      recovered: false,
-      forwardRecovered: true,
-    });
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "18789", "hermes-box"],
-      { ignoreError: true, stdio: "ignore" },
-    );
-  });
-
-  it("refuses recovery when the Hermes secret-boundary validator is absent on an older sandbox image", () => {
+  it("refuses recovery when the Hermes secret-boundary validator is absent on an older sandbox image", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
@@ -1298,16 +648,18 @@ hermes-box  127.0.0.1  8642  12346  running`;
       dashboardPort: 18789,
     });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: `SANDBOX  BIND  PORT  PID  STATUS\nhermes-box  127.0.0.1  18789  12345  running`,
     });
     vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
 
-    const result = withFakeOpenshellBinary(() =>
+    const result = await withFakeOpenshellBinary(() =>
       checkAndRecoverSandboxProcesses("hermes-box", {
         quiet: true,
         requestGatewaySupervisorAction,
+        isSandboxGatewayRunningImpl: async () => true,
       }),
     );
     expect(result).toEqual({
@@ -1327,7 +679,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     expect(errorOutput).toContain("Re-image the sandbox with a current Hermes build.");
   });
 
-  it("does not invoke the Hermes PID 1 supervisor path for a running OpenClaw sandbox", () => {
+  it("does not invoke the Hermes PID 1 supervisor path for a running OpenClaw sandbox", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
@@ -1347,6 +699,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
       dashboardPort: 18789,
     });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: `SANDBOX  BIND  PORT  PID  STATUS\nbeta  127.0.0.1  18789  12345  running`,
@@ -1355,10 +708,11 @@ hermes-box  127.0.0.1  8642  12346  running`;
       .spyOn(openshellRuntime, "runOpenshell")
       .mockReturnValue({ status: 0 } as never);
 
-    withFakeOpenshellBinary(() =>
+    await withFakeOpenshellBinary(() =>
       checkAndRecoverSandboxProcesses("beta", {
         quiet: true,
         requestGatewaySupervisorAction,
+        isSandboxGatewayRunningImpl: async () => true,
       }),
     );
     expect(requestGatewaySupervisorAction).not.toHaveBeenCalled();
@@ -1369,7 +723,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     ).toBe(false);
   });
 
-  it("fails safe on a running Hermes gateway when the supervisor channel is unreachable", () => {
+  it("fails safe on a running Hermes gateway when the supervisor channel is unreachable", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
@@ -1412,10 +766,11 @@ hermes-box  127.0.0.1  8642  12346  running`;
       });
     vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
 
-    const result = withFakeOpenshellBinary(() =>
+    const result = await withFakeOpenshellBinary(() =>
       checkAndRecoverSandboxProcesses("hermes-box", {
         quiet: true,
         requestGatewaySupervisorAction,
+        isSandboxGatewayRunningImpl: async () => true,
       }),
     );
     expect(result).toEqual({
@@ -1436,7 +791,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     );
   });
 
-  it("treats a non-zero boundary check without the REFUSED marker as unexpected, not raw-secret", () => {
+  it("treats a non-zero boundary check without the REFUSED marker as unexpected, not raw-secret", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
@@ -1477,10 +832,11 @@ hermes-box  127.0.0.1  8642  12346  running`;
     });
     vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
 
-    const result = withFakeOpenshellBinary(() =>
+    const result = await withFakeOpenshellBinary(() =>
       checkAndRecoverSandboxProcesses("hermes-box", {
         quiet: true,
         requestGatewaySupervisorAction,
+        isSandboxGatewayRunningImpl: async () => true,
       }),
     );
     expect(result).toEqual({

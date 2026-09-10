@@ -1,28 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
+import {
+  fingerprintOpenShellSandboxId,
+  isOpenShellSandboxId,
+} from "../../domain/sandbox/openshell-identity";
+
+export {
+  fingerprintOpenShellSandboxId,
+  isOpenShellSandboxId,
+} from "../../domain/sandbox/openshell-identity";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
-const SANDBOX_ID_RE = /^[A-Za-z0-9._-]+$/u;
-const SANDBOX_ID_MAX_LENGTH = 512;
-
-export function isOpenShellSandboxId(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= SANDBOX_ID_MAX_LENGTH &&
-    SANDBOX_ID_RE.test(value)
-  );
-}
-
-export function fingerprintOpenShellSandboxId(sandboxId: string): string | null {
-  return isOpenShellSandboxId(sandboxId)
-    ? createHash("sha256").update(sandboxId).digest("hex")
-    : null;
-}
-
 export const NEMOCLAW_CREATE_ATTEMPT_LABEL = "ai.nvidia.nemoclaw.create-attempt" as const;
 export const NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH = 62 as const;
 const CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS = 30_000;
@@ -78,13 +68,26 @@ function parseOpenShellSandboxListJson(output: string): readonly unknown[] | nul
   return Array.isArray(rows) ? rows : null;
 }
 
-export function parseOpenShellSandboxId(output: string): string | null {
-  const matches = [
+export type OpenShellSandboxIdObservation =
+  | { readonly kind: "present"; readonly id: string }
+  | { readonly kind: "absent" }
+  | { readonly kind: "invalid" };
+
+export function observeOpenShellSandboxId(output: string): OpenShellSandboxIdObservation {
+  const fields = [
     ...String(output)
       .replace(ANSI_RE, "")
-      .matchAll(/^\s*(?:Id|ID):\s*(\S+)\s*$/gm),
-  ].map((match) => match[1] ?? "");
-  return matches.length === 1 && isOpenShellSandboxId(matches[0]) ? (matches[0] as string) : null;
+      .matchAll(/^[\t ]*(?:Id|ID):[\t ]*(.*)$/gmu),
+  ].map((match) => (match[1] ?? "").trim());
+  if (fields.length === 0) return { kind: "absent" };
+  return fields.length === 1 && isOpenShellSandboxId(fields[0])
+    ? { kind: "present", id: fields[0] as string }
+    : { kind: "invalid" };
+}
+
+export function parseOpenShellSandboxId(output: string): string | null {
+  const observed = observeOpenShellSandboxId(output);
+  return observed.kind === "present" ? observed.id : null;
 }
 
 /** Hash the one durable OpenShell ID without importing sandbox mutation owners. */
@@ -95,10 +98,14 @@ export function fingerprintOpenShellSandboxLiveIdentity(output: string): string 
 export function resolveOpenShellSandboxId(
   sandboxName: string,
   runCaptureOpenshell: (args: string[], options?: Record<string, unknown>) => string,
+  gatewayName?: string,
 ): string {
-  const output = runCaptureOpenshell(["sandbox", "get", sandboxName], {
-    ignoreError: false,
-  });
+  const output = runCaptureOpenshell(
+    ["sandbox", "get", ...(gatewayName ? ["-g", gatewayName] : []), sandboxName],
+    {
+      ignoreError: false,
+    },
+  );
   const sandboxId = parseOpenShellSandboxId(output);
   if (!sandboxId) {
     throw new Error(
@@ -207,10 +214,11 @@ function classifySelectorExecutionError(
     : "selector-execution-non-error";
 }
 
-function observeCreatedOpenShellSandboxId(
+export function observeCreatedOpenShellSandboxId(
   input: CreatedOpenShellSandboxIdentityInput,
   timeout: number,
 ): CreatedOpenShellSandboxIdentityObservation {
+  assertCreateAttemptNonce(input.createAttemptNonce);
   let output: string;
   try {
     output = input.runCaptureOpenshell(
@@ -289,17 +297,25 @@ export function resolveCreatedOpenShellSandboxId(
  * Settle the nonce-owned identity after OpenShell reports the create Ready.
  * An empty selector result or the one exact nonce-owned row with incomplete
  * publication metadata is retryable. Malformed, ambiguous, or mismatched
- * identity results remain terminal before any post-create effect.
+ * identity results remain terminal before any post-create effect. A prior ID
+ * observed while the create client was still running remains part of the same
+ * settlement, so disappearance or replacement cannot reset the identity gate.
  */
 export function settleCreatedOpenShellSandboxId(input: {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly createAttemptNonce: string;
   readonly runCaptureOpenshell: (args: string[], options?: Record<string, unknown>) => string;
+  readonly priorSandboxId?: string | null;
   readonly now?: () => number;
   readonly sleep: (milliseconds: number) => void;
 }): string {
   assertCreateAttemptNonce(input.createAttemptNonce);
+  if (input.priorSandboxId !== undefined && input.priorSandboxId !== null) {
+    if (!isOpenShellSandboxId(input.priorSandboxId)) {
+      throw createdIdentityError(input.sandboxName);
+    }
+  }
   const now = input.now ?? (() => performance.now());
   const startedAt = now();
   const deadlineMs = startedAt + CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS;
@@ -309,7 +325,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   }
 
   let previousNowMs = startedAt;
-  let pendingSandboxId: string | null = null;
+  let pendingSandboxId: string | null = input.priorSandboxId ?? null;
   let diagnostic = "settlement-incomplete";
   const readNow = (): number => {
     const currentNowMs = now();

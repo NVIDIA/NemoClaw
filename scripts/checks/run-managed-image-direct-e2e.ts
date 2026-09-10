@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --no-warnings --experimental-strip-types
+#!/usr/bin/env -S node --no-warnings
 
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
@@ -131,7 +131,10 @@ function docker(
   return normalized;
 }
 
-function requestFor(agent: ShippedManagedImageAgent, changed = false): ManagedStartupRootApplyRequest {
+function requestFor(
+  agent: ShippedManagedImageAgent,
+  changed = false,
+): ManagedStartupRootApplyRequest {
   return createManagedStartupRootApplyRequest({
     agent,
     encodedProfile: encodeManagedStartupProfile(
@@ -281,7 +284,10 @@ function managedConfig(agent: ShippedManagedImageAgent): string {
 }
 
 function waitForAgentCommand(containerId: string): void {
-  const deadline = Date.now() + 120_000;
+  // The image-owned hold allows up to 600 seconds for managed startup
+  // completion. Keep this observer from abandoning a still-running container
+  // before that bounded product wait can finish.
+  const deadline = Date.now() + 600_000;
   while (Date.now() < deadline) {
     const ready = docker(
       [

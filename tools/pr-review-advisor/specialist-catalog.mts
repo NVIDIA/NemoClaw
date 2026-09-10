@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +19,6 @@ export type AdvisorSpecialist = Readonly<{
   interest: AdvisorInterest;
   label: string;
   prompt: string;
-  sandboxName: string;
 }>;
 
 function specialistLabel(interest: string): string {
@@ -28,12 +26,6 @@ function specialistLabel(interest: string): string {
     .split("-")
     .map((part) => part[0]!.toUpperCase() + part.slice(1))
     .join(" / ");
-}
-
-function specialistSandboxName(interest: string): string {
-  const stem = interest.replaceAll("-", "").slice(0, 4);
-  const suffix = createHash("sha256").update(interest).digest("hex").slice(0, 4);
-  return `pr-adv-sp-${stem}-${suffix}`;
 }
 
 export function readAdvisorSpecialists(
@@ -72,15 +64,10 @@ export function readAdvisorSpecialists(
         interest,
         label,
         prompt,
-        sandboxName: specialistSandboxName(interest),
       };
     });
 
   if (specialists.length === 0) throw new Error("No specialist prompt files found");
-  const sandboxNames = specialists.map(({ sandboxName }) => sandboxName);
-  if (new Set(sandboxNames).size !== sandboxNames.length) {
-    throw new Error("Specialist prompt names must produce unique sandbox names");
-  }
   return specialists;
 }
 

@@ -61,12 +61,86 @@ const MAX_RECEIPT_DIRECTORY_ENTRIES = 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const EXEC_READY_TIMEOUT_MS = 90_000;
+const EXEC_READY_POLL_INTERVAL_MS = 100;
 const STOP_SETTLEMENT_TIMEOUT_MS = 30_000;
 const STARTUP_STOP_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = 90_000;
 const GATEWAY_STARTUP_TIMING_READ_TIMEOUT_MS = 1_000;
 const GATEWAY_STARTUP_TIMING_RECORD_WAIT_TIMEOUT_MS = 2_000;
 const GATEWAY_STARTUP_TIMING_RECORD_POLL_INTERVAL_MS = 100;
+const GATEWAY_HEALTH_WAIT_COMMAND_TIMEOUT_MS = 20_000;
+const GATEWAY_HEALTH_WAIT_COMMAND_RESERVE_MS = 2_000;
+const GATEWAY_HEALTH_WAIT_POLL_INTERVAL_MS = 100;
+const GATEWAY_HEALTH_WAIT_RETRY_INTERVAL_MS = 1_000;
+const GATEWAY_HEALTH_WAIT_MAX_ATTEMPTS = 9_999;
+// The waiter rounds probe and sleep totals independently, so their sum can exceed its budget by 1 ms.
+const GATEWAY_HEALTH_WAIT_RECEIPT_ROUNDING_TOLERANCE_MS = 1;
+const GATEWAY_HEALTH_WAIT_PROGRAM = [
+  "import http.client",
+  "import sys",
+  "import time",
+  "",
+  "try:",
+  "    port = int(sys.argv[1])",
+  "    timeout_ms = int(sys.argv[2])",
+  "    interval_ms = int(sys.argv[3])",
+  "except (IndexError, ValueError):",
+  "    raise SystemExit(64)",
+  "if not (1 <= port <= 65535 and 1 <= timeout_ms <= 18000 and 10 <= interval_ms <= 1000):",
+  "    raise SystemExit(64)",
+  "deadline = time.monotonic() + timeout_ms / 1000",
+  "attempts = 0",
+  "not_ready = 0",
+  "timeouts = 0",
+  "errors = 0",
+  "probe_seconds = 0.0",
+  "sleep_seconds = 0.0",
+  'last_failure = "none"',
+  "",
+  "def finish(result, status):",
+  "    probe_ms = round(probe_seconds * 1000)",
+  "    sleep_ms = round(sleep_seconds * 1000)",
+  '    print(f"schema=1 result={result} attempts={attempts} notReady={not_ready} timeouts={timeouts} errors={errors} lastFailure={last_failure} probeMs={probe_ms} sleepMs={sleep_ms}")',
+  "    raise SystemExit(status)",
+  "",
+  "while True:",
+  "    remaining = deadline - time.monotonic()",
+  "    if remaining <= 0:",
+  '        finish("not-ready", 75)',
+  "    attempts += 1",
+  "    connection = None",
+  "    ready = False",
+  "    probe_started = time.monotonic()",
+  "    try:",
+  '        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=min(3, remaining))',
+  '        connection.request("GET", "/health")',
+  "        response = connection.getresponse()",
+  "        status = response.status",
+  "        response.close()",
+  "        if status in (200, 401):",
+  "            ready = True",
+  "        else:",
+  "            not_ready += 1",
+  '            last_failure = "not-ready"',
+  "    except TimeoutError:",
+  "        timeouts += 1",
+  '        last_failure = "timeout"',
+  "    except (OSError, http.client.HTTPException):",
+  "        errors += 1",
+  '        last_failure = "error"',
+  "    finally:",
+  "        if connection is not None:",
+  "            connection.close()",
+  "        probe_seconds += time.monotonic() - probe_started",
+  "    if ready:",
+  '        finish("ready", 0)',
+  "    remaining = deadline - time.monotonic()",
+  "    if remaining <= 0:",
+  '        finish("not-ready", 75)',
+  "    sleep_started = time.monotonic()",
+  "    time.sleep(min(interval_ms / 1000, remaining))",
+  "    sleep_seconds += time.monotonic() - sleep_started",
+].join("\n");
 const GATEWAY_STARTUP_TIMING_READ_PROGRAM = [
   'const fs=require("node:fs");',
   "let descriptor;",
@@ -101,6 +175,17 @@ export type PortablePodmanLifecycleCommandResult = {
 };
 
 type CommandResult = PortablePodmanLifecycleCommandResult;
+
+type GatewayHealthWaitReceipt = {
+  result: "ready" | "not-ready";
+  attempts: number;
+  notReady: number;
+  timeouts: number;
+  errors: number;
+  lastFailure: Exclude<PortableLifecycleAttemptOutcome, "ready"> | "none";
+  probeMs: number;
+  sleepMs: number;
+};
 
 interface PortableDemoLifecycleReceipt {
   schemaVersion: 1 | 2 | 3 | 4;
@@ -1013,6 +1098,62 @@ function commandAttemptOutcome(
   return "not-ready";
 }
 
+function parseGatewayHealthWaitReceipt(raw: string): GatewayHealthWaitReceipt | null {
+  const match =
+    /^schema=1 result=(ready|not-ready) attempts=(\d{1,4}) notReady=(\d{1,4}) timeouts=(\d{1,4}) errors=(\d{1,4}) lastFailure=(none|not-ready|timeout|error) probeMs=(\d{1,5}) sleepMs=(\d{1,5})\n?$/u.exec(
+      raw,
+    );
+  if (!match) return null;
+  const receipt: GatewayHealthWaitReceipt = {
+    result: match[1] as GatewayHealthWaitReceipt["result"],
+    attempts: Number(match[2]),
+    notReady: Number(match[3]),
+    timeouts: Number(match[4]),
+    errors: Number(match[5]),
+    lastFailure: match[6] as GatewayHealthWaitReceipt["lastFailure"],
+    probeMs: Number(match[7]),
+    sleepMs: Number(match[8]),
+  };
+  const failures = receipt.notReady + receipt.timeouts + receipt.errors;
+  const readyAttempts = receipt.result === "ready" ? 1 : 0;
+  if (
+    receipt.attempts < 1 ||
+    receipt.attempts > GATEWAY_HEALTH_WAIT_MAX_ATTEMPTS ||
+    receipt.probeMs > GATEWAY_HEALTH_WAIT_COMMAND_TIMEOUT_MS ||
+    receipt.sleepMs > GATEWAY_HEALTH_WAIT_COMMAND_TIMEOUT_MS ||
+    receipt.probeMs + receipt.sleepMs > GATEWAY_HEALTH_WAIT_COMMAND_TIMEOUT_MS ||
+    receipt.attempts !== failures + readyAttempts ||
+    (failures === 0) !== (receipt.lastFailure === "none") ||
+    (receipt.lastFailure === "not-ready" && receipt.notReady === 0) ||
+    (receipt.lastFailure === "timeout" && receipt.timeouts === 0) ||
+    (receipt.lastFailure === "error" && receipt.errors === 0)
+  ) {
+    return null;
+  }
+  return receipt;
+}
+
+function recordGatewayHealthWaitReceipt(
+  receipt: GatewayHealthWaitReceipt,
+  lifecycleTiming: PortableLifecycleTimingRecorder,
+): void {
+  const remaining = {
+    "not-ready": receipt.notReady,
+    timeout: receipt.timeouts,
+    error: receipt.errors,
+  };
+  if (receipt.lastFailure !== "none") remaining[receipt.lastFailure] -= 1;
+  for (const outcome of ["not-ready", "timeout", "error"] as const) {
+    for (let attempt = 0; attempt < remaining[outcome]; attempt += 1) {
+      lifecycleTiming.recordGatewayAttempt(outcome);
+    }
+  }
+  if (receipt.lastFailure !== "none") {
+    lifecycleTiming.recordGatewayAttempt(receipt.lastFailure);
+  }
+  if (receipt.result === "ready") lifecycleTiming.recordGatewayAttempt("ready");
+}
+
 function gatewayIsRunning(
   receipt: PortableDemoLifecycleReceipt,
   gatewayName: string,
@@ -1036,6 +1177,69 @@ function gatewayIsRunning(
   const ready = result.status === 0 && /(?:^|\D)(?:200|401)\s*$/u.test(String(result.stdout ?? ""));
   lifecycleTiming.recordGatewayAttempt(commandAttemptOutcome(result, ready));
   return ready;
+}
+
+function waitForLaunchedGateway(
+  receipt: PortableDemoLifecycleReceipt,
+  gatewayName: string,
+  capture: NonNullable<PortableDemoLifecycleDeps["captureOpenshell"]>,
+  timeoutMs: number,
+  deps: Required<Pick<PortableDemoLifecycleDeps, "now" | "sleep">>,
+  lifecycleTiming: PortableLifecycleTimingRecorder,
+): boolean {
+  const deadline = deps.now() + timeoutMs;
+  do {
+    const remainingMs = Math.max(1, deadline - deps.now());
+    const commandTimeoutMs = Math.min(GATEWAY_HEALTH_WAIT_COMMAND_TIMEOUT_MS, remainingMs);
+    const commandReserveMs = Math.min(
+      GATEWAY_HEALTH_WAIT_COMMAND_RESERVE_MS,
+      Math.floor(commandTimeoutMs / 2),
+    );
+    const waiterTimeoutMs = Math.max(1, commandTimeoutMs - commandReserveMs);
+    const result = lifecycleTiming.measureOpenClawGatewayProbe(() =>
+      capture(
+        openshellExecArgs(gatewayName, receipt.sandboxName, [
+          "python3",
+          "-I",
+          "-c",
+          GATEWAY_HEALTH_WAIT_PROGRAM,
+          String(receipt.dashboardPort),
+          String(waiterTimeoutMs),
+          String(GATEWAY_HEALTH_WAIT_POLL_INTERVAL_MS),
+        ]),
+        commandTimeoutMs,
+      ),
+    );
+    const waitReceipt = result.error
+      ? null
+      : parseGatewayHealthWaitReceipt(String(result.stdout ?? ""));
+    const validReady = waitReceipt?.result === "ready" && result.status === 0 && !result.error;
+    const validNotReady =
+      waitReceipt?.result === "not-ready" && result.status === 75 && !result.error;
+    const receiptWithinBudget =
+      waitReceipt !== null &&
+      waitReceipt.probeMs + waitReceipt.sleepMs <=
+        waiterTimeoutMs + GATEWAY_HEALTH_WAIT_RECEIPT_ROUNDING_TOLERANCE_MS;
+    const acceptedReceipt =
+      waitReceipt && receiptWithinBudget && (validReady || validNotReady) ? waitReceipt : null;
+    if (acceptedReceipt) {
+      lifecycleTiming.recordOpenClawGatewayWaitSleep(acceptedReceipt.sleepMs);
+      recordGatewayHealthWaitReceipt(acceptedReceipt, lifecycleTiming);
+      if (validReady) return true;
+    } else {
+      lifecycleTiming.recordGatewayAttempt(
+        result.error ? commandAttemptOutcome(result, false) : "error",
+      );
+    }
+    if (deps.now() >= deadline) return false;
+    const retryIntervalMs = acceptedReceipt
+      ? GATEWAY_HEALTH_WAIT_POLL_INTERVAL_MS
+      : GATEWAY_HEALTH_WAIT_RETRY_INTERVAL_MS;
+    lifecycleTiming.measureOpenClawGatewaySleep(() =>
+      deps.sleep(Math.min(retryIntervalMs, deadline - deps.now())),
+    );
+  } while (deps.now() < deadline);
+  return false;
 }
 
 function ollamaIsHealthy(
@@ -1363,15 +1567,21 @@ export function recoverPortableDemoSandboxLifecycle(
   const timing = { now: clock, sleep: deps.sleep ?? defaultSleep };
   const gatewayName = context.gatewayName;
   const execReady = lifecycleTiming.measure("execReady", () =>
-    waitFor(EXEC_READY_TIMEOUT_MS, timing, (remainingMs) => {
-      const result = capture(
-        openshellExecArgs(gatewayName, sandboxName, ["true"]),
-        Math.min(PROBE_TIMEOUT_MS, remainingMs),
-      );
-      const ready = result.status === 0 && !result.error;
-      lifecycleTiming.recordExecAttempt(commandAttemptOutcome(result, ready));
-      return ready;
-    }),
+    waitFor(
+      EXEC_READY_TIMEOUT_MS,
+      timing,
+      (remainingMs) => {
+        const result = capture(
+          openshellExecArgs(gatewayName, sandboxName, ["true"]),
+          Math.min(PROBE_TIMEOUT_MS, remainingMs),
+        );
+        const ready = result.status === 0 && !result.error;
+        lifecycleTiming.recordExecAttempt(commandAttemptOutcome(result, ready));
+        return ready;
+      },
+      undefined,
+      EXEC_READY_POLL_INTERVAL_MS,
+    ),
   );
   if (!execReady) {
     lifecycleTiming.markFailureStage("execReady");
@@ -1437,9 +1647,14 @@ export function recoverPortableDemoSandboxLifecycle(
     if (startupProbe.status === 0 && !startupProbe.error) {
       lifecycleTiming.setGatewayAction("waited");
       const recovered = lifecycleTiming.measure("gatewayReady", () =>
-        waitFor(STARTUP_TIMEOUT_MS, timing, (remainingMs) => {
-          return gatewayIsRunning(receipt, gatewayName, capture, remainingMs, lifecycleTiming);
-        }),
+        waitForLaunchedGateway(
+          receipt,
+          gatewayName,
+          capture,
+          STARTUP_TIMEOUT_MS,
+          timing,
+          lifecycleTiming,
+        ),
       );
       if (recovered) {
         lifecycleTiming.finish("already-running");
@@ -1466,12 +1681,12 @@ export function recoverPortableDemoSandboxLifecycle(
     launch(openshellExecArgs(gatewayName, sandboxName, startupArgv(receipt))),
   );
   const recovered = lifecycleTiming.measure("gatewayReady", () =>
-    waitFor(
+    waitForLaunchedGateway(
+      receipt,
+      gatewayName,
+      capture,
       STARTUP_TIMEOUT_MS,
       timing,
-      (remainingMs) => {
-        return gatewayIsRunning(receipt, gatewayName, capture, remainingMs, lifecycleTiming);
-      },
       lifecycleTiming,
     ),
   );

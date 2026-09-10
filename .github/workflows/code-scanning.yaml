@@ -37,13 +37,13 @@ jobs:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
         with:
           languages: ${{ matrix.language }}
           queries: security-and-quality
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
 
   shellcheck:
     name: ShellCheck SARIF
@@ -140,7 +140,7 @@ jobs:
           esac
 
           conversion_exit=0
-          if env -i PATH="$PATH" node --experimental-strip-types \
+          if env -i PATH="$PATH" node \
             "$GITHUB_WORKSPACE/trusted-shellcheck-converter/scripts/shellcheck-json1-to-sarif.mts" \
             "$GITHUB_WORKSPACE/shellcheck.json" "$GITHUB_WORKSPACE/shellcheck.sarif"; then
             conversion_exit=0
@@ -168,7 +168,7 @@ jobs:
 
       - name: Upload ShellCheck SARIF
         if: steps.shell-files.outputs.has_files == 'true' && steps.sarif-runs.outputs.has_runs == 'true'
-        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
         with:
           sarif_file: shellcheck.sarif
           checkout_path: source

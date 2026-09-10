@@ -139,44 +139,6 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
-  it("stops before the request producer when authority changes during pairing observation (#9833)", async () => {
-    let revalidatePolicyRequirements = () => undefined;
-    const scope = ordinaryPairingDeps({
-      observePairing: vi.fn(() => {
-        revalidatePolicyRequirements = () => {
-          throw new Error("policy authority changed");
-        };
-        return PAIRING_ONLY;
-      }),
-      revalidatePolicyRequirements: vi.fn(() => revalidatePolicyRequirements()),
-    });
-
-    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).rejects.toThrow(
-      "policy authority changed",
-    );
-
-    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
-  });
-
-  it("does not publish settled pairing when authority changes during observation (#9833)", async () => {
-    let revalidatePolicyRequirements = () => undefined;
-    const scope = ordinaryPairingDeps({
-      observePairing: vi.fn(() => {
-        revalidatePolicyRequirements = () => {
-          throw new Error("policy authority changed");
-        };
-        return SETTLED;
-      }),
-      revalidatePolicyRequirements: vi.fn(() => revalidatePolicyRequirements()),
-    });
-
-    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).rejects.toThrow(
-      "policy authority changed",
-    );
-
-    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
-  });
-
   it("holds lifecycle then gateway-route ownership across the full settlement (#9844)", async () => {
     const events: string[] = [];
     const scope = ordinaryPairingDeps({
@@ -715,12 +677,12 @@ describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
     vi.unstubAllEnvs();
   });
 
-  it("delegates timeout selection to the recovery readiness helper", () => {
+  it("delegates timeout selection to the recovery readiness helper", async () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "75");
     vi.stubEnv("NEMOCLAW_SANDBOX_READY_TIMEOUT", "180");
     let effectiveTimeoutSeconds: number | undefined;
     const waitForRecreatedSandboxOpenShellReady = vi.fn(
-      (_name: string, options: { timeoutSeconds?: number } = {}) => {
+      async (_name: string, options: { timeoutSeconds?: number } = {}) => {
         const requestedTimeoutSeconds = options.timeoutSeconds ?? 120;
         effectiveTimeoutSeconds = Number(
           process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS ?? requestedTimeoutSeconds,
@@ -733,7 +695,9 @@ describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
       waitForRecreatedSandboxOpenShellReady,
     });
 
-    expect(finalizationHandlerDeps.waitForSandboxControlPlaneReady("policy-box")).toBe(true);
+    await expect(
+      finalizationHandlerDeps.waitForSandboxControlPlaneReady("policy-box"),
+    ).resolves.toBe(true);
     expect(waitForRecreatedSandboxOpenShellReady).toHaveBeenCalledWith("policy-box");
     expect(effectiveTimeoutSeconds).toBe(75);
   });

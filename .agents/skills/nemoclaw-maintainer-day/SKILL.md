@@ -11,9 +11,14 @@ user_invocable: true
 
 Execute one pass of the maintainer loop, prioritizing version-targeted work.
 
-**Autonomy:** You may push small fixes. You may approve a PR when all gates pass.
+**Autonomy:** You may push small fixes after required CI and scheduled automated reviews settle for
+one unchanged latest PR commit. You may approve a PR when all gates pass.
 Report contributor and approver overlap as an advisory. It does not change merge readiness or require another reviewer.
 Never merge. Ask the user about merge, product-scope, and architecture decisions. Also ask when contributor intent is unclear.
+
+Treat the recorded latest PR commit as an optimistic publication guard. Immediately before a push,
+confirm that the remote branch still points to that commit. Stop when another workflow publishes
+first.
 
 ## References
 
@@ -24,13 +29,17 @@ Never merge. Ask the user about merge, product-scope, and architecture decisions
 ## Step 1: Check Version Progress
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version>
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version>
 ```
 
 The first script selects the target version. The second lists shipped and open items.
 
 ## Step 2: Pick One Action
+
+Before reviewing, repairing, approving, integrating, or pushing a PR, complete
+[PR follow-up](../_shared/pr-follow-up.md) successfully for one unchanged latest PR commit. This
+prerequisite does not apply to an item with no PR candidate.
 
 Select the first applicable action for an open item:
 
@@ -61,7 +70,7 @@ Follow the selected workflow. Complete one outcome in each pass:
 Re-run the progress script and show the update:
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version>
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version>
 ```
 
 If all items for the release version are done, suggest `/nemoclaw-maintainer-evening`.
@@ -69,7 +78,7 @@ If all items for the release version are done, suggest `/nemoclaw-maintainer-eve
 Update `.nemoclaw-maintainer/state.json` via the state script:
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts history <action> <item> "<note>"
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts history <action> <item> "<note>"
 ```
 
 ## Commit Hygiene

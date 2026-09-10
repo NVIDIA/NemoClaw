@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DockerGpuPatchFinalizeOutcome } from "../../onboard/docker-gpu-patch-finalize";
 import type { DockerGpuPatchResult } from "../../onboard/docker-gpu-patch";
+import * as registry from "../../state/registry";
 import {
   type ManagedSupervisorRelaunchDeps,
   relaunchManagedSupervisorSession,
 } from "./supervisor-relaunch";
+import * as backupAuthority from "./snapshot/backup-authority";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -74,10 +77,17 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
       failedFiles: [],
     })),
     removeBackup: vi.fn(() => true),
+    commandExecutor: {
+      runBuffered: vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: 0 },
+        stdout: "",
+        stderr: "",
+      })),
+    },
     runOpenshell: vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" })),
     runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:00  Ready\n"),
     recreate: vi.fn(() => patchResult()),
-    finalize: vi.fn(({ supervisorReady }) =>
+    finalize: vi.fn(async ({ supervisorReady }) =>
       supervisorReady
         ? { backupRemoved: true, finalHandoffAcknowledged: true, rolledBack: false }
         : { backupRemoved: false, rolledBack: true },
@@ -123,7 +133,7 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.recreate).not.toHaveBeenCalled();
   });
 
-  it("pins the selected container and persists only a credential-free startup command", () => {
+  it("pins the selected container and persists only a credential-free startup command", async () => {
     vi.stubEnv("NEMOCLAW_EXTRA_PLACEHOLDER_KEYS", "CUSTOM_PROVIDER_CREDENTIAL");
     vi.stubEnv("CUSTOM_PROVIDER_CREDENTIAL", "s3cr3t-token");
     vi.stubEnv("HTTPS_PROXY", "http://proxyuser:proxypass@proxy.example:8080");
@@ -147,7 +157,7 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(serialized).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
     expect(serialized).not.toContain("proxypass");
 
-    expect(relaunch?.finalize(true)).toEqual({
+    expect(await relaunch?.finalize(true)).toEqual({
       backupRemoved: true,
       finalHandoffAcknowledged: true,
       rolledBack: false,
@@ -164,10 +174,131 @@ describe("relaunchManagedSupervisorSession", () => {
         supervisorReady: true,
       },
       {
+        commandExecutor: deps.commandExecutor,
         runCaptureOpenshell: deps.runCaptureOpenshell,
         runOpenshell: deps.runOpenshell,
       },
     );
+  });
+
+  it("uses managed backup authority for default supervisor recovery", () => {
+    vi.stubEnv("NEMOCLAW_HERMES_API_PORT", "8642");
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ hermesApiPort: 8642 } as never);
+    const managedBackup = vi
+      .spyOn(backupAuthority, "backupSandboxStateWithManagedAuthority")
+      .mockReturnValue({
+        success: true,
+        manifest: { backupPath: "/tmp/rebuild-backups/alpha/managed-recovery" },
+        backedUpDirs: ["memories"],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+      } as never);
+    const getSandbox = vi.fn(() => ({
+      name: "alpha",
+      agent: "hermes",
+      dashboardPort: 18789,
+      openshellDriver: "docker",
+    })) as never;
+    const deps = baseDeps({
+      backupState: undefined,
+      getSandbox,
+      getSessionAgent: vi.fn(
+        () =>
+          ({
+            name: "hermes",
+            displayName: "Hermes",
+            forwardPort: 18789,
+          }) as never,
+      ),
+    });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).not.toBeNull();
+    expect(managedBackup).toHaveBeenCalledWith("alpha", {}, { getSandbox });
+    expect(deps.recreate).toHaveBeenCalledOnce();
+  });
+
+  it("retains the managed Hermes browser URL during supervisor recovery", () => {
+    vi.stubEnv("NEMOCLAW_EXTRA_PLACEHOLDER_KEYS", "HERMES_RECOVERY_CREDENTIAL");
+    vi.stubEnv("HERMES_RECOVERY_CREDENTIAL", "recovery-secret");
+    vi.stubEnv("NEMOCLAW_HERMES_API_PORT", "8643");
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ hermesApiPort: 8643 } as never);
+    const deps = baseDeps({
+      getSandbox: vi.fn(() => ({
+        name: "alpha",
+        agent: "hermes",
+        dashboardPort: 19189,
+        hermesDashboardEnabled: true,
+        hermesDashboardPort: 19189,
+        hermesDashboardInternalPort: 8643,
+        openshellDriver: "docker",
+      })),
+      getSessionAgent: vi.fn(
+        () =>
+          ({
+            name: "hermes",
+            displayName: "Hermes",
+            forwardPort: 19189,
+          }) as never,
+      ),
+      resolveDashboardPort: vi.fn(() => 19189),
+      readManagedWorkloadAuthority: vi.fn(
+        () =>
+          ({
+            agent: "hermes",
+            profile: {
+              dashboard: {
+                agent: "hermes",
+                browserUrl: "https://hermes.example.test:19189",
+              },
+            },
+          }) as never,
+      ),
+    });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).not.toBeNull();
+    expect(deps.readManagedWorkloadAuthority).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: "hermes", hermesDashboardEnabled: true }),
+    );
+    const command = vi.mocked(deps.recreate).mock.calls[0]?.[0].openshellSandboxCommand ?? [];
+    expect(command).toContain("CHAT_UI_URL=https://hermes.example.test:19189");
+    expect(command).not.toContain("CHAT_UI_URL=http://127.0.0.1:19189");
+    expect(command.join(" ")).not.toContain("HERMES_RECOVERY_CREDENTIAL");
+    expect(command.join(" ")).not.toContain("recovery-secret");
+  });
+
+  it("refuses Hermes supervisor recovery without a recorded browser URL", () => {
+    const deps = baseDeps({
+      getSandbox: vi.fn(() => ({
+        name: "alpha",
+        agent: "hermes",
+        dashboardPort: 19189,
+        hermesDashboardEnabled: true,
+        hermesDashboardPort: 19189,
+        hermesDashboardInternalPort: 8643,
+        openshellDriver: "docker",
+      })),
+      getSessionAgent: vi.fn(
+        () =>
+          ({
+            name: "hermes",
+            displayName: "Hermes",
+            forwardPort: 19189,
+          }) as never,
+      ),
+      resolveDashboardPort: vi.fn(() => 19189),
+      readManagedWorkloadAuthority: vi.fn(
+        () =>
+          ({
+            agent: "hermes",
+            profile: { dashboard: { agent: "hermes" } },
+          }) as never,
+      ),
+    });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
+    expect(deps.resolveContainer).not.toHaveBeenCalled();
+    expect(deps.recreate).not.toHaveBeenCalled();
   });
 
   it("retries only transport-level state backup failures after a container restart", () => {
@@ -296,11 +427,11 @@ describe("relaunchManagedSupervisorSession", () => {
     ]);
   });
 
-  it("rolls the container transaction back when managed readiness is not proven", () => {
+  it("rolls the container transaction back when managed readiness is not proven", async () => {
     const deps = baseDeps();
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
-    expect(relaunch?.finalize(false)).toEqual({
+    expect(await relaunch?.finalize(false)).toEqual({
       backupRemoved: false,
       rolledBack: true,
       stateRestored: false,
@@ -311,6 +442,35 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.finalize).toHaveBeenCalledWith({
       result: expect.objectContaining({ backupContainerName: expect.any(String) }),
       supervisorReady: false,
+    });
+  });
+
+  it("runs finalization once for concurrent matching callers", async () => {
+    let completeFinalization: ((outcome: DockerGpuPatchFinalizeOutcome) => void) | undefined;
+    const finalization = new Promise<DockerGpuPatchFinalizeOutcome>((resolve) => {
+      completeFinalization = resolve;
+    });
+    const deps = baseDeps({ finalize: vi.fn(() => finalization) });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    const first = relaunch?.finalize(true);
+    const second = relaunch?.finalize(true);
+
+    expect(second).toBe(first);
+    await Promise.resolve();
+    expect(deps.finalize).toHaveBeenCalledOnce();
+    await expect(relaunch?.finalize(false)).rejects.toThrow(
+      "Supervisor relaunch transaction was finalized with conflicting state.",
+    );
+    completeFinalization?.({
+      backupRemoved: true,
+      finalHandoffAcknowledged: true,
+      rolledBack: false,
+    });
+    await expect(first).resolves.toMatchObject({
+      backupRemoved: true,
+      rolledBack: false,
+      stateRestored: true,
     });
   });
 
@@ -336,7 +496,7 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.recreate).not.toHaveBeenCalled();
   });
 
-  it("rolls back the container transaction when state restore fails", () => {
+  it("rolls back the container transaction when state restore fails", async () => {
     const deps = baseDeps({
       restoreState: vi.fn(() => ({
         success: false,
@@ -348,7 +508,7 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
-    expect(relaunch?.finalize(true)).toEqual({
+    expect(await relaunch?.finalize(true)).toEqual({
       backupRemoved: false,
       rolledBack: true,
       stateRestored: false,
@@ -361,7 +521,7 @@ describe("relaunchManagedSupervisorSession", () => {
     });
   });
 
-  it("re-proves managed health after state restore and before commit", () => {
+  it("re-proves managed health after state restore and before commit", async () => {
     const order: string[] = [];
     const deps = baseDeps({
       restoreState: vi.fn(() => {
@@ -378,14 +538,14 @@ describe("relaunchManagedSupervisorSession", () => {
         order.push("restart-restored-gateway");
         return true;
       }),
-      finalize: vi.fn(() => {
+      finalize: vi.fn(async () => {
         order.push("commit-container");
         return { backupRemoved: true, rolledBack: false };
       }),
     });
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
-    expect(relaunch?.finalize(true)).toMatchObject({
+    expect(await relaunch?.finalize(true)).toMatchObject({
       backupRemoved: true,
       rolledBack: false,
       stateRestored: true,
@@ -400,26 +560,31 @@ describe("relaunchManagedSupervisorSession", () => {
         supervisorReady: true,
       },
       {
+        commandExecutor: deps.commandExecutor,
         runCaptureOpenshell: deps.runCaptureOpenshell,
         runOpenshell: deps.runOpenshell,
       },
     );
   });
 
-  it("uses only an injected host sleep for lifecycle polling after recreation (#9531)", () => {
+  it("uses only an injected host sleep for lifecycle polling after recreation (#9531)", async () => {
     const sleep = vi.fn();
     const deps = baseDeps({ sleep });
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
-    expect(relaunch?.finalize(true)).toMatchObject({ backupRemoved: true, rolledBack: false });
+    expect(await relaunch?.finalize(true)).toMatchObject({
+      backupRemoved: true,
+      rolledBack: false,
+    });
     expect(deps.finalize).toHaveBeenCalledWith(expect.objectContaining({ supervisorReady: true }), {
+      commandExecutor: deps.commandExecutor,
       runCaptureOpenshell: deps.runCaptureOpenshell,
       runOpenshell: deps.runOpenshell,
       sleep,
     });
   });
 
-  it("rolls back when managed health fails after state restore", () => {
+  it("rolls back when managed health fails after state restore", async () => {
     const order: string[] = [];
     const deps = baseDeps({
       restoreState: vi.fn(() => {
@@ -436,7 +601,7 @@ describe("relaunchManagedSupervisorSession", () => {
         order.push("restart-restored-gateway");
         return false;
       }),
-      finalize: vi.fn(({ supervisorReady }) => {
+      finalize: vi.fn(async ({ supervisorReady }) => {
         order.push(supervisorReady ? "commit-container" : "rollback-container");
         return supervisorReady
           ? { backupRemoved: true, rolledBack: false }
@@ -445,7 +610,7 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
-    expect(relaunch?.finalize(true)).toEqual({
+    expect(await relaunch?.finalize(true)).toEqual({
       backupRemoved: false,
       rolledBack: true,
       stateRestored: false,
@@ -458,7 +623,7 @@ describe("relaunchManagedSupervisorSession", () => {
     });
   });
 
-  it("rolls back before restore when the replacement container identity changes", () => {
+  it("rolls back before restore when the replacement container identity changes", async () => {
     const deps = baseDeps({
       resolveContainer: vi
         .fn()
@@ -467,7 +632,7 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
-    expect(relaunch?.finalize(true)).toEqual({
+    expect(await relaunch?.finalize(true)).toEqual({
       backupRemoved: false,
       rolledBack: true,
       stateRestored: false,
@@ -481,13 +646,13 @@ describe("relaunchManagedSupervisorSession", () => {
     });
   });
 
-  it("retains the state backup when rollback fails", () => {
+  it("retains the state backup when rollback fails", async () => {
     const deps = baseDeps({
-      finalize: vi.fn(() => ({ backupRemoved: false, rolledBack: false })),
+      finalize: vi.fn(async () => ({ backupRemoved: false, rolledBack: false })),
     });
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
-    expect(relaunch?.finalize(false)).toEqual({
+    expect(await relaunch?.finalize(false)).toEqual({
       backupRemoved: false,
       rolledBack: false,
       stateRestored: false,
@@ -495,11 +660,11 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.removeBackup).not.toHaveBeenCalled();
   });
 
-  it("reports best-effort state-backup cleanup failure after a successful restore", () => {
+  it("reports best-effort state-backup cleanup failure after a successful restore", async () => {
     const deps = baseDeps({ removeBackup: vi.fn(() => false) });
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
-    expect(relaunch?.finalize(true)).toEqual({
+    expect(await relaunch?.finalize(true)).toEqual({
       backupRemoved: true,
       finalHandoffAcknowledged: true,
       rolledBack: false,
@@ -508,9 +673,9 @@ describe("relaunchManagedSupervisorSession", () => {
     });
   });
 
-  it("retains the restored state backup when final handoff is not acknowledged (#9531)", () => {
+  it("retains the restored state backup when final handoff is not acknowledged (#9531)", async () => {
     const deps = baseDeps({
-      finalize: vi.fn(() => ({
+      finalize: vi.fn(async () => ({
         backupRemoved: true,
         finalHandoffAcknowledged: false,
         lastSandboxPhase: "Deleting",
@@ -519,7 +684,7 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
-    expect(relaunch?.finalize(true)).toEqual({
+    expect(await relaunch?.finalize(true)).toEqual({
       backupRemoved: true,
       finalHandoffAcknowledged: false,
       lastSandboxPhase: "Deleting",

@@ -16,6 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { LAUNCH_READINESS_FIXTURE_POLICY } from "../../helpers/launch-readiness-fixture";
 import { execTimeout, testTimeoutOptions } from "../../helpers/timeouts";
 
 const tmpFixtures: string[] = [];
@@ -52,7 +53,6 @@ function setupFixture(sandboxName: string, mode: "healthy" | "identity_drift" | 
           model: "nvidia/test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,
-          policies: [],
         },
       },
     }),
@@ -131,7 +131,8 @@ if (args[0] === "sandbox" && args[1] === "connect") {
 }
 
 if (args[0] === "policy" && args[1] === "get") {
-  process.exit(1);
+  process.stdout.write(${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)});
+  process.exit(0);
 }
 
 if (args[0] === "inference" && args[1] === "get") {
@@ -221,7 +222,8 @@ if (args[0] === "sandbox" && args[1] === "connect") {
 }
 
 if (args[0] === "policy" && args[1] === "get") {
-  process.exit(1);
+  process.stdout.write(${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)});
+  process.exit(0);
 }
 
 if (args[0] === "inference" && args[1] === "get") {

@@ -4,7 +4,7 @@
 import { materializeHostLocalVllmSelection } from "../../inference/serving/host-local-vllm-selection";
 import type { ResolvedHostLocalInferenceSelection } from "../../inference/serving/types";
 import type { VllmProfile } from "../../inference/vllm";
-import { VLLM_EXTRA_ARGS_ENV } from "../../inference/vllm-models";
+import { VLLM_EXTRA_ARGS_ENV, vllmModelMatchesAlias } from "../../inference/vllm-models";
 import type { SetupNimSelectionResult, SetupNimSelectionState } from "../setup-nim-flow";
 import { vllmInstallRecoveryOptions } from "../provider-recovery";
 import type { LocalModelProfilePlan } from "./plan";
@@ -87,13 +87,8 @@ export function createLocalModelProfileOnboarder(deps: LocalModelProfileOnboarde
       return "retry-selection";
     }
     const recovery = vllmInstallRecoveryOptions(deps);
-    const resumedModel = recovery.modelIntent?.trim().toLowerCase();
-    if (
-      resumedModel &&
-      ![materialized.model.id, materialized.model.envValue, materialized.model.servedModelId].some(
-        (candidate) => candidate?.toLowerCase() === resumedModel,
-      )
-    ) {
+    const resumedModel = recovery.modelIntent?.trim();
+    if (resumedModel && !vllmModelMatchesAlias(materialized.model, resumedModel)) {
       deps.error(
         `  The resumed vLLM model conflicts with the ${materialized.model.envValue} local model profile.`,
       );
@@ -116,14 +111,14 @@ export function createLocalModelProfileOnboarder(deps: LocalModelProfileOnboarde
         ? {
             checkpointInstallIntent: (modelId: string) => {
               seedVllmInstallRoute(modelId);
-              state.revalidatePolicyRequirements?.("record managed vLLM install intent");
+              state.revalidateSandboxIdentity?.("record managed vLLM install intent");
               checkpointInstallIntent(modelId);
             },
           }
         : {}),
       beforeInstall: (modelId) => {
         seedVllmInstallRoute(modelId);
-        state.revalidatePolicyRequirements?.("install managed vLLM runtime");
+        state.revalidateSandboxIdentity?.("install managed vLLM runtime");
       },
     });
     if (!result.ok) return "retry-selection";

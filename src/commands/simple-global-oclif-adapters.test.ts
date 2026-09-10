@@ -38,7 +38,6 @@ const mocks = vi.hoisted(() => {
     listSandboxes: vi.fn(() => ({ sandboxes: [] })),
     resolveOpenshell: vi.fn(() => "/usr/bin/openshell"),
     runDebugCommandWithOptions: vi.fn(),
-    runDeployAction: vi.fn().mockResolvedValue(undefined),
     runDashboardUrlCommand: vi.fn(() => undefined),
     runGatewayTokenCommand: vi.fn(() => undefined),
     runStartCommand: vi.fn().mockResolvedValue(undefined),
@@ -77,7 +76,6 @@ vi.mock("../lib/dashboard-url-command", () => ({
   runDashboardUrlCommand: mocks.runDashboardUrlCommand,
 }));
 vi.mock("../lib/actions/global", () => ({
-  runDeployAction: mocks.runDeployAction,
   showRootHelp: mocks.showRootHelp,
   showVersion: mocks.showVersion,
 }));
@@ -112,7 +110,6 @@ vi.mock("../lib/state/mcp-lifecycle-lock-acquisition", async (importOriginal) =>
 
 import { log } from "../lib/cli/logger";
 import DebugCliCommand from "./debug";
-import DeployCliCommand from "./deploy";
 import RootHelpCommand from "./root/help";
 import VersionCommand from "./root/version";
 import DashboardUrlCliCommand, {
@@ -139,12 +136,11 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     vi.restoreAllMocks();
   });
 
-  it("maps debug and deploy parser output to actions", async () => {
+  it("maps debug parser output to its action", async () => {
     await DebugCliCommand.run(
       ["--quick", "--output", "/tmp/debug.tar.gz", "--sandbox", "alpha"],
       rootDir,
     );
-    await DeployCliCommand.run(["gpu-alpha"], rootDir);
 
     expect(mocks.runDebugCommandWithOptions).toHaveBeenCalledWith(
       { quick: true, output: "/tmp/debug.tar.gz", sandboxName: "alpha" },
@@ -153,7 +149,6 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
         runDebug: expect.any(Function),
       }),
     );
-    expect(mocks.runDeployAction).toHaveBeenCalledWith("gpu-alpha");
   });
 
   it("keeps debug -q scoped to quick diagnostics instead of global quiet mode", async () => {
@@ -230,7 +225,10 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     await DebugCliCommand.run(["--quick"], rootDir);
 
     const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
-    await expect(deps.getDefaultSandbox()).resolves.toEqual({ name: "alpha", gatewayName: "nemoclaw" });
+    await expect(deps.getDefaultSandbox()).resolves.toEqual({
+      name: "alpha",
+      gatewayName: "nemoclaw",
+    });
   });
 
   it("rejects an explicit sandbox when OpenShell authentication fails", async () => {
@@ -276,8 +274,14 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     await DebugCliCommand.run(["--quick"], rootDir);
 
     const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
-    await expect(deps.getDefaultSandbox()).resolves.toEqual({ name: "alpha", gatewayName: "nemoclaw" });
-    await expect(deps.getSandboxAvailability("alpha")).resolves.toEqual({ state: "available", gatewayName: "nemoclaw" });
+    await expect(deps.getDefaultSandbox()).resolves.toEqual({
+      name: "alpha",
+      gatewayName: "nemoclaw",
+    });
+    await expect(deps.getSandboxAvailability("alpha")).resolves.toEqual({
+      state: "available",
+      gatewayName: "nemoclaw",
+    });
   });
 
   it("maps gateway-token flags to the gateway token action", async () => {

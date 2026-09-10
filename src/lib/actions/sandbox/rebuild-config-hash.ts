@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import { R, YW } from "../../cli/terminal-style";
 import { redact } from "../../security/redact";
 import { executeSandboxCommand } from "./process-recovery";
@@ -11,11 +12,16 @@ import {
 
 export { buildRefreshMutableOpenClawConfigHashCommand };
 
-export function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
+export async function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
   sandboxName: string,
   log: (msg: string) => void,
-): boolean {
-  const result = executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand());
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<boolean> {
+  const result = runtimeSelection
+    ? await executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand(), {
+        runtimeSelection,
+      })
+    : await executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand());
   if (result && result.status === 0) {
     log("Mutable OpenClaw config hash refreshed after post-restore config writes");
     return true;
@@ -28,11 +34,16 @@ export function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
   return false;
 }
 
-export function verifyFinalMutableOpenClawConfigHash(
+export async function verifyFinalMutableOpenClawConfigHash(
   sandboxName: string,
   log: (msg: string) => void,
-): boolean {
-  const result = executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand());
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<boolean> {
+  const result = runtimeSelection
+    ? await executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand(), {
+        runtimeSelection,
+      })
+    : await executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand());
   if (result && result.status === 0) {
     log("Final mutable OpenClaw config hash verified after post-restore finalization");
     return true;

@@ -7,7 +7,7 @@
  * Checks all required gates and outputs structured JSON.
  * Claude uses the output to decide: approve, route to salvage, or report blockers.
  *
- * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number> [--repo OWNER/REPO]
+ * Usage: node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number> [--repo OWNER/REPO]
  */
 
 import { isDeepStrictEqual } from "node:util";
@@ -1230,6 +1230,8 @@ const INSTALLER_HASH_RUN_TITLE =
   /^Installer Hash PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
 const E2E_GATE_RUN_TITLE =
   /^E2E Gate PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
+const PR_REVIEW_ADVISOR_RUN_TITLE =
+  /^Advisor after CI PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate true$/u;
 const REPOSITORY_NAME_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const REQUIRED_CHECK_WORKFLOW_PATHS = new Map([
   ["checks", ".github/workflows/pr.yaml"],
@@ -1255,9 +1257,11 @@ const PR_METADATA_EDIT_JOB_NAMES = new Set([
 const PR_REVIEW_ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
 const PR_REVIEW_ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
 const ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES = new Set([
-  "PR review advisor (GPT-5.6 Terra)",
-  "PR review advisor (Nemotron 3 Ultra)",
+  "Require green PR checks",
+  "Discover review specialists and collect GitHub context",
+  "Publish advisor link",
 ]);
+const ADVISORY_PR_REVIEW_ADVISOR_SPECIALIST_JOB = /^Specialist \/ [^/]+$/u;
 
 interface ActionRunMetadata {
   attempt: number;
@@ -1449,6 +1453,18 @@ function currentCheckRollup(
             match[3] === exactDiff.baseSha;
           e2eGateRun = match[4] === "true";
         }
+      }
+    }
+    if (event === "workflow_run" && path === PR_REVIEW_ADVISOR_WORKFLOW_PATH) {
+      const title = typeof record.display_title === "string" ? record.display_title : "";
+      const match = title.match(PR_REVIEW_ADVISOR_RUN_TITLE);
+      if (match) {
+        const titlePrNumber = Number(match[1]);
+        immutablePrDiff =
+          Number.isSafeInteger(titlePrNumber) &&
+          titlePrNumber === exactDiff.number &&
+          match[2] === exactDiff.headSha &&
+          match[3] === exactDiff.baseSha;
       }
     }
 
@@ -1720,29 +1736,27 @@ function currentCheckRollup(
 
     const successfulE2eSeedReuse = Boolean(
       classifyE2eSeedRun(runId, run) === "reuse" &&
-        run.status === "COMPLETED" &&
-        run.conclusion === "SUCCESS" &&
-        [...jobs.values()].every(
-          (job) =>
-            job.status === "COMPLETED" &&
-            job.conclusion !== null &&
-            PASSING_ACTION_RUN_CONCLUSIONS.has(job.conclusion),
-        ),
+      run.status === "COMPLETED" &&
+      run.conclusion === "SUCCESS" &&
+      [...jobs.values()].every(
+        (job) =>
+          job.status === "COMPLETED" &&
+          job.conclusion !== null &&
+          PASSING_ACTION_RUN_CONCLUSIONS.has(job.conclusion),
+      ),
     );
     if (successfulE2eSeedReuse) return true;
 
     const allSkippedTargetRun = Boolean(
       (runIdentityEvidence(runId, true) === "current" ||
         e2eControllerHeadBinding(run) === "current") &&
-        run.event === "pull_request_target" &&
-        run.path === ".github/workflows/pr-e2e-gate.yaml" &&
-        run.e2eGateDiff === true &&
-        run.e2eGateRun === false &&
-        run.status === "COMPLETED" &&
-        run.conclusion === "SKIPPED" &&
-        [...jobs.values()].every(
-          (job) => job.status === "COMPLETED" && job.conclusion === "SKIPPED",
-        ),
+      run.event === "pull_request_target" &&
+      run.path === ".github/workflows/pr-e2e-gate.yaml" &&
+      run.e2eGateDiff === true &&
+      run.e2eGateRun === false &&
+      run.status === "COMPLETED" &&
+      run.conclusion === "SKIPPED" &&
+      [...jobs.values()].every((job) => job.status === "COMPLETED" && job.conclusion === "SKIPPED"),
     );
     if (allSkippedTargetRun) return true;
     return classifyPrMetadataEditRun(runId) === "recognized";
@@ -1753,23 +1767,23 @@ function currentCheckRollup(
     const jobs = latestAttemptJobs(runId);
     return Boolean(
       run &&
-        jobs &&
-        classifyPrMetadataEditRun(runId) === "not_metadata_edit" &&
-        runIdentityEvidence(runId, true) === "current" &&
-        run.event === event &&
-        run.path === path &&
-        (run.path !== ".github/workflows/pr.yaml" || run.prCiGate === true) &&
-        (run.path !== ".github/workflows/installer-hash-check.yaml" ||
-          run.installerHashGate === true) &&
-        (run.path !== ".github/workflows/pr-e2e-gate.yaml" ||
-          run.event !== "pull_request_target" ||
-          (run.e2eGateDiff === true && run.e2eGateRun === true)) &&
-        run.status === "COMPLETED" &&
-        run.conclusion !== null &&
-        run.conclusion !== "SKIPPED" &&
-        jobs.size > 0 &&
-        [...jobs.values()].every((job) => job.status === "COMPLETED" && job.conclusion !== null) &&
-        [...jobs.values()].some((job) => job.conclusion !== "SKIPPED"),
+      jobs &&
+      classifyPrMetadataEditRun(runId) === "not_metadata_edit" &&
+      runIdentityEvidence(runId, true) === "current" &&
+      run.event === event &&
+      run.path === path &&
+      (run.path !== ".github/workflows/pr.yaml" || run.prCiGate === true) &&
+      (run.path !== ".github/workflows/installer-hash-check.yaml" ||
+        run.installerHashGate === true) &&
+      (run.path !== ".github/workflows/pr-e2e-gate.yaml" ||
+        run.event !== "pull_request_target" ||
+        (run.e2eGateDiff === true && run.e2eGateRun === true)) &&
+      run.status === "COMPLETED" &&
+      run.conclusion !== null &&
+      run.conclusion !== "SKIPPED" &&
+      jobs.size > 0 &&
+      [...jobs.values()].every((job) => job.status === "COMPLETED" && job.conclusion !== null) &&
+      [...jobs.values()].some((job) => job.conclusion !== "SKIPPED"),
     );
   };
 
@@ -1893,7 +1907,8 @@ function currentCheckRollup(
     if (
       check.__typename !== "CheckRun" ||
       check.workflowName !== PR_REVIEW_ADVISOR_WORKFLOW_NAME ||
-      !ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES.has(checkName)
+      (!ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES.has(checkName) &&
+        !ADVISORY_PR_REVIEW_ADVISOR_SPECIALIST_JOB.test(checkName))
     ) {
       return false;
     }
@@ -1904,22 +1919,24 @@ function currentCheckRollup(
     const checkStatus = check.status?.toUpperCase() ?? null;
     const checkConclusion = check.conclusion?.toUpperCase() ?? null;
     const currentPrBinding =
-      run?.hasPullRequests === true && run.exactDiff === true
-        ? true
-        : exactDiff.headRepository !== repo &&
-          run !== null &&
-          run.status === "COMPLETED" &&
-          run.conclusion !== null &&
-          associationLessHeadBinding(run) === "current";
+      run?.event === "workflow_run"
+        ? run.immutablePrDiff === true
+        : run?.hasPullRequests === true && run.exactDiff === true
+          ? true
+          : exactDiff.headRepository !== repo &&
+            run !== null &&
+            run.status === "COMPLETED" &&
+            run.conclusion !== null &&
+            associationLessHeadBinding(run) === "current";
     return Boolean(
       run &&
-        job &&
-        run.event === "pull_request_target" &&
-        run.path === PR_REVIEW_ADVISOR_WORKFLOW_PATH &&
-        currentPrBinding &&
-        job.name === checkName &&
-        job.status === checkStatus &&
-        job.conclusion === checkConclusion,
+      job &&
+      (run.event === "pull_request_target" || run.event === "workflow_run") &&
+      run.path === PR_REVIEW_ADVISOR_WORKFLOW_PATH &&
+      currentPrBinding &&
+      job.name === checkName &&
+      job.status === checkStatus &&
+      job.conclusion === checkConclusion,
     );
   };
 
@@ -1999,10 +2016,10 @@ function currentCheckRollup(
     const { event, path } = actionRunMetadata(runId) ?? {};
     return Boolean(
       event &&
-        path &&
-        [...allActionRunIds].some(
-          (otherRunId) => otherRunId !== runId && isMeaningfulExactDiffRun(otherRunId, event, path),
-        ),
+      path &&
+      [...allActionRunIds].some(
+        (otherRunId) => otherRunId !== runId && isMeaningfulExactDiffRun(otherRunId, event, path),
+      ),
     );
   };
 

@@ -19,12 +19,17 @@ const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const expectedId = "11111111-2222-4333-8444-555555555555";
 const foreignId = "99999999-8888-4777-8666-555555555555";
 let liveId = expectedId;
 let attached = true;
 let policyState = "match";
 const calls = [];
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
 agentDefs.loadAgent = () => { throw new Error("persisted adapter must be used"); };
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
@@ -40,7 +45,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: " + liveId + "\\nType: nemoclaw-mcp-v1\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\n",
+      stdout: "Name: " + args[2] + "\\nId: " + liveId + "\\nType: nemoclaw-mcp-v1\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\nConfig keys: <none>\\n",
       stderr: "",
     };
   }
@@ -88,11 +93,6 @@ registry.registerSandbox({
   agent: "legacy-disabled",
   mcp: { bridges: { fake: entry } },
 });
-registry.addCustomPolicy("alpha", {
-  name: entry.policyName,
-  content: "network_policies: {}\\n",
-  sourcePath: "generated:nemoclaw-mcp-bridge",
-});
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.removeMcpBridge("alpha", "fake").then(
   () => process.exit(9),
@@ -122,11 +122,16 @@ const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const expectedId = "11111111-2222-4333-8444-555555555555";
 let providerExists = true;
 let attached = true;
 let policyState = "match";
 const calls = [];
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
 agentDefs.loadAgent = () => { throw new Error("persisted adapter must be used"); };
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
@@ -141,10 +146,10 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return providerExists
       ? {
           status: 0,
-          stdout: "Id: " + expectedId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: LD_PRELOAD\n",
+          stdout: "Name: " + args[2] + "\nId: " + expectedId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: LD_PRELOAD\nConfig keys: <none>\n",
           stderr: "",
         }
-      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+      : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     return {
@@ -189,11 +194,6 @@ registry.registerSandbox({
   name: "alpha",
   agent: "legacy-disabled",
   mcp: { bridges: { fake: entry } },
-});
-registry.addCustomPolicy("alpha", {
-  name: entry.policyName,
-  content: "network_policies: {}\n",
-  sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.removeMcpBridge("alpha", "fake").then(
@@ -264,14 +264,33 @@ describe("MCP provider ownership", () => {
 
   it("reports a same-shape provider with a different stable ID as drift", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-status-owner-"));
+    const openshellLog = path.join(home, "openshell.log");
+    const openshellStub = path.join(home, "openshell");
+    fs.writeFileSync(
+      openshellStub,
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        "printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
+        `case "$*" in *valid_placeholder*) printf '%s\\n' v1 ;; *) printf '%s\\n' registered ;; esac`,
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 process.env.EXPECTED_TOKEN = "host-only-secret";
 const registry = require("./src/lib/state/registry.js");
 const agentDefs = require("./src/lib/agent/defs.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
+const policies = require("./src/lib/policy/index.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
 agentDefs.loadAgent = () => ({
   name: "openclaw",
   displayName: "OpenClaw",
@@ -283,11 +302,12 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   before: { state: "healthy_named" },
   after: { state: "healthy_named" },
 });
+policies.getPresetContentGatewayState = () => "match";
 providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
+      stdout: "Name: " + args[2] + "\nId: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\nConfig keys: <none>\n",
       stderr: "",
     };
   }
@@ -329,11 +349,15 @@ bridge.statusMcpBridge("alpha", "fake").then(
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
       encoding: "utf8",
-      env: { ...process.env, HOME: home },
+      env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: openshellStub },
     });
+    const openshellCalls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
     fs.rmSync(home, { recursive: true, force: true });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(openshellCalls).toContain("sandbox exec --name alpha");
+    expect(openshellCalls).toContain("valid_placeholder");
+    expect(openshellCalls).not.toContain("provider get");
     const status = JSON.parse(result.stdout) as {
       env: { ready: boolean };
       provider: { credentialReady: boolean; detail?: string };
@@ -350,10 +374,11 @@ process.env.HOME = ${JSON.stringify(home)};
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const calls = [];
 const attached = new Set(["alpha-mcp-fake", "alpha-mcp-second"]);
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
 providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "provider" && args[1] === "get") {
-    return { status: 1, stdout: "", stderr: "NotFound: provider" };
+    return { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     return attached.size > 0
@@ -382,18 +407,23 @@ const entry = {
   adapter: "mcporter",
   addedAt: "2026-06-01T00:00:00.000Z",
 };
-const before = providerActions.inspectMcpProviderAttachments("alpha");
-const firstOutcome = providerActions.detachMissingProviderReference("alpha", entry);
-const afterFirst = providerActions.inspectMcpProviderAttachments("alpha");
-const secondOutcome = providerActions.detachMissingProviderReference("alpha", {
-  ...entry,
-  server: "second",
-  providerName: "alpha-mcp-second",
-  providerId: "22222222-3333-4444-8555-666666666666",
-  policyName: "mcp-bridge-second",
+(async () => {
+  const before = await providerActions.inspectMcpProviderAttachments("alpha", runtimeSelection);
+  const firstOutcome = await providerActions.detachMissingProviderReference("alpha", entry, runtimeSelection);
+  const afterFirst = await providerActions.inspectMcpProviderAttachments("alpha", runtimeSelection);
+  const secondOutcome = await providerActions.detachMissingProviderReference("alpha", {
+    ...entry,
+    server: "second",
+    providerName: "alpha-mcp-second",
+    providerId: "22222222-3333-4444-8555-666666666666",
+    policyName: "mcp-bridge-second",
+  }, runtimeSelection);
+  const after = await providerActions.inspectMcpProviderAttachments("alpha", runtimeSelection);
+  process.stdout.write(JSON.stringify({ before, firstOutcome, afterFirst, secondOutcome, after, calls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
 });
-const after = providerActions.inspectMcpProviderAttachments("alpha");
-process.stdout.write(JSON.stringify({ before, firstOutcome, afterFirst, secondOutcome, after, calls }));
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
@@ -439,12 +469,13 @@ process.env.EXPECTED_TOKEN = "host-only-secret";
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const calls = [];
 let resourceVersion = 4;
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
 providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersion + "\nCredential keys: EXPECTED_TOKEN\n",
+      stdout: "Name: " + args[2] + "\nId: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersion + "\nCredential keys: EXPECTED_TOKEN\nConfig keys: <none>\n",
       stderr: "",
     };
   }
@@ -460,19 +491,25 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 };
 const providerActions = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
 let message = "";
-try {
-  providerActions.upsertMcpProvider(
-    "alpha-mcp-fake",
-    [{ name: "EXPECTED_TOKEN" }],
-    {
-      allowExisting: true,
-      expectedProviderId: "11111111-2222-4333-8444-555555555555",
-    },
-  );
-} catch (error) {
-  message = error.message;
-}
-process.stdout.write(JSON.stringify({ message, resourceVersion, calls }));
+(async () => {
+  try {
+    await providerActions.upsertMcpProvider(
+      "alpha-mcp-fake",
+      [{ name: "EXPECTED_TOKEN" }],
+      {
+        allowExisting: true,
+        expectedProviderId: "11111111-2222-4333-8444-555555555555",
+        runtimeSelection,
+      },
+    );
+  } catch (error) {
+    message = error.message;
+  }
+  process.stdout.write(JSON.stringify({ message, resourceVersion, calls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
@@ -504,29 +541,36 @@ process.env.HOME = ${JSON.stringify(home)};
 process.env.EXPECTED_TOKEN = "host-only-secret";
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const calls = [];
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
 providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "provider" && args[1] === "get") {
-    return { status: 1, stdout: "", stderr: "NotFound: provider" };
+    return { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   throw new Error("unexpected call: " + args.join(" "));
 };
 const providerActions = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
 let message = "";
-try {
-  providerActions.upsertMcpProvider(
-    "alpha-mcp-fake",
-    [{ name: "EXPECTED_TOKEN" }],
-    {
-      allowExisting: true,
-      expectedProviderId: "11111111-2222-4333-8444-555555555555",
-      requireExisting: true,
-    },
-  );
-} catch (error) {
-  message = error.message;
-}
-process.stdout.write(JSON.stringify({ message, calls }));
+(async () => {
+  try {
+    await providerActions.upsertMcpProvider(
+      "alpha-mcp-fake",
+      [{ name: "EXPECTED_TOKEN" }],
+      {
+        allowExisting: true,
+        expectedProviderId: "11111111-2222-4333-8444-555555555555",
+        requireExisting: true,
+        runtimeSelection,
+      },
+    );
+  } catch (error) {
+    message = error.message;
+  }
+  process.stdout.write(JSON.stringify({ message, calls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
@@ -553,7 +597,12 @@ const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const calls = [];
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
 agentDefs.loadAgent = () => { throw new Error("persisted adapter must be used"); };
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
@@ -574,7 +623,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 99999999-8888-4777-8666-555555555555\\nType: nemoclaw-mcp-v1\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\n",
+      stdout: "Name: " + args[2] + "\\nId: 99999999-8888-4777-8666-555555555555\\nType: nemoclaw-mcp-v1\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\nConfig keys: <none>\\n",
       stderr: "",
     };
   }
@@ -618,7 +667,8 @@ bridge.removeMcpBridge("alpha", "fake", { force: true }).then(
       bridgePresent: boolean;
     };
     expect(payload.message).toContain("registry entry was preserved");
-    expect(result.stderr).toContain("Expected stable provider ID");
+    expect(result.stderr).toContain("MCP force cleanup reported");
+    expect(result.stderr).not.toContain("Expected stable provider ID");
     expect(payload.calls.some((call) => call === "provider get alpha-mcp-fake")).toBe(true);
     expect(payload.bridgePresent).toBe(true);
   });

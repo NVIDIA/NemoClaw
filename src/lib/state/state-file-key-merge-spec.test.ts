@@ -20,6 +20,9 @@ describe("stateFileKeyMergeSpec", () => {
         requireFreshHeaders: [{ match: "exact", value: "# h" }],
       }),
     ).toEqual({
+      format: "toml",
+      allow_missing_fresh: false,
+      file_mode: 0o660,
       user_keys: [
         { path: ["a", "b"], type: "boolean" },
         { path: ["c"], type: "enum", values: ["x"] },
@@ -28,6 +31,22 @@ describe("stateFileKeyMergeSpec", () => {
       ],
       require_fresh_tables: [["t", "u"]],
       require_fresh_headers: [{ match: "exact", value: "# h" }],
+    });
+  });
+
+  it("derives a private missing-fresh JSON contract when no managed fresh data is required", () => {
+    expect(
+      stateFileKeyMergeSpec(
+        {
+          merge: "key-allowlist",
+          userKeys: [{ key: "theme", type: "string", maxLength: 128 }],
+        },
+        "settings.json",
+      ),
+    ).toMatchObject({
+      format: "json",
+      allow_missing_fresh: true,
+      file_mode: 0o600,
     });
   });
 });

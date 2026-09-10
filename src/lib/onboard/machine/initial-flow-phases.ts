@@ -5,6 +5,10 @@ import { spawnSync } from "node:child_process";
 import type { GatewayReuseState } from "../../state/gateway";
 import { type GatewayOwner, isExternallySupervised } from "../gateway-ownership";
 import { formatSandboxGpuPassthroughNote } from "../sandbox-gpu-notes";
+import {
+  ExternalComponentContractError,
+  type PreparedExternalComponent,
+} from "../external-component";
 import type { OnboardFlowContext } from "./flow-context";
 import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import { runInitialOnboardFlowSequence } from "./flow-slices";
@@ -54,6 +58,7 @@ export interface InitialOnboardFlowPhaseOptions<
   gpuRequested: boolean;
   noGpu: boolean;
   allowDeferredN1xManagedVllm?: boolean;
+  allowLegacyDgxStationQualification?: boolean;
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   recordedGpuPassthroughBeforePreflight: boolean;
@@ -66,11 +71,8 @@ export interface InitialOnboardFlowPhaseOptions<
   >;
   getInitialGatewayReuseState(): GatewayReuseState;
   assertGatewayReadiness(): Promise<void>;
+  prepareExternalComponent?(session: Context["session"]): PreparedExternalComponent | null;
   gatewayName: string;
-  bindPolicyAuthority(
-    gatewayName: string,
-    session: import("../../state/onboard-session").Session | null,
-  ): Promise<import("../../state/onboard-session").Session | null>;
   recreateSandbox(): boolean;
   requiresBindMounts?: boolean;
   gatewayDeps: GatewayStateOptions<Gpu>["deps"];
@@ -140,6 +142,13 @@ export function createInitialOnboardFlowPhases<
   const preflightPhase: OnboardSequencePhase<Context> = {
     state: "preflight",
     async run(context) {
+      const externalComponent = options.prepareExternalComponent?.(context.session) ?? null;
+      if (externalComponent && (context.resume || options.recreateSandbox())) {
+        throw new ExternalComponentContractError("lifecycle_unsupported");
+      }
+      if (externalComponent) {
+        options.gatewayDeps.assertExternalComponentFreshSandbox(context.requestedSandboxName);
+      }
       const preflightResult = await handlePreflightState({
         resume: context.resume,
         session: context.session,
@@ -150,6 +159,7 @@ export function createInitialOnboardFlowPhases<
         gpuRequested: options.gpuRequested,
         noGpu: options.noGpu,
         allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
+        allowLegacyDgxStationQualification: options.allowLegacyDgxStationQualification,
         env: options.env,
         deps: {
           ...options.preflightDeps,
@@ -181,8 +191,11 @@ export function createInitialOnboardFlowPhases<
           gpu: preflightGpu,
           sandboxGpuConfig: preflightResult.sandboxGpuConfig,
           gpuPassthrough: preflightResult.gpuPassthrough,
+          deferredN1xManagedVllmPreviewAccepted:
+            preflightResult.deferredN1xManagedVllmPreviewAccepted,
           resumeHasResolvedGpuIntent: preflightResult.resumeHasResolvedGpuIntent,
           requestedGpuPassthrough: preflightResult.requestedGpuPassthrough,
+          externalComponent,
         },
         result: preflightResult.stateResult,
       };
@@ -192,9 +205,7 @@ export function createInitialOnboardFlowPhases<
   const gatewayPhase: OnboardSequencePhase<Context> = {
     state: "gateway",
     async run(context) {
-      // Resolve authority before the managed-only reuse helper can select a
-      // gateway or mutate OPENSHELL_GATEWAY. External attachment revalidates
-      // the same owner again at the effect edge.
+      const externalComponent = context.externalComponent ?? null;
       const owner = options.gatewayDeps.resolveGatewayOwner();
       await options.assertGatewayReadiness();
       const gatewayResult = await handleGatewayState({
@@ -211,14 +222,11 @@ export function createInitialOnboardFlowPhases<
         requestedSandboxName: context.requestedSandboxName,
         recreateSandbox: options.recreateSandbox(),
         requiresBindMounts: options.requiresBindMounts === true,
+        externalComponent,
         deps: options.gatewayDeps,
       });
-      const policySession = await options.bindPolicyAuthority(
-        options.gatewayName,
-        gatewayResult.session,
-      );
       return {
-        context: { ...context, session: policySession },
+        context: { ...context, externalComponent, session: gatewayResult.session },
         result: gatewayResult.stateResult,
       };
     },

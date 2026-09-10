@@ -266,15 +266,16 @@ require(${JSON.stringify(CLI_PATH)});
       }
     }
 
-    it("shows ● with gateway-desync suffix when gateway has telegram but registry does not", () => {
+    it("shows the live OpenShell preset without a registry-desync suffix", () => {
       const output = runPolicyList({ registryPresets: [], gatewayPresets: ["telegram"] });
-      expect(output).toMatch(/●.*telegram.*active on gateway, missing from local state/);
+      expect(output).toMatch(/●.*telegram.*user-added/);
       expect(output).toMatch(/○.*npm/);
     });
 
-    it("shows ○ with registry-desync suffix when registry has telegram but gateway does not", () => {
+    it("ignores a legacy registry-only preset", () => {
       const output = runPolicyList({ registryPresets: ["telegram"], gatewayPresets: [] });
-      expect(output).toMatch(/○.*telegram.*recorded locally, not active on gateway/);
+      expect(output).toMatch(/○.*telegram/);
+      expect(output).not.toContain("recorded locally");
     });
 
     it("shows ● with no suffix when both sources agree", () => {
@@ -284,11 +285,11 @@ require(${JSON.stringify(CLI_PATH)});
       expect(output).not.toContain("recorded locally");
     });
 
-    it("falls back to registry-only display with warning when gateway is unreachable", () => {
+    it("does not fall back to registry policy state when OpenShell is unreachable", () => {
       const output = runPolicyList({ registryPresets: ["telegram"], gatewayPresets: null });
-      expect(output).toMatch(/●.*telegram/);
-      expect(output).toContain("Could not query gateway");
-      expect(output).not.toContain("active on gateway");
+      expect(output).toMatch(/○.*telegram/);
+      expect(output).toContain("Could not query OpenShell");
+      expect(output).not.toContain("local state only");
     });
   });
 });

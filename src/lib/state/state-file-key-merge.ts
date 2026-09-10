@@ -18,6 +18,9 @@ interface PythonUserKey {
 }
 
 export interface KeyAllowlistMergeSpec {
+  format: "json" | "toml";
+  allow_missing_fresh: boolean;
+  file_mode: number;
   user_keys: PythonUserKey[];
   require_fresh_tables: string[][];
   require_fresh_headers: { match: "exact" | "prefix"; value: string }[];
@@ -25,8 +28,19 @@ export interface KeyAllowlistMergeSpec {
 
 export function stateFileKeyMergeSpec(
   ownership: StateFileKeyAllowlistRestoreOwnership,
+  filePath = "config.toml",
 ): KeyAllowlistMergeSpec {
+  const format = filePath.endsWith(".json") ? "json" : "toml";
+  const requireFreshTables = (ownership.requireFreshTables ?? []).map((table) => table.split("."));
+  const requireFreshHeaders = (ownership.requireFreshHeaders ?? []).map((header) => ({
+    match: header.match,
+    value: header.value,
+  }));
   return {
+    format,
+    allow_missing_fresh:
+      format === "json" && requireFreshTables.length === 0 && requireFreshHeaders.length === 0,
+    file_mode: format === "json" ? 0o600 : 0o660,
     user_keys: (ownership.userKeys ?? []).map((key) => {
       const spec: PythonUserKey = { path: key.key.split("."), type: key.type };
       if (key.type === "enum" && key.values) spec.values = key.values;
@@ -37,11 +51,8 @@ export function stateFileKeyMergeSpec(
       if (key.type === "string" && key.maxLength !== undefined) spec.max_length = key.maxLength;
       return spec;
     }),
-    require_fresh_tables: (ownership.requireFreshTables ?? []).map((table) => table.split(".")),
-    require_fresh_headers: (ownership.requireFreshHeaders ?? []).map((header) => ({
-      match: header.match,
-      value: header.value,
-    })),
+    require_fresh_tables: requireFreshTables,
+    require_fresh_headers: requireFreshHeaders,
   };
 }
 
@@ -61,12 +72,20 @@ export function buildKeyAllowlistMergeRestoreCommand(
   const destination = shellQuote(`${normalizedDir}/${spec.path}`);
   const baseDir = shellQuote(normalizedDir);
   const relativePath = shellQuote(spec.path);
-  const mergeSpec = shellQuote(JSON.stringify(stateFileKeyMergeSpec(ownership)));
+  if (!spec.path.endsWith(".json") && !spec.path.endsWith(".toml")) {
+    throw new Error(`Key-allowlist state file '${spec.path}' must use .json or .toml format`);
+  }
+  const keyMergeSpec = stateFileKeyMergeSpec(ownership, spec.path);
+  const mergeSpec = shellQuote(JSON.stringify(keyMergeSpec));
+  const freshFileCheck = keyMergeSpec.allow_missing_fresh
+    ? '{ [ ! -e "$dst" ] && [ ! -L "$dst" ]; } || { [ -f "$dst" ] && [ ! -L "$dst" ]; } || { echo "fresh config is unsafe" >&2; exit 11; }'
+    : '[ -f "$dst" ] && [ ! -L "$dst" ] || { echo "fresh config is missing or unsafe" >&2; exit 11; }';
+  const python = keyMergeSpec.format === "json" ? "/usr/bin/python3" : "/opt/venv/bin/python3";
   return [
     `dst=${destination}`,
     'parent="$(dirname "$dst")"',
     '[ -d "$parent" ] && [ ! -L "$parent" ] || { echo "unsafe config parent" >&2; exit 10; }',
-    '[ -f "$dst" ] && [ ! -L "$dst" ] || { echo "fresh config is missing or unsafe" >&2; exit 11; }',
-    `/opt/venv/bin/python3 -I -c ${shellQuote(KEY_ALLOWLIST_MERGE_PYTHON)} ${baseDir} ${relativePath} ${mergeSpec}`,
+    freshFileCheck,
+    `${python} -I -c ${shellQuote(KEY_ALLOWLIST_MERGE_PYTHON)} ${baseDir} ${relativePath} ${mergeSpec}`,
   ].join("; ");
 }

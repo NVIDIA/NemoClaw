@@ -7,7 +7,7 @@
  */
 
 import { DASHBOARD_PORT } from "../core/ports";
-import { isLoopbackHostname } from "../core/url-utils";
+import { isLoopbackDashboardUrl } from "./url";
 
 export interface PlatformHints {
   chatUiUrl?: string;
@@ -68,7 +68,7 @@ function isLoopbackUrl(chatUiUrl: string): boolean {
   const raw = String(chatUiUrl || "").trim();
   if (!raw) return true;
   try {
-    return isLoopbackHostname(new URL(ensureScheme(raw)).hostname);
+    return isLoopbackDashboardUrl(ensureScheme(raw));
   } catch {
     return /localhost|::1|127(?:\.\d{1,3}){3}/i.test(raw);
   }
@@ -117,8 +117,7 @@ export function buildChain(hints?: PlatformHints): DashboardDeliveryChain {
   // hosts (Brev, cloud workstations). Only "0.0.0.0" is honored; arbitrary IPs are
   // rejected silently to keep the surface narrow.
   const remoteBindOptIn = h.bindOverride === "0.0.0.0";
-  const forwardTarget =
-    h.isWsl || hasNonLoopbackUrl || remoteBindOptIn ? `0.0.0.0:${port}` : String(port);
+  const forwardTarget = h.isWsl || remoteBindOptIn ? `0.0.0.0:${port}` : String(port);
   const bindAddress = forwardTarget.includes(":") ? "0.0.0.0" : "127.0.0.1";
   const loopbackOrigin = `http://127.0.0.1:${port}`;
   const toOrigin = (value: string): string | null => {

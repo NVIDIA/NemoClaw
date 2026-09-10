@@ -11,37 +11,36 @@ content:
 skill:
   priority: 10
 ---
-Replace the live policy only when you cannot express the change as a NemoClaw preset.
-This workflow requires OpenShell 0.0.72+.
+
+Replace the live policy only when you cannot express the change as a NemoClaw preset. This workflow requires OpenShell 0.0.72+.
 
 <Warning>
-`openshell policy set` replaces the sandbox's live policy with the file you provide.
-It does not merge.
-A running policy contains the baseline plus every preset layered during onboarding and later operations.
-Applying a file that contains only one part silently removes the other entries.
+  `openshell policy set` replaces the sandbox's live policy with the file you provide. It does not
+  merge. A running policy contains the baseline plus every preset layered during onboarding and
+  later operations. Applying a file that contains only one part silently removes the other entries.
 </Warning>
 
 ## Export the Base Policy
 
-Start from the current round-trippable base policy so the applied presets remain in the file:
+Start from the current parsed base policy so the applied presets remain in the file:
 
 ```bash
 $$nemoclaw my-assistant policy get > current-policy.yaml
 ```
 
-The command retrieves and validates the base policy.
-It exits nonzero instead of writing partial output when retrieval or validation fails.
-Do not use `--raw` because raw output retains the OpenShell metadata header.
+The command retrieves and parses the base policy. It replaces literal credential values with `[STRIPPED_BY_MIGRATION]`. It exits nonzero instead of writing partial output when retrieval or validation fails. Do not use `--raw` because raw output retains the OpenShell metadata header.
 
 ## Edit the Complete Policy
 
-Edit `current-policy.yaml`.
-Add entries under `network_policies` and keep the existing `version` field.
-Preserve every baseline and preset entry that the sandbox still needs.
+Edit `current-policy.yaml`. Add entries under `network_policies` and keep the existing `version` field. Preserve every baseline and preset entry that the sandbox still needs.
 
-The `openshell policy set` command accepts a raw policy file.
-It does not accept a preset file that starts with a `preset:` metadata block.
-Use [Apply Policy Presets](apply-policy-presets) when a maintained or custom preset can express the change.
+<Warning title="Replace Redaction Markers">
+  Do not apply a file that contains `[STRIPPED_BY_MIGRATION]`. Replace every marker with a supported
+  OpenShell credential binding or resolver placeholder; applying the marker as a literal value can
+  break credential delivery.
+</Warning>
+
+The `openshell policy set` command accepts a raw policy file. It does not accept a preset file that starts with a `preset:` metadata block. Use [Apply Policy Presets](apply-policy-presets) when a maintained or custom preset can express the change.
 
 ## Apply the Replacement
 
@@ -51,12 +50,11 @@ Apply the complete file:
 openshell policy set --policy current-policy.yaml --wait my-assistant
 ```
 
-The change applies to the running sandbox.
-For a durable source-of-truth change, update the baseline policy or record a custom preset with NemoClaw.
+The change applies to the running sandbox. OpenShell stores the replacement as the sandbox's durable live policy. Update the baseline policy only when the change must apply to future sandboxes.
 
 ## Verify the Result
 
-Inspect the tracked preset state:
+Compare maintained presets with the current OpenShell policy:
 
 ```bash
 $$nemoclaw my-assistant policy list
@@ -70,6 +68,6 @@ openshell policy get my-assistant
 
 ## Related Topics
 
-- [Create Custom Policy Presets](create-custom-policy-presets) records scoped additions with the sandbox.
+- [Create Custom Policy Presets](create-custom-policy-presets) applies scoped additions to the sandbox.
 - [Change the Baseline Network Policy](change-baseline-network-policy) changes every future sandbox.
 - [Approve or Deny Network Requests](../approve-network-requests) handles one-off access.

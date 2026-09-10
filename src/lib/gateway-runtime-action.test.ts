@@ -20,6 +20,7 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     delete process.env.OPENSHELL_GATEWAY;
   });
 
@@ -244,6 +245,12 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
     });
 
     it("starts recovery with the supplied gateway name and derived port", async () => {
+      const output = {
+        error: vi.fn(),
+        log: vi.fn(),
+        step: vi.fn(),
+        warn: vi.fn(),
+      };
       captureSpy
         .mockReturnValueOnce({ status: 0, output: "Status: Disconnected\nGateway: nemoclaw\n" })
         .mockReturnValueOnce({ status: 0, output: "" })
@@ -261,15 +268,72 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
 
       const result = await gatewayRuntime.recoverNamedGatewayRuntime({
         gatewayName: "nemoclaw-8090",
+        output,
       });
 
       expect(startGatewaySpy).toHaveBeenCalledWith({
         gatewayName: "nemoclaw-8090",
         gatewayPort: 8090,
+        output,
       });
       expect(result.recovered).toBe(true);
       expect(result.via).toBe("start");
       expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8090");
+    });
+
+    it("keeps recovery probes and startup on the frozen OpenShell target (#10514)", async () => {
+      vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+      vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+      vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+      vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "1");
+      vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+      vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+      const runtimeSelection = {
+        gatewayName: "nemoclaw-8090",
+        workspace: "default",
+        localTlsDir: "/recorded/tls",
+      };
+      captureSpy
+        .mockReturnValueOnce({ status: 0, output: "Status: Disconnected\nGateway: nemoclaw\n" })
+        .mockReturnValueOnce({ status: 0, output: "" })
+        .mockReturnValueOnce({ status: 0, output: "Status: Disconnected\nGateway: nemoclaw\n" })
+        .mockReturnValueOnce({ status: 0, output: "" })
+        .mockReturnValueOnce({
+          status: 0,
+          output: "Status: Connected\nGateway: nemoclaw-8090\n",
+        })
+        .mockReturnValueOnce({ status: 0, output: "Gateway: nemoclaw-8090\n" });
+      runSpy.mockReturnValue({ status: 0 } as never);
+
+      await expect(
+        gatewayRuntime.recoverNamedGatewayRuntime({
+          gatewayName: "nemoclaw-8090",
+          runtimeSelection,
+        }),
+      ).resolves.toMatchObject({ recovered: true, via: "start" });
+
+      const subprocessOptions = [
+        ...captureSpy.mock.calls.map(([, options]) => options),
+        ...runSpy.mock.calls.map(([, options]) => options),
+      ];
+      expect(subprocessOptions.length).toBeGreaterThan(0);
+      expect(
+        subprocessOptions.every(
+          (options) =>
+            options.replaceEnv === true &&
+            options.env.OPENSHELL_GATEWAY === "nemoclaw-8090" &&
+            options.env.OPENSHELL_WORKSPACE === "default" &&
+            options.env.OPENSHELL_LOCAL_TLS_DIR === "/recorded/tls" &&
+            options.env.OPENSHELL_GATEWAY_ENDPOINT === undefined &&
+            options.env.OPENSHELL_GATEWAY_INSECURE === undefined &&
+            options.env.OPENSHELL_TOKEN === undefined,
+        ),
+      ).toBe(true);
+      expect(startGatewaySpy).toHaveBeenCalledWith({
+        gatewayName: "nemoclaw-8090",
+        gatewayPort: 8090,
+        runtimeSelection,
+      });
     });
 
     it.each([

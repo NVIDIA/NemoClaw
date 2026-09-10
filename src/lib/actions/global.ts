@@ -7,7 +7,7 @@ import {
 } from "../domain/lifecycle/options";
 import { recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction } from "../gateway-runtime-action";
 import type { OnboardFlags } from "../onboard/command-support";
-import { runDeployAction as executeDeployAction } from "./deploy";
+import { completeAutomaticGatewayPortAfterOnboard } from "../onboard/gateway/automatic-port-completion";
 import {
   backupAll as executeBackupAllAction,
   garbageCollectImages as executeGarbageCollectImagesAction,
@@ -42,10 +42,7 @@ export async function runOnboardAction(
   runtimeDeps: OnboardActionRuntimeDeps = {},
 ): Promise<void> {
   await executeOnboardAction(flags, runtimeDeps);
-}
-
-export async function runDeployAction(instanceName?: string): Promise<void> {
-  await executeDeployAction(instanceName);
+  completeAutomaticGatewayPortAfterOnboard();
 }
 
 export async function runBackupAllAction(): Promise<void> {

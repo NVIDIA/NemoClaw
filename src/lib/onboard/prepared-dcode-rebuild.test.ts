@@ -326,6 +326,14 @@ describe("prepared DCode rebuild adapter", () => {
   it.each([
     ["another agent", { agent: { name: "openclaw" } as AgentDefinition, fromDockerfile: null }],
     ["a custom Dockerfile", { agent: dcodeAgent, fromDockerfile: "/tmp/custom/Dockerfile" }],
+    [
+      "a Dockerfile that differs from the recorded target",
+      {
+        agent: null,
+        fromDockerfile: "/tmp/other/Dockerfile",
+        preparedBuildContext: preparedImageBuildContext,
+      },
+    ],
   ])("rejects a prepared context for %s before staging or patching", async (_label, target) => {
     const stage = vi.fn();
     const patch = vi.fn();

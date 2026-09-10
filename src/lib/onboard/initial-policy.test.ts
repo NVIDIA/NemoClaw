@@ -10,13 +10,17 @@ import YAML from "yaml";
 
 const logPresetScopeMock = vi.hoisted(() => vi.fn());
 vi.mock("../policy", () => ({
-  mergePresetNamesIntoPolicy: (policy: string, presetNames: string[]) => ({
-    policy: `${policy.trimEnd()}\n${presetNames
-      .map((preset) => `  ${preset === "wechat" ? "wechat_bridge" : preset}: {}`)
-      .join("\n")}\n`,
-    appliedPresets: presetNames,
-    missingPresets: [],
-  }),
+  mergePresetNamesIntoPolicy: (policy: string, presetNames: string[]) => {
+    const additions = presetNames.flatMap((preset) => {
+      const policyKey = preset === "wechat" ? "wechat_bridge" : preset;
+      return new RegExp(`^  ${policyKey}:`, "mu").test(policy) ? [] : [`  ${policyKey}: {}`];
+    });
+    return {
+      policy: additions.length === 0 ? policy : `${policy.trimEnd()}\n${additions.join("\n")}\n`,
+      appliedPresets: presetNames,
+      missingPresets: [],
+    };
+  },
   logPresetScope: logPresetScopeMock,
 }));
 
@@ -166,7 +170,6 @@ describe("initial sandbox policy helpers", () => {
 
     const planned = planHermesPortableInitialSandboxPolicy(basePolicyPath, [], {
       agentName: "hermes",
-      policyTier: "personal",
       additionalPresets: ["personal-open-internet", "slack"],
     });
 
@@ -185,7 +188,6 @@ describe("initial sandbox policy helpers", () => {
 
     const planned = planHermesPortableInitialSandboxPolicy(basePolicyPath, [], {
       agentName: "hermes",
-      policyTier: "personal",
       additionalPresets: ["personal-open-internet"],
     });
 
@@ -213,7 +215,6 @@ describe("initial sandbox policy helpers", () => {
     expect(() =>
       planHermesPortableInitialSandboxPolicy(basePolicyPath, [], {
         agentName: "hermes",
-        policyTier: "personal",
         additionalPresets: ["personal-open-internet"],
       }),
     ).toThrow("not strict UTF-8");
@@ -233,20 +234,18 @@ describe("initial sandbox policy helpers", () => {
     expect(() =>
       planHermesPortableInitialSandboxPolicy(basePolicyPath, [], {
         agentName: "hermes",
-        policyTier: "personal",
         additionalPresets: ["personal-open-internet"],
       }),
     ).toThrow("must not include a UTF-8 byte-order mark");
   });
 
-  it("rejects replaced, linked, or writable schema-5 policy authority (#9203)", () => {
+  it("rejects replaced, linked, or writable schema-5 policy requirements (#9203)", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const original = tmpPolicy("version: 1\nnetwork_policies: {}\n");
     const replacement = path.join(path.dirname(original), "replacement.yaml");
     const plan = (policyPath: string) =>
       planHermesPortableInitialSandboxPolicy(policyPath, [], {
         agentName: "hermes",
-        policyTier: "personal",
         additionalPresets: ["personal-open-internet"],
       });
 
@@ -331,6 +330,61 @@ describe("initial sandbox policy helpers", () => {
         },
       }),
     ).toThrow("the detected Station product is not a qualified GB300 system");
+  });
+
+  it("uses a Station firmware-family identity for direct-GPU policy preparation (#10928)", () => {
+    const sysfsRoot = tmpSysfsRoot();
+    addPciDevice(sysfsRoot, "0009:06:00.0", "0x10de\n", "0x030200\n");
+    const discoveredPaths = discoverHostStationGb300SysfsReadOnlyPaths({
+      platform: "linux",
+      architecture: "arm64",
+      hasNvidiaGpu: true,
+      identity: {
+        nvidiaPlatform: "station",
+        productName: "Generic ARM workstation",
+        stationFirmwareProduct: "NVIDIA DGX Station GB300",
+        stationProfile: "supported-dgx-os",
+        stationGb300PciGpu: true,
+        osId: "ubuntu",
+        osVersionId: "24.04",
+      },
+      sysfsRoot,
+    });
+    const prepared = prepareInitialSandboxCreatePolicy(tmpPolicy(BASE_POLICY_FIXTURE), [], {
+      directGpu: true,
+      stationGb300SysfsReadOnlyPaths: discoveredPaths,
+    });
+    const preparedDoc = YAML.parse(fs.readFileSync(prepared.policyPath, "utf-8"));
+
+    expect(discoveredPaths).toEqual(["/sys/bus/pci/devices/0009:06:00.0"]);
+    expectSingleOccurrence(
+      preparedDoc.filesystem_policy.read_only,
+      "/sys/bus/pci/devices/0009:06:00.0",
+    );
+    expect(prepared.cleanup?.()).toBe(true);
+  });
+
+  it("rejects family-only Station hardware with an unsupported software profile (#10928)", () => {
+    const sysfsRoot = tmpSysfsRoot();
+    addPciDevice(sysfsRoot, "0009:06:00.0", "0x10de\n", "0x030200\n");
+
+    expect(() =>
+      discoverHostStationGb300SysfsReadOnlyPaths({
+        platform: "linux",
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        identity: {
+          nvidiaPlatform: "station",
+          productName: "Generic ARM workstation",
+          stationFirmwareProduct: "NVIDIA DGX Station GB300",
+          stationProfile: "unsupported-dgx-os",
+          stationGb300PciGpu: true,
+          osId: "ubuntu",
+          osVersionId: "24.04",
+        },
+        sysfsRoot,
+      }),
+    ).toThrow("the Station software profile is unsupported or unknown");
   });
 
   it("rejects Station GPU policy when host GPU availability fails", () => {
@@ -639,28 +693,46 @@ network_policies: {}
   it("keeps the base policy when no channel needs a create-time preset", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
 
-    expect(prepareInitialSandboxCreatePolicy(basePolicyPath, ["wechat"])).toEqual({
+    expect(prepareInitialSandboxCreatePolicy(basePolicyPath, ["whatsapp"])).toEqual({
       policyPath: basePolicyPath,
       appliedPresets: [],
     });
   });
 
-  it("records an existing create-time preset without writing a temp policy", () => {
-    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  slack: {}\n");
+  it("applies the WeChat bridge policy at sandbox creation", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
 
-    expect(prepareInitialSandboxCreatePolicy(basePolicyPath, ["slack"])).toEqual({
-      policyPath: basePolicyPath,
-      appliedPresets: ["slack"],
-    });
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["wechat"]);
+
+    expect(prepared.policyPath).not.toBe(basePolicyPath);
+    expect(prepared.appliedPresets).toEqual(["wechat"]);
+    expect(getNetworkPolicyNames(fs.readFileSync(prepared.policyPath, "utf-8"))).toEqual(
+      new Set(["base", "wechat_bridge"]),
+    );
+    expect(prepared.cleanup?.()).toBe(true);
+    expect(fs.existsSync(prepared.policyPath)).toBe(false);
   });
 
-  it("records active channel policies already provided by an agent base policy", () => {
+  it("replaces an existing messaging key with its active channel preset", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  slack: {}\n");
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["slack"], {
+      sandboxName: "active-slack",
+    });
+
+    expect(prepared.policyPath).not.toBe(basePolicyPath);
+    expect(prepared.appliedPresets).toEqual(["slack"]);
+    expect(prepared.cleanup?.()).toBe(true);
+  });
+
+  it("materializes active channel policy authority over an agent base entry", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  discord: {}\n");
 
-    expect(prepareInitialSandboxCreatePolicy(basePolicyPath, ["discord"])).toEqual({
-      policyPath: basePolicyPath,
-      appliedPresets: ["discord"],
-    });
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["discord"]);
+
+    expect(prepared.policyPath).not.toBe(basePolicyPath);
+    expect(prepared.appliedPresets).toEqual(["discord"]);
+    expect(prepared.cleanup?.()).toBe(true);
   });
 
   it("filters inactive Hermes messaging policies from the create-time policy", () => {

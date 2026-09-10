@@ -9,6 +9,7 @@ import {
   spawnObservedChild,
 } from "../fixtures/observed-child-process.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { resolveLiveE2eWorkloadSourceEnv } from "../fixtures/shell-probe.ts";
 import { dashboardRemoteBindConnectStarted } from "./dashboard-remote-bind-env.ts";
 
 const CONNECT_CAPTURE_LIMIT_BYTES = 1024 * 1024;
@@ -32,6 +33,8 @@ export interface DashboardConnectHandoffOptions {
   readonly stopGraceMs?: number;
   readonly timeoutMs: number;
   readonly dashboardPort: string;
+  readonly forwardProbe?: () => boolean;
+  readonly forwardProbeIntervalMs?: number;
 }
 
 function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
@@ -87,7 +90,7 @@ export async function runDashboardConnectUntilForwardHandoff(
     spawn: {
       cwd: REPO_ROOT,
       detached: true,
-      env: { ...options.env },
+      env: resolveLiveE2eWorkloadSourceEnv({ ...options.env }),
       stdio: ["ignore", "pipe", "pipe"],
     },
   });
@@ -101,6 +104,7 @@ export async function runDashboardConnectUntilForwardHandoff(
   let cleanupEscalated = false;
   let captureError: Error | null = null;
   let forceKillTimer: NodeJS.Timeout | undefined;
+  let forwardProbeTimer: NodeJS.Timeout | undefined;
 
   const scheduleForcedCleanup = (): void => {
     if (forceKillTimer) return;
@@ -128,6 +132,16 @@ export async function runDashboardConnectUntilForwardHandoff(
     );
     if (forwardProof) requestProofStop();
   };
+  const inspectForwardProbe = (): void => {
+    if (forwardProof || captureError || !options.forwardProbe) return;
+    try {
+      forwardProof = options.forwardProbe();
+      if (forwardProof) requestProofStop();
+    } catch (error) {
+      captureError = error instanceof Error ? error : new Error(String(error));
+      terminateGroup();
+    }
+  };
   const capture = (stream: "stdout" | "stderr", chunk: Buffer | string): void => {
     if (captureError) return;
     try {
@@ -141,6 +155,10 @@ export async function runDashboardConnectUntilForwardHandoff(
   };
   child.stdout?.on("data", (chunk: Buffer | string) => capture("stdout", chunk));
   child.stderr?.on("data", (chunk: Buffer | string) => capture("stderr", chunk));
+  if (options.forwardProbe) {
+    inspectForwardProbe();
+    forwardProbeTimer = setInterval(inspectForwardProbe, options.forwardProbeIntervalMs ?? 250);
+  }
 
   const deadline = setTimeout(() => {
     deadlineExpired = true;
@@ -165,6 +183,7 @@ export async function runDashboardConnectUntilForwardHandoff(
   });
   clearTimeout(deadline);
   if (forceKillTimer) clearTimeout(forceKillTimer);
+  if (forwardProbeTimer) clearInterval(forwardProbeTimer);
   options.signal?.removeEventListener("abort", abort);
 
   const artifactBase = "dashboard-connect-handoff";

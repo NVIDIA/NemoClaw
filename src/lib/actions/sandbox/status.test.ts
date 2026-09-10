@@ -9,6 +9,7 @@ import type { ProviderHealthProbeOptions } from "../../inference/health";
 import {
   classifySandboxContainerFailureForStatus,
   classifySandboxStatusPreflightFailure,
+  getSandboxStatusPreflight,
   getSandboxStatusInferenceHealth,
   getSandboxStatusReport,
   isDockerDaemonUnreachableForStatus,
@@ -59,6 +60,21 @@ describe("sandbox status DCode auto-approval (#6478)", () => {
     });
 
     expect(report.servingProfileProvenance).toEqual(provenance);
+  });
+
+  it("omits an attached llama.cpp route when the sandbox is missing (#10256)", async () => {
+    const report = await getSandboxStatusReport("attached", {
+      getSandbox: () =>
+        ({
+          name: "attached",
+          provider: "llama-cpp-local",
+          model: "muse-glimmer",
+          endpointUrl: "http://127.0.0.1:8081/v1",
+        }) as never,
+      reconcile: async () => ({ state: "missing" as const, output: "not found" }),
+    });
+
+    expect(report.llamaCpp).toBeNull();
   });
 
   it("projects effective DCode mode into JSON while using null for other agents", async () => {
@@ -364,6 +380,76 @@ describe("classifySandboxStatusPreflightFailure", () => {
       },
     );
     expect(result).toBeNull();
+  });
+
+  it("keeps the stopped observation available for intentional-stop classification (#11025)", async () => {
+    const result = await classifySandboxStatusPreflightFailure(
+      { name: "alpha", openshellDriver: "docker", stopped: true } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async () => ({
+          layer: "sandbox_container_stopped",
+          detail: "stub stopped container",
+        }),
+      },
+    );
+    expect(result).toEqual({
+      layer: "sandbox_container_stopped",
+      dockerUnreachable: false,
+    });
+  });
+
+  it("reports a clean stop only when provider observation confirms persisted intent (#11025)", async () => {
+    const stopped = await getSandboxStatusPreflight(
+      { name: "alpha", openshellDriver: "docker", stopped: true } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async () => ({
+          layer: "sandbox_container_stopped",
+          detail: "stub stopped container",
+        }),
+      },
+    );
+    const running = await getSandboxStatusPreflight(
+      { name: "alpha", openshellDriver: "docker", stopped: true } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async () => null,
+      },
+    );
+
+    expect(stopped).toMatchObject({
+      intentionalStopConfirmed: true,
+      failureLayer: null,
+      suppressInferenceProbe: true,
+      exitCode: 0,
+    });
+    expect(running).toMatchObject({
+      intentionalStopConfirmed: false,
+      failureLayer: null,
+      suppressInferenceProbe: false,
+      exitCode: 0,
+    });
+  });
+
+  it("does not accept a non-boolean persisted stop marker as intentional (#11025)", async () => {
+    const result = await getSandboxStatusPreflight(
+      { name: "alpha", openshellDriver: "docker", stopped: "false" } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async () => ({
+          layer: "sandbox_container_stopped",
+          detail: "stub stopped container",
+        }),
+      },
+    );
+
+    expect(result).toMatchObject({
+      intentionalStopConfirmed: false,
+      failureLayer: "sandbox_container_stopped",
+      suppressInferenceProbe: true,
+      exitCode: 1,
+    });
   });
 
   it("returns null when the sandbox is not on the docker driver", async () => {

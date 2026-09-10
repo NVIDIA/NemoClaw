@@ -14,10 +14,6 @@ type CommandEntry = {
   env?: Record<string, string | undefined> | null;
 };
 
-function writeExecutable(target: string, contents: string) {
-  fs.writeFileSync(target, contents, { mode: 0o755 });
-}
-
 function parseStdoutJson<T>(stdout: string): T {
   const line = stdout
     .trim()
@@ -45,12 +41,15 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   const sandboxCreateStreamPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "sandbox", "create-stream.ts"),
   );
+  const sandboxCommandCliPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "adapters", "openshell", "sandbox-command-cli.ts"),
+  );
   const onboardScriptMocksPath = JSON.stringify(
     path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
   );
 
   fs.mkdirSync(fakeBin, { recursive: true });
-  writeOkOpenshell(fakeBin, { readySandboxGet: true });
+  writeOkOpenshell(fakeBin);
 
   const script = String.raw`
 const fs = require("node:fs");
@@ -59,12 +58,18 @@ const path = require("node:path");
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 const agentDefs = require(${agentDefsPath});
 const agentOnboard = require(${agentOnboardPath});
 const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
 const sandboxCreateStream = require(${sandboxCreateStreamPath});
 const scenario = ${JSON.stringify(scenario)};
 const sandboxName = "deepagents-box";
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName,
+  lifecycleState: scenario === "reuse" ? "created" : "absent",
+});
+createdSandbox.installRuntimeObservation();
 const commands = [];
 const registerCalls = [];
 const updateCalls = [];
@@ -124,17 +129,13 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
+  if (profileResult !== null) return profileResult;
   const providerResult = managedProviderResult(normalized);
-  return profileResult ?? providerResult ??
-    (normalized.includes("sandbox get") && normalized.includes(sandboxName)
-      ? {
-          status: 0,
-          stdout: Buffer.from(
-            "Name: " + sandboxName + "\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n",
-          ),
-          stderr: Buffer.alloc(0),
-        }
-      : { status: 0 });
+  if (providerResult !== null) return providerResult;
+  const inferenceProviderResult = fixtureMocks.mockNvidiaProviderGetRun(command, "nemoclaw");
+  if (inferenceProviderResult !== null) return inferenceProviderResult;
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ command: _n([file, ...args]), env: opts.env || null });
@@ -142,18 +143,10 @@ runner.runFile = (file, args = [], opts = {}) => {
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, {
-    sandboxName,
-  });
-  if (createdIdentity !== null) return createdIdentity;
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   commands.push({ command: normalized, env: null });
-  if (
-    normalized.includes(
-      "sandbox exec --name " +
-        sandboxName +
-        " --gateway nemoclaw -- /usr/local/bin/dcode identity",
-    )
-  ) {
+  if (normalized.includes("sandbox exec") && normalized.includes("dcode identity")) {
     return [
       "Route:    inference",
       "Provider: nvidia-prod",
@@ -161,19 +154,36 @@ runner.runCapture = (command) => {
       "Endpoint: https://inference.local/v1",
     ].join("\n");
   }
-  if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
-    return scenario === "reuse"
-      ? [sandboxName, "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10))
-      : "";
-  }
-  if (normalized.includes("sandbox list")) return sandboxName + " Ready";
-  if (normalized.includes("forward list")) return sandboxName + " 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
+};
+
+const sandboxCommandCli = require(${sandboxCommandCliPath});
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const stdout = runner.runCapture([
+        "openshell",
+        "sandbox",
+        "exec",
+        "--name",
+        request.sandboxName,
+        ...gatewayArgs,
+        "--",
+        ...request.command,
+      ]);
+      return { outcome: { kind: "completed", exitCode: 0 }, stdout: String(stdout || ""), stderr: "" };
+    },
+  };
 };
 
 registry.getSandbox = () =>
   scenario === "reuse"
-    ? fixtureMocks.managedSandboxPolicyReceiptFixture({
+    ? fixtureMocks.sandboxLifecycleFixture({
         name: sandboxName,
         gpuEnabled: false,
         agent: "langchain-deepagents-code",
@@ -205,6 +215,7 @@ const createFixture =
 
 sandboxCreateStream.streamSandboxCreate = async (command, args, env) => {
   if (scenario === "reuse") throw new Error("unexpected sandbox create");
+  createdSandbox.create([command, ...args]);
   commands.push({ command: _n([command, ...args]), env });
   return { status: 0, output: "Created sandbox: " + sandboxName, sawProgress: true };
 };

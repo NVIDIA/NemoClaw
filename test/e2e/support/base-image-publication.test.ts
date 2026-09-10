@@ -6,15 +6,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  baseImageInputsChanged,
   collectPaginated,
   expandBaseImagePushPaths,
   type FirstParentHistory,
   githubRequest,
   type PublicationRun,
   isBaseImagePublicationEvent,
+  matchesBaseImagePushPath,
   parseBaseImagePushPaths,
   resolveFirstParentHistory,
   selectPublicationRun,
@@ -33,6 +35,8 @@ const RUN_ID = 29891942278;
 const WORKFLOW_ID = 251475843;
 const RUN_URL_ROOT = "https://github.com/NVIDIA/NemoClaw/actions/runs";
 const RUN_URL = `https://github.com/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`;
+const MANAGED_IMAGE_PROMOTION_JOB =
+  "Publish complete managed images / Promote complete multi-platform managed image cohort";
 const WORKFLOW_SOURCE = `on:
   push:
     branches: [main]
@@ -119,6 +123,7 @@ function selectedRun(overrides: Partial<PublicationRun> = {}): PublicationRun {
   return {
     id: RUN_ID,
     attempt: 1,
+    event: "push",
     workflowId: WORKFLOW_ID,
     headSha: RELEVANT_SHA,
     status: "completed",
@@ -162,7 +167,23 @@ function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string,
   ];
 }
 
+function successfulManualJobs(): Record<string, unknown>[] {
+  return [...successfulJobs(), publisherJob(MANAGED_IMAGE_PROMOTION_JOB, { id: 4 })];
+}
+
 describe("base-image publication evidence", () => {
+  it("publishes after a root package manifest changes", () => {
+    const workflowSource = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
+      "utf8",
+    );
+    const reviewedPaths = parseBaseImagePushPaths(workflowSource);
+
+    expect(reviewedPaths).toEqual(expect.arrayContaining(["package.json", "package-lock.json"]));
+    expect(baseImageInputsChanged(["package.json"], reviewedPaths)).toBe(true);
+    expect(baseImageInputsChanged(["package-lock.json"], reviewedPaths)).toBe(true);
+  });
+
   it.each(["push", "workflow_dispatch"])("accepts %s publication preflight events", (eventName) => {
     expect(isBaseImagePublicationEvent(eventName)).toBe(true);
   });
@@ -173,33 +194,6 @@ describe("base-image publication evidence", () => {
       expect(isBaseImagePublicationEvent(eventName)).toBe(false);
     },
   );
-
-  it("extracts literal paths and the reviewed managed-image input families (#7372)", () => {
-    const source = fs.readFileSync(
-      path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
-      "utf8",
-    );
-
-    expect(parseBaseImagePushPaths(source)).toEqual(
-      expect.arrayContaining([
-        ".github/actions/ci-reviewed-npm-audit/**",
-        ".github/workflows/base-image.yaml",
-        "Dockerfile",
-        "Dockerfile.base",
-        "agents/**",
-        "agents/hermes/Dockerfile.base",
-        "agents/langchain-deepagents-code/Dockerfile.base",
-        "nemoclaw/**",
-        "nemoclaw-blueprint/**",
-        "scripts/**",
-        "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
-        "src/lib/messaging/**",
-        "src/lib/tool-disclosure.ts",
-        "tools/mcp-tool-discovery-runtime/**",
-        "tsconfig.runtime-preloads.json",
-      ]),
-    );
-  });
 
   it.each([
     [
@@ -251,15 +245,23 @@ describe("base-image publication evidence", () => {
     const expanded = expandBaseImagePushPaths(EXPECTED_SHA, [
       "Dockerfile",
       "agents/**",
+      ".github/actions/ci-reviewed-npm-audit/**",
       "src/lib/messaging/**",
       "test/e2e/live/managed-image-activation-e2e*.ts",
     ]);
     expect(expanded).toEqual([
+      ":(glob).github/actions/ci-reviewed-npm-audit/**",
       ":(glob)agents/**",
       ":(glob)src/lib/messaging/**",
       ":(glob)test/e2e/live/managed-image-activation-e2e*.ts",
       "Dockerfile",
     ]);
+    expect(
+      matchesBaseImagePushPath(
+        ".github/actions/ci-reviewed-npm-audit/**",
+        ".github/actions/ci-reviewed-npm-audit/verify-and-install-npm.sh",
+      ),
+    ).toBe(true);
   });
 
   it("binds the applicable commit to the checked-out first-parent chain (#7372)", () => {
@@ -481,26 +483,85 @@ describe("base-image publication evidence", () => {
     });
   });
 
-  it("selects the nearest fully successful trusted run for branch reuse", () => {
-    const failedRunId = RUN_ID + 1;
+  it.each([
+    ["push", "completed", "failure", true],
+    ["workflow_dispatch", "completed", "failure", false],
+    ["workflow_dispatch", "completed", "cancelled", false],
+    ["workflow_dispatch", "completed", "timed_out", false],
+    ["workflow_dispatch", "in_progress", null, false],
+  ] as const)(
+    "keeps a valid publication when a newer %s rebuild is %s/%s",
+    (event, status, conclusion, completedSuccessOnly) => {
+      const newerRunId = RUN_ID + 1;
+      const selection = selectPublicationRun(
+        runsPayload([
+          workflowRun({
+            id: newerRunId,
+            head_sha: DESCENDANT_SHA,
+            html_url: `${RUN_URL_ROOT}/${newerRunId}`,
+            event,
+            status,
+            conclusion,
+          }),
+          workflowRun(),
+        ]),
+        history(),
+        WORKFLOW_ID,
+        { allowWorkflowDispatch: true, completedSuccessOnly },
+      );
+
+      expect(selection).toMatchObject({
+        state: "selected",
+        run: { id: RUN_ID, headSha: RELEVANT_SHA, conclusion: "success" },
+      });
+    },
+  );
+
+  it("accepts an exact successful manual main publication for branch reuse", () => {
+    const selection = selectPublicationRun(
+      runsPayload([workflowRun({ event: "workflow_dispatch" })]),
+      history(),
+      WORKFLOW_ID,
+      { allowWorkflowDispatch: true, completedSuccessOnly: true },
+    );
+
+    expect(selection).toMatchObject({
+      state: "selected",
+      run: {
+        id: RUN_ID,
+        event: "workflow_dispatch",
+        headSha: RELEVANT_SHA,
+        conclusion: "success",
+      },
+    });
+    expect(() =>
+      selectPublicationRun(
+        runsPayload([workflowRun({ event: "workflow_dispatch" })]),
+        history(),
+        WORKFLOW_ID,
+      ),
+    ).toThrow(/event must be push/u);
+  });
+
+  it("prefers a successful push over a successful manual publication at the same commit", () => {
+    const manualRunId = RUN_ID + 1;
     const selection = selectPublicationRun(
       runsPayload([
         workflowRun({
-          id: failedRunId,
-          head_sha: DESCENDANT_SHA,
-          conclusion: "failure",
-          html_url: `${RUN_URL_ROOT}/${failedRunId}`,
+          id: manualRunId,
+          html_url: `${RUN_URL_ROOT}/${manualRunId}`,
+          event: "workflow_dispatch",
         }),
         workflowRun(),
       ]),
       history(),
       WORKFLOW_ID,
-      { completedSuccessOnly: true },
+      { allowWorkflowDispatch: true, completedSuccessOnly: true },
     );
 
     expect(selection).toMatchObject({
       state: "selected",
-      run: { id: RUN_ID, headSha: RELEVANT_SHA, conclusion: "success" },
+      run: { id: RUN_ID, event: "push", headSha: RELEVANT_SHA },
     });
   });
 
@@ -562,7 +623,9 @@ describe("base-image publication evidence", () => {
         history(),
         WORKFLOW_ID,
       ),
-    ).toThrow(/name must be one of Images \/ Publish Base and Managed Images, Images \/ Base Images/u);
+    ).toThrow(
+      /name must be one of Images \/ Publish Base and Managed Images, Images \/ Base Images/u,
+    );
   });
 
   it("selects an in-progress trusted publication run (#9549)", () => {
@@ -599,6 +662,7 @@ describe("base-image publication evidence", () => {
         ]),
         history(),
         WORKFLOW_ID,
+        { allowWorkflowDispatch: true, completedSuccessOnly: true },
       ),
     ).toThrow(/multiple trusted/u);
     expect(() =>
@@ -631,6 +695,23 @@ describe("base-image publication evidence", () => {
         run,
       ),
     ).toThrow(/provenance does not match/u);
+  });
+
+  it("requires exact managed-image promotion from a manual publication", () => {
+    const manualRun = selectedRun({ event: "workflow_dispatch" });
+
+    expect(() =>
+      validatePublisherJobs(
+        { total_count: successfulJobs().length, jobs: successfulJobs() },
+        manualRun,
+      ),
+    ).toThrow(/missing required Publish complete managed images/u);
+    expect(
+      validatePublisherJobs(
+        { total_count: successfulManualJobs().length, jobs: successfulManualJobs() },
+        manualRun,
+      ),
+    ).toBe("ready");
   });
 
   it("accepts the renamed trusted publisher jobs", () => {
@@ -742,13 +823,15 @@ describe("base-image publication evidence", () => {
       workflowRun(),
     ];
     const requests: string[] = [];
+    const requestBudgets: Array<number | undefined> = [];
     const notices: string[] = [];
     let currentTime = 0;
 
     const run = await waitForBaseImagePublication({
       history: history(),
-      request: async (requestPath) => {
+      request: async (requestPath, budgetMs) => {
         requests.push(requestPath);
+        requestBudgets.push(budgetMs);
         return responses.shift();
       },
       waitMs: 100,
@@ -763,13 +846,14 @@ describe("base-image publication evidence", () => {
     expect(run.id).toBe(RUN_ID);
     expect(requests).toEqual([
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
     ]);
+    expect(requestBudgets).toEqual([100, 100, 90, 90, 80, 80, 80]);
     expect(notices).toHaveLength(2);
   });
 
@@ -855,6 +939,208 @@ describe("base-image publication evidence", () => {
     ).resolves.toEqual(selectedRun());
   });
 
+  it.each([
+    { context: "automatic main", selectNearestSuccessfulRun: false },
+    { context: "manual main", selectNearestSuccessfulRun: true },
+  ])(
+    "uses a successful manual publication for $context E2E",
+    async ({ selectNearestSuccessfulRun }) => {
+      const manualRun = workflowRun({ event: "workflow_dispatch" });
+      const responses = [
+        workflowMetadata(),
+        runsPayload([manualRun]),
+        { total_count: 4, jobs: successfulManualJobs() },
+        manualRun,
+      ];
+      const requests: string[] = [];
+
+      await expect(
+        waitForBaseImagePublication({
+          history: history(),
+          request: async (requestPath) => {
+            requests.push(requestPath);
+            return responses.shift();
+          },
+          requireWorkflowSuccess: true,
+          selectNearestSuccessfulRun,
+          waitMs: 100,
+          pollMs: 10,
+        }),
+      ).resolves.toEqual(selectedRun({ event: "workflow_dispatch" }));
+      expect(requests).toEqual([
+        "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+        "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+        `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
+        `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
+      ]);
+    },
+  );
+
+  it("selects the newest tied manual publication deterministically (#11289)", () => {
+    const olderManualRunId = RUN_ID + 1;
+    const newerManualRunId = RUN_ID + 2;
+
+    expect(
+      selectPublicationRun(
+        runsPayload([
+          workflowRun({
+            id: olderManualRunId,
+            event: "workflow_dispatch",
+            head_sha: DESCENDANT_SHA,
+            html_url: `${RUN_URL_ROOT}/${olderManualRunId}`,
+          }),
+          workflowRun({
+            id: newerManualRunId,
+            event: "workflow_dispatch",
+            head_sha: DESCENDANT_SHA,
+            html_url: `${RUN_URL_ROOT}/${newerManualRunId}`,
+          }),
+        ]),
+        history(),
+        WORKFLOW_ID,
+        { allowWorkflowDispatch: true, completedSuccessOnly: true },
+      ),
+    ).toMatchObject({
+      state: "selected",
+      run: { id: newerManualRunId, event: "workflow_dispatch" },
+    });
+  });
+
+  it("falls back through multiple ineligible manual publications to an older push (#11289)", async () => {
+    const olderManualRunId = RUN_ID + 1;
+    const newerManualRunId = RUN_ID + 2;
+    const manualRun = (id: number) =>
+      workflowRun({
+        id,
+        event: "workflow_dispatch",
+        head_sha: DESCENDANT_SHA,
+        html_url: `${RUN_URL_ROOT}/${id}`,
+      });
+    const manualJobs = (runId: number) =>
+      successfulJobs().map((job) => ({ ...job, run_id: runId, head_sha: DESCENDANT_SHA }));
+    const olderManualRun = manualRun(olderManualRunId);
+    const newerManualRun = manualRun(newerManualRunId);
+    const pushRun = workflowRun();
+    const responses = [
+      workflowMetadata(),
+      runsPayload([olderManualRun, newerManualRun, pushRun]),
+      { total_count: manualJobs(newerManualRunId).length, jobs: manualJobs(newerManualRunId) },
+      { total_count: manualJobs(olderManualRunId).length, jobs: manualJobs(olderManualRunId) },
+      { total_count: successfulJobs().length, jobs: successfulJobs() },
+      pushRun,
+    ];
+    const requests: string[] = [];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async (requestPath) => {
+          requests.push(requestPath);
+          return responses.shift();
+        },
+        requireWorkflowSuccess: true,
+        selectNearestSuccessfulRun: true,
+        waitMs: 100,
+        pollMs: 10,
+      }),
+    ).resolves.toEqual(selectedRun());
+    expect(requests).toEqual([
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      `/repos/NVIDIA/NemoClaw/actions/runs/${newerManualRunId}/attempts/1/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${olderManualRunId}/attempts/1/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
+    ]);
+  });
+
+  it("selects an older eligible push after skipping a newer manual run without managed-image promotion (#11289)", async () => {
+    const manualRunId = RUN_ID + 1;
+    const manualRun = workflowRun({
+      id: manualRunId,
+      event: "workflow_dispatch",
+      head_sha: DESCENDANT_SHA,
+      html_url: `${RUN_URL_ROOT}/${manualRunId}`,
+    });
+    const manualJobs = successfulJobs().map((job) => ({
+      ...job,
+      run_id: manualRunId,
+      head_sha: DESCENDANT_SHA,
+    }));
+    const pushRun = workflowRun();
+    const responses = [
+      workflowMetadata(),
+      runsPayload([manualRun, pushRun]),
+      { total_count: manualJobs.length, jobs: manualJobs },
+      { total_count: successfulJobs().length, jobs: successfulJobs() },
+      pushRun,
+    ];
+    const requests: string[] = [];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async (requestPath) => {
+          requests.push(requestPath);
+          return responses.shift();
+        },
+        requireWorkflowSuccess: true,
+        selectNearestSuccessfulRun: true,
+        waitMs: 100,
+        pollMs: 10,
+      }),
+    ).resolves.toEqual(selectedRun());
+    expect(requests).toEqual([
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      `/repos/NVIDIA/NemoClaw/actions/runs/${manualRunId}/attempts/1/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
+    ]);
+  });
+
+  it("rejects malformed manual promotion evidence instead of falling back to a push (#11289)", async () => {
+    const manualRunId = RUN_ID + 1;
+    const manualRun = workflowRun({
+      id: manualRunId,
+      event: "workflow_dispatch",
+      head_sha: DESCENDANT_SHA,
+      html_url: `${RUN_URL_ROOT}/${manualRunId}`,
+    });
+    const malformedManualJobs = successfulManualJobs().map((job) => ({
+      ...job,
+      run_id: manualRunId,
+      head_sha: DESCENDANT_SHA,
+      ...(job.name === MANAGED_IMAGE_PROMOTION_JOB ? { conclusion: "not-a-conclusion" } : {}),
+    }));
+    const pushRun = workflowRun();
+    const responses = [
+      workflowMetadata(),
+      runsPayload([manualRun, pushRun]),
+      { total_count: malformedManualJobs.length, jobs: malformedManualJobs },
+    ];
+    const requests: string[] = [];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async (requestPath) => {
+          requests.push(requestPath);
+          return responses.shift();
+        },
+        requireWorkflowSuccess: true,
+        selectNearestSuccessfulRun: true,
+        waitMs: 100,
+        pollMs: 10,
+      }),
+    ).rejects.toThrow(/conclusion is invalid/u);
+    expect(requests).toEqual([
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      `/repos/NVIDIA/NemoClaw/actions/runs/${manualRunId}/attempts/1/jobs?per_page=100&page=1`,
+    ]);
+  });
+
   it("rejects failed managed-image publication before E2E consumers start", async () => {
     const failedRun = workflowRun({ conclusion: "failure" });
     const responses = [
@@ -873,6 +1159,123 @@ describe("base-image publication evidence", () => {
         pollMs: 10,
       }),
     ).rejects.toThrow(/managed-image publication workflow did not complete successfully/u);
+  });
+
+  it("searches past failed attempts without an attempt-count cap", async () => {
+    const cancelledRun = workflowRun({
+      run_attempt: 12,
+      conclusion: "cancelled",
+    });
+    const failedAttempts = Array.from({ length: 10 }, (_, index) =>
+      workflowRun({ run_attempt: 11 - index, conclusion: "failure" }),
+    );
+    const successfulAttempt = workflowRun({ run_attempt: 1 });
+    const responses = [
+      workflowMetadata(),
+      runsPayload([cancelledRun]),
+      ...failedAttempts,
+      successfulAttempt,
+      { total_count: 3, jobs: successfulJobs() },
+      cancelledRun,
+      successfulAttempt,
+    ];
+    const requests: string[] = [];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async (requestPath) => {
+          requests.push(requestPath);
+          return responses.shift();
+        },
+        requireWorkflowSuccess: true,
+        waitMs: 100,
+        pollMs: 10,
+        now: () => 0,
+      }),
+    ).resolves.toMatchObject({ id: RUN_ID, attempt: 1, conclusion: "success" });
+    expect(requests).toEqual([
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      ...Array.from(
+        { length: 11 },
+        (_, index) => `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/${11 - index}`,
+      ),
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1`,
+    ]);
+  });
+
+  it("rejects mismatched identity from a prior workflow attempt", async () => {
+    const cancelledRun = workflowRun({ run_attempt: 3, conclusion: "cancelled" });
+    const responses = [
+      workflowMetadata(),
+      runsPayload([cancelledRun]),
+      workflowRun({ run_attempt: 2, head_sha: STALE_SHA }),
+    ];
+    const requests: string[] = [];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async (requestPath) => {
+          requests.push(requestPath);
+          return responses.shift();
+        },
+        requireWorkflowSuccess: true,
+        waitMs: 100,
+        pollMs: 10,
+      }),
+    ).rejects.toThrow(/selected base-image workflow changed while evidence was verified/u);
+    expect(requests).toEqual([
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2`,
+    ]);
+  });
+
+  it("stops the prior-attempt scan at the publication deadline", async () => {
+    const cancelledRun = workflowRun({ run_attempt: 3, conclusion: "cancelled" });
+    const responses = [
+      workflowMetadata(),
+      runsPayload([cancelledRun]),
+      workflowRun({ run_attempt: 2, conclusion: "failure" }),
+    ];
+    const requests: Array<{ path: string; budgetMs: number | undefined }> = [];
+    const responseTimes = new Map([
+      [`/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2`, 100],
+    ]);
+    let currentTime = 0;
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async (requestPath, budgetMs) => {
+          requests.push({ path: requestPath, budgetMs });
+          currentTime = responseTimes.get(requestPath) ?? currentTime;
+          return responses.shift();
+        },
+        requireWorkflowSuccess: true,
+        waitMs: 100,
+        pollMs: 10,
+        now: () => currentTime,
+      }),
+    ).rejects.toThrow(/timed out validating base-image publication/u);
+    expect(requests).toEqual([
+      {
+        path: "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+        budgetMs: 100,
+      },
+      {
+        path: "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+        budgetMs: 100,
+      },
+      {
+        path: `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2`,
+        budgetMs: 100,
+      },
+    ]);
   });
 
   it.each(["failure", "cancelled"] as const)(
@@ -981,6 +1384,72 @@ describe("base-image publication evidence", () => {
     expect(rateLimitSleeps).toEqual([7000]);
   });
 
+  it("keeps GitHub retries inside the caller's request budget", async () => {
+    const sleeps: number[] = [];
+    let currentTime = 0;
+    let requests = 0;
+
+    await expect(
+      githubRequest("/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml", "token", {
+        budgetMs: 1_500,
+        fetchImpl: async () => {
+          requests += 1;
+          throw new Error("network unavailable");
+        },
+        now: () => currentTime,
+        sleep: async (milliseconds) => {
+          sleeps.push(milliseconds);
+          currentTime += milliseconds;
+        },
+      }),
+    ).rejects.toThrow(/time budget/u);
+    expect(requests).toBe(2);
+    expect(sleeps).toEqual([1000, 500]);
+  });
+
+  it("aborts an in-flight GitHub request at the caller's request budget", async () => {
+    const controller = new AbortController();
+    const timeoutSignal = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    let currentTime = 0;
+    let observedAbort = false;
+
+    try {
+      const request = githubRequest(
+        "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+        "token",
+        {
+          attempts: 1,
+          budgetMs: 100,
+          timeoutMs: 5_000,
+          now: () => currentTime,
+          fetchImpl: async (_input, init) => {
+            const signal = required(init.signal ?? undefined, "request signal is required");
+            await new Promise<void>((_resolve, reject) => {
+              signal.addEventListener(
+                "abort",
+                () => {
+                  observedAbort = true;
+                  reject(signal.reason);
+                },
+                { once: true },
+              );
+            });
+            throw new Error("aborted request unexpectedly resumed");
+          },
+        },
+      );
+      const rejection = expect(request).rejects.toThrow(/time budget/u);
+
+      currentTime = 100;
+      controller.abort();
+      await rejection;
+      expect(timeoutSignal).toHaveBeenCalledWith(100);
+      expect(observedAbort).toBe(true);
+    } finally {
+      timeoutSignal.mockRestore();
+    }
+  }, 2_000);
+
   it("fails permanent and malformed GitHub responses without retrying (#7372)", async () => {
     let requests = 0;
     await expect(
@@ -1003,6 +1472,20 @@ describe("base-image publication evidence", () => {
     ).rejects.toThrow(/not valid JSON/u);
   });
 
+  it("omits authorization for public GitHub metadata requests", async () => {
+    let authorization: string | null = "unobserved";
+    await expect(
+      githubRequest("/repos/NVIDIA/NemoClaw/pulls/9923", "unused-token", {
+        authenticated: false,
+        fetchImpl: async (_input, init) => {
+          authorization = new Headers(init.headers).get("authorization");
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        },
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(authorization).toBeNull();
+  });
+
   it("loads directly with the Node strip-types runtime used by Actions (#7372)", () => {
     const modulePath = path.resolve(
       import.meta.dirname,
@@ -1011,12 +1494,7 @@ describe("base-image publication evidence", () => {
     expect(() =>
       execFileSync(
         process.execPath,
-        [
-          "--experimental-strip-types",
-          "--no-warnings",
-          "--eval",
-          `import(${JSON.stringify(modulePath)})`,
-        ],
+        ["--no-warnings", "--eval", `import(${JSON.stringify(modulePath)})`],
         { encoding: "utf8" },
       ),
     ).not.toThrow();

@@ -3,12 +3,20 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createDockerRuntimeProviderBundle } from "./docker";
+import {
+  createDockerRuntimeProviderBundle,
+  type DockerRuntimeProviderDependencies,
+} from "./docker";
 import type { RuntimeProviderLifecycleInput } from "./contract";
 
-function lifecycleInput(): RuntimeProviderLifecycleInput {
+const GPU_PROOF_RESOURCE = {
+  name: "nemoclaw-gpu-proof-1234",
+  ownership: { label: "com.nvidia.nemoclaw.gpu-proof", value: "true" },
+} as const;
+
+function lifecycleInput(environment: NodeJS.ProcessEnv = {}): RuntimeProviderLifecycleInput {
   return {
-    environment: {},
+    environment,
     log: vi.fn(),
     sandboxName: "alpha",
     sandbox: {
@@ -28,6 +36,17 @@ function poison(): never {
 function supportedLifecycle(provider: ReturnType<typeof createDockerRuntimeProviderBundle>) {
   expect(provider.lifecycle.supported).toBe(true);
   return provider.lifecycle as Extract<typeof provider.lifecycle, { supported: true }>;
+}
+
+function supportedContainerEngine(provider: ReturnType<typeof createDockerRuntimeProviderBundle>) {
+  expect(provider.containerEngine.supported).toBe(true);
+  return provider.containerEngine as Extract<typeof provider.containerEngine, { supported: true }>;
+}
+
+function nvidiaContainer(provider: ReturnType<typeof createDockerRuntimeProviderBundle>) {
+  const capability = supportedContainerEngine(provider).nvidiaContainer;
+  expect(capability).toBeDefined();
+  return capability!;
 }
 
 function inspectDockerHost(stdout: string, status = 0, stderr = "") {
@@ -96,24 +115,151 @@ describe("Docker runtime provider host doctor", () => {
   });
 });
 
+describe("Docker runtime provider NVIDIA container capture", () => {
+  it("maps one provider-neutral NVIDIA run to Docker GPU arguments", () => {
+    const captureHostCommand = vi.fn(() => ({ status: 0, stdout: "proof", stderr: "" }));
+    const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
+    const capability = nvidiaContainer(provider);
+
+    expect(
+      capability.capture(
+        "host-local-inference",
+        {
+          image: "registry.example/proof@sha256:" + "a".repeat(64),
+          entrypoint: "/bin/sh",
+          command: ["-c", "proof"],
+          resource: GPU_PROOF_RESOURCE,
+        },
+        12_000,
+      ),
+    ).toMatchObject({ status: 0, stdout: "proof" });
+    expect(captureHostCommand).toHaveBeenCalledWith(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--name",
+        GPU_PROOF_RESOURCE.name,
+        "--label",
+        "com.nvidia.nemoclaw.gpu-proof=true",
+        "--gpus",
+        "all",
+        "--entrypoint",
+        "/bin/sh",
+        "registry.example/proof@sha256:" + "a".repeat(64),
+        "-c",
+        "proof",
+      ],
+      12_000,
+    );
+  });
+
+  it("removes only the exact owned proof container after timeout", () => {
+    const containerId = "a".repeat(64);
+    const captureHostCommand = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `${containerId}\t${GPU_PROOF_RESOURCE.name}\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: containerId, stderr: "" });
+    const capability = nvidiaContainer(createDockerRuntimeProviderBundle({ captureHostCommand }));
+
+    expect(
+      capability.cleanup("host-local-inference", GPU_PROOF_RESOURCE, {
+        timeoutMs: 15_000,
+        observation: "until-deadline",
+      }),
+    ).toEqual({ status: "removed" });
+    expect(captureHostCommand).toHaveBeenNthCalledWith(
+      1,
+      "docker",
+      [
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `name=^/${GPU_PROOF_RESOURCE.name}$`,
+        "--filter",
+        "label=com.nvidia.nemoclaw.gpu-proof=true",
+        "--format",
+        "{{.ID}}\t{{.Names}}",
+      ],
+      expect.any(Number),
+    );
+    expect(captureHostCommand).toHaveBeenNthCalledWith(
+      2,
+      "docker",
+      expect.arrayContaining([
+        "ps",
+        "--filter",
+        `name=^/${GPU_PROOF_RESOURCE.name}$`,
+        "--filter",
+        "label=com.nvidia.nemoclaw.gpu-proof=true",
+      ]),
+      expect.any(Number),
+    );
+    expect(captureHostCommand).toHaveBeenNthCalledWith(
+      3,
+      "docker",
+      ["rm", "-f", containerId],
+      expect.any(Number),
+    );
+  });
+});
+
 describe("Docker provider portable lifecycle dispatch", () => {
   it("routes active Hermes start before every Docker dependency (#9203)", () => {
+    const requalifyPortableSandbox = vi.fn(() => ({ kind: "not-hermes" as const }));
     const recoverPortableSandbox = vi.fn(() => ({ kind: "already-running" as const }));
+    const withLifecycleLockSync: DockerRuntimeProviderDependencies["withLifecycleLockSync"] = vi.fn(
+      (_sandboxName, operation) => operation(),
+    );
     const provider = createDockerRuntimeProviderBundle({
       hasPortableLifecycleReceipt: () => true,
+      requalifyPortableSandbox,
       recoverPortableSandbox,
       findLabeledSandboxContainers: poison,
       recoverSandbox: poison,
       unpauseContainer: poison,
-      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+      withLifecycleLockSync,
     });
     const lifecycle = supportedLifecycle(provider);
 
-    expect(lifecycle.start(lifecycleInput())).toEqual({
+    expect(
+      lifecycle.start(lifecycleInput({ HOME: "/portable-home", NEMOCLAW_GATEWAY_PORT: "18080" })),
+    ).toEqual({
       exitCode: 0,
       hermesPortableVerified: true,
     });
+    expect(withLifecycleLockSync).toHaveBeenCalledWith("alpha", expect.any(Function), {
+      stateDir: "/portable-home/.nemoclaw/state",
+    });
+    expect(requalifyPortableSandbox).toHaveBeenCalledOnce();
     expect(recoverPortableSandbox).toHaveBeenCalledOnce();
+    expect(requalifyPortableSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      recoverPortableSandbox.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("fails closed before recovery when Hermes requalification fails (#11248)", () => {
+    const recoverPortableSandbox = vi.fn(poison);
+    const provider = createDockerRuntimeProviderBundle({
+      hasPortableLifecycleReceipt: () => false,
+      requalifyPortableSandbox: () => {
+        throw new Error("startup authority changed");
+      },
+      recoverPortableSandbox,
+      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    });
+
+    expect(supportedLifecycle(provider).start(lifecycleInput())).toEqual({
+      exitCode: 1,
+      message: "startup authority changed",
+    });
+    expect(recoverPortableSandbox).not.toHaveBeenCalled();
   });
 
   it("routes active Hermes stop before Docker capture or mutation (#9203)", () => {
@@ -121,19 +267,29 @@ describe("Docker provider portable lifecycle dispatch", () => {
       kind: "stopped" as const,
       portableAgent: "hermes" as const,
     }));
+    const withLifecycleLockSync: DockerRuntimeProviderDependencies["withLifecycleLockSync"] = vi.fn(
+      (_sandboxName, operation) => operation(),
+    );
     const provider = createDockerRuntimeProviderBundle({
       hasPortableLifecycleReceipt: () => true,
       stopPortableSandbox,
       findLabeledSandboxContainers: poison,
       stopContainer: poison,
-      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+      withLifecycleLockSync,
     });
     const lifecycle = supportedLifecycle(provider);
 
-    expect(lifecycle.stop(lifecycleInput(), { beforeStop: poison })).toEqual({
+    expect(
+      lifecycle.stop(lifecycleInput({ HOME: "/portable-home", NEMOCLAW_GATEWAY_PORT: "18080" }), {
+        beforeStop: poison,
+      }),
+    ).toEqual({
       exitCode: 0,
       state: "stopped",
       hermesPortableVerified: true,
+    });
+    expect(withLifecycleLockSync).toHaveBeenCalledWith("alpha", expect.any(Function), {
+      stateDir: "/portable-home/.nemoclaw/state",
     });
     expect(stopPortableSandbox).toHaveBeenCalledOnce();
   });

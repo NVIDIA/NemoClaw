@@ -91,8 +91,16 @@
                 "type": "object",
                 "required": ["cpu", "memory"],
                 "properties": {
-                  "cpu": { "type": "string", "minLength": 1, "pattern": "^([1-9]\\d?%|100%|\\d+(\\.\\d+)?[mKMGTPE]?i?)$" },
-                  "memory": { "type": "string", "minLength": 1, "pattern": "^([1-9]\\d?%|100%|\\d+(\\.\\d+)?[mKMGTPE]?i?)$" }
+                  "cpu": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^([1-9]\\d?%|100%|\\d+(\\.\\d+)?[mKMGTPE]?i?)$"
+                  },
+                  "memory": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^([1-9]\\d?%|100%|\\d+(\\.\\d+)?[mKMGTPE]?i?)$"
+                  }
                 },
                 "additionalProperties": false
               }
@@ -164,7 +172,7 @@
   "$defs": {
     "externalOpenShellTarget": {
       "type": "object",
-      "description": "Explicit externally managed OpenShell gateway target for target-only planning. File references use POSIX-rooted absolute paths. This contract does not establish a network connection, TLS trust, authentication, remote readiness, machine-authentication compatibility, or Kubernetes qualification.",
+      "description": "Explicit externally managed OpenShell gateway target for target-only planning and credential-free public health status. File references use POSIX-rooted absolute paths. Planning validates and sanitizes target inputs without connecting. Status uses the explicit HTTPS endpoint and validated CA bundle for one public health request. Status does not access the authentication file or authenticate. This contract does not establish remote readiness or support for machine authentication or Kubernetes.",
       "required": [
         "endpoint",
         "workspace",
@@ -184,12 +192,12 @@
           "type": "string",
           "pattern": "^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$",
           "maxLength": 19,
-          "description": "Explicit OpenShell workspace name for the target-only plan."
+          "description": "Explicit OpenShell workspace name included in the sanitized plan and status identity. Public health does not verify or access the workspace."
         },
         "expected_release": {
           "type": "string",
           "pattern": "^[0-9]{1,15}\\.[0-9]{1,15}\\.[0-9]{1,15}$",
-          "description": "Exact OpenShell release expected by the plan. The runner requires safe numeric components and validates this value against min_openshell_version and max_openshell_version."
+          "description": "Exact OpenShell release required by planning and public health status. The runner requires safe numeric components and validates this value against min_openshell_version and max_openshell_version. Status succeeds only when public health reports this release."
         },
         "lifecycle": {
           "const": "external",
@@ -204,7 +212,7 @@
               "type": "string",
               "minLength": 1,
               "pattern": "^/",
-              "description": "POSIX-rooted absolute path to a regular PEM CA bundle no larger than 1 MiB. Planning parses each certificate, requires the CA flag, and returns a fingerprint. It does not connect to the endpoint or establish TLS trust. Symbolic-link paths are not accepted."
+              "description": "POSIX-rooted absolute path to a regular PEM CA bundle no larger than 1 MiB. Planning validates the PEM CA bundle and returns its fingerprint without connecting. Status supplies the validated bundle to the official OpenShell SDK for the credential-free public health request. Symbolic-link paths are not accepted."
             }
           }
         },
@@ -212,13 +220,13 @@
           "type": "object",
           "required": ["credential_file"],
           "additionalProperties": false,
-          "description": "File-backed authentication reference for target-only planning. Planning checks file metadata only; it does not read the contents, authenticate, or select or validate a machine-authentication protocol.",
+          "description": "File-backed authentication reference required in the target shape for target-only planning and status. Planning validates the referenced file metadata without reading its contents. Status accepts the reference but does not access or validate the referenced file. Neither operation authenticates or selects or validates a machine-authentication protocol.",
           "properties": {
             "credential_file": {
               "type": "string",
               "minLength": 1,
               "pattern": "^/",
-              "description": "POSIX-rooted absolute path to a non-empty regular authentication file no larger than 1 MiB. Symbolic-link paths are not accepted. Planning checks metadata without reading the file and does not return the path."
+              "description": "POSIX-rooted absolute authentication file path. Planning requires a non-empty regular file no larger than 1 MiB, rejects symbolic links, and inspects only file metadata. Public health status does not access, validate, or require the referenced file. Neither operation returns the path."
             }
           }
         }

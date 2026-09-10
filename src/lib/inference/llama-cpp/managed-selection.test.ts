@@ -1,15 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
-import { createHostReadinessReport } from "../../readiness/host";
+import { describe, expect, it, vi } from "vitest";
+import {
+  type CollectHostObservationsOptions,
+  createHostReadinessReport,
+} from "../../readiness/host";
 import type { SystemReadinessReport } from "../../readiness/types";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ManagedInferenceServingPreset } from "../serving/types";
 import { LLAMA_CPP_RECIPE_ENV } from "./contract";
 import {
+  discoverManagedLlamaCppSelections,
   listManagedLlamaCppSelectionChoices,
   resolveManagedLlamaCppSelection,
+  resolveManagedLlamaCppSelectionForGpu,
 } from "./managed-selection";
 
 const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
@@ -17,6 +22,12 @@ const GENERIC_PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-3
 const SPARK_PRESET_ID = "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b";
 const MUSE_RECIPE_ID = "llama-cpp.muse-glimmer-30b.spark-single.v1";
 const MUSE_PRESET_ID = "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b";
+const N1X_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
+const N1X_WSL_PRESET_ID = "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b";
+const LOCAL_DOCKER_SELECTION = {
+  dockerContextIsDefault: () => true,
+  runtimeProviderId: "docker",
+} as const;
 
 function readinessReport(
   preset: ManagedInferenceServingPreset,
@@ -70,6 +81,49 @@ function fixture(presetId = SPARK_PRESET_ID) {
   const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
   expect(preset, "Shipped managed llama.cpp preset is missing.").toBeDefined();
   return { catalog, preset: preset!, report: readinessReport(preset!) };
+}
+
+function n1xCollectionOptions(): Omit<
+  CollectHostObservationsOptions,
+  "detectGpu" | "containerGpuProof"
+> {
+  const now = new Date();
+  return {
+    now: () => now,
+    architecture: "arm64",
+    assess: () => ({
+      platform: "linux" as const,
+      isWsl: true,
+      runtime: "docker-desktop" as const,
+      dockerInstalled: true,
+      dockerRunning: true,
+      dockerReachable: true,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "v2",
+      dockerDefaultCgroupnsMode: "private",
+      dockerStorageDriver: "overlay2",
+      dockerUsesContainerdSnapshotter: false,
+      dockerCpus: 12,
+      dockerMemTotalBytes: 64 * 1024 ** 3,
+      isContainerRuntimeUnderProvisioned: false,
+      hasNestedOverlayConflict: false,
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: true,
+      dockerCdiSpecDirs: ["/etc/cdi"],
+      cdiNvidiaGpuSpecMissing: false,
+      cdiNvidiaGpuSpecStale: false,
+      cdiNvidiaGpuSpecNeedsRepair: false,
+      nvidiaContainerToolkitInstalled: true,
+      notes: [],
+    }),
+    collectPlatformIdentity: () => ({
+      productName: "83N7",
+    }),
+    detectNvidiaDriverVersion: () => "580.65.06",
+  };
 }
 
 function withSyntheticRecipe(
@@ -172,6 +226,261 @@ describe("managed llama.cpp selection", () => {
         },
       },
     });
+  });
+
+  it("selects optimized managed Qwen 3.6 automatically on a qualifying N1x WSL host (#10962)", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+
+    expect(
+      resolveManagedLlamaCppSelection({}, catalog, report, LOCAL_DOCKER_SELECTION),
+    ).toMatchObject({
+      kind: "selected",
+      selection: {
+        selection: "automatic",
+        preset: { metadata: { id: N1X_WSL_PRESET_ID } },
+        recipe: {
+          metadata: { id: N1X_WSL_RECIPE_ID },
+          spec: {
+            serve: {
+              chatTemplate: "model-embedded-jinja",
+              chatTemplateArguments: { reasoningStrength: "low" },
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("selects N1x WSL through the proof-backed GPU identity on an OEM host (#10962)", () => {
+    const { catalog } = fixture(N1X_WSL_PRESET_ID);
+    const gpu = {
+      type: "nvidia",
+      name: "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)",
+      platform: "n1x" as const,
+      count: 1,
+      totalMemoryMB: 49_088,
+      perGpuMB: 49_088,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: true },
+    };
+
+    expect(
+      resolveManagedLlamaCppSelectionForGpu(
+        {},
+        gpu,
+        catalog,
+        n1xCollectionOptions(),
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "selected" });
+  });
+
+  it("rejects automatic N1x WSL selection for a remote runtime context (#10962)", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const dockerContextIsDefault = vi.fn(() => false);
+
+    expect(
+      resolveManagedLlamaCppSelection({}, catalog, report, { dockerContextIsDefault }),
+    ).toEqual({
+      kind: "rejected",
+      reason:
+        "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
+    });
+    expect(dockerContextIsDefault).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["automatic N1x WSL", N1X_WSL_PRESET_ID, {}],
+    ["explicit N1x WSL", N1X_WSL_PRESET_ID, { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID }],
+    ["automatic generic GPU", GENERIC_PRESET_ID, {}],
+    ["explicit DGX Spark", SPARK_PRESET_ID, { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID }],
+  ])("rejects %s when Docker readiness would start through Podman", (_case, presetId, env) => {
+    const { catalog, report } = fixture(presetId);
+
+    expect(
+      resolveManagedLlamaCppSelection(env, catalog, report, {
+        ...LOCAL_DOCKER_SELECTION,
+        runtimeProviderId: "podman",
+      }),
+    ).toEqual({
+      kind: "rejected",
+      reason: expect.stringContaining("requires the Docker runtime provider"),
+    });
+  });
+
+  it("uses resolved provider authority instead of a conflicting raw environment value", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { NEMOCLAW_GATEWAY_RUNTIME: "podman" },
+        catalog,
+        report,
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "selected" });
+  });
+
+  it("omits Docker-qualified automatic profiles under a resolved Podman provider", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+
+    const discovery = discoverManagedLlamaCppSelections({}, catalog, report, {
+      ...LOCAL_DOCKER_SELECTION,
+      runtimeProviderId: "podman",
+    });
+
+    expect(discovery.resolution).toEqual({
+      kind: "rejected",
+      reason: expect.stringContaining("requires the Docker runtime provider"),
+    });
+    expect(discovery.choices).toEqual([]);
+  });
+
+  it("rejects an explicit remote Docker context for N1x WSL", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const dockerContextIsDefault = vi.fn(() => false);
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        {
+          [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID,
+          DOCKER_CONTEXT: "remote-builder",
+        },
+        catalog,
+        report,
+        { dockerContextIsDefault },
+      ),
+    ).toMatchObject({
+      kind: "rejected",
+      reason: expect.stringContaining("effective Docker context to be default"),
+    });
+    expect(dockerContextIsDefault).toHaveBeenCalledWith(
+      expect.objectContaining({ DOCKER_CONTEXT: "remote-builder" }),
+    );
+  });
+
+  it("rejects a persisted remote Docker context for N1x WSL", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const dockerContextIsDefault = vi.fn(() => false);
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID, HOME: "/home/test" },
+        catalog,
+        report,
+        { dockerContextIsDefault },
+      ),
+    ).toMatchObject({
+      kind: "rejected",
+      reason: expect.stringContaining("effective Docker context to be default"),
+    });
+    expect(dockerContextIsDefault).toHaveBeenCalledOnce();
+  });
+
+  it("rejects N1x WSL when the real readiness wrapper receives failed GPU proof (#10102)", () => {
+    const { catalog } = fixture(N1X_WSL_PRESET_ID);
+    const gpu = {
+      type: "nvidia",
+      count: 1,
+      totalMemoryMB: 49_088,
+      perGpuMB: 49_088,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: false },
+    };
+
+    expect(
+      resolveManagedLlamaCppSelectionForGpu(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        gpu,
+        catalog,
+        n1xCollectionOptions(),
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+
+  it("rejects the N1x WSL recipe without Docker Desktop GPU proof (#10102)", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const withoutGpuProof = {
+      ...report,
+      capabilities: report.capabilities.map((capability) =>
+        capability.id === "host.platform.wsl_gpu_passthrough"
+          ? { ...capability, state: "absent" as const }
+          : capability,
+      ),
+    };
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        catalog,
+        withoutGpuProof,
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+
+  it("rejects the N1x WSL recipe without canonical N1x identity (#10102)", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const withoutN1xIdentity = {
+      ...report,
+      qualifications: report.qualifications.map((qualification) =>
+        qualification.id === "host.platform.n1x_wsl"
+          ? { ...qualification, status: "unqualified" as const }
+          : qualification,
+      ),
+    };
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        catalog,
+        withoutN1xIdentity,
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+
+  it("rejects the N1x WSL recipe below its independent GPU-memory floor (#10102)", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const belowMemoryFloor = {
+      ...report,
+      observations: report.observations.map((observation) =>
+        observation.id === "host.gpu.memory_total_bytes"
+          ? { ...observation, value: 50_331_647_999 }
+          : observation,
+      ),
+    };
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        catalog,
+        belowMemoryFloor,
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+
+  it("rejects the N1x WSL recipe without Docker Desktop runtime (#10102)", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const nativeDocker = {
+      ...report,
+      observations: report.observations.map((observation) =>
+        observation.id === "host.docker.runtime"
+          ? { ...observation, value: "docker" }
+          : observation,
+      ),
+    };
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        catalog,
+        nativeDocker,
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "rejected" });
   });
 
   it("selects the highest-priority compatible managed llama.cpp recipe", () => {

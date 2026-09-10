@@ -274,6 +274,7 @@ describe("isMemoryPath", () => {
 
   it("does not match unanchored workspace in project paths", () => {
     expect(isMemoryPath("/sandbox/my-project/workspace/readme.md")).toBe(false);
+    expect(isMemoryPath("/sandbox/my-project/workspace-main/readme.md")).toBe(false);
   });
 
   it("matches MEMORY.md even outside the OpenClaw workspace", () => {
@@ -328,6 +329,10 @@ describe("isMemoryPath", () => {
   it("matches named-workspace daily memory paths", () => {
     expect(isMemoryPath("workspace/memory/2026-05-29.md")).toBe(true);
     expect(isMemoryPath("workspace-main/memory/2026-05-29.md")).toBe(true);
+    // The gateway-managed runtime resolves those writes to absolute paths, so
+    // the named workspace must classify the same way the default one does.
+    expect(isMemoryPath("/sandbox/.openclaw/workspace-main/memory/2026-05-29.md")).toBe(true);
+    expect(isMemoryPath("/sandbox/.openclaw/workspace-support/notes.md")).toBe(true);
   });
 
   it("does not match unrelated relative memory subdirectories", () => {

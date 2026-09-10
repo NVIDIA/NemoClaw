@@ -35,13 +35,16 @@ export function withProvenManagedGatewayProcess(deps: UninstallRunDeps): Uninsta
   const gatewayPort = Number(env.NEMOCLAW_GATEWAY_PORT || 8080);
   const gatewayName = gatewayPort === 8080 ? "nemoclaw" : `nemoclaw-${String(gatewayPort)}`;
   const gatewayBin = env.NEMOCLAW_OPENSHELL_GATEWAY_BIN?.trim() || "/usr/bin/openshell-gateway";
-  const stateDir = path.join(
-    env.HOME || os.homedir(),
-    ".local",
-    "state",
-    "nemoclaw",
-    resolveGatewayStateDirName(gatewayPort),
-  );
+  const configuredStateDir = env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
+  const stateDir = configuredStateDir
+    ? path.resolve(configuredStateDir)
+    : path.join(
+        env.HOME || os.homedir(),
+        ".local",
+        "state",
+        "nemoclaw",
+        resolveGatewayStateDirName(gatewayPort),
+      );
   const run = deps.run ?? (() => ({ status: 0, stdout: "", stderr: "" }));
   let managedGatewayRunning = true;
   return {

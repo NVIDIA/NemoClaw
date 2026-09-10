@@ -41,21 +41,9 @@ const loadAgentMock = vi.hoisted(() =>
 const isTerminalAgentMock = vi.hoisted(() =>
   vi.fn((agent: { runtime?: { kind?: string } }) => agent.runtime?.kind === "terminal"),
 );
-const buildOpenshellExecArgsMock = vi.hoisted(() =>
-  vi.fn(
-    (
-      _sb: string,
-      cmd: readonly string[],
-      _options?: { timeoutSeconds?: number },
-      _gateway?: string,
-    ) => cmd,
-  ),
-);
-
 vi.mock("../exec", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../exec")>()),
   execSandbox: execMock,
-  buildOpenshellExecArgs: buildOpenshellExecArgsMock,
   wrapExecCommandWithRuntimeEnv: vi.fn((cmd: readonly string[]) => cmd),
   wrapOpenClawAgentCommandWithRuntimeEnv: vi.fn((cmd: readonly string[]) => cmd),
 }));
@@ -66,11 +54,6 @@ vi.mock("../../../agent/defs", () => ({
   listAgents: listAgentsMock,
   loadAgent: loadAgentMock,
 }));
-// Default to no recent shields auto-restore so tests that don't inject
-// getRecentShieldsAutoRestore don't read ~/.nemoclaw/state/shields-audit.jsonl.
-vi.mock("../../../shields/audit", () => ({
-  readRecentShieldsAutoRestore: vi.fn(() => ({ kind: "none" })),
-}));
 vi.mock("../../../../../nemoclaw/src/onboard/config.js", () => ({
   loadOnboardConfig: vi.fn(() => null),
   describeOnboardEndpoint: vi.fn(() => "build.nvidia.com"),
@@ -78,7 +61,6 @@ vi.mock("../../../../../nemoclaw/src/onboard/config.js", () => ({
 }));
 
 import registerPlugin, { type OpenClawPluginApi } from "../../../../../nemoclaw/src/index";
-import { buildOpenshellExecArgs } from "../exec";
 import {
   type AgentNonJsonPassthroughDeps,
   type AgentPassthroughDeps,
@@ -148,7 +130,7 @@ describe("runAgentPassthrough", () => {
     ).rejects.toThrow("__exit:2");
     const stderr = writes.join("");
     expect(stderr).toMatch(/port 8643/);
-    expect(stderr).toMatch(/openshell forward start --background 8643 beta/);
+    expect(stderr).toMatch(/nemoclaw beta recover/);
     expect(stderr).toMatch(/http:\/\/127\.0\.0\.1:8643\/v1\/chat\/completions/);
     expect(stderr).not.toMatch(/8642/);
   });
@@ -241,7 +223,7 @@ describe("runAgentPassthrough", () => {
       runAgentPassthrough(
         "alpha",
         { extraArgs: ["--agent", "main", "-m", "ping"] },
-        { execNonJson, process: proc, getRecentShieldsAutoRestore: () => ({ kind: "none" }) },
+        { execNonJson, process: proc },
       ),
     ).rejects.toThrow("__exit:0");
 
@@ -765,11 +747,7 @@ describe("runAgentNonJsonPassthrough", () => {
     return vi.fn(async () => ({
       stdout,
       stderr,
-      status,
-      pid: 1,
-      signal: null,
-      output: [],
-      error: undefined,
+      outcome: { kind: "exited" as const, exitCode: status ?? 1 },
     }));
   }
 
@@ -788,9 +766,11 @@ describe("runAgentNonJsonPassthrough", () => {
     ).rejects.toThrow("__exit:0");
     // Outlasts the requested deadline so the in-sandbox turn still reports its
     // own timeout; the host bound only catches a turn that stops answering.
-    expect(buildOpenshellExecArgsMock.mock.calls[0]?.[2]?.timeoutSeconds).toBe(60);
+    expect(vi.mocked(runDispatchMock).mock.calls[0]?.[0]).toMatchObject({ timeoutSeconds: 60 });
     // The turn still receives the deadline it asked for.
-    expect(buildOpenshellExecArgsMock.mock.calls[0]?.[1]).toContain("30");
+    expect(vi.mocked(runDispatchMock).mock.calls[0]?.[0]).toMatchObject({
+      command: expect.arrayContaining(["30"]),
+    });
   });
 
   it("leaves the host transport unbounded when the turn requests no deadline (#8723)", async () => {
@@ -807,7 +787,10 @@ describe("runAgentNonJsonPassthrough", () => {
         },
       ),
     ).rejects.toThrow("__exit:0");
-    expect(buildOpenshellExecArgsMock.mock.calls[0]?.[2]?.timeoutSeconds).toBeUndefined();
+    expect(vi.mocked(runDispatchMock).mock.calls[0]?.[0]).toHaveProperty(
+      "timeoutSeconds",
+      undefined,
+    );
   });
 
   it("emits a clean embedded-fallback error and exits 1 when EMBEDDED FALLBACK appears in stdout", async () => {
@@ -935,8 +918,7 @@ describe("runAgentNonJsonPassthrough", () => {
   it("returns exit 143 after the supervised OpenShell child receives SIGTERM (#8723)", async () => {
     const { stderrWrites, exit, proc } = makeNonJsonProcMock();
     const runDispatchMock = vi.fn(async () => ({
-      status: null,
-      signal: "SIGTERM" as const,
+      outcome: { kind: "signalled" as const, signal: "SIGTERM" as const, exitCode: 143 },
       stdout: "",
       stderr: "agent turn interrupted\n",
     }));
@@ -998,11 +980,11 @@ describe("runAgentNonJsonPassthrough", () => {
         stdinIsTty: () => false,
       }),
     ).rejects.toThrow("__exit:0");
-    expect(buildOpenshellExecArgs).toHaveBeenCalledWith(
-      "my-sb",
-      expect.anything(),
-      { tty: false },
-      "nemoclaw-8081",
+    expect(runDispatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "my-sb",
+        target: { kind: "named", gatewayName: "nemoclaw-8081" },
+      }),
     );
   });
 
@@ -1017,6 +999,9 @@ describe("runAgentNonJsonPassthrough", () => {
         stdinIsTty: () => true,
       }),
     ).rejects.toThrow("__exit:0");
-    expect(vi.mocked(runDispatchMock).mock.calls[0]?.[2]).toEqual({ stdinIsTty: true });
+    expect(vi.mocked(runDispatchMock).mock.calls[0]?.[0]).toMatchObject({
+      output: "capture",
+      tty: false,
+    });
   });
 });

@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { expect, vi } from "vitest";
 
+import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import type { SandboxGpuProofResult } from "../../state/registry";
 import type { ManagedBootstrapRuntimeCreateLifecycleInput } from "../managed-bootstrap/runtime-create";
@@ -57,21 +59,69 @@ export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
   };
 }
 
-export function createGpuFlowDeps(): SandboxGpuCreateFlowDeps {
+export function createGpuFlowDeps(sandboxId?: string): SandboxGpuCreateFlowDeps;
+export function createGpuFlowDeps(
+  expectedGatewayName: string,
+  requireTargetedSandboxProbes: boolean,
+): SandboxGpuCreateFlowDeps;
+export function createGpuFlowDeps(
+  sandboxIdOrGatewayName = "alpha-sandbox-id",
+  expectedGatewayNameOrRequireTargetedProbes: string | boolean = "nemoclaw",
+): SandboxGpuCreateFlowDeps {
+  const requiresTargetedSandboxProbes =
+    typeof expectedGatewayNameOrRequireTargetedProbes === "boolean";
+  const sandboxId = requiresTargetedSandboxProbes ? "alpha-sandbox-id" : sandboxIdOrGatewayName;
+  const expectedGatewayName = requiresTargetedSandboxProbes
+    ? sandboxIdOrGatewayName
+    : expectedGatewayNameOrRequireTargetedProbes;
+  const assertSandboxProbeTarget = (args: readonly string[]) => {
+    if (!requiresTargetedSandboxProbes) return;
+    if (args[0] !== "sandbox" || !["exec", "get", "list"].includes(args[1] ?? "")) return;
+    const gatewayFlag = args.indexOf("-g");
+    expect(gatewayFlag).toBeGreaterThan(1);
+    expect(args[gatewayFlag + 1]).toBe(expectedGatewayName);
+  };
+  const runCaptureOpenshell = vi.fn((args: string[], _options?: Record<string, unknown>) => {
+    assertSandboxProbeTarget(args);
+    if (args[0] === "sandbox" && args[1] === "get") {
+      return `Name: alpha\nId: ${sandboxId}\nState: Ready\n`;
+    }
+    if (args[0] === "sandbox" && args[1] === "list") return "alpha Ready";
+    return "";
+  });
   return {
-    runOpenshell: vi.fn((args: string[]) =>
-      args[0] === "sandbox" && args[1] === "get"
+    commandExecutor: {
+      runBuffered: vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: 0, signal: null },
+        stdout: "",
+        stderr: "",
+      })),
+    } satisfies OpenShellSandboxBufferedCommandExecutor,
+    runOpenshell: vi.fn((args: string[]) => {
+      assertSandboxProbeTarget(args);
+      return args[0] === "sandbox" && args[1] === "get"
         ? {
             status: 0,
-            stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
+            stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`,
             stderr: "",
           }
-        : { status: 0, stdout: "", stderr: "" },
-    ),
-    runCaptureOpenshell: vi.fn(() => "alpha Ready"),
+        : { status: 0, stdout: "", stderr: "" };
+    }),
+    runCaptureOpenshell,
+    sandboxObserver: createCliOpenShellSandboxObserver({
+      capture: (args, options) => {
+        const stdout = runCaptureOpenshell(args, {
+          ignoreError: true,
+          killProcessTreeOnTimeout: true,
+          timeout: options.timeout,
+        });
+        return { status: 0, output: stdout, stdout, stderr: "" };
+      },
+    }),
     sleep: vi.fn(),
     openshellArgv: vi.fn((args: string[]) => ["openshell", ...args]),
     verifyDirectSandboxGpu: vi.fn(() => VERIFIED_GPU_PROOF),
+    verifyExactFinalHandoffRuntime: vi.fn(() => true),
   };
 }
 
@@ -135,7 +185,7 @@ export function resetGpuFlowMocks(): void {
 }
 
 export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof vi.fn>>) {
-  const readyCheckOptions = { ignoreError: true, timeout: 5_000 };
+  const readyCheckOptions = { ignoreError: true, killProcessTreeOnTimeout: true, timeout: 5_000 };
   const failedProof: SandboxGpuProofResult = {
     status: "failed",
     cudaVerified: false,
