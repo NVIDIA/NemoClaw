@@ -187,9 +187,9 @@ setupNim(null).then(
         // The QA contract (#9301): rejection fires before any network request
         // or persistent state write, so the environment stays unchanged.
         assert.ok(!fs.existsSync(curlMarkerPath));
-        const writtenStateFiles = (
-          fs.readdirSync(tmpDir, { recursive: true }) as string[]
-        ).filter((entry) => /onboard-session\.json|sandboxes\.json/.test(String(entry)));
+        const writtenStateFiles = (fs.readdirSync(tmpDir, { recursive: true }) as string[]).filter(
+          (entry) => /onboard-session\.json|sandboxes\.json/.test(String(entry)),
+        );
         assert.deepEqual(writtenStateFiles, []);
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });

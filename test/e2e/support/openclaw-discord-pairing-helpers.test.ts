@@ -387,24 +387,14 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(SLACK_PAIRING_SCRIPT).toContain(
       'function postPairingReply(text, channel) {\n  const host = "host.openshell.internal";',
     );
-    expect(SLACK_PAIRING_SCRIPT).toContain(
-      'parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT")',
-    );
+    expect(SLACK_PAIRING_SCRIPT).toContain('parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT")');
   });
 
   it("uses the revision-scoped Slack credential references issued to the sandbox", () => {
-    expect(SLACK_PAIRING_SCRIPT).toContain(
-      'parseManagedCredentialReference("SLACK_APP_TOKEN")',
-    );
-    expect(SLACK_PAIRING_SCRIPT).toContain(
-      'parseManagedCredentialReference("SLACK_BOT_TOKEN")',
-    );
-    expect(SLACK_PAIRING_SCRIPT).not.toContain(
-      "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-    );
-    expect(SLACK_PAIRING_SCRIPT).not.toContain(
-      "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-    );
+    expect(SLACK_PAIRING_SCRIPT).toContain('parseManagedCredentialReference("SLACK_APP_TOKEN")');
+    expect(SLACK_PAIRING_SCRIPT).toContain('parseManagedCredentialReference("SLACK_BOT_TOKEN")');
+    expect(SLACK_PAIRING_SCRIPT).not.toContain("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
+    expect(SLACK_PAIRING_SCRIPT).not.toContain("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
   });
 
   it.each([

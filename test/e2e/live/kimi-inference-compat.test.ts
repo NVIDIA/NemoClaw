@@ -29,128 +29,128 @@ const TIMEOUT_MS = 40 * 60_000;
 test(
   "Kimi-compatible endpoint config enables plugin wiring and managed inference route",
   {
-  timeout: TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "select the Kimi endpoint mode and credentials",
-      "confirm the selected runtime and clear the Kimi sandbox",
-      "onboard the Kimi-compatible endpoint",
-      "inspect the generated Kimi OpenClaw configuration",
-      "probe the managed inference models route",
-      "exercise the Kimi tool-call trajectory",
-      "confirm Kimi upstream traffic",
-    ],
-  },
+    timeout: TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "select the Kimi endpoint mode and credentials",
+        "confirm the selected runtime and clear the Kimi sandbox",
+        "onboard the Kimi-compatible endpoint",
+        "inspect the generated Kimi OpenClaw configuration",
+        "probe the managed inference models route",
+        "exercise the Kimi tool-call trajectory",
+        "confirm Kimi upstream traffic",
+      ],
+    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
-  const mode = resolveKimiInferenceMode();
-  const apiKey =
-    mode === "public-nvidia"
-      ? requirePublicNvidiaApiKey(secrets.required("NVIDIA_API_KEY"))
-      : undefined;
-  const fake = await startKimiUpstream(mode);
-  maybeRegisterKimiMockCleanup(cleanup, fake);
-  const cleanupEnv = env();
-  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-    sandbox.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "cleanup-delete-kimi",
-      env: cleanupEnv,
-      timeoutMs: 60_000,
-    }),
-  );
-  cleanup.trackSandbox(host, SANDBOX_NAME, {
-    artifactName: "cleanup-destroy-kimi",
-    env: cleanupEnv,
-    timeoutMs: 120_000,
-  });
-
-  await artifacts.target.declare({
-    id: "kimi-inference-compat",
-    boundary: kimiBoundary(mode),
-    inferenceClassification:
+    const mode = resolveKimiInferenceMode();
+    const apiKey =
       mode === "public-nvidia"
-        ? "public NVIDIA endpoint validation"
-        : "hermetic Kimi compatibility validation",
-    inferenceMode: mode,
-    sandboxName: SANDBOX_NAME,
-    model: KIMI_MODEL,
-  });
+        ? requirePublicNvidiaApiKey(secrets.required("NVIDIA_API_KEY"))
+        : undefined;
+    const fake = await startKimiUpstream(mode);
+    maybeRegisterKimiMockCleanup(cleanup, fake);
+    const cleanupEnv = env();
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-delete-kimi",
+        env: cleanupEnv,
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "cleanup-destroy-kimi",
+      env: cleanupEnv,
+      timeoutMs: 120_000,
+    });
 
-  progress.phase("confirm the selected runtime and clear the Kimi sandbox");
+    await artifacts.target.declare({
+      id: "kimi-inference-compat",
+      boundary: kimiBoundary(mode),
+      inferenceClassification:
+        mode === "public-nvidia"
+          ? "public NVIDIA endpoint validation"
+          : "hermetic Kimi compatibility validation",
+      inferenceMode: mode,
+      sandboxName: SANDBOX_NAME,
+      model: KIMI_MODEL,
+    });
+
+    progress.phase("confirm the selected runtime and clear the Kimi sandbox");
     await runtimeProvider.requireAvailable({
-    artifactName: "runtime-info",
+      artifactName: "runtime-info",
       scenarioLabel: "Kimi inference compatibility",
-  });
+    });
 
-  await cleanupKimi(host, sandbox);
+    await cleanupKimi(host, sandbox);
 
-  progress.phase("onboard the Kimi-compatible endpoint");
-  const onboard = await host.command(
-    "node",
-    [CLI, "onboard", "--fresh", "--non-interactive", "--yes-i-accept-third-party-software"],
-    {
-      artifactName: "onboard-kimi-compatible",
-      cwd: REPO_ROOT,
-      env: kimiOnboardEnv(fake, mode, apiKey),
-      redactionValues: ["test-kimi-key", apiKey ?? ""],
-      timeoutMs: 20 * 60_000,
-    },
-  );
-  expect(onboard.exitCode, resultText(onboard)).toBe(0);
+    progress.phase("onboard the Kimi-compatible endpoint");
+    const onboard = await host.command(
+      "node",
+      [CLI, "onboard", "--fresh", "--non-interactive", "--yes-i-accept-third-party-software"],
+      {
+        artifactName: "onboard-kimi-compatible",
+        cwd: REPO_ROOT,
+        env: kimiOnboardEnv(fake, mode, apiKey),
+        redactionValues: ["test-kimi-key", apiKey ?? ""],
+        timeoutMs: 20 * 60_000,
+      },
+    );
+    expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
-  progress.phase("inspect the generated Kimi OpenClaw configuration");
-  const config = await sandbox.exec(SANDBOX_NAME, ["cat", "/sandbox/.openclaw/openclaw.json"], {
-    artifactName: "openclaw-config",
-    env: env({}, { mode }),
-    timeoutMs: 60_000,
-  });
-  expect(config.exitCode, resultText(config)).toBe(0);
-  const parsed = parseConfig(config.stdout);
-  expect(Object.keys(parsed.providers ?? {})).toEqual(["inference"]);
-  const inference = parsed.providers?.inference;
-  expect(inference?.baseUrl).toBe("https://inference.local/v1");
-  expect(inference?.api).toBe("openai-completions");
-  const modelEntry = inference?.models?.find((entry) => entry.id === KIMI_MODEL);
-  expect(modelEntry, config.stdout).toBeDefined();
-  expect(modelEntry?.compat?.requiresStringContent).toBe(true);
-  expect(modelEntry?.compat?.requiresToolResultName).toBe(true);
-  expect(modelEntry?.compat?.maxTokensField).toBe("max_tokens");
-  expect(modelEntry?.compat?.supportsStore).toBe(false);
-  expect(config.stdout).toContain(
-    "/usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat",
-  );
-  expect(parsed.primary).toBe(`inference/${KIMI_MODEL}`);
-  expect(parsed.pluginEnabled).toBe(true);
-  expect(parsed.toolSearch).toBe(false);
+    progress.phase("inspect the generated Kimi OpenClaw configuration");
+    const config = await sandbox.exec(SANDBOX_NAME, ["cat", "/sandbox/.openclaw/openclaw.json"], {
+      artifactName: "openclaw-config",
+      env: env({}, { mode }),
+      timeoutMs: 60_000,
+    });
+    expect(config.exitCode, resultText(config)).toBe(0);
+    const parsed = parseConfig(config.stdout);
+    expect(Object.keys(parsed.providers ?? {})).toEqual(["inference"]);
+    const inference = parsed.providers?.inference;
+    expect(inference?.baseUrl).toBe("https://inference.local/v1");
+    expect(inference?.api).toBe("openai-completions");
+    const modelEntry = inference?.models?.find((entry) => entry.id === KIMI_MODEL);
+    expect(modelEntry, config.stdout).toBeDefined();
+    expect(modelEntry?.compat?.requiresStringContent).toBe(true);
+    expect(modelEntry?.compat?.requiresToolResultName).toBe(true);
+    expect(modelEntry?.compat?.maxTokensField).toBe("max_tokens");
+    expect(modelEntry?.compat?.supportsStore).toBe(false);
+    expect(config.stdout).toContain(
+      "/usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat",
+    );
+    expect(parsed.primary).toBe(`inference/${KIMI_MODEL}`);
+    expect(parsed.pluginEnabled).toBe(true);
+    expect(parsed.toolSearch).toBe(false);
 
-  progress.phase("probe the managed inference models route");
-  const modelsRoute = await sandbox.exec(
-    SANDBOX_NAME,
-    ["curl", "-sk", "--max-time", "20", "https://inference.local/v1/models"],
-    { artifactName: "inference-local-models", env: env({}, { mode }), timeoutMs: 60_000 },
-  );
-  expect(modelsRoute.exitCode, resultText(modelsRoute)).toBe(0);
-  expect(resultText(modelsRoute)).toContain(KIMI_MODEL);
+    progress.phase("probe the managed inference models route");
+    const modelsRoute = await sandbox.exec(
+      SANDBOX_NAME,
+      ["curl", "-sk", "--max-time", "20", "https://inference.local/v1/models"],
+      { artifactName: "inference-local-models", env: env({}, { mode }), timeoutMs: 60_000 },
+    );
+    expect(modelsRoute.exitCode, resultText(modelsRoute)).toBe(0);
+    expect(resultText(modelsRoute)).toContain(KIMI_MODEL);
 
-  progress.phase("exercise the Kimi tool-call trajectory");
-  const toolAgent = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(
-      "openclaw agent --agent main --json --session-id e2e-kimi-tools -m 'Use the exec tool to run hostname, date, and uptime. Run each command and then say exactly: hostname, date, and uptime completed successfully.'",
-    ),
-    {
-      artifactName: "kimi-agent-tool-splitting",
-      env: kimiAgentEnv(mode),
-      redactionValues: ["test-kimi-key", apiKey ?? ""],
-      timeoutMs: 420_000,
-    },
-  );
-  expect(toolAgent.exitCode, resultText(toolAgent)).toBe(0);
-  expect(parseOpenClawAgentText(toolAgent.stdout), resultText(toolAgent)).toBe(
-    "hostname, date, and uptime completed successfully.",
-  );
-  await assertTrajectory(sandbox, mode);
-  progress.phase("confirm Kimi upstream traffic");
-  await assertKimiUpstreamTraffic({ fake, host, mode, apiKey });
+    progress.phase("exercise the Kimi tool-call trajectory");
+    const toolAgent = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        "openclaw agent --agent main --json --session-id e2e-kimi-tools -m 'Use the exec tool to run hostname, date, and uptime. Run each command and then say exactly: hostname, date, and uptime completed successfully.'",
+      ),
+      {
+        artifactName: "kimi-agent-tool-splitting",
+        env: kimiAgentEnv(mode),
+        redactionValues: ["test-kimi-key", apiKey ?? ""],
+        timeoutMs: 420_000,
+      },
+    );
+    expect(toolAgent.exitCode, resultText(toolAgent)).toBe(0);
+    expect(parseOpenClawAgentText(toolAgent.stdout), resultText(toolAgent)).toBe(
+      "hostname, date, and uptime completed successfully.",
+    );
+    await assertTrajectory(sandbox, mode);
+    progress.phase("confirm Kimi upstream traffic");
+    await assertKimiUpstreamTraffic({ fake, host, mode, apiKey });
   },
 );

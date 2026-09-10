@@ -11,6 +11,7 @@ import {
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
   NemoClawBraveSearchConfigSchema,
+  NemoClawManagedProxyConfigSchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
   TcpPortSchema,
@@ -255,6 +256,7 @@ export const ExportSourceValuesSchema = Type.Object({
     imageRef: ImmutableImageReferenceSchema,
   }),
   gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
+  proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
   webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
 });

@@ -52,10 +52,10 @@ describe("getLiveGatewayInference", () => {
       inference: null,
       status: 1,
     });
-    expect(capture).toHaveBeenCalledExactlyOnceWith(
-      ["inference", "get", "-g", "nemoclaw-19090"],
-      { ignoreError: true, timeout: undefined },
-    );
+    expect(capture).toHaveBeenCalledExactlyOnceWith(["inference", "get", "-g", "nemoclaw-19090"], {
+      ignoreError: true,
+      timeout: undefined,
+    });
   });
 
   it.each([

@@ -19,6 +19,7 @@ import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts
 import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { runHermesAcpLiveScenario } from "../fixtures/hermes-acp-live.ts";
 import { expectSandboxProviderAttachment } from "../fixtures/gateway-providers.ts";
 import { assertManagedImageReceiptMatchesSelectedCohort } from "../fixtures/managed-image-receipt.ts";
 import {
@@ -49,10 +50,7 @@ import {
   createRebuildHermesCronRestoreFixture,
   hermesRuntimeExecArgs,
 } from "./rebuild-hermes-cron-restore.ts";
-import {
-  buildRebuildHermesChildEnv,
-  buildRebuildHermesRecreateEnv,
-} from "./rebuild-hermes-env.ts";
+import { buildRebuildHermesChildEnv, buildRebuildHermesRecreateEnv } from "./rebuild-hermes-env.ts";
 import { ensureRebuildHermesHostTools, hermesApiTokenDigest } from "./rebuild-hermes-host-tools.ts";
 import {
   applyRebuildHermesHostPolicyEdit,
@@ -1181,10 +1179,20 @@ test(
     expectExitZero(hermesVersion, "Hermes version after rebuild");
     const hermesVersionText = resultText(hermesVersion);
     const actualHermesVersion = hermesVersionText.match(/v(\d+\.\d+\.\d+)/)?.[1];
+    const acpInitializedAfterRebuild = await runHermesAcpLiveScenario({
+      artifacts,
+      env: testEnv(apiKey),
+      progress,
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+      scenario: "initialize",
+    });
+    const acpAvailableAfterRebuild =
+      actualHermesVersion === expectedVersion && acpInitializedAfterRebuild;
     expect(
-      actualHermesVersion,
-      `Hermes version output did not include expected release ${expectedVersion}: ${hermesVersionText}`,
-    ).toBe(expectedVersion);
+      acpAvailableAfterRebuild,
+      `Hermes ${actualHermesVersion ?? "unknown"} did not preserve version ${expectedVersion} with compatible ACP after rebuild`,
+    ).toBe(true);
     await cronRestore.verify(rebuildOutput, rebuildBackupPath);
     await cronRestore.verifyStrandedGateRecovery();
     const restoredKanbanDatabase = await host.command(

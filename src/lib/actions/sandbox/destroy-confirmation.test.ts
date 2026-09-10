@@ -43,9 +43,9 @@ describe("destroy confirmation", () => {
       localTlsDir: "/authority/tls",
     };
 
-    await expect(
-      confirmSandboxDestroy("test-sb", { yes: true }, runtimeSelection),
-    ).resolves.toBe(true);
+    await expect(confirmSandboxDestroy("test-sb", { yes: true }, runtimeSelection)).resolves.toBe(
+      true,
+    );
 
     expect(createSessionDeps).toHaveBeenCalledWith("/usr/bin/openshell", {
       runtimeSelection,
