@@ -228,7 +228,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
 
     const report = await getSandboxStatusReport("alpha", deps);
 
-    expect(report.gatewayState).toBe("sandbox_recovery_failed");
+    expect(report.gatewayState).toBe("stop_intent_update_failed");
     expect(report.inferenceHealth).toBeNull();
   });
 

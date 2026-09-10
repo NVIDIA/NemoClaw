@@ -187,7 +187,7 @@ export async function getSandboxStatusPreflight(
 ): Promise<SandboxStatusPreflightResult> {
   const failure = await classifySandboxStatusPreflightFailure(sb, deps);
   const intentionalStopConfirmed = Boolean(
-    sb?.stopped && failure?.layer === "sandbox_container_stopped",
+    sb?.stopped === true && failure?.layer === "sandbox_container_stopped",
   );
   const effectiveFailure = intentionalStopConfirmed ? null : failure;
   return {

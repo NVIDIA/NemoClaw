@@ -474,10 +474,8 @@ export async function collectSandboxStatusSnapshot(
   ) {
     lookup = {
       ...lookup,
-      state: "sandbox_recovery_failed",
-      output:
-        `  Sandbox '${sandboxName}' is running, but NemoClaw could not clear its stale intentional-stop record. ` +
-        `Retry 'nemoclaw ${sandboxName} status' before another lifecycle command.`,
+      state: "stop_intent_update_failed",
+      output: `  Sandbox '${sandboxName}' is running, but NemoClaw could not clear its stale intentional-stop record.`,
     };
   }
   const dockerRecovered = lookup.recoveredSandbox === true;

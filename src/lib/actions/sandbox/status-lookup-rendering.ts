@@ -58,6 +58,9 @@ export async function printSandboxGatewayLookupStatus(
     case "sandbox_recovery_failed":
       printSandboxRecoveryFailedLookupStatus(context);
       return;
+    case "stop_intent_update_failed":
+      printStopIntentUpdateFailedLookupStatus(context);
+      return;
     default:
       await printUnknownGatewayLookupStatus(context);
   }
@@ -85,6 +88,18 @@ function printSandboxRecoveryFailedLookupStatus({
   if (lookup.output) console.log(lookup.output);
   console.log(
     `  Retry \`${CLI_NAME} ${sandboxName} recover\` after addressing the reported layer.`,
+  );
+  deferSandboxLifecycleExit(1);
+}
+
+function printStopIntentUpdateFailedLookupStatus({
+  sandboxName,
+  lookup,
+}: SandboxGatewayLookupStatusContext): void {
+  console.log("");
+  if (lookup.output) console.log(lookup.output);
+  console.log(
+    `  Repair access to NemoClaw's local state, then retry \`${CLI_NAME} ${sandboxName} status\`.`,
   );
   deferSandboxLifecycleExit(1);
 }

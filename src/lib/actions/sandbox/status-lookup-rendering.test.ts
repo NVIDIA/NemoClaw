@@ -161,6 +161,38 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("Workspace state is preserved");
   });
 
+  it("reports a stale stop-record write failure without agent recovery guidance (#11025)", async () => {
+    const cap = captureConsoleLog();
+    await expect(
+      printSandboxGatewayLookupStatus({
+        sandboxName: "beta",
+        registered: true,
+        lookup: {
+          state: "stop_intent_update_failed",
+          output:
+            "  Sandbox 'beta' is running, but NemoClaw could not clear its stale intentional-stop record.",
+        },
+        phase: "Running",
+        dockerRuntime: null,
+        effectivePreflight: {
+          failure: null,
+          failureLayer: null,
+          intentionalStopConfirmed: false,
+          suppressInferenceProbe: false,
+          exitCode: 0,
+        },
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("could not clear its stale intentional-stop record");
+    expect(text).toContain("Repair access to NemoClaw's local state");
+    expect(text).toContain("nemoclaw beta status");
+    expect(text).not.toContain("agent delivery chain");
+    expect(text).not.toContain("nemoclaw beta recover");
+  });
+
   it("keeps the unpause hint for a paused container and never suggests start/rebuild (#4495)", async () => {
     const cap = captureConsoleLog();
     await printGuidance({

@@ -432,6 +432,26 @@ describe("classifySandboxStatusPreflightFailure", () => {
     });
   });
 
+  it("does not accept a non-boolean persisted stop marker as intentional (#11025)", async () => {
+    const result = await getSandboxStatusPreflight(
+      { name: "alpha", openshellDriver: "docker", stopped: "false" } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async () => ({
+          layer: "sandbox_container_stopped",
+          detail: "stub stopped container",
+        }),
+      },
+    );
+
+    expect(result).toMatchObject({
+      intentionalStopConfirmed: false,
+      failureLayer: "sandbox_container_stopped",
+      suppressInferenceProbe: true,
+      exitCode: 1,
+    });
+  });
+
   it("returns null when the sandbox is not on the docker driver", async () => {
     let dockerCalled = false;
     let sandboxCalled = false;
