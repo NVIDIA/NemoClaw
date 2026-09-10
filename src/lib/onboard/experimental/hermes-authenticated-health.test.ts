@@ -25,7 +25,9 @@ class Health(http.server.BaseHTTPRequestHandler):
         self.end_headers()
     def log_message(self, *args):
         pass
-server = http.server.HTTPServer(("127.0.0.1", 0), Health)
+# The loopback fixture's server name must not depend on host DNS.
+with patch("socket.getfqdn", return_value="localhost"):
+    server = http.server.HTTPServer(("127.0.0.1", 0), Health)
 thread = threading.Thread(target=server.serve_forever, daemon=True)
 thread.start()
 stdout, stderr = io.StringIO(), io.StringIO()
