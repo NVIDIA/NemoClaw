@@ -143,9 +143,7 @@ function hasAdmittedReadinessException(
   if (waivedFindingIds.size !== admission.waivedFindingIds.length) return false;
   const allowedFindingIds = new Set<string>([
     ONBOARD_READINESS_FINDING_IDS.storageIncompatible,
-    ...(allowDeferredN1xManagedVllm
-      ? [ONBOARD_READINESS_FINDING_IDS.n1xValidationPending]
-      : []),
+    ...(allowDeferredN1xManagedVllm ? [ONBOARD_READINESS_FINDING_IDS.n1xValidationPending] : []),
   ]);
   return admission.waivedFindingIds.every((id) => allowedFindingIds.has(id));
 }
@@ -463,10 +461,7 @@ function intentCompatibilityError(
   if (hasText(intent.provider) && intent.provider !== recipe.spec.backend) {
     return `provider ${intent.provider} conflicts with preset ${preset.metadata.id}`;
   }
-  if (
-    hasText(intent.vllmModel) &&
-    !recipeMatchesModelIntent(recipe, intent.vllmModel)
-  ) {
+  if (hasText(intent.vllmModel) && !recipeMatchesModelIntent(recipe, intent.vllmModel)) {
     return `model ${intent.vllmModel} conflicts with preset ${preset.metadata.id}`;
   }
   if (unmanagedExplicitIntent(intent)) {
@@ -709,8 +704,7 @@ export function resolveManagedInferenceServing<TOutput>(
         if (!runtimeFailure || compareRuntimeRequirementFailures(evaluated, runtimeFailure) < 0) {
           runtimeFailure = evaluated;
         }
-      }
-      else firstFailure ??= evaluated;
+      } else firstFailure ??= evaluated;
     }
     if (matching.length === 0) {
       const failure = runtimeFailure ?? firstFailure;
@@ -752,8 +746,7 @@ export function resolveManagedInferenceServing<TOutput>(
       if (!runtimeFailure || compareRuntimeRequirementFailures(evaluated, runtimeFailure) < 0) {
         runtimeFailure = evaluated;
       }
-    }
-    else if (evaluated.outcome === "invalid-topology") firstInvalidTopology ??= evaluated.message;
+    } else if (evaluated.outcome === "invalid-topology") firstInvalidTopology ??= evaluated.message;
   }
   if (firstInvalidTopology) {
     return {

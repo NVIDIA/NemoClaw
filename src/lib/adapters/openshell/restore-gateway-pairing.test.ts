@@ -50,15 +50,18 @@ describe("verifyRestoredSandboxGatewayPairing", () => {
       "gateway connect failed: pairing required: device is asking for more scopes",
       "scope-upgrade-pending",
     ],
-  ] as const)("classifies a verification run with fallback or pairing output (#7431)", (output, failureLayer) => {
-    expect(
-      verifyRestoredSandboxGatewayPairing(
-        "beta",
-        SESSION_ID_PREFIX,
-        verifierDeps({ status: 0, stdout: output }),
-      ),
-    ).toEqual({ ok: false, failureLayer });
-  });
+  ] as const)(
+    "classifies a verification run with fallback or pairing output (#7431)",
+    (output, failureLayer) => {
+      expect(
+        verifyRestoredSandboxGatewayPairing(
+          "beta",
+          SESSION_ID_PREFIX,
+          verifierDeps({ status: 0, stdout: output }),
+        ),
+      ).toEqual({ ok: false, failureLayer });
+    },
+  );
 
   it("accepts changed output when the gateway run exits successfully without a failure signal (#7431)", () => {
     expect(

@@ -566,22 +566,37 @@ describe("pull request and main workflow contracts", () => {
         NODE_AUTH_TOKEN: "${{ github.event_name == 'push' && github.token || '' }}",
       })),
     );
-    expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual(
-      actions.map(() => 'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"'),
-    );
+    expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual([
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" none',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" production',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+    ]);
   });
 
+  // source-shape-contract: security -- The trusted split must retain test-config coverage after compiling candidate production code
   it.each([
-    [
-      "CLI shards",
-      requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools"),
-    ],
+    ["pull request", prWorkflow],
+    ["main", mainWorkflow],
+  ] as const)(
+    "keeps %s plugin test typechecking after the trusted production build",
+    (_name, workflow) => {
+      expect([workflow.jobs["build-typecheck"].needs].flat()).toContain("compile-artifacts");
+      expect(requiredStep(sharedActions.buildTypecheck, "Typecheck plugin tests").run).toBe(
+        "npm --prefix nemoclaw exec -- tsc --noEmit -p nemoclaw/tsconfig.test.json",
+      );
+      expect(stepRuns(sharedActions.buildTypecheck)).not.toContain(
+        "npm --prefix nemoclaw run typecheck",
+      );
+    },
+  );
+  it.each([
+    ["CLI shards", requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools")],
     [
       "Advisor runtime",
-      requiredWorkflowStep(
-        advisorWorkflow.jobs["build-advisor-runtime"],
-        "Install locked runtime",
-      ),
+      requiredWorkflowStep(advisorWorkflow.jobs["build-advisor-runtime"], "Install locked runtime"),
     ],
   ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
     const temp = mkdtempSync(join(tmpdir(), "nemoclaw-ubuntu-apt-sources-"));
@@ -964,9 +979,7 @@ describe("pull request and main workflow contracts", () => {
       NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
-    expect(fetch.run).toContain(
-      "node scripts/checks/package-openshell-sdk-for-pr.mts",
-    );
+    expect(fetch.run).toContain("node scripts/checks/package-openshell-sdk-for-pr.mts");
     expect(fetch.run).toContain("artifact_path=");
     expect(
       (sdkPackageJob.steps ?? [])

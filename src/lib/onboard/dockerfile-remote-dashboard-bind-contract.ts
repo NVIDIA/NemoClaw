@@ -76,7 +76,7 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "8f5966da093ef75cefd35c2b7f1361fbf5b32e63a4a8a34cb3ac7f76a1330e5e",
   "4c2f29cb433ff14ca386e71373b53e88c705e2ed255b435715681a0dd64e43f9",
   "761ea4fbb0da5cf3390ee8f2e56f3703a7da88c96ac47fea89d0fff800f728ae",
-  "bda3ce8d453fa143943eac44bea4288e44a3cdbf5e9e54a3da68154f06d08c3d",
+  "9026e48d7294a60abe57d7fed77aaf27e8088d29c48421a0f2d1260e7a6d5bdc",
   // COPY --from=openclaw-runtime-payload / /
   // The reviewed scratch payload has no /sandbox/.openclaw content, so this
   // exact late copy preserves the generated remote-dashboard configuration.

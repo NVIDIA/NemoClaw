@@ -34,7 +34,7 @@ function context(
 type ExecResult = { status: number; stdout: string; stderr: string } | null;
 
 function makeExec(result: ExecResult) {
-  return vi.fn((_sandbox: string, _command: string, _timeout: number): ExecResult => result);
+  return vi.fn(async (_sandbox: string, _command: string, _timeout: number) => result);
 }
 
 // Sequential mock: each invocation of the hook only issues one exec call, but
@@ -42,27 +42,25 @@ function makeExec(result: ExecResult) {
 // list of responses.
 function makeSequentialExec(results: readonly ExecResult[]) {
   let call = 0;
-  return vi.fn((_sandbox: string, _command: string, _timeout: number): ExecResult => {
+  return vi.fn(async (_sandbox: string, _command: string, _timeout: number) => {
     const value = results[call] ?? results[results.length - 1] ?? null;
     call += 1;
     return value;
   });
 }
 
-function reportOf(
-  result: MessagingHookResult | Promise<MessagingHookResult>,
-): ChannelHealthReport | undefined {
-  const value = (result as MessagingHookResult).outputs?.channelHealth?.value as unknown as
+function reportOf(result: MessagingHookResult): ChannelHealthReport | undefined {
+  const value = result.outputs?.channelHealth?.value as unknown as
     | { report?: ChannelHealthReport }
     | undefined;
   return value?.report;
 }
 
-function outputsOf(result: MessagingHookResult | Promise<MessagingHookResult>) {
-  return (result as MessagingHookResult).outputs;
+function outputsOf(result: MessagingHookResult) {
+  return result.outputs;
 }
 
-function stringifyReport(result: MessagingHookResult | Promise<MessagingHookResult>): string {
+function stringifyReport(result: MessagingHookResult): string {
   return JSON.stringify(reportOf(result));
 }
 
@@ -123,7 +121,7 @@ function hermesExec(options: {
 }) {
   const hasCreds = (credsFile: string) =>
     options.credsDirs.some((dir) => credsFile === `${dir}/creds.json`);
-  return vi.fn((_sandbox: string, command: string, _timeout: number): ExecResult => {
+  return vi.fn(async (_sandbox: string, command: string, _timeout: number) => {
     return command.startsWith("python3 -c ")
       ? options.configProbeStdout !== undefined
         ? { status: 0, stdout: options.configProbeStdout, stderr: "" }
@@ -205,9 +203,9 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
       verdict: "idle",
     },
     { label: "unpaired: linked=false", wa: UNPAIRED_WA, verdict: "unpaired" },
-  ] as const)("reports verdict $verdict for $label", ({ wa, verdict }) => {
+  ] as const)("reports verdict $verdict for $label", async ({ wa, verdict }) => {
     const exec = makeExec({ status: 0, stdout: openclawJson(wa), stderr: "" });
-    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context());
+    const result = await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context());
     expect(reportOf(result)?.verdict).toBe(verdict);
     // The healthy path is the only case that must produce `healthy` — every
     // non-healthy fixture must render as something else so the PRA-1 root
@@ -215,10 +213,10 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     expect(reportOf(result)?.verdict === "healthy").toBe(verdict === "healthy");
   });
 
-  it("stopped bridge never emits verdict=healthy (PRA-1 explicit guard)", () => {
+  it("stopped bridge never emits verdict=healthy (PRA-1 explicit guard)", async () => {
     const exec = makeExec({ status: 0, stdout: openclawJson(STOPPED_WA), stderr: "" });
     const report = reportOf(
-      createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context()),
+      await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context()),
     );
     expect(report?.verdict).not.toBe("healthy");
     const bridge = report?.signals.find((s) => s.label === "Bridge process");
@@ -230,9 +228,9 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     // emitted JSON, regardless of whether the fixture is healthy or stopped.
     { fixture: HEALTHY_WA, label: "healthy" },
     { fixture: STOPPED_WA, label: "stopped" },
-  ])("never propagates self.* or lastError values ($label)", ({ fixture }) => {
+  ])("never propagates self.* or lastError values ($label)", async ({ fixture }) => {
     const exec = makeExec({ status: 0, stdout: openclawJson(fixture), stderr: "" });
-    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context());
+    const result = await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context());
     const serialized = stringifyReport(result);
     expect(serialized).not.toContain(REDACTION_PHONE);
     expect(serialized).not.toContain("@s.whatsapp.net");
@@ -240,21 +238,21 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     expect(serialized).not.toContain("disconnect from");
   });
 
-  it("maps an unrecognized healthState to a fixed token so free text cannot leak", () => {
+  it("maps an unrecognized healthState to a fixed token so free text cannot leak", async () => {
     // healthState is external JSON text; a compromised gateway could stuff PII
     // into it. Only the documented enum may be surfaced verbatim.
     const wa: WaFixture = { ...HEALTHY_WA, healthState: `leaked ${REDACTION_PHONE}` };
     const exec = makeExec({ status: 0, stdout: openclawJson(wa), stderr: "" });
-    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context());
+    const result = await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context());
     const serialized = stringifyReport(result);
     expect(serialized).not.toContain(REDACTION_PHONE);
     expect(serialized).toContain("healthState=unknown");
   });
 
-  it("reports unknown for the bounded unconfigured response with no channel state", () => {
+  it("reports unknown for the bounded unconfigured response with no channel state", async () => {
     const exec = makeExec({ status: 0, stdout: openclawJson(null), stderr: "" });
     const report = reportOf(
-      createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context()),
+      await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context()),
     );
     expect(report?.verdict).not.toBe("healthy");
     // paired stays null here, so the evaluator lands on "unknown" —
@@ -265,7 +263,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     expect(logSignal?.detail).toMatch(/not configured on the gateway/);
   });
 
-  it("accepts the canonical successful payload without the failure-only reachability field", () => {
+  it("accepts the canonical successful payload without the failure-only reachability field", async () => {
     const payload = {
       channels: { whatsapp: { configured: true } },
       channelAccounts: {
@@ -275,12 +273,12 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     };
     const exec = makeExec({ status: 0, stdout: JSON.stringify(payload), stderr: "" });
     const report = reportOf(
-      createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context()),
+      await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context()),
     );
     expect(report?.verdict).toBe("healthy");
   });
 
-  it("selects the declared default account instead of trusting account-array order", () => {
+  it("selects the declared default account instead of trusting account-array order", async () => {
     const payload = {
       // Keep the summary deliberately unpaired so this test also proves the
       // probe consumes authoritative per-account state rather than the summary.
@@ -295,7 +293,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     };
     const exec = makeExec({ status: 0, stdout: JSON.stringify(payload), stderr: "" });
     const report = reportOf(
-      createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context()),
+      await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context()),
     );
     expect(report?.verdict).toBe("healthy");
   });
@@ -342,10 +340,10 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
         configOnly: true,
       },
     },
-  ])("fails closed when the gateway is unreachable despite $label", ({ payload }) => {
+  ])("fails closed when the gateway is unreachable despite $label", async ({ payload }) => {
     const exec = makeExec({ status: 0, stdout: JSON.stringify(payload), stderr: "" });
     const report = reportOf(
-      createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context()),
+      await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context()),
     );
     expect(report?.verdict).toBe("probe_failed");
     expect(report?.signals.some((signal) => signal.label === "Recent log signals")).toBe(false);
@@ -406,16 +404,23 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
         channelDefaultAccountId: { whatsapp: "default" },
       },
     },
-  ])("fails closed when the live-status contract is invalid: $label (#7016)", ({ payload }) => {
-    const exec = makeExec({ status: 0, stdout: JSON.stringify(payload), stderr: "" });
-    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context());
-    const report = reportOf(result);
-    expect(report?.verdict).toBe("probe_failed");
-    expect(stringifyReport(result)).not.toContain("channel runtime reports WhatsApp is not paired");
-    expect(stringifyReport(result)).not.toContain("no bridge process");
-  });
+  ])(
+    "fails closed when the live-status contract is invalid: $label (#7016)",
+    async ({ payload }) => {
+      const exec = makeExec({ status: 0, stdout: JSON.stringify(payload), stderr: "" });
+      const result = await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+        context(),
+      );
+      const report = reportOf(result);
+      expect(report?.verdict).toBe("probe_failed");
+      expect(stringifyReport(result)).not.toContain(
+        "channel runtime reports WhatsApp is not paired",
+      );
+      expect(stringifyReport(result)).not.toContain("no bridge process");
+    },
+  );
 
-  it("degrades an out-of-range lastInboundAt to null instead of crashing", () => {
+  it("degrades an out-of-range lastInboundAt to null instead of crashing", async () => {
     // A finite-but-out-of-Date-range epoch (e.g. 1e300) passes Number.isFinite
     // yet makes `new Date(v).toISOString()` throw RangeError. The probe must
     // degrade it to null, not crash the whole status command.
@@ -425,11 +430,11 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
       stderr: "",
     });
     const run = () => createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context());
-    expect(run).not.toThrow();
-    expect(reportOf(run())?.verdict).toBeDefined();
+    const result = await run();
+    expect(reportOf(result)?.verdict).toBeDefined();
   });
 
-  it("guides the Hermes dashboard-only session split through re-pairing (#8184)", () => {
+  it("guides the Hermes dashboard-only session split through re-pairing (#8184)", async () => {
     const exec = makeExec({
       status: 0,
       stdout: hermesSessionProbeOutput({
@@ -438,7 +443,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
       }),
       stderr: "",
     });
-    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+    const result = await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
       context({ ...BASE_INPUTS, agent: "hermes" }),
     );
     const report = reportOf(result);
@@ -479,12 +484,12 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     },
   ])(
     "keeps the durable session path for an unsupported compatibility value: $label (#8947)",
-    ({ sessionPath }) => {
+    async ({ sessionPath }) => {
       const exec = hermesExec({
         configuredSessionPath: sessionPath,
         credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
       });
-      const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+      const result = await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
         context({ ...BASE_INPUTS, agent: "hermes" }),
       );
       const report = reportOf(result);
@@ -501,12 +506,12 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     },
   );
 
-  it("reads the Hermes config only when the default session path is empty (#8718)", () => {
+  it("reads the Hermes config only when the default session path is empty (#8718)", async () => {
     const exec = hermesExec({
       configuredSessionPath: HERMES_DASHBOARD_SESSION_DIR,
       credsDirs: [HERMES_DEFAULT_SESSION_DIR],
     });
-    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+    const result = await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
       context({ ...BASE_INPUTS, agent: "hermes" }),
     );
     const report = reportOf(result);
@@ -514,12 +519,12 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     expect(report?.signals.find((s) => s.label === "Session path override")).toBeUndefined();
   });
 
-  it("keeps unrelated Hermes config values out of the report (#8718)", () => {
+  it("keeps unrelated Hermes config values out of the report (#8718)", async () => {
     const exec = hermesExec({
       configuredSessionPath: HERMES_DASHBOARD_SESSION_DIR,
       credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
     });
-    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+    const result = await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
       context({ ...BASE_INPUTS, agent: "hermes" }),
     );
     expect(stringifyReport(result)).not.toContain("sk-do-not-leak-this");
@@ -528,13 +533,13 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     );
   });
 
-  it("keeps default diagnostics when the configured Hermes session probe fails (#8718)", () => {
+  it("keeps default diagnostics when the configured Hermes session probe fails (#8718)", async () => {
     const exec = hermesExec({
       configuredSessionPath: HERMES_DASHBOARD_SESSION_DIR,
       configuredSessionProbeFails: true,
       credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
     });
-    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+    const result = await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
       context({ ...BASE_INPUTS, agent: "hermes" }),
     );
     const report = reportOf(result);
@@ -547,12 +552,12 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     expect(exec).toHaveBeenCalledTimes(3);
   });
 
-  it("keeps Hermes fallback probes within one timeout budget (#8718)", () => {
+  it("keeps Hermes fallback probes within one timeout budget (#8718)", async () => {
     const exec = hermesExec({
       configuredSessionPath: HERMES_DASHBOARD_SESSION_DIR,
       credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
     });
-    createWhatsappStatusHealthHook({ executeSandboxCommand: exec, timeoutMs: 8_000 })(
+    await createWhatsappStatusHealthHook({ executeSandboxCommand: exec, timeoutMs: 8_000 })(
       context({ ...BASE_INPUTS, agent: "hermes" }),
     );
     const probeTimeouts = exec.mock.calls.map((call) => Number(call[2]));
@@ -561,7 +566,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     expect(probeTimeouts.reduce((total, timeout) => total + timeout, 0)).toBeLessThanOrEqual(8_000);
   });
 
-  it("rejects a config probe response that carries unrelated values (#8718)", () => {
+  it("rejects a config probe response that carries unrelated values (#8718)", async () => {
     const secret = "sk-do-not-cross-the-sandbox-boundary";
     const exec = hermesExec({
       configProbeStdout: [
@@ -571,7 +576,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
       ].join("\n"),
       credsDirs: [HERMES_DASHBOARD_SESSION_DIR],
     });
-    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+    const result = await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
       context({ ...BASE_INPUTS, agent: "hermes" }),
     );
     const report = reportOf(result);
@@ -583,9 +588,9 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     expect(probeCommands[0]).toContain(`gateway='${HERMES_DEFAULT_SESSION_DIR}/creds.json'`);
   });
 
-  it("falls back to the default session path when the Hermes config cannot be read (#8718)", () => {
+  it("falls back to the default session path when the Hermes config cannot be read (#8718)", async () => {
     const exec = hermesExec({ credsDirs: [HERMES_DASHBOARD_SESSION_DIR] });
-    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+    const result = await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
       context({ ...BASE_INPUTS, agent: "hermes" }),
     );
     const report = reportOf(result);
@@ -599,7 +604,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     expect(report?.signals.find((s) => s.label === "Session path override")).toBeUndefined();
   });
 
-  it("does not treat a Hermes gateway session file as live inbound health", () => {
+  it("does not treat a Hermes gateway session file as live inbound health", async () => {
     const exec = makeExec({
       status: 0,
       stdout: hermesSessionProbeOutput({
@@ -608,7 +613,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
       }),
       stderr: "",
     });
-    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+    const result = await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
       context({ ...BASE_INPUTS, agent: "hermes" }),
     );
     const report = reportOf(result);
@@ -633,9 +638,9 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
         "DASHBOARD_SESSION=yes",
       ].join("\n"),
     },
-  ])("reports probe_failed for malformed Hermes probe output: $label", ({ stdout }) => {
+  ])("reports probe_failed for malformed Hermes probe output: $label", async ({ stdout }) => {
     const exec = makeExec({ status: 0, stdout, stderr: "" });
-    const result = createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+    const result = await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
       context({ ...BASE_INPUTS, agent: "hermes" }),
     );
     const report = reportOf(result);
@@ -661,27 +666,29 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
       },
     },
     { label: "JSON but not an object", exec: { status: 0, stdout: '"hello"', stderr: "" } },
-  ] as const)("verdict=probe_failed when $label", ({ exec }) => {
+  ] as const)("verdict=probe_failed when $label", async ({ exec }) => {
     const runner = makeExec(exec);
     const report = reportOf(
-      createWhatsappStatusHealthHook({ executeSandboxCommand: runner })(context()),
+      await createWhatsappStatusHealthHook({ executeSandboxCommand: runner })(context()),
     );
     expect(report?.verdict).toBe("probe_failed");
   });
 
-  it("reports probe_failed when the sandbox exec runner throws", () => {
-    const exec = vi.fn(() => {
+  it("reports probe_failed when the sandbox exec runner rejects", async () => {
+    const exec = vi.fn(async () => {
       throw new Error("sandbox exec unavailable");
     });
     const report = reportOf(
-      createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context()),
+      await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(context()),
     );
     expect(report?.verdict).toBe("probe_failed");
   });
 
-  it("invokes the openclaw CLI with the JSON + timeout flags", () => {
+  it("invokes the openclaw CLI with the JSON + timeout flags", async () => {
     const exec = makeExec({ status: 0, stdout: openclawJson(HEALTHY_WA), stderr: "" });
-    createWhatsappStatusHealthHook({ executeSandboxCommand: exec, timeoutMs: 4500 })(context());
+    await createWhatsappStatusHealthHook({ executeSandboxCommand: exec, timeoutMs: 4500 })(
+      context(),
+    );
     const command = String(exec.mock.calls[0]?.[1] ?? "");
     expect(command).toContain("openclaw channels status --channel whatsapp --json");
     expect(command).toContain("--timeout 4500");
@@ -692,7 +699,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     expect(command).not.toMatch(/DIR .* POPULATED/);
   });
 
-  it("healthState surfaces neutral state signal only when non-healthy", () => {
+  it("healthState surfaces neutral state signal only when non-healthy", async () => {
     const stale: WaFixture = {
       ...HEALTHY_WA,
       healthState: "stale",
@@ -704,10 +711,10 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
       { status: 0, stdout: openclawJson(stale), stderr: "" },
     ]);
     const hook = createWhatsappStatusHealthHook({ executeSandboxCommand: exec });
-    const healthyReport = reportOf(hook(context()));
+    const healthyReport = reportOf(await hook(context()));
     // Healthy runs stay clean (no "Recent log signals" row from healthState).
     expect(healthyReport?.signals.some((s) => s.label === "Recent log signals")).toBe(false);
-    const staleReport = reportOf(hook(context()));
+    const staleReport = reportOf(await hook(context()));
     const staleLogs = staleReport?.signals.find((s) => s.label === "Recent log signals");
     expect(staleLogs?.detail).toMatch(/healthState=stale/);
     expect(staleLogs?.detail).toMatch(/reconnectAttempts=3/);
@@ -715,25 +722,27 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
 });
 
 describe("whatsapp.statusHealth wiring guards", () => {
-  it("no-ops for a non-whatsapp channel or without an exec runner", () => {
+  it("no-ops for a non-whatsapp channel or without an exec runner", async () => {
     const exec = makeExec({ status: 0, stdout: openclawJson(HEALTHY_WA), stderr: "" });
     expect(
       outputsOf(
-        createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
+        await createWhatsappStatusHealthHook({ executeSandboxCommand: exec })(
           context(BASE_INPUTS, "slack"),
         ),
       ),
     ).toBeUndefined();
-    expect(outputsOf(createWhatsappStatusHealthHook({})(context()))).toBeUndefined();
+    expect(outputsOf(await createWhatsappStatusHealthHook({})(context()))).toBeUndefined();
     expect(exec).not.toHaveBeenCalled();
   });
 
-  it("derives config_gap / policy_gap from the host-fact inputs", () => {
+  it("derives config_gap / policy_gap from the host-fact inputs", async () => {
     const exec = makeExec({ status: 0, stdout: openclawJson(HEALTHY_WA), stderr: "" });
     const hook = createWhatsappStatusHealthHook({ executeSandboxCommand: exec });
-    const configGap = reportOf(hook(context({ ...BASE_INPUTS, channelEnabledInRegistry: false })));
+    const configGap = reportOf(
+      await hook(context({ ...BASE_INPUTS, channelEnabledInRegistry: false })),
+    );
     expect(configGap?.verdict).toBe("config_gap");
-    const policyGap = reportOf(hook(context({ ...BASE_INPUTS, presetApplied: false })));
+    const policyGap = reportOf(await hook(context({ ...BASE_INPUTS, presetApplied: false })));
     expect(policyGap?.verdict).toBe("policy_gap");
   });
 });

@@ -15,11 +15,13 @@ runs:
 
     - name: Typecheck CLI + tests
       shell: bash
+      env:
+        NODE_OPTIONS: --max-old-space-size=5120
       run: npm run typecheck:cli
 
-    - name: Typecheck plugin
+    - name: Typecheck plugin tests
       shell: bash
-      run: npm --prefix nemoclaw run typecheck
+      run: npm --prefix nemoclaw exec -- tsc --noEmit -p nemoclaw/tsconfig.test.json
 
     - name: Typecheck JavaScript config
       shell: bash

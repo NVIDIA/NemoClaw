@@ -64,7 +64,8 @@ Restore a separately created snapshot afterward if one is available; rebuild can
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-If `$$nemoclaw <name> status` reports the sandbox container or gateway is not running, run the recover command instead of opening a shell.
+If `$$nemoclaw <name> status` reports `Phase: Stopped` after an intentional stop, run `$$nemoclaw <name> start`.
+If status reports `sandbox_container_stopped`, a missing sandbox, or an unhealthy gateway, run the recover command instead of opening a shell.
 
 ```bash
 $$nemoclaw <sandbox-name> recover
@@ -83,7 +84,8 @@ The restart command asks the topology-specific controller to stop the tracked ga
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-If `$$nemoclaw <name> status` reports the sandbox container or Hermes gateway is not running, run the recover command instead of opening a shell.
+If `$$nemoclaw <name> status` reports `Phase: Stopped` after an intentional stop, run `$$nemoclaw <name> start`.
+If status reports `sandbox_container_stopped`, a missing sandbox, or an unhealthy Hermes gateway, run the recover command instead of opening a shell.
 
 ```bash
 $$nemoclaw <sandbox-name> recover
@@ -93,11 +95,14 @@ The command repairs a stopped in-sandbox gateway and re-establishes the dashboar
 
 Before it repairs the gateway, `recover` checks for a NemoClaw cron restore gate or release recovery record left by an interrupted rebuild. The gate continues to block new Hermes turns and cron dispatch across gateway and container restarts in the same sandbox. If release rollback could not restore the gate, `recover` uses the root-owned recovery record to reacquire it before gateway repair can start dispatch. After gateway repair, `recover` waits for active agent work to finish and validates the restored cron jobs and scripts. It clears NemoClaw-owned gate and release recovery state only after validation succeeds. If no independent operator drain exists, successful recovery prints `Hermes cron dispatch resumed after restored jobs and scripts were validated.` If an operator drain exists, recovery prints `Hermes cron restore gate cleared; the independent operator drain remains active.` The command does not own or clear the Hermes operator drain, so new Hermes turns and cron dispatch remain blocked while that drain is active. If gate reacquisition or cron validation fails, `recover` exits nonzero and retains the recovery state for another attempt.
 
-Portable Hermes recovery follows the exact receipt-bound start, authenticated-health, and rollback contract in the [`recover` command reference](../../reference/commands#nemoclaw-name-recover).
+Portable Hermes recovery follows the exact receipt-bound start, authenticated-health, and rollback contract in the [`recover` command reference](../../reference/commands#$$nemoclaw-name-recover).
+After Portable `start` completes lifecycle recovery, it checks and repairs the recorded host forwards before reporting success.
+Portable Hermes records the selected OpenShell gateway during onboarding.
+Recovery and uninstall use that recorded gateway, including a non-default gateway selected through `NEMOCLAW_GATEWAY_PORT`.
 
 ### Recover Portable Published Ollama
 
-When an active Portable Hermes sandbox uses a published receipt-owned Ollama runner, use one of these commands to recover it:
+When an active Portable Hermes sandbox uses `ollama-local` and a published receipt-owned Ollama runner, use one of these commands to recover it:
 
 ```bash
 $$nemoclaw <sandbox-name> recover
@@ -111,6 +116,7 @@ Missing authority, a same-name replacement, or other drift stops recovery before
 Success requires a final route proof from inside the sandbox.
 
 Ordinary `connect` and direct `launch` do not resume the runner.
+For another configured provider, `recover` and `connect --probe-only` verify the recorded inference route and required forwards without requiring or starting an Ollama runner.
 If a check fails after recovery starts a stopped runner, NemoClaw restores the runner and registry to their prior states or reports that restoration could not be proved.
 
 <Warning title="Unproved Rollback">
@@ -203,6 +209,7 @@ Lease acceptance and publication are currently Linux-only and require a secure, 
 On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease. `connect --probe-only` also runs the complete preflight, including recovery and probes. After a successful probe and recovery, it prints a note that launch-readiness evidence is unavailable on this platform and exits zero. On Linux, the publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
 
 Infrastructure must run `connect --probe-only` as the same final numeric user that later runs `launch`. Run it after the final durable home and state volume is mounted and after policy and network provisioning is complete. On completion, `connect --probe-only` writes one credential-free `Probe timing:` line with elapsed milliseconds for readiness, authority, lifecycle, gateway, processes, forward, inference, pairing, and publication stages. The line also reports the lifecycle and forward actions, the result, and the failed stage when the probe fails. Timing output is diagnostic only and does not change probe success or failure. NemoClaw rejects evidence after a bound sandbox, configuration, policy, or network identity changes. Deployment ordering remains responsible for external changes that OpenShell and NemoClaw cannot observe.
+Refer to the [probe timing reference](../../reference/commands#$$nemoclaw-name-connect) for observation counts, readiness decisions, and Portable Hermes diagnostics.
 
 <AgentOnly variant="openclaw,hermes">
 ### Host OpenShell Gateway Versus In-Sandbox Agent Recovery
@@ -255,6 +262,8 @@ $$nemoclaw <sandbox-name> rebuild
 On WSL with Docker Desktop, a generated replacement image build uses a temporary credential-free Docker configuration when the configured Docker Desktop credential helper is unavailable. NemoClaw removes the temporary configuration after the build and does not modify your Docker configuration. An explicit custom Dockerfile continues to use your configured Docker credentials because its base image or build steps might require a private registry. If that custom rebuild cannot reach the credential helper, restore the Docker Desktop session or credential-helper access before retrying.
 
 Rebuild creates the replacement from the base image selected during preflight, even when the source sandbox records an older base-image hint.
+If replacement onboarding returns a nonzero status, rebuild stops before post-create state restoration and preserves the backup and registry recovery state.
+It does not report a successful rebuild.
 
 If the sandbox's container is stopped (for example, an out-of-band container kill left the sandbox in `Phase: Error`), rebuild starts the container for the duration of the pre-recreate state backup and returns it to its stopped state afterward, the same recovery `$$nemoclaw backup-all` uses for a stopped container. If no stopped container can be found for the sandbox, or the retried backup still fails, rebuild aborts without recreating the sandbox; it reports an incomplete-snapshot notice only when a partial snapshot was retained. If the backup itself succeeds but the started container cannot be returned to its stopped state, rebuild also aborts, so a sandbox that was stopped before rebuild started is never left running without a warning.
 
@@ -314,8 +323,13 @@ A gateway that reports no live inference route does not stop the rebuild. Replac
 
 <AgentOnly variant="hermes">
 The rebuild command preserves Hermes state, the complete current OpenShell policy, and managed MCP configuration while recreating the container.
+It also preserves supported configuration values previously written through `nemohermes <name> config set`.
+Before deletion, NemoClaw captures those recorded dotpaths, excluding `gateway` settings, managed inference-route fields, and credential material.
+After state restoration, it merges the captured values into the replacement configuration and verifies them.
+The completion report lists restored and dropped keys.
+A capture failure stops before deletion; a restore or verification failure exits nonzero and preserves recovery state.
 For that one replacement create, NemoClaw adds baseline fields required by the current replacement image when they are absent from the live policy. Existing values, network keys, and same-name live network entries win, so host changes are not overwritten. NemoClaw does not save a desired-policy copy or enforce that handoff after OpenShell creates the sandbox.
-It reuses a messaging provider only when its exact type and credential keys match the recorded channel binding.
+It reuses a messaging provider only when its type, credential keys, and checked-in OpenShell profile contract match the recorded channel binding.
 A stopped channel remains inactive and contributes no token upsert, rendered runtime configuration, channel startup effect, or inactive built-in messaging preset.
 Custom and host-edited policy entries are preserved as part of that one OpenShell policy handoff, not by a separate replay system.
 A policy-required provider attachment is the narrow exception: when a preserved custom policy still credential-binds stopped Hermes Discord, rebuild attaches its exact validated static provider without starting Discord.
@@ -349,7 +363,7 @@ It records the replacement process identity around managed health verification.
 NemoClaw clears the gate only if that same live process completes the final cron validation.
 If an operator already drained the gateway, NemoClaw clears its gate and release recovery record while leaving the operator drain active.
 
-If state restore, managed MCP restoration, gateway replacement, agent-version verification, or cron validation fails after gate acquisition, `rebuild` exits nonzero and preserves the backup.
+If state restore, operator configuration restoration, managed MCP restoration, gateway replacement, agent-version verification, or cron validation fails after gate acquisition, `rebuild` exits nonzero and preserves the backup.
 `rebuild` keeps the NemoClaw gate active after these failures unless release rollback cannot restore the drain marker.
 Failures before gate acquisition do not create a new gate.
 

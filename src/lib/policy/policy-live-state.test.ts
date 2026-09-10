@@ -115,11 +115,7 @@ describe("live OpenShell policy mutations", () => {
     } as const;
 
     expect(
-      captureRecordedSandboxBasePolicy(
-        sandboxName,
-        "capture a lifecycle policy",
-        runtimeSelection,
-      ),
+      captureRecordedSandboxBasePolicy(sandboxName, "capture a lifecycle policy", runtimeSelection),
     ).toBe(livePolicy);
     expect(mocks.inspectSandboxPolicy).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "nemoclaw" },

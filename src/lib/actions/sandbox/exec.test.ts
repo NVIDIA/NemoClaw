@@ -349,20 +349,9 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
     const inspectMutableConfigPerms = vi
       .fn<SandboxExecCleanupDeps["inspectMutableConfigPerms"]>()
       .mockReturnValueOnce({
-        applies: false,
-        skipReason: "unavailable",
-        reason: "container unavailable",
-      })
-      .mockReturnValueOnce({
         applies: true,
-        ok: true,
-        dirMode: "2770",
-        dirOwner: "sandbox:sandbox",
-        fileMode: "660",
-        fileOwner: "sandbox:sandbox",
-        configDir: "/sandbox/.openclaw",
-        configFile: "openclaw.json",
-        issues: [],
+        ok: false,
+        issues: ["config mode differs from runtime contract"],
       });
     const repairMutableConfigPerms = vi.fn(() => ({
       applied: true as const,
@@ -376,7 +365,7 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
         repairMutableConfigPerms,
       },
     });
-    expect(inspectMutableConfigPerms).toHaveBeenCalledTimes(2);
+    expect(inspectMutableConfigPerms).toHaveBeenCalledOnce();
     expect(repairMutableConfigPerms).toHaveBeenCalledOnce();
     expect(exitCode).toBe(56);
     expect(stderr.join("\n")).toContain("recent network policy denial detected");

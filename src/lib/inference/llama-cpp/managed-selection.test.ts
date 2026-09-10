@@ -298,12 +298,10 @@ describe("managed llama.cpp selection", () => {
     const { catalog, report } = fixture(presetId);
 
     expect(
-      resolveManagedLlamaCppSelection(
-        env,
-        catalog,
-        report,
-        { ...LOCAL_DOCKER_SELECTION, runtimeProviderId: "podman" },
-      ),
+      resolveManagedLlamaCppSelection(env, catalog, report, {
+        ...LOCAL_DOCKER_SELECTION,
+        runtimeProviderId: "podman",
+      }),
     ).toEqual({
       kind: "rejected",
       reason: expect.stringContaining("requires the Docker runtime provider"),

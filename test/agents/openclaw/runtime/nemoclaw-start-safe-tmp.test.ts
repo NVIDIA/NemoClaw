@@ -10,7 +10,13 @@ import { describe, expect, it } from "vitest";
 
 import { extractShellFunctionFromSource } from "../../../support/shell-function-extractor";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "scripts",
+  "nemoclaw-start.sh",
+);
 
 function safeTmpHelpers(src: string): string {
   const start = src.indexOf("_nemoclaw_safe_replace_tmp_file() {");
@@ -23,10 +29,7 @@ describe("nemoclaw-start safe tmp file creation", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it("captures Portable OpenClaw timestamps with a fixed numeric locale", () => {
-    const captureEpoch = extractShellFunctionFromSource(
-      src,
-      "_nemoclaw_capture_epoch_realtime",
-    );
+    const captureEpoch = extractShellFunctionFromSource(src, "_nemoclaw_capture_epoch_realtime");
     const script = [
       "set -euo pipefail",
       captureEpoch,
@@ -140,8 +143,8 @@ describe("nemoclaw-start safe tmp file creation", () => {
         "-c",
         [
           "set -euo pipefail",
-          `id() { test \"\${1:-}\" = -u && printf '%s' ${JSON.stringify(uid)}; }`,
-          `_nemoclaw_safe_create_tmp_file() { printf '%s|%s\\n' \"$#\" \"$*\"; }`,
+          `id() { test "\${1:-}" = -u && printf '%s' ${JSON.stringify(uid)}; }`,
+          `_nemoclaw_safe_create_tmp_file() { printf '%s|%s\\n' "$#" "$*"; }`,
           prepareAutoPairLog,
           "prepare_auto_pair_log",
         ].join("\n"),

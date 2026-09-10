@@ -99,7 +99,9 @@ describe("install.sh print_done — auto-upgrade severity (#5735)", () => {
     const out = runPrintDone(false, "8990");
 
     expect(out).toContain("Ordinary CLI commands restore recorded port 8990 automatically");
-    expect(out).toContain("script or another process that intentionally needs explicit gateway scope");
+    expect(out).toContain(
+      "script or another process that intentionally needs explicit gateway scope",
+    );
     expect(out).toContain("export NEMOCLAW_GATEWAY_PORT=8990");
     expect(out).toContain("explicit operator selection");
     expect(out).toContain("no-name gateway stop authorization");

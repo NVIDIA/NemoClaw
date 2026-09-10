@@ -131,6 +131,7 @@ export function createFinalOnboardFlowPhases<
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
+      externalComponent: context.externalComponent,
       deps: finalizationDeps,
     });
     return { result: finalizationResult.stateResult };
@@ -155,6 +156,7 @@ export function createFinalOnboardFlowPhases<
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
+      externalComponent: null,
       deps: finalizationDeps,
     });
     return { result: postVerifyResult.stateResult };

@@ -772,27 +772,26 @@ describe("setupMessagingChannels", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
-  it.each(
-    BLANK_WHATSAPP_SEED_CASES,
-  )("keeps credentialless WhatsApp disabled when its optional allowlist is $label", async ({
-    environment,
-  }) => {
-    applyWhatsAppSeedEnvironment(environment);
-    process.env[MESSAGING_SETUP_APPLIER_ENV_KEY] = "stale-plan";
-    const notes: string[] = [];
+  it.each(BLANK_WHATSAPP_SEED_CASES)(
+    "keeps credentialless WhatsApp disabled when its optional allowlist is $label",
+    async ({ environment }) => {
+      applyWhatsAppSeedEnvironment(environment);
+      process.env[MESSAGING_SETUP_APPLIER_ENV_KEY] = "stale-plan";
+      const notes: string[] = [];
 
-    const result = await setupMessagingChannels(null, null, {
-      note: (message) => notes.push(message),
-      isNonInteractive: () => true,
-    });
+      const result = await setupMessagingChannels(null, null, {
+        note: (message) => notes.push(message),
+        isNonInteractive: () => true,
+      });
 
-    expect(result).toEqual([]);
-    expect(notes).toEqual([
-      "  [non-interactive] No complete messaging channel inputs configured. Skipping.",
-    ]);
-    expect(process.env[MESSAGING_SETUP_APPLIER_ENV_KEY]).toBeUndefined();
-    expect(prompt).not.toHaveBeenCalled();
-  });
+      expect(result).toEqual([]);
+      expect(notes).toEqual([
+        "  [non-interactive] No complete messaging channel inputs configured. Skipping.",
+      ]);
+      expect(process.env[MESSAGING_SETUP_APPLIER_ENV_KEY]).toBeUndefined();
+      expect(prompt).not.toHaveBeenCalled();
+    },
+  );
 
   it("validates detected non-interactive Slack inputs before returning enabled channels", async () => {
     process.env.SLACK_BOT_TOKEN = "not-a-slack-token";
@@ -969,15 +968,14 @@ describe("detectMessagingChannelsFromEnv", () => {
     expect(detectMessagingChannelsFromEnv(null)).toContain("whatsapp");
   });
 
-  it.each(
-    BLANK_WHATSAPP_SEED_CASES,
-  )("does not detect credentialless WhatsApp when its optional allowlist is $label", ({
-    environment,
-  }) => {
-    applyWhatsAppSeedEnvironment(environment);
+  it.each(BLANK_WHATSAPP_SEED_CASES)(
+    "does not detect credentialless WhatsApp when its optional allowlist is $label",
+    ({ environment }) => {
+      applyWhatsAppSeedEnvironment(environment);
 
-    expect(detectMessagingChannelsFromEnv(null)).not.toContain("whatsapp");
-  });
+      expect(detectMessagingChannelsFromEnv(null)).not.toContain("whatsapp");
+    },
+  );
 
   it("does not detect channels for unsupported named agents even when env inputs are complete", () => {
     process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
