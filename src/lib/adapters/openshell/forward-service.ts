@@ -304,8 +304,8 @@ export function isForwardServiceListenerOwner(
   const procRoot = options.procRoot ?? "/proc";
   const procWorkLimit = options.procWorkLimit ?? LINUX_PROC_WORK_LIMIT;
   const before = listenerPids(target.localPort, platform, procRoot, procWorkLimit, probe);
-  if (before.length !== 1 || !/^[1-9]\d*$/u.test(before[0]!)) return false;
-  const pid = before[0]!;
+  const [pid] = before;
+  if (before.length !== 1 || pid === undefined || !/^[1-9]\d*$/u.test(pid)) return false;
   if (!processExecutableMatches(pid, target.executable, platform, procRoot, probe)) return false;
   const commandLine = probe("ps", ["-ww", "-p", pid, "-o", "args="]);
   if (commandLine.status !== 0) return false;
