@@ -27,6 +27,7 @@ import {
   securityPostureEnabled,
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
+import { verifyHermesConfigExportLive } from "../fixtures/hermes-config-export-live.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { assertHermesCliAdapterLiveContract } from "./hermes-cli-adapter-live.ts";
 import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
@@ -878,7 +879,17 @@ test(
       timeoutMs: 60_000,
     });
     expect(logs.exitCode, resultText(logs)).toBe(0);
-    expect(resultText(logs).trim().length).toBeGreaterThan(0);
+
+    const configExport = await verifyHermesConfigExportLive({
+      artifacts,
+      cleanup,
+      enabled: securityPostureEnabled(),
+      env: commandEnv(),
+      host,
+      redactionValues,
+      sandboxName: SANDBOX_NAME,
+    });
+    expect(configExport.passed).toBe(true);
 
     if (rootSupervisorTopology) {
       expect(recoveredRootGatewayPid).toBeDefined();
@@ -976,6 +987,7 @@ test(
         hermesAcpInterruptDisconnectAndRemoteExitClean: true,
         hermesAcpCleansUpAndReconnectsAfterOpenShellGatewayRestart: true,
         dashboardChecked: hermesDashboardE2eEnabled(),
+        configExportChecked: configExport.checked,
         securityPostureChecked: securityPosture !== null,
       },
       securityPosture,
