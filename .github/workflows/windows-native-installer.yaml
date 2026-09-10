@@ -43,6 +43,7 @@ on:
           - python
           - runtime
           - host-prerequisites
+          - system-drive
           - application
 
 permissions:
@@ -50,7 +51,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-native-installer-${{ github.ref }}${{ inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application' && '-compiled-application' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' && '-host-prerequisites' || inputs.probe_official_hermes_components && '-hermes-components' || inputs.windows_native_diagnostic_source_run_id != '' && '-package-diagnostic' || '' }}
+  group: windows-native-installer-${{ github.ref }}${{ inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application' && '-compiled-application' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' && '-host-prerequisites' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'system-drive' && '-system-drive' || inputs.probe_official_hermes_components && '-hermes-components' || inputs.windows_native_diagnostic_source_run_id != '' && '-package-diagnostic' || '' }}
   # Finish the in-flight artifact/evidence; keep only the latest queued request.
   cancel-in-progress: false
 
@@ -185,6 +186,66 @@ jobs:
             ${{ runner.temp }}/compiled-windows-app/build/build-failure.json
             ${{ runner.temp }}/compiled-windows-app/inputs/materialization-receipt.json
             ${{ runner.temp }}/compiled-windows-app/node/node-input.json
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-system-drive-proof:
+    name: Native system-drive preparation and MXC proof (ARM64)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'system-drive' }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 12
+    steps:
+      - name: Check out the fixed-purpose Windows helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up pinned native Rust
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.95.0
+          target: aarch64-pc-windows-msvc
+          cache: false
+      - name: Prepare only the pinned Node and MXC executables
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\system-drive-inputs"
+          & packaging/windows/app/prepare-app-node.ps1 `
+            -LockPath packaging/windows/hermes/official-runtime.lock.json -OutputDirectory "$work\node"
+          $archive = "$work\mxc-sdk.tgz"
+          Invoke-WebRequest 'https://registry.npmjs.org/@microsoft/mxc-sdk/-/mxc-sdk-0.8.0.tgz' -OutFile $archive -TimeoutSec 60
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne '06bb2399d7e98ab1907acf851e12a4e44748dd467b79d3e53c2f2fbf569da14e') {
+            throw 'The MXC SDK differs from its immutable archive.'
+          }
+          & "$env:SystemRoot\System32\tar.exe" -xzf $archive -C $work package/bin/arm64/wxc-exec.exe package/bin/arm64/wxc-host-prep.exe
+          if ($LASTEXITCODE -ne 0) { throw 'The two pinned MXC executables could not be extracted.' }
+      - name: Compile and exercise the native metadata helper
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\host-preparation-helper"
+          & packaging/windows/host-preparation/build-helper.ps1 -OutputDirectory $work
+          & rustup run 1.95.0-aarch64-pc-windows-msvc cargo test --locked --offline `
+            --target aarch64-pc-windows-msvc --manifest-path packaging/windows/host-preparation/Cargo.toml `
+            --target-dir "$work\rust-target" -- --test-threads=1 2>&1 | Tee-Object -FilePath "$work\native-controls.log"
+          if ($LASTEXITCODE -ne 0) { throw 'The actual native metadata controls failed.' }
+      - name: Verify the actual system root and contained Node access
+        shell: pwsh
+        run: |
+          & packaging/windows/host-preparation/test-system-root-mxc.ps1 `
+            -HelperPath "$env:RUNNER_TEMP\host-preparation-helper\NemoClawHostPreparation.exe" `
+            -MxcDirectory "$env:RUNNER_TEMP\system-drive-inputs\package\bin\arm64" `
+            -NodePath "$env:RUNNER_TEMP\system-drive-inputs\node\node.exe" `
+            -ArtifactDirectory "$env:RUNNER_TEMP\system-root-mxc-proof"
+      - name: Preserve fixed-purpose preparation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-system-drive-mxc-proof-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/host-preparation-helper/*.json
+            ${{ runner.temp }}/host-preparation-helper/*.log
+            ${{ runner.temp }}/host-preparation-helper/NemoClawHostPreparation.exe
+            ${{ runner.temp }}/system-root-mxc-proof/
+            ${{ runner.temp }}/system-drive-inputs/node/node-input.json
           if-no-files-found: error
           retention-days: 14
 
@@ -1026,7 +1087,7 @@ jobs:
 
   official-hermes-components:
     name: Official Hermes ${{ inputs.official_hermes_phase || 'components' }} probe (Windows ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && inputs.official_hermes_phase != 'application' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && inputs.official_hermes_phase != 'application' && inputs.official_hermes_phase != 'system-drive' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: ${{ inputs.official_hermes_phase == 'runtime' && 180 || 90 }}
     steps:
