@@ -23,6 +23,14 @@ src/lib/domain/<area>/<topic>.ts
 Configuration export represents retained startup intent from a validated managed-image receipt.
 Preserve image authority and full residual profile comparison when admitting a supported setting.
 
+Managed OpenClaw exports `agents[].tools.disclosure: direct` only when the registry selection agrees with
+the validated startup profile. Absent or explicit `progressive` selection keeps
+the canonical omission. Model compatibility can still downgrade runtime tool
+behavior. Preserve managed-image authority and full residual profile equality;
+admitting disclosure must not admit extra tool gateways or minimal-bootstrap settings.
+Hermes keeps its canonical export without `tools`; a retained direct selection or
+profile is unsupported even when those two sources agree.
+
 Managed OpenClaw exports `agents[].interfaces.dashboard` when the retained port agrees with the
 registry and remote bind agrees with recorded preparation. Port 18789 and loopback bind are omitted.
 Legacy registry entries may omit the port only for the canonical loopback/default-port profile.

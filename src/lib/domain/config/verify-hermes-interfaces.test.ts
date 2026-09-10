@@ -76,8 +76,8 @@ describe("Hermes retained interface export", () => {
     const exported = await exportSnapshots([hermesInterfacesSnapshot(18789, 19119, false, 8642)]);
     expect(exported.outcome.ok).toBe(true);
     const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
-      interfaces: { dashboard: { enabled: true } },
+    expect(document.spec.sandboxes[0]!.agents[0]!.interfaces).toEqual({
+      dashboard: { enabled: true },
     });
   });
 

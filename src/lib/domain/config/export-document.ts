@@ -47,6 +47,7 @@ function agentSettings(source: VerifiedExportSource) {
     ...(source.agent === "openclaw"
       ? {
           type: "openclaw" as const,
+          ...(source.tools === undefined ? {} : { tools: source.tools }),
           ...(source.interfaces ? { interfaces: source.interfaces } : {}),
           ...(source.observability ? { observability: source.observability } : {}),
         }

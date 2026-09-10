@@ -404,6 +404,25 @@
                           "additionalProperties": false,
                           "minProperties": 1
                         },
+                        "tools": {
+                          "type": "object",
+                          "required": ["disclosure"],
+                          "properties": {
+                            "disclosure": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "const": "progressive"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "direct"
+                                }
+                              ]
+                            }
+                          },
+                          "additionalProperties": false
+                        },
                         "interfaces": {
                           "type": "object",
                           "required": ["dashboard"],

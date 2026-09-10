@@ -331,6 +331,11 @@ const NemoClawInferenceRouteConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const NemoClawAgentToolsConfigSchema = Type.Object(
+  { disclosure: Type.Union([Type.Literal("progressive"), Type.Literal("direct")]) },
+  { additionalProperties: false },
+);
+
 /** Retained OpenClaw dashboard settings; absent leaves keep the managed defaults. */
 export const NemoClawOpenClawDashboardConfigSchema = Type.Object(
   {
@@ -437,6 +442,7 @@ const NemoClawAgentConfigSchema = Type.Union([
       ...nemoClawAgentFields,
       type: Type.Literal("openclaw"),
       execution: Type.Optional(NemoClawAgentExecutionSchema),
+      tools: Type.Optional(NemoClawAgentToolsConfigSchema),
       interfaces: Type.Optional(NemoClawOpenClawInterfacesSchema),
       observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
     },

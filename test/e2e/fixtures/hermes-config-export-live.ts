@@ -9,6 +9,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
 
+import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
@@ -77,20 +78,29 @@ export function passesHermesConfigExportLiveEvidence(
   );
 }
 
+function hermesTuiEnabled(env: NodeJS.ProcessEnv): boolean {
+  return ["1", "true", "yes", "on"].includes(
+    (env.NEMOCLAW_HERMES_DASHBOARD_TUI ?? "0").toLowerCase(),
+  );
+}
+
 function expectedHermesInterfaces(input: HermesConfigExportLiveInput) {
-  if (!input.dashboardEnabled) return undefined;
-  const port = Number(input.env.NEMOCLAW_DASHBOARD_PORT ?? "18789");
-  const internalPort = Number(input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ?? "19119");
-  const apiPort = Number(input.env.NEMOCLAW_HERMES_API_PORT ?? "8642");
-  const tui = ["1", "true", "yes", "on"].includes(input.env.NEMOCLAW_HERMES_DASHBOARD_TUI ?? "0");
+  const port = Number(input.env.NEMOCLAW_DASHBOARD_PORT ?? HERMES_INTERFACE_DEFAULTS.dashboardPort);
+  const internalPort = Number(
+    input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ??
+      HERMES_INTERFACE_DEFAULTS.dashboardInternalPort,
+  );
+  const apiPort = Number(input.env.NEMOCLAW_HERMES_API_PORT ?? HERMES_INTERFACE_DEFAULTS.apiPort);
+  const api = apiPort === HERMES_INTERFACE_DEFAULTS.apiPort ? undefined : { port: apiPort };
+  if (!input.dashboardEnabled) return api ? { api } : undefined;
   return {
     dashboard: {
       enabled: true,
-      ...(port === 18789 ? {} : { port }),
-      ...(internalPort === 19119 ? {} : { internalPort }),
-      ...(tui ? { tui: { enabled: true } } : {}),
+      ...(port === HERMES_INTERFACE_DEFAULTS.dashboardPort ? {} : { port }),
+      ...(internalPort === HERMES_INTERFACE_DEFAULTS.dashboardInternalPort ? {} : { internalPort }),
+      ...(hermesTuiEnabled(input.env) ? { tui: { enabled: true } } : {}),
     },
-    ...(apiPort === 8642 ? {} : { api: { port: apiPort } }),
+    ...(api ? { api } : {}),
   };
 }
 
@@ -117,10 +127,10 @@ async function dashboardRuntimeMatches(input: HermesConfigExportLiveInput): Prom
       redactionValues: [...input.redactionValues],
     },
   );
-  const port = input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ?? "19119";
-  const expectedTui = ["1", "true", "yes", "on"].includes(
-    input.env.NEMOCLAW_HERMES_DASHBOARD_TUI ?? "0",
-  );
+  const port =
+    input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ??
+    HERMES_INTERFACE_DEFAULTS.dashboardInternalPort;
+  const expectedTui = hermesTuiEnabled(input.env);
   if (process.exitCode !== 0 || process.stdout.trim() !== `${port} ${String(expectedTui)}`)
     return false;
   const listener = await input.sandbox.exec(

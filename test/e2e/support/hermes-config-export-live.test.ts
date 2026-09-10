@@ -93,6 +93,7 @@ function passingEvidence(): HermesConfigExportLiveEvidence {
 async function runEnabledFixture(
   redactionValues: readonly string[] = [],
   dashboardEnabled = false,
+  environment: NodeJS.ProcessEnv = {},
 ) {
   let dispose: (() => void) | undefined;
   try {
@@ -106,14 +107,17 @@ async function runEnabledFixture(
       enabled: true,
       dashboardEnabled,
       sandbox: { exec: mocks.exec, execShell: mocks.execShell },
-      env: dashboardEnabled
-        ? {
-            NEMOCLAW_DASHBOARD_PORT: "19000",
-            NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "19120",
-            NEMOCLAW_HERMES_DASHBOARD_TUI: "1",
-            NEMOCLAW_HERMES_API_PORT: "8643",
-          }
-        : {},
+      env: {
+        ...(dashboardEnabled
+          ? {
+              NEMOCLAW_DASHBOARD_PORT: "19000",
+              NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "19120",
+              NEMOCLAW_HERMES_DASHBOARD_TUI: "TRUE",
+              NEMOCLAW_HERMES_API_PORT: "8643",
+            }
+          : {}),
+        ...environment,
+      },
       host: { command: mocks.command },
       redactionValues,
       sandboxName: "hermes",
@@ -202,6 +206,31 @@ describe("Hermes config export live evidence", () => {
 });
 
 describe("Hermes interface runtime evidence", () => {
+  it.each([
+    { apiPort: "8642", interfaces: undefined },
+    { apiPort: "8643", interfaces: { api: { port: 8643 } } },
+  ])(
+    "checks API allocation $apiPort with the dashboard disabled (#11433)",
+    async ({ apiPort, interfaces }) => {
+      const document = mocks.validateNemoClawConfig.getMockImplementation()!();
+      document.spec.sandboxes[0].agents[0].interfaces = interfaces;
+      mocks.validateNemoClawConfig.mockReturnValue(document);
+      const writeExport = async (_command: string, args: string[]) => {
+        fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
+        return { exitCode: 0, stderr: "", stdout: "" };
+      };
+      mocks.command
+        .mockImplementationOnce(writeExport)
+        .mockImplementationOnce(writeExport)
+        .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
+      expect(await runEnabledFixture([], false, { NEMOCLAW_HERMES_API_PORT: apiPort })).toEqual({
+        checked: true,
+        passed: true,
+      });
+      expect(mocks.execShell).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     ["19120 true\n", "200", true],
     ["19120 false\n", "200", false],
