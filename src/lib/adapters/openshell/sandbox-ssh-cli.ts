@@ -41,8 +41,11 @@ export function createCliOpenShellSandboxSshExecutor(
   return {
     async run(request) {
       const environment = request.environment;
-      const sshEnvironment = request.environment ?? { ...process.env };
-      assertNoOpenShellGatewayEndpointOverride(environment ?? process.env);
+      try {
+        assertNoOpenShellGatewayEndpointOverride(environment ?? process.env);
+      } catch {
+        return { kind: "failed", reason: "configuration" };
+      }
       if (
         !isValidName(request.sandboxName) ||
         (request.target.kind === "named" && !isValidName(request.target.gatewayName)) ||
@@ -93,7 +96,7 @@ export function createCliOpenShellSandboxSshExecutor(
               request.command,
             ],
             {
-              environment: sshEnvironment,
+              environment,
               timeoutMilliseconds: request.timeoutMilliseconds ?? 15000,
             },
           );

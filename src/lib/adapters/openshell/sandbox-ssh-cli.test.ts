@@ -202,6 +202,23 @@ describe("CLI sandbox SSH execution", () => {
     expect(existsSync(dirname(run.mock.calls[2][1][1]))).toBe(false);
   });
 
+  it("uses the runner's filtered environment when no override is supplied", async () => {
+    const { run, executor } = fixture();
+    await executor.run(request);
+    expect(run.mock.calls[2][2]?.environment).toBeUndefined();
+  });
+
+  it("returns a configuration failure without spawning for an endpoint override", async () => {
+    const { run, executor } = fixture();
+    expect(
+      await executor.run({
+        ...request,
+        environment: { OPENSHELL_GATEWAY_ENDPOINT: "https://ambient.invalid" },
+      }),
+    ).toEqual({ kind: "failed", reason: "configuration" });
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("does not spawn when the executable is unavailable", async () => {
     const run = vi.fn<OpenShellBufferedCommandRunner>();
     const executor = createCliOpenShellSandboxSshExecutor({
