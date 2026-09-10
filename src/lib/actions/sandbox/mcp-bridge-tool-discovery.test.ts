@@ -104,6 +104,26 @@ describe("MCP tool discovery host boundary (#6901)", () => {
     ).toBeNull();
   });
 
+  it("builds discovery for a recorded trusted private endpoint and still refuses an unrecorded one (#11377)", () => {
+    const unrecordedPrivateEntry = {
+      server: "local-mcp",
+      url: "https://172.17.0.2:8443/mcp",
+      env: ["MCP_KEY"],
+    } as McpBridgeEntry;
+    const trustedPrivateEntry = {
+      ...unrecordedPrivateEntry,
+      trustedPrivateHost: "172.17.0.2",
+      allowedIps: ["172.17.0.2"],
+    } as McpBridgeEntry;
+
+    const built = buildMcpToolDiscoveryCommand(trustedPrivateEntry, "mcporter");
+    expect(built).not.toBeNull();
+    expect(built?.command).toContain("https://172.17.0.2:8443/mcp");
+    expect(built?.command).toContain("--credential-env");
+    expect(built?.command).toContain("MCP_KEY");
+    expect(buildMcpToolDiscoveryCommand(unrecordedPrivateEntry, "mcporter")).toBeNull();
+  });
+
   it("accepts one framed, deterministic, names-only runtime result", () => {
     expect(
       classifyMcpToolDiscoveryResult(
