@@ -269,10 +269,10 @@ describe("rebuild session selection", () => {
           `
       const assert = require("node:assert/strict");
       const session = require(process.argv[1]);
-      assert.throws(() => session.loadRebuildSession("alpha"), /session state changed/);
+      assert.throws(() => session.loadRebuildSession("alpha"), /not a regular file/);
       assert.equal(session.acquireOnboardLock("FIFO recovery probe").acquired, true);
       try {
-        assert.throws(() => session.selectRebuildSession("alpha"), /session state changed/);
+        assert.throws(() => session.selectRebuildSession("alpha"), /not a regular file/);
       } finally {
         session.releaseOnboardLock();
       }
@@ -298,6 +298,11 @@ describe("rebuild session selection", () => {
       kind: "malformed",
       corrupt: (retained: string, _victim: string) =>
         fs.writeFileSync(retained, "{invalid", { mode: 0o600 }),
+    },
+    {
+      kind: "null",
+      corrupt: (retained: string, _victim: string) =>
+        fs.writeFileSync(retained, "null", { mode: 0o600 }),
     },
     {
       kind: "symlink",

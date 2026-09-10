@@ -66,6 +66,7 @@ import {
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
   retainedRebuildSessionFileName,
+  readRetainedRebuildSession,
   resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
@@ -1195,14 +1196,13 @@ export function loadSession(): Session | null {
   return loadSessionFile(SESSION_FILE);
 }
 
-function loadSessionFile(filePath: string, strict = false): Session | null {
+function loadSessionFile(filePath: string): Session | null {
   const lockOwned = heldLockFd !== null;
-  const protectedRead = lockOwned || strict;
   let descriptor: number | null = null;
   try {
     if (lockOwned) assertOnboardLockOwned();
     let contents: string;
-    if (protectedRead) {
+    if (lockOwned) {
       try {
         descriptor = fs.openSync(
           filePath,
@@ -1230,7 +1230,7 @@ function loadSessionFile(filePath: string, strict = false): Session | null {
     if (error instanceof InvalidPersistedApfInterceptorIntentError) {
       throw error;
     }
-    if (protectedRead) throw error;
+    if (lockOwned) throw error;
     return null;
   } finally {
     if (descriptor !== null) fs.closeSync(descriptor);
@@ -1242,12 +1242,12 @@ function rebuildSessionFile(sandboxName: string): string {
 }
 
 function loadRetainedRebuildSession(sandboxName: string): Session | null {
-  const filePath = rebuildSessionFile(sandboxName);
-  const retained = loadSessionFile(filePath, true);
-  if (
-    (!retained && fs.existsSync(filePath)) ||
-    (retained && retained.checkpoint?.sandboxRecreate?.sandboxName !== sandboxName)
-  ) {
+  if (heldLockFd !== null) assertOnboardLockOwned();
+  const value = readRetainedRebuildSession(SESSION_DIR, sandboxName);
+  if (heldLockFd !== null) assertOnboardLockOwned();
+  if (value === null) return null;
+  const retained = normalizeSession(value);
+  if (!retained) {
     throw new Error(`Retained rebuild recovery does not identify sandbox '${sandboxName}'.`);
   }
   return retained;

@@ -8,6 +8,8 @@ import { isDeepStrictEqual } from "node:util";
 
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../sandbox-name-contract";
+import type { JsonObject } from "../../core/json-types";
+import { inspectCheckpoint } from "../onboard-checkpoint";
 
 const SCHEMA_VERSION = 1;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/u;
@@ -23,6 +25,32 @@ export function retainedRebuildSessionFileName(sandboxName: string): `.onboard-r
     throw new Error("Cannot select rebuild recovery for an invalid sandbox name.");
   }
   return `.onboard-rebuild-${sandboxName}.json`;
+}
+
+/** Read the same protected transaction authority for recovery and state migration. */
+export function readRetainedRebuildSession(
+  stateDirectory: string,
+  sandboxName: string,
+  expectedGatewayPort?: number,
+): JsonObject | null {
+  const missing = Symbol("missing retained rebuild session");
+  const value = readStateFile(path.join(stateDirectory, retainedRebuildSessionFileName(sandboxName)), missing, true);
+  if (value === missing) return null;
+  const checkpoint = inspectCheckpoint(isObjectRecord(value) ? value.checkpoint : undefined);
+  if (
+    !isObjectRecord(value) || value.version !== 1 ||
+    checkpoint.status !== "loaded" ||
+    checkpoint.checkpoint.sandboxRecreate?.sandboxName !== sandboxName ||
+    value.sessionId !== checkpoint.checkpoint.sessionId ||
+    !isObjectRecord(value.machine) || value.machine.state !== checkpoint.checkpoint.machineState ||
+    (expectedGatewayPort !== undefined && checkpoint.checkpoint.sandboxRecreate.gatewayPort !== expectedGatewayPort)
+  ) {
+    throw new Error(
+      `Retained rebuild recovery does not identify sandbox '${sandboxName}'` +
+      (expectedGatewayPort === undefined ? "." : ` on gateway port ${expectedGatewayPort}.`),
+    );
+  }
+  return value as JsonObject;
 }
 
 export type RetainedSandboxRecoveryReason =
@@ -193,14 +221,23 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readStateFile(filePath: string): unknown {
+function assertPrivateRecoveryFile(stat: fs.Stats): void {
+  if ((stat.mode & 0o077) !== 0 || (typeof process.getuid === "function" && stat.uid !== process.getuid())) {
+    throw new Error("Retained rebuild recovery must be a private file owned by the current user.");
+  }
+}
+
+function readStateFile(filePath: string, missingValue: unknown = emptyState(), requirePrivate = false): unknown {
   const directory = openStateDirectory(filePath, false);
-  if (directory === null) return emptyState();
+  if (directory === null) return missingValue;
   try {
     revalidateStateDirectory(directory);
     const file = openRegularFileNoFollow(filePath);
     try {
-      const value = JSON.parse(file.readUtf8());
+      if (requirePrivate) assertPrivateRecoveryFile(file.stat());
+      const text = requirePrivate ? file.readBytes(16 * 1024 * 1024).toString("utf8") : file.readUtf8();
+      if (requirePrivate) assertPrivateRecoveryFile(file.stat());
+      const value = JSON.parse(text);
       revalidateStateDirectory(directory);
       return value;
     } finally {
@@ -212,7 +249,7 @@ function readStateFile(filePath: string): unknown {
       "code" in error &&
       (error as NodeJS.ErrnoException).code === "ENOENT"
     ) {
-      return emptyState();
+      return missingValue;
     }
     if (
       error instanceof Error &&

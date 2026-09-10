@@ -19,6 +19,7 @@ import {
   listRetainedSandboxRecoveryRecords,
   retainedSandboxRecoveryFile,
   retainedRebuildSessionFileName,
+  readRetainedRebuildSession,
   type RetainedSandboxRecoveryRecord,
 } from "./onboard-session/retained-sandbox-recovery";
 import { nemoclawStateRoot, resolveHome } from "./state-root";
@@ -117,6 +118,35 @@ interface RetainedRecoveryDocument {
 
 function migrationError(message: string): Error {
   return new Error(`Cannot safely migrate legacy NemoClaw state for this gateway port: ${message}`);
+}
+
+function retainedRebuildSessionEntry(sandboxName: string): LegacyBundleEntry {
+  try {
+    return retainedRebuildSessionFileName(sandboxName);
+  } catch {
+    throw migrationError(`sandbox ${JSON.stringify(sandboxName)} has an unsupported name`);
+  }
+}
+
+function validateRetainedRebuildMoves(
+  sharedRoot: string,
+  selectedRoot: string,
+  gatewayPort: number,
+  sandboxNames: readonly string[],
+  bundleEntries: readonly LegacyBundleEntry[],
+): void {
+  for (const sandboxName of sandboxNames) {
+    if (!bundleEntries.includes(retainedRebuildSessionEntry(sandboxName))) continue;
+    try {
+      const source = readRetainedRebuildSession(sharedRoot, sandboxName, gatewayPort);
+      const destination = readRetainedRebuildSession(selectedRoot, sandboxName, gatewayPort);
+      if (Boolean(source) === Boolean(destination)) {
+        throw new Error(`retained rebuild recovery for '${sandboxName}' must exist in exactly one state root`);
+      }
+    } catch (error) {
+      throw migrationError(error instanceof Error ? error.message : String(error));
+    }
+  }
 }
 
 function ensureRealDirectory(home: string, dir: string): void {
@@ -463,7 +493,7 @@ function readMigrationIntent(home: string, sharedRoot: string): LegacyPortMigrat
   }
   const allowedBundleEntries: ReadonlySet<string> = new Set([
     ...LEGACY_BUNDLE_ENTRIES,
-    ...selectedSandboxNames.map(retainedRebuildSessionFileName),
+    ...selectedSandboxNames.map(retainedRebuildSessionEntry),
   ]);
   for (const entry of rawBundleEntries) {
     if (!allowedBundleEntries.has(entry)) {
@@ -651,6 +681,7 @@ function applyMigrationIntent(
   selectedRegistryFile: string,
   intent: LegacyPortMigrationIntent,
 ): LegacyPortMigrationResult {
+  validateRetainedRebuildMoves(sharedRoot, selectedRoot, intent.metadata.gatewayPort, intent.metadata.selectedSandboxNames, intent.metadata.bundleEntries);
   const result: LegacyPortMigrationResult = {
     migratedSandboxNames: [...intent.metadata.selectedSandboxNames],
     migratedSession: intent.metadata.moveSession,
@@ -945,6 +976,8 @@ export function migrateLegacyPortState(
         retainedSandboxRecoveryFile(selectedRoot),
       );
     }
+
+    validateRetainedRebuildMoves(sharedRoot, selectedRoot, gatewayPort, selectedNames, bundleEntries);
 
     registryLocks.push(acquireDirectoryLock(home, `${selectedRegistryFile}.lock`));
     const existingSelected = readGatewayRegistryFile(home, selectedRegistryFile);
