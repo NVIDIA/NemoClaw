@@ -1775,7 +1775,7 @@ jobs:
           receipt="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.receipt.json"
           raw="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.raw.json"
           policy="$RUNNER_TEMP/reviewed-npm-audit/mcporter-runtime.policy.json"
-          test -f "$receipt"; test -f "$raw"; test -f "$policy"
+          test -f "$receipt"; test -f "$raw"; test -s "$policy"; test ! -L "$policy"
           printf 'receipt=%s\nraw=%s\npolicy=%s\nreceipt_sha256=%s\npolicy_sha256=%s\n' "$receipt" "$raw" "$policy" "$(sha256sum "$receipt" | cut -d' ' -f1)" "$(sha256sum "$policy" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Restore exact base image contract

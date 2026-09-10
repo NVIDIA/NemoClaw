@@ -229,6 +229,18 @@ describe("mcporter image supply-chain controls", () => {
     expect(flattenedContents).toContain(
       "NEMOCLAW_MCPORTER_AUDIT_REPORT_PATH=/tmp/mcporter-npm-audit.json NEMOCLAW_MCPORTER_AUDIT_RESULT_PATH=/tmp/mcporter-npm-audit-policy.json bash /scripts/lib/verify-mcporter-audit.sh",
     );
+    const receiptVerification = mcporterAuditHelper.indexOf(
+      '"$receipt_sha256" "$receipt" | sha256sum --check --status',
+    );
+    const rawBinding = mcporterAuditHelper.indexOf("value.rawResponseSha256");
+    const rawVerification = mcporterAuditHelper.indexOf(
+      '"$raw_report_sha256" "$raw_report" | sha256sum --check --status',
+    );
+    const reportCopy = mcporterAuditHelper.indexOf('cp -- "$raw_report" "$report_path"');
+    expect(receiptVerification).toBeGreaterThan(-1);
+    expect(rawBinding).toBeGreaterThan(receiptVerification);
+    expect(rawVerification).toBeGreaterThan(rawBinding);
+    expect(reportCopy).toBeGreaterThan(rawVerification);
   });
 
   it("verifies the exact committed dependency graph signatures in trusted CI (#8925)", () => {

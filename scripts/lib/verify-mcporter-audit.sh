@@ -48,5 +48,19 @@ printf '%s  %s\n' "$policy_result_sha256" "$policy_result" | sha256sum --check -
   echo "ERROR: cached mcporter audit policy result hash does not match" >&2
   exit 1
 }
+raw_report_sha256="$(
+  node -e '
+    const value = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+    if (!/^[0-9a-f]{64}$/.test(value.rawResponseSha256 ?? "")) process.exit(1);
+    process.stdout.write(value.rawResponseSha256);
+  ' "$receipt"
+)" || {
+  echo "ERROR: verified mcporter audit receipt does not declare a raw response SHA-256" >&2
+  exit 1
+}
+printf '%s  %s\n' "$raw_report_sha256" "$raw_report" | sha256sum --check --status - || {
+  echo "ERROR: cached mcporter audit raw report does not match the verified receipt" >&2
+  exit 1
+}
 [[ -z "$report_path" ]] || cp -- "$raw_report" "$report_path"
 [[ -z "$result_path" ]] || cp -- "$policy_result" "$result_path"
