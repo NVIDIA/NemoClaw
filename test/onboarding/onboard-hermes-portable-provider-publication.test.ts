@@ -22,9 +22,11 @@ beforeEach(() => {
 type ProviderBoundaryMode = "create" | "deferred" | "ordinary-resume" | "superseded";
 
 type ProviderBoundaryResult = {
+  binderCalls: number;
   events: string[];
   firstError: string | null;
   gpuCreateCalls: number;
+  portableLockInvocations: number;
   portableTransactions: number;
   providerCalls: string[][];
   result: string;
@@ -47,6 +49,7 @@ function runProviderBoundary(mode: ProviderBoundaryMode): ProviderBoundaryResult
   const script = String.raw`
 const fixtureMocks = require(${onboardScriptMocksPath});
 fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const runner = require(${modulePath("runner.ts")});
 const registry = require(${modulePath("state/registry.ts")});
@@ -57,11 +60,14 @@ const createdSandboxFinalizationId = require.resolve(${modulePath("onboard/creat
 const dashboardPortId = require.resolve(${modulePath("onboard/dashboard-port.ts")});
 const dashboardRuntimeId = require.resolve(${modulePath("onboard/dashboard-runtime.ts")});
 const sandboxGpuCreateFlowId = require.resolve(${modulePath("onboard/sandbox-gpu-create-flow.ts")});
+const lifecycleLock = require(${modulePath("state/mcp-lifecycle-lock.ts")});
 const sandboxProviderCleanupId = require.resolve(${modulePath("onboard/sandbox-provider-cleanup.ts")});
 const normalize = (command) => Array.isArray(command) ? command.map(String) : [String(command)];
 const events = [];
 const providerCalls = [];
+let binderCalls = 0;
 let gpuCreateCalls = 0;
+let portableLockInvocations = 0;
 let portableTransactions = 0;
 const portableMode = ${JSON.stringify(mode !== "ordinary-resume")};
 const customDockerfile = process.env.HOME + "/Dockerfile";
@@ -185,11 +191,23 @@ require.cache[agentOnboardId].exports = {
 };
 
 const sandboxGpuCreateFlow = require(sandboxGpuCreateFlowId);
+const portableLifecycleLock = async (name, operation) => {
+  assert.equal(name, sandboxName);
+  portableLockInvocations += 1;
+  return await operation();
+};
 require.cache[sandboxGpuCreateFlowId].exports = {
   ...sandboxGpuCreateFlow,
+  bindHermesPortableOnboardingLifecycleLock: (withLifecycleLock) => {
+    assert.equal(withLifecycleLock, lifecycleLock.withMcpLifecycleLock);
+    binderCalls += 1;
+    return portableLifecycleLock;
+  },
   runHermesPortableOnboardingFromOnboard: async (input) => {
     portableTransactions += 1;
     events.push("portable:transaction");
+    assert.equal(input.withLifecycleLock, portableLifecycleLock);
+    await input.withLifecycleLock(sandboxName, async () => {});
     if (${JSON.stringify(mode)} === "superseded") return { created: false };
     const attemptArgv = [...input.createArgv];
     const separator = attemptArgv.indexOf("--");
@@ -299,9 +317,11 @@ const { resolveSandboxGpuConfig } = require(${modulePath("onboard/sandbox-gpu-mo
   const result = await createSandbox(...createArgs);
   console.log(
     JSON.stringify({
+      binderCalls,
       events,
       firstError,
       gpuCreateCalls,
+      portableLockInvocations,
       portableTransactions,
       providerCalls,
       result,
@@ -343,6 +363,8 @@ describe("sandbox-create provider publication branches", () => {
 
       assert.equal(payload.result, "my-assistant");
       assert.deepEqual(payload.providerCalls, expectedProviderCalls);
+      assert.equal(payload.binderCalls, 1);
+      assert.equal(payload.portableLockInvocations, 1);
       assert.equal(payload.portableTransactions, 1);
       assert.ok(
         payload.events.indexOf("portable:transaction") < payload.events.indexOf("provider:update"),

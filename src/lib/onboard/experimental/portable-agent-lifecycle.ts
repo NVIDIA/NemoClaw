@@ -37,6 +37,8 @@ import {
 } from "./portable-demo-lifecycle";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 
+export { defaultPortableDemoStateDir };
+
 export type PortableAgentLifecycleDeps = PortableDemoLifecycleDeps & HermesPortableLifecycleDeps;
 export type PortableAgentLifecycleStopResult = PortableDemoLifecycleStopResult & {
   readonly portableAgent?: "hermes";
