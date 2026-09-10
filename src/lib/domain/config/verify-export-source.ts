@@ -26,6 +26,7 @@ import {
   isValidNemoClawRuntimeProvider,
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
+  NemoClawAgentToolsConfigSchema,
   NemoClawOpenClawObservabilitySchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
@@ -104,6 +105,7 @@ type VerifiedExportSourceData = Pick<
   | "proxy"
   | "runtime"
   | "sandboxName"
+  | "tools"
   | "webSearch"
 >;
 
@@ -143,6 +145,11 @@ function hasBraveSearch(entry: ObservedExportRegistry): boolean {
 
 function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
   const excluded: Array<[string, unknown, string]> = [
+    [
+      "spec.sandboxes[].agents[0].tools.disclosure",
+      entry.agent === "hermes" && entry.toolDisclosure === "direct",
+      "direct tool disclosure for Hermes",
+    ],
     ["spec.sandboxes[].agents[0].tools", entry.hermesToolGateways, "enabled Hermes tool gateways"],
     [
       "spec.sandboxes[].agents[0].dashboard",
@@ -255,11 +262,6 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
       "secondary agents or added agent plugins",
     ],
     [
-      "spec.sandboxes[].agents[0].toolDisclosure",
-      entry.toolDisclosure === "direct",
-      "direct tool disclosure",
-    ],
-    [
       "spec.sandboxes[].agents[0].dashboard",
       entry.agent !== "openclaw" && entry.dashboardRemoteBindPrepared,
       "remote dashboard exposure",
@@ -293,6 +295,17 @@ function classifyHermesApiConfiguration(entry: ObservedExportRegistry): ExportFi
 
 function classifyRegistryProvenance(entry: ObservedExportRegistry): ExportFinding[] {
   const findings: ExportFinding[] = [];
+  if (
+    entry.toolDisclosure !== undefined &&
+    !Check(NemoClawAgentToolsConfigSchema, { disclosure: entry.toolDisclosure })
+  )
+    findings.push(
+      finding(
+        "spec.sandboxes[].agents[0].tools.disclosure",
+        "unsupported",
+        "The persisted tool disclosure is not a supported mode.",
+      ),
+    );
   if (!entry.lifecycleGeneration || !entry.lifecycleLiveIdentityFingerprint)
     findings.push(
       finding(
@@ -415,6 +428,12 @@ export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFin
   return findings;
 }
 
+function registeredToolDisclosure(
+  entry: ObservedExportRegistry,
+): ManagedStartupProfileBuilderInput["toolDisclosure"] {
+  return entry.agent === "openclaw" ? (entry.toolDisclosure ?? "progressive") : "progressive";
+}
+
 function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedStartupProfile {
   if (entry.agent !== "openclaw" && entry.agent !== "hermes") {
     throw new Error("The agent is unsupported.");
@@ -450,7 +469,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     },
     dashboard: projection.dashboard,
     webSearch: hasBraveSearch(entry) ? { fetchEnabled: true, provider: "brave" } : null,
-    toolDisclosure: "progressive",
+    toolDisclosure: registeredToolDisclosure(entry),
     hermesToolGateways: [],
     messagingPlan: null,
     dcodeAutoApprovalMode: null,
@@ -564,6 +583,23 @@ function classifyReasoningAgreement(
   ];
 }
 
+function classifyToolDisclosureAgreement(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile,
+  expected: ManagedStartupProfile,
+): ExportFinding[] {
+  if (entry.agent !== "openclaw" || profile.tools.disclosure === expected.tools.disclosure) {
+    return [];
+  }
+  return [
+    finding(
+      "spec.sandboxes[].agents[0].tools.disclosure",
+      entry.toolDisclosure === undefined ? "missing-provenance" : "drifted",
+      "The retained tool disclosure and the registry selection do not agree.",
+    ),
+  ];
+}
+
 function supportedAgentSettingsProfile(
   profile: ManagedStartupProfile,
   expected: ManagedStartupProfile,
@@ -636,14 +672,23 @@ function supportedObservabilityProfile(
   };
 }
 
+function expectedProfileWithHostSettings(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile,
+): ManagedStartupProfile | null {
+  try {
+    return supportedHostProfile(profile, expectedManagedStartupProfile(entry));
+  } catch {
+    return null;
+  }
+}
+
 function classifyManagedStartupProfile(
   entry: ObservedExportRegistry,
   profile: ManagedStartupProfile,
 ): ExportFinding[] {
-  let expected: ManagedStartupProfile;
-  try {
-    expected = supportedHostProfile(profile, expectedManagedStartupProfile(entry));
-  } catch {
+  let expected = expectedProfileWithHostSettings(entry, profile);
+  if (!expected) {
     return [
       finding(
         "source.workload.startupProfile",
@@ -656,6 +701,7 @@ function classifyManagedStartupProfile(
   const findings = [
     ...classifyDashboard(entry, profile),
     ...classifyReasoningAgreement(entry, profile),
+    ...classifyToolDisclosureAgreement(entry, profile, expected),
   ];
   if (entry.servingProfileProvenance?.preset.id !== EXPORTED_VLLM_PROFILE_ID) {
     const supported = supportedAgentSettingsProfile(profile, expected);
@@ -1148,6 +1194,29 @@ function projectVerifiedInference(
       };
 }
 
+function projectVerifiedExecution(settings: ReturnType<typeof projectAgentSettings>) {
+  return settings.execution ? { execution: settings.execution } : {};
+}
+
+function projectVerifiedWebSearch(entry: ObservedExportRegistry) {
+  if (!hasBraveSearch(entry)) return {};
+  return {
+    webSearch: {
+      provider: "brave" as const,
+      agentRefs: ["primary"],
+      credential: { env: "BRAVE_API_KEY" },
+    },
+  };
+}
+
+function projectVerifiedTools(
+  entry: ObservedExportRegistry,
+  authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
+) {
+  if (entry.agent !== "openclaw" || authority?.profile.tools.disclosure !== "direct") return {};
+  return { tools: { disclosure: authority.profile.tools.disclosure } };
+}
+
 function verifiedHermesAuth(entry: ObservedExportRegistry) {
   return entry.agent === "hermes" && entry.hermesAuthMethod === "api_key"
     ? { auth: { method: "api-key" as const } }
@@ -1186,19 +1255,12 @@ function completeVerifiedSource(
     ...(observability ? { observability } : {}),
     sandboxName: requestedSandboxName,
     agent: entry.agent,
-    ...(settings.execution ? { execution: settings.execution } : {}),
+    ...projectVerifiedExecution(settings),
+    ...projectVerifiedWebSearch(entry),
     ...verifiedHermesAuth(entry),
-    ...(hasBraveSearch(entry)
-      ? {
-          webSearch: {
-            provider: "brave",
-            agentRefs: ["primary"],
-            credential: { env: "BRAVE_API_KEY" },
-          },
-        }
-      : {}),
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
+    ...projectVerifiedTools(entry, authority),
     ...projectHostSettings(entry, authority),
     inference: projectVerifiedInference(snapshot, selected, settings),
   };

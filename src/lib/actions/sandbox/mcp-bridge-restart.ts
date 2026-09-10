@@ -203,7 +203,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   for (const entry of missingProviderEntries) {
     await detachMissingProviderReference(sandboxName, entry, providerRuntimeSelection);
   }
-  assertMcpAdapterMutationRuntimeCapabilities(
+  await assertMcpAdapterMutationRuntimeCapabilities(
     sandboxName,
     sandbox,
     targetEntries,
@@ -352,14 +352,14 @@ export async function restoreExistingMcpBridgeRuntime(
     // Deep Agents entry on the same old image it just scrubbed. New/rebuilt
     // images use the default path and must prove the current marker before any
     // policy, provider, attachment, or adapter mutation.
-    assertMcpAdapterTeardownRuntimeCapabilities(
+    await assertMcpAdapterTeardownRuntimeCapabilities(
       sandboxName,
       sandbox,
       entries,
       providerRuntimeSelection,
     );
   } else {
-    assertMcpAdapterMutationRuntimeCapabilities(
+    await assertMcpAdapterMutationRuntimeCapabilities(
       sandboxName,
       sandbox,
       entries,

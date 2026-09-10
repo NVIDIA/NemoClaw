@@ -1,15 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  buildCliOpenShellSandboxExecArgs,
-  createCliOpenShellSandboxCommandExecutor,
-  runCliOpenShellStreamingCommand,
-  type OpenShellCommandChild,
-  type OpenShellCommandChildOptions,
-  type OpenShellCommandSignalSource,
-  type OpenShellCommandSpawner,
-} from "../../adapters/openshell/sandbox-command-cli";
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import type {
   OpenShellSandboxCommandExecutor,
   OpenShellSandboxCommandRequest,
@@ -18,7 +10,6 @@ import {
   namedOpenShellGateway,
   selectedOpenShellGateway,
 } from "../../adapters/openshell/sandbox-observer";
-import { spawnExitCode } from "../../core/process-exit";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import type {
   MutableConfigPermsInspection,
@@ -41,28 +32,9 @@ export type SandboxExecOptions = {
   stdin?: boolean;
 };
 
-export type SandboxExecChildOptions = SandboxExecOptions & {
-  hostCwd?: string;
-  hostEnv?: NodeJS.ProcessEnv;
-  subprocessEnv?: NodeJS.ProcessEnv;
-};
-
 export type SandboxExecGatewayRestart = (sandboxName: string) => Promise<{ ok: boolean }>;
 
 export type SandboxExecAgentResolver = (sandboxName: string) => string | null;
-
-export type SpawnLikeResult = {
-  status: number | null;
-  signal?: NodeJS.Signals | null;
-  error?: Error;
-  releaseSignals?: () => void;
-};
-
-export type SandboxExecChild = OpenShellCommandChild;
-
-export type SandboxExecSpawner = OpenShellCommandSpawner;
-
-export type SandboxExecSignalSource = OpenShellCommandSignalSource;
 
 export type SandboxExecCleanupDeps = {
   getSandbox: (sandboxName: string) => Pick<SandboxEntry, "agent"> | null;
@@ -76,27 +48,6 @@ export type SandboxExecCompletion = {
   invocationError?: string;
   cleanupError?: string;
 };
-
-/**
- * Compatibility argv surface for buffered and interactive consumers tracked
- * by #10991 and #10994. Remove it after those callers use typed executors.
- */
-export function buildOpenshellExecArgs(
-  sandboxName: string,
-  command: readonly string[],
-  options: SandboxExecOptions = {},
-  gatewayName?: string,
-): string[] {
-  return buildCliOpenShellSandboxExecArgs({
-    sandboxName,
-    target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
-    command,
-    workdir: options.workdir,
-    tty: options.tty,
-    timeoutSeconds: options.timeoutSeconds,
-    stdin: options.stdin,
-  });
-}
 
 // OpenShell accepts LF/CR in command argv while retaining field-specific
 // rejection for NUL-bearing command args and NUL/LF/CR-bearing workdirs. Keep
@@ -119,16 +70,6 @@ function execInputError(command: readonly string[], workdir: string | undefined)
 
 export function workdirMissingMessage(workdir: string): string {
   return `error: --workdir: ${workdir} does not exist inside the sandbox`;
-}
-
-export function computeExitCode(result: SpawnLikeResult): {
-  code: number;
-  errorMessage?: string;
-} {
-  if (result.error) {
-    return { code: 1, errorMessage: result.error.message };
-  }
-  return { code: spawnExitCode(result) };
 }
 
 function repairFailureDetail(
@@ -186,25 +127,6 @@ export function cleanupOpenClawAfterExec(
     return `permission repair failed: ${detail}`;
   }
   return repairFailureDetail(inspection, repair);
-}
-
-/**
- * Compatibility child-process surface for interactive consumers tracked by
- * #10994. Remove it after those callers use a typed interactive executor.
- */
-export async function runSandboxExecChild(
-  binary: string,
-  args: readonly string[],
-  options: SandboxExecChildOptions = {},
-  spawnChild?: SandboxExecSpawner,
-  signalSource?: SandboxExecSignalSource,
-): Promise<SpawnLikeResult> {
-  const childOptions: OpenShellCommandChildOptions = {
-    stdin: options.stdin,
-    hostCwd: options.hostCwd,
-    hostEnv: options.hostEnv ?? options.subprocessEnv,
-  };
-  return runCliOpenShellStreamingCommand(binary, args, childOptions, spawnChild, signalSource);
 }
 
 export function cleanupFailureMessage(commandCode: number, detail: string): string {

@@ -431,6 +431,8 @@ export async function probeCredentialResolution(
   }
   const probeCommand = buildCredentialResolutionProbeCommand(entry, adapter, credentialRevision);
   if (!probeCommand) return { ok: null, detail: "no credential binding or safe endpoint to probe" };
-  const result = executeSandboxCommand(sandboxName, probeCommand.command, { runtimeSelection });
+  const result = await executeSandboxCommand(sandboxName, probeCommand.command, {
+    runtimeSelection,
+  });
   return classifyCredentialResolutionProbe(result, entry, probeCommand.resultMarker);
 }

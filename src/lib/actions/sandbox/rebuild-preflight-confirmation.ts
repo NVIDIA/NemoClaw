@@ -21,7 +21,7 @@ import { type RebuildBail, type RebuildLog } from "./rebuild-credential-prefligh
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import { ensureRebuildUsageNoticeAccepted } from "./rebuild-usage-notice";
 
-export type RebuildVersionCheck = ReturnType<typeof sandboxVersion.checkAgentVersion>;
+export type RebuildVersionCheck = sandboxVersion.VersionCheckResult;
 
 export function createRebuildCommandContext(
   options: string[] | RebuildSandboxOptions,
@@ -158,7 +158,7 @@ export async function confirmRebuildIntent(
   bail: RebuildBail,
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode,
 ): Promise<RebuildVersionCheck | null> {
-  const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
+  const versionCheck = await sandboxVersion.checkAgentVersion(sandboxName);
   console.log("");
   console.log(`  ${B}Rebuild sandbox '${sandboxName}'${R}`);
   if (versionCheck.sandboxVersion) {
