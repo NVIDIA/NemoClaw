@@ -226,7 +226,10 @@ export type NonEmptyExportFindings = readonly [ExportFinding, ...ExportFinding[]
 
 // Runtime refinements preserve semantic checks that are not part of JSON Schema.
 const HostedExportInferenceSchema = Type.Object({
-  provider: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
+  provider: Type.Refine(
+    BoundedTextSchema,
+    (value) => isValidNemoClawBoundedText(value) && value !== "vllm-local",
+  ),
   model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
   api: NemoClawInferenceApiSchema,
   endpoint: Type.Refine(InferenceEndpointSchema, isValidNemoClawInferenceEndpoint),

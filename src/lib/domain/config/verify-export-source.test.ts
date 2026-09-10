@@ -508,6 +508,7 @@ describe("config export source verification (#10938)", () => {
     { runtime: { provider: "docker", imageRef: "registry/image:latest" } },
     { gateway: { name: "nemoclaw", port: 0 } },
     { inference: { provider: "e\u0301".repeat(257) } },
+    { inference: { provider: "vllm-local" } },
     { inference: { api: "openai-unknown" } },
     { inference: { endpoint: "https://user:secret@api.example.com/v1" } },
     { inference: { endpoint: "https://api.example.com/%0A%" } },

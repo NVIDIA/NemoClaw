@@ -71,7 +71,10 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 512,
-                    "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                    "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$",
+                    "not": {
+                      "const": "vllm-local"
+                    }
                   },
                   "api": {
                     "enum": ["openai-completions", "openai-responses", "anthropic-messages"]

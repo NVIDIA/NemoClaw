@@ -83,6 +83,10 @@ export const BoundedTextSchema = Type.String({
   maxLength: BOUNDED_TEXT_MAX_LENGTH,
   pattern: BOUNDED_TEXT_PATTERN,
 });
+const HostedInferenceProviderNameSchema = Type.Unsafe<string>({
+  ...BoundedTextSchema,
+  not: { const: "vllm-local" },
+});
 export const RuntimeProviderSchema = Type.String({ pattern: RUNTIME_PROVIDER_PATTERN });
 export const ImmutableImageReferenceSchema = Type.Unsafe<ImmutableImageReference>({
   type: "string",
@@ -224,7 +228,7 @@ const NemoClawGatewayConfigSchema = Type.Object(
 const NemoClawHostedInferenceProviderConfigSchema = Type.Object(
   {
     name: LocalResourceNameSchema,
-    provider: BoundedTextSchema,
+    provider: HostedInferenceProviderNameSchema,
     api: NemoClawInferenceApiSchema,
     endpoint: InferenceEndpointSchema,
     credential: Type.Optional(CredentialEnvironmentReferenceSchema),

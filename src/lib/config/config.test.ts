@@ -506,6 +506,13 @@ describe("fixed managed serving public contract", () => {
     expect(validateNemoClawConfig(YAML.parse(renderInput(value).yaml))).toEqual(value);
   });
 
+  it("rejects vllm-local without its managed serving contract", () => {
+    const { value, provider } = managedServingConfig();
+    Reflect.deleteProperty(provider, "serving");
+    Object.assign(provider, { endpoint: "https://127.0.0.1:18000/v1" });
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
   it.each([
     [
       "transport credential",
