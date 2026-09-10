@@ -301,6 +301,23 @@
                       "type": "object",
                       "required": ["name", "inference", "type"],
                       "properties": {
+                        "execution": {
+                          "type": "object",
+                          "properties": {
+                            "timeoutSeconds": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1000000000
+                            },
+                            "heartbeatEvery": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "minProperties": 1
+                        },
                         "name": {
                           "type": "string",
                           "minLength": 1,
@@ -343,6 +360,17 @@
                                         "type": "integer",
                                         "minimum": 1,
                                         "maximum": 4194304
+                                      },
+                                      "maxTokens": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 1000000000
+                                      },
+                                      "reasoning": {
+                                        "type": "boolean"
+                                      },
+                                      "reasoningEffort": {
+                                        "enum": ["default", "low", "medium", "high"]
                                       }
                                     },
                                     "additionalProperties": false
@@ -385,6 +413,23 @@
                       "type": "object",
                       "required": ["name", "inference", "type"],
                       "properties": {
+                        "execution": {
+                          "type": "object",
+                          "properties": {
+                            "timeoutSeconds": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1000000000
+                            },
+                            "heartbeatEvery": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "minProperties": 1
+                        },
                         "name": {
                           "type": "string",
                           "minLength": 1,
@@ -427,6 +472,17 @@
                                         "type": "integer",
                                         "minimum": 1,
                                         "maximum": 4194304
+                                      },
+                                      "maxTokens": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 1000000000
+                                      },
+                                      "reasoning": {
+                                        "type": "boolean"
+                                      },
+                                      "reasoningEffort": {
+                                        "enum": ["default", "low", "medium", "high"]
                                       }
                                     },
                                     "additionalProperties": false
