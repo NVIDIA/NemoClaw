@@ -66,8 +66,6 @@ export type ConnectHarness = {
   readSandboxConfigSpy: MockInstance;
   recoverPortableDemoLifecycleSpy: MockInstance;
   requalifyPortableAgentAuthoritySpy: MockInstance;
-  qualifyPortableAgentLifecycleAuthoritySpy: MockInstance;
-  requireHermesPortableActiveLifecycleAuthoritySpy: MockInstance;
   qualifyHermesPortableAcceptedReadinessAuthoritySpy: MockInstance;
   inspectPortableReceiptDispositionSpy: MockInstance;
   registryUpdateSpy: MockInstance;
@@ -141,6 +139,7 @@ export type ConnectHarnessOptions = {
         gatewayName?: string;
         lifecycleGeneration?: string;
       };
+  useRealPortableReceipt?: boolean;
   dockerRuntime?: {
     health?: string;
     paused?: boolean;
@@ -309,34 +308,45 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
           liveIdentityFingerprint: "f".repeat(64),
         }
       : requestedPortableDisposition;
-  const inspectPortableReceiptDispositionSpy = vi
-    .spyOn(portableAgentLifecycle, "inspectPortableAgentReceiptDisposition")
-    .mockReturnValue(portableDisposition);
+  const inspectPortableReceiptDispositionSpy = vi.spyOn(
+    portableAgentLifecycle,
+    "inspectPortableAgentReceiptDisposition",
+  );
+  if (!options.useRealPortableReceipt) {
+    inspectPortableReceiptDispositionSpy.mockReturnValue(portableDisposition);
+  }
   let registryEntries: SandboxEntry[] = [];
   const qualifyPortableAgentLifecycleAuthority =
     portableAgentLifecycle.qualifyPortableAgentLifecycleAuthority;
   const requireHermesPortableActiveLifecycleAuthority =
     portableAgentLifecycle.requireHermesPortableActiveLifecycleAuthority;
   const portableAuthorityDeps = () => ({
-    inspectReceiptDisposition: (sandboxName: string) =>
-      portableAgentLifecycle.inspectPortableAgentReceiptDisposition(sandboxName),
+    ...(options.useRealPortableReceipt
+      ? {}
+      : {
+          inspectReceiptDisposition: (sandboxName: string) =>
+            portableAgentLifecycle.inspectPortableAgentReceiptDisposition(sandboxName),
+        }),
     readRegistry: (sandboxName: string) =>
       registryEntries.find((candidate) => candidate.name === sandboxName) ?? null,
   });
-  const qualifyPortableAgentLifecycleAuthoritySpy = vi
-    .spyOn(gatewayState, "qualifyPortableAgentLifecycleAuthority")
-    .mockImplementation(((sandboxName: string, deps: object) =>
-      qualifyPortableAgentLifecycleAuthority(sandboxName, {
-        ...deps,
-        ...portableAuthorityDeps(),
-      })) as never);
-  const requireHermesPortableActiveLifecycleAuthoritySpy = vi
-    .spyOn(gatewayState, "requireHermesPortableActiveLifecycleAuthority")
-    .mockImplementation(((sandboxName: string, expected: unknown, deps: object) =>
-      requireHermesPortableActiveLifecycleAuthority(sandboxName, expected, {
-        ...deps,
-        ...portableAuthorityDeps(),
-      })) as never);
+  vi.spyOn(gatewayState, "qualifyPortableAgentLifecycleAuthority").mockImplementation(((
+    sandboxName: string,
+    deps: object,
+  ) =>
+    qualifyPortableAgentLifecycleAuthority(sandboxName, {
+      ...deps,
+      ...portableAuthorityDeps(),
+    })) as never);
+  vi.spyOn(gatewayState, "requireHermesPortableActiveLifecycleAuthority").mockImplementation(((
+    sandboxName: string,
+    expected: unknown,
+    deps: object,
+  ) =>
+    requireHermesPortableActiveLifecycleAuthority(sandboxName, expected, {
+      ...deps,
+      ...portableAuthorityDeps(),
+    })) as never);
   const recoverHermesPortableOllamaInferenceSpy = vi
     .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
     .mockImplementation((async (input: {
@@ -691,8 +701,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     readSandboxConfigSpy,
     recoverPortableDemoLifecycleSpy,
     requalifyPortableAgentAuthoritySpy,
-    qualifyPortableAgentLifecycleAuthoritySpy,
-    requireHermesPortableActiveLifecycleAuthoritySpy,
     qualifyHermesPortableAcceptedReadinessAuthoritySpy,
     inspectPortableReceiptDispositionSpy,
     registryUpdateSpy,

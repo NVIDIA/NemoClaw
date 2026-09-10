@@ -1,12 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import os from "node:os";
+
 import {
   type McpLifecycleLockOptions,
   withMcpLifecycleLock,
   withMcpLifecycleLockSync,
 } from "../../../state/mcp-lifecycle-lock-acquisition";
-import { withCurrentPortableHostFence } from "../../../state/portable-uninstall-retirement";
+import {
+  assertCurrentPortableHostFenceHeld,
+  withCurrentPortableHostFence,
+} from "../../../state/portable-uninstall-retirement";
 import {
   portableLifecycleLockOptions,
   resolveHermesPortableLifecycleLockOptions,
@@ -48,6 +53,9 @@ export function withSandboxLifecycleLockSync<T>(
   options: McpLifecycleLockOptions = {},
 ): T {
   const resolved = resolveLifecycleLockOptions(sandboxName, options);
+  if (usesPortableLifecycleLock(resolved)) {
+    assertCurrentPortableHostFenceHeld(process.env.HOME || os.homedir());
+  }
   return Object.keys(resolved).length === 0
     ? withMcpLifecycleLockSync(sandboxName, operation)
     : withMcpLifecycleLockSync(sandboxName, operation, resolved);

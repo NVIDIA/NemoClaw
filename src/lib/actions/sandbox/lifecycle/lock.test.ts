@@ -64,6 +64,12 @@ describe("Portable-aware sandbox lifecycle lock", () => {
     expect(resolveHermesPortableLifecycleLockOptions("alpha", env, () => false)).toBeUndefined();
   });
 
+  it("rejects a direct synchronous Portable operation without the host fence", () => {
+    expect(() => withSandboxLifecycleLockSync("alpha", () => undefined)).toThrow(
+      "Portable host authority mutation requires the current HOME fence",
+    );
+  });
+
   it("serializes competing Portable lifecycle operations on the same authority", async () => {
     const events: string[] = [];
     let releaseFirst!: () => void;
