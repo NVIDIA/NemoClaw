@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isStdinTty } from "../../../core/stdin";
 import {
   openClawAgentIncompleteTurnSignal,
   type OpenClawIncompleteTurnSignal,
@@ -12,11 +11,12 @@ import {
   computeExitCode,
   wrapOpenClawAgentCommandWithRuntimeEnv,
 } from "../exec";
+import { isStdinTty } from "../../../core/stdin";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
+import { agentDispatchDeadlineSeconds, hasExplicitAgentMessage } from "./passthrough-args";
 import {
   type AgentDispatchRunner,
-  agentDispatchDeadlineSeconds,
-  hasExplicitAgentMessage,
+  type AgentDispatchResult,
   isSilentAgentDispatch,
   runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
@@ -27,6 +27,39 @@ import {
   writeTimedOutAgentTurnFailure,
 } from "./passthrough-help";
 
+export type OpenClawAgentDispatchDeps = {
+  getOpenshellBinary?: () => string;
+  getGatewayName?: (sandboxName: string) => string | null;
+  runDispatch?: AgentDispatchRunner;
+  stdinIsTty?: () => boolean;
+};
+
+/** Both output formats use the same argv, owning gateway, deadline, and stdin policy. */
+export function runOpenClawAgentDispatch(
+  sandboxName: string,
+  command: readonly string[],
+  deps: OpenClawAgentDispatchDeps = {},
+): Promise<AgentDispatchResult> {
+  const binary = deps.getOpenshellBinary
+    ? deps.getOpenshellBinary()
+    : (
+        require("../../../adapters/openshell/runtime") as typeof import("../../../adapters/openshell/runtime")
+      ).getOpenshellBinary();
+  return (deps.runDispatch ?? runAgentDispatch)(
+    binary,
+    buildOpenshellExecArgs(
+      sandboxName,
+      wrapOpenClawAgentCommandWithRuntimeEnv(command),
+      { tty: false, timeoutSeconds: agentDispatchDeadlineSeconds(command) },
+      (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
+    ),
+    {
+      stdinIsTty: (deps.stdinIsTty ?? isStdinTty)(),
+      ...(hasExplicitAgentMessage(command) ? { stdin: false } : {}),
+    },
+  );
+}
+
 /** Exit code for a turn the payload itself marks incomplete or abandoned. */
 export const INCOMPLETE_AGENT_TURN_EXIT_CODE = 1;
 
@@ -36,23 +69,10 @@ export type AgentJsonPassthroughProcess = {
   stderr: { write(s: string): unknown };
 };
 
-export type AgentJsonPassthroughDeps = {
-  getOpenshellBinary?: () => string;
-  getGatewayName?: (sandboxName: string) => string | null;
-  stdinIsTty?: () => boolean;
+export type AgentJsonPassthroughDeps = OpenClawAgentDispatchDeps & {
   provenanceLines?: (raw: string) => string[];
   incompleteTurnSignal?: (raw: string) => OpenClawIncompleteTurnSignal | null;
-  runDispatch?: AgentDispatchRunner;
 };
-
-export function defaultGetOpenshellBinary(): string {
-  // Lazy require keeps this module unit-testable under Vitest's TS loader; the
-  // OpenShell runtime imports runner/platform modules that only exist in built
-  // CLI layouts.
-  const runtime =
-    require("../../../adapters/openshell/runtime") as typeof import("../../../adapters/openshell/runtime");
-  return runtime.getOpenshellBinary();
-}
 
 function writeProvenanceBlock(
   proc: AgentJsonPassthroughProcess,
@@ -69,20 +89,7 @@ export async function runAgentJsonPassthrough(
   proc: AgentJsonPassthroughProcess = process,
   deps: AgentJsonPassthroughDeps = {},
 ): Promise<never> {
-  const binary = (deps.getOpenshellBinary ?? defaultGetOpenshellBinary)();
-  const result = await (deps.runDispatch ?? runAgentDispatch)(
-    binary,
-    buildOpenshellExecArgs(
-      sandboxName,
-      wrapOpenClawAgentCommandWithRuntimeEnv(command),
-      { tty: false, timeoutSeconds: agentDispatchDeadlineSeconds(command) },
-      (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
-    ),
-    {
-      stdinIsTty: (deps.stdinIsTty ?? isStdinTty)(),
-      ...(hasExplicitAgentMessage(command) ? { stdin: false } : {}),
-    },
-  );
+  const result = await runOpenClawAgentDispatch(sandboxName, command, deps);
   const { stderr, stdout } = result;
 
   // Ahead of the stdout write so machine-readable stdout stays byte-empty and

@@ -20,6 +20,7 @@ import {
   TIMED_OUT_AGENT_TURN_EXIT_CODE,
 } from "./passthrough-dispatch";
 import { buildOpenshellExecArgs, computeExitCode, type SandboxExecSignalSource } from "../exec";
+import { hasOpenClawAgentSelector, requestsOpenClawJsonOutput } from "./passthrough-args";
 
 function dispatchHarness() {
   const childEvents = new EventEmitter();
@@ -227,7 +228,16 @@ describe("hasExplicitAgentMessage", () => {
     ["--timeout", "30", "-mping"],
     ["-m", "--json"],
     ["--message="],
-  ])("recognizes a message supplied in argv %j", (...args) => {
+    ["--message"],
+    ["--message-file"],
+    ["--verbose", "off", "--channel", "slack", "-m", "ping"],
+    ["--local", "--reply-to", "#reports", "--reply-account", "work", "-m", "ping"],
+    ["--verbose=on", "--channel=slack", "--message-file", "/sandbox/task.md"],
+    ["-t+15555550123", "--message-file=/sandbox/task.md"],
+    ["-aops", "--json", "-mping"],
+    ["--profile", "work", "--log-level=debug", "--no-color", "-m", "ping"],
+    ["--dev", "--container", "agent-tools", "--message", "ping"],
+  ])("recognizes explicit message options %j", (...args) => {
     expect(hasExplicitAgentMessage(["openclaw", "agent", ...args])).toBe(true);
   });
 
@@ -236,7 +246,7 @@ describe("hasExplicitAgentMessage", () => {
     ["--agent", "--message", "ping"],
     ["--", "-m", "ping"],
     ["--unknown", "-m", "ping"],
-    ["--message"],
+    ["--reply-to", "-m", "payload"],
   ])("preserves stdin when argv does not establish a message %j", (...args) => {
     expect(hasExplicitAgentMessage(["openclaw", "agent", ...args])).toBe(false);
   });
@@ -254,6 +264,35 @@ describe("SILENT_AGENT_DISPATCH_EXIT_CODE", () => {
 
 describe("requestedAgentTimeoutSeconds", () => {
   const agent = (...args: string[]) => ["openclaw", "agent", ...args];
+
+  it("uses and updates the last timeout without changing earlier argv (#11371)", () => {
+    const command = agent("--timeout", "30", "--verbose", "off", "--timeout=90", "-m", "ping");
+    expect(requestedAgentTimeoutSeconds(command)).toBe(90);
+    expect(replaceRequestedAgentTimeoutSeconds(command, 45)).toEqual(
+      agent("--timeout", "30", "--verbose", "off", "--timeout=45", "-m", "ping"),
+    );
+    expect(
+      agentDispatchDeadlineSeconds(agent("--timeout", "30", "--timeout", "0")),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    ["--verbose", "off"],
+    ["--channel", "slack"],
+    ["--reply-to", "#reports"],
+    ["--reply-account", "work"],
+    ["--local"],
+    ["--message-file", "/sandbox/task.md"],
+    ["-t+15555550123"],
+    ["-mping"],
+    ["--profile", "work", "--log-level", "debug", "--no-color"],
+  ])("preserves the deadline after agent options %j (#11371)", (...prefix) => {
+    const command = agent(...prefix, "--timeout=30");
+    expect(requestedAgentTimeoutSeconds(command)).toBe(30);
+    expect(replaceRequestedAgentTimeoutSeconds(command, 12)).toEqual(
+      agent(...prefix, "--timeout=12"),
+    );
+  });
 
   it("rejects timeout flags outside the exact OpenClaw agent prefix (#8723)", () => {
     expect(requestedAgentTimeoutSeconds(["other", "agent", "--timeout", "30"])).toBeNull();
@@ -315,6 +354,27 @@ describe("requestedAgentTimeoutSeconds", () => {
 
   it("refuses a missing deadline value (#8723)", () => {
     expect(requestedAgentTimeoutSeconds(agent("--timeout"))).toBeNull();
+  });
+});
+
+describe("shared agent option interpretation", () => {
+  it.each([["-t", "+15555550123"], ["-t+15555550123"], ["--agent=main"]])(
+    "recognizes the target selector %j",
+    (...args) => {
+      expect(hasOpenClawAgentSelector(["openclaw", "agent", ...args, "-m", "ping"])).toBe(true);
+    },
+  );
+
+  it.each(["--agent", "--to", "--session-key", "--session-id"])(
+    "does not treat the message value %s as a selector",
+    (value) => {
+      expect(hasOpenClawAgentSelector(["openclaw", "agent", "-m", value])).toBe(false);
+    },
+  );
+
+  it("honors the last JSON switch", () => {
+    expect(requestsOpenClawJsonOutput(["openclaw", "agent", "--json", "--json=false"])).toBe(false);
+    expect(requestsOpenClawJsonOutput(["openclaw", "agent", "--json=false", "--json"])).toBe(true);
   });
 });
 
