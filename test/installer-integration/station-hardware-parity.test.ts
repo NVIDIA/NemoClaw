@@ -11,6 +11,7 @@ import {
   hasDgxStationGb300PciGpu,
   readBoundedNvidiaFirmwareValue,
 } from "../../src/lib/inference/dgx-station-identity";
+import { projectPlatformQualification } from "../../src/lib/readiness/platform-qualification";
 
 const helper = path.resolve(import.meta.dirname, "../../scripts/prepare-dgx-station-host.sh");
 const cases = [
@@ -133,9 +134,29 @@ main --classify-station-hardware
           ? "conflicting"
           : (identity.firmwareClass ?? "not-station"),
       ).toBe(scenario.state === "station-gb300-pci-missing" ? "station-gb300" : scenario.state);
-      expect(hasDgxStationGb300PciGpu(readFile, (dir) => fs.readdirSync(dir), pciRoot)).toBe(
-        "pci" in scenario ? scenario.pci : true,
-      );
+      const pci = hasDgxStationGb300PciGpu(readFile, (dir) => fs.readdirSync(dir), pciRoot);
+      expect(pci).toBe("pci" in scenario ? scenario.pci : true);
+      const readiness = projectPlatformQualification({
+        platform: "linux",
+        architecture: "arm64",
+        isWsl: false,
+        dockerInstalled: true,
+        dockerReachable: true,
+        runtime: "docker",
+        hasNvidiaGpu: pci === true,
+        osId: "ubuntu",
+        osVersionId: "24.04",
+        nvidiaPlatform: identity.nvidiaPlatform,
+        productName: identity.stationFirmwareProduct,
+        platformIdentityConflict: identity.platformIdentityConflict,
+        stationProfile: "generic-ubuntu",
+        stationGb300PciGpu: pci,
+      });
+      expect(
+        readiness.capabilities.some(
+          ({ id, state }) => id === "host.platform.dgx_station" && state === "present",
+        ),
+      ).toBe(scenario.state === "station-gb300");
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
