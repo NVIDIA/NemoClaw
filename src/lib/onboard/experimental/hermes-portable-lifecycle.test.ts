@@ -238,9 +238,11 @@ function lifecycleDeps(
   const captureOpenShell = vi.fn((args: readonly string[]) => {
     const sandboxExecOutput = args.includes(hermesPortableLifecycleInternals.healthWaitProgram)
       ? "schema=1 result=ready attempts=1 notReady=0 timeouts=0 errors=0 lastFailure=none probeMs=0 sleepMs=0\n"
-      : args.includes("python3")
-        ? "200\n"
-        : "";
+      : args.includes(hermesPortableLifecycleInternals.openShellV0116StopAssistProgram)
+        ? "schema=1 result=armed pgrp=123\n"
+        : args.includes("python3")
+          ? "200\n"
+          : "";
     const responses = {
       "policy:get": { status: 0, stdout: options.livePolicy ?? POLICY, stderr: "" },
       "sandbox:list": {
@@ -1175,6 +1177,10 @@ describe("Hermes portable lifecycle", () => {
     expect(captureOpenShell).toHaveBeenCalledWith(
       ["sandbox", "stop", "-g", GATEWAY, SANDBOX],
       40_000,
+    );
+    expect(captureOpenShell).toHaveBeenCalledWith(
+      expect.arrayContaining([hermesPortableLifecycleInternals.openShellV0116StopAssistProgram]),
+      5_000,
     );
     expect(captureOpenShell).toHaveReturnedWith({
       status: 0,
