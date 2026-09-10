@@ -538,10 +538,15 @@ test(
       timeoutMs: PROBE_TIMEOUT_MS,
     });
     const crossDeviceInstallText = resultText(crossDeviceInstall);
-    expect(crossDeviceInstall.exitCode, crossDeviceInstallText).toBe(0);
     const [, sourceDevice, targetDevice] =
       /source_device=(\d+) target_device=(\d+)/.exec(crossDeviceInstallText) ?? [];
-    expect(sourceDevice, crossDeviceInstallText).not.toBe(targetDevice);
+    expect(
+      crossDeviceInstall.exitCode === 0 &&
+        sourceDevice !== undefined &&
+        targetDevice !== undefined &&
+        sourceDevice !== targetDevice,
+      crossDeviceInstallText,
+    ).toBe(true);
 
     progress.phase("restart the gateway and confirm the installed payload");
     const restart = await host.command(
@@ -588,7 +593,10 @@ test(
     });
     openshellWrapper.selectImage(pluginImageV2);
     terminateProcessIfRunning(listenerAfterRestart.pid!, "SIGKILL");
-    waitUntil(() => !isLocalForwardReachable(DASHBOARD_PORT, 100), 5, 50);
+    expect(
+      waitUntil(() => !isLocalForwardReachable(DASHBOARD_PORT, 100), 5, 50),
+      `verified dashboard listener still owns port ${DASHBOARD_PORT} after termination`,
+    ).toBe(true);
     const recreate = await runOpenClawPluginWithFailureEvidence({
       operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
       captureDiagnostics: capturePairingDiagnostics,
