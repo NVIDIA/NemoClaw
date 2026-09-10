@@ -3,6 +3,8 @@
 
 import type { WaitUntilOptions } from "../core/wait";
 
+export { sleepMs, waitUntil, waitUntilAsync } from "../core/wait";
+
 const DEFAULT_INITIAL_INTERVAL_MS = 250;
 const DEFAULT_MAX_INTERVAL_MS = 2_000;
 const DEFAULT_BACKOFF_FACTOR = 1.5;

@@ -99,7 +99,7 @@ export interface ChannelRuntimeStatusDeps {
   /** Sandbox shell exec — returns `null` when the exec itself failed. */
   executeSandboxCommand: (
     script: string,
-  ) => { status: number; stdout: string; stderr: string } | null;
+  ) => Promise<{ status: number; stdout: string; stderr: string } | null>;
 }
 
 /**
@@ -269,9 +269,11 @@ function escapeExtendedRegexLiteral(value: string): string {
  * desired, decide to fail. The detail string is the one the caller
  * should render verbatim in a diagnostic hint.
  */
-export function probeChannelRuntimeStatus(deps: ChannelRuntimeStatusDeps): RuntimeChannelStatus {
+export async function probeChannelRuntimeStatus(
+  deps: ChannelRuntimeStatusDeps,
+): Promise<RuntimeChannelStatus> {
   const configFilePath = deps.configFilePath;
-  const result = deps.executeSandboxCommand(
+  const result = await deps.executeSandboxCommand(
     `cat ${shellQuote(configFilePath)} 2>/dev/null || true`,
   );
   if (!result) {
@@ -326,7 +328,7 @@ export function probeChannelRuntimeStatus(deps: ChannelRuntimeStatusDeps): Runti
   // O(file) scan per missing pattern — bounded and predictable.
   const gatewayLogPath = deps.gatewayLogPath || DEFAULT_GATEWAY_LOG_PATH;
   const logScript = buildGatewayLogScanScript(gatewayLogPath);
-  const logResult = deps.executeSandboxCommand(logScript);
+  const logResult = await deps.executeSandboxCommand(logScript);
   const logStdout = logResult && typeof logResult.stdout === "string" ? logResult.stdout : "";
   const logProbeOk = logStdout.includes(LOG_PROBE_OK_MARKER);
   if (!logProbeOk) {

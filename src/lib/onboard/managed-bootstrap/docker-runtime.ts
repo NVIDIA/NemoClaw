@@ -213,6 +213,10 @@ function createDockerLifecycle(
   const backend = input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic";
   const persistStartupCommand =
     input.persistStartupCommand && (input.route !== "native" || input.requiredLimits.length > 0);
+  const commandExecutor = input.dependencies.commandExecutor;
+  if (!commandExecutor) {
+    throw new Error("Docker managed bootstrap requires a buffered sandbox command executor.");
+  }
   const patch = createDockerGpuSandboxCreatePatch({
     route: input.route,
     persistStartupCommand,
@@ -224,7 +228,7 @@ function createDockerLifecycle(
     timeoutSecs: input.timeoutSecs,
     backend,
     dockerDesktopWsl,
-    deps: input.dependencies,
+    deps: { ...input.dependencies, commandExecutor },
     ...(input.onPatchFailure
       ? {
           overrides: {
@@ -247,6 +251,7 @@ function createDockerLifecycle(
       fingerprint: input.request.profileFingerprint,
     },
     agentIdentity: input.agentIdentity,
+    managedStateRoots: input.managedStateRoots,
     intendedWorkloadArgv: input.intendedWorkloadArgv,
     expectedSupervisorArgv: input.expectedSupervisorArgv,
     metadata: {},
@@ -287,6 +292,7 @@ function createDockerLifecycle(
           selectedRoute: input.route,
           gatewayPort: input.network.gatewayPort,
           log: console.log,
+          reverifyBridgeReachability: input.network.reverifyBridgeReachability,
         },
       );
     },
@@ -345,6 +351,7 @@ function createDockerLifecycle(
       );
       patch.attachManagedBootstrapCutover({
         selectedMode: mode,
+        replacementRuntimeId: activated.replacement.replacementRuntimeId,
         failureContext: {
           sandboxName: input.sandboxName,
           oldContainerId: activated.snapshot.runtimeId,

@@ -254,7 +254,7 @@ export function spawnDetachedNodeAdapter(options: {
 }): ChildProcess {
   const child = spawn(
     process.execPath,
-    ["--experimental-strip-types", "--no-warnings", options.scriptPath],
+    ["--no-warnings", options.scriptPath],
     {
       detached: true,
       stdio: "ignore",

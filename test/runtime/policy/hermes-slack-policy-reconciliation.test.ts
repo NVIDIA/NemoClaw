@@ -122,6 +122,8 @@ exit 1
     expect(binaries).toEqual([
       "/usr/local/bin/hermes",
       "/usr/bin/python3*",
+      "/usr/bin/python3.13",
+      "/opt/hermes/.venv/bin/python3",
       "/opt/hermes/.venv/bin/python",
     ]);
     expect(binaries).not.toContain("/usr/local/bin/node");

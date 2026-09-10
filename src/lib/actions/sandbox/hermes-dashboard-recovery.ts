@@ -43,6 +43,5 @@ export function ensureHermesDashboardPortForwardIfEnabled(
   if (dashboard === null) return null;
   const forwardHealth = deps.isPortForwardHealthy(sandboxName, dashboard.publicPort);
   if (forwardHealth === true) return true;
-  if (forwardHealth === "occupied") return false;
   return deps.ensurePortForward(sandboxName, dashboard.publicPort);
 }

@@ -114,7 +114,7 @@ Some endpoints require direct TLS negotiation and fail through inspected L7 prox
 
 <a id="export-edit-and-set-the-base-policy"></a>
 
-OpenShell `policy set` replaces the complete live policy. Follow [Replace the Live Network Policy](configure-policies/replace-live-network-policy) to export the round-trippable base, preserve existing entries, and apply a validated replacement.
+OpenShell `policy set` replaces the current round-trippable OpenShell base policy. Follow [Replace the Live Network Policy](configure-policies/replace-live-network-policy) to export the parsed base policy, replace every `[STRIPPED_BY_MIGRATION]` marker, preserve existing entries, and apply a validated replacement. Provider-composed entries remain managed through their provider lifecycle rather than through the base-policy document.
 
 <AgentOnly variant="openclaw,hermes">
 

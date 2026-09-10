@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isShieldsDown } from "../../shields";
 import type { McpBridgeEntry } from "../../state/registry";
 import {
   type AdapterMutationOptions,
@@ -20,6 +19,7 @@ import {
 } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
 import { getAgentConfigDir } from "./mcp-bridge-state";
@@ -40,29 +40,11 @@ function mcporterRootForEntry(entry: McpBridgeEntry): string {
     : OPENCLAW_MCPORTER_ROOT;
 }
 
-/**
- * Refuse an in-sandbox Mcporter config mutation while config is locked.
- *
- * Mcporter's managed project config is `<agent config dir>/workspace/config/
- * mcporter.json`, and `workspace` is a `readOnlyRoots` entry in
- * `agents/openclaw/state-lock-plan.json`. Locking therefore re-owns that whole
- * subtree to `root:sandbox` and drops every group write bit, so the in-sandbox
- * `mcporter config` commands NemoClaw drives over SSH cannot reopen the file
- * for write. Fail closed on the posture instead of letting a raw
- * `EACCES ... open '/sandbox/.openclaw/workspace/config/mcporter.json'` escape
- * from inside the sandbox with no indication of what to do about it (#10469).
- * This mirrors `assertHermesMcpConfigMutationAllowed`, which already fails
- * closed the same way for the Hermes adapter.
- */
-export function assertOpenClawMcpConfigMutationAllowed(sandboxName: string): void {
-  if (isShieldsDown(sandboxName, false)) return;
-  throw new McpBridgeError(
-    `OpenClaw sandbox '${sandboxName}' has shields up or an unreadable shields posture. The managed Mcporter config is locked together with the rest of the workspace state root. Run \`nemoclaw ${sandboxName} shields down --timeout 15m --reason "MCP maintenance"\` before changing MCP configuration.`,
-  );
-}
-
-function ensureMcporter(sandboxName: string): void {
-  const check = executeSandboxCommand(sandboxName, "command -v mcporter");
+function ensureMcporter(
+  sandboxName: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): void {
+  const check = executeSandboxCommand(sandboxName, "command -v mcporter", { runtimeSelection });
   if (check?.status === 0 && check.stdout.trim()) return;
   throw new McpBridgeError(
     `mcporter is not available in sandbox '${sandboxName}'. Rebuild with a NemoClaw image that includes mcporter@${MCPORTER_VERSION}.`,
@@ -152,27 +134,31 @@ export function buildOpenClawMcporterRemoveCommand(
 export function inspectOpenClawAdapterRegistration(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): AdapterRegistrationInspection {
   const root = mcporterRootForEntry(entry);
   return inspectAdapterRegistrationCommand(
     sandboxName,
     entry,
     buildOpenClawMcporterInspectCommand(entry, false, root),
+    runtimeSelection,
   );
 }
 
 export function registerOpenClawAdapter(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string> = {},
   replaceExisting = false,
   credentialRevision?: McpAttachedCredentialRevision,
 ): void {
-  ensureMcporter(sandboxName);
+  ensureMcporter(sandboxName, runtimeSelection);
   const root = mcporterRootForEntry(entry);
   const result = executeSandboxCommand(
     sandboxName,
     buildOpenClawMcporterRegisterCommand(entry, replaceExisting, root, credentialRevision),
+    { runtimeSelection },
   );
   const output = redactBridgeSecretsForDisplay(
     [result?.stdout, result?.stderr].filter(Boolean).join("\n").trim(),
@@ -190,6 +176,7 @@ export function registerOpenClawAdapter(
   const verification = executeSandboxCommand(
     sandboxName,
     buildOpenClawMcporterInspectCommand(entry, true, root, credentialRevision),
+    { runtimeSelection },
   );
   const verificationOutput = redactBridgeSecretsForDisplay(
     [verification?.stdout, verification?.stderr].filter(Boolean).join("\n").trim(),
@@ -210,12 +197,14 @@ export function registerOpenClawAdapter(
 export function unregisterOpenClawAdapter(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
 ): void {
   const root = mcporterRootForEntry(entry);
   const result = executeSandboxCommand(
     sandboxName,
     buildOpenClawMcporterRemoveCommand(entry, options.force === true, root),
+    { runtimeSelection },
   );
   const output = redactBridgeSecretsForDisplay(
     [result?.stdout, result?.stderr].filter(Boolean).join("\n").trim(),

@@ -61,7 +61,7 @@ describe("managed snapshot clone activation boundary", () => {
     ).rejects.toMatchObject({ exitCode: 1 });
 
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
-      "requires managed-profile clone rebind",
+      "uses a NemoClaw-managed image",
     );
     expect(fixture.lifecycleMock.events).not.toContain("delete");
     expect(fixture.streamSandboxCreateMock).not.toHaveBeenCalled();

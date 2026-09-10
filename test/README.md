@@ -64,6 +64,18 @@ title, and category to the reviewed allowlist in `scripts/find-source-shape-test
 `npm run source-shape:check` rejects unsupported categories, short or misplaced reasons, missing
 allowlist entries, and unused entries.
 
+### Live E2E assertion ratchet
+
+Run `npm run e2e:assertions:scan` to inspect direct assertions and assertions reachable through
+live companion modules. Run `npm run e2e:assertions:check` to compare the current suite with
+`ci/e2e-assertion-budget.json`.
+
+An E2E assertion reduction must classify each removed assertion as already covered by a lower test,
+moved to a lower test, covered by another retained behavior test, or unnecessary because it has no
+distinct quality value. Do not move assertions into helpers, aggregate objects, or generated probes.
+After a valid reduction, run `npm run e2e:assertions:update` and include the lower baseline in the
+same change. The ratchet rejects growth and stale baselines.
+
 New test files must use TypeScript. Each plugin test must execute at least one Vitest `expect`
 assertion. The repository test configuration owns automatic mock and environment cleanup; restore
 direct global or environment mutations in the test that owns them.

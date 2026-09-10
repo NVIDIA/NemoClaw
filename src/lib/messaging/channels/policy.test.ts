@@ -9,6 +9,7 @@ import {
 } from "./metadata";
 import {
   createMessagingChannelPolicyResolver,
+  isReviewedMessagingChannelPolicyUpgrade,
   listMessagingChannelPolicyPresets,
   loadMessagingChannelPolicyPreset,
   materializeMessagingPolicySandboxName,
@@ -138,5 +139,115 @@ describe("messaging channel policy presets", () => {
       ),
     );
     expect(missing).toEqual([]);
+  });
+
+  it.each([
+    "http://idc-3.weixin.qq.com",
+    "https://idc-3.weixin.qq.com:443",
+    "https://idc-3.weixin.qq.com:8443",
+    "https://user@idc-3.weixin.qq.com",
+    "https://idc-3.weixin.qq.com/path",
+    "https://idc-3.weixin.qq.com?query=1",
+    "https://idc-3.weixin.qq.com#fragment",
+    "https://*.weixin.qq.com",
+    "https://idc-3.weixin.qq.com.evil.example",
+    "https://evil.example",
+  ])("rejects an untrusted WeChat policy origin [case %#] (#10606)", (baseUrl) => {
+    expect(() =>
+      loadMessagingChannelPolicyPreset("wechat", {
+        agent: "openclaw",
+        sandboxName: "wechat-policy-test",
+        messagingConfig: { WECHAT_BASE_URL: baseUrl },
+      }),
+    ).toThrow(/WeChat baseUrl/);
+  });
+
+  it("fails closed when a configured endpoint loses its reviewed template (#10606)", () => {
+    const policy = createPolicyWithFixtures([{ channelId: "wechat", presetName: "wechat" }], {
+      wechat: "preset:\n  name: wechat\nnetwork_policies:\n  wechat_bridge:\n    endpoints: []\n",
+    });
+
+    expect(() =>
+      policy.loadMessagingChannelPolicyPreset("wechat", {
+        messagingConfig: { WECHAT_BASE_URL: "https://idc-3.weixin.qq.com" },
+      }),
+    ).toThrow("reviewed template 'ilinkai.wechat.com' is missing");
+  });
+
+  it("owns the exact static-to-IDC policy transition without widening its grant (#10606)", () => {
+    const template = {
+      host: "ilinkai.wechat.com",
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+      credential_binding: { provider: "alpha-wechat-bridge" },
+      rules: [
+        { allow: { method: "GET", path: "/**" } },
+        { allow: { method: "POST", path: "/**" } },
+      ],
+    };
+    const live = {
+      name: "wechat_bridge",
+      endpoints: [template],
+      binaries: [{ path: "/usr/local/bin/node" }],
+    };
+    const replacement = {
+      ...live,
+      endpoints: [template, { ...template, host: "idc-3.weixin.qq.com" }],
+    };
+
+    expect(isReviewedMessagingChannelPolicyUpgrade("wechat_bridge", live, replacement)).toBe(true);
+    expect(
+      isReviewedMessagingChannelPolicyUpgrade("wechat_bridge", replacement, {
+        ...replacement,
+        endpoints: [template, { ...template, host: "idc-37.weixin.qq.com" }],
+      }),
+    ).toBe(true);
+    expect(isReviewedMessagingChannelPolicyUpgrade("another_channel", live, replacement)).toBe(
+      false,
+    );
+    expect(
+      isReviewedMessagingChannelPolicyUpgrade("wechat_bridge", live, {
+        ...replacement,
+        endpoints: [template, { ...template, host: "idc-3.weixin.qq.com", port: 80 }],
+      }),
+    ).toBe(false);
+    expect(
+      isReviewedMessagingChannelPolicyUpgrade("wechat_bridge", live, {
+        ...replacement,
+        endpoints: [
+          template,
+          {
+            ...template,
+            host: "idc-3.weixin.qq.com",
+            credential_binding: { provider: "another-provider" },
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      isReviewedMessagingChannelPolicyUpgrade("wechat_bridge", live, {
+        ...replacement,
+        endpoints: [
+          template,
+          { ...template, host: "idc-3.weixin.qq.com" },
+          { ...template, host: "idc-37.weixin.qq.com" },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      isReviewedMessagingChannelPolicyUpgrade(
+        "wechat_bridge",
+        { ...live, endpoints: [template, { ...template, host: "*.weixin.qq.com" }] },
+        {
+          ...replacement,
+          endpoints: [
+            template,
+            { ...template, host: "*.weixin.qq.com" },
+            { ...template, host: "idc-3.weixin.qq.com" },
+          ],
+        },
+      ),
+    ).toBe(false);
   });
 });

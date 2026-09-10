@@ -6,6 +6,8 @@ import { accessSync, constants } from "node:fs";
 
 import { buildSubprocessEnv, isSubprocessEnvNameAllowed } from "../../subprocess-env";
 
+export { buildSubprocessEnv as buildOpenShellCommandBaseEnv };
+
 export interface ResolveOpenshellOptions {
   /** Mock result for `command -v` (undefined = run real command). */
   commandVResult?: string | null;
@@ -15,6 +17,33 @@ export interface ResolveOpenshellOptions {
   home?: string;
   /** Environment used only for an explicitly authority-bound resolution. */
   env?: NodeJS.ProcessEnv;
+}
+
+/** Build the actionable diagnostic used when OpenShell cannot be resolved. */
+export function openshellNotFoundDiagnosticLines(
+  sourceEnv: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const checked: string[] = [];
+  const override = sourceEnv.NEMOCLAW_OPENSHELL_BIN;
+  if (override) checked.push(`NEMOCLAW_OPENSHELL_BIN=${override}`);
+  checked.push(
+    sourceEnv.PATH
+      ? `PATH=${sourceEnv.PATH} (via \`command -v openshell\`)`
+      : "PATH=<unset> (via `command -v openshell`)",
+  );
+  if (sourceEnv.HOME?.startsWith("/")) {
+    checked.push(`${sourceEnv.HOME}/.local/bin/openshell`);
+  }
+  checked.push(
+    "/opt/homebrew/bin/openshell",
+    "/usr/local/bin/openshell",
+    "/usr/bin/openshell",
+  );
+  return [
+    "  openshell binary not found. Checked:",
+    ...checked.map((location) => `    - ${location}`),
+    "  Install OpenShell (https://github.com/NVIDIA/OpenShell) or set NEMOCLAW_OPENSHELL_BIN to an absolute, executable path.",
+  ];
 }
 
 /**

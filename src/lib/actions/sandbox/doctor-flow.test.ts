@@ -51,6 +51,7 @@ function createDoctorHarness(
   getSandboxSpy: MockInstance;
   getNamedGatewayLifecycleStateSpy: MockInstance;
   healthProbeSpy: MockInstance;
+  ollamaInventoryProbeSpy: MockInstance;
   inspectMutableConfigPermsSpy: MockInstance;
   loadAgentSpy: MockInstance;
   probeSandboxInferenceGatewayHealthSpy: MockInstance;
@@ -77,7 +78,7 @@ function createDoctorHarness(
   const gatewayBinding = requireDist("../../onboard/gateway-binding.js");
   const sandboxVerificationExec = requireDist("../../onboard/sandbox-verification-exec.js");
   const sandboxVersion = requireDist("../../sandbox/version.js");
-  const shields = requireDist("../../shields/index.js");
+  const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");
   const registry = requireDist("../../state/registry.js");
   const statusCommandDeps = requireDist("../../status-command-deps.js");
   const tunnelServices = requireDist("../../tunnel/services.js");
@@ -192,6 +193,10 @@ function createDoctorHarness(
     endpoint: "http://127.0.0.1:11434/v1/chat/completions",
     detail: "healthy",
   });
+  const ollamaInventoryProbeSpy = vi.spyOn(health, "probeOllamaHostInventory").mockReturnValue({
+    endpoint: "http://127.0.0.1:11434/api/tags",
+    inventory: ["m"],
+  });
   const probeSandboxInferenceGatewayHealthSpy = vi
     .spyOn(inferenceRouteHealth, "probeSandboxInferenceGatewayHealth")
     .mockResolvedValue({
@@ -211,12 +216,8 @@ function createDoctorHarness(
     expectedVersion: "0.2.0",
     isStale: true,
   });
-  vi.spyOn(shields, "getShieldsPosture").mockReturnValue({
-    mode: "temporarily_unlocked",
-    detail: "temporarily unlocked for maintenance",
-  });
   const inspectMutableConfigPermsSpy = vi
-    .spyOn(shields, "inspectMutableConfigPerms")
+    .spyOn(mutableConfigPerms, "inspectMutableConfigPerms")
     .mockReturnValue({
       applies: true,
       ok: true,
@@ -229,7 +230,7 @@ function createDoctorHarness(
       issues: [],
     });
   const repairMutableConfigPermsSpy = vi
-    .spyOn(shields, "repairMutableConfigPerms")
+    .spyOn(mutableConfigPerms, "repairMutableConfigPerms")
     .mockReturnValue({
       applied: true,
       verified: true,
@@ -274,6 +275,7 @@ function createDoctorHarness(
     getSandboxSpy,
     getNamedGatewayLifecycleStateSpy,
     healthProbeSpy,
+    ollamaInventoryProbeSpy,
     inspectMutableConfigPermsSpy,
     loadAgentSpy,
     probeSandboxInferenceGatewayHealthSpy,
@@ -492,6 +494,7 @@ describe("runSandboxDoctor flow", () => {
         ]),
       );
       expect(exitSpy).not.toHaveBeenCalled();
+      expect(harness.ollamaInventoryProbeSpy).toHaveBeenCalledOnce();
       expect(harness.logSpy).not.toHaveBeenCalled();
     },
   );

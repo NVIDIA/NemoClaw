@@ -3,121 +3,166 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { credentialProviderRegistrationDependencies } from "../../../src/lib/onboard/credential-provider-registration.ts";
+import { rebuildOnboardDependencies } from "../../../src/lib/actions/sandbox/rebuild-onboard-dependencies.ts";
+import { MessagingSetupApplier } from "../../../src/lib/messaging/applier/setup-applier.ts";
+import type { SandboxMessagingPlan } from "../../../src/lib/messaging/manifest/index.ts";
 import {
-  addAndRebuildGooglechatForChannelsStopStartLiveE2e,
   GOOGLECHAT_E2E_ACCESS_TOKEN,
+  addAndRebuildGooglechatForChannelsStopStartLiveE2e,
   installGooglechatCredentialFixture,
   rebuildGooglechatForChannelsStopStartLiveE2e,
 } from "../live/channels-stop-start-helpers.ts";
 
-type FixtureRunner = typeof import("../../../src/lib/adapters/openshell/runtime.ts").runOpenshell;
-type FixtureProviderDependencies = {
-  upsertMessagingProviders(
-    tokenDefs: Parameters<
-      (typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts"))["policyChannelDependencies"]["upsertMessagingProviders"]
-    >[0],
-    run: FixtureRunner,
-    options?: {
-      readonly replaceExisting?: boolean;
-      readonly revalidateSandboxIdentity?: (operation: string) => void;
-    },
-  ): string[];
+type CredentialProviderRegistrationModule =
+  typeof import("../../../src/lib/onboard/credential-provider-registration.ts");
+type OnboardModule = {
+  onboard(options: Parameters<typeof rebuildOnboardDependencies.onboard>[0]): Promise<void>;
 };
+type SetupApplierModule = typeof import("../../../src/lib/messaging/applier/setup-applier.ts");
+type FixtureRunner = typeof import("../../../src/lib/adapters/openshell/runtime.ts").runOpenshell;
 
-type FixtureChannelDependencies = Pick<
-  (typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts"))["policyChannelDependencies"],
-  "runGatewayOpenshell" | "upsertMessagingProviders"
->;
+const commonJsOnboard = require("../../../src/lib/onboard") as OnboardModule;
+const commonJsRegistration =
+  require("../../../src/lib/onboard/credential-provider-registration") as CredentialProviderRegistrationModule;
+const commonJsSetupApplier =
+  require("../../../src/lib/messaging/applier/setup-applier") as SetupApplierModule;
 
 describe("channels stop/start Google Chat live composition", () => {
-  it("intercepts the live policy-channel boundary before gateway refresh minting", () => {
-    const sandboxName = "e2e-oc-ch-cycle";
-    const expectedName = `${sandboxName}-googlechat-bridge`;
-    const calls: string[][] = [];
-    const originalUpsert = vi.fn(() => []);
-    const channelDependencies: FixtureChannelDependencies = {
-      upsertMessagingProviders: originalUpsert,
-      runGatewayOpenshell: vi.fn((_gatewayName, args) => {
-        calls.push(args);
-        return { status: args[1] === "get" ? 1 : 0 } as never;
-      }),
-    };
-    const restore = installGooglechatCredentialFixture(sandboxName, "openclaw", {
-      channelDependencies,
-      ensureProfiles: vi.fn(),
-      providerDependencies: { upsertMessagingProviders: vi.fn(() => []) },
-      root: "/repo",
-    });
-
-    expect(
-      restore.upsertMessagingProviders(
-        [
-          {
-            name: expectedName,
-            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-            token: null,
-            providerType: "google-chat-bridge",
-          },
-        ],
-        "nemoclaw",
-        { bestEffort: true, requireExactBindings: true },
-      ),
-    ).toEqual([expectedName]);
-    expect(originalUpsert).not.toHaveBeenCalled();
-    expect(channelDependencies.upsertMessagingProviders).toBe(originalUpsert);
-    expect(calls).toContainEqual([
-      "provider",
-      "create",
-      "--name",
-      expectedName,
-      "--type",
-      "google-chat-bridge",
-      "--credential",
-      "GOOGLE_CHAT_ACCESS_TOKEN",
-    ]);
-
-    restore();
-    expect(channelDependencies.upsertMessagingProviders).toBe(originalUpsert);
-  });
-
-  it("routes rebuild registration through the process-global live fixture", () => {
-    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
-    const sandboxName = "e2e-oc-ch-cycle";
-    const expectedName = `${sandboxName}-googlechat-bridge`;
-    const runMock = vi.fn((args: string[]) => ({
-      status: args[1] === "get" ? 1 : 0,
-      stdout: "",
-      stderr: "",
-    }));
-    const run = runMock as unknown as FixtureRunner;
-    const restore = installGooglechatCredentialFixture(sandboxName, "openclaw", {
-      ensureProfiles: vi.fn(),
-      root: "/repo",
-      run,
-    });
-    try {
-      expect(
-        credentialProviderRegistrationDependencies.upsertMessagingProviders(
+  it.each([
+    ["openclaw", "e2e-oc-ch-cycle", "google-chat-bridge"],
+    ["hermes", "e2e-hm-ch-cycle", "google-chat-hermes-bridge"],
+  ] as const)(
+    "uses the fixed access token for typed %s channel add and the late-bound rebuild graph (#11186)",
+    async (agent, sandboxName, providerType) => {
+      const providerName = `${sandboxName}-googlechat-bridge`;
+      const privateKey = "fixture-private-key";
+      const plan: SandboxMessagingPlan = {
+        schemaVersion: 1,
+        sandboxName,
+        agent,
+        workflow: "onboard",
+        channels: [],
+        disabledChannels: [],
+        credentialBindings: [],
+        networkPolicy: { presets: [], entries: [] },
+        agentRender: [],
+        buildSteps: [],
+        stateUpdates: [],
+        healthChecks: [],
+      };
+      const applied = {
+        upserted: [],
+        reused: [],
+        missing: [],
+        replacedProviderNames: [],
+        providerNames: [providerName],
+        sandboxCreateProviderArgs: ["--provider", providerName],
+      } as const;
+      const esmApply = vi
+        .spyOn(MessagingSetupApplier, "applyCredentialsAtOpenShell")
+        .mockResolvedValue(applied);
+      const commonJsApply = vi
+        .spyOn(commonJsSetupApplier.MessagingSetupApplier, "applyCredentialsAtOpenShell")
+        .mockResolvedValue(applied);
+      const runOpenshellMock = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+      const runOpenshell = runOpenshellMock as unknown as FixtureRunner;
+      const registration = commonJsRegistration.createCredentialProviderRegistration({
+        root: process.cwd(),
+        runOpenshell,
+        getGatewayName: () => "test-gateway",
+        getCredential: (key) =>
+          key === "GOOGLECHAT_SERVICE_ACCOUNT"
+            ? JSON.stringify({ client_email: "bot@example.test", private_key: privateKey })
+            : null,
+        updateSession: vi.fn() as never,
+        stagedLegacyValues: new Map(),
+        migratedLegacyKeys: new Set(),
+        persistMigratedLegacyKeys: vi.fn(),
+      });
+      const onboard = vi.spyOn(commonJsOnboard, "onboard").mockImplementation(async () => {
+        await registration.applyMessagingProviders(
           [
             {
-              name: expectedName,
+              name: providerName,
               envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-              token: null,
-              providerType: "google-chat-bridge",
+              token: "openshell-managed-pending-mint",
+              providerType,
             },
           ],
-          run,
           {},
-        ),
-      ).toEqual([expectedName]);
-      expect(runMock.mock.calls.some(([args]) => args[1] === "create")).toBe(true);
-      expect(runMock.mock.calls.some(([args]) => args.includes("refresh"))).toBe(false);
-    } finally {
-      restore();
-      vi.unstubAllEnvs();
-    }
-  });
+          runOpenshell,
+          plan,
+        );
+      });
+      const originalServiceAccount = process.env.GOOGLECHAT_SERVICE_ACCOUNT;
+      const restoreServiceAccount =
+        originalServiceAccount === undefined
+          ? () => Reflect.deleteProperty(process.env, "GOOGLECHAT_SERVICE_ACCOUNT")
+          : () => {
+              process.env.GOOGLECHAT_SERVICE_ACCOUNT = originalServiceAccount;
+            };
+      process.env.GOOGLECHAT_SERVICE_ACCOUNT = JSON.stringify({
+        client_email: "bot@example.test",
+        private_key: privateKey,
+      });
+      const fixture = installGooglechatCredentialFixture(sandboxName, agent);
+
+      try {
+        const addProviderNames = await fixture.upsertMessagingProviders(
+          [
+            {
+              name: providerName,
+              envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+              token: "openshell-managed-pending-mint",
+              providerType,
+            },
+          ],
+          "test-gateway",
+          {},
+          {
+            plan,
+            channelName: "googlechat",
+            sandboxAgent: agent,
+            sandboxName,
+            revalidateSandboxIdentity: () => undefined,
+          },
+        );
+        await rebuildOnboardDependencies.onboard({} as never);
+
+        expect(addProviderNames).toEqual([providerName]);
+        expect(onboard).toHaveBeenCalledOnce();
+        expect(esmApply).not.toHaveBeenCalled();
+        expect(commonJsApply).toHaveBeenCalledTimes(2);
+        const expectedApplication = {
+          plan,
+          definitions: [
+            expect.objectContaining({
+              channelId: "googlechat",
+              providerName,
+              providerType,
+              credentials: [
+                { name: "GOOGLE_CHAT_ACCESS_TOKEN", value: GOOGLECHAT_E2E_ACCESS_TOKEN },
+              ],
+            }),
+          ],
+          refreshes: [],
+        };
+        expect(
+          commonJsApply.mock.calls.map(([receivedPlan, options]) => ({
+            plan: receivedPlan,
+            definitions: options.definitions,
+            refreshes: options.refreshes,
+          })),
+        ).toEqual([expectedApplication, expectedApplication]);
+        expect(runOpenshellMock).not.toHaveBeenCalled();
+        expect(JSON.stringify(commonJsApply.mock.calls)).not.toContain(privateKey);
+      } finally {
+        fixture();
+        restoreServiceAccount();
+        vi.restoreAllMocks();
+      }
+    },
+  );
 
   it("grants a process-local audience capability to the exact live sandbox", async () => {
     const addSandboxChannel = vi.fn(async () => {});
@@ -305,204 +350,4 @@ describe("channels stop/start Google Chat live composition", () => {
     expect(events).toEqual(["install", "rebuild", "restore"]);
     expect(restore).toHaveBeenCalledOnce();
   });
-
-  it.each([
-    ["openclaw", "e2e-oc-ch-cycle", "google-chat-bridge"],
-    ["hermes", "e2e-hm-ch-cycle", "google-chat-hermes-bridge"],
-  ] as const)(
-    "creates the real %s provider profile without putting the fixture value in argv",
-    (agent, sandboxName, providerType) => {
-      const delegatedName = `${sandboxName}-slack-bridge`;
-      const delegatedTokenDef = {
-        name: delegatedName,
-        envKey: "SLACK_BOT_TOKEN",
-        token: "e2e-fake-slack-token",
-        providerType: "nemoclaw-mcp-v1",
-      };
-      const originalUpsert = vi.fn(() => [delegatedName]);
-      const providerDependencies: FixtureProviderDependencies = {
-        upsertMessagingProviders: originalUpsert,
-      };
-      const ensureProfiles = vi.fn();
-      const runMock = vi.fn((args: string[], _options?: { env?: NodeJS.ProcessEnv }) => ({
-        status: args[1] === "get" ? 1 : 0,
-      }));
-      const run = runMock as unknown as FixtureRunner;
-      const revalidateSandboxIdentity = vi.fn();
-
-      const restore = installGooglechatCredentialFixture(sandboxName, agent, {
-        ensureProfiles,
-        providerDependencies,
-        root: "/repo",
-        run,
-      });
-      const providerNames = providerDependencies.upsertMessagingProviders(
-        [
-          delegatedTokenDef,
-          {
-            name: `${sandboxName}-googlechat-bridge`,
-            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-            token: null,
-            providerType,
-          },
-        ],
-        run,
-        { revalidateSandboxIdentity },
-      );
-
-      expect(providerNames).toEqual([delegatedName, `${sandboxName}-googlechat-bridge`]);
-      expect(originalUpsert).toHaveBeenCalledWith([delegatedTokenDef], run, {
-        revalidateSandboxIdentity,
-      });
-      expect(ensureProfiles).toHaveBeenCalledOnce();
-      const profileDependencies = ensureProfiles.mock.calls[0]?.[1] as {
-        redact: (value: string) => string;
-        root: string;
-        runOpenshell: FixtureRunner;
-      };
-      expect(profileDependencies.root).toBe("/repo");
-      expect(profileDependencies.runOpenshell).not.toBe(run);
-      expect(profileDependencies.redact(GOOGLECHAT_E2E_ACCESS_TOKEN)).toBe("[redacted]");
-      expect(revalidateSandboxIdentity).toHaveBeenCalledTimes(2);
-
-      const createCall = runMock.mock.calls.find(([args]) => args[1] === "create");
-      expect(createCall?.[0]).toEqual([
-        "provider",
-        "create",
-        "--name",
-        `${sandboxName}-googlechat-bridge`,
-        "--type",
-        providerType,
-        "--credential",
-        "GOOGLE_CHAT_ACCESS_TOKEN",
-      ]);
-      expect(createCall?.[0]).not.toContain(GOOGLECHAT_E2E_ACCESS_TOKEN);
-      expect(createCall?.[1]?.env).toMatchObject({
-        GOOGLE_CHAT_ACCESS_TOKEN: GOOGLECHAT_E2E_ACCESS_TOKEN,
-      });
-
-      restore();
-      expect(providerDependencies.upsertMessagingProviders).toBe(originalUpsert);
-    },
-  );
-
-  it("intercepts both registration and legacy provider boundaries during rebuild", () => {
-    const sandboxName = "e2e-oc-ch-cycle";
-    const expectedName = `${sandboxName}-googlechat-bridge`;
-    const delegatedName = `${sandboxName}-slack-bridge`;
-    const registrationOriginal = vi.fn(() => []);
-    const legacyOriginal = vi.fn(() => [delegatedName]);
-    const providerDependencies: FixtureProviderDependencies = {
-      upsertMessagingProviders: registrationOriginal,
-    };
-    const legacyProviderDependencies: FixtureProviderDependencies = {
-      upsertMessagingProviders: legacyOriginal,
-    };
-    const run = vi.fn((args: string[]) => ({
-      status: args[1] === "get" ? 1 : 0,
-    })) as unknown as FixtureRunner;
-    const restore = installGooglechatCredentialFixture(sandboxName, "openclaw", {
-      ensureProfiles: vi.fn(),
-      providerDependencies,
-      legacyProviderDependencies,
-      root: "/repo",
-      run,
-    });
-
-    expect(providerDependencies.upsertMessagingProviders).toBe(
-      legacyProviderDependencies.upsertMessagingProviders,
-    );
-    expect(
-      providerDependencies.upsertMessagingProviders(
-        [
-          {
-            name: delegatedName,
-            envKey: "SLACK_BOT_TOKEN",
-            token: "e2e-fake-slack-token",
-            providerType: "nemoclaw-mcp-v1",
-          },
-          {
-            name: expectedName,
-            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-            token: null,
-            providerType: "google-chat-bridge",
-          },
-        ],
-        run,
-      ),
-    ).toEqual([delegatedName, expectedName]);
-    expect(registrationOriginal).not.toHaveBeenCalled();
-    expect(legacyOriginal).toHaveBeenCalledOnce();
-
-    restore();
-    expect(providerDependencies.upsertMessagingProviders).toBe(registrationOriginal);
-    expect(legacyProviderDependencies.upsertMessagingProviders).toBe(legacyOriginal);
-  });
-
-  it.each([
-    [
-      {},
-      [
-        ["provider", "get", "e2e-oc-ch-cycle-googlechat-bridge"],
-        [
-          "provider",
-          "update",
-          "e2e-oc-ch-cycle-googlechat-bridge",
-          "--credential",
-          "GOOGLE_CHAT_ACCESS_TOKEN",
-        ],
-      ],
-    ],
-    [
-      { replaceExisting: true },
-      [
-        ["provider", "get", "e2e-oc-ch-cycle-googlechat-bridge"],
-        ["provider", "delete", "e2e-oc-ch-cycle-googlechat-bridge"],
-        [
-          "provider",
-          "create",
-          "--name",
-          "e2e-oc-ch-cycle-googlechat-bridge",
-          "--type",
-          "google-chat-bridge",
-          "--credential",
-          "GOOGLE_CHAT_ACCESS_TOKEN",
-        ],
-      ],
-    ],
-  ] as const)(
-    "reconciles an existing fixture provider with options %o",
-    (options, expectedCalls) => {
-      const providerDependencies: FixtureProviderDependencies = {
-        upsertMessagingProviders: vi.fn(() => []),
-      };
-      const calls: string[][] = [];
-      const run = ((args: string[]) => {
-        calls.push(args);
-        return { status: 0 };
-      }) as unknown as FixtureRunner;
-      const restore = installGooglechatCredentialFixture("e2e-oc-ch-cycle", "openclaw", {
-        ensureProfiles: vi.fn(),
-        providerDependencies,
-        root: "/repo",
-        run,
-      });
-
-      providerDependencies.upsertMessagingProviders(
-        [
-          {
-            name: "e2e-oc-ch-cycle-googlechat-bridge",
-            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-            token: null,
-            providerType: "google-chat-bridge",
-          },
-        ],
-        run,
-        options,
-      );
-
-      expect(calls).toEqual(expectedCalls);
-      restore();
-    },
-  );
 });

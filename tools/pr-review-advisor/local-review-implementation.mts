@@ -139,9 +139,17 @@ function git(cwd: string, args: readonly string[], input?: string): string {
   );
 }
 const gitValue = (cwd: string, args: readonly string[]): string => git(cwd, args).trim();
-function removeSnapshotSymlinks(directory: string): void {
-  for (const entry of fs.readdirSync(directory, { recursive: true, withFileTypes: true }))
-    if (entry.isSymbolicLink()) fs.rmSync(path.join(entry.parentPath, entry.name), { force: true });
+function removeSnapshotSymlinksResolvingOutside(directory: string): void {
+  const root = fs.realpathSync(directory);
+  for (const entry of fs.readdirSync(directory, { recursive: true, withFileTypes: true })) {
+    if (!entry.isSymbolicLink()) continue;
+    const link = path.join(entry.parentPath, entry.name);
+    const target = path.resolve(entry.parentPath, fs.readlinkSync(link));
+    const relative = path.relative(root, target);
+    const resolvesOutside =
+      relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative);
+    if (resolvesOutside) fs.rmSync(link, { force: true });
+  }
 }
 export function createLocalReviewSnapshot(
   source: string,
@@ -152,7 +160,6 @@ export function createLocalReviewSnapshot(
   const initialHead = gitValue(destination, ["rev-parse", "HEAD"]);
   git(destination, ["read-tree", initialHead]);
   git(destination, [...disabledFilters(source), "checkout-index", "--all", "--force"]);
-  removeSnapshotSymlinks(destination);
   const patch = git(source, ["diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD"]);
   if (patch) {
     git(destination, ["apply", "--cached", "--binary", "-"], patch);
@@ -177,7 +184,7 @@ export function createLocalReviewSnapshot(
     "Local review snapshot",
   ]);
   git(destination, ["update-ref", "--no-deref", "HEAD", commit]);
-  removeSnapshotSymlinks(destination);
+  removeSnapshotSymlinksResolvingOutside(destination);
   git(destination, ["cat-file", "-e", baseRef + "^{commit}"]);
   return { baseRef, headRef: commit };
 }

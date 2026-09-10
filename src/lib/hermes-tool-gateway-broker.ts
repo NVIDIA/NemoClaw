@@ -334,14 +334,14 @@ function brokerRuntimeFileHash(file) {
   }
 }
 
-function registerHermesToolGatewayRefreshProvider(sandboxName, refreshToken, runOpenshell) {
+async function registerHermesToolGatewayRefreshProvider(sandboxName, refreshToken, runOpenshell) {
   const normalized = String(refreshToken || "").trim();
   if (!normalized) {
     throw new Error("Hermes tool gateway refresh credential is empty");
   }
   const state = persistHermesToolGatewayProviderState(sandboxName, normalized);
   const providerName = getHermesToolGatewayProviderName(sandboxName);
-  const result = onboardProviders.upsertProvider(
+  const result = await onboardProviders.upsertProvider(
     providerName,
     "generic",
     HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
@@ -493,7 +493,7 @@ function probeHermesToolGatewayBrokerStart(options = {}) {
   try {
     const result = spawnProbe(
       process.execPath,
-      ["--experimental-strip-types", HERMES_TOOL_GATEWAY_SCRIPT],
+      [HERMES_TOOL_GATEWAY_SCRIPT],
       {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
@@ -732,7 +732,7 @@ function spawnHermesToolGatewayBroker(refreshToken, initialSandboxName = null) {
   }
   const child = spawn(
     process.execPath,
-    ["--experimental-strip-types", HERMES_TOOL_GATEWAY_SCRIPT],
+    [HERMES_TOOL_GATEWAY_SCRIPT],
     {
       detached: true,
       stdio: "ignore",

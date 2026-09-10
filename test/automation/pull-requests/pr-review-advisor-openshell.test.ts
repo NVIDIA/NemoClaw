@@ -37,7 +37,6 @@ import {
   runAdvisorSpecialistCommand,
   type AdvisorSpecialistLifecycle,
 } from "../../../tools/pr-review-advisor/specialist-lifecycle.mts";
-import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialists.mts";
 
 const temporaryDirectories: string[] = [];
 
@@ -766,7 +765,6 @@ describe("PR review advisor OpenShell wrapper", () => {
     const read = spawnSync(
       process.execPath,
       [
-        "--experimental-strip-types",
         "--no-warnings",
         "--input-type=module",
         "--eval",
@@ -1111,10 +1109,9 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(createArgs[driverConfigIndex + 1]).not.toContain('"target":"/pr-workdir/');
     expect(createArgs).not.toContain("--upload");
     expect(createArgs).not.toContain("--no-git-ignore");
-    expect(createArgs.slice(-6)).toEqual([
+    expect(createArgs.slice(-5)).toEqual([
       "--",
       "/usr/bin/node",
-      "--experimental-strip-types",
       "--no-warnings",
       "/advisor/tools/pr-review-advisor/openshell.mts",
       "initialize",

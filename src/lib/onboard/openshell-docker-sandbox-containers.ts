@@ -15,6 +15,25 @@ export const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
 export const OPENSHELL_SANDBOX_NAMESPACE_LABEL = "openshell.ai/sandbox-namespace";
 export const OPENSHELL_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
 
+export type OpenShellSandboxOwnershipLabel = {
+  readonly label: string;
+  readonly value: string;
+};
+
+export function resolveOpenShellSandboxOwnershipLabel(
+  _env: NodeJS.ProcessEnv = process.env,
+): OpenShellSandboxOwnershipLabel {
+  return { label: OPENSHELL_MANAGED_BY_LABEL, value: OPENSHELL_MANAGED_BY_VALUE };
+}
+
+export function hasOpenShellSandboxOwnership(
+  labels: Readonly<Record<string, string>>,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const ownership = resolveOpenShellSandboxOwnershipLabel(env);
+  return labels[ownership.label] === ownership.value;
+}
+
 const DOCKER_SANDBOX_QUERY_TIMEOUT_MS = 30_000;
 const STALE_DOCKER_ORPHAN_TIMEOUT_MS = 30_000;
 
@@ -110,6 +129,86 @@ export function queryOpenShellDockerSandboxContainers(
     deps,
     timeoutMs,
   );
+}
+
+/**
+ * Prove that one durable replacement ID is the sole OpenShell-owned Docker
+ * runtime for its immutable sandbox namespace. Resume callers use the stopped
+ * form before a name-scoped OpenShell start and the running form before
+ * acknowledging the recovered handoff.
+ */
+export function isExactOpenShellDockerSandboxReplacement(
+  sandboxName: string,
+  replacementContainerId: string,
+  requireRunning: boolean,
+  deps: DockerSandboxContainerQueryDeps = {},
+  timeoutMs: number = DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+  now: () => Date = () => new Date(),
+): boolean {
+  const expectedContainerId = replacementContainerId.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/u.test(expectedContainerId) || timeoutMs <= 0) return false;
+  const run = deps.dockerRun ?? dockerRun;
+  try {
+    const deadline = now().getTime() + timeoutMs;
+    const namespace = run(
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        `{{ index .Config.Labels "${OPENSHELL_SANDBOX_NAMESPACE_LABEL}" }}`,
+        expectedContainerId,
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, timeoutMs),
+      },
+    );
+    const sandboxNamespace = String(namespace.stdout ?? "").trim();
+    if (
+      Number(namespace.status ?? 1) !== 0 ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u.test(sandboxNamespace)
+    ) {
+      return false;
+    }
+    let remainingMs = deadline - now().getTime();
+    if (remainingMs <= 0) return false;
+    const containers = queryOpenShellDockerSandboxContainers(
+      sandboxName,
+      { dockerRun: run },
+      remainingMs,
+      sandboxNamespace,
+    );
+    if (
+      !containers.ok ||
+      containers.ids.length !== 1 ||
+      containers.ids[0]?.trim().toLowerCase() !== expectedContainerId
+    ) {
+      return false;
+    }
+    if (!requireRunning) return true;
+    remainingMs = deadline - now().getTime();
+    if (remainingMs <= 0) return false;
+    const inspect = run(
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        "{{json .State.Running}}",
+        expectedContainerId,
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, remainingMs),
+      },
+    );
+    return Number(inspect.status ?? 1) === 0 && String(inspect.stdout ?? "").trim() === "true";
+  } catch {
+    return false;
+  }
 }
 
 type StaleDockerOrphanCleanupDeps = {

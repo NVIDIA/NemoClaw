@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import {
@@ -22,8 +23,8 @@ import {
   VERIFY_PHRASE,
 } from "../support/skill-agent-classifiers.ts";
 
-// Keep this as a direct live test: the contract is skill fixture
-// injection into a real OpenClaw sandbox plus an agent turn that must read
+// Keep this as a direct live test: the contract is native skill installation
+// into a real OpenClaw sandbox plus an agent turn that must read it. The helper
 // hands off to this live target.
 
 const ADD_SKILL_SCRIPT = path.join(
@@ -47,7 +48,7 @@ const VERIFY_SKILL_SCRIPT = path.join(
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-skill-agent";
 validateSandboxName(SANDBOX_NAME);
 const SKILL_ID = "skill-smoke-fixture";
-const ONBOARD_TIMEOUT_MS = 20 * 60_000;
+const ONBOARD_TIMEOUT_MS = execTimeout(20 * 60_000);
 const AGENT_VERIFY_TIMEOUT_MS = 4 * 60_000;
 const MAX_ATTEMPTS = Number.parseInt(process.env.E2E_SKILL_AGENT_MAX_ATTEMPTS ?? "3", 10);
 const RETRY_SLEEP_MS =
@@ -62,18 +63,13 @@ function sleep(ms: number): Promise<void> {
 function buildVerifySkillFixtureScript(): string {
   // Keep this readable as discrete clauses while emitting one atomic `sh -lc`
   // expression with consistent error propagation.
-  const skillPaths = [
-    `/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md`,
-    `\${HOME:-/home/sandbox}/.openclaw/skills/${SKILL_ID}/SKILL.md`,
-    `/home/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md`,
-    `/home/openclaw/.openclaw/skills/${SKILL_ID}/SKILL.md`,
-  ];
+  const skillPath = `/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`;
   return [
     `token=${shellQuote(VERIFY_PHRASE)}`,
-    `skill=${shellQuote(SKILL_ID)}`,
-    "found=0",
-    `for path in ${skillPaths.map(shellQuote).join(" ")}; do if [ -f "$path" ] && grep -Fq "$token" "$path"; then echo "SKILL_TOKEN_PATH=$path"; found=1; fi; done`,
-    'test "$found" = 1',
+    `path=${shellQuote(skillPath)}`,
+    'test -f "$path"',
+    'grep -Fq "$token" "$path"',
+    'echo "SKILL_TOKEN_PATH=$path"',
   ].join("; ");
 }
 
@@ -103,20 +99,20 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
 }
 
 test(
-  "skill-agent: injected sandbox skill is read by a real OpenClaw agent turn",
+  "skill-agent: installed sandbox skill is read by a real OpenClaw agent turn",
   {
-    timeout: 30 * 60_000,
+    timeout: testTimeout(30 * 60_000),
     meta: {
       e2ePhases: [
-        "confirm Docker and skill tooling",
+        "confirm the selected runtime and skill tooling",
         "onboard the OpenClaw skill sandbox",
-        "inject and confirm the skill fixture",
+        "install and confirm the skill fixture",
         "ask the agent to consume the skill",
         "record the verified skill behavior",
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",
@@ -129,17 +125,10 @@ test(
       `missing skill verify helper: ${VERIFY_SKILL_SCRIPT}`,
     ).toBe(true);
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-skill-agent",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-info-skill-agent",
+      scenarioLabel: "skill-agent",
     });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for skill-agent E2E: ${resultText(docker)}`);
-      }
-      skip("Docker is required for skill-agent E2E");
-    }
 
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
@@ -148,10 +137,10 @@ test(
       id: "skill-agent",
       boundary: "direct-cli-onboard-sandbox-skill-and-agent-turn",
       contract: [
-        "Docker is available before onboarding",
+        "the selected runtime is available before onboarding",
         "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",
         "nemoclaw onboard creates/recreates a real OpenClaw sandbox",
-        "skill-smoke-fixture is injected into sandbox and home skill roots",
+        "skill-smoke-fixture is installed through OpenClaw's native add command",
         "openclaw agent reads SKILL.md and returns SKILL_SMOKE_VERIFY_K9X2",
         "provider/tool-call transport flakes only skip after the skill fixture is proven present",
       ],
@@ -303,7 +292,7 @@ test(
     expect(onboard.exitCode, onboardText).toBe(0);
     sandboxProvisioned = true;
 
-    progress.phase("inject and confirm the skill fixture");
+    progress.phase("install and confirm the skill fixture");
     const addSkill = await host.command("bash", [ADD_SKILL_SCRIPT], {
       artifactName: "add-sandbox-skill-fixture",
       cwd: REPO_ROOT,
@@ -316,8 +305,9 @@ test(
       timeoutMs: 120_000,
     });
     expect(addSkill.exitCode, resultText(addSkill)).toBe(0);
-    expect(addSkill.stdout).toContain(`QUERY_PATH=/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md`);
-    expect(addSkill.stdout).toContain("HOME_QUERY_PATH=");
+    expect(addSkill.stdout).toContain(
+      `QUERY_PATH=/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`,
+    );
     expect(await verifySkillFixturePresent(sandbox, SANDBOX_NAME)).toBe(true);
 
     let lastAgentOutput = "";
@@ -382,7 +372,7 @@ test(
       id: "skill-agent",
       status: "passed",
       assertions: {
-        dockerRunning: docker.exitCode === 0,
+        runtimeProviderAvailable: true,
         onboardCompleted: onboard.exitCode === 0,
         skillInjected: addSkill.exitCode === 0,
         agentReturnedVerificationToken: agentOk,

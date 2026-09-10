@@ -1,30 +1,43 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getSandboxPolicy: vi.fn(),
+  captureRecordedSandboxBasePolicy: vi.fn(),
+  recordRebuildRecoveryBackup: vi.fn(),
   secureTempFile: vi.fn(),
 }));
 
-vi.mock("./policy-get", () => ({ getSandboxPolicy: mocks.getSandboxPolicy }));
+vi.mock("../../policy", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../policy")>()),
+  captureRecordedSandboxBasePolicy: mocks.captureRecordedSandboxBasePolicy,
+}));
 vi.mock("../../onboard/temp-files", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../onboard/temp-files")>()),
   secureTempFile: mocks.secureTempFile,
 }));
+vi.mock("./rebuild-recreate-journal", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-recreate-journal")>()),
+  recordRebuildRecoveryBackup: mocks.recordRebuildRecoveryBackup,
+}));
 
-import { type RebuildBackupPhaseInput, runRebuildBackupPhase } from "./rebuild-backup-phase";
+import {
+  type RebuildBackupPhaseInput,
+  runRebuildBackupPhase,
+} from "./rebuild-backup-phase";
 
 const temporaryDirectories: string[] = [];
 
 beforeEach(() => {
-  mocks.getSandboxPolicy.mockReset().mockReturnValue({
-    yaml: "version: 1\nnetwork_policies: {}\n",
-  });
+  mocks.captureRecordedSandboxBasePolicy
+    .mockReset()
+    .mockReturnValue("version: 1\nnetwork_policies: {}\n");
+  mocks.recordRebuildRecoveryBackup.mockReset();
   mocks.secureTempFile.mockReset().mockImplementation(() => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-default-"));
     temporaryDirectories.push(directory);
@@ -40,59 +53,152 @@ afterEach(() => {
 });
 
 describe("rebuild policy handoff", () => {
-  it("captures the current OpenShell base policy in a private transaction file", () => {
+  const input = (overrides: Partial<RebuildBackupPhaseInput> = {}): RebuildBackupPhaseInput => ({
+    sandboxName: "alpha",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    sandboxEntry: { name: "alpha" },
+    staleRecovery: false,
+    preparedRecoveryManifest: null,
+    messagingPlan: null,
+    webSearchConfig: null,
+    log: vi.fn(),
+    bail: (message): never => {
+      throw new Error(message);
+    },
+    ...overrides,
+  });
+
+  it("captures the current OpenShell base policy in a private transaction file", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-test-"));
     temporaryDirectories.push(directory);
     const policyPath = path.join(directory, "policy.yaml");
     mocks.secureTempFile.mockReturnValue(policyPath);
-    mocks.getSandboxPolicy.mockReturnValue({
-      yaml: "version: 1\nnetwork_policies:\n  host_changed: {}\n",
-    });
-    const result = runRebuildBackupPhase(
-      {
-        sandboxName: "alpha",
-        sandboxEntry: { name: "alpha" },
-        staleRecovery: false,
-        preparedRecoveryManifest: null,
-        messagingPlan: null,
-        webSearchConfig: null,
-        log: vi.fn(),
-        bail: (message): never => {
-          throw new Error(message);
-        },
-        relockShieldsIfNeeded: vi.fn(() => true),
-      },
-      vi.fn(() => null),
+    mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
+      "version: 1\nnetwork_policies:\n  host_changed: {}\n",
+    );
+    const result = await runRebuildBackupPhase(
+      input(),
+      vi.fn(async () => null),
     );
 
     expect(result?.policySourcePath).toBe(policyPath);
     expect(fs.readFileSync(policyPath, "utf8")).toContain("host_changed");
     expect(fs.statSync(policyPath).mode & 0o777).toBe(0o600);
     expect(result).not.toHaveProperty("policyPresets");
-    expect(mocks.getSandboxPolicy).toHaveBeenCalledWith("alpha", {
-      recordedGatewayOperation: "capture the live policy before sandbox replacement",
-    });
+    expect(mocks.captureRecordedSandboxBasePolicy).toHaveBeenCalledWith(
+      "alpha",
+      "capture the live policy before sandbox replacement",
+      undefined,
+    );
   });
 
-  it("never reconstructs a missing live policy from NemoClaw state", () => {
-    expect(() =>
+  it("rejects a literal credential before creating a rebuild policy handoff", async () => {
+    const credential = "opaque-url-credential";
+    mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
+      [
+        "version: 1",
+        "network_policies:",
+        "  protected_api:",
+        "    endpoints:",
+        `      - host: https://operator:${credential}@api.example`,
+        "",
+      ].join("\n"),
+    );
+    const backup = vi.fn(async () => null);
+
+    await expect(runRebuildBackupPhase(input(), backup)).rejects.toThrow(
+      "Cannot prepare a rebuild policy handoff for sandbox 'alpha' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.",
+    );
+    expect(backup).not.toHaveBeenCalled();
+    expect(mocks.secureTempFile).not.toHaveBeenCalled();
+  });
+
+  it("never reconstructs a missing live policy from NemoClaw state", async () => {
+    await expect(
       runRebuildBackupPhase(
-        {
-          sandboxName: "alpha",
-          sandboxEntry: { name: "alpha" },
-          staleRecovery: true,
-          preparedRecoveryManifest: null,
-          messagingPlan: null,
-          webSearchConfig: null,
-          log: vi.fn(),
-          bail: (message): never => {
-            throw new Error(message);
-          },
-          relockShieldsIfNeeded: vi.fn(() => true),
-        },
-        vi.fn(() => null),
+        input({ staleRecovery: true }),
+        vi.fn(async () => null),
       ),
-    ).toThrow(/will not reconstruct policy from NemoClaw state/);
+    ).rejects.toThrow(/will not reconstruct policy from NemoClaw state/);
+  });
+
+  it("binds an unsafe legacy handoff to a supported recovery transaction", async () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unsafe-recovery-"));
+    temporaryDirectories.push(backupPath);
+    const legacyCredentialPolicy = [
+      "version: 1",
+      "network_policies: {}",
+      "process:",
+      "  environment:",
+      "    SERVICE_API_KEY: opaque-retained-credential",
+      "",
+    ].join("\n");
+    const sha256 = createHash("sha256").update(legacyCredentialPolicy).digest("hex");
+    const file = `rebuild-policy-handoff.${sha256}.yaml`;
+    fs.writeFileSync(path.join(backupPath, file), legacyCredentialPolicy, { mode: 0o600 });
+    const preparedRecoveryManifest = {
+      version: 1,
+      sandboxName: "alpha",
+      timestamp: "2026-09-01T00-00-00-000Z",
+      agentType: "openclaw",
+      agentVersion: null,
+      expectedVersion: null,
+      stateDirs: [],
+      failedBackupDirs: [],
+      stateFiles: [],
+      dir: "/sandbox/.openclaw",
+      backupPath,
+      blueprintDigest: "digest",
+      rebuildPolicyHandoff: { file, sha256 },
+    };
+
+    let refusal: Error | null = null;
+    try {
+      await runRebuildBackupPhase(
+        input({
+          staleRecovery: true,
+          preparedRecoveryManifest,
+        }),
+        vi.fn(async () => null),
+      );
+    } catch (error) {
+      refusal = error as Error;
+    }
+
+    expect(refusal?.message).toContain(
+      "Only then run `nemoclaw alpha destroy --yes` and confirm OpenShell reports the sandbox deleted",
+    );
+    expect(refusal?.message).toContain("Do not use `--force` for this recovery");
+    expect(refusal?.message).not.toContain("destroy --force");
+    expect(refusal?.message).toContain(
+      "If deletion is unconfirmed, preserve the recovery state and restore gateway access",
+    );
+    expect(refusal?.message).toContain(
+      "Create a fresh sandbox under a new name by replacing `<new-sandbox>` in `nemoclaw onboard --name <new-sandbox>`",
+    );
+    expect(refusal?.message).toContain("Do not retry rebuild with the unsafe handoff");
+    expect(refusal?.message).toContain("`nemoclaw alpha rebuild --retire-recovery ");
+    expect(refusal?.message).not.toContain("<transaction-id>");
+    expect(refusal?.message).toContain(
+      `This removes the credential-bearing policy handoff at '${path.join(
+        backupPath,
+        preparedRecoveryManifest.rebuildPolicyHandoff!.file,
+      )}'`,
+    );
+    expect(
+      fs.existsSync(path.join(backupPath, preparedRecoveryManifest.rebuildPolicyHandoff!.file)),
+    ).toBe(true);
+    expect(mocks.recordRebuildRecoveryBackup).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      agentName: "openclaw",
+      transactionId: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+      ),
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      backupManifest: preparedRecoveryManifest,
+    });
   });
 });
 
@@ -108,6 +214,8 @@ describe("rebuild backup safety", () => {
   function customOpenClawInput(overrides: Record<string, unknown> = {}): RebuildBackupPhaseInput {
     return {
       sandboxName: "custom-openclaw",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
       sandboxEntry: {
         name: "custom-openclaw",
         agent: "openclaw",
@@ -121,29 +229,27 @@ describe("rebuild backup safety", () => {
       bail: (message): never => {
         throw new Error(message);
       },
-      relockShieldsIfNeeded: vi.fn(() => true),
       ...overrides,
     } as RebuildBackupPhaseInput;
   }
 
-  it("blocks a live custom image with missing plugin provenance before backup", () => {
+  it("blocks a live custom image with missing plugin provenance before backup", async () => {
     const backup = vi.fn();
     const input = customOpenClawInput();
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(() => runRebuildBackupPhase(input, backup)).toThrow(
+    await expect(runRebuildBackupPhase(input, backup)).rejects.toThrow(
       "Custom-image OpenClaw plugin provenance is unavailable.",
     );
     expect(backup).not.toHaveBeenCalled();
-    expect(input.relockShieldsIfNeeded).toHaveBeenCalledWith(true);
   });
 
-  it("uses a marked prepared manifest while still capturing live OpenShell policy", () => {
+  it("uses a marked prepared manifest while still capturing live OpenShell policy", async () => {
     const backup = vi.fn();
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-recovery-"));
     temporaryDirectories.push(backupPath);
     const preparedManifest = { ...completeMarkedManifest, backupPath } as never;
-    const result = runRebuildBackupPhase(
+    const result = await runRebuildBackupPhase(
       customOpenClawInput({ preparedRecoveryManifest: preparedManifest }),
       backup,
     );
@@ -153,7 +259,7 @@ describe("rebuild backup safety", () => {
     expect(backup).not.toHaveBeenCalled();
   });
 
-  it("blocks an unmarked legacy prepared manifest before replacement", () => {
+  it("blocks an unmarked legacy prepared manifest before replacement", async () => {
     const backup = vi.fn();
     const input = customOpenClawInput({
       preparedRecoveryManifest: {
@@ -165,14 +271,14 @@ describe("rebuild backup safety", () => {
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(() => runRebuildBackupPhase(input, backup)).toThrow(
+    await expect(runRebuildBackupPhase(input, backup)).rejects.toThrow(
       "Custom-image OpenClaw plugin provenance is unavailable.",
     );
     expect(backup).not.toHaveBeenCalled();
   });
 
-  it("revalidates a newly generated backup manifest before replacement", () => {
-    const backup = vi.fn(() => ({
+  it("revalidates a newly generated backup manifest before replacement", async () => {
+    const backup = vi.fn(async () => ({
       agentType: "openclaw",
       dir: "/sandbox/.openclaw",
       backupPath: "/tmp/incomplete-custom-openclaw-backup",
@@ -188,10 +294,9 @@ describe("rebuild backup safety", () => {
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(() => runRebuildBackupPhase(input, backup as never)).toThrow(
+    await expect(runRebuildBackupPhase(input, backup as never)).rejects.toThrow(
       "Custom-image OpenClaw plugin provenance is unavailable.",
     );
     expect(backup).toHaveBeenCalledOnce();
   });
-
 });
