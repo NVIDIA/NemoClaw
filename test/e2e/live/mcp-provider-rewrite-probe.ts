@@ -32,7 +32,7 @@ const expectation = process.argv[4];
 const credentialKey = process.argv[5] || "FAKE_MCP_SECRET";
 const authorization = buildMcpProviderRewriteAuthorization(credentialKey, process.env[credentialKey]);
 if (authorization === null) {
-  console.error("OpenShell did not project the expected generation-scoped MCP credential placeholder");
+  console.error("OpenShell did not project the expected endpoint-bound MCP credential placeholder");
   process.exit(2);
 }
 const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method });

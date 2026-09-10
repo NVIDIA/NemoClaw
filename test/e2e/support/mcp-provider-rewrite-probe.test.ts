@@ -18,15 +18,18 @@ describe("managed MCP provider rewrite probe", () => {
     "openshell:resolve:env:v0_FAKE_MCP_SECRET",
     "openshell:resolve:env:v1_FAKE_MCP_SECRET",
     "openshell:resolve:env:v14429878272859325890_FAKE_MCP_SECRET",
-    `openshell:resolve:env:s${stableCredentialId}_FAKE_MCP_SECRET`,
-  ])(
-    "uses only an exact generation-scoped OpenShell placeholder value [case %#]",
-    (runtimeValue) => {
-      expect(buildMcpProviderRewriteAuthorization("FAKE_MCP_SECRET", runtimeValue)).toBe(
-        `Bearer ${runtimeValue}`,
-      );
-    },
-  );
+  ])("accepts an exact ordinary-static OpenShell credential revision [case %#]", (runtimeValue) => {
+    expect(buildMcpProviderRewriteAuthorization("FAKE_MCP_SECRET", runtimeValue)).toBe(
+      `Bearer ${runtimeValue}`,
+    );
+  });
+
+  it("accepts an exact refresh-managed OpenShell stable credential handle", () => {
+    const runtimeValue = `openshell:resolve:env:s${stableCredentialId}_FAKE_MCP_SECRET`;
+    expect(buildMcpProviderRewriteAuthorization("FAKE_MCP_SECRET", runtimeValue)).toBe(
+      `Bearer ${runtimeValue}`,
+    );
+  });
 
   it.each([
     undefined,
@@ -56,8 +59,14 @@ describe("managed MCP provider rewrite probe", () => {
     "Bearer openshell:resolve:env:v0_FAKE_MCP_SECRET",
     "Bearer openshell:resolve:env:v1_FAKE_MCP_SECRET",
     "Bearer openshell:resolve:env:v14429878272859325890_FAKE_MCP_SECRET",
-    `Bearer openshell:resolve:env:s${stableCredentialId}_FAKE_MCP_SECRET`,
-  ])("accepts only generation-scoped Deep Agents authorization [case %#]", (value) => {
+  ])("accepts an ordinary-static Deep Agents credential revision [case %#]", (value) => {
+    expect(value).toMatch(
+      new RegExp(buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET"), "u"),
+    );
+  });
+
+  it("accepts a refresh-managed Deep Agents stable credential handle", () => {
+    const value = `Bearer openshell:resolve:env:s${stableCredentialId}_FAKE_MCP_SECRET`;
     expect(value).toMatch(
       new RegExp(buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET"), "u"),
     );

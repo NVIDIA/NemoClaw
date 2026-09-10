@@ -213,9 +213,9 @@ export async function waitForAttachedMcpCredential(
       // The startup command can expose the identityless canonical placeholder
       // before the process supervisor receives the attached provider snapshot.
       // Endpoint-bound credentials become usable only when a fresh exec sees
-      // the credential handle issued by that snapshot. Legacy revision handles
-      // must advance after an update; OpenShell 0.0.116 stable handles remain
-      // unchanged while the provider identity and endpoint authorization do.
+      // the credential placeholder issued by that snapshot. Ordinary static
+      // `v` revisions must advance after an update; refresh-managed `s` handles
+      // remain stable while the provider identity and endpoint authorization do.
       const attached =
         observation !== null &&
         observation !== "absent" &&
