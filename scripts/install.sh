@@ -2219,6 +2219,71 @@ maybe_install_openshell_during_install() {
   install_nemoclaw_openshell_gateway_user_service
 }
 
+is_installer_managed_cli_shim() {
+  local shim_path="${1:-}" cli_bin="${2:-}"
+  local line path_line node_dir path_dir
+  local path_prefix path_middle path_suffix exec_prefix exec_suffix
+  local -a lines=()
+
+  [[ -n "$shim_path" && -n "$cli_bin" && -f "$shim_path" && ! -L "$shim_path" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    lines[${#lines[@]}]="$line"
+    [[ "${#lines[@]}" -le 3 ]] || return 1
+  done <"$shim_path" || return 1
+  [[ "${#lines[@]}" -eq 3 && "${lines[0]}" == "#!/usr/bin/env bash" ]] || return 1
+
+  path_line="${lines[1]}"
+  path_prefix='export PATH="'
+  # shellcheck disable=SC2016 # Match the literal $PATH emitted by the managed shim.
+  path_suffix=':$PATH"'
+  if [[ "$path_line" == "$path_prefix"*"$path_suffix" ]]; then
+    path_dir="${path_line#"$path_prefix"}"
+    path_dir="${path_dir%"$path_suffix"}"
+    [[ -n "$path_dir" ]] || return 1
+  else
+    # shellcheck disable=SC2016 # Match the literal command substitution emitted by the shim.
+    path_prefix='[[ "$(command -v node 2>/dev/null)" == "'
+    path_middle='/node" ]] || export PATH="'
+    [[ "$path_line" == "$path_prefix"*"$path_middle"*"$path_suffix" ]] || return 1
+    node_dir="${path_line#"$path_prefix"}"
+    node_dir="${node_dir%%"$path_middle"*}"
+    path_dir="${path_line#*"$path_middle"}"
+    path_dir="${path_dir%"$path_suffix"}"
+    [[ -n "$node_dir" && "$node_dir" == "$path_dir" ]] || return 1
+  fi
+
+  exec_prefix='exec "'
+  exec_suffix="/${cli_bin}\" \"\$@\""
+  [[ "${lines[2]}" == "$exec_prefix"*"$exec_suffix" ]]
+}
+
+is_npm_managed_nemoclaw_acp_link() {
+  local shim_path="${1:-}" link_target
+  [[ -n "$shim_path" && -L "$shim_path" ]] || return 1
+  link_target="$(readlink "$shim_path")" || return 1
+  [[ "$link_target" == "../lib/node_modules/nemoclaw/dist/lib/acp/main.js" ]]
+}
+
+assert_nemoclaw_acp_shim_replaceable() {
+  local cli_bin="${1:-}" cli_path="${2:-}" shim_path
+  [[ "$cli_bin" == "nemoclaw-acp" ]] || return 0
+  shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
+
+  [[ -e "$shim_path" || -L "$shim_path" ]] || return 0
+  [[ "$cli_path" == "$shim_path" ]] && return 0
+  is_installer_managed_cli_shim "$shim_path" "$cli_bin" && return 0
+
+  error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
+}
+
+preflight_nemoclaw_acp_shim() {
+  local shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw-acp"
+  [[ -e "$shim_path" || -L "$shim_path" ]] || return 0
+  is_installer_managed_cli_shim "$shim_path" "nemoclaw-acp" && return 0
+  is_npm_managed_nemoclaw_acp_link "$shim_path" && return 0
+  error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
+}
+
 ensure_cli_shim() {
   local cli_bin="${1:-$_CLI_BIN}"
   local npm_bin shim_path node_path node_dir cli_path expected_shim
@@ -2240,11 +2305,13 @@ ensure_cli_shim() {
   fi
   node_dir="$(dirname "$node_path")"
 
+  assert_nemoclaw_acp_shim_replaceable "$cli_bin" "$cli_path"
+
   # If npm placed the binary at the same path as the shim target (e.g. when
   # npm_config_prefix=$HOME/.local), writing a shim would overwrite the real
   # binary with a script that exec's itself — an infinite loop.  In that case
   # the binary is already where it needs to be; skip shim creation.
-  if [[ "$cli_path" -ef "$shim_path" ]]; then
+  if [[ "$cli_path" == "$shim_path" ]]; then
     refresh_path
     ensure_local_bin_in_profile
     return 0
@@ -2275,6 +2342,7 @@ EOF
 
 ensure_nemoclaw_shim() {
   local cli_bin status=0
+  preflight_nemoclaw_acp_shim
   ensure_cli_shim "$_CLI_BIN" || status=$?
   for cli_bin in nemoclaw nemoclaw-acp nemohermes nemo-deepagents; do
     [[ "$cli_bin" == "$_CLI_BIN" ]] && continue
@@ -6372,6 +6440,7 @@ install_nemoclaw_before_onboarding() {
   # `nemoclaw onboard` (the install-ollama / install-vllm branches).
   # install.sh stays focused on dependency setup.
   fix_npm_permissions
+  preflight_nemoclaw_acp_shim
   preinstall_backup_and_retire_legacy_gateway
   install_nemoclaw
   verify_nemoclaw

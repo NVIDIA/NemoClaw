@@ -176,7 +176,8 @@ describe("CLI Hermes ACP SSH transport", () => {
     expect(probe.at(-1)).toContain('m.version("hermes-agent")');
     expect(probe.at(-1)).toContain('m.version("agent-client-protocol")');
     expect(session.at(-1)).toBe("/usr/local/bin/hermes-acp");
-    expect(session).not.toContain("sh");
+    expect(session.slice(0, -1)).not.toContain("sh");
+    expect(session.slice(0, -1)).not.toContain("/bin/sh");
   });
 
   it("forwards duplex bytes with backpressure and keeps stderr out of ACP output", async () => {
@@ -319,6 +320,29 @@ describe("CLI Hermes ACP SSH transport", () => {
 
     expect(result).toMatchObject({ kind: "failed", error: { kind: "cancelled" } });
     expect(session.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(fixture.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("returns the SIGTERM exit code when AbortSignal cancels the compatibility probe", async () => {
+    const probe = fakeChild();
+    const fixture = harness([probe]);
+    const controller = new AbortController();
+    const io = streams();
+    const pending = fixture.transport.run({
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      signal: controller.signal,
+      streams: io.value,
+    });
+    await vi.waitFor(() => expect(fixture.spawnSsh).toHaveBeenCalledOnce());
+    controller.abort();
+
+    await expect(pending).resolves.toMatchObject({
+      kind: "failed",
+      error: { kind: "cancelled" },
+      exitCode: 143,
+    });
+    expect(probe.kill).toHaveBeenCalledWith("SIGTERM");
     expect(fixture.cleanup).toHaveBeenCalledOnce();
   });
 
