@@ -177,6 +177,8 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null),
       vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw"),
       vi.spyOn(onboardSession, "loadSession").mockImplementation(loadSession),
+      vi.spyOn(onboardSession, "loadRebuildSession").mockImplementation(loadSession),
+      vi.spyOn(onboardSession, "selectRebuildSession").mockImplementation(() => undefined),
       vi.spyOn(onboardSession, "updateSession").mockImplementation(updateSession),
       vi.spyOn(onboardSession, "compareAndSwapSession").mockImplementation((matches, mutator) => {
         const current = cloneSession(session);

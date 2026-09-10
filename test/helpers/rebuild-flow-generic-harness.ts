@@ -395,6 +395,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       hermesCredentialKeys = [String(args[2] ?? "OPENAI_API_KEY")];
     });
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
+  vi.spyOn(onboardSession, "loadRebuildSession").mockReturnValue(session);
+  vi.spyOn(onboardSession, "selectRebuildSession").mockImplementation(() => undefined);
   vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
     overrides.updateSession?.();
     if (typeof mutator !== "function") {
