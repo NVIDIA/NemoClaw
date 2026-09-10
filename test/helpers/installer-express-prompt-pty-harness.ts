@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -19,8 +19,12 @@ export type InstallerExpressPtyFixture =
     };
 
 const DEFAULT_INSTALLER_EXPRESS_PTY_HARNESS_MODE = "installer";
+const PYTHON =
+  spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], {
+    encoding: "utf-8",
+  }).stdout.trim() || "python3";
 
-export function runExpressPromptWithTty(
+export async function runExpressPromptWithTty(
   answer: string,
   stdinMode: "pipe" | "tty",
   platform = "DGX Spark",
@@ -29,10 +33,6 @@ export function runExpressPromptWithTty(
   entrypointArgs: string[] = [],
   harnessFixture?: InstallerExpressPtyFixture,
 ) {
-  const python =
-    spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], {
-      encoding: "utf-8",
-    }).stdout.trim() || "python3";
   const ptyRunner = `
 import errno
 import os
@@ -268,33 +268,50 @@ sys.exit(exit_code)
     harnessFixture?.mode ?? DEFAULT_INSTALLER_EXPRESS_PTY_HARNESS_MODE;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
   try {
-    const result = spawnSync(
-      python,
-      [
-        "-c",
-        ptyRunner,
-        INSTALLER_PAYLOAD,
-        answer,
-        stdinMode,
-        platform,
-        entrypoint,
-        harnessMode,
-        String(harnessFixture?.timeoutSeconds ?? 10),
-        harnessFixture?.mode === "post-exit-tail" ? harnessFixture.pidFile : "",
-        ...entrypointArgs,
-      ],
-      {
-        cwd: tmp,
-        encoding: "utf-8",
-        timeout: 15_000,
-        killSignal: "SIGKILL",
-        env: {
-          HOME: tmp,
-          PATH: TEST_SYSTEM_PATH,
-          ...extraEnv,
+    const result = await new Promise<{
+      error: Error | undefined;
+      status: number | null;
+      stderr: string;
+      stdout: string;
+    }>((resolve) => {
+      const child = execFile(
+        PYTHON,
+        [
+          "-c",
+          ptyRunner,
+          INSTALLER_PAYLOAD,
+          answer,
+          stdinMode,
+          platform,
+          entrypoint,
+          harnessMode,
+          String(harnessFixture?.timeoutSeconds ?? 10),
+          harnessFixture?.mode === "post-exit-tail" ? harnessFixture.pidFile : "",
+          ...entrypointArgs,
+        ],
+        {
+          cwd: tmp,
+          encoding: "utf-8",
+          timeout: 15_000,
+          killSignal: "SIGKILL",
+          env: {
+            HOME: tmp,
+            PATH: TEST_SYSTEM_PATH,
+            ...extraEnv,
+          },
         },
-      },
-    );
+        (error, stdout, stderr) => {
+          const exitCode = error?.code;
+          resolve({
+            error: error && typeof exitCode !== "number" ? error : undefined,
+            status: error ? (typeof exitCode === "number" ? exitCode : child.exitCode) : 0,
+            stderr,
+            stdout,
+          });
+        },
+      );
+      child.stdin?.end();
+    });
     return Object.assign(result, { temporaryDirectory: tmp });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

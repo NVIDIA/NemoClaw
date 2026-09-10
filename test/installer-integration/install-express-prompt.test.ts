@@ -5,24 +5,26 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runInstallerSourced } from "../helpers/installer-express-prompt-harness";
+import {
+  detectExpressPlatform,
+  detectExpressPlatformForProductName,
+  detectExpressPlatformForStockDgxRelease,
+  noOtaDgxOs76Release,
+  noOtaFactoryRelease,
+  runInstallerCommand as runCommand,
+  stockDgxRelease,
+} from "../helpers/installer-express-platform-fixture";
 import { runExpressPromptWithTty } from "../helpers/installer-express-prompt-pty-harness";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
-describe("installer express install prompt (sourced)", () => {
-  const firmwareStates = [
-    [/(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu, "station-gb300"],
-    [/DGX[\s_-]+Spark/iu, "spark"],
-    [/(?:^|[^A-Za-z0-9])P3830(?:$|[^A-Za-z0-9])|DGX[\s_-]+Station/iu, "station-other"],
-    [/Jetson|Tegra|Thor|Orin|Xavier/iu, "jetson"],
-  ] as const;
-  function firmwareStateForProduct(productName: string): string {
-    return firmwareStates.find(([pattern]) => pattern.test(productName))?.[1] ?? "not-station";
-  }
+// Direct shell cases own separate HOME directories; keep their overlap bounded on CI.
+vi.setConfig({ maxConcurrency: 3 });
 
-  it("carries a declined N1x preview through preflight into ordinary onboarding (#11041)", () => {
-    const result = runExpressPromptWithTty("n\n", "pipe", "N1x", {}, "n1x-standard-main");
+describe.concurrent("installer express install prompt (sourced)", () => {
+  it("carries a declined N1x preview through preflight into ordinary onboarding (#11041)", async () => {
+    const result = await runExpressPromptWithTty("n\n", "pipe", "N1x", {}, "n1x-standard-main");
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.error, output).toBeUndefined();
@@ -33,10 +35,10 @@ describe("installer express install prompt (sourced)", () => {
     expect(output.match(/ONBOARD NO_EXPRESS=1 PROVIDER= ARGS=onboard/g)).toHaveLength(1);
   });
 
-  it("drains PTY output after the child exits", () => {
+  it("drains PTY output after the child exits", async () => {
     const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pty-tail-"));
     try {
-      const result = runExpressPromptWithTty("", "tty", "DGX Spark", {}, "prompt", [], {
+      const result = await runExpressPromptWithTty("", "tty", "DGX Spark", {}, "prompt", [], {
         mode: "post-exit-tail",
         pidFile: path.join(fixtureDir, "child.pid"),
       });
@@ -51,8 +53,8 @@ describe("installer express install prompt (sourced)", () => {
     }
   });
 
-  it("reaps the PTY child after the harness timeout", () => {
-    const result = runExpressPromptWithTty("", "tty", "DGX Spark", {}, "prompt", [], {
+  it("reaps the PTY child after the harness timeout", async () => {
+    const result = await runExpressPromptWithTty("", "tty", "DGX Spark", {}, "prompt", [], {
       mode: "timeout",
       timeoutSeconds: 1,
     });
@@ -64,134 +66,15 @@ describe("installer express install prompt (sourced)", () => {
     expect(output).toContain("PTY_CHILD_REAPED");
   });
 
-  function detectExpressPlatform(
-    productName: string,
-    releasePath: string,
-    extraEnv: Record<string, string> = {},
-  ) {
-    return spawnSync(
+  it.concurrent("parses and documents the metadata-only Station override", async () => {
+    const result = await runCommand(
       "bash",
-      [
-        "-c",
-        `
-source "$INSTALLER_UNDER_TEST" >/dev/null
-classify_dgx_station_release() {
-  if [[ -z "$EXPRESS_DGX_RELEASE_PATH" ]]; then
-    printf "generic-ubuntu"
-    return
-  fi
-  bash -c '
-    source "$STATION_PREPARE" >/dev/null
-    dgx_station_release_file_is_safe() { return 0; }
-    dgx_station_release_state "$EXPRESS_DGX_RELEASE_PATH"
-  '
-}
-classify_dgx_station_hardware() { printf "%s" "$EXPRESS_FIRMWARE_STATE"; }
-function [ {
-  if [[ "$#" -eq 3 && "$1" = "-r" && "$2" = "/sys/class/dmi/id/product_name" && "$3" = "]" ]]; then
-    return 0
-  fi
-  builtin [ "$@"
-}
-cat() {
-  if [[ "$#" -eq 1 && "$1" = "/sys/class/dmi/id/product_name" ]]; then
-    printf "%s" "$EXPRESS_PRODUCT_NAME"
-    return
-  fi
-  command cat "$@"
-}
-is_wsl_host() { return 1; }
-detect_express_platform
-`,
-      ],
+      [INSTALLER_PAYLOAD, "--force-station-install", "--help"],
       {
         cwd: path.join(import.meta.dirname, "../.."),
         encoding: "utf-8",
-        env: {
-          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-detect-")),
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-          STATION_PREPARE: path.join(
-            path.resolve(import.meta.dirname, "../.."),
-            "scripts",
-            "prepare-dgx-station-host.sh",
-          ),
-          EXPRESS_PRODUCT_NAME: productName,
-          EXPRESS_FIRMWARE_STATE: firmwareStateForProduct(productName),
-          EXPRESS_DGX_RELEASE_PATH: releasePath,
-          ...extraEnv,
-        },
       },
     );
-  }
-
-  function detectExpressPlatformForProductName(productName: string) {
-    return detectExpressPlatform(productName, "");
-  }
-
-  function detectExpressPlatformForStockDgxRelease(productName: string, dgxRelease: string) {
-    const releasePath = path.join(
-      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dgx-release-")),
-      "dgx-release",
-    );
-    fs.writeFileSync(releasePath, dgxRelease);
-    return detectExpressPlatform(productName, releasePath);
-  }
-
-  function stockDgxRelease(
-    version: string,
-    platform = "DGX Server for GALAXY-GB300",
-    otaPrettyName: string | null = "DGX OS",
-  ) {
-    return [
-      'DGX_NAME="DGX Server"',
-      'DGX_PRETTY_NAME="NVIDIA DGX Server"',
-      ...(otaPrettyName === null ? [] : [`DGX_OTA_PRETTY_NAME="${otaPrettyName}"`]),
-      `DGX_OTA_VERSION="${version}"`,
-      'DGX_OTA_DATE="Mon Jul 13 21:29:13 UTC 2026"',
-      `DGX_PLATFORM="${platform}"`,
-      'DGX_SERIAL_NUMBER="Unknown"',
-      "",
-    ].join("\n");
-  }
-
-  function noOtaFactoryRelease(profile: "colossus-baseos" | "ai-developer-tools") {
-    const identity =
-      profile === "colossus-baseos"
-        ? {
-            pretty: "NVIDIA DGX Server",
-            version: "7.5.0-GB300ws-GB200ws",
-            buildDate: "2026-04-02-08-20-16",
-          }
-        : {
-            pretty: "NVIDIA DGX GB300WS",
-            version: "7.5.0",
-            buildDate: "2026-06-16-11-48-10",
-          };
-    return [
-      'DGX_NAME="DGX Server"',
-      `DGX_PRETTY_NAME="${identity.pretty}"`,
-      `DGX_SWBUILD_DATE="${identity.buildDate}"`,
-      `DGX_SWBUILD_VERSION="${identity.version}"`,
-      'DGX_PLATFORM="DGX Server for GALAXY-GB300"',
-      'DGX_SERIAL_NUMBER="host-specific-value"',
-      "",
-    ].join("\n");
-  }
-
-  function noOtaDgxOs76Release(version = "7.6.0", pretty = "NVIDIA DGX GB300WS") {
-    return `DGX_NAME="DGX GB300WS"\nDGX_PRETTY_NAME="${pretty}"
-DGX_SWBUILD_DATE="2026-07-14-13-59-06"
-DGX_SWBUILD_VERSION="${version}"
-DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
-`;
-  }
-
-  it("parses and documents the metadata-only Station override", () => {
-    const result = spawnSync("bash", [INSTALLER_PAYLOAD, "--force-station-install", "--help"], {
-      cwd: path.join(import.meta.dirname, "../.."),
-      encoding: "utf-8",
-    });
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).toBe(0);
@@ -200,8 +83,8 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     );
   });
 
-  it("offers express install when curl-piped stdin still has a controlling TTY", () => {
-    const result = runExpressPromptWithTty("\ny\n", "pipe");
+  it("offers express install when curl-piped stdin still has a controlling TTY", async () => {
+    const result = await runExpressPromptWithTty("\ny\n", "pipe");
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected DGX Spark/);
@@ -222,8 +105,8 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(/STATION_EXPRESS=\s/);
   });
 
-  it("offers the fixed catalog-backed vLLM profile as the second Spark Express option", () => {
-    const result = runExpressPromptWithTty("2\ny\n", "pipe");
+  it("offers the fixed catalog-backed vLLM profile as the second Spark Express option", async () => {
+    const result = await runExpressPromptWithTty("2\ny\n", "pipe");
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Choose 1 or 2 \[1\]/);
@@ -241,8 +124,8 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     );
   });
 
-  it("rejects preset serve arguments before activating the fixed Spark Express profile", () => {
-    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", {
+  it("rejects preset serve arguments before activating the fixed Spark Express profile", async () => {
+    const result = await runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", {
       NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-model-len","4096"]',
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -255,8 +138,8 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).not.toContain("PROFILE_GATE=1");
   });
 
-  it("accepts a preset host port for the fixed Spark Express profile", () => {
-    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", {
+  it("accepts a preset host port for the fixed Spark Express profile", async () => {
+    const result = await runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", {
       NEMOCLAW_VLLM_PORT: "18000",
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -265,8 +148,8 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toContain("PROFILE_GATE=1 PROFILE_RUNTIME=vllm SPARK_SELECTION=fixed-vllm");
   });
 
-  it("preserves a preset Spark vLLM model in the prompt and exported env", () => {
-    const result = runExpressPromptWithTty("y\n", "pipe", "DGX Spark", {
+  it("preserves a preset Spark vLLM model in the prompt and exported env", async () => {
+    const result = await runExpressPromptWithTty("y\n", "pipe", "DGX Spark", {
       NEMOCLAW_VLLM_MODEL: "custom-qwen3.6",
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -283,8 +166,8 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(/PROFILE_GATE= PROFILE_RUNTIME=/);
   });
 
-  it("keeps an explicit generic model on the customizable Spark Express path", () => {
-    const result = runExpressPromptWithTty("y\n", "pipe", "DGX Spark", {
+  it("keeps an explicit generic model on the customizable Spark Express path", async () => {
+    const result = await runExpressPromptWithTty("y\n", "pipe", "DGX Spark", {
       NEMOCLAW_MODEL: "catalog/model",
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -298,8 +181,8 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     );
   });
 
-  it("preserves an explicit NEMOCLAW_SANDBOX_NAME over the DGX Spark default (#6525)", () => {
-    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", {
+  it("preserves an explicit NEMOCLAW_SANDBOX_NAME over the DGX Spark default (#6525)", async () => {
+    const result = await runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", {
       NEMOCLAW_SANDBOX_NAME: "custom-spark",
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -311,8 +194,8 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     );
   });
 
-  it("keeps the Station Ultra default while deferring topology selection", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station");
+  it("keeps the Station Ultra default while deferring topology selection", async () => {
+    const result = await runExpressPromptWithTty("\n", "pipe", "DGX Station");
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected DGX Station/);
@@ -343,8 +226,8 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(/STATION_EXPRESS=1/);
   });
 
-  it("keeps Station preparation details in the log while showing warnings and errors", () => {
-    const { result, output } = runInstallerSourced(`
+  it("keeps Station preparation details in the log while showing warnings and errors", async () => {
+    const { result, output } = await runInstallerSourced(`
 printf '%s\n' \
   '[station-prepare] 2026-07-17T07:59:07Z version=2026-07-17.4 mode=--apply log=/tmp/station-prepare.log' \
   '[station-prepare] 2026-07-17T07:59:07Z platform=Dell Pro Max with Station GB300 profile=generic-ubuntu' \
@@ -361,8 +244,8 @@ printf '%s\n' \
     expect(output).not.toMatch(/platform=Dell Pro Max|NVIDIA-SMI/);
   });
 
-  it("preserves the Station helper exit status while filtering installer output", () => {
-    const { result, output } = runInstallerSourced(`
+  it("preserves the Station helper exit status while filtering installer output", async () => {
+    const { result, output } = await runInstallerSourced(`
 bash() {
   printf '%s\n' \
     '[station-prepare] 2026-07-17T07:59:07Z version=2026-07-17.4 mode=--apply log=/tmp/station-prepare.log' \
@@ -382,7 +265,7 @@ fi
     expect(output).not.toContain("runtime_setup=complete");
   });
 
-  it.each([
+  it.concurrent.each([
     [
       "supported-colossus-baseos",
       "Qualified BaseOS setup preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages",
@@ -391,8 +274,8 @@ fi
       "supported-ai-developer-tools",
       "Factory Ubuntu with NVIDIA AI Developer Tools reuses its driver and container stack",
     ],
-  ])("describes the %s Station mutation boundary before consent", (release, expected) => {
-    const result = spawnSync(
+  ])("describes the %s Station mutation boundary before consent", async (release, expected) => {
+    const result = await runCommand(
       "bash",
       [
         "--noprofile",
@@ -420,8 +303,8 @@ describe_express_install 'DGX Station'`,
     expect(output).not.toContain("installs missing pinned driver");
   });
 
-  it("normalizes the canonical Ultra served alias to the registered model slug", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+  it("normalizes the canonical Ultra served alias to the registered model slug", async () => {
+    const result = await runExpressPromptWithTty("\n", "pipe", "DGX Station", {
       NEMOCLAW_VLLM_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -431,8 +314,8 @@ describe_express_install 'DGX Station'`,
     );
   });
 
-  it("uses DeepSeek V4 Flash for the Station demo override with one confirmation", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+  it("uses DeepSeek V4 Flash for the Station demo override with one confirmation", async () => {
+    const result = await runExpressPromptWithTty("\n", "pipe", "DGX Station", {
       STATION_DEEPSEEK: "1",
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -451,7 +334,7 @@ describe_express_install 'DGX Station'`,
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
     const token = `hf_${"s".repeat(32)}`;
-    const authenticated = runInstallerSourced(
+    const authenticated = await runInstallerSourced(
       `HF_TOKEN="${token}"\ndescribe_express_install "DGX Station"`,
     );
     expect(authenticated.result.status, authenticated.output).toBe(0);
@@ -460,11 +343,11 @@ describe_express_install 'DGX Station'`,
     expect(authenticated.output).not.toContain(token);
   });
 
-  it("pre-stages complete Station Express intent and ports before a Docker-group relogin (#7203)", () => {
+  it.concurrent("pre-stages complete Station Express intent and ports before a Docker-group relogin (#7203)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-relogin-"));
     const revision = "a".repeat(40);
     const generation = "0123456789abcdef0123456789abcdef";
-    const result = spawnSync(
+    const result = await runCommand(
       "bash",
       [
         "--noprofile",
@@ -518,8 +401,8 @@ ensure_station_express_host`,
     );
   });
 
-  it("preserves Express intent and prints the exact resume command when the user keeps Express", () => {
-    const { home, result, output } = runInstallerSourced(`
+  it("preserves Express intent and prints the exact resume command when the user keeps Express", async () => {
+    const { home, result, output } = await runInstallerSourced(`
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 load_station_vllm_conflict_helpers
 NON_INTERACTIVE=1
@@ -555,8 +438,8 @@ ensure_station_express_host
     expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(true);
   });
 
-  it("reads a bounded running-model identity from the existing vLLM health endpoint", () => {
-    const { home, result, output } = runInstallerSourced(`
+  it("reads a bounded running-model identity from the existing vLLM health endpoint", async () => {
+    const { home, result, output } = await runInstallerSourced(`
 load_station_vllm_conflict_helpers
 NEMOCLAW_VLLM_PORT=18000
 curl() {
@@ -574,8 +457,8 @@ printf 'MODEL=%s\n' "$(station_existing_vllm_model)"
     );
   });
 
-  it("does not display an unsafe model identity returned by the existing endpoint", () => {
-    const { result, output } = runInstallerSourced(`
+  it("does not display an unsafe model identity returned by the existing endpoint", async () => {
+    const { result, output } = await runInstallerSourced(`
 load_station_vllm_conflict_helpers
 curl() { printf '{"data":[{"id":"unsafe model\\ntext"}]}'; }
 if station_existing_vllm_model; then
@@ -591,8 +474,8 @@ fi
     expect(output).not.toContain("unsafe model");
   });
 
-  it("uses the Express-preserving default when the user submits an empty choice", () => {
-    const { home, result, output } = runInstallerSourced(`
+  it("uses the Express-preserving default when the user submits an empty choice", async () => {
+    const { home, result, output } = await runInstallerSourced(`
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 load_station_vllm_conflict_helpers
 NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
@@ -613,8 +496,8 @@ ensure_station_express_host
     expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(true);
   });
 
-  it("rejects an invalid conflict choice before accepting advanced manual setup", () => {
-    const { result, output } = runInstallerSourced(`
+  it("rejects an invalid conflict choice before accepting advanced manual setup", async () => {
+    const { result, output } = await runInstallerSourced(`
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 load_station_vllm_conflict_helpers
 NON_INTERACTIVE=1
@@ -643,8 +526,8 @@ ensure_station_express_host
     expect(output).toContain("Continuing with advanced manual Local vLLM setup");
   });
 
-  it("uses the Express-preserving default without a TTY", () => {
-    const { home, result, output } = runInstallerSourced(`
+  it("uses the Express-preserving default without a TTY", async () => {
+    const { home, result, output } = await runInstallerSourced(`
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 load_station_vllm_conflict_helpers
 FORCE_STATION_INSTALL=1
@@ -666,8 +549,8 @@ ensure_station_express_host
     expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(true);
   });
 
-  it("does not invoke Station host preparation when the accepted receipt cannot be staged (#7203)", () => {
-    const { result, output } = runInstallerSourced(`
+  it("does not invoke Station host preparation when the accepted receipt cannot be staged (#7203)", async () => {
+    const { result, output } = await runInstallerSourced(`
 mkdir "$HOME/receipt-target"
 ln -s "$HOME/receipt-target" "$HOME/.nemoclaw"
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
@@ -684,8 +567,8 @@ ensure_station_express_host
     expect(output).not.toContain("HOST_PREPARATION_INVOKED");
   });
 
-  it("rejects numerically equivalent Station Express ports before host preparation (#7203)", () => {
-    const { result, output } = runInstallerSourced(`
+  it("rejects numerically equivalent Station Express ports before host preparation (#7203)", async () => {
+    const { result, output } = await runInstallerSourced(`
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 NEMOCLAW_VLLM_MODEL='deepseek-v4-flash'
 NEMOCLAW_GATEWAY_PORT='18081'
@@ -703,7 +586,7 @@ ensure_station_express_host
     expect(output).not.toContain("HOST_PREPARATION_INVOKED");
   });
 
-  it("restores custom Station Express ports from the accepted receipt without another prompt (#7203)", () => {
+  it.concurrent("restores custom Station Express ports from the accepted receipt without another prompt (#7203)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-port-resume-"));
     const revision = "a".repeat(40);
     const generation = "0123456789abcdef0123456789abcdef";
@@ -718,7 +601,7 @@ ensure_station_express_host
         "gateway_port=18081\ndashboard_port=18790\nvllm_port=18000\n",
       { mode: 0o600 },
     );
-    const result = spawnSync(
+    const result = await runCommand(
       "bash",
       [
         "--noprofile",
@@ -752,7 +635,7 @@ printf 'PORTS gateway=%s dashboard=%s vllm=%s\n' "$NEMOCLAW_GATEWAY_PORT" "$NEMO
     expect(output).not.toContain("Run express install with these settings?");
     expect(output).toContain("PORTS gateway=18081 dashboard=18790 vllm=18000");
 
-    const mismatched = spawnSync(
+    const mismatched = await runCommand(
       "bash",
       [
         "--noprofile",
@@ -785,8 +668,8 @@ maybe_offer_express_install`,
     expect(mismatchedOutput).not.toContain("Run express install with these settings?");
   });
 
-  it("allows a matching explicit DeepSeek model with the Station demo override", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+  it("allows a matching explicit DeepSeek model with the Station demo override", async () => {
+    const result = await runExpressPromptWithTty("\n", "pipe", "DGX Station", {
       STATION_DEEPSEEK: "1",
       NEMOCLAW_VLLM_MODEL: "deepseek-ai/DeepSeek-V4-Flash",
     });
@@ -796,8 +679,8 @@ maybe_offer_express_install`,
     expect(output).toMatch(/MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash/);
   });
 
-  it("rejects a conflicting explicit model with the Station demo override", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+  it("rejects a conflicting explicit model with the Station demo override", async () => {
+    const result = await runExpressPromptWithTty("\n", "pipe", "DGX Station", {
       STATION_DEEPSEEK: "1",
       NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
     });
@@ -809,8 +692,8 @@ maybe_offer_express_install`,
     expect(output).not.toMatch(/Run express install/);
   });
 
-  it("rejects the Station demo override on non-Station platforms", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Spark", {
+  it("rejects the Station demo override on non-Station platforms", async () => {
+    const result = await runExpressPromptWithTty("\n", "pipe", "DGX Spark", {
       STATION_DEEPSEEK: "1",
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -821,7 +704,7 @@ maybe_offer_express_install`,
     expect(output).not.toMatch(/Run express install/);
   });
 
-  it.each([
+  it.concurrent.each([
     {
       name: "a forced Station install on DGX Spark",
       args: ["--force-station-install"],
@@ -884,10 +767,10 @@ maybe_offer_express_install`,
     },
   ])(
     "rejects $name before Docker or build-dependency mutation",
-    ({ args, platform, env, message }) => {
+    async ({ args, platform, env, message }) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-flag-preflight-"));
       const mutationLog = path.join(tmp, "host-mutations.log");
-      const result = spawnSync(
+      const result = await runCommand(
         "bash",
         [
           "--noprofile",
@@ -944,8 +827,8 @@ main "$@"
     },
   ])(
     "reaches and accepts the DeepSeek express prompt through main with $name (#7008)",
-    ({ extraEnv, entrypointArgs }) => {
-      const result = runExpressPromptWithTty(
+    async ({ extraEnv, entrypointArgs }) => {
+      const result = await runExpressPromptWithTty(
         "\n",
         "pipe",
         "DGX Station",
@@ -987,8 +870,8 @@ main "$@"
     },
   ])(
     "validates and stops the forced Station flow through main with $name",
-    ({ extraEnv, entrypointArgs }) => {
-      const result = runExpressPromptWithTty(
+    async ({ extraEnv, entrypointArgs }) => {
+      const result = await runExpressPromptWithTty(
         "\n",
         "pipe",
         "DGX Station",
@@ -1010,7 +893,7 @@ main "$@"
     },
   );
 
-  it("errors instead of silently skipping --station-deepseek when no interactive terminal is available (#7014)", () => {
+  it.concurrent("errors instead of silently skipping --station-deepseek when no interactive terminal is available (#7014)", async () => {
     // Python's start_new_session runs main without a controlling terminal, and
     // stdin is /dev/null — so neither `-t 0` nor /dev/tty is available. This is
     // deterministic on both Linux and macOS regardless of the test runner TTY.
@@ -1030,7 +913,7 @@ ensure_docker() { printf "ensure_docker\\n" >>"$MUTATION_LOG"; }
 ensure_openshell_build_deps() { printf "ensure_openshell_build_deps\\n" >>"$MUTATION_LOG"; }
 main "$@"
 `;
-      const result = spawnSync(
+      const result = await runCommand(
         python,
         [
           "-c",
@@ -1080,8 +963,8 @@ sys.exit(result.returncode)
     }
   });
 
-  it("fails closed if the Station DeepSeek prompt becomes unreadable after preflight (#7014)", () => {
-    const result = runExpressPromptWithTty("", "tty", "DGX Station", {
+  it("fails closed if the Station DeepSeek prompt becomes unreadable after preflight (#7014)", async () => {
+    const result = await runExpressPromptWithTty("", "tty", "DGX Station", {
       FORCE_EXPRESS_PROMPT_READ_FAILURE: "1",
       STATION_DEEPSEEK: "1",
     });
@@ -1093,8 +976,8 @@ sys.exit(result.returncode)
     expect(output).not.toMatch(/RESULT NON_INTERACTIVE=/);
   });
 
-  it("fails closed if the forced Station prompt becomes unreadable after preflight (#7138)", () => {
-    const result = runExpressPromptWithTty("", "tty", "DGX Station", {
+  it("fails closed if the forced Station prompt becomes unreadable after preflight (#7138)", async () => {
+    const result = await runExpressPromptWithTty("", "tty", "DGX Station", {
       EXPRESS_RELEASE_STATE: "unsupported-dgx-os",
       FORCE_EXPRESS_PROMPT_READ_FAILURE: "1",
       FORCE_STATION_INSTALL: "1",
@@ -1107,11 +990,11 @@ sys.exit(result.returncode)
     expect(output).not.toMatch(/RESULT NON_INTERACTIVE=/);
   });
 
-  it.each([
+  it.concurrent.each([
     ["Unsupported DGX Station OS", { NEMOCLAW_NO_EXPRESS: "1" }],
     ["Unsupported DGX Station generation", { NEMOCLAW_PROVIDER: "openai" }],
-  ])("allows an explicit non-express path on %s", (platform, overrides) => {
-    const result = spawnSync(
+  ])("allows an explicit non-express path on %s", async (platform, overrides) => {
+    const result = await runCommand(
       "bash",
       [
         "--noprofile",
@@ -1149,8 +1032,8 @@ printf 'NON_EXPRESS_ALLOWED\n'
     ["NEMOCLAW_PROVIDER", "install-vllm", /conflicts with NEMOCLAW_PROVIDER=install-vllm/],
   ])(
     "rejects %s when the Station demo override would otherwise be ignored",
-    (name, value, message) => {
-      const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+    async (name, value, message) => {
+      const result = await runExpressPromptWithTty("\n", "pipe", "DGX Station", {
         STATION_DEEPSEEK: "1",
         [name]: value,
       });
@@ -1161,8 +1044,8 @@ printf 'NON_EXPRESS_ALLOWED\n'
     },
   );
 
-  it("describes and preserves an explicit DGX Station model override", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+  it("describes and preserves an explicit DGX Station model override", async () => {
+    const result = await runExpressPromptWithTty("\n", "pipe", "DGX Station", {
       NEMOCLAW_VLLM_MODEL: "custom-station-model",
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -1175,8 +1058,8 @@ printf 'NON_EXPRESS_ALLOWED\n'
     );
   });
 
-  it("treats a whitespace-only DGX Station model override as unset", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+  it("treats a whitespace-only DGX Station model override as unset", async () => {
+    const result = await runExpressPromptWithTty("\n", "pipe", "DGX Station", {
       NEMOCLAW_VLLM_MODEL: "  \t ",
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -1188,8 +1071,8 @@ printf 'NON_EXPRESS_ALLOWED\n'
     );
   });
 
-  it("detects Windows WSL as an express install platform", () => {
-    const result = spawnSync(
+  it.concurrent("detects Windows WSL as an express install platform", async () => {
+    const result = await runCommand(
       "bash",
       [
         "-c",
@@ -1214,18 +1097,19 @@ detect_express_platform
     expect(result.stdout).toBe("Windows WSL");
   });
 
-  it.each(["Dell Pro Max with Station GB300", "NVIDIA DGX Station GB300", "DGX_Station_GB300"])(
-    "recognizes supported Station GB300 firmware as DGX Station: %s",
-    (productName) => {
-      const result = detectExpressPlatformForProductName(productName);
+  it.concurrent.each([
+    "Dell Pro Max with Station GB300",
+    "NVIDIA DGX Station GB300",
+    "DGX_Station_GB300",
+  ])("recognizes supported Station GB300 firmware as DGX Station: %s", async (productName) => {
+    const result = await detectExpressPlatformForProductName(productName);
 
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(result.stdout).toBe("DGX Station");
-    },
-  );
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  });
 
-  it("rejects conflicting NVIDIA firmware identities before platform selection (#10928)", () => {
-    const result = detectExpressPlatform("NVIDIA DGX Spark", "", {
+  it.concurrent("rejects conflicting NVIDIA firmware identities before platform selection (#10928)", async () => {
+    const result = await detectExpressPlatform("NVIDIA DGX Spark", "", {
       EXPRESS_FIRMWARE_STATE: "conflicting",
     });
 
@@ -1233,31 +1117,37 @@ detect_express_platform
     expect(result.stdout).toBe("Conflicting NVIDIA firmware identity");
   });
 
-  it.each([
+  it.concurrent.each([
     "Acme XP3830 Workstation",
     "Dell Pro Max with Station GB200",
     "Dell Pro Max with GB300",
-  ])("rejects partial and unsupported Station product identifiers [case %#]", (productName) => {
-    const result = detectExpressPlatformForProductName(productName);
+  ])(
+    "rejects partial and unsupported Station product identifiers [case %#]",
+    async (productName) => {
+      const result = await detectExpressPlatformForProductName(productName);
 
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect(result.stdout).not.toBe("DGX Station");
-  });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).not.toBe("DGX Station");
+    },
+  );
 
-  it.each(["7.2.0", "7.4.0", "7.5.0"])("recognizes stock DGX OS %s on Station GB300", (version) => {
-    const result = detectExpressPlatformForStockDgxRelease(
-      "DGX Station GB300",
-      stockDgxRelease(version),
-    );
+  it.concurrent.each(["7.2.0", "7.4.0", "7.5.0"])(
+    "recognizes stock DGX OS %s on Station GB300",
+    async (version) => {
+      const result = await detectExpressPlatformForStockDgxRelease(
+        "DGX Station GB300",
+        stockDgxRelease(version),
+      );
 
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect(result.stdout).toBe("DGX Station");
-  });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).toBe("DGX Station");
+    },
+  );
 
-  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server", "NVIDIA DGX GB300 Workstation"])(
+  it.concurrent.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server", "NVIDIA DGX GB300 Workstation"])(
     "recognizes the no-OTA DGX OS 7.6 family without binding the %s display name (#9898, #10928)",
-    (pretty) => {
-      const result = detectExpressPlatformForStockDgxRelease(
+    async (pretty) => {
+      const result = await detectExpressPlatformForStockDgxRelease(
         "DGX Station GB300",
         noOtaDgxOs76Release("7.6.0", pretty),
       );
@@ -1267,10 +1157,10 @@ detect_express_platform
     },
   );
 
-  it.each(["colossus-baseos", "ai-developer-tools"] as const)(
+  it.concurrent.each(["colossus-baseos", "ai-developer-tools"] as const)(
     "recognizes the exact no-OTA %s Station profile",
-    (profile) => {
-      const result = detectExpressPlatformForStockDgxRelease(
+    async (profile) => {
+      const result = await detectExpressPlatformForStockDgxRelease(
         "DGX Station GB300",
         noOtaFactoryRelease(profile),
       );
@@ -1280,29 +1170,29 @@ detect_express_platform
     },
   );
 
-  it("classifies the exact GB300WS 7.5.0 build 2026-05-13-18-42-38 as Station Express (#7979)", () => {
+  it.concurrent("classifies the exact GB300WS 7.5.0 build 2026-05-13-18-42-38 as Station Express (#7979)", async () => {
     const release = noOtaFactoryRelease("ai-developer-tools").replace(
       "2026-06-16-11-48-10",
       "2026-05-13-18-42-38",
     );
-    const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", release);
+    const result = await detectExpressPlatformForStockDgxRelease("DGX Station GB300", release);
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toBe("DGX Station");
   });
 
-  it("recognizes the exact Colossus BaseOS profile with the GB300WS display name (#10906)", () => {
+  it.concurrent("recognizes the exact Colossus BaseOS profile with the GB300WS display name (#10906)", async () => {
     const release = noOtaFactoryRelease("colossus-baseos").replace(
       "NVIDIA DGX Server",
       "NVIDIA DGX GB300WS",
     );
-    const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", release);
+    const result = await detectExpressPlatformForStockDgxRelease("DGX Station GB300", release);
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toBe("DGX Station");
   }, 15_000);
 
-  it("keeps trusted unrecognized release metadata outside automatic Station Express (#10928)", () => {
+  it.concurrent("keeps trusted unrecognized release metadata outside automatic Station Express (#10928)", async () => {
     const releasePath = path.join(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dgx-release-force-")),
       "dgx-release",
@@ -1319,31 +1209,34 @@ detect_express_platform
       ].join("\n"),
     );
 
-    const detected = detectExpressPlatform("DGX Station GB300", releasePath);
+    const detected = await detectExpressPlatform("DGX Station GB300", releasePath);
 
     expect(detected.status, `${detected.stdout}${detected.stderr}`).toBe(0);
     expect(detected.stdout).toBe("Unsupported DGX Station OS");
   });
 
-  it("does not let the metadata override impersonate Station GB300 hardware", () => {
-    const result = detectExpressPlatform("DGX Spark", "", { FORCE_STATION_INSTALL: "1" });
+  it.concurrent("does not let the metadata override impersonate Station GB300 hardware", async () => {
+    const result = await detectExpressPlatform("DGX Spark", "", { FORCE_STATION_INSTALL: "1" });
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toBe("DGX Spark");
   });
 
-  it.each([
+  it.concurrent.each([
     ["out-of-scope OTA version", stockDgxRelease("7.6.0")],
     ["future OTA version", stockDgxRelease("7.7.0")],
     ["unreviewed no-OTA version", noOtaDgxOs76Release("7.7.0")],
-  ])("keeps a Station with %s outside automatic Express handling (#10928)", (_scenario, marker) => {
-    const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", marker);
+  ])(
+    "keeps a Station with %s outside automatic Express handling (#10928)",
+    async (_scenario, marker) => {
+      const result = await detectExpressPlatformForStockDgxRelease("DGX Station GB300", marker);
 
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect(result.stdout).toBe("Unsupported DGX Station OS");
-  });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).toBe("Unsupported DGX Station OS");
+    },
+  );
 
-  it.each([
+  it.concurrent.each([
     ["wrong DGX platform", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB200")],
     ["BaseOS identity", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", "NVIDIA BaseOS")],
     [
@@ -1351,14 +1244,14 @@ detect_express_platform
       `${stockDgxRelease("7.5.0")}DGX_PLATFORM="DGX Server for GALAXY-GB300"\n`,
     ],
     ["shell payload", `${stockDgxRelease("7.5.0")}PAYLOAD="$(touch /tmp/nope)"\n`],
-  ])("rejects a stock DGX OS marker with %s", (_scenario, marker) => {
-    const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", marker);
+  ])("rejects a stock DGX OS marker with %s", async (_scenario, marker) => {
+    const result = await detectExpressPlatformForStockDgxRelease("DGX Station GB300", marker);
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toBe("Unsupported DGX Station OS");
   });
 
-  it.each([
+  it.concurrent.each([
     ["P3830", "Unsupported DGX Station generation"],
     ["NVIDIA P3830 Rev A", "Unsupported DGX Station generation"],
     ["Acme XP3830 Workstation", ""],
@@ -1368,27 +1261,27 @@ detect_express_platform
     ["Dell Pro Max with GB300", ""],
   ])(
     "rejects partial or unsupported Station product identifier: %s (#7103)",
-    (productName, expected) => {
-      const result = detectExpressPlatformForProductName(productName);
+    async (productName, expected) => {
+      const result = await detectExpressPlatformForProductName(productName);
 
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(result.stdout).toBe(expected);
     },
   );
 
-  it("classifies older DGX Station generations as unsupported", () => {
-    const result = detectExpressPlatformForProductName("NVIDIA DGX Station A100");
+  it.concurrent("classifies older DGX Station generations as unsupported", async () => {
+    const result = await detectExpressPlatformForProductName("NVIDIA DGX Station A100");
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toBe("Unsupported DGX Station generation");
   });
 
-  it.each([
+  it.concurrent.each([
     "Unsupported DGX Station OS",
     "Unsupported DGX Station generation",
     "Conflicting NVIDIA firmware identity",
-  ])("rejects %s before the express prompt", (platform) => {
-    const result = spawnSync(
+  ])("rejects %s before the express prompt", async (platform) => {
+    const result = await runCommand(
       "bash",
       [
         "--noprofile",
@@ -1419,8 +1312,8 @@ printf 'PROMPT_REACHED\n'
     expect(output).not.toContain("PROMPT_REACHED");
   });
 
-  it("explains the supported boundary for an unrecognized DGX OS before Station preparation", () => {
-    const result = spawnSync(
+  it.concurrent("explains the supported boundary for an unrecognized DGX OS before Station preparation", async () => {
+    const result = await runCommand(
       "bash",
       [
         "--noprofile",
@@ -1455,9 +1348,9 @@ printf 'PROMPT_REACHED\n'
 
   it.skipIf(process.platform === "darwin")(
     "skips express install without a controlling TTY",
-    () => {
+    async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-no-tty-"));
-      const result = spawnSync(
+      const result = await runCommand(
         "setsid",
         [
           "bash",

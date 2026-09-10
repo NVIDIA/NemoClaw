@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseStationDiscoveryHost } from "../../scripts/lib/dgx-station-peer.mts";
 import {
   STATION_DISCOVERY_PROBE,
@@ -14,10 +13,13 @@ import {
 import { strictVllmSshTransportArgs } from "../../src/lib/inference/serving/vllm-ssh-transport-policy.ts";
 import { sshBinding } from "../helpers/dgx-station-peer-fixture";
 import { runInstallerSourced } from "../helpers/installer-express-prompt-harness";
+import { runInstallerCommand } from "../helpers/installer-express-platform-fixture";
 
-describe("Station classifier process boundaries", () => {
-  it("documents validation-only Station mode in public bootstrap help", () => {
-    const result = spawnSync(
+vi.setConfig({ maxConcurrency: 3 });
+
+describe.concurrent("Station classifier process boundaries", () => {
+  it("documents validation-only Station mode in public bootstrap help", async () => {
+    const result = await runInstallerCommand(
       "bash",
       [path.resolve(import.meta.dirname, "../../install.sh"), "--help"],
       {
@@ -36,8 +38,8 @@ describe("Station classifier process boundaries", () => {
     ["maybe_offer_express_install", "STATION_DEEPSEEK"],
     ["maybe_offer_express_install", "NEMOCLAW_VLLM_MODEL"],
     ["maybe_offer_express_install", "NEMOCLAW_MODEL"],
-  ])("%s rejects %s in validation-only mode", (entrypoint, override) => {
-    const { home, result, output } = runInstallerSourced(
+  ])("%s rejects %s in validation-only mode", async (entrypoint, override) => {
+    const { home, result, output } = await runInstallerSourced(
       `
 classify_dgx_station_hardware() { printf station-gb300; }
 classify_dgx_station_release() { printf unsupported-dgx-os; }
@@ -80,14 +82,14 @@ printf continued
     ["preflight_explicit_express_flags", "--classify-dgx-release"],
     ["maybe_offer_express_install", "--classify-station-hardware"],
     ["maybe_offer_express_install", "--classify-dgx-release"],
-  ])("stops %s when the %s helper fails", (entrypoint, failingMode) => {
+  ])("stops %s when the %s helper fails", async (entrypoint, failingMode) => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-classifier-failure-"));
     try {
       fs.writeFileSync(
         path.join(fixture, "prepare-dgx-station-host.sh"),
         '#!/bin/bash\nif [ "$1" = "$FAILING_MODE" ]; then exit 42; fi\nprintf station-gb300\n',
       );
-      const { home, result, output } = runInstallerSourced(
+      const { home, result, output } = await runInstallerSourced(
         `
 SCRIPT_DIR="$HELPER_DIR"
 is_wsl_host() { return 1; }
@@ -113,7 +115,7 @@ touch "$HELPER_DIR/continued"
     ["station-gb300", "DGX Station"],
     ["conflicting", "Conflicting NVIDIA firmware identity"],
     ["not-station", ""],
-  ])("routes the helper's %s result to %s", (hardware, platform) => {
+  ])("routes the helper's %s result to %s", async (hardware, platform) => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-classifier-result-"));
     try {
       fs.writeFileSync(
@@ -127,7 +129,7 @@ case "$1" in
 esac
 `,
       );
-      const { home, result, output } = runInstallerSourced(
+      const { home, result, output } = await runInstallerSourced(
         `
 SCRIPT_DIR="$HELPER_DIR"
 is_wsl_host() { return 1; }
@@ -153,8 +155,8 @@ detect_express_platform
     }
   });
 
-  it("produces a discovery payload accepted by the pair consumer", () => {
-    const result = spawnSync("python3", ["-"], {
+  it("produces a discovery payload accepted by the pair consumer", async () => {
+    const result = await runInstallerCommand("python3", ["-"], {
       input: STATION_DISCOVERY_PROBE,
       encoding: "utf8",
       timeout: 20_000,

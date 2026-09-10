@@ -1,14 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runInstallerSourced } from "../helpers/installer-express-prompt-harness";
 import { runExpressPromptWithTty } from "../helpers/installer-express-prompt-pty-harness";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
-describe("installer N1x Express preview", () => {
-  it("offers one single-host managed-vLLM path (#8574)", () => {
-    const result = runExpressPromptWithTty("y\n", "pipe", "N1x");
+vi.setConfig({ maxConcurrency: 3 });
+
+describe.concurrent("installer N1x Express preview", () => {
+  it("offers one single-host managed-vLLM path (#8574)", async () => {
+    const result = await runExpressPromptWithTty("y\n", "pipe", "N1x");
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).toBe(0);
@@ -30,9 +32,9 @@ describe("installer N1x Express preview", () => {
     );
   });
 
-  it("continues with ordinary onboarding when the Deferred preview is declined (#11041)", () => {
+  it("continues with ordinary onboarding when the Deferred preview is declined (#11041)", async () => {
     // Model curl | bash: stdin is the script pipe, while the reply reaches the controlling /dev/tty.
-    const result = runExpressPromptWithTty("n\n", "pipe", "N1x");
+    const result = await runExpressPromptWithTty("n\n", "pipe", "N1x");
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).toBe(0);
@@ -43,8 +45,8 @@ describe("installer N1x Express preview", () => {
   it.each([
     ["NEMOCLAW_NO_EXPRESS", { NEMOCLAW_NO_EXPRESS: "1" }, ""],
     ["an explicit provider", { NEMOCLAW_PROVIDER: "ollama" }, "ollama"],
-  ])("continues with ordinary onboarding for %s (#11041)", (_scenario, env, provider) => {
-    const result = runExpressPromptWithTty("", "pipe", "N1x", env);
+  ])("continues with ordinary onboarding for %s (#11041)", async (_scenario, env, provider) => {
+    const result = await runExpressPromptWithTty("", "pipe", "N1x", env);
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).toBe(0);
@@ -53,8 +55,8 @@ describe("installer N1x Express preview", () => {
     expect(output).toContain(`PROVIDER=${provider} `);
   });
 
-  it("allows the N1x prompt bypass with explicit managed-vLLM intent (#8574)", () => {
-    const result = runExpressPromptWithTty("", "pipe", "N1x", {
+  it("allows the N1x prompt bypass with explicit managed-vLLM intent (#8574)", async () => {
+    const result = await runExpressPromptWithTty("", "pipe", "N1x", {
       NEMOCLAW_NO_EXPRESS: "1",
       NEMOCLAW_PROVIDER: "install-vllm",
     });
@@ -65,7 +67,7 @@ describe("installer N1x Express preview", () => {
     expect(output).toMatch(/RESULT .*PROVIDER=install-vllm/);
   });
 
-  it("detects N1x only when FastOS and PCI identity both qualify (#8574)", () => {
+  it("detects N1x only when FastOS and PCI identity both qualify (#8574)", async () => {
     const detectN1x = (fastOsQualified: boolean, pciQualified: boolean) =>
       runInstallerSourced(`
 function [ {
@@ -88,9 +90,9 @@ n1x_has_pci_gpu() { return ${pciQualified ? "0" : "1"}; }
 detect_express_platform
 `);
 
-    expect(detectN1x(true, true).result.stdout).toBe("N1x");
-    expect(detectN1x(true, false).result.stdout).toBe("");
-    expect(detectN1x(false, true).result.stdout).toBe("");
+    expect((await detectN1x(true, true)).result.stdout).toBe("N1x");
+    expect((await detectN1x(true, false)).result.stdout).toBe("");
+    expect((await detectN1x(false, true)).result.stdout).toBe("");
   });
 
   it.each([
@@ -122,8 +124,8 @@ detect_express_platform
     ["linked marker", 'NAME="DGX SPARK FASTOS"\n', "81a4:0:0:644:64:1:2", "link", ""],
   ] as const)(
     "routes an OEM FastOS marker only when trusted: %s (#10717)",
-    (_scenario, contents, metadata, markerKind, expected) => {
-      const result = runInstallerSourced(
+    async (_scenario, contents, metadata, markerKind, expected) => {
+      const result = await runInstallerSourced(
         `
 test_marker="$HOME/fastos-release"
 test_target="$HOME/fastos-release-target"
@@ -158,8 +160,8 @@ detect_express_platform
     },
   );
 
-  it("preserves harness-owned environment paths", () => {
-    const result = runInstallerSourced(
+  it("preserves harness-owned environment paths", async () => {
+    const result = await runInstallerSourced(
       `printf '%s\n%s\n%s\n' "$HOME" "$PATH" "$INSTALLER_UNDER_TEST"`,
       { HOME: "/forbidden", PATH: "/forbidden", INSTALLER_UNDER_TEST: "/forbidden" },
     );
@@ -176,20 +178,20 @@ detect_express_platform
     "81a4:0:1000:644:116:1:2",
     "81b6:0:0:666:116:1:2",
     "81a4:0:0:644:4097:1:2",
-  ])("validates bounded root-owned FastOS metadata [%s] (#8574)", (metadata) => {
-    const accepted = runInstallerSourced(
+  ])("validates bounded root-owned FastOS metadata [%s] (#8574)", async (metadata) => {
+    const accepted = await runInstallerSourced(
       `n1x_fastos_release_metadata_is_trusted "81a4:0:0:644:116:1:2"`,
     );
     expect(accepted.result.status, accepted.output).toBe(0);
 
-    const rejected = runInstallerSourced(
+    const rejected = await runInstallerSourced(
       `if n1x_fastos_release_metadata_is_trusted "${metadata}"; then exit 9; fi`,
     );
     expect(rejected.result.status, `${metadata}: ${rejected.output}`).toBe(0);
   });
 
-  it("collects numeric FastOS metadata under a non-C locale (#8574)", () => {
-    const result = runInstallerSourced(`
+  it("collects numeric FastOS metadata under a non-C locale (#8574)", async () => {
+    const result = await runInstallerSourced(`
 test_marker="$HOME/n1x-fastos-release"
 printf 'NAME="N1x FASTOS"\\n' >"$test_marker"
 n1x_fastos_release_path() { printf "%s" "$test_marker"; }
@@ -208,8 +210,8 @@ LC_ALL=de_DE.UTF-8 n1x_fastos_release_is_trusted
     expect(result.result.status, result.output).toBe(0);
   });
 
-  it("parses the FastOS name without executing marker text (#8574)", () => {
-    const result = runInstallerSourced(`
+  it("parses the FastOS name without executing marker text (#8574)", async () => {
+    const result = await runInstallerSourced(`
 marker=$'NAME="N1x FASTOS"\\nVERSION="1.23.0"\\nPAYLOAD="$(touch $HOME/n1x-marker-payload)"'
 n1x_fastos_release_contents_are_valid "$marker"
 [ ! -e "$HOME/n1x-marker-payload" ]
@@ -222,8 +224,8 @@ if n1x_fastos_release_contents_are_valid $'NAME="N1x FASTOS"\\nVERSION="1.23.0"\
     expect(result.result.status, result.output).toBe(0);
   });
 
-  it("rejects a NUL byte before the FastOS marker enters a shell variable (#8574)", () => {
-    const result = runInstallerSourced(`
+  it("rejects a NUL byte before the FastOS marker enters a shell variable (#8574)", async () => {
+    const result = await runInstallerSourced(`
 marker="$HOME/n1x-fastos-with-nul"
 printf 'NAME="N1x FASTOS"\\0\\n' >"$marker"
 exec 9<"$marker"
@@ -236,8 +238,8 @@ exec 9<&-
     expect(result.result.status, result.output).toBe(0);
   });
 
-  it("accepts an NVIDIA display device without pinning its PCI device ID (#10076)", () => {
-    const result = runInstallerSourced(`
+  it("accepts an NVIDIA display device without pinning its PCI device ID (#10076)", async () => {
+    const result = await runInstallerSourced(`
 test_pci_root="$HOME/n1x-pci"
 mkdir -p "$test_pci_root/000f:01:00.0"
 printf '0x10de\n' >"$test_pci_root/000f:01:00.0/vendor"
