@@ -221,8 +221,28 @@ const NemoClawInferenceProviderConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const NemoClawInferenceTuningSchema = Type.Object(
+  {
+    contextWindow: Type.Optional(Type.Integer({ minimum: 1, maximum: 4_194_304 })),
+    maxTokens: Type.Optional(Type.Integer({ minimum: 1, maximum: 1_000_000_000 })),
+    reasoning: Type.Optional(Type.Boolean()),
+    reasoningEffort: Type.Optional(Type.Enum(["default", "low", "medium", "high"])),
+  },
+  { additionalProperties: false },
+);
+
+export const NemoClawAgentExecutionSchema = Type.Object(
+  {
+    timeoutSeconds: Type.Optional(Type.Integer({ minimum: 1, maximum: 1_000_000_000 })),
+    heartbeatEvery: Type.Optional(
+      Type.String({ maxLength: 256, pattern: "^[0-9]+[smh]$(?![\\s\\S])" }),
+    ),
+  },
+  { additionalProperties: false, minProperties: 1 },
+);
+
 const NemoClawRouteOverridesSchema = Type.Object(
-  { model: BoundedTextSchema },
+  { model: BoundedTextSchema, ...NemoClawInferenceTuningSchema.properties },
   { additionalProperties: false },
 );
 
@@ -239,6 +259,7 @@ const NemoClawAgentConfigSchema = Type.Object(
   {
     name: LocalResourceNameSchema,
     type: Type.Literal("openclaw"),
+    execution: Type.Optional(NemoClawAgentExecutionSchema),
     inference: Type.Object(
       {
         routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }),

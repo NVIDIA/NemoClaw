@@ -66,12 +66,13 @@ export function buildExportConfig(
             {
               name: "primary",
               type: "openclaw",
+              ...(source.execution ? { execution: source.execution } : {}),
               inference: {
                 routes: [
                   {
                     name: "primary",
                     providerRef: providerName,
-                    overrides: { model: source.inference.model },
+                    overrides: { model: source.inference.model, ...source.inference.overrides },
                   },
                 ],
               },

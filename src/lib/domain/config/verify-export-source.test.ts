@@ -1,9 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import YAML from "yaml";
 import { Check } from "typebox/value";
 import { ExportSourceValuesSchema } from "./export-evidence";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { runConfigExport } from "../../actions/config/export";
+import { validateNemoClawConfig } from "../../config/schema";
+import {
+  parseNemoClawConfigDocumentName,
+  parseNemoClawConfigDocumentUid,
+} from "../../config/model";
+import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import {
@@ -195,6 +204,85 @@ function verify(
   return verifyExportSource(requestedSandboxName, qualified);
 }
 
+async function exportSnapshots(sequence: readonly ObservedExportSnapshot[]) {
+  let index = 0;
+  const read = vi.fn(async () => sequence[Math.min(index++, sequence.length - 1)]!);
+  const writeStdout = vi.fn(async (_contents: string) => undefined);
+  const publish = vi.fn(() => ({ ok: true, outputPath: "/tmp/alpha.yaml" }) as const);
+  const outcome = await runConfigExport(
+    {
+      sandboxName: "alpha",
+      documentName: parseNemoClawConfigDocumentName("alpha"),
+      target: { kind: "stdout" },
+    },
+    {
+      observe: (name) => observeStableExportSource(name, { read }),
+      createDocumentUid: () => parseNemoClawConfigDocumentUid(sandboxId),
+      writeStdout,
+      publish,
+    },
+  );
+  return { outcome, read, writeStdout, publish };
+}
+
+const tunedEnvironment = {
+  NEMOCLAW_CONTEXT_WINDOW: "65536",
+  NEMOCLAW_MAX_TOKENS: "8192",
+  NEMOCLAW_REASONING: "true",
+  NEMOCLAW_REASONING_EFFORT: "high",
+  NEMOCLAW_AGENT_TIMEOUT: "900",
+  NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m",
+};
+
+function tunedSnapshot(environment: NodeJS.ProcessEnv = tunedEnvironment) {
+  return snapshot({
+    registry: entry({ workload: managedWorkload(profileInput({ environment })) }),
+  });
+}
+
+function compatibleSnapshot(
+  environment: NodeJS.ProcessEnv,
+  registryOverrides: Partial<SandboxEntry>,
+) {
+  const base = profileInput({ environment });
+  const route = resolveManagedStartupInferenceRoute(
+    "openclaw",
+    "compatible-endpoint",
+    "gpt-5",
+    "openai-completions",
+  );
+  const input = {
+    ...base,
+    inference: {
+      ...base.inference,
+      routeProvider: route.providerKey,
+      upstreamProvider: "compatible-endpoint",
+      api: "openai-completions" as const,
+      routedBaseUrl: route.inferenceBaseUrl,
+      primaryModelRef: route.primaryModelRef,
+      compatibility: route.inferenceCompat ?? {},
+    },
+  };
+  const observed = snapshot();
+  return snapshot({
+    registry: entry({
+      provider: "compatible-endpoint",
+      preferredInferenceApi: "openai-completions",
+      workload: managedWorkload(input),
+      ...registryOverrides,
+    }),
+    inference: {
+      ...observed.inference,
+      provider: "compatible-endpoint",
+      api: "openai-completions",
+      endpointEvidence: {
+        ...observed.inference.endpointEvidence!,
+        provider: { ...observed.inference.endpointEvidence!.provider, name: "compatible-endpoint" },
+      },
+    },
+  });
+}
+
 describe("config export source verification (#10938)", () => {
   it("qualifies and verifies two equal snapshots through the observer", async () => {
     const observed = snapshot();
@@ -207,6 +295,207 @@ describe("config export source verification (#10938)", () => {
       attempts: 1,
       source: { sandboxName: "alpha", policy: canonicalPolicy },
     });
+  });
+
+  it("exports retained tuning and execution settings through the complete action", async () => {
+    const observed = tunedSnapshot();
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.read).toHaveBeenCalledTimes(2);
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    const config = validateNemoClawConfig(YAML.parse(yaml));
+    const agent = config.spec.sandboxes[0]!.agents[0]!;
+    expect(agent.inference.routes[0]!.overrides).toEqual({
+      model: "gpt-5",
+      contextWindow: 65536,
+      maxTokens: 8192,
+      reasoning: true,
+      reasoningEffort: "high",
+    });
+    expect(agent.execution).toEqual({ timeoutSeconds: 900, heartbeatEvery: "30m" });
+    expect(config.spec.sandboxes[0]!.network.policy.explicit).toEqual(canonicalPolicy);
+    expect(config.spec.inferenceProviders[0]!.credential).toEqual({ env: "OPENAI_API_KEY" });
+    expect(Object.isFrozen(verifiedSource(verify(observed)).inference.overrides)).toBe(true);
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
+  it("preserves canonical output when all six settings use their defaults", async () => {
+    const baseline = await exportSnapshots([snapshot()]);
+    const explicit = await exportSnapshots([
+      tunedSnapshot({
+        NEMOCLAW_CONTEXT_WINDOW: "131072",
+        NEMOCLAW_MAX_TOKENS: "4096",
+        NEMOCLAW_REASONING: "false",
+        NEMOCLAW_REASONING_EFFORT: "default",
+        NEMOCLAW_AGENT_TIMEOUT: "600",
+      }),
+    ]);
+    expect(explicit.outcome.ok).toBe(true);
+    expect(explicit.writeStdout.mock.calls).toEqual(baseline.writeStdout.mock.calls);
+    const config = validateNemoClawConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
+    expect(config.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides).toEqual({
+      model: "gpt-5",
+    });
+    expect(config.spec.sandboxes[0]!.agents[0]).not.toHaveProperty("execution");
+  });
+
+  it("retains an explicit zero heartbeat duration", async () => {
+    const result = await exportSnapshots([tunedSnapshot({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" })]);
+    expect(result.outcome.ok).toBe(true);
+    const config = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
+    expect(config.spec.sandboxes[0]!.agents[0]!.execution).toEqual({ heartbeatEvery: "0m" });
+  });
+
+  it.each(Object.entries(tunedEnvironment))(
+    "rejects unstable retained setting %s before publication",
+    async (key, value) => {
+      const changed = tunedSnapshot({ [key]: value });
+      const result = await exportSnapshots([snapshot(), changed, snapshot(), changed]);
+      expect(result.outcome).toMatchObject({
+        ok: false,
+        failure: { findings: [expect.objectContaining({ category: "unstable-source" })] },
+      });
+      expect(result.read).toHaveBeenCalledTimes(4);
+      expect(result.writeStdout).not.toHaveBeenCalled();
+      expect(result.publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it("exports a stable tuning observation after one changed pair", async () => {
+    const changed = tunedSnapshot();
+    const result = await exportSnapshots([snapshot(), changed, changed, changed]);
+    expect(result.outcome.ok).toBe(true);
+    expect(result.read).toHaveBeenCalledTimes(4);
+    expect(
+      validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])).spec.sandboxes[0]!
+        .agents[0]!.execution?.timeoutSeconds,
+    ).toBe(900);
+  });
+
+  it.each([
+    ["true", "high"],
+    ["false", undefined],
+  ] as const)("exports consistent compatible endpoint reasoning %s", async (reasoning, effort) => {
+    const observed = compatibleSnapshot(
+      { NEMOCLAW_REASONING: reasoning, ...(effort ? { NEMOCLAW_REASONING_EFFORT: effort } : {}) },
+      { compatibleEndpointReasoning: reasoning, compatibleEndpointReasoningEffort: effort ?? null },
+    );
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome.ok).toBe(true);
+    const route = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])).spec
+      .sandboxes[0]!.agents[0]!.inference.routes[0]!;
+    expect(route.overrides).toEqual(
+      reasoning === "true"
+        ? { model: "gpt-5", reasoning: true, reasoningEffort: "high" }
+        : { model: "gpt-5" },
+    );
+  });
+
+  it.each([
+    {},
+    { compatibleEndpointReasoning: null, compatibleEndpointReasoningEffort: null },
+    { compatibleEndpointReasoning: "false" },
+    { compatibleEndpointReasoning: false },
+    { compatibleEndpointReasoningEffort: "low" },
+    { compatibleEndpointReasoning: "credential-canary" },
+  ])("rejects inconsistent reasoning evidence without publication", async (change) => {
+    const observed = compatibleSnapshot(tunedEnvironment, change as Partial<SandboxEntry>);
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: { findings: [expect.objectContaining({ category: "drifted" })] },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+    expect(JSON.stringify(result.outcome)).not.toContain("credential-canary");
+  });
+
+  it("rejects enabled registry reasoning when the receipt retains false", async () => {
+    const result = await exportSnapshots([
+      compatibleSnapshot({}, { compatibleEndpointReasoning: "true" }),
+    ]);
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: { findings: [expect.objectContaining({ category: "drifted" })] },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale compatible endpoint reasoning on another provider", async () => {
+    const observed = tunedSnapshot();
+    const result = await exportSnapshots([
+      { ...observed, registry: { ...observed.registry, compatibleEndpointReasoning: "true" } },
+    ]);
+    expect(result.outcome.ok).toBe(false);
+    expect(result.writeStdout).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["tuning", { contextWindow: 4194305 }],
+    ["tuning", { maxTokens: 1000000001 }],
+    ["tuning", { reasoning: null }],
+    ["tuning", { reasoningEffort: "credential-canary" }],
+    ["tuning", { unexpected: "credential-canary" }],
+    ["agentConfig", { agentTimeoutSeconds: 1000000001 }],
+    ["agentConfig", { heartbeatEvery: "3".repeat(256) + "m" }],
+    ["agentConfig", { heartbeatEvery: "30m\n" }],
+    ["agentConfig", { minimalBootstrap: true }],
+    [
+      "agentConfig",
+      {
+        otel: {
+          enabled: true,
+          endpointUrl: "http://host.openshell.internal:4318",
+          serviceName: "openclaw-gateway",
+          sampleRate: 1,
+        },
+      },
+    ],
+    ["proxy", { managedPort: 3129 }],
+    ["tools", { disclosure: "direct" }],
+    ["inference", { inputModalities: ["text", "image"] }],
+  ] as const)(
+    "rejects unrepresentable %s settings alongside valid tuning",
+    async (section, change) => {
+      const workload = managedWorkload(profileInput({ environment: tunedEnvironment }));
+      const profile = JSON.parse(
+        Buffer.from(workload.encodedProfile, "base64url").toString("utf8"),
+      );
+      Object.assign(profile[section], change);
+      const encodedProfile = Buffer.from(JSON.stringify(profile)).toString("base64url");
+      const observed = snapshot({
+        registry: entry({
+          workload: {
+            ...workload,
+            encodedProfile,
+            startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+          },
+        }),
+      });
+      const result = await exportSnapshots([observed]);
+      expect(result.outcome.ok).toBe(false);
+      expect(result.writeStdout).not.toHaveBeenCalled();
+      expect(result.publish).not.toHaveBeenCalled();
+      expect(JSON.stringify(result.outcome)).not.toContain("credential-canary");
+    },
+  );
+
+  it("rejects a tuned source with a mismatched receipt hash", async () => {
+    const observed = tunedSnapshot();
+    const workload = observed.registry.workload!;
+    const result = await exportSnapshots([
+      {
+        ...observed,
+        registry: {
+          ...observed.registry,
+          workload: { ...workload, startupProfileSha256: "c".repeat(64) } as SandboxWorkloadReceipt,
+        },
+      },
+    ]);
+    expect(result.outcome.ok).toBe(false);
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
   });
 
   it("narrows one supported snapshot to an immutable verified source", () => {

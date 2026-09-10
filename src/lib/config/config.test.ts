@@ -83,6 +83,49 @@ describe("NemoClawConfig v1", () => {
     expect(validateNemoClawConfig(config())).toEqual(config());
   });
 
+  it("retains explicit false, default reasoning effort, and zero heartbeat", () => {
+    const value = config();
+    const agent = value.spec.sandboxes[0]!.agents[0]!;
+    Object.assign(agent.inference.routes[0]!.overrides, {
+      contextWindow: 4194304,
+      maxTokens: 1000000000,
+      reasoning: false,
+      reasoningEffort: "default",
+    });
+    Object.assign(agent, { execution: { timeoutSeconds: 1000000000, heartbeatEvery: "0m" } });
+    expect(validateNemoClawConfig(value)).toEqual(value);
+  });
+
+  it.each([
+    { contextWindow: 0 },
+    { contextWindow: 4194305 },
+    { maxTokens: 1.5 },
+    { maxTokens: 1000000001 },
+    { reasoning: "false" },
+    { reasoningEffort: "extreme" },
+    { inputModalities: ["image"] },
+    { unexpected: true },
+  ])("rejects invalid or unsupported route settings", (fields) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides, fields);
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
+  it.each([
+    {},
+    { timeoutSeconds: 0 },
+    { timeoutSeconds: 1000000001 },
+    { heartbeatEvery: "30m\n" },
+    { heartbeatEvery: "30d" },
+    { heartbeatEvery: "3".repeat(256) + "m" },
+    { heartbeatEvery: null },
+    { unexpected: true },
+  ])("rejects invalid or unsupported execution settings", (fields) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, { execution: fields });
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
   it("returns an owned and deeply frozen validated document (#10938)", () => {
     const input = config();
     const validated = validateNemoClawConfig(input);

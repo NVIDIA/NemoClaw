@@ -9,6 +9,8 @@ import {
   InferenceEndpointSchema,
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
+  NemoClawInferenceTuningSchema,
+  NemoClawAgentExecutionSchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
   TcpPortSchema,
@@ -185,6 +187,7 @@ export type NonEmptyExportFindings = readonly [ExportFinding, ...ExportFinding[]
 
 // Runtime refinements preserve semantic checks that are not part of JSON Schema.
 const ExportInferenceSchema = Type.Object({
+  overrides: Type.Optional(NemoClawInferenceTuningSchema),
   provider: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
   model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
   api: NemoClawInferenceApiSchema,
@@ -197,6 +200,7 @@ const ExportInferenceSchema = Type.Object({
 /** Representable values only; provenance and policy qualification remain separate. */
 export const ExportSourceValuesSchema = Type.Object({
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
+  execution: Type.Optional(NemoClawAgentExecutionSchema),
   runtime: Type.Object({
     provider: RuntimeProviderSchema,
     imageRef: ImmutableImageReferenceSchema,
