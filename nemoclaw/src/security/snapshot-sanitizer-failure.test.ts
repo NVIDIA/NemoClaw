@@ -1,17 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
+import fs, {
   chmodSync,
   closeSync,
   fstatSync,
+  linkSync,
   mkdtempSync,
   openSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -20,18 +23,32 @@ import {
   decodeDescriptorSnapshotContent,
   inspectDescriptorSnapshotRoot,
   installDescriptorSnapshotFile,
+  resolveSnapshotSanitizerHelperPath,
   resolveTrustedSnapshotSanitizerPythonPath,
+  SnapshotSanitizerOperationError,
   SnapshotSanitizerPrerequisiteError,
   type SnapshotFileIdentity,
   scanDescriptorSnapshot,
-  setSnapshotSanitizerPythonPathForTest,
+  setSnapshotSanitizerHelperPathForTest,
 } from "../shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapshot-sanitizer.js";
 
-const roots: string[] = [];
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    realpathSync: vi.fn(actual.realpathSync),
+    statSync: vi.fn(actual.statSync),
+  };
+});
 
-const LARGE_INSTALL_CONTENT = "x".repeat(15 * 1024 * 1024);
-const SHELL_WAIT_ATTEMPTS = 10_000;
+const roots: string[] = [];
+const helperTempDirectory = realpathSync(
+  spawnSync(process.execPath, ["-p", "require('node:os').tmpdir()"], {
+    env: {},
+    encoding: "utf8",
+  }).stdout.trim(),
+);
 
 function makeRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-migration-sanitizer-failure-"));
@@ -39,41 +56,44 @@ function makeRoot(): string {
   return root;
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-function boundedShellWait(condition: string, pauseCommand = "sleep 0.001"): string[] {
-  return [
-    "    wait_attempt=0",
-    `    while ${condition}; do`,
-    "      wait_attempt=$((wait_attempt + 1))",
-    `      [ "$wait_attempt" -lt ${String(SHELL_WAIT_ATTEMPTS)} ] || exit 1`,
-    `      ${pauseCommand}`,
-    "    done",
-  ];
-}
-
-function writePythonWrapper(lines: readonly string[]): string {
+function writeRawNodeHelper(lines: readonly string[]): string {
   const wrapperRoot = makeRoot();
-  const wrapper = path.join(wrapperRoot, "python3");
-  writeFileSync(wrapper, ["#!/bin/sh", ...lines].join("\n"));
-  chmodSync(wrapper, 0o755);
-  setSnapshotSanitizerPythonPathForTest(wrapper);
+  const wrapper = path.join(wrapperRoot, "snapshot-helper.mjs");
+  writeFileSync(wrapper, lines.join("\n"));
+  setSnapshotSanitizerHelperPathForTest(wrapper);
   return wrapper;
 }
 
-function requireTrustedPython(): string {
-  const python = resolveTrustedSnapshotSanitizerPythonPath();
-  expect(python).toEqual(expect.any(String));
-  return python as string;
+function writeNodeHelperWrapper(beforeForward: readonly string[]): string {
+  const helper = resolveSnapshotSanitizerHelperPath();
+  return writeRawNodeHelper([
+    'import { readFileSync, renameSync, symlinkSync } from "node:fs";',
+    'import { spawnSync } from "node:child_process";',
+    ...beforeForward,
+    'const input = readFileSync(0, "utf8");',
+    `const helper = ${JSON.stringify(helper)};`,
+    'const helperArguments = helper.endsWith(".mts") ? ["--import", "tsx", helper, process.argv[2]] : [helper, process.argv[2]];',
+    "const result = spawnSync(process.execPath, helperArguments, {",
+    '  encoding: "utf8", env: {}, input, maxBuffer: 48 * 1024 * 1024,',
+    "});",
+    "if (result.stdout) process.stdout.write(result.stdout);",
+    "process.exit(result.status ?? 1);",
+  ]);
+}
+
+function writeStaticHelperResult(result: unknown): string {
+  return writeRawNodeHelper([
+    `process.stdout.write(${JSON.stringify(JSON.stringify({ ok: true, result }))});`,
+  ]);
 }
 
 afterEach(() => {
-  setSnapshotSanitizerPythonPathForTest(undefined);
+  setSnapshotSanitizerHelperPathForTest(undefined);
+  vi.mocked(realpathSync).mockImplementation(fs.realpathSync);
+  vi.mocked(statSync).mockImplementation(fs.statSync);
   vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true });
-});
+}, 60_000);
 
 describe("migration snapshot sanitizer fallbacks", () => {
   const identity: SnapshotFileIdentity = {
@@ -86,36 +106,36 @@ describe("migration snapshot sanitizer fallbacks", () => {
     ctimeNs: "4",
   };
   const malformedDescriptorOutputs = [
-    { label: "non-JSON output", output: "not-json" },
     {
-      label: "array directories",
-      output: JSON.stringify({ root: identity, directories: [], files: [] }),
+      label: "invalid root identity",
+      output: JSON.stringify({ root: null, files: [] }),
     },
     {
-      label: "escaping directory path",
-      output: JSON.stringify({
-        root: identity,
-        directories: { "nested\\escape": identity },
-        files: [],
-      }),
+      label: "non-array files",
+      output: JSON.stringify({ root: identity, files: {} }),
     },
     {
       label: "null file",
-      output: JSON.stringify({ root: identity, directories: {}, files: [null] }),
+      output: JSON.stringify({ root: identity, files: [null] }),
     },
     {
       label: "absolute file path",
       output: JSON.stringify({
         root: identity,
-        directories: {},
         files: [{ path: "/escape", metadata: identity }],
+      }),
+    },
+    {
+      label: "Windows-separated file path",
+      output: JSON.stringify({
+        root: identity,
+        files: [{ path: "nested\\\\config.json", metadata: identity }],
       }),
     },
     {
       label: "null file metadata",
       output: JSON.stringify({
         root: identity,
-        directories: {},
         files: [{ path: "config.json", metadata: null }],
       }),
     },
@@ -123,17 +143,16 @@ describe("migration snapshot sanitizer fallbacks", () => {
       label: "non-string file content",
       output: JSON.stringify({
         root: identity,
-        directories: {},
         files: [{ path: "config.json", metadata: identity, content: 42 }],
       }),
     },
   ];
 
-  it("reports when the descriptor helper has no trusted interpreter (#8202)", () => {
+  it("reports when native snapshot support is unavailable (#11174)", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     const original = JSON.stringify({ apiKey: "sk-secret-value" });
     writeFileSync(configPath, original);
-    setSnapshotSanitizerPythonPathForTest(null);
+    setSnapshotSanitizerHelperPathForTest(null);
 
     expect(() => sanitizeOpenClawConfigFile(configPath)).toThrow(
       SnapshotSanitizerPrerequisiteError,
@@ -141,12 +160,12 @@ describe("migration snapshot sanitizer fallbacks", () => {
     expect(readFileSync(configPath, "utf-8")).toBe(original);
   });
 
-  it("reports the validated root when the apply helper has no trusted interpreter (#8202)", () => {
+  it("reports the validated root when native snapshot support is unavailable (#11174)", () => {
     const root = { canonicalPath: makeRoot(), identity };
-    setSnapshotSanitizerPythonPathForTest(null);
+    setSnapshotSanitizerHelperPathForTest(null);
 
     expect(() =>
-      applyDescriptorSnapshotActions(root, { root: identity, directories: {}, files: [] }, [
+      applyDescriptorSnapshotActions(root, { root: identity, files: [] }, [
         { kind: "remove", path: "config.json", metadata: identity },
       ]),
     ).toThrow(expect.objectContaining({ snapshotPath: root.canonicalPath }));
@@ -155,11 +174,11 @@ describe("migration snapshot sanitizer fallbacks", () => {
   it("fails closed when the descriptor install helper is unavailable", () => {
     const root = inspectDescriptorSnapshotRoot(makeRoot());
     expect(root).not.toBeNull();
-    setSnapshotSanitizerPythonPathForTest(null);
+    setSnapshotSanitizerHelperPathForTest(null);
 
-    expect(
+    expect(() =>
       installDescriptorSnapshotFile(root as NonNullable<typeof root>, "openclaw.json", "{}"),
-    ).toBe(false);
+    ).toThrow(SnapshotSanitizerPrerequisiteError);
   });
 
   it("rejects nested install targets before creating any entry", () => {
@@ -186,21 +205,21 @@ describe("migration snapshot sanitizer fallbacks", () => {
         const originalMode = fstatSync(outsideConfigFd).mode & 0o777;
         const root = inspectDescriptorSnapshotRoot(rootPath);
         expect(root).not.toBeNull();
-        const python = requireTrustedPython();
-        writePythonWrapper([
-          `if [ "\${4-}" = install ]; then ln -s ${shellQuote(outsideConfig)} ${shellQuote(
+        writeNodeHelperWrapper([
+          "if (process.argv[2] === 'install') {",
+          `  symlinkSync(${JSON.stringify(outsideConfig)}, ${JSON.stringify(
             path.join(rootPath, "openclaw.json"),
-          )}; fi`,
-          `exec ${shellQuote(python)} "$@"`,
+          )});`,
+          "}",
         ]);
 
-        expect(
+        expect(() =>
           installDescriptorSnapshotFile(
             root as NonNullable<typeof root>,
             "openclaw.json",
             JSON.stringify({ installed: true }),
           ),
-        ).toBe(false);
+        ).toThrow(/snapshot-mutation-failed/u);
         expect(readFileSync(outsideConfigFd, "utf-8")).toBe(original);
         expect(fstatSync(outsideConfigFd).mode & 0o777).toBe(originalMode);
       } finally {
@@ -209,83 +228,91 @@ describe("migration snapshot sanitizer fallbacks", () => {
     },
   );
 
+  it.runIf(process.platform !== "win32")("rejects mutation of a scanned hard-linked file", () => {
+    const rootPath = makeRoot();
+    const targetPath = path.join(rootPath, "auth.json");
+    const aliasPath = path.join(makeRoot(), "openclaw-alias.json");
+    writeFileSync(targetPath, "original");
+    const root = inspectDescriptorSnapshotRoot(rootPath)!;
+    const scan = scanDescriptorSnapshot(root, new Set(["auth.json"]))!;
+    const config = scan.files.find((file) => file.path === "auth.json")!;
+    linkSync(targetPath, aliasPath);
+
+    expect(() =>
+      applyDescriptorSnapshotActions(root, scan, [
+        {
+          kind: "remove",
+          path: config.path,
+          metadata: config.metadata,
+        },
+      ]),
+    ).toThrow(/snapshot-mutation-failed/u);
+    expect(readFileSync(targetPath, "utf8")).toBe("original");
+    expect(readFileSync(aliasPath, "utf8")).toBe("original");
+  });
+
   it.runIf(process.platform !== "win32")(
-    "rejects a persistent hard link created while sanitized config is installed",
+    "rejects a hard-linked readable config during scanning",
     () => {
       const rootPath = makeRoot();
-      const targetPath = path.join(rootPath, "openclaw.json");
-      const aliasPath = path.join(rootPath, "openclaw-alias.json");
-      const root = inspectDescriptorSnapshotRoot(rootPath);
-      expect(root).not.toBeNull();
-      const python = requireTrustedPython();
-      writePythonWrapper([
-        `if [ "\${4-}" = install ]; then`,
-        "  (",
-        ...boundedShellWait(`[ ! -s ${shellQuote(targetPath)} ]`),
-        `    ln ${shellQuote(targetPath)} ${shellQuote(aliasPath)}`,
-        "  ) &",
-        "fi",
-        `exec ${shellQuote(python)} "$@"`,
-      ]);
+      const targetPath = path.join(rootPath, "config.json");
+      writeFileSync(targetPath, "{}");
+      linkSync(targetPath, path.join(rootPath, "config-alias.json"));
+      const root = inspectDescriptorSnapshotRoot(rootPath)!;
 
-      expect(
-        installDescriptorSnapshotFile(
-          root as NonNullable<typeof root>,
-          "openclaw.json",
-          LARGE_INSTALL_CONTENT,
-        ),
-      ).toBe(false);
-      expect(() => statSync(targetPath)).toThrow();
-      expect(statSync(aliasPath).isFile()).toBe(true);
+      expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(/snapshot-scan-failed/u);
     },
   );
 
   it.runIf(process.platform !== "win32")(
-    "rejects a transient hard-link mutation while sanitized config is installed",
+    "fails closed when the real helper exceeds 100,000 snapshot entries",
     () => {
-      const rootPath = makeRoot();
-      const targetPath = path.join(rootPath, "openclaw.json");
-      const aliasPath = path.join(rootPath, "openclaw-alias.json");
-      const root = inspectDescriptorSnapshotRoot(rootPath);
-      expect(root).not.toBeNull();
-      const python = requireTrustedPython();
-      writePythonWrapper([
-        `if [ "\${4-}" = install ]; then`,
-        "  (",
-        ...boundedShellWait(`[ ! -s ${shellQuote(targetPath)} ]`),
-        `    ln ${shellQuote(targetPath)} ${shellQuote(aliasPath)}`,
-        ...boundedShellWait(
-          `[ "$(wc -c < ${shellQuote(aliasPath)})" -lt ${String(LARGE_INSTALL_CONTENT.length)} ]`,
-          "sleep 0.001",
-        ),
-        `    printf M | dd of=${shellQuote(aliasPath)} bs=1 count=1 conv=notrunc 2>/dev/null`,
-        `    rm ${shellQuote(aliasPath)}`,
-        "  ) &",
-        "fi",
-        `exec ${shellQuote(python)} "$@"`,
-      ]);
+      const root = makeRoot();
+      const credentialPath = path.join(root, "config.json");
+      const original = JSON.stringify({ apiKey: "sk-entry-limit-secret" });
+      writeFileSync(credentialPath, original);
+      Array.from({ length: 100_001 }, (_, index) =>
+        writeFileSync(path.join(root, `.ignored-${index}`), ""),
+      );
 
-      expect(
-        installDescriptorSnapshotFile(
-          root as NonNullable<typeof root>,
-          "openclaw.json",
-          LARGE_INSTALL_CONTENT,
-        ),
-      ).toBe(false);
-      expect(() => statSync(targetPath)).toThrow();
-      expect(() => statSync(aliasPath)).toThrow();
+      expect(() => sanitizeMigrationDirectory(root)).toThrow(
+        expect.objectContaining({ code: "snapshot-entry-limit-exceeded" }),
+      );
+      expect(readFileSync(credentialPath, "utf8")).toBe(original);
     },
+    60_000,
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "fails closed when the real helper exceeds 32 MiB of snapshot content",
+    () => {
+      const root = makeRoot();
+      const credentialPath = path.join(root, "config-1.json");
+      const original = JSON.stringify({ apiKey: "sk-total-limit-secret" }).padEnd(
+        11 * 1024 * 1024,
+        " ",
+      );
+      writeFileSync(credentialPath, original);
+      writeFileSync(path.join(root, "config-2.json"), original);
+      writeFileSync(path.join(root, "config-3.json"), original);
+
+      expect(() => sanitizeMigrationDirectory(root)).toThrow(
+        expect.objectContaining({ code: "snapshot-size-limit-exceeded" }),
+      );
+      expect(readFileSync(credentialPath, "utf8")).toBe(original);
+    },
+    60_000,
   );
 
   it("accepts only absolute helper substitutions under Vitest", () => {
-    expect(() => setSnapshotSanitizerPythonPathForTest("python3")).toThrow(
-      /test Python path must be absolute/u,
+    expect(() => setSnapshotSanitizerHelperPathForTest("snapshot-helper.mjs")).toThrow(
+      /test helper path must be absolute/u,
     );
 
     const originalVitest = process.env.VITEST;
     try {
       process.env.VITEST = "false";
-      expect(() => setSnapshotSanitizerPythonPathForTest(null)).toThrow(
+      expect(() => setSnapshotSanitizerHelperPathForTest(null)).toThrow(
         /only available under Vitest/u,
       );
     } finally {
@@ -300,17 +327,13 @@ describe("migration snapshot sanitizer fallbacks", () => {
       const configPath = path.join(root, "openclaw.json");
       const attackerRoot = makeRoot();
       const stolen = path.join(attackerRoot, "stolen-config");
-      const wrapper = path.join(attackerRoot, "python3");
+      const wrapper = path.join(attackerRoot, "node");
       writeFileSync(configPath, JSON.stringify({ apiKey: "sk-secret-value" }));
       writeFileSync(
         wrapper,
-        [
-          "#!/bin/sh",
-          'if [ "${4-}" = scan-file ]; then',
-          `  cp "$5/$7" ${shellQuote(stolen)}`,
-          "fi",
-          "exit 1",
-        ].join("\n"),
+        ["#!/bin/sh", `cp ${JSON.stringify(configPath)} ${JSON.stringify(stolen)}`, "exit 1"].join(
+          "\n",
+        ),
       );
       chmodSync(wrapper, 0o755);
       vi.stubEnv("PATH", `${attackerRoot}:${process.env.PATH ?? ""}`);
@@ -325,17 +348,203 @@ describe("migration snapshot sanitizer fallbacks", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     const original = JSON.stringify({ apiKey: "sk-secret-value" });
     writeFileSync(configPath, original);
-    writePythonWrapper(["printf '%s\\n' '{}'", "exit 0"]);
+    writeStaticHelperResult({});
 
     expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
     expect(readFileSync(configPath, "utf-8")).toBe(original);
+  });
+
+  it("rejects malformed helper protocol responses", () => {
+    const root = { canonicalPath: makeRoot(), identity };
+    writeRawNodeHelper(['process.stdout.write("not-json");']);
+    expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
+
+    writeRawNodeHelper(['process.stdout.write("{}");']);
+    expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
+
+    writeRawNodeHelper(["process.stdout.write('{\"ok\":true}');"]);
+    expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
+
+    writeRawNodeHelper(['process.stdout.write(\'{"ok":false,"prerequisite":true}\');']);
+    expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(
+      SnapshotSanitizerPrerequisiteError,
+    );
+
+    writeRawNodeHelper([
+      'process.stdout.write(\'{"ok":false,"code":"unexpected-sensitive-code"}\');',
+    ]);
+    expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
+  });
+
+  it("passes only the required Windows root variables to the helper", () => {
+    const root = { canonicalPath: makeRoot(), identity };
+    vi.stubEnv("SYSTEMROOT", "C:\\Windows");
+    vi.stubEnv("WINDIR", "C:\\Windows");
+    vi.stubEnv("NEMOCLAW_TEST_SECRET", "must-not-reach-helper");
+    writeRawNodeHelper([
+      // CoreFoundation can add this process metadata on macOS after launch.
+      'const keys = Object.keys(process.env).filter((name) => process.platform !== "darwin" || name !== "__CF_USER_TEXT_ENCODING").sort();',
+      `const valid = process.env.SYSTEMROOT === "C:\\\\Windows" && process.env.WINDIR === "C:\\\\Windows" && process.env.NEMOCLAW_TEST_SECRET === undefined && JSON.stringify(keys) === '["SYSTEMROOT","WINDIR"]';`,
+      `const result = valid ? ${JSON.stringify({ root: identity, files: [] })} : null;`,
+      "process.stdout.write(JSON.stringify({ ok: true, result }));",
+    ]);
+
+    expect(scanDescriptorSnapshot(root, new Set())).toEqual({ root: identity, files: [] });
+  });
+
+  it("surfaces only the bounded failure class reported by the helper (#11174)", () => {
+    const root = { canonicalPath: makeRoot(), identity };
+    writeRawNodeHelper([
+      'process.stdout.write(\'{"ok":false,"code":"snapshot-size-limit-exceeded"}\');',
+    ]);
+
+    let received: unknown;
+    try {
+      scanDescriptorSnapshot(root, new Set());
+    } catch (error) {
+      received = error;
+    }
+
+    expect(received).toBeInstanceOf(SnapshotSanitizerOperationError);
+    expect(received).toMatchObject({
+      code: "snapshot-size-limit-exceeded",
+      message: "Native snapshot sanitization failed: snapshot-size-limit-exceeded",
+      snapshotPath: root.canonicalPath,
+    });
+  });
+
+  it("reports the exact retained native probe when its cleanup fails", () => {
+    vi.stubEnv("TMPDIR", makeRoot());
+    const retainedPath = path.join(helperTempDirectory, ".nemoclaw-native-probe-retained");
+    const probeTestPath = path.join(makeRoot(), "native-probe-cleanup.mts");
+    writeFileSync(
+      probeTestPath,
+      [
+        `import { assertNativeSupport } from ${JSON.stringify(resolveSnapshotSanitizerHelperPath())};`,
+        "try {",
+        "  await assertNativeSupport(async () => ({",
+        `    receipt: { directory: { realPath: ${JSON.stringify(path.dirname(retainedPath))} }, temporaryBasename: ${JSON.stringify(path.basename(retainedPath))} },`,
+        '    cleanup: async () => ({ status: "preserved" }),',
+        "  }));",
+        "} catch (error) {",
+        "  process.stdout.write(JSON.stringify({ message: error.message, retainedPath: error.retainedPath }));",
+        "}",
+      ].join("\n"),
+    );
+    const probeTest = spawnSync(process.execPath, ["--import", "tsx", probeTestPath], {
+      encoding: "utf8",
+      env: {},
+    });
+
+    expect(probeTest.status, probeTest.stderr).toBe(0);
+    expect(JSON.parse(probeTest.stdout)).toMatchObject({
+      message: "native support probe cleanup failed",
+      retainedPath,
+    });
+
+    const root = { canonicalPath: makeRoot(), identity };
+    writeRawNodeHelper([
+      `process.stdout.write(${JSON.stringify(
+        JSON.stringify({ ok: false, code: "native-probe-failed", retainedPath }),
+      )});`,
+    ]);
+
+    expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(
+      expect.objectContaining({
+        code: "native-probe-failed",
+        message: `Native snapshot sanitization failed: native-probe-failed; remove retained temporary file and retry: ${retainedPath}`,
+        retainedPath,
+      }),
+    );
+
+    writeRawNodeHelper([
+      `process.stdout.write(${JSON.stringify(
+        JSON.stringify({
+          ok: false,
+          code: "native-probe-failed",
+          retainedPath: path.join(helperTempDirectory, "nested", "untrusted-probe"),
+        }),
+      )});`,
+    ]);
+    expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(
+      expect.objectContaining({
+        code: "native-probe-failed",
+        message: "Native snapshot sanitization failed: native-probe-failed",
+        retainedPath: undefined,
+      }),
+    );
+  });
+
+  it("reports a bounded failure when the native probe cannot start", () => {
+    const wrapper = path.join(makeRoot(), "snapshot-helper.mts");
+    writeFileSync(
+      wrapper,
+      [
+        `import { main } from ${JSON.stringify(resolveSnapshotSanitizerHelperPath())};`,
+        'await main(async () => { throw new Error("private-probe-diagnostic"); });',
+      ].join("\n"),
+    );
+    setSnapshotSanitizerHelperPathForTest(wrapper);
+
+    expect(() =>
+      scanDescriptorSnapshot({ canonicalPath: makeRoot(), identity }, new Set()),
+    ).toThrow(
+      expect.objectContaining({
+        code: "native-probe-failed",
+        message: "Native snapshot sanitization failed: native-probe-failed",
+        retainedPath: undefined,
+      }),
+    );
+  });
+
+  it("reports the retained native probe when cleanup rejects", () => {
+    const retainedPath = path.join(helperTempDirectory, ".nemoclaw-native-probe-rejected");
+    const wrapper = path.join(makeRoot(), "snapshot-helper.mts");
+    writeFileSync(
+      wrapper,
+      [
+        `import { main } from ${JSON.stringify(resolveSnapshotSanitizerHelperPath())};`,
+        "await main(async () => ({",
+        `  receipt: { directory: { realPath: ${JSON.stringify(path.dirname(retainedPath))} }, temporaryBasename: ${JSON.stringify(path.basename(retainedPath))} },`,
+        '  cleanup: async () => { throw new Error("cleanup denied"); },',
+        "}));",
+      ].join("\n"),
+    );
+    setSnapshotSanitizerHelperPathForTest(wrapper);
+    const root = { canonicalPath: makeRoot(), identity };
+
+    expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(
+      expect.objectContaining({
+        code: "native-probe-failed",
+        message: `Native snapshot sanitization failed: native-probe-failed; remove retained temporary file and retry: ${retainedPath}`,
+        retainedPath,
+      }),
+    );
+  });
+
+  it("omits scanned content from the descriptor apply request", () => {
+    const root = { canonicalPath: makeRoot(), identity };
+    writeRawNodeHelper([
+      'import { readFileSync } from "node:fs";',
+      'const request = JSON.parse(readFileSync(0, "utf8"));',
+      'const metadataOnly = request.scan.files.every((file) => !Object.hasOwn(file, "content"));',
+      "process.stdout.write(JSON.stringify({ ok: true, result: metadataOnly }));",
+    ]);
+
+    expect(
+      applyDescriptorSnapshotActions(
+        root,
+        { root: identity, files: [{ path: "config.json", metadata: identity, content: "e30=" }] },
+        [{ kind: "remove", path: "config.json", metadata: identity }],
+      ),
+    ).toBe(true);
   });
 
   it.each(malformedDescriptorOutputs)(
     "rejects a malformed descriptor with $label",
     ({ output }) => {
       const root = { canonicalPath: makeRoot(), identity };
-      writePythonWrapper([`printf '%s\\n' ${shellQuote(output)}`]);
+      writeStaticHelperResult(JSON.parse(output));
       expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
     },
   );
@@ -352,7 +561,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
     expect(
       applyDescriptorSnapshotActions(
         { canonicalPath: root, identity },
-        { root: identity, directories: {}, files: [] },
+        { root: identity, files: [] },
         [],
       ),
     ).toBe(true);
@@ -400,11 +609,11 @@ describe("migration snapshot sanitizer fallbacks", () => {
       expect(scan).not.toBeNull();
       expect(config).toBeDefined();
 
-      expect(
+      expect(() =>
         applyDescriptorSnapshotActions(root, scan, [
           { kind: "replace", path: config.path, metadata: config.metadata, content },
         ]),
-      ).toBe(false);
+      ).toThrow(/snapshot-mutation-failed/u);
       expect(readFileSync(configPath, "utf-8")).toBe("original");
     },
   );
@@ -413,24 +622,18 @@ describe("migration snapshot sanitizer fallbacks", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     const original = JSON.stringify({ apiKey: "sk-secret-value" });
     writeFileSync(configPath, original);
-    const python = requireTrustedPython();
-    writePythonWrapper([
-      'if [ "${4-}" = apply ]; then exit 1; fi',
-      `exec ${shellQuote(python)} "$@"`,
-    ]);
+    writeNodeHelperWrapper(["if (process.argv[2] === 'apply') process.exit(1);"]);
 
-    expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
+    expect(() => sanitizeOpenClawConfigFile(configPath)).toThrow(/helper-process-failed/u);
     expect(readFileSync(configPath, "utf-8")).toBe(original);
   });
 
   it("aborts optional-artifact sanitization when inspection fails", () => {
     const root = makeRoot();
     writeFileSync(path.join(root, "config.json"), JSON.stringify({ token: "raw" }));
-    writePythonWrapper(["exit 1"]);
+    writeRawNodeHelper(["process.exit(1);"]);
 
-    expect(() => sanitizeMigrationDirectory(root)).toThrow(
-      /Failed to inspect migration artifacts safely/u,
-    );
+    expect(() => sanitizeMigrationDirectory(root)).toThrow(/helper-process-failed/u);
   });
 
   it("removes optional artifacts that are not valid UTF-8", () => {
@@ -450,16 +653,38 @@ describe("migration snapshot sanitizer fallbacks", () => {
       const movedRoot = `${root}-moved`;
       roots.push(movedRoot);
       writeFileSync(path.join(root, "config.json"), JSON.stringify({ token: "raw" }));
-      const python = requireTrustedPython();
-      writePythonWrapper([
-        `if [ "\${4-}" = scan-tree ]; then mv ${shellQuote(root)} ${shellQuote(movedRoot)}; fi`,
-        `exec ${shellQuote(python)} "$@"`,
+      writeNodeHelperWrapper([
+        "if (process.argv[2] === 'scan-tree') {",
+        `  renameSync(${JSON.stringify(root)}, ${JSON.stringify(movedRoot)});`,
+        "}",
       ]);
 
-      expect(() => sanitizeMigrationDirectory(root)).toThrow(
-        /Failed to inspect migration artifacts safely/u,
-      );
+      expect(() => sanitizeMigrationDirectory(root)).toThrow(/snapshot-scan-failed/u);
       expect(readFileSync(path.join(movedRoot, "config.json"), "utf-8")).toContain("raw");
+    },
+  );
+});
+
+describe("migration restore interpreter selection", () => {
+  it("rejects all candidates when their canonical paths cannot be verified", () => {
+    vi.mocked(realpathSync).mockImplementation(() => {
+      throw new Error("interpreter is unavailable");
+    });
+
+    expect(resolveTrustedSnapshotSanitizerPythonPath()).toBeNull();
+  });
+
+  it.each(["writable", "wrong-owner"] as const)(
+    "rejects a %s interpreter before executing it",
+    (rejected) => {
+      const metadata = statSync(process.execPath);
+      Object.assign(
+        metadata,
+        rejected === "writable" ? { mode: metadata.mode | 0o022 } : { uid: process.getuid!() + 1 },
+      );
+      vi.mocked(statSync).mockReturnValue(metadata as unknown as ReturnType<typeof fs.statSync>);
+
+      expect(resolveTrustedSnapshotSanitizerPythonPath()).toBeNull();
     },
   );
 });

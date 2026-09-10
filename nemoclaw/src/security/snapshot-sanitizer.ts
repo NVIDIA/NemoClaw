@@ -10,6 +10,7 @@ import {
   type DescriptorSnapshotRoot,
   decodeDescriptorSnapshotContent,
   inspectDescriptorSnapshotRoot,
+  SnapshotSanitizerOperationError,
   type SnapshotSanitizationAction,
   type SnapshotScannedFile,
   scanDescriptorSnapshot,
@@ -124,8 +125,19 @@ export function sanitizeOpenClawConfigFile(configPath: string): boolean {
       return false;
     }
     if (root === null) return false;
-    const scan = scanDescriptorSnapshot(root, CREDENTIAL_SENSITIVE_BASENAMES, targetName);
-    if (scan?.files.length !== 1) return false;
+    let scan;
+    try {
+      scan = scanDescriptorSnapshot(root, CREDENTIAL_SENSITIVE_BASENAMES, targetName);
+    } catch (error) {
+      if (
+        error instanceof SnapshotSanitizerOperationError &&
+        error.code === "snapshot-scan-failed"
+      ) {
+        return false;
+      }
+      throw error;
+    }
+    if (scan === null || scan.files.length !== 1) return false;
     const file = scan.files[0];
     if (file?.path !== targetName) return false;
     const raw = decodeDescriptorSnapshotContent(file.content);

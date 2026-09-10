@@ -23,8 +23,11 @@ import {
   valueLooksLikeSecret,
 } from "./credential-filter";
 
-/** Re-exported so CLI callers identify the prerequisite failure without importing the plugin boundary module. (#8202) */
-export { SnapshotSanitizerPrerequisiteError } from "../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs";
+/** Re-exported so CLI callers identify helper failures without importing the plugin boundary module. (#8202) */
+export {
+  SnapshotSanitizerOperationError,
+  SnapshotSanitizerPrerequisiteError,
+} from "../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs";
 
 const MAX_SANITIZATION_PASSES = 3;
 
@@ -175,7 +178,7 @@ function actionForScannedFile(file: SnapshotScannedFile): SnapshotSanitizationAc
 /**
  * Sanitize every credential-bearing artifact beneath a copied snapshot root.
  *
- * Both discovery and mutation use the shared descriptor-relative helper. A
+ * Both discovery and mutation use the shared native filesystem boundary. A
  * directory or file that changes after inspection therefore fails closed
  * instead of redirecting the sanitizer outside the snapshot root.
  */

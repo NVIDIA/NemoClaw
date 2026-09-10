@@ -43,6 +43,8 @@ on:
       - "ci/reviewed-npm-audit.json"
       - "nemoclaw/**"
       - "nemoclaw-blueprint/**"
+      - "package-lock.json"
+      - "package.json"
       - "scripts/**"
       - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
       - "src/lib/actions/sandbox/mcp-bridge-*.ts"
@@ -53,7 +55,9 @@ on:
       - "src/lib/core/ports.ts"
       - "src/lib/messaging/**"
       - "src/lib/onboard/**"
+      - "src/lib/security/credential-filter.ts"
       - "src/lib/security/credential-hash.ts"
+      - "src/lib/security/snapshot-sanitizer.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
       - "test/e2e/live/mcp-bridge*.ts"
@@ -1217,6 +1221,19 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.19.0
+      - name: Validate the candidate snapshot sanitizer on the native architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$SOURCE_REVISION" ]] || {
+            echo "ERROR: snapshot sanitizer checkout does not match the exact PR head" >&2
+            exit 1
+          }
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build:cli
+          npx --no-install vitest run \
+            --project package-contract \
+            test/package-contract/snapshot-sanitizer-boundary.test.ts
       # Pi has no published base alias yet, so the candidate lane builds its own
       # base on the target architecture. The activation change adds the shared
       # published-base contract with the rest of the release cohort.
