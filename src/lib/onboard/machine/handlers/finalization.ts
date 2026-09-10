@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../../cli/branding";
+import type { ExternalComponentActivationIncomplete } from "../../../state/onboard-session";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
+import type { PreparedExternalComponent } from "../../external-component";
+import type {
+  ExternalComponentActivationProof,
+  ExternalComponentActivationResult,
+} from "../../external-component/activation";
 import type { WebSearchVerifyProvider } from "../../web-search-verify";
 import type { PortableOpenClawPairingSettlementResult } from "../../../actions/sandbox/launch-readiness";
 import type { OrdinaryOpenClawPairingSettlementResult } from "../finalization-deps";
@@ -29,6 +35,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   webSearchProvider: WebSearchVerifyProvider | null;
   portableProfileSelected?: boolean;
   recreateJournalHandoff?: boolean;
+  externalComponent?: PreparedExternalComponent | null;
   deps: {
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
@@ -36,6 +43,16 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
      * registered as default (#4614).
      */
     setDefaultSandbox(sandboxName: string): void;
+    createExternalComponentActivationProof?(sandboxName: string): ExternalComponentActivationProof;
+    createExternalComponentActivationId?(): string;
+    activateExternalComponent?(
+      component: PreparedExternalComponent,
+      proof: ExternalComponentActivationProof,
+      activationId: string,
+    ): Promise<ExternalComponentActivationResult>;
+    setExternalComponentActivationEvidence?(
+      evidence: ExternalComponentActivationIncomplete | null,
+    ): void;
     toSessionUpdates(
       updates: Record<string, unknown>,
     ): NonNullable<OnboardStateCompleteResult["updates"]>;
@@ -99,7 +116,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
 }
 
 export interface FinalizationStateResult {
-  stateResult: OnboardStateTransitionResult;
+  stateResult: OnboardStateTransitionResult | OnboardStatePauseResult;
   unmigratedLegacyKeys: string[];
 }
 
@@ -180,6 +197,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   agent,
   stagedLegacyKeys,
   migratedLegacyKeys,
+  externalComponent = null,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -187,6 +205,46 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   VerificationResult
 >): Promise<FinalizationStateResult> {
   const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
+  if (externalComponent) {
+    if (
+      !deps.createExternalComponentActivationProof ||
+      !deps.createExternalComponentActivationId ||
+      !deps.activateExternalComponent ||
+      !deps.setExternalComponentActivationEvidence
+    ) {
+      throw new Error("External component activation is unavailable.");
+    }
+    const proof = deps.createExternalComponentActivationProof(sandboxName);
+    const activationId = deps.createExternalComponentActivationId();
+    const evidence = (resultClass: "failed" | "ambiguous") => ({
+      schemaVersion: 1 as const,
+      activationId,
+      componentId: externalComponent.declaration.componentId,
+      lifecycleGeneration: proof.lifecycleGeneration,
+      sandboxIdentityFingerprint: proof.sandboxIdentityFingerprint,
+      resultClass,
+    });
+    deps.setExternalComponentActivationEvidence(evidence("ambiguous"));
+    const activation = await deps.activateExternalComponent(externalComponent, proof, activationId);
+    if (activation.kind !== "activated") {
+      const resultClass = activation.kind === "rejected" ? "failed" : "ambiguous";
+      const incompleteEvidence = evidence(resultClass);
+      deps.setExternalComponentActivationEvidence(incompleteEvidence);
+      deps.error(
+        `  External component activation is incomplete. Reason class: ${resultClass}. The sandbox was preserved.`,
+      );
+      return {
+        stateResult: pauseOnboardMachine(
+          deps.toSessionUpdates({
+            externalComponentActivation: incompleteEvidence,
+          }),
+          { state: "finalizing", reason: "external_component_activation_incomplete" },
+        ),
+        unmigratedLegacyKeys: stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key)),
+      };
+    }
+    deps.setExternalComponentActivationEvidence(null);
+  }
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).
   deps.setDefaultSandbox(sandboxName);
