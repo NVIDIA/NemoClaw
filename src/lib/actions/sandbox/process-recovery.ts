@@ -57,6 +57,7 @@ import {
   recoverMessagingHostForward,
   resolveSandboxDashboardPort,
   resolveSandboxHealthProbeUrl,
+  unverifiedForwardListenerRefusal,
   verifyHermesPortableLaunchForwards,
   type HermesPortableForwardRecoveryFailure,
   type HermesPortableForwardRecoveryContext,
@@ -1771,8 +1772,8 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
       if (!quiet) {
         console.log("");
         if (forwardListener === "unverified") {
-          // Not dead: something else answers on the port. The recovery
-          // helper prints the refusal and remedy; nothing is relaunched (#11149).
+          // Not dead: something else answers on the port. The refusal and
+          // remedy follow below; nothing is relaunched (#11149).
           console.log(
             `  Dashboard port forward to '${sandboxName}' is held by a listener NemoClaw does not own.`,
           );
@@ -1781,9 +1782,17 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
           console.log("  Re-establishing...");
         }
       }
-      const forwardRecovered = measure("forward", () =>
-        ensureSandboxPortForward(sandboxName, { isWsl: isWslOverride, runtimeSelection }),
-      );
+      const forwardRecovered = measure("forward", () => {
+        if (forwardListener === "unverified") {
+          // Already classified above. The helper would only probe the port
+          // again and refuse the same way, so refuse here (#11149).
+          console.error(
+            unverifiedForwardListenerRefusal(sandboxName, resolveSandboxDashboardPort(sandboxName)),
+          );
+          return false;
+        }
+        return ensureSandboxPortForward(sandboxName, { isWsl: isWslOverride, runtimeSelection });
+      });
       const dashboardForwardRecovered = measure("forward", () =>
         ensureHermesDashboardPortForwardIfEnabled(sandboxName, runtimeSelection),
       );

@@ -882,7 +882,7 @@ describe("recover with a dashboard port held by a listener the sandbox does not 
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(false);
     const launch = vi.spyOn(forwardService, "launchForwardService");
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+    const forwardList = vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: "SANDBOX  BIND  PORT  PID  STATUS\n",
     });
@@ -908,6 +908,12 @@ describe("recover with a dashboard port held by a listener the sandbox does not 
       ),
     });
     expect(launch).not.toHaveBeenCalled();
+    // One classification decides; the recovery helper is not asked to classify again.
+    expect(
+      forwardList.mock.calls.filter(
+        ([rawArgs]) => Array.isArray(rawArgs) && rawArgs[0] === "forward" && rawArgs[1] === "list",
+      ),
+    ).toHaveLength(1);
     expect(
       runOpenshell.mock.calls.some(
         ([rawArgs]) => Array.isArray(rawArgs) && rawArgs[0] === "forward",
