@@ -38,12 +38,6 @@ const configExportFiles = [
 export default defineConfig({
   categories: {
     correctness: "off",
-    nursery: "off",
-    pedantic: "off",
-    perf: "off",
-    restriction: "off",
-    style: "off",
-    suspicious: "off",
   },
   env: {
     browser: true,
@@ -99,11 +93,9 @@ export default defineConfig({
       },
     },
     {
-      files: ["src/lib/adapters/**/*.ts"],
+      files: ["src/lib/adapters/**/*.ts", "nemoclaw/src/**/*.ts"],
       rules: {
         "no-unused-vars": "error",
-        "no-debugger": "error",
-        eqeqeq: "error",
         "typescript/no-explicit-any": "error",
         "typescript/consistent-type-exports": "error",
         "typescript/consistent-type-imports": [
@@ -114,6 +106,17 @@ export default defineConfig({
             prefer: "type-imports",
           },
         ],
+        "typescript/no-floating-promises": "error",
+        "typescript/switch-exhaustiveness-check": "error",
+      },
+    },
+    {
+      files: ["src/lib/adapters/**/*.ts"],
+      rules: {
+        "no-debugger": "error",
+        eqeqeq: "error",
+        "typescript/no-misused-promises": "error",
+        "typescript/await-thenable": "error",
       },
     },
     {
@@ -174,20 +177,8 @@ export default defineConfig({
       files: ["nemoclaw/src/**/*.ts"],
       rules: {
         "import/no-commonjs": "error",
-        "no-unused-vars": "error",
-        "typescript/consistent-type-exports": "error",
-        "typescript/consistent-type-imports": [
-          "error",
-          {
-            disallowTypeAnnotations: false,
-            fixStyle: "separate-type-imports",
-            prefer: "type-imports",
-          },
-        ],
-        "typescript/no-explicit-any": "error",
         "typescript/prefer-nullish-coalescing": "error",
         "typescript/prefer-optional-chain": "error",
-        "typescript/switch-exhaustiveness-check": "error",
       },
     },
   ],

@@ -46,10 +46,11 @@ function runTests(...tests: string[]): () => string[] {
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern:
-      /(?:^|\/)(?:oxlint(?:\.type-aware)?\.config\.ts|oxc\.ignore-patterns\.ts|tsconfig\.cli\.json|\.pre-commit-config\.yaml)$/,
+      /(?:^|\/)(?:oxlint\.config\.ts|oxc\.ignore-patterns\.ts|tsconfig(?:\.cli)?\.json|nemoclaw\/tsconfig(?:\.test)?\.json|\.pre-commit-config\.yaml)$/,
     testsToRun: runTests(
       "test/automation/lint/config-export-complexity.test.ts",
       "test/automation/lint/adapters.test.ts",
+      "test/automation/lint/plugin.test.ts",
     ),
   },
   {
