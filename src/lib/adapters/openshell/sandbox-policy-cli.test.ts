@@ -200,6 +200,26 @@ describe("CLI OpenShell sandbox policy writer", () => {
     );
   });
 
+  it("rejects malformed documents before creating submission material or capturing", async () => {
+    const capture = vi.fn();
+    const makeDirectory = vi.spyOn(fs, "mkdtempSync");
+    try {
+      const result = await createCliOpenShellSandboxPolicyWriter({ capture }).setSandboxPolicy({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+        document: "network_policies: [",
+      });
+      expect(result).toEqual({
+        status: 1,
+        outcome: { kind: "rejected", status: 1, message: "Invalid sandbox policy document." },
+      });
+      expect(capture).not.toHaveBeenCalled();
+      expect(makeDirectory).not.toHaveBeenCalled();
+    } finally {
+      makeDirectory.mockRestore();
+    }
+  });
+
   it("retains private submission material until capture finishes on success", async () => {
     let settle!: () => void;
     let policyPath = "";

@@ -197,6 +197,35 @@ describe("sanitized OpenShell capture", () => {
     expect(environments[0]).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
   });
 
+  it.each(["SIGINT", "SIGTERM"] as const)(
+    "settles a cancelled policy submission and removes its private material on %s",
+    async (signal) => {
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", blockingExecutable("openshell"));
+      const before = process.listeners(signal);
+      const makeDirectory = vi.spyOn(fs, "mkdtempSync");
+      const pending = cliOpenShellSandboxPolicyWriter.setSandboxPolicy({
+        target: namedOpenShellGateway("nemoclaw"),
+        sandboxName: "alpha",
+        document: "version: 1\nnetwork_policies: {}",
+        timeoutMs: 1_000,
+      });
+      try {
+        const submissionDirectory = makeDirectory.mock.results[0]?.value as string;
+        expect(fs.existsSync(submissionDirectory)).toBe(true);
+        const forward = process.listeners(signal).find((listener) => !before.includes(listener));
+        expect(forward).toBeTypeOf("function");
+        forward!(signal);
+        const result = await pending;
+        expect(result.status).toBe(1);
+        expect(result.outcome.kind).not.toBe("applied");
+        expect(fs.existsSync(submissionDirectory)).toBe(false);
+        expect(process.listeners(signal)).toEqual(before);
+      } finally {
+        await pending;
+      }
+    },
+  );
+
   it("keeps a policy mutation on one selected OpenShell runtime", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-runtime-test-"));
     directories.push(directory);

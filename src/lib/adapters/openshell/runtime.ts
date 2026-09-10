@@ -154,6 +154,14 @@ export function captureResolvedOpenshellAsync(args: CommandArgs, opts: RunnerOpt
     includeStreams: opts.includeStreams,
     timeout: opts.timeout,
     outputLimitBytes: opts.maxBuffer,
+    signalSource: {
+      add: (signal, listener) => {
+        process.on(signal, listener);
+      },
+      remove: (signal, listener) => {
+        process.removeListener(signal, listener);
+      },
+    },
   });
 }
 

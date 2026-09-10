@@ -2,15 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Command, Flags, type Interfaces } from "@oclif/core";
-import path from "node:path";
 import {
   assertHermesPortableCommandSupported,
   assertHermesPortableCommandUnavailable,
   classifyHermesPortableCommand,
+  hermesPortableLifecycleLockOptions,
   HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE,
   HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE,
 } from "../onboard/experimental/portable-agent-lifecycle";
-import { hasHermesPortableReceiptCandidate } from "../onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
 import {
@@ -143,17 +142,15 @@ export abstract class NemoClawCommand extends Command {
       }
       return super._run<T>();
     };
+    const portableLifecycleLockOptions = hermesPortableLifecycleLockOptions(
+      sandboxName,
+      process.env,
+    );
     const usesHermesPortableHostAuthority =
       (commandId === "sandbox:start" || this.isProbeOnlyConnect(commandId)) &&
-      hasHermesPortableReceiptCandidate(sandboxName, defaultPortableDemoStateDir(process.env));
+      portableLifecycleLockOptions !== undefined;
     const runWithLifecycleFence = async () => {
-      return await withMcpLifecycleLock(
-        sandboxName,
-        runLocked,
-        usesHermesPortableHostAuthority
-          ? { stateDir: path.join(defaultPortableDemoStateDir(process.env), "state") }
-          : {},
-      );
+      return await withMcpLifecycleLock(sandboxName, runLocked, portableLifecycleLockOptions);
     };
     if (usesHermesPortableHostAuthority) {
       return await withCurrentPortableHostFence(runWithLifecycleFence);
