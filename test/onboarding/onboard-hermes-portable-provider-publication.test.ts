@@ -19,7 +19,12 @@ beforeEach(() => {
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 
-type ProviderBoundaryMode = "create" | "deferred" | "ordinary-resume" | "superseded";
+type ProviderBoundaryMode =
+  | "create"
+  | "deferred"
+  | "ollama-create"
+  | "ordinary-resume"
+  | "superseded";
 
 type ProviderBoundaryResult = {
   binderCalls: number;
@@ -70,6 +75,9 @@ let gpuCreateCalls = 0;
 let portableLockInvocations = 0;
 let portableTransactions = 0;
 const portableMode = ${JSON.stringify(mode !== "ordinary-resume")};
+const inferenceProvider = ${JSON.stringify(
+    mode === "ollama-create" ? "ollama-local" : "nvidia-prod",
+  )};
 const customDockerfile = process.env.HOME + "/Dockerfile";
 fs.writeFileSync(customDockerfile, [
   "FROM scratch",
@@ -119,7 +127,7 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
   sandboxName,
   gatewayName,
   agentName: portableMode ? "hermes" : "langchain-deepagents-code",
-  provider: "nvidia-prod",
+  provider: inferenceProvider,
   model: "gpt-5.4",
 });
 if (!portableMode) {
@@ -288,7 +296,7 @@ const { resolveSandboxGpuConfig } = require(${modulePath("onboard/sandbox-gpu-mo
       resolved: resolveSandboxCreateIntent({
         basePolicyPath: ${JSON.stringify(path.join(repoRoot, "agents/hermes/policy-additions.yaml"))},
         sandboxName,
-        inferenceProvider: "nvidia-prod",
+        inferenceProvider,
         channels: [],
         enabledChannels: [],
         disabledChannelNames: new Set(),
@@ -371,6 +379,25 @@ describe("sandbox-create provider publication branches", () => {
       );
       assert.ok(
         payload.events.indexOf("provider:update") < payload.events.indexOf("sandbox:create"),
+      );
+    },
+  );
+
+  it(
+    "keeps the transaction-bound Ollama provider at its committed version (#11336)",
+    { timeout: 60_000 },
+    () => {
+      const payload = runProviderBoundary("ollama-create");
+
+      assert.equal(payload.result, "my-assistant");
+      assert.deepEqual(payload.providerCalls, []);
+      assert.equal(payload.portableTransactions, 1);
+      assert.equal(payload.gpuCreateCalls, 1);
+      assert.equal(payload.events.filter((event) => event === "provider:update").length, 0);
+      assert.ok(payload.events.includes("sandbox:create"));
+      assert.ok(payload.events.includes("sandbox:identity-verified"));
+      assert.ok(
+        payload.events.indexOf("portable:transaction") < payload.events.indexOf("sandbox:create"),
       );
     },
   );
