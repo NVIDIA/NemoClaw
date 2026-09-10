@@ -102,8 +102,11 @@ function Assert-PythonPhaseResult {
     }
     $winpty = @($Result.python.packages | Where-Object { $_.name -eq 'pywinpty' })
     $hermes = @($Result.python.packages | Where-Object { $_.name -eq 'hermes-agent' })
+    # Editable source metadata can be enumerated alongside the installed
+    # distribution. Repeated identical versions are not a substituted package.
+    $unexpectedHermes = @($hermes | Where-Object { $_.version -cne '0.21.1' })
     if ($winpty.Count -ne 1 -or $winpty[0].version -cne '2.0.15' -or
-        $hermes.Count -ne 1 -or $hermes[0].version -cne '0.21.1') {
+        $hermes.Count -lt 1 -or $unexpectedHermes.Count -ne 0) {
         throw 'The official Hermes or pywinpty version was substituted.'
     }
 }
