@@ -30,7 +30,9 @@ describe("dependency review record retention guidance", () => {
   });
 
   it("distinguishes point-in-time dependency reports from maintained contracts", () => {
-    expect(retentionSection).toMatch(/point-in-time.*dependency-review reports/i);
+    expect(retentionSection).toMatch(
+      /do not commit or update point-in-time.*dependency-review reports/i,
+    );
     expect(retentionSection).toMatch(
       /does not apply.*durable.*code-synchronized dependency contract documents/i,
     );
