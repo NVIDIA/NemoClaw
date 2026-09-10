@@ -1205,7 +1205,7 @@ function loadSessionFile(filePath: string, strict = false): Session | null {
       try {
         descriptor = fs.openSync(
           filePath,
-          fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+          fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
         );
       } catch (error) {
         if (isErrnoException(error) && error.code === "ENOENT") {
@@ -1265,7 +1265,10 @@ export function loadRebuildSession(sandboxName: string): Session | null {
 
 function moveSessionFile(source: string, target: string): void {
   assertOnboardLockOwned();
-  const descriptor = fs.openSync(source, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  const descriptor = fs.openSync(
+    source,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
+  );
   try {
     assertSessionFileIdentity(descriptor, source);
     fs.fchmodSync(descriptor, 0o600);
@@ -1290,6 +1293,13 @@ export function selectRebuildSession(sandboxName: string): void {
   }
   const retained = loadRetainedRebuildSession(sandboxName);
   const transaction = current?.checkpoint?.sandboxRecreate;
+  if (retained && !transaction && current?.resumable) {
+    throw new Error(
+      `Cannot select rebuild recovery for '${sandboxName}': ` +
+        `onboarding for ${JSON.stringify(current.sandboxName ?? "(unnamed)")} is unfinished. ` +
+        "Resume or clear that onboarding session before retrying.",
+    );
+  }
   if (transaction?.sandboxName === sandboxName) {
     if (retained) {
       throw new Error(`Sandbox '${sandboxName}' has conflicting rebuild recovery sessions.`);
@@ -1312,7 +1322,8 @@ export function selectRebuildSession(sandboxName: string): void {
   if (retained) {
     moveSessionFile(targetFile, SESSION_FILE);
   } else if (transaction || !current) {
-    saveSession(createSession({ sandboxName }));
+    // Preflight has not started onboarding or recorded a rebuild transaction yet.
+    saveSession({ ...createSession({ sandboxName }), resumable: false });
   }
 }
 

@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -116,14 +118,15 @@ describe("rebuild session selection", () => {
   it("does not restore a completed transaction after switching away and back", () => {
     withRebuildLock("alpha", () => begin("alpha"));
     const beta = withRebuildLock("beta", () => begin("beta", "completed"));
-    withRebuildLock("beta", () =>
+    withRebuildLock("beta", () => {
       session.updateSession((current) => {
         transactions.clearCompletedSandboxRecreateTransaction(
           current,
           beta.checkpoint!.sandboxRecreate!.id,
         );
-      }),
-    );
+      });
+      session.completeSession({}, { emitEvents: false });
+    });
 
     withRebuildLock("alpha", () =>
       expect(session.loadSession()?.checkpoint?.sandboxRecreate?.sandboxName).toBe("alpha"),
@@ -131,6 +134,30 @@ describe("rebuild session selection", () => {
     const next = withRebuildLock("beta", () => begin("beta"));
 
     expect(next.checkpoint?.sandboxRecreate?.id).not.toBe(beta.checkpoint?.sandboxRecreate?.id);
+  });
+
+  it.each(["beta", "alpha", null])(
+    "preserves unfinished onboarding for %j when selecting retained recovery",
+    (sandboxName) => {
+      const alpha = withRebuildLock("alpha", () => begin("alpha"));
+      withRebuildLock("beta", () => undefined);
+      const onboarding = session.saveSession(
+        session.createSession({ sandboxName, resumable: true }),
+      );
+
+      expect(() => withRebuildLock("alpha", () => undefined)).toThrow(/onboarding.*unfinished/);
+
+      expect(session.loadSession()).toEqual(onboarding);
+      expect(session.loadRebuildSession("alpha")).toEqual(alpha);
+      expect(session.isOnboardLockHeldByCurrentProcess()).toBe(false);
+    },
+  );
+
+  it("resumes retained recovery after another rebuild stops before recording a transaction", () => {
+    const alpha = withRebuildLock("alpha", () => begin("alpha"));
+    withRebuildLock("beta", () => expect(session.loadSession()?.resumable).toBe(false));
+
+    withRebuildLock("alpha", () => expect(session.loadSession()).toEqual(alpha));
   });
 
   it("still rejects a changed target for the same sandbox", () => {
@@ -218,6 +245,53 @@ describe("rebuild session selection", () => {
 
     expect(session.loadSession()).toEqual(alpha);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a FIFO recovery file without blocking",
+    () => {
+      withRebuildLock("alpha", () => begin("alpha"));
+      const beta = withRebuildLock("beta", () => begin("beta"));
+      const retained = path.join(session.SESSION_DIR, ".onboard-rebuild-alpha.json");
+      fs.unlinkSync(retained);
+      const fifo = spawnSync("mkfifo", ["-m", "600", retained], {
+        encoding: "utf8",
+        timeout: 1000,
+      });
+      expect(fifo.status, fifo.stderr).toBe(0);
+
+      // A separate process makes a blocking-open regression fail within a bounded time.
+      const probe = spawnSync(
+        process.execPath,
+        [
+          "--require",
+          "tsx/cjs",
+          "-e",
+          `
+      const assert = require("node:assert/strict");
+      const session = require(process.argv[1]);
+      assert.throws(() => session.loadRebuildSession("alpha"), /session state changed/);
+      assert.equal(session.acquireOnboardLock("FIFO recovery probe").acquired, true);
+      try {
+        assert.throws(() => session.selectRebuildSession("alpha"), /session state changed/);
+      } finally {
+        session.releaseOnboardLock();
+      }
+    `,
+          fileURLToPath(new URL("./onboard-session.ts", import.meta.url)),
+        ],
+        {
+          env: { ...process.env, HOME: tmpDir },
+          encoding: "utf8",
+          timeout: 15_000,
+        },
+      );
+
+      expect(probe.error).toBeUndefined();
+      expect(probe.status, probe.stderr).toBe(0);
+      expect(session.loadSession()).toEqual(beta);
+    },
+    30_000,
+  );
 
   it.each([
     {
