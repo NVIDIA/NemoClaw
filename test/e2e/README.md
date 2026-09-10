@@ -1480,6 +1480,10 @@ It validates the complete three-agent, two-architecture cohort artifact and the 
 `generate-matrix` and every stock-onboarding job depend on this publication job, so incomplete publication creates no onboarding fanout.
 Direct `main` runs use the same publication workflow and artifact contract.
 
+The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
+Onboarding and fresh re-onboarding do not supply a base-image override.
+The retained `dcode-base-image.json` artifact records publication evidence; it does not select the managed workload's image.
+
 PR Review Advisor maps changes to either of these shared journaled-recreation handlers to recommended E2E coverage:
 
 - `src/lib/onboard/machine/handlers/sandbox-resume.ts`.

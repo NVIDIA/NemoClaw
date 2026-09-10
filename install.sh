@@ -19,6 +19,10 @@ BOOTSTRAP_TMPDIR=""
 PAYLOAD_MARKER="NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1"
 DEFAULT_INSTALL_REF="lkg"
 INSTALL_TAG_EXAMPLE="vX.Y.Z"
+BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=30
+BOOTSTRAP_CLI_LOOKUP_MAX_OUTPUT_BYTES=65536
+BOOTSTRAP_TAG_LOOKUP_MAX_OUTPUT_BYTES=1048576
+SELECTED_PAYLOAD_IDENTITY_REF=""
 
 resolve_release_tag() {
   if [[ -n "${NEMOCLAW_INSTALL_REF:-}" ]]; then
@@ -79,17 +83,186 @@ clone_nemoclaw_ref() {
   )
 }
 
+installed_nemoclaw_release_version() {
+  local cli_name cli_path normalized_agent output status
+  normalized_agent="$(printf '%s' "${NEMOCLAW_AGENT:-openclaw}" | tr '[:upper:]_ ' '[:lower:]--' | sed -E 's/-+/-/g; s/^-//; s/-$//')"
+  case "$normalized_agent" in
+    nemohermes | nemo-hermes | hermes) cli_name="nemohermes" ;;
+    nemo-deepagents | nemo-deepagent | nemodeepagents | nemodeepagent | dcode | deepagent | deepagents | deep-agent | deep-agents | deepagentcode | deepagentscode | deepagent-code | deepagents-code | deep-agent-code | deep-agents-code | langchain | langchain-code | langchaindeepagent | langchaindeepagents | langchain-deepagent | langchain-deepagents | langchaindeepagentcode | langchaindeepagentscode | langchain-deepagent-code | langchain-deepagents-code | langchain-deep-agent | langchain-deep-agents | langchain-deep-agent-code | langchain-deep-agents-code) cli_name="nemo-deepagents" ;;
+    *) cli_name="nemoclaw" ;;
+  esac
+  cli_path="$(command -v "$cli_name" 2>/dev/null || true)"
+  [[ -n "$cli_path" ]] || return 3
+  output="$(run_bounded_bootstrap_lookup "installed NemoClaw version lookup" "$BOOTSTRAP_CLI_LOOKUP_MAX_OUTPUT_BYTES" "$cli_path" --version)" || {
+    status=$?
+    ((status == 124)) && return 124
+    ((status >= 128)) && return "$status"
+    return 2
+  }
+  if [[ "$output" =~ ^${cli_name}[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 2
+}
+
+checkout_release_version() {
+  local source_root="$1" target_commit refs status ref version
+  target_commit="$(git -C "$source_root" rev-parse HEAD 2>/dev/null || true)"
+  [[ -n "$target_commit" ]] || return 0
+  refs="$(run_bounded_bootstrap_lookup "maintained release tag lookup" "$BOOTSTRAP_TAG_LOOKUP_MAX_OUTPUT_BYTES" git -C "$source_root" ls-remote --tags origin 'refs/tags/v*')" || {
+    status=$?
+    ((status == 124)) && exit 1
+    ((status >= 128)) && exit "$status"
+    return 0
+  }
+  while read -r commit ref; do
+    [[ "$commit" == "$target_commit" ]] || continue
+    ref="${ref%\^\{\}}"
+    version="${ref#refs/tags/v}"
+    # The maintained lkg must resolve to a stable release. Rejecting prerelease
+    # tags also prevents replacing a stable install with the same core version.
+    if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      printf '%s' "$version"
+      return 0
+    fi
+  done <<<"$refs"
+}
+
+release_version_is_newer() {
+  local left="$1" right="$2" left_major left_minor left_patch right_major right_minor right_patch
+  left="${left%%+*}"
+  left="${left%%-*}"
+  IFS=. read -r left_major left_minor left_patch <<<"$left"
+  IFS=. read -r right_major right_minor right_patch <<<"$right"
+  ((10#$left_major > 10#$right_major)) && return 0
+  ((10#$left_major < 10#$right_major)) && return 1
+  ((10#$left_minor > 10#$right_minor)) && return 0
+  ((10#$left_minor < 10#$right_minor)) && return 1
+  ((10#$left_patch > 10#$right_patch))
+}
+
+run_bounded_bootstrap_lookup() (
+  local label="$1" max_output_bytes="$2" output_file command_pid="" output_bytes status ticks=0 pending_signal=0
+  shift 2
+  output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-bootstrap-lookup.XXXXXX")"
+  # Invoked indirectly by the signal and exit traps below.
+  # shellcheck disable=SC2329
+  cleanup_bootstrap_lookup() {
+    local cleanup_status="$1"
+    # Preserve cancellation status without interrupting or reentering cleanup.
+    trap 'cleanup_status=130' INT
+    trap 'cleanup_status=143' TERM
+    trap - EXIT
+    [[ -z "$command_pid" ]] || terminate_bootstrap_lookup_group "$command_pid"
+    rm -f "$output_file"
+    exit "$cleanup_status"
+  }
+  # Defer cancellation until the newly launched process group has an owned PID.
+  trap 'pending_signal=130' INT
+  trap 'pending_signal=143' TERM
+  trap 'cleanup_bootstrap_lookup "$?"' EXIT
+  set -m
+  (
+    set -o pipefail
+    "$@" 2>/dev/null </dev/null | head -c "$((max_output_bytes + 1))"
+  ) >"$output_file" 2>/dev/null &
+  command_pid=$!
+  set +m
+  trap 'cleanup_bootstrap_lookup 130' INT
+  trap 'cleanup_bootstrap_lookup 143' TERM
+  ((pending_signal == 0)) || cleanup_bootstrap_lookup "$pending_signal"
+  while bootstrap_lookup_group_is_alive "$command_pid"; do
+    if ((ticks >= BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS * 10)); then
+      printf '[ERROR] Timed out during %s after %s seconds.\n' "$label" "$BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS" >&2
+      printf '        The installed CLI was not changed. Retry or select an explicit immutable release tag.\n' >&2
+      return 124
+    fi
+    sleep 0.1
+    ticks=$((ticks + 1))
+  done
+  if wait "$command_pid"; then
+    status=0
+  else
+    status=$?
+  fi
+  command_pid=""
+  output_bytes="$(wc -c <"$output_file")"
+  if ((output_bytes > max_output_bytes)); then
+    status=2
+  elif ((status == 0)); then
+    cat "$output_file"
+  elif ((status >= 128)); then
+    status=2
+  fi
+  return "$status"
+)
+
+bootstrap_lookup_group_is_alive() {
+  local command_pid="$1"
+  kill -0 -- "-$command_pid" 2>/dev/null || kill -0 "$command_pid" 2>/dev/null
+}
+
+terminate_bootstrap_lookup_group() {
+  local command_pid="$1" grace_ticks
+  bootstrap_lookup_group_is_alive "$command_pid" || {
+    wait "$command_pid" 2>/dev/null || true
+    return
+  }
+  kill -TERM -- "-$command_pid" 2>/dev/null || kill -TERM "$command_pid" 2>/dev/null || true
+  for ((grace_ticks = 0; grace_ticks < 10; grace_ticks++)); do
+    bootstrap_lookup_group_is_alive "$command_pid" || break
+    sleep 0.1
+  done
+  if bootstrap_lookup_group_is_alive "$command_pid"; then
+    kill -KILL -- "-$command_pid" 2>/dev/null || kill -KILL "$command_pid" 2>/dev/null || true
+  fi
+  wait "$command_pid" 2>/dev/null || true
+}
+
+guard_implicit_maintained_downgrade() {
+  local source_root="$1" selected_ref="$2" installed_version target_version status
+  case "$selected_ref" in
+    lkg | refs/tags/lkg) ;;
+    *) return 0 ;;
+  esac
+  installed_version="$(installed_nemoclaw_release_version)" || {
+    status=$?
+    ((status == 3)) && return 0
+    ((status == 124)) && exit 1
+    ((status >= 128)) && exit "$status"
+    printf '[ERROR] Cannot verify the installed NemoClaw version before selecting maintained lkg.\n' >&2
+    printf '        The installed CLI was not changed. Repair it or select an explicit immutable release tag.\n' >&2
+    exit 1
+  }
+  target_version="$(checkout_release_version "$source_root")"
+  if [[ -z "$target_version" ]]; then
+    printf "[ERROR] Cannot verify the maintained lkg version before replacing installed NemoClaw v%s.\n" "$installed_version" >&2
+    printf "        The installed CLI was not changed. Set NEMOCLAW_INSTALL_TAG=v%s to reinstall this release.\n" "$installed_version" >&2
+    exit 1
+  fi
+  SELECTED_PAYLOAD_IDENTITY_REF="v${target_version}"
+  if release_version_is_newer "$installed_version" "$target_version"; then
+    printf "[ERROR] Refusing to replace installed NemoClaw v%s with maintained lkg v%s.\n" "$installed_version" "$target_version" >&2
+    printf "        The installed CLI was not changed. Set NEMOCLAW_INSTALL_TAG=v%s to reinstall this release.\n" "$installed_version" >&2
+    exit 1
+  fi
+}
+
 exec_installer_from_ref() {
   local ref="$1"
   shift
 
-  local tmpdir source_root payload_script legacy_script
+  local tmpdir source_root payload_script legacy_script selected_commit
   tmpdir="$(mktemp -d)"
   BOOTSTRAP_TMPDIR="$tmpdir"
   trap 'rm -rf "${BOOTSTRAP_TMPDIR:-}"' EXIT
   source_root="${tmpdir}/source"
 
   clone_nemoclaw_ref "$ref" "$source_root"
+  selected_commit="$(git -C "$source_root" rev-parse HEAD)"
+
+  guard_implicit_maintained_downgrade "$source_root" "$ref"
 
   payload_script="${source_root}/scripts/install.sh"
   legacy_script="${source_root}/install.sh"
@@ -100,7 +273,9 @@ exec_installer_from_ref() {
     # helpers beside scripts/install.sh (including DGX Station preparation)
     # are therefore staged from the same ref before payload execution.
     verify_downloaded_script "$payload_script" "versioned installer"
-    NEMOCLAW_INSTALL_REF="$ref" NEMOCLAW_INSTALL_TAG="$ref" NEMOCLAW_BOOTSTRAP_PAYLOAD=1 \
+    NEMOCLAW_BOOTSTRAP_FETCH_REF="$selected_commit" \
+      NEMOCLAW_INSTALL_REF="${SELECTED_PAYLOAD_IDENTITY_REF:-$ref}" \
+      NEMOCLAW_INSTALL_TAG="$ref" NEMOCLAW_BOOTSTRAP_PAYLOAD=1 \
       bash "$payload_script" "$@"
     return
   fi
