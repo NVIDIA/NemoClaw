@@ -87,10 +87,9 @@ import { runSandboxExecChild, type SandboxExecChild, type SandboxExecSignalSourc
 export {
   AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS,
   agentDispatchDeadlineSeconds,
-  hasExplicitAgentMessage,
   replaceRequestedAgentTimeoutSeconds,
   requestedAgentTimeoutSeconds,
-} from "./passthrough-args";
+} from "../../../domain/sandbox/openclaw-agent-args";
 
 /**
  * Exit code for a dispatch that reported success without delivering a turn.

@@ -137,7 +137,7 @@ import {
   hasOpenClawAgentSelector,
   requestsOpenClawJsonOutput,
   requestsOpenClawLocalMode,
-} from "./passthrough-args";
+} from "../../../domain/sandbox/openclaw-agent-args";
 import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
 
 export { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";

@@ -64,7 +64,8 @@ runAgentTurnLatencyTest(
     };
     await artifacts.target.declare({
       id: "agent-turn-latency",
-      boundary: "two real sandboxes + hosted inference + OpenClaw agent turns + Hermes API turn",
+      boundary:
+        "two real sandboxes + hosted inference + host CLI agent turns with open stdin + Hermes API turn",
       openclawSandbox: OPENCLAW_SANDBOX,
       hermesSandbox: HERMES_SANDBOX,
     });
@@ -151,7 +152,7 @@ runAgentTurnLatencyTest(
     assertOpenClawConfig(openclawConfig.stdout, inference.model);
 
     progress.phase("run OpenClaw hosted inference turns");
-    const openclaw = await openclawTurn(sandbox, inference, progress);
+    const openclaw = await openclawTurn(host, inference, progress);
     expect(openclaw.result.exitCode, resultText(openclaw.result)).toBe(0);
     assertNoOpenClawTransportErrors(resultText(openclaw.result));
     expect(
@@ -160,7 +161,7 @@ runAgentTurnLatencyTest(
     ).toBe(true);
     expect(openclaw.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
 
-    const openclawFollowUp = await openclawTurn(sandbox, inference, progress, {
+    const openclawFollowUp = await openclawTurn(host, inference, progress, {
       artifactName: "openclaw-agent-follow-up-turn",
       prompt: "What is seven multiplied by eight? Reply with only the integer, no extra words.",
     });
@@ -253,7 +254,9 @@ runAgentTurnLatencyTest(
     expect(hermesTurn.exitCode, resultText(hermesTurn)).toBe(0);
     const hermesResponse = responseBodyAndStatus(hermesTurn.stdout);
     expect(hermesResponse.status, resultText(hermesTurn)).toBe("200");
-    expect(containsAnswer(chatContent(hermesResponse.body), "42"), resultText(hermesTurn)).toBe(true);
+    expect(containsAnswer(chatContent(hermesResponse.body), "42"), resultText(hermesTurn)).toBe(
+      true,
+    );
     expect(hermesMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
     results.hermes = { elapsedMs: hermesMs };
     progress.phase("record hosted inference timing evidence");

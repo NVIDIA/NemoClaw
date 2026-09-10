@@ -24,7 +24,7 @@ const inputs = [
   {
     name: "an open pipe with a message argument",
     args: ["-m", "ARG_MESSAGE"],
-    expected: "ARG_MESSAGE",
+    expected: "",
     open: openPipe,
   },
   {
@@ -41,13 +41,13 @@ const inputs = [
       "-m",
       "ARG_MESSAGE",
     ],
-    expected: "ARG_MESSAGE",
+    expected: "",
     open: openPipe,
   },
   {
     name: "an open pipe with a message file",
     args: ["--verbose", "off", "--message-file", "/sandbox/task.md"],
-    expected: "ARG_MESSAGE",
+    expected: "",
     open: openPipe,
   },
   {
@@ -59,6 +59,15 @@ const inputs = [
       return fs.openSync(inputPath, "r");
     },
   },
+  ...["/dev/stdin", "/dev/fd/0", "/proc/self/fd/0", "/proc/thread-self/fd/0"].map((file) => ({
+    name: `finite redirected input through message file ${file}`,
+    args: ["--message-file", file],
+    expected: "PIPED_INPUT",
+    open(inputPath: string) {
+      fs.writeFileSync(inputPath, "PIPED_INPUT");
+      return fs.openSync(inputPath, "r");
+    },
+  })),
 ];
 
 describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
@@ -96,15 +105,17 @@ describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
             stdinIsTty: () => false,
             runDispatch: (binary, args, options) =>
               runAgentDispatch(binary, args, options, {
-                spawnChild: (_binary, _args, stdio) => {
+                spawnChild: (_binary, args, stdio) => {
                   const child = spawn(
                     process.execPath,
                     [
                       "-e",
                       `
               const input = require('node:fs').readFileSync(0, 'utf8');
-              console.log(JSON.stringify({payloads: [{text: input || 'ARG_MESSAGE'}]}));
+              console.log(JSON.stringify({payloads: [{text: JSON.stringify({input, args: process.argv.slice(1)})}]}));
             `,
+                      "--",
+                      ...args,
                     ],
                     {
                       stdio: [
@@ -121,9 +132,9 @@ describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
               }),
           }),
         ).rejects.toThrow("exit:0");
-        expect(JSON.parse(stdout.join(""))).toEqual({
-          payloads: [{ text: expected }],
-        });
+        const received = JSON.parse(JSON.parse(stdout.join("")).payloads[0].text);
+        expect(received.input).toBe(expected);
+        expect(received.args.slice(-command.length)).toEqual(command);
         expect(stderr.join("")).toBe("");
       } finally {
         closeInput();
@@ -178,7 +189,7 @@ describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
                     add: (signal, listener) => signalEvents.on(signal, listener),
                     remove: (signal, listener) => signalEvents.off(signal, listener),
                   },
-                  spawnChild: (_binary, _args, stdio) => {
+                  spawnChild: (_binary, args, stdio) => {
                     const child = spawn(
                       process.execPath,
                       [

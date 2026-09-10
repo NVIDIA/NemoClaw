@@ -13,7 +13,10 @@ import {
 } from "../exec";
 import { isStdinTty } from "../../../core/stdin";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
-import { agentDispatchDeadlineSeconds, hasExplicitAgentMessage } from "./passthrough-args";
+import {
+  agentDispatchDeadlineSeconds,
+  canCloseAgentStdin,
+} from "../../../domain/sandbox/openclaw-agent-args";
 import {
   type AgentDispatchRunner,
   type AgentDispatchResult,
@@ -55,7 +58,7 @@ export function runOpenClawAgentDispatch(
     ),
     {
       stdinIsTty: (deps.stdinIsTty ?? isStdinTty)(),
-      ...(hasExplicitAgentMessage(command) ? { stdin: false } : {}),
+      ...(canCloseAgentStdin(command) ? { stdin: false } : {}),
     },
   );
 }

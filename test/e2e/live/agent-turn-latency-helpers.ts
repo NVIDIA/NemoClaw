@@ -446,7 +446,7 @@ export async function route(
 }
 
 export async function openclawTurn(
-  sandbox: SandboxClient,
+  host: HostCliClient,
   inference: AgentTurnInference,
   progress?: Pick<TestProgress, "onOutput">,
   options: {
@@ -459,12 +459,26 @@ export async function openclawTurn(
     options.prompt ?? "What is 6 multiplied by 7? Reply with only the integer, no extra words.";
   const sessionId = options.sessionId ?? "e2e-turn-latency";
   const started = process.hrtime.bigint();
-  const result = await sandbox.execShell(
-    OPENCLAW_SANDBOX,
-    trustedSandboxShellScript(
-      `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(sessionId)} -m ${shellQuote(prompt)}`,
-    ),
+  // The host fixture holds stdin open until the CLI exits. The released
+  // wrapper waits for EOF before OpenShell dispatches to the Ready sandbox.
+  const result = await host.command(
+    "node",
+    [
+      CLI,
+      OPENCLAW_SANDBOX,
+      "agent",
+      "--agent",
+      "main",
+      "--json",
+      "--thinking",
+      "off",
+      "--session-id",
+      sessionId,
+      "-m",
+      prompt,
+    ],
     {
+      stdin: "open-pipe",
       artifactName: options.artifactName ?? "openclaw-agent-turn",
       env: env(OPENCLAW_SANDBOX, "openclaw", inference),
       onOutput: progress?.onOutput,

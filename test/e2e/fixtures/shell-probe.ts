@@ -25,6 +25,8 @@ import type { TrustedShellCommand } from "./shell/trusted-command.ts";
  */
 
 export interface ShellProbeRunOptions {
+  /** Keep an empty stdin pipe open until exit; default callers receive EOF. */
+  stdin?: "open-pipe";
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
@@ -281,7 +283,7 @@ export class ShellProbe {
         cwd: options.cwd,
         detached: true,
         env: commandEnv,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [options.stdin === "open-pipe" ? "pipe" : "ignore", "pipe", "pipe"],
       },
     });
     const supervised = await superviseChild(child, {

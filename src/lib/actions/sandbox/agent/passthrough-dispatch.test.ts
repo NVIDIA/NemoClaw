@@ -10,7 +10,6 @@ import {
   AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS,
   agentDispatchDeadlineSeconds,
   agentDispatchStdio,
-  hasExplicitAgentMessage,
   isSilentAgentDispatch,
   isTimedOutAgentDispatch,
   replaceRequestedAgentTimeoutSeconds,
@@ -20,7 +19,11 @@ import {
   TIMED_OUT_AGENT_TURN_EXIT_CODE,
 } from "./passthrough-dispatch";
 import { buildOpenshellExecArgs, computeExitCode, type SandboxExecSignalSource } from "../exec";
-import { hasOpenClawAgentSelector, requestsOpenClawJsonOutput } from "./passthrough-args";
+import {
+  canCloseAgentStdin,
+  hasOpenClawAgentSelector,
+  requestsOpenClawJsonOutput,
+} from "../../../domain/sandbox/openclaw-agent-args";
 
 function dispatchHarness() {
   const childEvents = new EventEmitter();
@@ -245,7 +248,7 @@ describe("agentDispatchStdio", () => {
   });
 });
 
-describe("hasExplicitAgentMessage", () => {
+describe("canCloseAgentStdin", () => {
   it.each([
     ["--agent", "main", "-m", "ping"],
     ["--json", "--agent=main", "--message", "ping"],
@@ -255,6 +258,8 @@ describe("hasExplicitAgentMessage", () => {
     ["--message="],
     ["--message"],
     ["--message-file"],
+    ["--message-file", "/dev/stdin", "--message-file=/sandbox/task.md"],
+    ["--message-file", "/dev/stdin", "-m", "conflicting message"],
     ["--verbose", "off", "--channel", "slack", "-m", "ping"],
     ["--local", "--reply-to", "#reports", "--reply-account", "work", "-m", "ping"],
     ["--verbose=on", "--channel=slack", "--message-file", "/sandbox/task.md"],
@@ -263,7 +268,7 @@ describe("hasExplicitAgentMessage", () => {
     ["--profile", "work", "--log-level=debug", "--no-color", "-m", "ping"],
     ["--dev", "--container", "agent-tools", "--message", "ping"],
   ])("recognizes explicit message options %j", (...args) => {
-    expect(hasExplicitAgentMessage(["openclaw", "agent", ...args])).toBe(true);
+    expect(canCloseAgentStdin(["openclaw", "agent", ...args])).toBe(true);
   });
 
   it.each([
@@ -272,12 +277,18 @@ describe("hasExplicitAgentMessage", () => {
     ["--", "-m", "ping"],
     ["--unknown", "-m", "ping"],
     ["--reply-to", "-m", "payload"],
+    ["--message-file", "/dev/stdin"],
+    ["--message-file=/dev/fd/0"],
+    ["--message-file", " /proc/self/fd/0 "],
+    ["--message-file", "/proc/thread-self/fd/0"],
+    ["--message-file", "/dev/./stdin"],
+    ["--message-file", "/sandbox/task.md", "--message-file=/dev/stdin"],
   ])("preserves stdin when argv does not establish a message %j", (...args) => {
-    expect(hasExplicitAgentMessage(["openclaw", "agent", ...args])).toBe(false);
+    expect(canCloseAgentStdin(["openclaw", "agent", ...args])).toBe(false);
   });
 
   it("leaves another agent's stdin unchanged", () => {
-    expect(hasExplicitAgentMessage(["dcode", "-m", "ping"])).toBe(false);
+    expect(canCloseAgentStdin(["dcode", "-m", "ping"])).toBe(false);
   });
 });
 
