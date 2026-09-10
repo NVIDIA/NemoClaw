@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import path from "node:path";
 import {
   createHostProcessWorkspace,
@@ -113,6 +113,37 @@ export function runOnboardProcess(
     stderr,
     output: `${stdout}\n${stderr}`,
   };
+}
+
+/** Runs `node <argv...>` asynchronously so isolated fixtures can run concurrently. */
+export function runOnboardProcessAsync(
+  argv: readonly string[],
+  options: RunOnboardProcessOptions,
+): Promise<OnboardProcessResult> {
+  return new Promise((resolve) => {
+    const child = execFile(
+      process.execPath,
+      [...argv],
+      {
+        cwd: options.cwd ?? testRepoRoot,
+        encoding: "utf-8",
+        env: options.env,
+        ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
+        ...(options.killSignal === undefined ? {} : { killSignal: options.killSignal }),
+      },
+      (error, stdout, stderr) => {
+        resolve({
+          status: error ? (typeof error.code === "number" ? error.code : null) : 0,
+          signal: error?.signal ?? null,
+          error: error ?? undefined,
+          stdout,
+          stderr,
+          output: `${stdout}\n${stderr}`,
+        });
+      },
+    );
+    child.stdin?.end(options.input);
+  });
 }
 
 /** Runs a generated onboarding script with a bounded hard-kill timeout. */

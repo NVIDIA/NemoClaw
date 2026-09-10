@@ -7,7 +7,7 @@ import path from "node:path";
 import { describe, it, onTestFinished } from "vitest";
 import {
   createOnboardProcessWorkspace,
-  runOnboardProcess,
+  runOnboardProcessAsync,
   trailingJsonPayload,
   workspaceEnv,
 } from "../helpers/onboard-child-process-harness";
@@ -25,7 +25,7 @@ const managedWorkloadOnboardPath = JSON.stringify(
 );
 
 describe("onboard sandbox recreate reservation safety", () => {
-  it.each([
+  it.concurrent.each([
     {
       name: "preserves a current-session pending route reservation across a not-ready recreate",
       reservationSessionId: "session-owner",
@@ -307,7 +307,7 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = runOnboardProcess([scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         env: workspaceEnv(workspace, {
           NEMOCLAW_NON_INTERACTIVE: "1",
           NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
@@ -363,7 +363,7 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
-  it.each([
+  it.concurrent.each([
     { scenario: "same-session", resumes: true },
     { scenario: "foreign-reservation", resumes: false },
     { scenario: "changed-checkpoint", resumes: false },
@@ -672,7 +672,7 @@ createArgs[16] = async () => {
         NEMOCLAW_SANDBOX_PREBUILD: "1",
       });
 
-      const first = runOnboardProcess([scriptPath, "seed", scenario], {
+      const first = await runOnboardProcessAsync([scriptPath, "seed", scenario], {
         env,
         timeoutMs: 40_000,
       });
@@ -699,7 +699,7 @@ createArgs[16] = async () => {
         retained.registryEntry.lifecycleLiveIdentityFingerprint,
       );
 
-      const second = runOnboardProcess([scriptPath, "resume", scenario], {
+      const second = await runOnboardProcessAsync([scriptPath, "resume", scenario], {
         env,
         timeoutMs: 40_000,
       });
