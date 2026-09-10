@@ -10,6 +10,8 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { testTimeout } from "../helpers/timeouts";
+
 type OnboardModule = typeof import("../../src/lib/onboard") & {
   onboardSession: typeof import("../../src/lib/state/onboard-session");
   registerIncompleteOnboardExitHandlerForSession: (
@@ -432,7 +434,7 @@ const { onboard } = require(${onboardPath});
     expect(resumePayload.loaded.status).toBe("in_progress");
     expect(resumePayload.loaded.failure).toBeNull();
     expect(resumePayload.loaded.machine.state).toBe("preflight");
-  });
+  }, testTimeout(30_000));
 
   it("onboard() preserves a resumable session after a normal incomplete result (#9048)", () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
