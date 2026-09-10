@@ -59,7 +59,7 @@ type TelegramHttpRequestLike = (
     var text = String(value || "");
     text = text.replace(/\/bot[^/\s"']+/g, "/bot<redacted>");
     text = text.replace(/\/file\/bot[^/\s"']+/g, "/file/bot<redacted>");
-    text = text.replace(/Bearer\s+[A-Za-z0-9._~+\/=-]+/g, "Bearer <redacted>");
+    text = text.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer <redacted>");
     text = text.replace(
       /\b(api[_-]?key|token|authorization)\b(["']?\s*[:=]\s*["']?)[^"'\s,)]+/gi,
       "$1$2<redacted>",

@@ -57,24 +57,17 @@ export default defineConfig({
     denyWarnings: true,
     reportUnusedDisableDirectives: "deny",
   },
-  jsPlugins: [
-    {
-      name: "sonarjs",
-      specifier: "eslint-plugin-sonarjs",
-    },
-  ],
+  jsPlugins: ["eslint-plugin-sonarjs"],
   plugins: ["import", "typescript"],
   rules: {
     "sonarjs/cognitive-complexity": ["error", 149],
     "no-undef": "error",
-    "no-debugger": "error",
     // Sanitizers deliberately match control characters; Vitest fixtures require empty parameters.
     "no-control-regex": "off",
     "no-empty-pattern": ["error", { allowObjectPatternsAsParameters: true }],
     // Preserve the current scoped checks until each remaining rule family is migrated.
     "no-unused-vars": "off",
     "no-unused-expressions": "off",
-    "no-useless-escape": "off",
     "no-useless-catch": "off",
     "no-unsafe-optional-chaining": "off",
     "no-unsafe-finally": "off",
@@ -132,14 +125,7 @@ export default defineConfig({
         "no-unused-vars": "error",
         "typescript/no-explicit-any": "error",
         "typescript/consistent-type-exports": "error",
-        "typescript/consistent-type-imports": [
-          "error",
-          {
-            disallowTypeAnnotations: false,
-            fixStyle: "separate-type-imports",
-            prefer: "type-imports",
-          },
-        ],
+        "typescript/consistent-type-imports": ["error", { disallowTypeAnnotations: false }],
         "typescript/no-floating-promises": "error",
         "typescript/switch-exhaustiveness-check": "error",
       },

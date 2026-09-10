@@ -2069,9 +2069,9 @@ function validateInferenceModeGeneration(
 function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
   const concurrency = asRecord(workflow.concurrency);
   const expectedGroup =
-    "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
+    "e2e-${{ github.ref }}-${{ (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
   if (concurrency.group !== expectedGroup) {
-    errors.push("workflow concurrency must isolate each full dispatch with github.run_id");
+    errors.push("workflow concurrency must isolate each Launchable dispatch with github.run_id");
   }
   if (
     concurrency["cancel-in-progress"] !==
@@ -2152,11 +2152,11 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
   const concurrency = asRecord(job.concurrency);
   if (
     concurrency.group !== "staging-brev-launchable-cpu" ||
-    Object.hasOwn(concurrency, "queue") ||
+    concurrency.queue !== "max" ||
     concurrency["cancel-in-progress"] !== false
   ) {
     errors.push(
-      "staging-brev-launchable concurrency must preserve its Launchable group without cancelling the running job or using unsupported queue keys",
+      "staging-brev-launchable concurrency must queue pending jobs in its Launchable group without cancelling the running job",
     );
   }
   const steps = asSteps(job.steps);
@@ -2261,10 +2261,12 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
   const concurrency = asRecord(job.concurrency);
   if (
     concurrency.group !== "staging-brev-launchable-cpu" ||
-    Object.hasOwn(concurrency, "queue") ||
+    concurrency.queue !== "max" ||
     concurrency["cancel-in-progress"] !== false
   ) {
-    errors.push(`${jobName} must share the non-cancelling Launchable concurrency group`);
+    errors.push(
+      `${jobName} must share the Launchable concurrency group with queue: max and no cancellation`,
+    );
   }
 
   const jobEnv = asRecord(job.env);

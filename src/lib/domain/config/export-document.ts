@@ -82,6 +82,7 @@ export function buildExportConfig(
             {
               name: "primary",
               type: source.agent,
+              ...(source.execution ? { execution: source.execution } : {}),
               inference: {
                 routes: [
                   {
@@ -92,6 +93,7 @@ export function buildExportConfig(
                       ...("serving" in source.inference
                         ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
                         : {}),
+                      ...("overrides" in source.inference ? source.inference.overrides : {}),
                     },
                   },
                 ],
