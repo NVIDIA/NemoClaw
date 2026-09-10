@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFile, type ExecFileOptionsWithStringEncoding, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+
+import { superviseChild } from "../../e2e/fixtures/shell/supervisor.ts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
@@ -23,23 +25,45 @@ type AsyncProcessResult = {
   stdout: string;
 };
 
-function execFileResult(
+function runProcessGroup(
   command: string,
   args: readonly string[],
-  options: ExecFileOptionsWithStringEncoding,
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    signal: AbortSignal;
+    timeoutMs: number;
+  },
 ): Promise<AsyncProcessResult> {
-  return new Promise((resolve) => {
-    const child = execFile(command, [...args], options, (error, stdout, stderr) => {
-      const numericExitCode = error && typeof error.code === "number" ? error.code : undefined;
-      resolve({
-        error: error && numericExitCode === undefined ? error : undefined,
-        signal: child.signalCode,
-        status: error ? (numericExitCode ?? child.exitCode) : 0,
-        stderr,
-        stdout,
-      });
-    });
+  let stderr = "";
+  let stdout = "";
+  const child = spawn(command, [...args], {
+    cwd: options.cwd,
+    detached: true,
+    env: options.env,
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  return superviseChild(child, {
+    killGraceMs: 0,
+    onStderr: (chunk) => {
+      stderr += chunk;
+    },
+    onStdout: (chunk) => {
+      stdout += chunk;
+    },
+    signal: options.signal,
+    timeoutMs: options.timeoutMs,
+  }).then((result) => ({
+    error:
+      result.spawnError ??
+      (result.timedOut
+        ? new Error(`${command} timed out after ${options.timeoutMs}ms`)
+        : undefined),
+    signal: result.signal,
+    status: result.exitCode,
+    stderr,
+    stdout,
+  }));
 }
 
 type CliParityFixture = {
@@ -76,7 +100,11 @@ case "\${1:-}" in
   --dump-command-flags) _invocation="dump-command-flags" ;;
   *) _invocation="custom-help" ;;
 esac
-printf '%s\\n' "$_invocation" >>"$NEMOCLAW_TEST_INVOCATION_LOG"
+{
+  printf '%s' "$_invocation"
+  printf '\\t%s' "$@"
+  printf '\\n'
+} >>"$NEMOCLAW_TEST_INVOCATION_LOG"
 
 if [[ "\${1:-}" == "--dump-command-flags" && "\${NEMOCLAW_TEST_EMPTY_AGENT_METADATA:-0}" == "1" ]]; then
   "$NEMOCLAW_TEST_NODE" "$_entrypoint" "$@" | LC_ALL=C awk -F '\\t' 'BEGIN { OFS = "\\t" } $1 == "nemoclaw <name> agent" { $3 = ""; print; next } { print }'
@@ -97,13 +125,9 @@ exec "$NEMOCLAW_TEST_NODE" "$_entrypoint" "$@"
   return { binDir, nodeInvocationLog, nodeShim, root };
 }
 
-function cliParityOptions(
-  fixture: CliParityFixture,
-  env: NodeJS.ProcessEnv = {},
-): ExecFileOptionsWithStringEncoding {
+function cliParityOptions(fixture: CliParityFixture, env: NodeJS.ProcessEnv = {}) {
   return {
     cwd: REPO_ROOT,
-    encoding: "utf-8",
     env: {
       ...process.env,
       CHECK_DOC_LINKS_REMOTE: "0",
@@ -115,13 +139,7 @@ function cliParityOptions(
       PATH: `${fixture.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
       ...env,
     },
-    killSignal: "SIGKILL",
-    timeout: 120_000,
   };
-}
-
-function runCliParity(fixture: CliParityFixture, env: NodeJS.ProcessEnv = {}) {
-  return spawnSync("bash", [CHECK_DOCS, "--only-cli"], cliParityOptions(fixture, env));
 }
 
 function runCliParityAsync(
@@ -129,9 +147,10 @@ function runCliParityAsync(
   signal: AbortSignal,
   env: NodeJS.ProcessEnv = {},
 ) {
-  return execFileResult("bash", [CHECK_DOCS, "--only-cli"], {
+  return runProcessGroup("bash", [CHECK_DOCS, "--only-cli"], {
     ...cliParityOptions(fixture, env),
     signal,
+    timeoutMs: 120_000,
   });
 }
 
@@ -195,7 +214,7 @@ describe("public compiled CLI contracts", () => {
     {
       timeout: 150_000,
     },
-    async ({ signal }) => {
+    async ({ expect, signal }) => {
       // `npm run test:package` builds the CLI before this project. Empty one
       // custom-help metadata row to prove its code-owned classification still
       // selects rendered help without returning to one start per command.
@@ -212,13 +231,26 @@ describe("public compiled CLI contracts", () => {
         expect(result.stdout).toContain("check-docs: running: [cli]");
         expect(result.stdout).toContain("command-level parity OK");
         expect(result.stdout).toContain("flag-level parity OK");
-        const invocations = readCliInvocations(fixture);
-        expect(invocations.filter((invocation) => invocation === "dump-commands")).toHaveLength(1);
-        expect(
-          invocations.filter((invocation) => invocation === "dump-command-flags"),
-        ).toHaveLength(1);
-        expect(invocations).toContain("custom-help");
-        expect(invocations.length).toBeLessThanOrEqual(20);
+        expect(readCliInvocations(fixture)).toEqual([
+          "dump-commands\t--dump-commands",
+          "dump-command-flags\t--dump-command-flags",
+          "custom-help\tplaceholder-sandbox\tagent\t--help",
+          "custom-help\tplaceholder-sandbox\tagents\tadd\t--help",
+          "custom-help\tplaceholder-sandbox\tagents\tapply\t--help",
+          "custom-help\tplaceholder-sandbox\tagents\tdelete\t--help",
+          "custom-help\tplaceholder-sandbox\tagents\tlist\t--help",
+          "custom-help\tplaceholder-sandbox\tmcp\tadd\t--help",
+          "custom-help\tplaceholder-sandbox\tmcp\tlist\t--help",
+          "custom-help\tplaceholder-sandbox\tmcp\tremove\t--help",
+          "custom-help\tplaceholder-sandbox\tmcp\trestart\t--help",
+          "custom-help\tplaceholder-sandbox\tmcp\tstatus\t--help",
+          "custom-help\tplaceholder-sandbox\tmcp\tupdate\t--help",
+          "custom-help\tplaceholder-sandbox\tsessions\t--help",
+          "custom-help\tplaceholder-sandbox\tsessions\tlist\t--help",
+          "custom-help\tplaceholder-sandbox\tskill\tlist\t--help",
+          "custom-help\tuninstall\t--help",
+          "custom-help\tinternal\tuninstall\trun-plan\t--help",
+        ]);
       } finally {
         fs.rmSync(fixture.root, { force: true, recursive: true });
       }
@@ -230,17 +262,15 @@ describe("public compiled CLI contracts", () => {
     {
       timeout: 150_000,
     },
-    async ({ signal }) => {
-      const result = await execFileResult("bash", [CHECK_DOCS, "--only-links", "--local-only"], {
+    async ({ expect, signal }) => {
+      const result = await runProcessGroup("bash", [CHECK_DOCS, "--only-links", "--local-only"], {
         cwd: REPO_ROOT,
-        encoding: "utf-8",
         env: {
           ...process.env,
           CHECK_DOC_LINKS_REMOTE: "0",
         },
-        killSignal: "SIGKILL",
         signal,
-        timeout: 120_000,
+        timeoutMs: 120_000,
       });
 
       expect(result.error).toBeUndefined();
@@ -257,7 +287,7 @@ describe("public compiled CLI contracts", () => {
     {
       timeout: 150_000,
     },
-    async ({ signal }) => {
+    async ({ expect, signal }) => {
       const fixture = createCliParityFixture();
 
       try {
@@ -270,7 +300,9 @@ describe("public compiled CLI contracts", () => {
         expect(result.status).toBe(1);
         expect(result.stderr).toContain("flag --synthetic-undocumented");
         expect(result.stderr).toContain("not in 'nemoclaw <name> agent' section");
-        expect(readCliInvocations(fixture)).toContain("custom-help");
+        expect(readCliInvocations(fixture)).toContain(
+          "custom-help\tplaceholder-sandbox\tagent\t--help",
+        );
       } finally {
         fs.rmSync(fixture.root, { force: true, recursive: true });
       }
