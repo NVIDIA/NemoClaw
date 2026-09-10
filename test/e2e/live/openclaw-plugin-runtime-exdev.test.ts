@@ -563,7 +563,6 @@ test(
       restart.exitCode === 0 && listenerAfterRestart.valid,
       `${resultText(restart)}\n${listenerAfterRestart.output}`,
     ).toBe(true);
-    terminateForwardServiceProcessTree({ pid: listenerAfterRestart.pid!, unref() {} });
     const weatherAfterRestart = await assertWeatherPluginRuntime(
       sandbox,
       "after-restart",
@@ -586,6 +585,7 @@ test(
       version: "v2",
     });
     openshellWrapper.selectImage(pluginImageV2);
+    terminateForwardServiceProcessTree({ pid: listenerAfterRestart.pid!, unref() {} });
     const recreate = await runOpenClawPluginWithFailureEvidence({
       operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
       captureDiagnostics: capturePairingDiagnostics,
