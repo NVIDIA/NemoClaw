@@ -35,21 +35,28 @@ const configExportFiles = [
   "src/lib/adapters/openshell/{providers,sandboxes,sandbox-config,sdk-read,sdk-read-schema}.ts",
 ];
 
+// Ratchet existing hotspots to their measured scores without raising the default ceiling.
+const legacyComplexityLimits = {
+  "src/lib/onboard/machine/handlers/provider-inference.ts": 171,
+  "src/lib/actions/uninstall/run-plan.ts": 186,
+  "src/lib/actions/sandbox/process-recovery.ts": 166,
+  "src/lib/onboard.ts": 119,
+  "src/lib/onboard/setup-nim-flow.ts": 150,
+  "src/lib/actions/sandbox/status.ts": 11,
+};
+
 export default defineConfig({
   categories: {
-    correctness: "off",
-    nursery: "off",
-    pedantic: "off",
-    perf: "off",
-    restriction: "off",
-    style: "off",
-    suspicious: "off",
+    correctness: "error",
   },
   env: {
-    browser: true,
     node: true,
   },
   ignorePatterns: oxcIgnorePatterns,
+  options: {
+    denyWarnings: true,
+    reportUnusedDisableDirectives: "deny",
+  },
   jsPlugins: [
     {
       name: "sonarjs",
@@ -60,8 +67,29 @@ export default defineConfig({
   rules: {
     "sonarjs/cognitive-complexity": ["error", 149],
     "no-undef": "error",
+    "no-debugger": "error",
+    // Sanitizers deliberately match control characters; Vitest fixtures require empty parameters.
+    "no-control-regex": "off",
+    "no-empty-pattern": ["error", { allowObjectPatternsAsParameters: true }],
+    // Preserve the current scoped checks until each remaining rule family is migrated.
+    "no-unused-vars": "off",
+    "no-unused-expressions": "off",
+    "no-useless-escape": "off",
+    "no-useless-catch": "off",
+    "no-unsafe-optional-chaining": "off",
+    "no-unsafe-finally": "off",
+    "import/namespace": "off",
   },
   overrides: [
+    {
+      files: ["docs/_components/**/*.{ts,tsx}", "fern/components/**/*.{ts,tsx}"],
+      env: { browser: true },
+    },
+    {
+      files: ["**/*.test.ts"],
+      // Mock assertions pass method references without invoking their receivers.
+      rules: { "typescript/unbound-method": "off" },
+    },
     {
       files: [".dsh/tools/*/index.ts"],
       globals: {
@@ -99,11 +127,9 @@ export default defineConfig({
       },
     },
     {
-      files: ["src/lib/adapters/**/*.ts"],
+      files: ["src/lib/adapters/**/*.{cts,mts,ts,tsx}", "nemoclaw/src/**/*.{cts,mts,ts,tsx}"],
       rules: {
         "no-unused-vars": "error",
-        "no-debugger": "error",
-        eqeqeq: "error",
         "typescript/no-explicit-any": "error",
         "typescript/consistent-type-exports": "error",
         "typescript/consistent-type-imports": [
@@ -114,6 +140,16 @@ export default defineConfig({
             prefer: "type-imports",
           },
         ],
+        "typescript/no-floating-promises": "error",
+        "typescript/switch-exhaustiveness-check": "error",
+      },
+    },
+    {
+      files: ["src/lib/adapters/**/*.ts"],
+      rules: {
+        eqeqeq: "error",
+        "typescript/no-misused-promises": "error",
+        "typescript/await-thenable": "error",
       },
     },
     {
@@ -124,70 +160,16 @@ export default defineConfig({
         "typescript/no-non-null-assertion": "error",
       },
     },
-    // Pin the migration-baseline SonarJS scores for existing hotspots so later changes cannot increase them.
-
-    {
-      files: ["src/lib/onboard/machine/handlers/provider-inference.ts"],
-      rules: {
-        "sonarjs/cognitive-complexity": ["error", 171],
-      },
-    },
-    {
-      files: ["src/lib/actions/uninstall/run-plan.ts"],
-      rules: {
-        "sonarjs/cognitive-complexity": ["error", 202],
-      },
-    },
-    {
-      files: ["src/lib/actions/sandbox/process-recovery.ts"],
-      rules: {
-        "sonarjs/cognitive-complexity": ["error", 297],
-      },
-    },
-    {
-      files: ["src/lib/onboard.ts"],
-      rules: {
-        "sonarjs/cognitive-complexity": ["error", 159],
-      },
-    },
-    {
-      files: ["src/lib/onboard/setup-nim-flow.ts"],
-      rules: {
-        "sonarjs/cognitive-complexity": ["error", 161],
-      },
-    },
-    {
-      files: ["src/lib/actions/sandbox/status.ts"],
-      rules: {
-        "sonarjs/cognitive-complexity": ["error", 11],
-      },
-    },
-    // Oxlint parses this import-only E2E shim as a script and reports await as a global.
-
-    {
-      files: ["test/e2e/live/bootstrap-install-smoke.test.ts"],
-      rules: {
-        "no-undef": "off",
-      },
-    },
+    ...Object.entries(legacyComplexityLimits).map(([file, limit]) => ({
+      files: [file],
+      rules: { "sonarjs/cognitive-complexity": ["error", limit] as ["error", number] },
+    })),
     {
       files: ["nemoclaw/src/**/*.ts"],
       rules: {
         "import/no-commonjs": "error",
-        "no-unused-vars": "error",
-        "typescript/consistent-type-exports": "error",
-        "typescript/consistent-type-imports": [
-          "error",
-          {
-            disallowTypeAnnotations: false,
-            fixStyle: "separate-type-imports",
-            prefer: "type-imports",
-          },
-        ],
-        "typescript/no-explicit-any": "error",
         "typescript/prefer-nullish-coalescing": "error",
         "typescript/prefer-optional-chain": "error",
-        "typescript/switch-exhaustiveness-check": "error",
       },
     },
   ],

@@ -12,34 +12,40 @@ import { validateMcpOpenShellWorkflowBoundary } from "../../../tools/e2e/mcp-wor
 import { requireFixture } from "./require-fixture";
 
 describe("MCP workflow artifact boundary", () => {
-  it.each([
-    "mcp-bridge",
-    "mcp-bridge-dev",
-  ])("rejects missing canonical risk-signal evidence in %s", (jobName) => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
-    const workflowPath = path.join(directory, "e2e.yaml");
-    try {
-      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
-        jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
-      };
-      const run = workflow.jobs[jobName].steps.find(
-        (step) => step.name === "Run MCP OpenShell provider live test",
-      );
-      requireFixture(run?.run, `${jobName} MCP live-test fixture is missing`);
-      const helper = "tools/e2e/live-vitest-invocation.mts run --test-path";
-      requireFixture(run.run.includes(helper), `${jobName} live-vitest helper fixture is missing`);
-      const updatedRun = run.run.replace(helper, "vitest run");
-      requireFixture(updatedRun !== run.run, `${jobName} live-vitest helper could not be removed`);
-      run.run = updatedRun;
-      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+  it.each(["mcp-bridge", "mcp-bridge-dev"])(
+    "rejects missing canonical risk-signal evidence in %s",
+    (jobName) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+      const workflowPath = path.join(directory, "e2e.yaml");
+      try {
+        const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+          jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+        };
+        const run = workflow.jobs[jobName].steps.find(
+          (step) => step.name === "Run MCP OpenShell provider live test",
+        );
+        requireFixture(run?.run, `${jobName} MCP live-test fixture is missing`);
+        const helper = "tools/e2e/live-vitest-invocation.mts run --test-path";
+        requireFixture(
+          run.run.includes(helper),
+          `${jobName} live-vitest helper fixture is missing`,
+        );
+        const updatedRun = run.run.replace(helper, "vitest run");
+        requireFixture(
+          updatedRun !== run.run,
+          `${jobName} live-vitest helper could not be removed`,
+        );
+        run.run = updatedRun;
+        fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
-      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        `${jobName} must publish canonical risk-signal evidence`,
-      );
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
+        expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+          `${jobName} must publish canonical risk-signal evidence`,
+        );
+      } finally {
+        fs.rmSync(directory, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("rejects missing, fail-fast, or in-process MCP agent shards", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
@@ -171,55 +177,53 @@ describe("MCP workflow artifact boundary", () => {
       mutate: (run: string) => run.replace("--reporter=test/e2e/risk-signal-reporter.ts", ""),
       name: "omits its risk-signal reporter",
     },
-  ])("rejects an independent credential generation-window proof that $name", ({
-    expected,
-    mutate,
-    name,
-  }) => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
-    const workflowPath = path.join(directory, "e2e.yaml");
-    try {
-      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
-        jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
-      };
-      const run = workflow.jobs["openshell-credential-generation-window"].steps.find(
-        (step) => step.name === "Run OpenShell credential generation-window live test",
-      );
-      requireFixture(run?.run, "MCP stable lifecycle fixture is missing");
-      const updatedRun = mutate(run.run);
-      requireFixture(updatedRun !== run.run, `credential generation-window proof ${name}`);
-      run.run = updatedRun;
-      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+  ])(
+    "rejects an independent credential generation-window proof that $name",
+    ({ expected, mutate, name }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+      const workflowPath = path.join(directory, "e2e.yaml");
+      try {
+        const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+          jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+        };
+        const run = workflow.jobs["openshell-credential-generation-window"].steps.find(
+          (step) => step.name === "Run OpenShell credential generation-window live test",
+        );
+        requireFixture(run?.run, "MCP stable lifecycle fixture is missing");
+        const updatedRun = mutate(run.run);
+        requireFixture(updatedRun !== run.run, `credential generation-window proof ${name}`);
+        run.run = updatedRun;
+        fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
-      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(expected);
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
+        expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(expected);
+      } finally {
+        fs.rmSync(directory, { force: true, recursive: true });
+      }
+    },
+  );
 
-  it.each([
-    "release-qualification",
-    "report-to-pr",
-    "scorecard",
-  ])("requires %s to wait for the independent credential-window result", (terminalJob) => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
-    const workflowPath = path.join(directory, "e2e.yaml");
-    try {
-      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
-        jobs: Record<string, { needs: string[] }>;
-      };
-      workflow.jobs[terminalJob].needs = workflow.jobs[terminalJob].needs.filter(
-        (job) => job !== "openshell-credential-generation-window",
-      );
-      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+  it.each(["release-qualification", "report-to-pr", "scorecard"])(
+    "requires %s to wait for the independent credential-window result",
+    (terminalJob) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+      const workflowPath = path.join(directory, "e2e.yaml");
+      try {
+        const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+          jobs: Record<string, { needs: string[] }>;
+        };
+        workflow.jobs[terminalJob].needs = workflow.jobs[terminalJob].needs.filter(
+          (job) => job !== "openshell-credential-generation-window",
+        );
+        fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
-      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        `${terminalJob} must wait for openshell-credential-generation-window`,
-      );
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
+        expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+          `${terminalJob} must wait for openshell-credential-generation-window`,
+        );
+      } finally {
+        fs.rmSync(directory, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("rejects upload action or path drift from the reviewed shared boundary", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
@@ -250,43 +254,43 @@ describe("MCP workflow artifact boundary", () => {
     }
   });
 
-  it.each([
-    "mcp-bridge-dev",
-    "openshell-credential-generation-window",
-  ])("rejects an unverified or mutable cloudflared installer in %s", (jobName) => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
-    const workflowPath = path.join(directory, "e2e.yaml");
-    try {
-      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
-        jobs: Record<
-          string,
-          {
-            steps: Array<{
-              env?: Record<string, unknown>;
-              name?: string;
-              run?: string;
-            }>;
-          }
-        >;
-      };
-      const cloudflared = workflow.jobs[jobName].steps.find(
-        (step) => step.name === "Install and verify cloudflared prerequisite",
-      );
-      requireFixture(cloudflared?.env, `${jobName} cloudflared installer fixture is missing`);
-      cloudflared.env.CLOUDFLARED_DEB_SHA256 = "mutable";
-      cloudflared.run = "sudo apt-get install -y cloudflared";
-      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+  it.each(["mcp-bridge-dev", "openshell-credential-generation-window"])(
+    "rejects an unverified or mutable cloudflared installer in %s",
+    (jobName) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+      const workflowPath = path.join(directory, "e2e.yaml");
+      try {
+        const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+          jobs: Record<
+            string,
+            {
+              steps: Array<{
+                env?: Record<string, unknown>;
+                name?: string;
+                run?: string;
+              }>;
+            }
+          >;
+        };
+        const cloudflared = workflow.jobs[jobName].steps.find(
+          (step) => step.name === "Install and verify cloudflared prerequisite",
+        );
+        requireFixture(cloudflared?.env, `${jobName} cloudflared installer fixture is missing`);
+        cloudflared.env.CLOUDFLARED_DEB_SHA256 = "mutable";
+        cloudflared.run = "sudo apt-get install -y cloudflared";
+        fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
-      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
-        expect.arrayContaining([
-          `${jobName} must pin the reviewed cloudflared package checksum`,
-          `${jobName} cloudflared installation must not use mutable package repositories`,
-        ]),
-      );
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
+        expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
+          expect.arrayContaining([
+            `${jobName} must pin the reviewed cloudflared package checksum`,
+            `${jobName} cloudflared installation must not use mutable package repositories`,
+          ]),
+        );
+      } finally {
+        fs.rmSync(directory, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("rejects any additional credential-persisting checkout", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
@@ -422,7 +426,10 @@ describe("MCP workflow artifact boundary", () => {
       const install = workflow.jobs["mcp-bridge-dev"].steps.find(
         (step) => step.name === "Install immutable OpenShell dev artifact",
       );
-      requireFixture(typeof install?.run === "string", "OpenShell dev installation fixture is missing");
+      requireFixture(
+        typeof install?.run === "string",
+        "OpenShell dev installation fixture is missing",
+      );
       install.run = `bash test/e2e/setup-mcp-test-tls.sh\n${install.run}`;
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
@@ -651,10 +658,7 @@ describe("MCP workflow artifact boundary", () => {
         const checkout = job.steps.find(
           (step) => step.name === "Checkout trusted OpenShell dev tooling",
         );
-        requireFixture(
-          checkout?.with,
-          "trusted OpenShell resolver checkout fixture is missing",
-        );
+        requireFixture(checkout?.with, "trusted OpenShell resolver checkout fixture is missing");
         const withValues = checkout.with as Record<string, unknown>;
         withValues.ref = "${{ inputs.checkout_sha || github.sha }}";
       },
@@ -677,10 +681,7 @@ describe("MCP workflow artifact boundary", () => {
       },
       expected: "openshell-dev-artifact must run the trusted immutable resolver",
     },
-  ])("rejects a $name for OpenShell dev artifact resolution (#9051)", ({
-    expected,
-    mutate,
-  }) => {
+  ])("rejects a $name for OpenShell dev artifact resolution (#9051)", ({ expected, mutate }) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");
     try {

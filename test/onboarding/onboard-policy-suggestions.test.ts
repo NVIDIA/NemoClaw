@@ -60,22 +60,18 @@ const {
   agentRequiredPresetAdditions,
   filterSuppressedAgentRequiredPresets,
   suppressedAgentRequiredPresets,
-} =
-  require("../../src/lib/onboard/policy-tier-suppression") as {
-    agentRequiredPresetAdditions: (
-      agent: string | null | undefined,
-      env: NodeJS.ProcessEnv,
-    ) => string[];
-    filterSuppressedAgentRequiredPresets: (
-      presetNames: string[],
-      tierName: string | null | undefined,
-      agent: string | null | undefined,
-    ) => string[];
-    suppressedAgentRequiredPresets: (
-      tierName: string,
-      agent: string | null | undefined,
-    ) => string[];
-  };
+} = require("../../src/lib/onboard/policy-tier-suppression") as {
+  agentRequiredPresetAdditions: (
+    agent: string | null | undefined,
+    env: NodeJS.ProcessEnv,
+  ) => string[];
+  filterSuppressedAgentRequiredPresets: (
+    presetNames: string[],
+    tierName: string | null | undefined,
+    agent: string | null | undefined,
+  ) => string[];
+  suppressedAgentRequiredPresets: (tierName: string, agent: string | null | undefined) => string[];
+};
 
 function setOrUnset(key: string, value: string | undefined): void {
   value === undefined ? delete process.env[key] : (process.env[key] = value);
@@ -170,15 +166,7 @@ describe("onboard policy preset suggestions", () => {
   // one never suggested). Assert both paths yield exactly
   // `allMessagingChannelPolicyPresets` for every channel individually and combined.
   it("suggestion and finalization paths contribute identical channel presets for all channels (#5967)", () => {
-    const channels = [
-      "slack",
-      "discord",
-      "telegram",
-      "teams",
-      "whatsapp",
-      "wechat",
-      "googlechat",
-    ];
+    const channels = ["slack", "discord", "telegram", "teams", "whatsapp", "wechat", "googlechat"];
     const knownNames = [...known, "teams", "whatsapp", "wechat"];
     const channelPresetSet = new Set(allMessagingChannelPolicyPresets(channels));
     const channelPresetsFromSuggestions = (enabled: string[]) =>

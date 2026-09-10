@@ -116,15 +116,9 @@ describe("probeLlamaCppAttachment", () => {
       native[0]!,
       native[1]!,
       native[2]!,
-      response(
-        404,
-        '{"error":{"code":"route_not_available","type":"invalid_request_error"}}',
-      ),
+      response(404, '{"error":{"code":"route_not_available","type":"invalid_request_error"}}'),
       native[3]!,
-      response(
-        404,
-        '{"error":{"code":"route_not_available","type":"invalid_request_error"}}',
-      ),
+      response(404, '{"error":{"code":"route_not_available","type":"invalid_request_error"}}'),
       native[4]!,
     ]);
 
@@ -381,9 +375,10 @@ describe("probeLlamaCppAttachment", () => {
     responses[3] = response(404, '{"error":"not found"}');
     const probe = scriptedProbe(responses);
 
-    expect(
-      probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: probe }),
-    ).toMatchObject({ ok: false, reason: "conflicting-fingerprint" });
+    expect(probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: probe })).toMatchObject({
+      ok: false,
+      reason: "conflicting-fingerprint",
+    });
     expect(probe).toHaveBeenCalledTimes(5);
   });
 
@@ -517,8 +512,11 @@ describe("probeLlamaCppAttachment", () => {
     expect(JSON.stringify(result)).not.toContain(token);
     probe.mock.calls.forEach(([argv, options]) => {
       expect(JSON.stringify(argv)).not.toContain(token);
-      expect((options?.trustedConfigFiles ?? []).every((configPath) =>
-          Object.is(fs.existsSync(configPath), false))).toBe(true);
+      expect(
+        (options?.trustedConfigFiles ?? []).every((configPath) =>
+          Object.is(fs.existsSync(configPath), false),
+        ),
+      ).toBe(true);
     });
     expect(configModes).toEqual([0o600, 0o600, 0o600, 0o600]);
   });

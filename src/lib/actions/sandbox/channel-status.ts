@@ -45,7 +45,6 @@ import { buildConfigStatusSignals } from "./channel-status-config";
 // time. The default in-sandbox exec implementation lives in this lazy loader
 // so unit tests can inject an `execSandbox` mock without pulling the runner.
 function loadProcessRecovery(): typeof import("./process-recovery") {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   return require("./process-recovery") as typeof import("./process-recovery");
 }
 

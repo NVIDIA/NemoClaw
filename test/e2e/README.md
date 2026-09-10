@@ -368,6 +368,12 @@ and transport. It also stops the gateway and removes its temporary state.
 
 ## Catalogue Targets
 
+Every catalogue profile installs the reviewed OpenShell SDK archive before restoring the candidate CLI.
+The shared package job downloads and verifies the pinned SDK with package-read permission.
+Catalogue jobs receive the run-scoped archive without package credentials and reject a missing or ambiguous archive.
+The install disables package scripts and verifies that the SDK connection API loads before running tests.
+This keeps the private optional dependency available for SDK-backed commands such as configuration export.
+
 The `network-policy` target also owns live configuration-export evidence for #10938 and PR #11065.
 After ordinary restricted OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
 It compares the exported sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
@@ -381,6 +387,14 @@ The assertion budget is unchanged. Nine export assertions replace nine redundant
 - Two intermediate process-start comparisons are covered by the retained comparison after all policy and traffic probes.
 - The approved HTTP status check is redundant with the marker server response, which always returns that marker with status 200.
 - Two web-fetch success-marker checks duplicate the retained probe exit-status check; the probe rejects missing approved content and unexpected denied-port access.
+
+The `security-posture-hermes` target owns the corresponding live Hermes export evidence for #11286.
+After canonical hosted-inference onboarding, it invokes `config export` through both the `nemoclaw`
+and `nemohermes` launchers and requires the validated documents to have identical specs. It checks
+the Hermes agent type, immutable managed image, hosted route, effective policy, and omission of
+credential values. It then changes the fixture's recorded sandbox fingerprint and requires both
+launchers to fail without publishing a file before restoring the registry. The assertion budget is
+unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:

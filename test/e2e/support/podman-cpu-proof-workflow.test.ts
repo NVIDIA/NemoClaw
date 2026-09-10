@@ -772,29 +772,29 @@ describe("native Podman CPU proof workflow", () => {
       expect(() => portableCpuDelegationProofCli(["cleanup", "extra"], fixture)).toThrow(
         /Expected exactly one mode/u,
       );
-      const rejected = spawnSync(
-        process.execPath,
-        ["--no-warnings", scriptPath, "unknown"],
-        { cwd: path.resolve("."), encoding: "utf8", env },
-      );
+      const rejected = spawnSync(process.execPath, ["--no-warnings", scriptPath, "unknown"], {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        env,
+      });
       expect(rejected.status).toBe(1);
       expect(rejected.stderr).toContain("Expected exactly one mode");
-      const cleaned = spawnSync(
-        process.execPath,
-        ["--no-warnings", scriptPath, "cleanup"],
-        { cwd: path.resolve("."), encoding: "utf8", env },
-      );
+      const cleaned = spawnSync(process.execPath, ["--no-warnings", scriptPath, "cleanup"], {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        env,
+      });
       expect(cleaned.status).toBe(0);
       fs.writeFileSync(
         path.join(bin, "sudo"),
         "#!/usr/bin/env node\nprocess.kill(process.pid, 'SIGTERM');\n",
         { mode: 0o755 },
       );
-      const signaled = spawnSync(
-        process.execPath,
-        ["--no-warnings", scriptPath, "cleanup"],
-        { cwd: path.resolve("."), encoding: "utf8", env },
-      );
+      const signaled = spawnSync(process.execPath, ["--no-warnings", scriptPath, "cleanup"], {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        env,
+      });
       expect(signaled.status).toBe(1);
       expect(signaled.stderr).toContain("sudo terminated by SIGTERM");
     });
