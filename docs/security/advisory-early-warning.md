@@ -43,7 +43,7 @@ This polling is the planned extension, and the correlation module already accept
   Only a match on the npm ecosystem, package name, and parseable semantic-version range yields `confidence: "exact"` and `action: "investigate"`.
   Name collisions from non-npm, CPE-derived records and unparseable ranges yield `confidence: "ambiguous"` and `action: "informational"`.
   Ambiguous matches never block or mutate a release.
-- The reviewed npm audit gate in `scripts/audit-reviewed-npm-graph.mts` remains enabled in CI.
+- The npm audit gate in `scripts/audit-reviewed-npm-graph.mts` remains enabled in CI.
   It is authoritative for npm package and version-range decisions.
   The early-warning path triggers only investigation and rescanning.
 
@@ -93,9 +93,12 @@ The same #7338 sign-off gate applies to this work.
 
 ## Provenance Recorded for Each Audit
 
-Each reviewed npm audit report has a `*.provenance.json` sidecar.
+Each npm audit report has a `*.provenance.json` sidecar.
 The sidecars include `coverage/reviewed-npm-audit/` artifacts and `npm-audit.provenance.json` for the WeChat locked runtime graph audit.
-A configured cache reuses a response only when the package and lock bytes, npm version, fixed Yarn audit registry origin, command arguments, and parser identity match. Until 2026-09-11, image builds may accept a still-current npmjs receipt only through the explicit legacy transition. Remove the legacy option and verifier path after Yarn-bound receipts replace the retained npmjs receipts.
+A configured cache reuses a response only when the package and lock bytes, the pinned npm identity (version, SHA-512 SRI, and archive SHA-256), fixed Yarn audit registry origin, command arguments, and parser identity match.
+Current receipts bind the same complete npm identity.
+Until 2026-09-18, image builds may accept a still-current version-only or npmjs receipt only through the explicit legacy transition.
+Remove the legacy option and verifier path after schema version 2 receipts replace the retained receipts.
 The sidecar records whether the response came from the cache or a live registry request, plus its creation time, age, input digest, and response digest.
 Each sidecar also records:
 
@@ -161,5 +164,5 @@ Mapping each demonstrated gap to a mechanism:
   Rescanning maintained immutable image digests is not implemented.
   The image-scan pipeline waits for product and security owners to define the supported-image scope required by #7338.
 - Unproven trigger (`tar`): No trigger design can recover missing evidence.
-  Each reviewed npm audit now writes a provenance sidecar with endpoints, timestamps, and advisory IDs.
+  Each npm audit now writes a provenance sidecar with endpoints, timestamps, and advisory IDs.
   Consecutive retained runs can establish the last comparable non-detection and first detection for future findings.

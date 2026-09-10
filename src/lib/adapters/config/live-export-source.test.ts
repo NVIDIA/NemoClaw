@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
 import { runConfigExport } from "../../actions/config/export";
 import {
@@ -1393,5 +1394,83 @@ describe("managed vLLM export pipeline", () => {
       stage: "managed-serving",
     });
     expect(raw.getProvider).not.toHaveBeenCalled();
+  });
+});
+
+describe("dashboard export observation", () => {
+  it("projects registered dashboard authority through complete live observation (#10904)", async () => {
+    const workload = entry.workload as Extract<
+      NonNullable<SandboxEntry["workload"]>,
+      { kind: "managed-image" }
+    >;
+    expect(workload?.kind).toBe("managed-image");
+    const profile = {
+      ...startup.profile,
+      dashboard: {
+        agent: "openclaw" as const,
+        mode: "remote" as const,
+        url: "http://127.0.0.1:19000",
+        port: 19000,
+        bindAddress: "0.0.0.0" as const,
+        wslExposure: false,
+      },
+    };
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const sourceEntry = {
+      ...entry,
+      dashboardPort: 19000,
+      dashboardRemoteBindPrepared: true,
+      workload: {
+        ...workload,
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+      },
+    };
+    mockSupportedLiveSource(3, 3, sourceEntry);
+    const reader = createLiveExportSnapshotReader();
+    const observed = await reader.read("alpha");
+    expect(observed).toMatchObject({
+      kind: "observed",
+      registry: { dashboardPort: 19000, dashboardRemoteBindPrepared: true },
+    });
+    const writeStdout = vi.fn(async (_yaml: string) => {});
+    const result = await runConfigExport(
+      {
+        sandboxName: "alpha",
+        documentName: parseNemoClawConfigDocumentName("alpha"),
+        target: { kind: "stdout" },
+      },
+      {
+        observe: (name) => observeStableExportSource(name, reader),
+        createDocumentUid: () =>
+          parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
+        writeStdout,
+        publish: vi.fn(),
+      },
+    );
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
+    expect(yaml).not.toContain(readFailureCanary);
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.sandboxes[0]?.agents[0]).toMatchObject({
+      type: "openclaw",
+      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+    });
+  });
+
+  it("retains dashboard registry changes in both complete snapshots (#10904)", async () => {
+    mockSupportedLiveSource();
+    let reads = 0;
+    vi.mocked(loadRegistry).mockImplementation(() => ({
+      sandboxes: { alpha: { ...entry, dashboardPort: reads++ % 2 === 0 ? 18789 : 19000 } },
+      defaultSandbox: null,
+    }));
+    const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
+    expect(result).toMatchObject({
+      ok: false,
+      attempts: 2,
+      findings: [expect.objectContaining({ category: "unstable-source" })],
+    });
+    expect(loadRegistry).toHaveBeenCalledTimes(4);
   });
 });
