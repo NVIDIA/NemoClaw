@@ -202,35 +202,30 @@ harden_resource_limits
 # PATH was already locked down at the top of this script (before the
 # early stderr capture). This comment marks the original location.
 
-# Redirect tool caches and state to /tmp so transient package-manager and
-# shell state stays outside the agent's durable workspace. Without these, tools
-# would create noisy dotfiles (~/.npm, ~/.cache, ~/.bash_history, ~/.gitconfig,
-# ~/.local, ~/.claude) under /sandbox.
-#
-# IMPORTANT: This array is the single source of truth for tool-cache redirects.
-# The same entries are emitted into /tmp/nemoclaw-proxy-env.sh (see below) so
-# that `openshell sandbox connect` sessions also pick up the redirects.
+# Keep disposable caches and existing auth/history locations in /tmp. Ordinary
+# config and user data use native HOME defaults; npm needs a writable user prefix.
+# Connect shells receive the same settings from /tmp/nemoclaw-proxy-env.sh.
 _TOOL_REDIRECTS=(
   'npm_config_cache=/tmp/.npm-cache'
   'XDG_CACHE_HOME=/tmp/.cache'
-  'XDG_CONFIG_HOME=/tmp/.config'
-  'XDG_DATA_HOME=/tmp/.local/share'
-  'XDG_STATE_HOME=/tmp/.local/state'
   'XDG_RUNTIME_DIR=/tmp/.runtime'
   'NODE_REPL_HISTORY=/tmp/.node_repl_history'
   'HISTFILE=/tmp/.bash_history'
-  'GIT_CONFIG_GLOBAL=/tmp/.gitconfig'
   'GNUPGHOME=/tmp/.gnupg'
-  'PYTHONUSERBASE=/tmp/.local'
   'PYTHON_HISTORY=/tmp/.python_history'
   'CLAUDE_CONFIG_DIR=/tmp/.claude'
-  'npm_config_prefix=/tmp/npm-global'
+  'npm_config_prefix=/sandbox/.local'
   # Pin npm online at runtime so a stale base image or future build-time
   # offline-lock regression cannot force `only-if-cached` mode on PID 1 or
   # `openshell sandbox connect` sessions.
   'npm_config_offline=false'
   'NPM_CONFIG_OFFLINE=false'
 )
+# The separate gateway UID cannot create files in the sandbox-owned HOME.
+# Retain its existing Git location without widening HOME permissions.
+if [ "$(id -u)" -eq 0 ]; then
+  _TOOL_REDIRECTS+=('GIT_CONFIG_GLOBAL=/tmp/.gitconfig')
+fi
 for _redir in "${_TOOL_REDIRECTS[@]}"; do
   export "${_redir?}"
 done
@@ -244,15 +239,10 @@ done
 # directories are owned by us automatically. Using install -o would fail with
 # EPERM because only root can chown. Ref: #804
 if [ "$(id -u)" -eq 0 ]; then
-  install -d -o sandbox -g sandbox -m 755 \
-    /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
-    /tmp/.local/state /tmp/.runtime /tmp/.claude \
-    /tmp/npm-global
+  install -d -o sandbox -g sandbox -m 755 /tmp/.npm-cache /tmp/.cache /tmp/.runtime /tmp/.claude
   install -d -o sandbox -g sandbox -m 700 /tmp/.gnupg
 else
-  mkdir -p /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
-    /tmp/.local/state /tmp/.runtime /tmp/.claude \
-    /tmp/npm-global
+  mkdir -p /tmp/.npm-cache /tmp/.cache /tmp/.runtime /tmp/.claude
   install -d -m 700 /tmp/.gnupg
 fi
 
@@ -4135,11 +4125,15 @@ GUARDENVEOF
     if type emit_messaging_connect_runtime_preload_exports >/dev/null 2>&1; then
       emit_messaging_connect_runtime_preload_exports
     fi
-    # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
-    echo '# Tool cache redirects — keep transient tool state under /tmp'
     for _redir in "${_TOOL_REDIRECTS[@]}"; do
       echo "export ${_redir?}"
     done
+    # Root also sources this file before stepping down; keep its PATH trusted.
+    cat <<'USERPATHENVEOF'
+if [ "$(/usr/bin/id -u)" -ne 0 ]; then
+  export PATH="$PATH:/sandbox/.local/bin"
+fi
+USERPATHENVEOF
     if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
       _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
       # Emit the token last, after every other generated export. Mark the name
@@ -5108,7 +5102,7 @@ launch_openclaw_gateway_process() {
     current) ;;
     gateway)
       gateway_launch_prefix=(
-        "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c
+        "${STEP_DOWN_PREFIX_GATEWAY[@]}" /usr/bin/env HOME=/sandbox PATH="$PATH:/sandbox/.local/bin" sh -c
         'umask 0007; exec "$@"' sh
       )
       ;;
@@ -5757,6 +5751,7 @@ fi
 if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
   export HOME=/sandbox
+  export PATH="$PATH:/sandbox/.local/bin"
   # Restore a #3118 truncation before later config reads.
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_CONFIG_STARTED_EPOCH
   recover_openclaw_config_if_empty
@@ -5947,7 +5942,7 @@ setup_auth_profile_as_sandbox
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   _nemoclaw_cmd_rc=0
-  run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
+  run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" /usr/bin/env HOME=/sandbox PATH="$PATH:/sandbox/.local/bin" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
   exit "$_nemoclaw_cmd_rc"
 fi
 

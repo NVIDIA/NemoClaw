@@ -176,6 +176,14 @@ NVIDIA tracks shared-file tooling (shared mount, `workspaces list` command) in [
 Workspace files live in the sandbox's persistent state volume, not in the container image.
 They survive normal container restarts, but NemoClaw deletes them when you destroy the sandbox.
 
+OpenShell-managed OpenClaw uses its home, `/sandbox`, for user configuration in `~/.config` and `~/.gitconfig`, and application data in `~/.local/share` and `~/.local/state`.
+npm `--global` and Python `--user` installations use `~/.local`, with commands available through `~/.local/bin` on the agent's `PATH`.
+These settings and tools survive restarts of the same sandbox, but are excluded from rebuilds, upgrades, and snapshots, which preserve only declared agent state.
+The direct Docker topology with separate gateway and sandbox users retains `/tmp/.gitconfig` because the gateway cannot create files in the sandbox-owned home.
+Existing files in the old `/tmp` locations remain untouched.
+To retain older preferences, manually transfer only reviewed, non-secret values without overwriting current configuration.
+Do not copy authentication stores or raw credentials.
+
 ### Preserved During Restart, Rebuild, and Upgrade
 
 Sandbox restarts preserve workspace files because the persistent state volume outlives individual container restarts.

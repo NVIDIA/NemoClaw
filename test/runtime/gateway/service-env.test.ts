@@ -323,38 +323,39 @@ describe("service environment", () => {
   });
 
   describe("runtime npm online state", () => {
-    it("entrypoint exports npm_config_offline=false and NPM_CONFIG_OFFLINE=false at PID 1", () => {
-      const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
-      const start = src.indexOf("_TOOL_REDIRECTS=(");
-      const end = src.indexOf("done", src.indexOf("for _redir", start));
-      if (start === -1 || end === -1 || end <= start) {
-        throw new Error("Failed to extract _TOOL_REDIRECTS block from scripts/nemoclaw-start.sh");
-      }
-      const block = `${src.slice(start, end)}done`;
-      const tmpFile = join(tmpdir(), `nemoclaw-tool-redirects-npm-online-${process.pid}.sh`);
-      try {
-        writeFileSync(
-          tmpFile,
-          [
-            "#!/usr/bin/env bash",
-            "set -euo pipefail",
-            block,
-            'printf "npm_config_offline=%s\\n" "${npm_config_offline:-unset}"',
-            'printf "NPM_CONFIG_OFFLINE=%s\\n" "${NPM_CONFIG_OFFLINE:-unset}"',
-          ].join("\n"),
-          { mode: 0o700 },
-        );
-        const out = execFileSync("bash", [tmpFile], { encoding: "utf-8" });
-        expect(out).toContain("npm_config_offline=false");
-        expect(out).toContain("NPM_CONFIG_OFFLINE=false");
-      } finally {
+    it.each([0, 998])(
+      "exports online npm settings and topology-appropriate Git config for UID %s",
+      (uid) => {
+        const block = extractToolRedirectsSnippet();
+        const tmpFile = join(tmpdir(), `nemoclaw-tool-redirects-npm-online-${process.pid}.sh`);
         try {
-          unlinkSync(tmpFile);
-        } catch {
-          /* ignore */
+          writeFileSync(
+            tmpFile,
+            [
+              "#!/usr/bin/env bash",
+              "set -euo pipefail",
+              `id() { printf '%s\\n' ${uid}; }`,
+              "unset GIT_CONFIG_GLOBAL",
+              block,
+              'printf "GIT_CONFIG_GLOBAL=%s\\n" "${GIT_CONFIG_GLOBAL:-native}"',
+              'printf "npm_config_offline=%s\\n" "${npm_config_offline:-unset}"',
+              'printf "NPM_CONFIG_OFFLINE=%s\\n" "${NPM_CONFIG_OFFLINE:-unset}"',
+            ].join("\n"),
+            { mode: 0o700 },
+          );
+          const out = execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+          expect(out).toContain("npm_config_offline=false");
+          expect(out).toContain("NPM_CONFIG_OFFLINE=false");
+          expect(out).toContain(`GIT_CONFIG_GLOBAL=${uid === 0 ? "/tmp/.gitconfig" : "native"}`);
+        } finally {
+          try {
+            unlinkSync(tmpFile);
+          } catch {
+            /* ignore */
+          }
         }
-      }
-    });
+      },
+    );
 
     it("a sandbox-connect shell sourcing the emitted proxy-env reports both npm offline env vars as false", () => {
       const persistBlock = extractRuntimeShellEnvSnippet();
@@ -393,21 +394,11 @@ describe("service environment", () => {
     });
   });
 
-  describe("XDG and tool cache redirects (#804)", () => {
-    it.each([
-      { scenario: "npm cache" },
-      { scenario: "cache" },
-      { scenario: "config" },
-      { scenario: "local share" },
-      { scenario: "local state" },
-      { scenario: "runtime" },
-      { scenario: "Claude" },
-      { scenario: "npm global" },
-    ])(
-      "entrypoint pre-creates redirected dirs and restricts GNUPGHOME permissions [$scenario]",
-      ({ scenario }) => {
-        const scriptPath = join(import.meta.dirname, "..", "..", "../scripts/nemoclaw-start.sh");
-        const src = readFileSync(scriptPath, "utf-8");
+  describe("temporary tool directories (#804)", () => {
+    it.each([".npm-cache", ".cache", ".runtime", ".claude"])(
+      "pre-creates %s and restricts GNUPGHOME permissions",
+      (dir) => {
+        const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
         const start = src.indexOf("# Pre-create redirected directories");
         const end = src.indexOf("# ── Drop unnecessary Linux capabilities", start);
         if (start === -1 || end === -1 || end <= start) {
@@ -416,7 +407,7 @@ describe("service environment", () => {
 
         const fakeTmp = mkdtempSync(join(tmpdir(), "nemoclaw-tool-redirects-"));
         const block = src.slice(start, end).replaceAll("/tmp/", `${fakeTmp}/`);
-        const tmpFile = join(tmpdir(), `nemoclaw-tool-redirects-${process.pid}.sh`);
+        const tmpFile = join(fakeTmp, "setup.sh");
         try {
           writeFileSync(
             tmpFile,
@@ -432,34 +423,13 @@ describe("service environment", () => {
           );
           execFileSync("bash", [tmpFile], { encoding: "utf-8" });
 
-          const dir = (
-            {
-              "npm cache": ".npm-cache",
-              cache: ".cache",
-              config: ".config",
-              "local share": join(".local", "share"),
-              "local state": join(".local", "state"),
-              runtime: ".runtime",
-              Claude: ".claude",
-              "npm global": "npm-global",
-            } as const
-          )[scenario]!;
           expect(lstatSync(join(fakeTmp, dir)).isDirectory()).toBe(true);
 
           const gnupg = lstatSync(join(fakeTmp, ".gnupg"));
           expect(gnupg.isDirectory()).toBe(true);
           expect((gnupg.mode & 0o777).toString(8)).toBe("700");
         } finally {
-          try {
-            unlinkSync(tmpFile);
-          } catch {
-            /* ignore */
-          }
-          try {
-            rmSync(fakeTmp, { recursive: true, force: true });
-          } catch {
-            /* ignore */
-          }
+          rmSync(fakeTmp, { recursive: true, force: true });
         }
       },
     );
@@ -564,6 +534,12 @@ describe("service environment", () => {
       (sourceShell) => {
         const fakeDataDir = join(tmpdir(), `nemoclaw-data-test-${process.pid}`);
         mkdirSync(fakeDataDir, { recursive: true });
+        const nativeHome = join(fakeDataDir, "home");
+        mkdirSync(join(nativeHome, ".config", "git"), { recursive: true });
+        writeFileSync(
+          join(nativeHome, ".config", "git", "config"),
+          "[user]\n\temail = native@example.invalid\n",
+        );
         const tmpFile = join(tmpdir(), `nemoclaw-proxyenv-write-test-${process.pid}.sh`);
         try {
           const persistBlock = extractRuntimeShellEnvSnippet();
@@ -571,6 +547,7 @@ describe("service environment", () => {
           const wrapper = [
             "#!/usr/bin/env bash",
             sandboxInitSource,
+            'id() { if [ "${1:-}" = "-u" ]; then printf "998\\n"; else command id "$@"; fi; }',
             toolRedirects,
             'PROXY_HOST="10.200.0.1"',
             'PROXY_PORT="3128"',
@@ -606,18 +583,13 @@ describe("service environment", () => {
 
           expect(envFile).toContain("nemoclaw-configure-guard begin");
           expect(envFile).toContain('/usr/bin/env openclaw "$@"');
-          // Tool cache redirects should be present (#804)
+          // Disposable caches and existing auth/history locations stay temporary.
           expect(envFile).toContain("npm_config_cache");
           expect(envFile).toContain("HISTFILE");
-          expect(envFile).toContain("GIT_CONFIG_GLOBAL");
-          // XDG redirects prevent tools from writing to read-only /sandbox (#804)
-          expect(envFile).toContain("XDG_CONFIG_HOME=/tmp/.config");
-          expect(envFile).toContain("XDG_DATA_HOME=/tmp/.local/share");
-          expect(envFile).toContain("XDG_STATE_HOME=/tmp/.local/state");
           expect(envFile).toContain("XDG_RUNTIME_DIR=/tmp/.runtime");
           expect(envFile).toContain("GNUPGHOME=/tmp/.gnupg");
           expect(envFile).toContain("PYTHON_HISTORY=/tmp/.python_history");
-          expect(envFile).toContain("npm_config_prefix=/tmp/npm-global");
+          expect(envFile).toContain("npm_config_prefix=/sandbox/.local");
           // Pin npm online for connect sessions and PID 1 so a leaked
           // build-time NPM_CONFIG_OFFLINE=true cannot force `only-if-cached`
           // mode on dashboard-driven MCP installs, skill installers, or
@@ -628,17 +600,41 @@ describe("service environment", () => {
           const perms = (lstatSync(join(fakeDataDir, "proxy-env.sh")).mode & 0o777).toString(8);
           expect(perms).toBe("444");
 
+          const nativeEnv = { HOME: nativeHome, PATH: process.env.PATH };
+          const pythonUserBase = execFileSync(
+            "python3",
+            ["-S", "-c", "import site; print(site.getuserbase())"],
+            {
+              encoding: "utf-8",
+              env: nativeEnv,
+            },
+          ).trim();
           const connectedValues = execFileSync(
-            "bash",
+            sourceShell,
             [
-              "--noprofile",
-              "--norc",
               "-c",
-              `export AWS_EC2_METADATA_DISABLED=false; source ${JSON.stringify(join(fakeDataDir, "proxy-env.sh"))}; printf "%s|%s" "$AWS_EC2_METADATA_DISABLED" "$OPENCLAW_GATEWAY_TOKEN"`,
+              [
+                "set -e",
+                "export AWS_EC2_METADATA_DISABLED=false",
+                `. ${JSON.stringify(join(fakeDataDir, "proxy-env.sh"))}`,
+                'printf "%s|%s\\n" "$AWS_EC2_METADATA_DISABLED" "$OPENCLAW_GATEWAY_TOKEN"',
+                "git config --global user.name 'Native Fixture'",
+                "git config --global --get user.email",
+                "python3 -S -c 'import site; print(site.getuserbase())'",
+                'printf "%s|%s\\n" "${XDG_DATA_HOME-unset}" "${XDG_STATE_HOME-unset}"',
+              ].join("\n"),
             ],
-            { encoding: "utf-8" },
+            { encoding: "utf-8", env: nativeEnv },
           );
-          expect(connectedValues).toBe("true|test-token-123");
+          expect(connectedValues.trim().split("\n")).toEqual([
+            "true|test-token-123",
+            "native@example.invalid",
+            pythonUserBase,
+            "unset|unset",
+          ]);
+          expect(readFileSync(join(nativeHome, ".config", "git", "config"), "utf-8")).toContain(
+            "name = Native Fixture",
+          );
         } finally {
           try {
             unlinkSync(tmpFile);
