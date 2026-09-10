@@ -17,34 +17,32 @@ export type ReviewedNpmIdentity = Readonly<{
   npmVersion: string;
 }>;
 
+function identityField(
+  record: Record<string, unknown>,
+  field: keyof ReviewedNpmIdentity,
+  pattern: RegExp,
+): string {
+  const value = record[field];
+  if (typeof value !== "string" || !pattern.test(value) || /[\r\n]/.test(value)) {
+    throw new Error(`npm audit configuration has an invalid ${field}`);
+  }
+  return value;
+}
+
 export function parseReviewedNpmIdentity(value: unknown): ReviewedNpmIdentity {
   const record =
     typeof value === "object" && value !== null && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : {};
-  const { npmArchiveSha256, npmIntegrity, npmVersion } = record;
-  if (
-    typeof npmVersion !== "string" ||
-    !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(npmVersion) ||
-    /[\r\n]/.test(npmVersion)
-  ) {
-    throw new Error("npm audit configuration has an invalid npmVersion");
-  }
-  if (
-    typeof npmIntegrity !== "string" ||
-    !/^sha512-[A-Za-z0-9+/]{86}==$/.test(npmIntegrity) ||
-    /[\r\n]/.test(npmIntegrity)
-  ) {
-    throw new Error("npm audit configuration has an invalid npmIntegrity");
-  }
-  if (
-    typeof npmArchiveSha256 !== "string" ||
-    !/^[a-f0-9]{64}$/.test(npmArchiveSha256) ||
-    /[\r\n]/.test(npmArchiveSha256)
-  ) {
-    throw new Error("npm audit configuration has an invalid npmArchiveSha256");
-  }
-  return { npmArchiveSha256, npmIntegrity, npmVersion };
+  return {
+    npmArchiveSha256: identityField(record, "npmArchiveSha256", /^[a-f0-9]{64}$/),
+    npmIntegrity: identityField(record, "npmIntegrity", /^sha512-[A-Za-z0-9+/]{86}==$/),
+    npmVersion: identityField(
+      record,
+      "npmVersion",
+      /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/,
+    ),
+  };
 }
 
 export function parseReviewedNpmIdentityConfig(contents: string): ReviewedNpmIdentity {

@@ -481,11 +481,25 @@ describe("npm audit raw cache", () => {
     return directory;
   }
 
+  function cliArgs(directory: string, ...extra: string[]) {
+    return [
+      "--directory",
+      directory,
+      "--exceptions",
+      "exceptions.json",
+      "--graph",
+      "fixture",
+      "--threshold",
+      "high",
+      ...extra,
+    ];
+  }
+
   it.each([
     ["flag", ["--cache", "cache.json"], {}],
     ["environment", [], { NEMOCLAW_NPM_AUDIT_CACHE_FILE: "cache.json" }],
   ] as const)(
-    "loads the reviewed npm identity for a CLI cache configured by %s",
+    "loads the reviewed npm identity for a CLI cache configured by %s (#8253)",
     (_source, cacheArgs, environment) => {
       const directory = fixture();
       const auditConfigFile = path.join(directory, "reviewed-npm-audit.json");
@@ -493,19 +507,7 @@ describe("npm audit raw cache", () => {
         fs.writeFileSync(auditConfigFile, `${JSON.stringify(npmIdentity)}\n`);
         expect(
           parseReviewedNpmAuditCliArgs(
-            [
-              "--directory",
-              directory,
-              "--exceptions",
-              "exceptions.json",
-              "--graph",
-              "fixture",
-              "--threshold",
-              "high",
-              "--audit-config",
-              auditConfigFile,
-              ...cacheArgs,
-            ],
+            cliArgs(directory, "--audit-config", auditConfigFile, ...cacheArgs),
             environment,
           ),
         ).toMatchObject({ cacheFile: "cache.json", reviewedNpmIdentity: npmIdentity });
@@ -516,23 +518,9 @@ describe("npm audit raw cache", () => {
   );
 
   it("rejects a CLI cache without the reviewed npm configuration", () => {
-    expect(() =>
-      parseReviewedNpmAuditCliArgs(
-        [
-          "--directory",
-          ".",
-          "--exceptions",
-          "exceptions.json",
-          "--graph",
-          "fixture",
-          "--threshold",
-          "high",
-          "--cache",
-          "cache.json",
-        ],
-        {},
-      ),
-    ).toThrow("npm audit cache requires --audit-config");
+    expect(() => parseReviewedNpmAuditCliArgs(cliArgs(".", "--cache", "cache.json"), {})).toThrow(
+      "npm audit cache requires --audit-config",
+    );
   });
 
   it("rejects a truncated reviewed npm SHA-512 integrity", () => {
