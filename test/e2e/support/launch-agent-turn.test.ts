@@ -561,6 +561,7 @@ exec "$@"
       ),
       orphanedMonitorProcessIds: monitorProcessIds.filter((pid) => existsSync(`/proc/${pid}`)),
       orphanedTuiProcessIds: tuiProcessIds.filter((pid) => existsSync(`/proc/${pid}`)),
+      ownedStatePaths: [fixtureRoot, baselinePath, ptyMonitorRoot],
       openshellCalls: readdirSync(openshellCallsRoot)
         .sort()
         .map(
@@ -604,7 +605,7 @@ it.runIf(process.platform === "linux").concurrent(
     expect(fixture.tuiProcessIds.length).toBeGreaterThan(0);
     expect(fixture.monitorProcessIds.length).toBeGreaterThan(0);
     expect([...fixture.orphanedTuiProcessIds, ...fixture.orphanedMonitorProcessIds]).toEqual([]);
-    expect([fixture.baselineRemoved, fixture.ptyMonitorRemoved]).toEqual([true, true]);
+    expect(fixture.ownedStatePaths.every((path) => !existsSync(path))).toBe(true);
   },
   testTimeout(10_000),
 );
