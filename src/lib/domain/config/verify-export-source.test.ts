@@ -2,23 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import YAML from "yaml";
-import { Check } from "typebox/value";
-import { ExportSourceValuesSchema } from "./export-evidence";
-import { describe, expect, it, vi } from "vitest";
-import { runConfigExport } from "../../actions/config/export";
-import { buildChain } from "../../dashboard/contract";
-import { validateNemoClawConfig } from "../../config/schema";
-import {
-  parseNemoClawConfigDocumentName,
-  parseNemoClawConfigDocumentUid,
-  type NemoClawConfig,
-} from "../../config/model";
-import { observeStableExportSource } from "../../actions/config/observe-export-source";
-import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
-import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
-import type { ObservedExportSnapshot, QualifiedExportSnapshot } from "./export-evidence";
-import { classifyExportRegistry, verifyExportSource } from "./verify-export-source";
 import {
   sandboxId,
   imageRef,
@@ -30,14 +13,29 @@ import {
   managedWorkload,
   entry,
   snapshot,
-  braveSnapshot,
+  verify,
+  changeRetainedProfile,
+  tunedEnvironment,
   hermesSnapshot,
   hermesManagedAuthSnapshot,
-  tunedEnvironment,
+  braveSnapshot,
   tunedSnapshot,
   compatibleSnapshot,
   proxySnapshot,
 } from "./export-source-test-fixture";
+import YAML from "yaml";
+import { Check } from "typebox/value";
+import { ExportSourceValuesSchema } from "./export-evidence";
+import { describe, expect, it } from "vitest";
+import { exportSnapshots } from "../../actions/config/export-test-fixture";
+import { validateNemoClawConfig } from "../../config/schema";
+import { type NemoClawConfig } from "../../config/model";
+import { observeStableExportSource } from "../../actions/config/observe-export-source";
+import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
+import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import type { ObservedExportSnapshot } from "./export-evidence";
+import { classifyExportRegistry, verifyExportSource } from "./verify-export-source";
+import { buildChain } from "../../dashboard/contract";
 
 function findings(result: ReturnType<typeof verifyExportSource>) {
   return result.kind === "verified" ? [] : result.findings;
@@ -46,42 +44,6 @@ function findings(result: ReturnType<typeof verifyExportSource>) {
 function verifiedSource(result: ReturnType<typeof verifyExportSource>) {
   expect(result.kind).toBe("verified");
   return (result as Extract<typeof result, { kind: "verified" }>).source;
-}
-
-function verify(
-  value: ObservedExportSnapshot,
-  requestedSandboxName = "alpha",
-  policyRepresentable = true,
-) {
-  const identity = { sandboxId: value.policy.sandboxId, revision: value.policy.revision };
-  const qualified = {
-    ...value,
-    policy: policyRepresentable
-      ? { ...identity, kind: "verified", canonical: canonicalPolicy }
-      : { ...identity, kind: "not-representable" },
-  } as QualifiedExportSnapshot;
-  return verifyExportSource(requestedSandboxName, qualified);
-}
-
-async function exportSnapshots(sequence: readonly ObservedExportSnapshot[]) {
-  let index = 0;
-  const read = vi.fn(async () => sequence[Math.min(index++, sequence.length - 1)]!);
-  const writeStdout = vi.fn(async (_contents: string) => undefined);
-  const publish = vi.fn(() => ({ ok: true, outputPath: "/tmp/alpha.yaml" }) as const);
-  const outcome = await runConfigExport(
-    {
-      sandboxName: "alpha",
-      documentName: parseNemoClawConfigDocumentName("alpha"),
-      target: { kind: "stdout" },
-    },
-    {
-      observe: (name) => observeStableExportSource(name, { read }),
-      createDocumentUid: () => parseNemoClawConfigDocumentUid(sandboxId),
-      writeStdout,
-      publish,
-    },
-  );
-  return { outcome, read, writeStdout, publish };
 }
 
 function primaryOpenClawAgent(config: NemoClawConfig) {
@@ -632,6 +594,49 @@ describe("config export source verification (#10938)", () => {
     expect(Check(ExportSourceValuesSchema, verifiedSource(result))).toBe(true);
   });
 
+  it.each([undefined, "progressive"] as const)(
+    "exports canonical Hermes without tools for registry selection %s",
+    async (toolDisclosure) => {
+      const result = await exportSnapshots([hermesSnapshot({ toolDisclosure })]);
+      expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+      expect(result.read).toHaveBeenCalledTimes(2);
+      expect(result.publish).not.toHaveBeenCalled();
+      const [yaml] = result.writeStdout.mock.calls[0]!;
+      const sandbox = validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!;
+      expect(sandbox.agents[0]!.type).toBe("hermes");
+      expect(sandbox.agents[0]).not.toHaveProperty("tools");
+      expect(sandbox.network.policy.explicit).toEqual(canonicalPolicy);
+    },
+  );
+
+  it.each([
+    { label: "stale direct selection", selection: "direct", retained: "progressive" },
+    { label: "unregistered direct profile", selection: undefined, retained: "direct" },
+    { label: "matching direct selection and profile", selection: "direct", retained: "direct" },
+  ] as const)("does not publish Hermes with $label", async ({ selection, retained }) => {
+    const workload = managedWorkload(
+      { ...hermesProfileInput(), toolDisclosure: retained },
+      hermesImageRef,
+    );
+    const result = await exportSnapshots([hermesSnapshot({ toolDisclosure: selection, workload })]);
+    expect(result.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(result.outcome).not.toMatchObject({
+      failure: {
+        findings: expect.arrayContaining([expect.objectContaining({ category: "drifted" })]),
+      },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
+  it.each(["progressive", "direct"])(
+    "rejects Hermes tool disclosure %s at the verified value boundary",
+    (disclosure) => {
+      const source = verifiedSource(verify(hermesSnapshot()));
+      expect(Check(ExportSourceValuesSchema, { ...source, tools: { disclosure } })).toBe(false);
+    },
+  );
+
   it("exports explicit retained Hermes Nous API-key authentication (#11432)", async () => {
     const observed = hermesManagedAuthSnapshot();
     expect(verifiedSource(verify(observed)).auth).toEqual({ method: "api-key" });
@@ -693,6 +698,8 @@ describe("config export source verification (#10938)", () => {
 
   it.each([
     { sandboxName: "alpha--beta" },
+    { tools: { disclosure: "unknown" } },
+    { tools: { disclosure: "direct", enabledGateways: [] } },
     { runtime: { provider: "docker", imageRef: "registry/image:latest" } },
     { gateway: { name: "nemoclaw", port: 0 } },
     { inference: { provider: "e\u0301".repeat(257) } },
@@ -753,21 +760,10 @@ describe("config export source verification (#10938)", () => {
       "spec.sandboxes[].agents[0].tools",
     ],
     [
-      "Hermes dashboard",
-      { hermesDashboardEnabled: true, hermesDashboardPort: 18_790 },
-      "spec.sandboxes[].agents[0].dashboard",
-    ],
-    [
-      "invalid Hermes dashboard port evidence",
-      { hermesDashboardPort: 0 },
-      "spec.sandboxes[].agents[0].dashboard",
-    ],
-    [
       "Hermes inference provider",
       { hermesInferenceProvider: "hermes-provider" },
       "spec.sandboxes[].agents[0].auth",
     ],
-    ["non-default Hermes API port", { hermesApiPort: 8643 }, "spec.sandboxes[].agents[0].api"],
   ])("rejects excluded %s state (#11286)", (_case, registryOverrides, field) => {
     expect(findings(verify(hermesSnapshot(registryOverrides)))).toContainEqual(
       expect.objectContaining({ category: "unsupported", field }),
@@ -803,7 +799,7 @@ describe("config export source verification (#10938)", () => {
           agent: "hermes",
           mode: "loopback-forwarded",
           url: "http://127.0.0.1:19189",
-          browserUrl: "http://127.0.0.1:19189",
+          browserUrl: "https://dashboard.example.com",
           publicPort: 19_189,
           internalPort: 29_189,
           tuiEnabled: false,
@@ -1170,54 +1166,6 @@ function dashboardSnapshot(
   });
 }
 
-function changeDashboardProfile(
-  observed: ObservedExportSnapshot,
-  change: (profile: Record<string, Record<string, unknown>>) => void,
-) {
-  const workload = observed.registry.workload as Extract<
-    SandboxWorkloadReceipt,
-    { kind: "managed-image" }
-  >;
-  expect(workload?.kind).toBe("managed-image");
-  const value = JSON.parse(Buffer.from(workload.encodedProfile, "base64url").toString("utf8"));
-  change(value);
-  const serialized = JSON.stringify(value);
-  const encodedProfile = Buffer.from(serialized).toString("base64url");
-  return {
-    ...observed,
-    registry: {
-      ...observed.registry,
-      workload: {
-        ...workload,
-        encodedProfile,
-        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
-      },
-    },
-  };
-}
-
-async function exportDashboardSnapshots(observed: readonly ObservedExportSnapshot[]) {
-  const writeStdout = vi.fn(async (_yaml: string) => {});
-  const publish = vi.fn();
-  let index = 0;
-  const read = vi.fn(async () => observed[index++ % observed.length]!);
-  const result = await runConfigExport(
-    {
-      sandboxName: "alpha",
-      documentName: parseNemoClawConfigDocumentName("alpha"),
-      target: { kind: "stdout" },
-    },
-    {
-      observe: (name) => observeStableExportSource(name, { read }),
-      createDocumentUid: () =>
-        parseNemoClawConfigDocumentUid("11111111-1111-4111-8111-111111111111"),
-      writeStdout,
-      publish,
-    },
-  );
-  return { result, writeStdout, publish, read };
-}
-
 describe("dashboard settings export", () => {
   it("keeps canonical Hermes export free of dashboard interfaces (#10904)", async () => {
     const exported = await exportSnapshots([hermesSnapshot()]);
@@ -1234,26 +1182,26 @@ describe("dashboard settings export", () => {
     });
   });
 
-  it.each([
-    { hermesDashboardEnabled: true, hermesDashboardPort: 19000 },
-    { dashboardRemoteBindPrepared: true },
-  ])("does not publish unsupported Hermes dashboard state %j (#10904)", async (registry) => {
-    const exported = await exportSnapshots([hermesSnapshot(registry)]);
-    expect(exported.outcome).toMatchObject({
-      ok: false,
-      failure: {
-        kind: "observation",
-        findings: expect.arrayContaining([
-          expect.objectContaining({
-            category: "unsupported",
-            field: "spec.sandboxes[].agents[0].dashboard",
-          }),
-        ]),
-      },
-    });
-    expect(exported.writeStdout).not.toHaveBeenCalled();
-    expect(exported.publish).not.toHaveBeenCalled();
-  });
+  it.each([{ dashboardRemoteBindPrepared: true }])(
+    "does not publish unsupported Hermes dashboard state %j (#10904)",
+    async (registry) => {
+      const exported = await exportSnapshots([hermesSnapshot(registry)]);
+      expect(exported.outcome).toMatchObject({
+        ok: false,
+        failure: {
+          kind: "observation",
+          findings: expect.arrayContaining([
+            expect.objectContaining({
+              category: "unsupported",
+              field: "spec.sandboxes[].agents[0].dashboard",
+            }),
+          ]),
+        },
+      });
+      expect(exported.writeStdout).not.toHaveBeenCalled();
+      expect(exported.publish).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     [19000, "0.0.0.0", { port: 19000, bind: "0.0.0.0" }],
@@ -1263,8 +1211,8 @@ describe("dashboard settings export", () => {
     "exports prepared dashboard port %s and bind %s (#10904)",
     async (port, bind, dashboard) => {
       const observed = dashboardSnapshot(port, bind);
-      const outcome = await exportDashboardSnapshots([observed]);
-      expect(outcome.result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const outcome = await exportSnapshots([observed]);
+      expect(outcome.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
       const raw = outcome.writeStdout.mock.calls[0]![0];
       const document = validateNemoClawConfig(YAML.parse(raw));
       expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
@@ -1283,8 +1231,8 @@ describe("dashboard settings export", () => {
       NEMOCLAW_PROXY_HOST: "proxy.internal",
       NEMOCLAW_PROXY_PORT: "3129",
     });
-    const exported = await exportDashboardSnapshots([observed]);
-    expect(exported.result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const exported = await exportSnapshots([observed]);
+    expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
     expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
       type: "openclaw",
@@ -1297,9 +1245,9 @@ describe("dashboard settings export", () => {
   });
 
   it("keeps explicit and legacy canonical dashboard exports identical (#10904)", async () => {
-    const legacy = await exportDashboardSnapshots([snapshot()]);
-    const explicit = await exportDashboardSnapshots([dashboardSnapshot(18789, "127.0.0.1")]);
-    expect(explicit.result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const legacy = await exportSnapshots([snapshot()]);
+    const explicit = await exportSnapshots([dashboardSnapshot(18789, "127.0.0.1")]);
+    expect(explicit.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     expect(explicit.writeStdout.mock.calls).toEqual(legacy.writeStdout.mock.calls);
     expect(explicit.writeStdout.mock.calls[0]![0]).not.toContain("interfaces:");
   });
@@ -1311,8 +1259,8 @@ describe("dashboard settings export", () => {
       NEMOCLAW_AGENT_TIMEOUT: "900",
       NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m",
     });
-    const exported = await exportDashboardSnapshots([observed]);
-    expect(exported.result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const exported = await exportSnapshots([observed]);
+    expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
     const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
     expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
       interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
@@ -1329,10 +1277,10 @@ describe("dashboard settings export", () => {
     ["unprepared bind", { dashboardRemoteBindPrepared: false }],
   ] as const)("rejects %s without output (#10904)", async (_label, registry) => {
     const observed = dashboardSnapshot();
-    const outcome = await exportDashboardSnapshots([
+    const outcome = await exportSnapshots([
       { ...observed, registry: { ...observed.registry, ...registry } },
     ]);
-    expect(outcome.result).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(outcome.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
     expect(outcome.writeStdout).not.toHaveBeenCalled();
     expect(outcome.publish).not.toHaveBeenCalled();
   });
@@ -1346,18 +1294,18 @@ describe("dashboard settings export", () => {
     const observed = dashboardSnapshot();
     const changed = { ...observed, registry: { ...observed.registry } };
     Object.assign(changed.registry, invalid);
-    const outcome = await exportDashboardSnapshots([changed]);
-    expect(outcome.result).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    const outcome = await exportSnapshots([changed]);
+    expect(outcome.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
     expect(outcome.writeStdout).not.toHaveBeenCalled();
     expect(outcome.publish).not.toHaveBeenCalled();
   });
 
   it("rejects stale preparation for a loopback dashboard (#10904)", async () => {
     const observed = dashboardSnapshot(19000, "127.0.0.1");
-    const outcome = await exportDashboardSnapshots([
+    const outcome = await exportSnapshots([
       { ...observed, registry: { ...observed.registry, dashboardRemoteBindPrepared: true } },
     ]);
-    expect(outcome.result).toMatchObject({
+    expect(outcome.outcome).toMatchObject({
       ok: false,
       failure: {
         findings: expect.arrayContaining([expect.objectContaining({ category: "drifted" })]),
@@ -1413,20 +1361,18 @@ describe("dashboard settings export", () => {
   ] as const)(
     "rejects retained %s without output or private values (#10904)",
     async (label, change) => {
-      const outcome = await exportDashboardSnapshots([
-        changeDashboardProfile(dashboardSnapshot(), change),
-      ]);
+      const outcome = await exportSnapshots([changeRetainedProfile(dashboardSnapshot(), change)]);
       const category = ["malformed port", "URL credential"].includes(label)
         ? "missing-provenance"
         : "unsupported";
-      expect(outcome.result).toMatchObject({
+      expect(outcome.outcome).toMatchObject({
         ok: false,
         failure: {
           kind: "observation",
           findings: expect.arrayContaining([expect.objectContaining({ category })]),
         },
       });
-      expect(JSON.stringify(outcome.result)).not.toContain("dashboard-secret-canary");
+      expect(JSON.stringify(outcome.outcome)).not.toContain("dashboard-secret-canary");
       expect(outcome.writeStdout).not.toHaveBeenCalled();
       expect(outcome.publish).not.toHaveBeenCalled();
     },
@@ -1439,7 +1385,7 @@ describe("dashboard settings export", () => {
       { kind: "managed-image" }
     >;
     expect(workload?.kind).toBe("managed-image");
-    const outcome = await exportDashboardSnapshots([
+    const outcome = await exportSnapshots([
       {
         ...observed,
         registry: {
@@ -1448,14 +1394,19 @@ describe("dashboard settings export", () => {
         },
       },
     ]);
-    expect(outcome.result).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(outcome.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
     expect(outcome.writeStdout).not.toHaveBeenCalled();
     expect(outcome.publish).not.toHaveBeenCalled();
   });
 
   it("rejects dashboard changes across both observation pairs (#10904)", async () => {
-    const outcome = await exportDashboardSnapshots([dashboardSnapshot(), dashboardSnapshot(19001)]);
-    expect(outcome.result).toMatchObject({
+    const outcome = await exportSnapshots([
+      dashboardSnapshot(),
+      dashboardSnapshot(19001),
+      dashboardSnapshot(),
+      dashboardSnapshot(19001),
+    ]);
+    expect(outcome.outcome).toMatchObject({
       ok: false,
       failure: {
         attempts: 2,

@@ -26,6 +26,7 @@ import {
   isValidNemoClawRuntimeProvider,
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
+  NemoClawAgentToolsConfigSchema,
   NemoClawOpenClawObservabilitySchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
@@ -34,6 +35,7 @@ import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
 import { validateManagedServing } from "./verify-managed-serving";
+import { inspectAgentInterfaces } from "./verify-agent-interfaces";
 import type {
   CanonicalExportPolicy,
   ExportFinding,
@@ -48,9 +50,6 @@ import type {
 const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 const DEFAULT_DASHBOARD_URL = "http://127.0.0.1:18789";
 const HERMES_API_KEY_ENDPOINT = "https://inference-api.nousresearch.com/v1";
-// V1 intentionally recognizes only the accepted single-sandbox Hermes binding.
-// A future onboarding-default change must make a new export fidelity decision.
-const DEFAULT_HERMES_API_PORT = 8642;
 
 type SupportedExportAgent = "hermes" | "openclaw";
 type ManagedStartupInferenceRoute = ReturnType<typeof resolveManagedStartupInferenceRoute>;
@@ -104,6 +103,7 @@ type VerifiedExportSourceData = Pick<
   | "proxy"
   | "runtime"
   | "sandboxName"
+  | "tools"
   | "webSearch"
 >;
 
@@ -143,15 +143,22 @@ function hasBraveSearch(entry: ObservedExportRegistry): boolean {
 
 function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
   const excluded: Array<[string, unknown, string]> = [
+    [
+      "spec.sandboxes[].agents[0].tools.disclosure",
+      entry.agent === "hermes" && entry.toolDisclosure === "direct",
+      "direct tool disclosure for Hermes",
+    ],
     ["spec.sandboxes[].agents[0].tools", entry.hermesToolGateways, "enabled Hermes tool gateways"],
     [
       "spec.sandboxes[].agents[0].dashboard",
-      [
-        entry.hermesDashboardEnabled,
-        entry.hermesDashboardPort,
-        entry.hermesDashboardInternalPort,
-        entry.hermesDashboardTui,
-      ].some(hasEntries),
+      entry.agent !== "hermes" &&
+        [
+          entry.hermesApiPort,
+          entry.hermesDashboardEnabled,
+          entry.hermesDashboardPort,
+          entry.hermesDashboardInternalPort,
+          entry.hermesDashboardTui,
+        ].some(hasEntries),
       "a non-default Hermes dashboard",
     ],
     ["spec.sandboxes[].agents[0].auth", entry.hermesInferenceProvider, "Hermes clone inference"],
@@ -255,11 +262,6 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
       "secondary agents or added agent plugins",
     ],
     [
-      "spec.sandboxes[].agents[0].toolDisclosure",
-      entry.toolDisclosure === "direct",
-      "direct tool disclosure",
-    ],
-    [
       "spec.sandboxes[].agents[0].dashboard",
       entry.agent !== "openclaw" && entry.dashboardRemoteBindPrepared,
       "remote dashboard exposure",
@@ -273,26 +275,19 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
   return [...findings, ...classifyHermesExcludedCapabilities(entry)];
 }
 
-function classifyHermesApiConfiguration(entry: ObservedExportRegistry): ExportFinding[] {
-  if (
-    entry.agent !== "hermes" ||
-    entry.hermesApiPort === undefined ||
-    entry.hermesApiPort === null ||
-    entry.hermesApiPort === DEFAULT_HERMES_API_PORT
-  ) {
-    return [];
-  }
-  return [
-    finding(
-      "spec.sandboxes[].agents[0].api",
-      "unsupported",
-      "V1 export requires the default Hermes API configuration.",
-    ),
-  ];
-}
-
 function classifyRegistryProvenance(entry: ObservedExportRegistry): ExportFinding[] {
   const findings: ExportFinding[] = [];
+  if (
+    entry.toolDisclosure !== undefined &&
+    !Check(NemoClawAgentToolsConfigSchema, { disclosure: entry.toolDisclosure })
+  )
+    findings.push(
+      finding(
+        "spec.sandboxes[].agents[0].tools.disclosure",
+        "unsupported",
+        "The persisted tool disclosure is not a supported mode.",
+      ),
+    );
   if (!entry.lifecycleGeneration || !entry.lifecycleLiveIdentityFingerprint)
     findings.push(
       finding(
@@ -394,7 +389,6 @@ export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFin
         "V1 export requires OpenClaw or Hermes.",
       ),
     );
-  findings.push(...classifyHermesApiConfiguration(entry));
   if (entry.pendingRouteReservation === true)
     findings.push(
       finding(
@@ -413,6 +407,12 @@ export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFin
       ),
     );
   return findings;
+}
+
+function registeredToolDisclosure(
+  entry: ObservedExportRegistry,
+): ManagedStartupProfileBuilderInput["toolDisclosure"] {
+  return entry.agent === "openclaw" ? (entry.toolDisclosure ?? "progressive") : "progressive";
 }
 
 function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedStartupProfile {
@@ -450,7 +450,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     },
     dashboard: projection.dashboard,
     webSearch: hasBraveSearch(entry) ? { fetchEnabled: true, provider: "brave" } : null,
-    toolDisclosure: "progressive",
+    toolDisclosure: registeredToolDisclosure(entry),
     hermesToolGateways: [],
     messagingPlan: null,
     dcodeAutoApprovalMode: null,
@@ -461,48 +461,6 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
         : {},
     corporateCa: null,
   }).profile;
-}
-
-function projectDashboard(profile: ManagedStartupProfile): VerifiedExportSource["interfaces"] {
-  if (profile.dashboard.agent !== "openclaw") return undefined;
-  const dashboard = {
-    ...(profile.dashboard.port === 18_789 ? {} : { port: profile.dashboard.port }),
-    ...(profile.dashboard.bindAddress === "127.0.0.1"
-      ? {}
-      : { bind: profile.dashboard.bindAddress }),
-  };
-  return Object.keys(dashboard).length === 0 ? undefined : { dashboard };
-}
-
-function classifyDashboard(
-  entry: ObservedExportRegistry,
-  profile: ManagedStartupProfile,
-): ExportFinding[] {
-  const dashboard = profile.dashboard;
-  if (dashboard.agent !== "openclaw") return [];
-  const remote = dashboard.bindAddress === "0.0.0.0";
-  const legacyDefault = entry.dashboardPort === undefined && dashboard.port === 18_789 && !remote;
-  if (entry.dashboardPort !== dashboard.port && !legacyDefault) {
-    return [
-      finding(
-        "spec.sandboxes[].agents[].interfaces.dashboard.port",
-        entry.dashboardPort === undefined ? "missing-provenance" : "drifted",
-        "The persisted dashboard port must match the managed startup profile.",
-      ),
-    ];
-  }
-  const prepared = entry.dashboardRemoteBindPrepared;
-  const preparationMatches = remote ? prepared === true : [undefined, false].includes(prepared);
-  if (!preparationMatches) {
-    return [
-      finding(
-        "spec.sandboxes[].agents[].interfaces.dashboard.bind",
-        remote ? "missing-provenance" : "drifted",
-        "Dashboard remote-bind preparation must match the managed startup profile.",
-      ),
-    ];
-  }
-  return [];
 }
 
 function exportedObservability(
@@ -564,6 +522,23 @@ function classifyReasoningAgreement(
   ];
 }
 
+function classifyToolDisclosureAgreement(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile,
+  expected: ManagedStartupProfile,
+): ExportFinding[] {
+  if (entry.agent !== "openclaw" || profile.tools.disclosure === expected.tools.disclosure) {
+    return [];
+  }
+  return [
+    finding(
+      "spec.sandboxes[].agents[0].tools.disclosure",
+      entry.toolDisclosure === undefined ? "missing-provenance" : "drifted",
+      "The retained tool disclosure and the registry selection do not agree.",
+    ),
+  ];
+}
+
 function supportedAgentSettingsProfile(
   profile: ManagedStartupProfile,
   expected: ManagedStartupProfile,
@@ -600,25 +575,12 @@ function supportedHostProfile(
   profile: ManagedStartupProfile,
   expected: ManagedStartupProfile,
 ): ManagedStartupProfile {
-  const projected = {
+  return {
     ...expected,
     proxy: {
       ...expected.proxy,
       managedHost: profile.proxy.managedHost,
       managedPort: profile.proxy.managedPort,
-    },
-  };
-  if (profile.dashboard.agent !== "openclaw") return projected;
-  const { port, bindAddress } = profile.dashboard;
-  return {
-    ...projected,
-    dashboard: {
-      agent: "openclaw",
-      mode: bindAddress === "0.0.0.0" ? "remote" : "loopback",
-      url: `http://127.0.0.1:${port}`,
-      port,
-      bindAddress,
-      wslExposure: false,
     },
   };
 }
@@ -636,14 +598,23 @@ function supportedObservabilityProfile(
   };
 }
 
+function expectedProfileWithHostSettings(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile,
+): ManagedStartupProfile | null {
+  try {
+    return supportedHostProfile(profile, expectedManagedStartupProfile(entry));
+  } catch {
+    return null;
+  }
+}
+
 function classifyManagedStartupProfile(
   entry: ObservedExportRegistry,
   profile: ManagedStartupProfile,
 ): ExportFinding[] {
-  let expected: ManagedStartupProfile;
-  try {
-    expected = supportedHostProfile(profile, expectedManagedStartupProfile(entry));
-  } catch {
+  let expected = expectedProfileWithHostSettings(entry, profile);
+  if (!expected) {
     return [
       finding(
         "source.workload.startupProfile",
@@ -653,9 +624,12 @@ function classifyManagedStartupProfile(
     ];
   }
   expected = supportedObservabilityProfile(profile, expected);
+  const interfaces = inspectAgentInterfaces(entry, profile);
+  if (interfaces.dashboard) expected = { ...expected, dashboard: interfaces.dashboard };
   const findings = [
-    ...classifyDashboard(entry, profile),
+    ...interfaces.findings,
     ...classifyReasoningAgreement(entry, profile),
+    ...classifyToolDisclosureAgreement(entry, profile, expected),
   ];
   if (entry.servingProfileProvenance?.preset.id !== EXPORTED_VLLM_PROFILE_ID) {
     const supported = supportedAgentSettingsProfile(profile, expected);
@@ -1148,6 +1122,29 @@ function projectVerifiedInference(
       };
 }
 
+function projectVerifiedExecution(settings: ReturnType<typeof projectAgentSettings>) {
+  return settings.execution ? { execution: settings.execution } : {};
+}
+
+function projectVerifiedWebSearch(entry: ObservedExportRegistry) {
+  if (!hasBraveSearch(entry)) return {};
+  return {
+    webSearch: {
+      provider: "brave" as const,
+      agentRefs: ["primary"],
+      credential: { env: "BRAVE_API_KEY" },
+    },
+  };
+}
+
+function projectVerifiedTools(
+  entry: ObservedExportRegistry,
+  authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
+) {
+  if (entry.agent !== "openclaw" || authority?.profile.tools.disclosure !== "direct") return {};
+  return { tools: { disclosure: authority.profile.tools.disclosure } };
+}
+
 function verifiedHermesAuth(entry: ObservedExportRegistry) {
   return entry.agent === "hermes" && entry.hermesAuthMethod === "api_key"
     ? { auth: { method: "api-key" as const } }
@@ -1159,7 +1156,7 @@ function projectHostSettings(
   authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
 ) {
   if (!authority) return {};
-  const interfaces = projectDashboard(authority.profile);
+  const interfaces = inspectAgentInterfaces(entry, authority.profile).interfaces;
   const proxy = authority.profile.proxy;
   return {
     ...(interfaces ? { interfaces } : {}),
@@ -1186,19 +1183,12 @@ function completeVerifiedSource(
     ...(observability ? { observability } : {}),
     sandboxName: requestedSandboxName,
     agent: entry.agent,
-    ...(settings.execution ? { execution: settings.execution } : {}),
+    ...projectVerifiedExecution(settings),
+    ...projectVerifiedWebSearch(entry),
     ...verifiedHermesAuth(entry),
-    ...(hasBraveSearch(entry)
-      ? {
-          webSearch: {
-            provider: "brave",
-            agentRefs: ["primary"],
-            credential: { env: "BRAVE_API_KEY" },
-          },
-        }
-      : {}),
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
+    ...projectVerifiedTools(entry, authority),
     ...projectHostSettings(entry, authority),
     inference: projectVerifiedInference(snapshot, selected, settings),
   };
