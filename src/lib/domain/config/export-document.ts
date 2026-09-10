@@ -6,6 +6,7 @@ import type {
   NemoClawConfig,
   NemoClawConfigDocumentName,
   NemoClawConfigDocumentUid,
+  NemoClawAgentConfig,
   NemoClawInferenceProviderConfig,
 } from "../../config/model";
 import type { VerifiedExportSource } from "./export-evidence";
@@ -41,9 +42,48 @@ function inferenceProvider(
     : { ...provider, credential: { env: source.inference.credentialEnv } };
 }
 
+function primaryAgent(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig {
+  return {
+    name: "primary",
+    ...agentSettings(source),
+    ...(source.auth === undefined
+      ? {}
+      : { auth: { method: source.auth.method, providerRef: providerName } }),
+    inference: {
+      routes: [
+        {
+          name: "primary",
+          providerRef: providerName,
+          overrides: {
+            model: source.inference.model,
+            ...("serving" in source.inference
+              ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
+              : {}),
+            ...("overrides" in source.inference ? source.inference.overrides : {}),
+          },
+        },
+      ],
+    },
+  };
+}
+
 export interface ExportConfigBuildIdentity {
   readonly documentName: NemoClawConfigDocumentName;
   readonly documentUid: NemoClawConfigDocumentUid;
+}
+
+function agentSettings(source: VerifiedExportSource) {
+  return {
+    ...(source.agent === "openclaw"
+      ? {
+          type: "openclaw" as const,
+          ...(source.tools === undefined ? {} : { tools: source.tools }),
+          ...(source.interfaces ? { interfaces: source.interfaces } : {}),
+          ...(source.observability ? { observability: source.observability } : {}),
+        }
+      : { type: "hermes" as const }),
+    ...(source.execution ? { execution: source.execution } : {}),
+  };
 }
 
 /** Map one verified export source to an unbound aggregate document. */
@@ -75,31 +115,8 @@ export function buildExportConfig(
             policy: { explicit: source.policy },
             ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
           },
-          ...(source.webSearch === undefined
-            ? {}
-            : { integrations: { webSearch: source.webSearch } }),
-          agents: [
-            {
-              name: "primary",
-              type: source.agent,
-              ...(source.execution ? { execution: source.execution } : {}),
-              inference: {
-                routes: [
-                  {
-                    name: "primary",
-                    providerRef: providerName,
-                    overrides: {
-                      model: source.inference.model,
-                      ...("serving" in source.inference
-                        ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
-                        : {}),
-                      ...("overrides" in source.inference ? source.inference.overrides : {}),
-                    },
-                  },
-                ],
-              },
-            },
-          ],
+          ...(source.webSearch ? { integrations: { webSearch: source.webSearch } } : {}),
+          agents: [primaryAgent(source, providerName)],
         },
       ],
     },

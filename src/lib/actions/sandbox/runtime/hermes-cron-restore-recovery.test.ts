@@ -102,7 +102,6 @@ describe("sandbox recovery with a Hermes cron restore gate", () => {
     await expect(recoverSandboxWithHermesCronRestore("alpha")).rejects.toThrow(
       "recovery authority is unsafe",
     );
-
     expect(mocks.connectSandbox).not.toHaveBeenCalled();
     expect(mocks.recoverHermesCronRestore).not.toHaveBeenCalled();
   });

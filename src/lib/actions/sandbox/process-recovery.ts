@@ -16,7 +16,6 @@ import {
 import {
   buildOpenShellRuntimeSelectionEnv,
   captureOpenshell,
-  captureSandboxSshConfig,
   isCommandTimeout,
   type OpenShellRuntimeSelection,
   runOpenshell,
@@ -150,12 +149,10 @@ function commandTransportDependencies(): CommandTransportDependencies {
   return {
     buildSandboxExecMarkedCommand,
     buildSubprocessEnv,
-    captureSandboxSshConfig,
     executePrivilegedSandboxCommand: executeProviderPrivilegedSandboxCommand,
     extractSandboxExecCommandStdout,
     commandExecutor: createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT }),
     isDirectSandboxFallbackUnavailableError,
-    openshellProbeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
   };
 }
 
@@ -196,11 +193,11 @@ function getSandboxHealthProbeUrl(sandboxName: string): string {
  * Run a command inside the sandbox via SSH and return { status, stdout, stderr }.
  * Returns null if SSH config cannot be obtained.
  */
-export function executeSandboxCommand(
+export async function executeSandboxCommand(
   sandboxName: string,
   command: string,
   timeoutOrOptions: number | SandboxCommandExecutionOptions = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-): SandboxCommandResult | null {
+): Promise<SandboxCommandResult | null> {
   const timeout =
     typeof timeoutOrOptions === "number"
       ? timeoutOrOptions
@@ -210,7 +207,7 @@ export function executeSandboxCommand(
   const runtimeEnv = runtimeSelection
     ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
     : undefined;
-  return executeSandboxCommandTransport(
+  return await executeSandboxCommandTransport(
     commandTransportDependencies(),
     sandboxName,
     command,
@@ -436,7 +433,7 @@ async function isSandboxGatewayRunning(
   // declare a trusted runtime user/supervisor.
   if (!agent || agent.name === "openclaw" || agent.name === "hermes") return null;
   return parseSandboxGatewayProbe(
-    executeSandboxCommand(
+    await executeSandboxCommand(
       sandboxName,
       command,
       runtimeSelection ? { runtimeSelection } : DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
@@ -853,7 +850,7 @@ type SandboxProcessRecovery =
   | { kind: "provider" }
   | { kind: "relaunched"; relaunch: ManagedSupervisorRelaunch };
 
-function recoverSandboxProcesses(
+async function recoverSandboxProcesses(
   sandboxName: string,
   {
     quiet = false,
@@ -874,7 +871,7 @@ function recoverSandboxProcesses(
     onFailureLayer?: (layer: GatewayRestartFailureLayer, detail: string) => void;
     runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
-): SandboxProcessRecovery | null {
+): Promise<SandboxProcessRecovery | null> {
   const effectiveGatewaySupervisorAction =
     runtimeSelection && requestGatewaySupervisorAction === executeGatewaySupervisorAction
       ? refuseHostLocalSupervisorForSelectedRuntime
@@ -1080,7 +1077,7 @@ function recoverSandboxProcesses(
     // runtime user. Recover them over SSH so the launch inherits the sandbox
     // login user instead of creating root-owned agent state under /sandbox.
     return recoveredSsh(
-      executeSandboxCommand(
+      await executeSandboxCommand(
         sandboxName,
         agentScript,
         runtimeSelection ? { runtimeSelection } : DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
@@ -1885,20 +1882,22 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
 
   let managedRecoveryFailureLayer: GatewayRestartFailureLayer | null = null;
   let managedRecoveryFailureDetail: string | null = null;
-  const recovery = measure("processes", () =>
-    recoverSandboxProcesses(sandboxName, {
-      quiet,
-      requestGatewaySupervisorAction: effectiveGatewaySupervisorAction,
-      requestPinnedGatewaySupervisorAction: effectivePinnedGatewaySupervisorAction,
-      relaunchManagedSupervisorSessionImpl,
-      managedControlNowImpl,
-      managedControlTimeoutMs,
-      runtimeSelection,
-      onFailureLayer: (layer, detail) => {
-        managedRecoveryFailureLayer = layer;
-        managedRecoveryFailureDetail = detail;
-      },
-    }),
+  const recovery = await measureAsync(
+    "processes",
+    async () =>
+      await recoverSandboxProcesses(sandboxName, {
+        quiet,
+        requestGatewaySupervisorAction: effectiveGatewaySupervisorAction,
+        requestPinnedGatewaySupervisorAction: effectivePinnedGatewaySupervisorAction,
+        relaunchManagedSupervisorSessionImpl,
+        managedControlNowImpl,
+        managedControlTimeoutMs,
+        runtimeSelection,
+        onFailureLayer: (layer, detail) => {
+          managedRecoveryFailureLayer = layer;
+          managedRecoveryFailureDetail = detail;
+        },
+      }),
   );
   if (recovery !== null) {
     const withManagedControlCompletion = <T extends { recovered: true }>(

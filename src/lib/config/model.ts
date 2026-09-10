@@ -331,20 +331,87 @@ const NemoClawInferenceRouteConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
-const NemoClawAgentConfigSchema = Type.Object(
+export const NemoClawAgentToolsConfigSchema = Type.Object(
+  { disclosure: Type.Union([Type.Literal("progressive"), Type.Literal("direct")]) },
+  { additionalProperties: false },
+);
+
+/** Retained OpenClaw dashboard settings; absent leaves keep the managed defaults. */
+export const NemoClawDashboardConfigSchema = Type.Object(
   {
-    name: LocalResourceNameSchema,
-    type: NemoClawAgentTypeSchema,
-    execution: Type.Optional(NemoClawAgentExecutionSchema),
-    inference: Type.Object(
+    port: Type.Optional(
+      Type.Integer({
+        minimum: 1024,
+        maximum: 65_535,
+        // Managed OpenClaw dashboards cannot use the reserved Hermes API range.
+        not: { minimum: 8642, maximum: 8652 },
+      }),
+    ),
+    bind: Type.Optional(Type.Union([Type.Literal("127.0.0.1"), Type.Literal("0.0.0.0")])),
+  },
+  { additionalProperties: false, minProperties: 1 },
+);
+
+export const NemoClawAgentInterfacesSchema = Type.Object(
+  { dashboard: NemoClawDashboardConfigSchema },
+  { additionalProperties: false },
+);
+
+const NemoClawAgentAuthConfigSchema = Type.Object(
+  {
+    method: Type.Literal("api-key"),
+    providerRef: LocalResourceNameSchema,
+  },
+  { additionalProperties: false },
+);
+
+/** First supported OTLP profile: local HTTP collector, without credentials or headers. */
+export const NemoClawOpenClawObservabilitySchema = Type.Object(
+  {
+    otlp: Type.Object(
       {
-        routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }),
+        enabled: Type.Literal(true),
+        endpoint: Type.Literal("http://host.openshell.internal:4318"),
+        // ASCII keeps the public character bound equal to the receipt's UTF-8 byte bound.
+        serviceName: Type.String({
+          minLength: 1,
+          maxLength: 256,
+          pattern: "^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])",
+        }),
+        sampleRate: Type.Number({ minimum: 0, maximum: 1 }),
       },
       { additionalProperties: false },
     ),
   },
   { additionalProperties: false },
 );
+
+const nemoClawAgentFields = {
+  name: LocalResourceNameSchema,
+  auth: Type.Optional(NemoClawAgentAuthConfigSchema),
+  inference: Type.Object(
+    { routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }) },
+    { additionalProperties: false },
+  ),
+};
+
+const NemoClawAgentConfigSchema = Type.Union([
+  Type.Object(
+    {
+      ...nemoClawAgentFields,
+      type: Type.Literal("openclaw"),
+      execution: Type.Optional(NemoClawAgentExecutionSchema),
+      tools: Type.Optional(NemoClawAgentToolsConfigSchema),
+      interfaces: Type.Optional(NemoClawAgentInterfacesSchema),
+      observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { ...nemoClawAgentFields, type: Type.Literal("hermes") },
+    { additionalProperties: false },
+  ),
+]);
 
 const NemoClawManagedImageConfigSchema = Type.Object(
   { ref: ImmutableImageReferenceSchema },
@@ -457,6 +524,9 @@ export type NemoClawRouteOverrides = DeepReadonly<
 >;
 export type NemoClawInferenceRouteConfig = DeepReadonly<
   TypeBoxModule.Type.Static<typeof NemoClawInferenceRouteConfigSchema>
+>;
+export type NemoClawAgentAuthConfig = DeepReadonly<
+  TypeBoxModule.Type.Static<typeof NemoClawAgentAuthConfigSchema>
 >;
 export type NemoClawAgentConfig = DeepReadonly<
   TypeBoxModule.Type.Static<typeof NemoClawAgentConfigSchema>

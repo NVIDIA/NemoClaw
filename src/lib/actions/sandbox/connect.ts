@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
 import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
 import {
@@ -17,7 +16,6 @@ import {
 import {
   captureOpenshell,
   captureResolvedOpenshell,
-  getOpenshellBinary,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
 import {
@@ -31,7 +29,6 @@ import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import { retryUntilAsync } from "../../core/retry";
 
-import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
@@ -65,7 +62,12 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
-import { runSandboxExecChild } from "./exec";
+import { createCliOpenShellSandboxSessionExecutor } from "../../adapters/openshell/sandbox-command-cli";
+import type {
+  OpenShellSandboxSessionExecutor,
+  OpenShellSandboxSessionRequest,
+  OpenShellSandboxSessionOutcome,
+} from "../../adapters/openshell/sandbox-session";
 import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   exitOnSecretBoundaryRefusal,
@@ -88,6 +90,7 @@ import {
   ensureLiveSandboxOrExit,
   assertHermesPortableLifecycleForConnect,
   buildHermesPortableCommandAuthority,
+  defaultPortableDemoStateDir,
   type HermesPortableActiveLifecycleAuthority,
   getNamedGatewayLifecycleState,
   printGatewayLifecycleHint,
@@ -181,11 +184,6 @@ export function sanitizeSandboxStartupRecoveryDetail(raw: string): string {
     .trim()
     .slice(0, 240);
 }
-
-type SpawnLikeResult = {
-  status: number | null;
-  signal?: NodeJS.Signals | null;
-};
 
 export type SandboxInferenceRouteProbe = {
   healthy: boolean;
@@ -701,7 +699,10 @@ function hermesPortableLaunchReadinessDeps(
 }
 
 function portableAgentLifecycleAuthorityDeps() {
-  return { readRegistry: registry.getSandbox };
+  return {
+    readRegistry: registry.getSandbox,
+    stateDir: defaultPortableDemoStateDir(process.env),
+  };
 }
 
 type HermesPortableForwardConnectRecoveryInput = {
@@ -1759,40 +1760,17 @@ export async function restoreSandboxStartupState(
   return Object.assign(processCheck, { recoveryFailureDetail, recoveryFailureLayer });
 }
 
-function restoreInteractiveTerminal(): void {
-  if (!process.stdin.isTTY) return;
-
-  try {
-    const stdin = process.stdin as typeof process.stdin & {
-      setRawMode?: (mode: boolean) => unknown;
-    };
-    stdin.setRawMode?.(false);
-  } catch {
-    // Best-effort: still try `stty sane` below.
-  }
-
-  try {
-    spawnSync("stty", ["sane"], {
-      stdio: ["inherit", "ignore", "ignore"],
-      cwd: ROOT,
-      env: process.env,
-    });
-  } catch {
-    // Terminal cleanup must never mask the original connect failure.
-  }
-}
-
-function isLikelySshDisconnect(result: SpawnLikeResult): boolean {
-  return result.status === 255 || result.signal === "SIGHUP" || result.signal === "SIGPIPE";
-}
-
-function exitWithConnectSpawnResult(sandboxName: string, result: SpawnLikeResult): void {
-  if (isLikelySshDisconnect(result)) {
-    restoreInteractiveTerminal();
+function exitWithConnectSessionOutcome(
+  sandboxName: string,
+  outcome: OpenShellSandboxSessionOutcome,
+): void {
+  if (outcome.kind === "failed" && outcome.reason === "transport") {
     console.error("");
     console.error(`  Gateway connection lost. Reconnect with: ${CLI_NAME} ${sandboxName} connect`);
+  } else if (outcome.kind === "failed") {
+    console.error(`  ${outcome.message}`);
   }
-  process.exit(spawnExitCode(result));
+  process.exit(outcome.exitCode);
 }
 
 type WaitForSandboxReadyOptions = {
@@ -2192,10 +2170,10 @@ async function runConnectEntryPreflight(
 }
 
 /** Print version and active-session hints on both interactive launch paths. */
-export function printInteractiveSessionHints(sandboxName: string): void {
+export async function printInteractiveSessionHints(sandboxName: string): Promise<void> {
   // Version staleness check — warn but don't block
   try {
-    const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
+    const versionCheck = await sandboxVersion.checkAgentVersion(sandboxName);
     if (versionCheck.isStale) {
       for (const line of sandboxVersion.formatStalenessWarning(sandboxName, versionCheck)) {
         console.error(line);
@@ -2265,7 +2243,7 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
     probeOnly: false,
     withinLifecycleFence: async ({ hermesPortable, requalify }) => {
       if (!hermesPortable) {
-        printInteractiveSessionHints(sandboxName);
+        await printInteractiveSessionHints(sandboxName);
         const processCheck = await checkAndRecoverSandboxProcesses(sandboxName);
         if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
           const agentName = agentRuntime.getAgentDisplayName(
@@ -2343,13 +2321,7 @@ export async function connectSandbox(
         probeTiming,
       );
       if (!prepared) return null;
-      return {
-        completion: runSandboxExecChild(prepared.binary, prepared.args, {
-          hostCwd: ROOT,
-          stdin: true,
-          ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
-        }),
-      };
+      return prepared.executor.start(prepared.request);
     });
     if (!started) {
       probeTiming?.finish("ready");
@@ -2359,8 +2331,8 @@ export async function connectSandbox(
     // Start the selected child under the lifecycle lock, then release the lock
     // before waiting for an interactive shell that can remain open indefinitely.
     const result = await started.completion;
-    result.releaseSignals?.();
-    exitWithConnectSpawnResult(sandboxName, result);
+    result.release();
+    exitWithConnectSessionOutcome(sandboxName, result.outcome);
   } catch (error) {
     probeTiming?.finish("failed", probeTiming.activeStage() ?? undefined);
     throw error;
@@ -2369,17 +2341,16 @@ export async function connectSandbox(
   }
 }
 
-type PreparedConnectChild = {
-  binary: string;
-  args: string[];
-  hostEnv?: NodeJS.ProcessEnv;
+type PreparedConnectSession = {
+  executor: OpenShellSandboxSessionExecutor;
+  request: OpenShellSandboxSessionRequest;
 };
 
 async function prepareConnectSandboxWithinLifecycleFence(
   sandboxName: string,
   { probeOnly = false, requireLaunchReadinessPublication = true }: SandboxConnectOptions,
   probeTiming?: ProbeTimingRecorder,
-): Promise<PreparedConnectChild | null> {
+): Promise<PreparedConnectSession | null> {
   if (probeOnly) {
     let portableAuthorityReady = false;
     let hermesMissingFastPathEligible = false;
@@ -2754,6 +2725,14 @@ async function prepareConnectSandboxWithinLifecycleFence(
               : probeTiming!.measure("lifecycle", () =>
                   startStoppedSandboxContainerForProbeRecovery(sandboxName),
                 );
+            if (
+              startedStoppedContainer &&
+              !registry.recordSandboxStopIntent(sandboxName, false, registry.updateSandbox)
+            ) {
+              throw new Error(
+                `Sandbox '${sandboxName}' recovered, but NemoClaw could not clear its intentional-stop record. Run '${CLI_NAME} ${sandboxName} status' before another lifecycle command.`,
+              );
+            }
             await probeTiming!.measureAsync("gateway", () =>
               waitForSandboxReadyOrExit(sandboxName, {
                 allowInitialErrorAfterStart: startedStoppedContainer,
@@ -2986,12 +2965,22 @@ async function prepareConnectSandboxWithinLifecycleFence(
   if (!hermesPortable) prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
   requalifyPortableDisposition();
   const portableAuthority = hermesPortable ? requalifyHermesPortableForConnect() : null;
-  const connectArgs = portableAuthority
-    ? ["sandbox", "connect", "-g", portableAuthority.gatewayName, sandboxName]
-    : ["sandbox", "connect", sandboxName];
   return {
-    binary: portableAuthority?.executablePath ?? getOpenshellBinary(),
-    args: connectArgs,
-    ...(portableAuthority ? { hostEnv: portableAuthority.env } : {}),
+    executor: createCliOpenShellSandboxSessionExecutor({
+      hostCwd: ROOT,
+      ...(portableAuthority
+        ? {
+            resolveBinary: () => portableAuthority.executablePath,
+            environment: portableAuthority.env,
+          }
+        : {}),
+    }),
+    request: {
+      kind: "connect",
+      sandboxName,
+      target: portableAuthority
+        ? { kind: "named", gatewayName: portableAuthority.gatewayName }
+        : { kind: "selected" },
+    },
   };
 }
