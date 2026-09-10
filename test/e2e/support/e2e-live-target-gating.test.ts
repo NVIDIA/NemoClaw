@@ -11,13 +11,19 @@ import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { LIVE_E2E_ROOT, REPO_ROOT } from "../fixtures/paths.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
-import { redactString } from "../fixtures/redaction.ts";
+import { buildChildEnv, redactString } from "../fixtures/redaction.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 import { listTargets } from "../registry/registry.ts";
 import { liveTargetSupport } from "../registry/runtime-support.ts";
 
 const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
-const SPECIAL_GATE_ENV = ["NEMOCLAW_ISSUE_4434_LIVE", "NEMOCLAW_MCP_BRIDGE_AGENT"] as const;
+const COLLECTION_ENV = [
+  "E2E_TARGET_ID",
+  "NEMOCLAW_ISSUE_4434_LIVE",
+  "NEMOCLAW_MCP_BRIDGE_AGENT",
+  "TARGET_ID",
+] as const;
+const COLLECTOR_TIMEOUT_MS = 30_000;
 
 // Each case starts a nested Vitest collector; cap overlap to bound memory.
 vi.setConfig({ maxConcurrency: 3 });
@@ -35,10 +41,29 @@ function liveTestFiles(root = LIVE_E2E_ROOT): string[] {
 
 type LiveTestListOptions = {
   enabled: boolean;
-  env?: NodeJS.ProcessEnv;
+  env?: Partial<Record<(typeof COLLECTION_ENV)[number], string>>;
   files?: readonly string[];
   filesOnly?: boolean;
 };
+
+function collectorTimeoutOptions(count = 1) {
+  return testTimeoutOptions(count * COLLECTOR_TIMEOUT_MS + 5_000);
+}
+
+function buildLiveTestEnv(
+  base: NodeJS.ProcessEnv,
+  options: Pick<LiveTestListOptions, "enabled" | "env">,
+): NodeJS.ProcessEnv {
+  return buildChildEnv(base, {
+    fixtureOverlay: {
+      NEMOCLAW_RUN_LIVE_E2E: options.enabled ? "1" : undefined,
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: undefined,
+      NEMOCLAW_PROVIDER: "nvidia",
+      ...Object.fromEntries(COLLECTION_ENV.map((name) => [name, undefined])),
+      ...options.env,
+    },
+  });
+}
 
 function liveTestLister(context: Pick<TestContext, "signal" | "onTestFinished">) {
   const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-test-list-"));
@@ -76,17 +101,10 @@ function liveTestLister(context: Pick<TestContext, "signal" | "onTestFinished">)
       {
         captureLimitBytes: 1024 * 1024,
         cwd: REPO_ROOT,
-        env: {
-          ...process.env,
-          NEMOCLAW_RUN_LIVE_E2E: options.enabled ? "1" : undefined,
-          NEMOCLAW_E2E_USE_HOSTED_INFERENCE: undefined,
-          NEMOCLAW_PROVIDER: "nvidia",
-          ...Object.fromEntries(SPECIAL_GATE_ENV.map((name) => [name, undefined])),
-          ...options.env,
-        },
+        env: buildLiveTestEnv(process.env, options),
         killGraceMs: 0,
         persistArtifacts: false,
-        timeoutMs: 30_000,
+        timeoutMs: COLLECTOR_TIMEOUT_MS,
       },
     );
     return {
@@ -118,9 +136,37 @@ function missingDeclaredTarget(wired: boolean): never {
 }
 
 describe("live E2E target gating", () => {
+  it("strips ambient credentials from nested collector environments", () => {
+    const env = buildLiveTestEnv(
+      {
+        AMBIENT_API_KEY: "must-not-reach-the-collector",
+        PATH: "/usr/bin",
+      },
+      {
+        enabled: true,
+        env: {
+          E2E_TARGET_ID: "launchable-smoke",
+          NEMOCLAW_ISSUE_4434_LIVE: "1",
+          NEMOCLAW_MCP_BRIDGE_AGENT: "openclaw",
+          TARGET_ID: "declared-target",
+        },
+      },
+    );
+
+    expect(env).not.toHaveProperty("AMBIENT_API_KEY");
+    expect(env).toMatchObject({
+      E2E_TARGET_ID: "launchable-smoke",
+      NEMOCLAW_ISSUE_4434_LIVE: "1",
+      NEMOCLAW_MCP_BRIDGE_AGENT: "openclaw",
+      NEMOCLAW_PROVIDER: "nvidia",
+      NEMOCLAW_RUN_LIVE_E2E: "1",
+      TARGET_ID: "declared-target",
+    });
+  });
+
   it.concurrent(
     "collects the bootstrap install test through the trusted-main legacy path",
-    testTimeoutOptions(90_000),
+    collectorTimeoutOptions(3),
     async (context) => {
       const listLiveTests = liveTestLister(context);
       const legacy = await listLiveTests({
@@ -156,20 +202,24 @@ describe("live E2E target gating", () => {
     },
   );
 
-  it.concurrent("collects no live files without project opt-in and all live files with it", async (context) => {
-    const listLiveTests = liveTestLister(context);
-    const disabled = await listLiveTests({ enabled: false, filesOnly: true });
-    const enabled = await listLiveTests({ enabled: true, filesOnly: true });
-    const discovered = liveTestFiles()
-      .map((file) => path.relative(REPO_ROOT, file))
-      .sort();
-    const collected = enabled.lines.map((line) => line.replace(/^\[e2e-live\]\s+/, "")).sort();
+  it.concurrent(
+    "collects no live files without project opt-in and all live files with it",
+    collectorTimeoutOptions(2),
+    async (context) => {
+      const listLiveTests = liveTestLister(context);
+      const disabled = await listLiveTests({ enabled: false, filesOnly: true });
+      const enabled = await listLiveTests({ enabled: true, filesOnly: true });
+      const discovered = liveTestFiles()
+        .map((file) => path.relative(REPO_ROOT, file))
+        .sort();
+      const collected = enabled.lines.map((line) => line.replace(/^\[e2e-live\]\s+/, "")).sort();
 
-    expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
-    expect(disabled.lines).toEqual([]);
-    expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
-    expect(collected).toEqual(discovered);
-  });
+      expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
+      expect(disabled.lines).toEqual([]);
+      expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
+      expect(collected).toEqual(discovered);
+    },
+  );
 
   it.concurrent.for([
     {
@@ -178,7 +228,7 @@ describe("live E2E target gating", () => {
     },
   ] as const)(
     "applies the $file special target's $gate opt-in at real Vitest collection",
-    testTimeoutOptions(15_000),
+    collectorTimeoutOptions(2),
     async ({ file, gate }, context) => {
       const listLiveTests = liveTestLister(context);
       const disabled = await listLiveTests({ enabled: true, files: [file] });
@@ -204,7 +254,7 @@ describe("live E2E target gating", () => {
     { shard: "openclaw", expectedTest: "mcp-bridge" },
   ] as const)(
     "collects exactly the reviewed $shard MCP bridge agent shard",
-    testTimeoutOptions(30_000),
+    collectorTimeoutOptions(),
     async ({ shard, expectedTest }, context) => {
       const listLiveTests = liveTestLister(context);
       const file = "mcp-bridge.test.ts";
@@ -223,7 +273,7 @@ describe("live E2E target gating", () => {
 
   it.concurrent(
     "rejects an unreviewed MCP bridge agent shard",
-    testTimeoutOptions(30_000),
+    collectorTimeoutOptions(),
     async (context) => {
       const listLiveTests = liveTestLister(context);
       const file = "mcp-bridge.test.ts";
@@ -239,7 +289,7 @@ describe("live E2E target gating", () => {
 
   it.concurrent(
     "rejects a TARGET_ID no registry target declares (#8286)",
-    testTimeoutOptions(30_000),
+    collectorTimeoutOptions(3),
     async (context) => {
       const listLiveTests = liveTestLister(context);
       const file = "registry-targets.test.ts";
@@ -274,7 +324,7 @@ describe("live E2E target gating", () => {
 
   it.concurrent.for([{ wired: true }, { wired: false }])(
     "collects registry targets when wired is $wired for a declared TARGET_ID (#8286)",
-    testTimeoutOptions(30_000),
+    collectorTimeoutOptions(),
     async ({ wired }, context) => {
       const listLiveTests = liveTestLister(context);
       const file = "registry-targets.test.ts";
@@ -306,6 +356,7 @@ describe("live E2E target gating", () => {
     },
   ] as const)(
     "applies the Linux gate to $file at real Vitest collection",
+    collectorTimeoutOptions(),
     async ({ file, testName }, context) => {
       const listLiveTests = liveTestLister(context);
       const result = await listLiveTests({
