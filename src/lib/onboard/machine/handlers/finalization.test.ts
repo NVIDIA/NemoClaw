@@ -31,7 +31,7 @@ function createDeps(
     setDefaultSandbox: vi.fn(),
     removeLegacy: vi.fn(),
     cleanupHost: vi.fn(),
-    recoverProcesses: vi.fn(),
+    recoverProcesses: vi.fn(async () => undefined),
     settleOrdinaryPairing: vi.fn(async () => ({ kind: "settled" as const })),
     ordinaryPairingIncompleteMessage: vi.fn(
       () => "OpenClaw onboarding is incomplete; resume onboarding.",
@@ -45,7 +45,7 @@ function createDeps(
     buildChain: vi.fn(() => ({ port: 18789 })),
     verify: vi.fn(async () => ({ ok: true })),
     diagnostics: vi.fn(() => ["  ✓ verified"]),
-    verifyWebSearch: vi.fn(() => true),
+    verifyWebSearch: vi.fn(async () => true),
     dashboard: vi.fn(),
     isHealthy: vi.fn(() => true),
     reportReadiness: vi.fn(),
@@ -300,7 +300,7 @@ describe("finalization handlers", () => {
 
   it("relies on process recovery to restore the default OpenClaw dashboard forward", async () => {
     let forwardLive = false;
-    const recoverProcesses = vi.fn(() => {
+    const recoverProcesses = vi.fn(async () => {
       forwardLive = true;
     });
     const verify = vi.fn(async () => ({ ok: forwardLive }));
@@ -468,7 +468,7 @@ describe("finalization handlers", () => {
 
   it("does not complete when web-search credentials are exposed in the sandbox (#7425)", async () => {
     const { deps, calls } = createDeps({
-      verifyWebSearchInsideSandbox: vi.fn(() => false),
+      verifyWebSearchInsideSandbox: vi.fn(async () => false),
     });
     const agent = { name: "openclaw" };
 
