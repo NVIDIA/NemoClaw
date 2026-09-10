@@ -21,6 +21,7 @@ const META_JOBS = new Set([
   "release-qualification",
   "relevant-e2e",
   "report-to-pr",
+  "review-queue-result",
   "scorecard",
 ]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
@@ -589,8 +590,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Check out the qualification evaluator" &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedRelevantE2eCheckout =
-        jobName === "relevant-e2e" &&
-        step.name === "Check out the E2E result evaluator" &&
+        ((jobName === "relevant-e2e" && step.name === "Check out the E2E result evaluator") ||
+          (jobName === "review-queue-result" &&
+            step.name === "Check out the trusted result recorder")) &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedLaunchableLaneCheckout =
         ((jobName === "staging-brev-launchable" &&
@@ -1156,6 +1158,62 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
   }
 }
 
+function validateReviewQueueResult(errors: string[], workflow: OperationsWorkflow): void {
+  const job = workflow.jobs["review-queue-result"] ?? {};
+  if (!sameMembers(needs(job), needs(workflow.jobs["report-to-pr"] ?? {}))) {
+    errors.push("review-queue-result must wait for every E2E execution group");
+  }
+  if (
+    job.if !==
+      "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' }}" ||
+    !isDeepStrictEqual(job.permissions, { contents: "read" }) ||
+    job.env !== undefined
+  ) {
+    errors.push(
+      "review-queue-result must retain trusted manual PR scope and read-only permissions",
+    );
+  }
+  const [checkout, record, upload] = job.steps ?? [];
+  if (
+    job.steps?.length !== 3 ||
+    !checkout?.uses?.startsWith("actions/checkout@") ||
+    checkout?.run !== undefined ||
+    checkout?.env !== undefined ||
+    checkout?.with?.repository !== undefined ||
+    checkout?.with?.ref !== "${{ github.workflow_sha }}" ||
+    checkout?.with?.["persist-credentials"] !== false ||
+    checkout?.with?.["sparse-checkout"] !== "tools/e2e/review-queue-result.mts"
+  ) {
+    errors.push("review-queue-result must execute only its trusted recorder");
+  }
+  requirePinnedAction(errors, checkout ?? {}, "review-queue-result checkout");
+  if (
+    record?.uses !== undefined ||
+    record?.if !== undefined ||
+    record?.run !==
+      'node --no-warnings tools/e2e/review-queue-result.mts "${RUNNER_TEMP}/review-queue-e2e-result.json"' ||
+    !isDeepStrictEqual(record?.env, {
+      PR_NUMBER: "${{ inputs.pr_number }}",
+      CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
+      BASE_SHA: "${{ inputs.base_sha }}",
+      SELECTED_WORKFLOW_JOBS: "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}",
+      NEEDS_JSON: "${{ toJSON(needs) }}",
+    })
+  ) {
+    errors.push("review-queue-result must bind planner selection and workflow results as data");
+  }
+  if (
+    !upload?.uses?.startsWith("actions/upload-artifact@") ||
+    upload.with?.name !==
+      "review-queue-e2e-result-${{ github.run_id }}-${{ github.run_attempt }}" ||
+    upload.with?.path !== "${{ runner.temp }}/review-queue-e2e-result.json" ||
+    upload.with?.["if-no-files-found"] !== "error"
+  ) {
+    errors.push("review-queue-result must upload one attempt-scoped result file");
+  }
+  requirePinnedAction(errors, upload ?? {}, "review-queue-result upload");
+}
+
 function validateReleaseQualification(errors: string[], workflow: OperationsWorkflow): void {
   const job = workflow.jobs["release-qualification"] ?? {};
   const expectedCondition =
@@ -1574,6 +1632,7 @@ export function validateE2eOperationsWorkflow(workflow: OperationsWorkflow): str
   validatePrGateEvidenceProducers(errors, workflow);
   validateAggregation(errors, workflow);
   validateRelevantE2e(errors, workflow);
+  validateReviewQueueResult(errors, workflow);
   validateReleaseQualification(errors, workflow);
   validateIssueRoutingRetirement(errors, workflow);
   validateScorecard(errors, workflow);

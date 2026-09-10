@@ -33,6 +33,24 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
   it("accepts the checked-in workflow", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
   });
+  it("rejects altered review queue authority, dependencies, and evidence (#11489)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const job = workflow.jobs["review-queue-result"];
+    job.needs = ["generate-matrix"];
+    job.permissions = { contents: "write" };
+    job.steps![0]!.with!.ref = "${{ inputs.checkout_sha }}";
+    job.steps![1]!.env!.NEEDS_JSON = "{}";
+    job.steps![2]!.with!.name = "result";
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "review-queue-result must wait for every E2E execution group",
+        "review-queue-result must retain trusted manual PR scope and read-only permissions",
+        "review-queue-result must execute only its trusted recorder",
+        "review-queue-result must bind planner selection and workflow results as data",
+        "review-queue-result must upload one attempt-scoped result file",
+      ]),
+    );
+  });
   it("rejects a lookalike live cold-onboard performance artifact path (#6660)", () => {
     const workflow = readE2eOperationsWorkflow();
     const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;

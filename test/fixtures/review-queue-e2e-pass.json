@@ -1,0 +1,17 @@
+{
+  "kind": "nemoclaw-review-queue-e2e-result-v1",
+  "repository": "NVIDIA/NemoClaw",
+  "prNumber": 11489,
+  "candidateSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "workflowSha": "cccccccccccccccccccccccccccccccccccccccc",
+  "workflowRunId": "123",
+  "workflowRunAttempt": 2,
+  "selectedWorkflowJobs": ["live", "catalogue-standard"],
+  "results": [
+    { "job": "generate-matrix", "result": "success" },
+    { "job": "live", "result": "success" },
+    { "job": "catalogue-standard", "result": "success" }
+  ],
+  "status": "pass"
+}

@@ -35,6 +35,7 @@ const TERMINAL_JOBS = [
   "release-qualification",
   "relevant-e2e",
   "report-to-pr",
+  "review-queue-result",
   "scorecard",
 ] as const;
 const DOCKER_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
