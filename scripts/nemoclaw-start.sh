@@ -2171,7 +2171,7 @@ validate_nemoclaw_tmp_permissions() {
     [ -n "$_target" ] && _dynamic_targets+=("$_target")
   done < <(messaging_runtime_preload_targets)
 
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
 }
 
 verify_messaging_runtime_secret_scans() {
@@ -3398,7 +3398,7 @@ fi
 # patterns are documented inline in the script; unknown patterns are
 # logged with full stack so they can be diagnosed and either fixed
 # upstream or added to the allow-list with explicit justification.
-# Specific guards (Slack, ciao) pre-empt their own error patterns;
+# Channel-specific guards pre-empt their own error patterns;
 # this is the backstop for everything else.
 #
 # Only active when OPENSHELL_SANDBOX=1 (set by OpenShell at runtime),
@@ -3437,17 +3437,6 @@ _PROXY_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/http-proxy-fix.js"
 _NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"
 _NEMOTRON_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/nemotron-inference-fix.js"
 
-# mDNS / ciao network interface guard.
-# The @homebridge/ciao mDNS library calls os.networkInterfaces() which
-# throws a SystemError (uv_interface_addresses) inside sandboxes with
-# restricted network namespaces (seccomp/Landlock). This crashes the
-# gateway even though mDNS is not needed. The guard monkey-patches
-# os.networkInterfaces to return an empty object on failure instead
-# of throwing, and catches the uncaughtException as a fallback.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
-_CIAO_GUARD_SCRIPT="/tmp/nemoclaw-ciao-network-guard.js"
-_CIAO_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js"
-
 # Stage the immutable, image-packaged preload set into /tmp. Startup and
 # authenticated PID 1 recovery share this exact path so a pod-recreate-style
 # /tmp wipe cannot drift from the initial security boundary. The shared emit
@@ -3463,9 +3452,6 @@ install_core_runtime_preloads() {
 
   emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <"$_NEMOTRON_FIX_SOURCE" || return 1
   append_node_require_once "$_NEMOTRON_FIX_SCRIPT"
-
-  emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <"$_CIAO_GUARD_SOURCE" || return 1
-  append_node_require_once "$_CIAO_GUARD_SCRIPT"
 }
 
 install_core_runtime_preloads || exit 1
@@ -4145,8 +4131,6 @@ GUARDENVEOF
     fi
     # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
-    # ciao network guard for connect sessions.
-    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
     # Manifest-declared messaging preloads for connect sessions.
     if type emit_messaging_connect_runtime_preload_exports >/dev/null 2>&1; then
       emit_messaging_connect_runtime_preload_exports
@@ -5505,7 +5489,6 @@ openclaw_runtime_guard_chain_complete() {
   local targets=(
     "$_SANDBOX_SAFETY_NET"
     "$_NEMOTRON_FIX_SCRIPT"
-    "$_CIAO_GUARD_SCRIPT"
     "$_RUNTIME_SHELL_ENV_FILE"
   )
   local target

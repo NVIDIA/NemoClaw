@@ -58,8 +58,6 @@ describe("http-proxy-fix preload sync (#2109)", () => {
       `_SANDBOX_SAFETY_NET_SOURCE=${JSON.stringify(CANONICAL_FIX)}`,
       `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tempDir, "nemotron-fix.js"))}`,
       `_NEMOTRON_FIX_SOURCE=${JSON.stringify(CANONICAL_FIX)}`,
-      `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tempDir, "ciao-guard.js"))}`,
-      `_CIAO_GUARD_SOURCE=${JSON.stringify(CANONICAL_FIX)}`,
       extractShellFunction(startScript, "install_core_runtime_preloads"),
       "install_core_runtime_preloads",
       "printf 'NODE_OPTIONS=%s\\n' \"$NODE_OPTIONS\"",

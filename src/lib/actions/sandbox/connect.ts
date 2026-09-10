@@ -88,6 +88,7 @@ import {
   ensureLiveSandboxOrExit,
   assertHermesPortableLifecycleForConnect,
   buildHermesPortableCommandAuthority,
+  defaultPortableDemoStateDir,
   type HermesPortableActiveLifecycleAuthority,
   getNamedGatewayLifecycleState,
   printGatewayLifecycleHint,
@@ -701,7 +702,10 @@ function hermesPortableLaunchReadinessDeps(
 }
 
 function portableAgentLifecycleAuthorityDeps() {
-  return { readRegistry: registry.getSandbox };
+  return {
+    readRegistry: registry.getSandbox,
+    stateDir: defaultPortableDemoStateDir(process.env),
+  };
 }
 
 type HermesPortableForwardConnectRecoveryInput = {
@@ -2754,6 +2758,14 @@ async function prepareConnectSandboxWithinLifecycleFence(
               : probeTiming!.measure("lifecycle", () =>
                   startStoppedSandboxContainerForProbeRecovery(sandboxName),
                 );
+            if (
+              startedStoppedContainer &&
+              !registry.recordSandboxStopIntent(sandboxName, false, registry.updateSandbox)
+            ) {
+              throw new Error(
+                `Sandbox '${sandboxName}' recovered, but NemoClaw could not clear its intentional-stop record. Run '${CLI_NAME} ${sandboxName} status' before another lifecycle command.`,
+              );
+            }
             await probeTiming!.measureAsync("gateway", () =>
               waitForSandboxReadyOrExit(sandboxName, {
                 allowInitialErrorAfterStart: startedStoppedContainer,
