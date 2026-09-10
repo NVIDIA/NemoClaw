@@ -161,7 +161,6 @@ function startScriptHeredoc(src: string, marker: string): string {
   const match = src.match(new RegExp(`<<'${marker}'[^\\n]*\\n([\\s\\S]*?)\\n${marker}`));
   if (match) return match[1];
   const preloadByMarker: Record<string, string> = {
-    CIAO_GUARD_EOF: "ciao-network-guard.js",
     SAFETY_NET_EOF: "sandbox-safety-net.js",
   };
   const preload = preloadByMarker[marker];
@@ -394,7 +393,6 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
         '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
         '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
         '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
-        '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
         "emit_messaging_connect_runtime_preload_exports() { :; }",
         "_TOOL_REDIRECTS=()",
         "set +u",
@@ -649,7 +647,6 @@ describe("nemoclaw-start configure guard behavior", () => {
       '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
       '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
-      '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
       "emit_messaging_connect_runtime_preload_exports() { :; }",
       'export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"',
       'export OPENCLAW_GATEWAY_PORT="18789"',
@@ -3065,7 +3062,6 @@ describe("Telegram diagnostics (#2766)", () => {
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
         `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
-        `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
         `validate_nemoclaw_tmp_permissions() { validate_tmp_permissions ${JSON.stringify(preloadPath)}; }`,
         "NEMOCLAW_CMD=()",
         '_nemoclaw_safe_create_tmp_file() { if [ "$1" = /tmp/auto-pair.log ]; then return 97; fi; : > "$1"; chmod "$2" "$1"; }',
@@ -3304,7 +3300,6 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
         `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
-        `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
         `_MESSAGING_CONNECT_PRELOADS_FILE=${JSON.stringify(connectPreloadsPath)}`,
         extractShellFunctionFromSource(src, "emit_messaging_connect_runtime_preload_exports"),
         "_TOOL_REDIRECTS=()",
@@ -4301,7 +4296,6 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         '_SANDBOX_SAFETY_NET=""',
         '_PROXY_FIX_SCRIPT=""',
         '_NEMOTRON_FIX_SCRIPT=""',
-        '_CIAO_GUARD_SCRIPT=""',
         "emit_messaging_connect_runtime_preload_exports() { :; }",
         '_TOOL_REDIRECTS=("NEMOCLAW_TEST_REDIRECT=/tmp/nemoclaw-test")',
         'NODE_USE_ENV_PROXY=""',

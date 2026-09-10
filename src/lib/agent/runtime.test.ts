@@ -187,8 +187,7 @@ describe("buildRecoveryScript", () => {
   // /tmp/nemoclaw-proxy-env.sh, then source a generated recovery env carrying
   // the critical NODE_OPTIONS library guards. The pre-fix recovery path
   // swallowed sourcing errors via `2>/dev/null`, leaving respawned gateways
-  // guard-less and crash-looping on the next library error from ciao,
-  // model-pricing, or anything else hitting a sandboxed syscall.
+  // guard-less and crash-looping on the next recoverable library error.
   describe("hardened library-guard preload chain (#2478)", () => {
     it("sources the generated recovery env after validating the gateway env file", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
@@ -210,12 +209,10 @@ describe("buildRecoveryScript", () => {
       expect(script).not.toContain(". /tmp/nemoclaw-proxy-env.sh 2>/dev/null");
     });
 
-    it("checks NODE_OPTIONS for the safety-net and ciao preloads after sourcing", () => {
+    it("checks NODE_OPTIONS for the safety-net preload after sourcing", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
       expect(script).toContain("nemoclaw-sandbox-safety-net");
-      expect(script).toContain("nemoclaw-ciao-network-guard");
       expect(script).toContain("NODE_OPTIONS missing safety-net preload");
-      expect(script).toContain("or ciao preload");
     });
 
     it("stops stale launcher and gateway processes before relaunch", () => {
