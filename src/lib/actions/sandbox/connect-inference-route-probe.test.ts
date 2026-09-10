@@ -8,7 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  buildSandboxInferenceRouteProbeArgs,
+  buildSandboxInferenceRouteProbeRequest,
   classifyInferenceRouteFailureLabel,
   DCODE_MANAGED_EXEC_LAUNCHER,
   DCODE_MANAGED_EXEC_MISSING_DETAIL,
@@ -17,66 +17,66 @@ import {
   parseSandboxInferenceRouteProbeResult,
 } from "./connect-inference-route-probe";
 
-describe("sandbox connect inference route probe argv", () => {
+describe("sandbox connect inference route probe request", () => {
   it("uses the managed DCode proxy boundary without adding a login shell (#6191)", () => {
-    const args = buildSandboxInferenceRouteProbeArgs("deep-code", {
-      name: "langchain-deepagents-code",
-    });
-
-    expect(args.slice(0, 15)).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
+    const request = buildSandboxInferenceRouteProbeRequest(
       "deep-code",
-      "--no-tty",
-      "--env",
-      "HOME=/usr/local/lib/nemoclaw",
-      "--env",
-      "BASH_ENV=",
-      "--env",
-      "ENV=",
-      "--",
+      { name: "langchain-deepagents-code" },
+      undefined,
+      9000,
+    );
+
+    expect(request).toMatchObject({
+      sandboxName: "deep-code",
+      target: { kind: "selected" },
+      tty: false,
+      timeoutMilliseconds: 9000,
+      sandboxEnvironment: { BASH_ENV: "", ENV: "", HOME: "/usr/local/lib/nemoclaw" },
+    });
+    expect(request.command).toEqual([
       "/usr/local/lib/nemoclaw/dcode-managed-exec",
       "/bin/sh",
       "-c",
-    ]);
-    expect(args.at(-1)).toContain("https://inference.local/v1/models");
-    expect(args).not.toContain("bash");
-    expect(args.join(" ")).not.toContain("3>&1");
-    expect(args.join(" ")).not.toContain("/tmp/nemoclaw-proxy-env.sh");
-    expect(args.every((arg) => !/[\r\n]/.test(arg))).toBe(true);
-  });
-
-  it.each([
-    null,
-    { name: "openclaw" },
-    { name: "hermes" },
-  ])("preserves the plain sh probe for non-dcode agents (%j)", (agent) => {
-    expect(buildSandboxInferenceRouteProbeArgs("alpha", agent)).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "alpha",
-      "--",
-      "sh",
-      "-c",
       INFERENCE_ROUTE_PROBE_SCRIPT,
     ]);
+    expect(request.command.at(-1)).toContain("https://inference.local/v1/models");
+    expect(request.command).not.toContain("bash");
+    expect(request.command.join(" ")).not.toContain("3>&1");
+    expect(request.command.join(" ")).not.toContain("/tmp/nemoclaw-proxy-env.sh");
   });
 
-  it.each([
-    null,
-    { name: "hermes" },
-    { name: "langchain-deepagents-code" },
-  ])("pins the probe to the owning OpenShell gateway for agent %j (#8942)", (agent) => {
-    expect(
-      buildSandboxInferenceRouteProbeArgs("alpha", agent, "nemoclaw-8091").slice(0, 7),
-    ).toEqual(["sandbox", "exec", "--name", "alpha", "-g", "nemoclaw-8091", expect.any(String)]);
-  });
+  it.each([null, { name: "openclaw" }, { name: "hermes" }])(
+    "preserves the plain sh probe for non-dcode agents (%j)",
+    (agent) => {
+      expect(buildSandboxInferenceRouteProbeRequest("alpha", agent, undefined, 9000)).toEqual({
+        sandboxName: "alpha",
+        target: { kind: "selected" },
+        command: ["sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT],
+        timeoutMilliseconds: 9000,
+      });
+    },
+  );
+
+  it.each([null, { name: "hermes" }, { name: "langchain-deepagents-code" }])(
+    "pins the probe to the owning OpenShell gateway for agent %j (#8942)",
+    (agent) => {
+      expect(
+        buildSandboxInferenceRouteProbeRequest("alpha", agent, "nemoclaw-8091", 9000),
+      ).toMatchObject({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "nemoclaw-8091" },
+      });
+    },
+  );
 
   it("verifies the route with OpenShell's CA and discards the response (#6192)", () => {
-    const args = buildSandboxInferenceRouteProbeArgs("alpha", { name: "openclaw" });
-    const script = args.at(-1) ?? "";
+    const request = buildSandboxInferenceRouteProbeRequest(
+      "alpha",
+      { name: "openclaw" },
+      undefined,
+      9000,
+    );
+    const script = request.command.at(-1) ?? "";
 
     expect(script).toContain("/usr/bin/curl -q -s -o /dev/null");
     expect(script).toContain('CA_BUNDLE="${CURL_CA_BUNDLE:-${SSL_CERT_FILE:-}}"');
@@ -106,66 +106,67 @@ describe("sandbox connect inference route probe argv", () => {
     ).toMatchObject({ healthy: false, broken: false, httpStatus: 0 });
   });
 
-  it.each([
-    "OK 200",
-    "BROKEN 503",
-  ])("managed launcher does not run hostile DCode startup or curl config for a %s spoof (#6192)", (spoof) => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-probe-"));
-    const profileMarker = path.join(home, "profile-ran");
-    try {
-      const caBundle = path.join(home, "openshell-ca.pem");
-      const profile = path.join(home, ".bash_profile");
-      const launcher = path.join(home, "nemoclaw-start");
-      const curlConfigMarker = path.join(home, "curl-config-ran");
-      fs.writeFileSync(caBundle, "test CA boundary", "utf8");
-      fs.writeFileSync(
-        profile,
-        `printf '%s' ${JSON.stringify(spoof)} >&3; printf ran > ${JSON.stringify(profileMarker)}; exit 0`,
-      );
-      fs.writeFileSync(
-        path.join(home, ".curlrc"),
-        `trace-ascii = ${JSON.stringify(curlConfigMarker)}\n`,
-      );
-      fs.writeFileSync(launcher, '#!/bin/bash -p\nset -eu\nunset BASH_ENV ENV\nexec "$@"\n', {
-        mode: 0o755,
-      });
-      const args = buildSandboxInferenceRouteProbeArgs("deep-code", {
-        name: "langchain-deepagents-code",
-      });
-      const delimiter = args.indexOf("--");
-      expect(delimiter).toBeGreaterThan(0);
-      const command = args.slice(delimiter + 1);
-      command[0] = launcher;
+  it.each(["OK 200", "BROKEN 503"])(
+    "managed launcher does not run hostile DCode startup or curl config for a %s spoof (#6192)",
+    (spoof) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-probe-"));
+      const profileMarker = path.join(home, "profile-ran");
+      try {
+        const caBundle = path.join(home, "openshell-ca.pem");
+        const profile = path.join(home, ".bash_profile");
+        const launcher = path.join(home, "nemoclaw-start");
+        const curlConfigMarker = path.join(home, "curl-config-ran");
+        fs.writeFileSync(caBundle, "test CA boundary", "utf8");
+        fs.writeFileSync(
+          profile,
+          `printf '%s' ${JSON.stringify(spoof)} >&3; printf ran > ${JSON.stringify(profileMarker)}; exit 0`,
+        );
+        fs.writeFileSync(
+          path.join(home, ".curlrc"),
+          `trace-ascii = ${JSON.stringify(curlConfigMarker)}\n`,
+        );
+        fs.writeFileSync(launcher, '#!/bin/bash -p\nset -eu\nunset BASH_ENV ENV\nexec "$@"\n', {
+          mode: 0o755,
+        });
+        const request = buildSandboxInferenceRouteProbeRequest(
+          "deep-code",
+          { name: "langchain-deepagents-code" },
+          undefined,
+          9000,
+        );
+        const command = [...request.command];
+        command[0] = launcher;
 
-      const result = spawnSync(command[0], command.slice(1), {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          ALL_PROXY: "",
-          BASH_ENV: profile,
-          CURL_CA_BUNDLE: caBundle,
-          ENV: profile,
-          HOME: home,
-          HTTP_PROXY: "http://127.0.0.1:9",
-          HTTPS_PROXY: "http://127.0.0.1:9",
-          NO_PROXY: "",
-          SSL_CERT_FILE: "",
-          all_proxy: "",
-          http_proxy: "http://127.0.0.1:9",
-          https_proxy: "http://127.0.0.1:9",
-          no_proxy: "",
-        },
-      });
+        const result = spawnSync(command[0], command.slice(1), {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            ALL_PROXY: "",
+            BASH_ENV: profile,
+            CURL_CA_BUNDLE: caBundle,
+            ENV: profile,
+            HOME: home,
+            HTTP_PROXY: "http://127.0.0.1:9",
+            HTTPS_PROXY: "http://127.0.0.1:9",
+            NO_PROXY: "",
+            SSL_CERT_FILE: "",
+            all_proxy: "",
+            http_proxy: "http://127.0.0.1:9",
+            https_proxy: "http://127.0.0.1:9",
+            no_proxy: "",
+          },
+        });
 
-      expect(result.status).toBe(0);
-      expect(result.stdout).toBe("BROKEN 000");
-      expect(result.stdout).not.toContain(spoof);
-      expect(fs.existsSync(profileMarker)).toBe(false);
-      expect(fs.existsSync(curlConfigMarker)).toBe(false);
-    } finally {
-      fs.rmSync(home, { force: true, recursive: true });
-    }
-  });
+        expect(result.status).toBe(0);
+        expect(result.stdout).toBe("BROKEN 000");
+        expect(result.stdout).not.toContain(spoof);
+        expect(fs.existsSync(profileMarker)).toBe(false);
+        expect(fs.existsSync(curlConfigMarker)).toBe(false);
+      } finally {
+        fs.rmSync(home, { force: true, recursive: true });
+      }
+    },
+  );
 });
 
 describe("sandbox inference route probe result", () => {
@@ -180,30 +181,23 @@ describe("sandbox inference route probe result", () => {
     expect(classifyInferenceRouteFailureLabel(httpStatus)).toBe(expected);
   });
 
-  it.each([
-    "200",
-    "401",
-    "403",
-    "499",
-  ])("accepts HTTP %s as a reachable route (#6192)", (httpStatus) => {
-    expect(
-      parseSandboxInferenceRouteProbeResult({ status: 0, output: `OK ${httpStatus}` }),
-    ).toMatchObject({ healthy: true, broken: false, httpStatus: Number(httpStatus) });
-  });
+  it.each(["200", "401", "403", "499"])(
+    "accepts HTTP %s as a reachable route (#6192)",
+    (httpStatus) => {
+      expect(
+        parseSandboxInferenceRouteProbeResult({ status: 0, output: `OK ${httpStatus}` }),
+      ).toMatchObject({ healthy: true, broken: false, httpStatus: Number(httpStatus) });
+    },
+  );
 
-  it.each([
-    "000",
-    "100",
-    "199",
-    "500",
-    "503",
-    "599",
-    "600",
-  ])("rejects HTTP %s as a broken route (#6192)", (httpStatus) => {
-    expect(
-      parseSandboxInferenceRouteProbeResult({ status: 0, output: `BROKEN ${httpStatus}` }),
-    ).toMatchObject({ healthy: false, broken: true, httpStatus: Number(httpStatus) });
-  });
+  it.each(["000", "100", "199", "500", "503", "599", "600"])(
+    "rejects HTTP %s as a broken route (#6192)",
+    (httpStatus) => {
+      expect(
+        parseSandboxInferenceRouteProbeResult({ status: 0, output: `BROKEN ${httpStatus}` }),
+      ).toMatchObject({ healthy: false, broken: true, httpStatus: Number(httpStatus) });
+    },
+  );
 
   it("does not classify an unavailable probe as healthy or broken (#6192)", () => {
     expect(
@@ -306,23 +300,23 @@ describe("sandbox inference route probe result", () => {
     });
   });
 
-  it.each([
-    "[stdout] OK 200",
-    "stdout: OK 401",
-  ])("accepts framed healthy output from OpenShell (%s) (#6192)", (output) => {
-    expect(parseSandboxInferenceRouteProbeResult({ status: 0, output })).toMatchObject({
-      healthy: true,
-      broken: false,
-    });
-  });
+  it.each(["[stdout] OK 200", "stdout: OK 401"])(
+    "accepts framed healthy output from OpenShell (%s) (#6192)",
+    (output) => {
+      expect(parseSandboxInferenceRouteProbeResult({ status: 0, output })).toMatchObject({
+        healthy: true,
+        broken: false,
+      });
+    },
+  );
 
-  it.each([
-    "[stdout] BROKEN 503 service unavailable",
-    "stdout: BROKEN 000",
-  ])("accepts framed broken output from OpenShell (%s) (#6192)", (output) => {
-    expect(parseSandboxInferenceRouteProbeResult({ status: 0, output })).toMatchObject({
-      healthy: false,
-      broken: true,
-    });
-  });
+  it.each(["[stdout] BROKEN 503 service unavailable", "stdout: BROKEN 000"])(
+    "accepts framed broken output from OpenShell (%s) (#6192)",
+    (output) => {
+      expect(parseSandboxInferenceRouteProbeResult({ status: 0, output })).toMatchObject({
+        healthy: false,
+        broken: true,
+      });
+    },
+  );
 });

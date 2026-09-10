@@ -46,27 +46,29 @@ export function createSlackStatusHealthHook(
     const sandboxName = normalizeString(context.inputs?.currentSandbox);
     if (!execute || !sandboxName) return {};
 
-    const timeoutMs =
-      typeof options.timeoutMs === "number" &&
-      Number.isFinite(options.timeoutMs) &&
-      options.timeoutMs > 0
-        ? options.timeoutMs
-        : DEFAULT_CHANNEL_STATUS_HEALTH_TIMEOUT_MS;
-    const probe = canRunSlackProbe(context.inputs)
-      ? runSlackStatusProbe(execute, sandboxName, timeoutMs)
-      : UNREACHABLE_PROBE;
-    const report = evaluateSlackReadiness(context.inputs, probe);
-    return {
-      outputs: {
-        channelHealth: {
-          kind: "status",
-          value: {
-            type: MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE,
-            report,
-          } as unknown as MessagingSerializableValue,
+    return (async () => {
+      const timeoutMs =
+        typeof options.timeoutMs === "number" &&
+        Number.isFinite(options.timeoutMs) &&
+        options.timeoutMs > 0
+          ? options.timeoutMs
+          : DEFAULT_CHANNEL_STATUS_HEALTH_TIMEOUT_MS;
+      const probe = canRunSlackProbe(context.inputs)
+        ? await runSlackStatusProbe(execute, sandboxName, timeoutMs)
+        : UNREACHABLE_PROBE;
+      const report = evaluateSlackReadiness(context.inputs, probe);
+      return {
+        outputs: {
+          channelHealth: {
+            kind: "status",
+            value: {
+              type: MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE,
+              report,
+            } as unknown as MessagingSerializableValue,
+          },
         },
-      },
-    };
+      };
+    })();
   };
 }
 
@@ -93,14 +95,14 @@ const UNREACHABLE_PROBE: SlackStatusProbe = {
   lastTransitionAt: null,
 };
 
-function runSlackStatusProbe(
+async function runSlackStatusProbe(
   execute: NonNullable<SlackStatusHealthHookOptions["executeSandboxCommand"]>,
   sandboxName: string,
   timeoutMs: number,
-): SlackStatusProbe {
+): Promise<SlackStatusProbe> {
   let payload: unknown;
   try {
-    const result = execute(
+    const result = await execute(
       sandboxName,
       `openclaw channels status --channel slack --probe --json --timeout ${timeoutMs}`,
       timeoutMs,

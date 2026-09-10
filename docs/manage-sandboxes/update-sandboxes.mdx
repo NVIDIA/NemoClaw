@@ -68,7 +68,13 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 $$nemoclaw upgrade-sandboxes --check
 ```
 
-If a support workflow asks you to pass the maintained tag explicitly, clear any inherited `NEMOCLAW_INSTALL_REF` and set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the install pipeline.
+The default installer preserves a newer installed NemoClaw release. When a NemoClaw CLI is installed, it also stops without changing the CLI when it cannot verify the maintained `lkg` release. To intentionally install an older release from a fixed source, select its version tag or full commit SHA with `NEMOCLAW_INSTALL_TAG`.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=vX.Y.Z bash
+```
+
+If a support workflow asks you to pass the maintained tag explicitly, clear any inherited `NEMOCLAW_INSTALL_REF` and set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the install pipeline. The same downgrade protection applies to an explicit `lkg` selection.
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=lkg bash

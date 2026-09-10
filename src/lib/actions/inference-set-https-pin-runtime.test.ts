@@ -457,7 +457,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       }),
       ensureHttpsPinRuntimeAdapter: adapter,
       captureOpenshell: capture,
-      probeSandboxRoute: () => ({
+      probeSandboxRoute: async () => ({
         ok: false,
         detail: "sandbox inference invocation probe returned HTTP 500",
         httpStatus: 500,

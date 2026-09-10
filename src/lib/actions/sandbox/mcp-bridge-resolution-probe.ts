@@ -384,14 +384,14 @@ export function credentialResolutionWarning(
   return `Credential resolution could not be verified: a placeholder-bearing MCP initialize probe and a deliberately-unresolvable control probe were rejected identically (HTTP ${probe.httpStatus}). If the stored credential is confirmed valid, the OpenShell host is not rewriting the '${placeholder}' placeholder on egress and agent runtimes will hit the same auth failure and skip this MCP server (see NVIDIA/OpenShell issue 2161). Otherwise, rotate the credential with mcp restart and re-run mcp status.`;
 }
 
-export function probeCredentialResolution(
+export async function probeCredentialResolution(
   sandboxName: string,
   entry: McpBridgeEntry,
   adapter: AgentMcpAdapter | undefined,
   readiness: CredentialResolutionProbeReadiness,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   observedCredentialRevision?: McpCredentialRevisionObservation,
-): CredentialResolutionProbe {
+): Promise<CredentialResolutionProbe> {
   if (!adapter) return { ok: null, detail: "MCP adapter is not declared" };
   if (entry.addState) return { ok: null, detail: "add transaction incomplete" };
   const readinessSkipDetail = credentialResolutionReadinessSkipDetail(readiness);
@@ -408,7 +408,7 @@ export function probeCredentialResolution(
   let credentialRevision = observedCredentialRevision;
   if (credentialRevision === undefined) {
     try {
-      credentialRevision = observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
+      credentialRevision = await observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
     } catch {
       return {
         ok: null,

@@ -1023,7 +1023,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(result?.entries).toEqual([bridgeEntries.github]);
     expect(testState.executeSandboxExecCommand).toHaveBeenCalledOnce();
     expect(testState.executeSandboxExecCommand).toHaveBeenCalledWith("alpha", ":", undefined, {
-      allowLocalDockerFallback: false,
+      localDockerFallbackPolicy: "never",
       runtimeSelection: testState.runtimeSelection,
     });
     expect(testState.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":", {

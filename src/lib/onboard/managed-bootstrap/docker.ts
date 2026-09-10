@@ -198,6 +198,7 @@ export type DockerManagedBootstrapDeps = Pick<
   | "dockerRun"
   | "dockerStart"
   | "dockerStop"
+  | "commandExecutor"
   | "runCaptureOpenshell"
   | "sleep"
   | "errorPhaseDebouncePolls"
@@ -4152,6 +4153,46 @@ export function createDockerManagedBootstrapAdapter(
       assertReplacementBoundary(before, handle, snapshot);
       const supervisorReconnectTimeoutSecs =
         getDockerGpuSupervisorReconnectTimeoutSecs(timeoutSecs);
+      if (
+        !deps.commandExecutor ||
+        !(await waitForOpenShellSupervisorReconnect(
+          handle.sandbox.sandboxName,
+          supervisorReconnectTimeoutSecs,
+          {
+            commandExecutor: deps.commandExecutor,
+            runCaptureOpenshell: deps.runCaptureOpenshell,
+            sleep: deps.sleep,
+            errorPhaseDebouncePolls: deps.errorPhaseDebouncePolls,
+          },
+        ))
+      ) {
+        throw new Error(supervisorReconnectFailureDetail(replacement.replacementRuntimeId, deps));
+      }
+      const afterWaitJournal = deps.journalStore.load(journal.bootstrapIdentity);
+      if (!afterWaitJournal || !sameDockerBootstrapJournal(afterWaitJournal, journal)) {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: journal.bootstrapIdentity,
+          runtimeId: journal.replacementRuntimeId,
+          detail: "durable transaction authority changed while awaiting bootstrap",
+        });
+      }
+      assertCompletedCutoverRuntimeState(afterWaitJournal, deps);
+      const after = inspectExact(replacement.replacementRuntimeId, deps);
+      if (!isStableRunning(after)) {
+        throw replacementNotStableError(
+          replacement.replacementRuntimeId,
+          "completed replacement",
+          deps,
+        );
+      }
+      if (assertImage(after, replacement.image, deps) !== replacement.runtimeImageContentId) {
+        throw new Error("Managed bootstrap Docker completed image content changed.");
+      }
+      assertReplacementBoundary(after, handle, snapshot);
+      const normalized = normalizeDockerManagedBootstrapLaunchSpec(after);
+      if (normalized.hash !== replacement.replacementSpecHash) {
+        throw new Error("Managed bootstrap Docker replacement changed during bootstrap.");
+      }
       const imageCompletion = waitForProtectedImageCompletion(
         replacement.replacementRuntimeId,
         supervisorReconnectTimeoutSecs,

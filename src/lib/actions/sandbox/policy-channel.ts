@@ -933,7 +933,8 @@ async function applyChannelAddToGatewayAndRegistry(
         () => revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName),
       );
       const updatedProviderNames = err.mutatedProviderNames.filter(
-        (providerName) => !createdProviders.has(providerName) || replacedProviders.has(providerName),
+        (providerName) =>
+          !createdProviders.has(providerName) || replacedProviders.has(providerName),
       );
       const originalFailure = redactFullWithUrls(err instanceof Error ? err.message : String(err))
         .replace(/\s+/gu, " ")
@@ -1109,7 +1110,9 @@ async function runMessagingHealthChecksAfterRebuild(
     openclawBridgeHealth: {
       sandboxName,
       executeSandboxCommand: (command, timeoutMs) =>
-        executeSandboxExecCommand(sandboxName, command, timeoutMs),
+        executeSandboxExecCommand(sandboxName, command, timeoutMs, {
+          localDockerFallbackPolicy: "read-only",
+        }),
     },
   });
   try {
@@ -1765,14 +1768,15 @@ function stoppedWechatCleanupFailureGuidance(
 
 /**
  * Wipe durable channel state before rebuild can preserve an obsolete auth blob.
- * OpenShell exec runs first, followed by SSH and the selected provider's stopped-state fallback.
+ * OpenShell exec runs first. A permitted reconciled runtime-provider retry runs before SSH.
+ * OpenClaw WeChat stopped-state cleanup runs last.
  * Fixes #3998.
  */
-function clearSandboxChannelDurableState(
+async function clearSandboxChannelDurableState(
   sandboxName: string,
   channelName: string,
   options: { readonly allowAbsentStoppedState?: boolean } = {},
-): boolean {
+): Promise<boolean> {
   const agent = resolveAgentForSandbox(sandboxName);
   const paths = getSandboxChannelStatePaths(agent, channelName);
   if (!paths.every(isSafeChannelStatePath)) {
@@ -1786,7 +1790,9 @@ function clearSandboxChannelDurableState(
   const sentinelSeen = (result: { stdout?: string | null } | null): boolean =>
     !!result && typeof result.stdout === "string" && result.stdout.includes(CHANNEL_CLEAR_SENTINEL);
 
-  let result = executeSandboxExecCommand(sandboxName, cmd);
+  let result = await executeSandboxExecCommand(sandboxName, cmd, undefined, {
+    localDockerFallbackPolicy: "reconciled",
+  });
   if (!sentinelSeen(result)) {
     result = executeSandboxCommand(sandboxName, cmd);
   }
@@ -1933,9 +1939,9 @@ async function removeSandboxChannelUnlocked(
   if (
     requiresStateCleanupBeforeTeardown &&
     (hasChannelResidue || recoverPhysicalWechatResidue) &&
-    !clearSandboxChannelDurableState(sandboxName, canonical, {
+    !(await clearSandboxChannelDurableState(sandboxName, canonical, {
       allowAbsentStoppedState: !hasChannelResidue,
-    })
+    }))
   ) {
     console.error(
       `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,
@@ -2014,7 +2020,7 @@ async function removeSandboxChannelUnlocked(
   // revocation already prevents the bot from authenticating, so a
   // failure here is a warning, not a bail.
   if (!requiresStateCleanupBeforeTeardown) {
-    clearSandboxChannelDurableState(sandboxName, canonical);
+    await clearSandboxChannelDurableState(sandboxName, canonical);
   }
 
   const rebuilt = await promptAndRebuild(sandboxName, `remove '${canonical}'`);
