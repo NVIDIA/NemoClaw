@@ -247,9 +247,9 @@ describe("PR review advisor terminology evidence", () => {
       traceId: trace.id,
       source: { file: "guide.md", line: 4 },
     };
-    expect(() => ledger.commit({ decisions: [decision], noChangesReason: null }, new Map([[trace.id, trace]]))).toThrow(
-      "requires a concrete contrast",
-    );
+    expect(() =>
+      ledger.commit({ decisions: [decision], noChangesReason: null }, new Map([[trace.id, trace]])),
+    ).toThrow("requires a concrete contrast");
     ledger.commit(
       {
         decisions: [{ ...decision, disposition: "replace", existingTerm: "commit SHA" }],

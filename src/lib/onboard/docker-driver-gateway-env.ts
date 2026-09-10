@@ -384,12 +384,7 @@ export function assertDockerDriverGatewayAuthConfigSafe(
   platform: NodeJS.Platform = process.platform,
   gatewayRuntime?: RuntimeProviderGatewayHostRuntime,
 ): void {
-  assertDockerDriverGatewayBindAddressSafe(
-    gatewayEnv,
-    environment,
-    platform,
-    gatewayRuntime,
-  );
+  assertDockerDriverGatewayBindAddressSafe(gatewayEnv, environment, platform, gatewayRuntime);
   const configPath = gatewayEnv.OPENSHELL_GATEWAY_CONFIG?.trim();
   if (!configPath) {
     throw new Error("OpenShell Docker-driver gateway requires OPENSHELL_GATEWAY_CONFIG");

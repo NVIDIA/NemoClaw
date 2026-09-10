@@ -120,11 +120,7 @@ describe("Hermes Langfuse OpenShell credential compatibility", () => {
     const fixturePath = path.join(directory, "__init__.py");
     fs.writeFileSync(fixturePath, pinnedValidatorFixture, "utf8");
 
-    const result = spawnSync(
-      process.execPath,
-      [patcherPath, fixturePath],
-      { encoding: "utf8" },
-    );
+    const result = spawnSync(process.execPath, [patcherPath, fixturePath], { encoding: "utf8" });
 
     expect(result.status, result.stderr).toBe(0);
     const patched = fs.readFileSync(fixturePath, "utf8");

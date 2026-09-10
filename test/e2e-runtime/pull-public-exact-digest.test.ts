@@ -293,33 +293,29 @@ describe("pull-public-exact-digest", () => {
     expect(result.stderr).toContain("failure=terminal-docker-exit-1");
   });
 
-  it(
-    "stops at the hard attempt cap even when no elapsed time passes",
-    () => {
-      const result = runPuller("attempt-cap-exhausted");
+  it("stops at the hard attempt cap even when no elapsed time passes", () => {
+    const result = runPuller("attempt-cap-exhausted");
 
-      expect(result.status).toBe(1);
-      expect(result.count).toBe(65);
-      expect(result.sleeps).toHaveLength(64);
-      expect(result.sleeps.slice(0, 5)).toEqual(["2", "4", "8", "16", "30"]);
-      expect(new Set(result.sleeps.slice(4))).toEqual(new Set(["30"]));
-      expect(new Set(result.configs).size).toBe(1);
-      expect(result.configsWereRemoved).toBe(true);
-      const diagnostics = result.stderr.trim().split("\n");
-      expect(diagnostics).toHaveLength(65);
-      expect(normalizeElapsed(diagnostics[0] ?? "")).toBe(firstRetryWarning);
-      expect(normalizeElapsed(diagnostics[63] ?? "")).toBe(
-        "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=64/65 failure=anonymous-unavailable elapsed=<seconds> deadline=1800s retry-in=30s",
-      );
-      expect(normalizeElapsed(diagnostics[64] ?? "")).toBe(
-        "::error::GHCR anonymous exact-digest pull outcome=exhausted attempt=65/65 failure=anonymous-unavailable limit=attempt-cap elapsed=<seconds> deadline=1800s",
-      );
-      expect(result.stderr).not.toContain("permission_denied");
-      expect(result.stderr).not.toContain("manifest unknown");
-      expect(result.stderr).not.toContain("anonymous HEAD request");
-    },
-    30_000,
-  );
+    expect(result.status).toBe(1);
+    expect(result.count).toBe(65);
+    expect(result.sleeps).toHaveLength(64);
+    expect(result.sleeps.slice(0, 5)).toEqual(["2", "4", "8", "16", "30"]);
+    expect(new Set(result.sleeps.slice(4))).toEqual(new Set(["30"]));
+    expect(new Set(result.configs).size).toBe(1);
+    expect(result.configsWereRemoved).toBe(true);
+    const diagnostics = result.stderr.trim().split("\n");
+    expect(diagnostics).toHaveLength(65);
+    expect(normalizeElapsed(diagnostics[0] ?? "")).toBe(firstRetryWarning);
+    expect(normalizeElapsed(diagnostics[63] ?? "")).toBe(
+      "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=64/65 failure=anonymous-unavailable elapsed=<seconds> deadline=1800s retry-in=30s",
+    );
+    expect(normalizeElapsed(diagnostics[64] ?? "")).toBe(
+      "::error::GHCR anonymous exact-digest pull outcome=exhausted attempt=65/65 failure=anonymous-unavailable limit=attempt-cap elapsed=<seconds> deadline=1800s",
+    );
+    expect(result.stderr).not.toContain("permission_denied");
+    expect(result.stderr).not.toContain("manifest unknown");
+    expect(result.stderr).not.toContain("anonymous HEAD request");
+  }, 30_000);
 
   it("stops at the elapsed deadline before another anonymous pull", () => {
     const result = runPuller("deadline-exhausted");

@@ -49,10 +49,7 @@ import {
   createRebuildHermesCronRestoreFixture,
   hermesRuntimeExecArgs,
 } from "./rebuild-hermes-cron-restore.ts";
-import {
-  buildRebuildHermesChildEnv,
-  buildRebuildHermesRecreateEnv,
-} from "./rebuild-hermes-env.ts";
+import { buildRebuildHermesChildEnv, buildRebuildHermesRecreateEnv } from "./rebuild-hermes-env.ts";
 import { ensureRebuildHermesHostTools, hermesApiTokenDigest } from "./rebuild-hermes-host-tools.ts";
 import {
   applyRebuildHermesHostPolicyEdit,

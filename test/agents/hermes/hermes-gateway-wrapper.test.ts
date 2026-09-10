@@ -103,9 +103,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("gateway run");
-    expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe(
-      "/sandbox/.hermes/lazy-packages",
-    );
+    expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe("/sandbox/.hermes/lazy-packages");
   });
 
   it("scrubs package-manager and Python startup inputs before a root-separated gateway exec", () => {
@@ -200,9 +198,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realInvoked).toBe(true);
     expect(run.realEnv.HERMES_HOME).toBe("/sandbox/.hermes");
     expect(run.realEnv.HERMES_BUNDLED_PLUGINS).toBe("/opt/hermes/plugins");
-    expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe(
-      "/sandbox/.hermes/lazy-packages",
-    );
+    expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe("/sandbox/.hermes/lazy-packages");
     expect(run.realEnv.HOME).toBe("/sandbox");
     const packageEnvironment = Object.fromEntries(
       Object.entries(run.realEnv).filter(
@@ -321,11 +317,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${JSON.stringify(argvLog)}\nexit 1\n`,
         { mode: 0o755 },
       );
-      const run = runUnmodifiedWrapperWithTrustedPython(
-        dir,
-        ["gateway", "run"],
-        [stubPython],
-      );
+      const run = runUnmodifiedWrapperWithTrustedPython(dir, ["gateway", "run"], [stubPython]);
       expect(run.status).not.toBe(0);
       const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
       expect(argv[0]).toBe("-I");
@@ -350,11 +342,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      const run = runUnmodifiedWrapperWithTrustedPython(
-        dir,
-        ["config", "show"],
-        [stubPython],
-      );
+      const run = runUnmodifiedWrapperWithTrustedPython(dir, ["config", "show"], [stubPython]);
       expect(run.status).not.toBe(0);
       const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
       expect(argv[0]).toBe("-I");
@@ -371,20 +359,12 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       const missingB = path.join(dir, "missing-python3-b");
       const missingC = path.join(dir, "missing-python3-c");
       const candidates = [missingA, missingB, missingC];
-      const gatewayRun = runUnmodifiedWrapperWithTrustedPython(
-        dir,
-        ["gateway", "run"],
-        candidates,
-      );
+      const gatewayRun = runUnmodifiedWrapperWithTrustedPython(dir, ["gateway", "run"], candidates);
       expect(gatewayRun.status).toBe(127);
       expect(gatewayRun.stderr).toContain("[SECURITY]");
       expect(gatewayRun.stderr).toContain("no python3 at a trusted absolute path");
 
-      const configRun = runUnmodifiedWrapperWithTrustedPython(
-        dir,
-        ["config", "show"],
-        candidates,
-      );
+      const configRun = runUnmodifiedWrapperWithTrustedPython(dir, ["config", "show"], candidates);
       expect(configRun.status).toBe(127);
       expect(configRun.stderr).toContain("[SECURITY]");
       expect(configRun.stderr).toContain("no python3 at a trusted absolute path");

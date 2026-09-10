@@ -433,9 +433,7 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
     expect(longRequest).toBe(2);
     expect(healthProbes).toBe(2);
     expect(
-      requestBodySizes.filter(
-        (size) => size >= plan.recipe.serve.limits.maxRequestBodyBytes,
-      ),
+      requestBodySizes.filter((size) => size >= plan.recipe.serve.limits.maxRequestBodyBytes),
     ).toEqual([32768, 50000]);
     expect(requestedMaxTokens).toEqual(
       expect.arrayContaining([

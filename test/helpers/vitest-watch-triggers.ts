@@ -55,8 +55,8 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern:
-      /(?:^|\/)(?:tools\/lint\/format-added-files\.sh|oxfmt\.config\.ts|oxc\.ignore-patterns\.ts)$/,
-    testsToRun: runTests("test/automation/lint/adapter-formatting.test.ts"),
+      /(?:^|\/)(?:oxfmt\.config\.ts|oxc\.ignore-patterns\.ts|package\.json|\.pre-commit-config\.yaml)$/,
+    testsToRun: runTests("test/automation/lint/source-formatting.test.ts"),
   },
   {
     pattern: /(?:^|\/)scripts\/lib\/sandbox-init\.sh$/,
