@@ -5,7 +5,7 @@
 set -euo pipefail
 
 if [ "$#" -eq 0 ]; then
-  echo "::error::At least one pinned Ubuntu package specification is required"
+  echo "::error::At least one pinned package specification is required"
   exit 2
 fi
 
@@ -18,7 +18,7 @@ done
 
 UBUNTU_APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"
 if [ ! -r "$UBUNTU_APT_SOURCES" ]; then
-  echo "::error::Required Ubuntu APT source is unavailable: $UBUNTU_APT_SOURCES"
+  echo "::error::Configured APT source list is unavailable: $UBUNTU_APT_SOURCES"
   exit 1
 fi
 

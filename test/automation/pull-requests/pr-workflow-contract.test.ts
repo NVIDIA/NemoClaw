@@ -593,15 +593,32 @@ describe("pull request and main workflow contracts", () => {
       "Advisor runtime",
       requiredWorkflowStep(advisorWorkflow.jobs["build-advisor-runtime"], "Install locked runtime"),
     ],
-  ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
-    // Both callers delegate source isolation to the shared installer, which
-    // pins apt to /etc/apt/sources.list.d/ubuntu.sources and disables source
-    // fragments before either updating metadata or installing packages.
-    expect(installStep.run).toContain("ci-install-pinned-ubuntu-packages.sh");
-    expect(installStep.run).not.toContain("apt-get update");
-  });
+  ])(
+    "uses the configured ubuntu.sources file without source fragments for %s",
+    (_name, installStep) => {
+      // Both callers delegate source selection to the shared installer, which
+      // selects /etc/apt/sources.list.d/ubuntu.sources and disables source
+      // fragments before either updating metadata or installing packages.
+      expect(installStep.run).toContain("ci-install-pinned-ubuntu-packages.sh");
+      expect(installStep.run).not.toContain("apt-get update");
+    },
+  );
 
-  it("limits CLI shard package installation to Ubuntu archive sources", () => {
+  // source-shape-contract: security -- The trusted CLI shard checkout must include the helper invoked by the base-controlled composite action
+  it("limits CLI shard package installation to the configured ubuntu.sources file", () => {
+    const trustedCheckout = requiredWorkflowStep(
+      prWorkflow.jobs["cli-test-shards"],
+      "Checkout trusted CI actions",
+    );
+    expect(trustedCheckout.uses).toBe(trustedCheckoutAction);
+    expect(trustedCheckout.with).toMatchObject({
+      ref: "${{ github.event.pull_request.base.sha }}",
+      path: ".trusted-ci-actions",
+    });
+    expect(String(trustedCheckout.with?.["sparse-checkout"])).toContain(
+      ".github/actions/ci-install-pinned-ubuntu-packages.sh",
+    );
+
     const temp = mkdtempSync(join(tmpdir(), "nemoclaw-cli-shard-apt-"));
     const fakeBin = join(temp, "bin");
     const actionPath = join(temp, "actions", "ci-cli-coverage-shard");
@@ -695,7 +712,7 @@ describe("pull request and main workflow contracts", () => {
       rmSync(binaryTrace);
       const missingSourceResult = runInstall();
       expect(missingSourceResult.status).not.toBe(0);
-      expect(missingSourceResult.stdout).toContain("Required Ubuntu APT source is unavailable");
+      expect(missingSourceResult.stdout).toContain("Configured APT source list is unavailable");
       expect(existsSync(aptTrace)).toBe(false);
       expect(existsSync(binaryTrace)).toBe(false);
 

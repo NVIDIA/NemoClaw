@@ -201,7 +201,9 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     runtimeInstallScript.includes("UBUNTU_APT_SOURCES") ||
     runtimeInstallScript.includes("APT_SOURCE_OPTIONS")
   ) {
-    errors.push("Unified advisor runtime package install must use only Ubuntu archive sources");
+    errors.push(
+      "Unified advisor runtime package install must delegate to the shared pinned-package helper",
+    );
   }
   return errors;
 }

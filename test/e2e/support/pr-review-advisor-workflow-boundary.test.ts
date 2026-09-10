@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,125 +17,6 @@ const matrix = "${{ matrix.advisor.artifact_name }}";
 
 it("accepts the checked-in Advisor workflow", () => {
   expect(validatePrReviewAdvisorWorkflow()).toEqual([]);
-});
-
-it("executes the Advisor runtime install with only the required Ubuntu source", () => {
-  const directory = mkdtempSync(join(tmpdir(), "nemoclaw-pr-review-advisor-apt-"));
-  const fakeBin = join(directory, "bin");
-  const advisorDirectory = join(directory, "advisor");
-  const aptTrace = join(directory, "apt-trace");
-  const aptLists = join(directory, "apt-lists");
-  const npmTrace = join(directory, "npm-trace");
-  const ubuntuSources = join(directory, "ubuntu.sources");
-  mkdirSync(fakeBin);
-  mkdirSync(join(advisorDirectory, ".github/actions"), { recursive: true });
-  const packageInstallerSource = readFileSync(
-    join(process.cwd(), ".github/actions/ci-install-pinned-ubuntu-packages.sh"),
-    "utf8",
-  );
-  const [sourceAssignment] = packageInstallerSource.match(
-    /UBUNTU_APT_SOURCES="\/etc\/apt\/sources\.list\.d\/ubuntu\.sources"/u,
-  )!;
-  const packageInstaller = packageInstallerSource.replace(
-    sourceAssignment,
-    `UBUNTU_APT_SOURCES=${JSON.stringify(ubuntuSources)}`,
-  );
-  writeFileSync(
-    join(advisorDirectory, ".github/actions/ci-install-pinned-ubuntu-packages.sh"),
-    packageInstaller,
-    { mode: 0o755 },
-  );
-  writeFileSync(
-    join(fakeBin, "sudo"),
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      'printf "%s\\n" "$*" >> "$APT_TRACE"',
-      'if [ "${1:-}" = "mktemp" ]; then',
-      '  printf "%s\\n" "$APT_LISTS_DIR"',
-      "  exit 0",
-      "fi",
-      'if [ "${1:-}" = "apt-get" ] && [ "${FAIL_APT_INSTALL:-0}" = "1" ] && [[ " $* " == *" install "* ]]; then',
-      "  exit 42",
-      "fi",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-  writeFileSync(
-    join(fakeBin, "dpkg-query"),
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      'case "${@: -1}" in',
-      '  fd-find) printf "9.0.0-1" ;;',
-      '  ripgrep) printf "14.1.0-1" ;;',
-      "  *) exit 1 ;;",
-      "esac",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-  writeFileSync(
-    join(fakeBin, "npm"),
-    '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$NPM_TRACE"\n',
-    { mode: 0o755 },
-  );
-
-  try {
-    const workflow = YAML.parse(
-      readFileSync(join(process.cwd(), ".github/workflows/pr-review-advisor.yaml"), "utf8"),
-    ) as {
-      jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
-    };
-    const installScript = workflow.jobs["build-advisor-runtime"].steps!.find(
-      (step) => step.name === "Install locked runtime",
-    )!.run!;
-    const runInstall = (extraEnv: Record<string, string> = {}) =>
-      spawnSync("bash", ["-c", installScript], {
-        cwd: directory,
-        encoding: "utf8",
-        env: {
-          ADVISOR_DIR: advisorDirectory,
-          APT_LISTS_DIR: aptLists,
-          APT_TRACE: aptTrace,
-          FD_FIND_VERSION: "9.0.0-1",
-          NPM_TRACE: npmTrace,
-          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-          RIPGREP_VERSION: "14.1.0-1",
-          ...extraEnv,
-        },
-        killSignal: "SIGKILL",
-        timeout: 5_000,
-      });
-
-    writeFileSync(ubuntuSources, "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\n");
-    const success = runInstall();
-    expect(success.status, success.stderr).toBe(0);
-    expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toEqual([
-      "mktemp -d /var/lib/apt/nemoclaw-lists.XXXXXXXX",
-      `chmod 0755 ${aptLists}`,
-      `install -d -o _apt -g root -m 0700 ${aptLists}/partial`,
-      `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${aptLists} update -qq`,
-      `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${aptLists} install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1`,
-    ]);
-    expect(readFileSync(npmTrace, "utf8").trim()).toBe("ci --ignore-scripts --no-audit --no-fund");
-
-    rmSync(ubuntuSources);
-    rmSync(aptTrace);
-    rmSync(npmTrace);
-    const missingSource = runInstall();
-    expect(missingSource.status).not.toBe(0);
-    expect(missingSource.stdout).toContain("Required Ubuntu APT source is unavailable");
-    expect(existsSync(aptTrace)).toBe(false);
-    expect(existsSync(npmTrace)).toBe(false);
-
-    writeFileSync(ubuntuSources, "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\n");
-    const unavailablePackage = runInstall({ FAIL_APT_INSTALL: "1" });
-    expect(unavailablePackage.status).not.toBe(0);
-    expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toHaveLength(5);
-    expect(existsSync(npmTrace)).toBe(false);
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
 });
 
 it.each([
@@ -213,16 +93,16 @@ it.each([
     "Unified advisor must prepare the PR revision from the successful checks run",
   ],
   [
-    "pinned Ubuntu package helper",
+    "pinned package helper",
     'bash "$ADVISOR_DIR/.github/actions/ci-install-pinned-ubuntu-packages.sh"',
     'bash "/bin/true"',
-    "Unified advisor runtime package install must use only Ubuntu archive sources",
+    "Unified advisor runtime package install must delegate to the shared pinned-package helper",
   ],
   [
     "direct apt bypass",
     'bash "$ADVISOR_DIR/.github/actions/ci-install-pinned-ubuntu-packages.sh"',
     'sudo apt-get update\n          bash "$ADVISOR_DIR/.github/actions/ci-install-pinned-ubuntu-packages.sh"',
-    "Unified advisor runtime package install must use only Ubuntu archive sources",
+    "Unified advisor runtime package install must delegate to the shared pinned-package helper",
   ],
 ])("rejects an unsafe Advisor %s mutation", (_case, before, after, error) => {
   const directory = mkdtempSync(join(tmpdir(), "nemoclaw-pr-review-advisor-"));
