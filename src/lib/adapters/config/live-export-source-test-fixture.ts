@@ -3,7 +3,14 @@
 
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
+import type { SandboxEntry } from "../../state/registry/types";
+import { fingerprintOpenShellSandboxId } from "../openshell/sandbox-identity";
 
+const sandboxId = "123e4567-e89b-42d3-a456-426614174000";
+const identityFingerprint = fingerprintOpenShellSandboxId(sandboxId) as string;
+export const endpoint = "https://integrate.api.nvidia.com/v1";
+export const readFailureCanary = "credential-canary-value";
+export const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
 export const startupInput = {
   agent: "openclaw",
   inference: {
@@ -35,6 +42,67 @@ export const startupInput = {
 } satisfies ManagedStartupProfileBuilderInput;
 export const startup = buildManagedStartupProfile(startupInput);
 
+export const entry = {
+  name: "alpha",
+  createdAt: "not-export-evidence",
+  agent: "openclaw",
+  openshellDriver: "docker",
+  gatewayName: "nemoclaw",
+  gatewayPort: 8080,
+  lifecycleGeneration: "generation-1",
+  lifecycleLiveIdentityFingerprint: identityFingerprint,
+  provider: "nvidia-prod",
+  model: "model-a",
+  preferredInferenceApi: "openai-completions",
+  endpointUrl: endpoint,
+  credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+  imageTag: imageRef,
+  workload: {
+    schemaVersion: 1,
+    kind: "managed-image",
+    reference: imageRef,
+    platform: "linux/amd64",
+    release: "v1.0.0",
+    sourceRevision: "b".repeat(40),
+    sourceCohort: "ghrun-1-1",
+    capabilityContractVersion: 1,
+    startupProfileContractVersion: 1,
+    encodedProfile: startup.encodedProfile,
+    startupProfileSha256: startup.startupProfileSha256,
+    credentialProxyReplayRequired: false,
+    shared: true,
+  },
+} satisfies SandboxEntry;
+
+export function inventory(resourceVersion = 7, policyVersion = 3) {
+  return {
+    sandbox: {
+      metadata: {
+        id: sandboxId,
+        name: "alpha",
+        workspace: "default",
+        resourceVersion: BigInt(resourceVersion),
+      },
+      status: { phase: 2, currentPolicyVersion: policyVersion },
+      spec: { template: { image: imageRef }, providers: [] },
+    },
+  };
+}
+export function provider() {
+  return {
+    provider: {
+      metadata: {
+        id: "provider-id",
+        name: "nvidia-prod",
+        workspace: "default",
+        resourceVersion: 8n,
+      },
+      type: "openai",
+      credentials: { NVIDIA_INFERENCE_API_KEY: readFailureCanary },
+      config: { OPENAI_BASE_URL: endpoint },
+    },
+  };
+}
 export function configuration(revision = 3) {
   return {
     policy: {

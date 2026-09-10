@@ -55,47 +55,19 @@ import type { SandboxEntry } from "../../state/registry/types";
 import { connectManagedOpenShellSdk } from "../openshell/sdk";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
-import { fingerprintOpenShellSandboxId } from "../openshell/sandbox-identity";
 import { createLiveExportSnapshotReader } from "./live-export-source";
-import { startupInput, startup, configuration } from "./live-export-source-test-fixture";
 
-const sandboxId = "123e4567-e89b-42d3-a456-426614174000";
-const identityFingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
-const endpoint = "https://integrate.api.nvidia.com/v1";
-const readFailureCanary = "credential-canary-value";
-const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
-
-const entry = {
-  name: "alpha",
-  createdAt: "not-export-evidence",
-  agent: "openclaw",
-  openshellDriver: "docker",
-  gatewayName: "nemoclaw",
-  gatewayPort: 8080,
-  lifecycleGeneration: "generation-1",
-  lifecycleLiveIdentityFingerprint: identityFingerprint,
-  provider: "nvidia-prod",
-  model: "model-a",
-  preferredInferenceApi: "openai-completions",
-  endpointUrl: endpoint,
-  credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-  imageTag: imageRef,
-  workload: {
-    schemaVersion: 1,
-    kind: "managed-image",
-    reference: imageRef,
-    platform: "linux/amd64",
-    release: "v1.0.0",
-    sourceRevision: "b".repeat(40),
-    sourceCohort: "ghrun-1-1",
-    capabilityContractVersion: 1,
-    startupProfileContractVersion: 1,
-    encodedProfile: startup.encodedProfile,
-    startupProfileSha256: startup.startupProfileSha256,
-    credentialProxyReplayRequired: false,
-    shared: true,
-  },
-} satisfies SandboxEntry;
+import {
+  endpoint,
+  readFailureCanary,
+  imageRef,
+  startupInput,
+  startup,
+  entry,
+  inventory,
+  provider,
+  configuration,
+} from "./live-export-source-test-fixture";
 
 function telemetryEntry(
   telemetry: Readonly<Record<string, unknown>> = {},
@@ -128,36 +100,6 @@ const raw = {
   getSandbox: vi.fn(),
   getSandboxConfig: vi.fn(),
 };
-function inventory(resourceVersion = 7, policyVersion = 3) {
-  return {
-    sandbox: {
-      metadata: {
-        id: sandboxId,
-        name: "alpha",
-        workspace: "default",
-        resourceVersion: BigInt(resourceVersion),
-      },
-      status: { phase: 2, currentPolicyVersion: policyVersion },
-      spec: { template: { image: imageRef }, providers: [] },
-    },
-  };
-}
-function provider() {
-  return {
-    provider: {
-      metadata: {
-        id: "provider-id",
-        name: "nvidia-prod",
-        workspace: "default",
-        resourceVersion: 8n,
-      },
-      type: "openai",
-      credentials: { NVIDIA_INFERENCE_API_KEY: readFailureCanary },
-      config: { OPENAI_BASE_URL: endpoint },
-    },
-  };
-}
-
 function mockSupportedLiveSource(
   policyVersion = 3,
   appliedRevision = 3,
@@ -1496,5 +1438,41 @@ describe("dashboard export observation", () => {
       findings: [expect.objectContaining({ category: "unstable-source" })],
     });
     expect(loadRegistry).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("Hermes interface export observation", () => {
+  it("reads only retained interface fields and includes allocation changes in stability (#11433)", async () => {
+    mockSupportedLiveSource();
+    const first = {
+      ...entry,
+      hermesApiPort: 8643,
+      hermesDashboardEnabled: true,
+      hermesDashboardPort: 19000,
+      hermesDashboardInternalPort: 19120,
+      hermesDashboardTui: true,
+    };
+    vi.mocked(loadRegistry).mockReturnValue({ sandboxes: { alpha: first }, defaultSandbox: null });
+    const reader = createLiveExportSnapshotReader();
+    expect(await reader.read("alpha")).toMatchObject({
+      kind: "observed",
+      registry: {
+        hermesApiPort: 8643,
+        hermesDashboardEnabled: true,
+        hermesDashboardPort: 19000,
+        hermesDashboardInternalPort: 19120,
+        hermesDashboardTui: true,
+      },
+    });
+    let reads = 0;
+    vi.mocked(loadRegistry).mockImplementation(() => ({
+      sandboxes: { alpha: { ...first, hermesApiPort: reads++ % 2 === 0 ? 8643 : 8644 } },
+      defaultSandbox: null,
+    }));
+    expect(await observeStableExportSource("alpha", reader)).toMatchObject({
+      ok: false,
+      findings: [expect.objectContaining({ category: "unstable-source" })],
+    });
+    expect(reads).toBe(4);
   });
 });

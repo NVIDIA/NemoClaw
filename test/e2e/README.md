@@ -739,6 +739,15 @@ The retired `hermes-dashboard` selector remains a compatibility alias for
 the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
 mode.
 
+That existing lane also owns Hermes interface export evidence for #11433. It onboards with public
+dashboard port 19000 through both port aliases, internal port 19120, browser TUI enabled and API
+port 8643. Both CLI names must export the same validated interface values. Existing host dashboard
+and API probes verify the public endpoints; the export fixture separately checks the deployed
+dashboard process's internal port and TUI flag, then probes that internal listener. Process evidence
+contains only the numeric port and TUI boolean. The fixture retains identity-drift rejection,
+registry restoration and export-file cleanup. The `security-posture-hermes` lane retains canonical
+disabled/default interface coverage. This extends one existing behavior dimension and adds no target.
+
 ## Current OpenClaw plugin EXDEV lifecycle
 
 The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
