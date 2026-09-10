@@ -49,12 +49,9 @@ printf '%s  %s\n' "$policy_result_sha256" "$policy_result" | sha256sum --check -
   exit 1
 }
 raw_report_sha256="$(
-  node -e '
-    const value = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-    if (!/^[0-9a-f]{64}$/.test(value.rawResponseSha256 ?? "")) process.exit(1);
-    process.stdout.write(value.rawResponseSha256);
-  ' "$receipt"
-)" || {
+  sed -n 's/.*"rawResponseSha256"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{64\}\)".*/\1/p' "$receipt" | head -n 1
+)"
+printf '%s' "$raw_report_sha256" | grep -qxE '[0-9a-f]{64}' || {
   echo "ERROR: verified mcporter audit receipt does not declare a raw response SHA-256" >&2
   exit 1
 }
