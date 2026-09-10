@@ -454,7 +454,7 @@ RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
 # Upstream tests are not part of the production runtime and can contain
 # intentionally hostile security-test fixtures. Remove them in the extraction
 # RUN so their bytes never enter a published image layer.
-# Redact the bundled docs search key in that RUN as well.
+# Remove only the reviewed Algolia key value from its pinned configuration.
 COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
 COPY agents/hermes/agent-browser-runtime/package.json \
     agents/hermes/agent-browser-runtime/package-lock.json \
@@ -470,8 +470,11 @@ RUN mkdir -p /opt/hermes \
     && sha256sum -c /tmp/hermes.tar.gz.sha256 \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && rm -rf /opt/hermes/tests \
-    && sed -i -E "/^[[:space:]]*apiKey:/s/'[^']*'/'REDACTED'/" /opt/hermes/website/docusaurus.config.ts \
-    && grep -Fq "apiKey: 'REDACTED'," /opt/hermes/website/docusaurus.config.ts \
+    && python3 -I -c 'from hashlib import sha256; from pathlib import Path; \
+        p = Path("/opt/hermes/website/docusaurus.config.ts"); data = p.read_bytes(); \
+        assert sha256(data).hexdigest() == "952b1d6c62498416d118e1fd70c678e82838b80cd4b6a860ee7587a441279d18", "Unexpected Hermes docs configuration"; \
+        prefix = b"      apiKey: \x27"; start = data.index(prefix, data.index(b"    algolia: {")) + len(prefix); \
+        end = data.index(b"\x27", start); p.write_bytes(data[:start] + b"REDACTED" + data[end:])' \
     && printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /tmp/hermes-runtime-boundaries.patch \
         "$NEMOCLAW_HERMES_SECURE_DIR_PATCH_SHA256" /tmp/hermes-secure-dir-skip-chmod.patch \
