@@ -270,6 +270,54 @@ describe("authenticated MCP live fixtures", () => {
     }
   });
 
+  it("uses the proxy-aware HTTPS probe when Node fetch cannot reach the public tunnel", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-probe-"));
+    const cloudflared = path.join(directory, "cloudflared");
+    const curl = path.join(directory, "curl");
+    const priorPath = process.env.PATH;
+    fs.writeFileSync(
+      cloudflared,
+      [
+        "#!/bin/sh",
+        "printf '%s\\n' 'https://fixture-cleanup-123.trycloudflare.com' >&2",
+        "trap 'exit 0' TERM INT",
+        "sleep 2",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(curl, "#!/bin/sh\nprintf '%s' '405'\n", { mode: 0o755 });
+    process.env.PATH = `${directory}:${priorPath ?? ""}`;
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new TypeError("fetch failed"));
+    let cleanupProcess: (() => Promise<void>) | undefined;
+
+    try {
+      const tunnel = await startPublicMcpHttpsTunnel({
+        cloudflaredBin: cloudflared,
+        cleanup: {
+          add: (_name, run) => {
+            cleanupProcess = async () => {
+              await run();
+            };
+          },
+        },
+        label: "proxy-aware fixture",
+        progress: progressProbe().progress,
+        server: { port: 43123, close: async () => {} },
+      });
+
+      expect(tunnel.origin).toBe("https://fixture-cleanup-123.trycloudflare.com");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      await cleanupProcess?.();
+      fetchMock.mockRestore();
+      priorPath === undefined ? delete process.env.PATH : (process.env.PATH = priorPath);
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("omits failed cloudflared child output from diagnostics", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-redaction-"));
     const cloudflared = path.join(directory, "cloudflared");
