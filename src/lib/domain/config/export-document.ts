@@ -68,8 +68,12 @@ export function buildExportConfig(
           agents: [
             {
               name: "primary",
-              type: "openclaw",
-              ...(source.interfaces ? { interfaces: source.interfaces } : {}),
+              ...(source.agent === "openclaw"
+                ? {
+                    type: "openclaw" as const,
+                    ...(source.interfaces ? { interfaces: source.interfaces } : {}),
+                  }
+                : { type: "hermes" as const }),
               inference: {
                 routes: [
                   {

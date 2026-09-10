@@ -698,9 +698,9 @@ describe("dashboard export observation", () => {
     const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
     expect(yaml).not.toContain(readFailureCanary);
     const document = validateNemoClawConfig(YAML.parse(yaml));
-    expect(document.spec.sandboxes[0]?.agents[0]?.interfaces?.dashboard).toEqual({
-      port: 19000,
-      bind: "0.0.0.0",
+    expect(document.spec.sandboxes[0]?.agents[0]).toMatchObject({
+      type: "openclaw",
+      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
     });
   });
 

@@ -143,9 +143,14 @@ describe("NemoClawConfig v1", () => {
   it("rejects an unknown inference API (#10938)", () => {
     const value = structuredClone(config()) as unknown as Record<string, any>;
     value.spec.inferenceProviders[0].api = "openai";
-    expect(() => validateNemoClawConfig(value)).toThrow(
-      "must be equal to one of the allowed values",
-    );
+    expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
+  });
+
+  it("accepts Hermes as a v1 agent type (#11286)", () => {
+    const value = structuredClone(config()) as unknown as Record<string, any>;
+    value.spec.sandboxes[0].agents[0].type = "hermes";
+
+    expect(validateNemoClawConfig(value).spec.sandboxes[0]!.agents[0]!.type).toBe("hermes");
   });
 
   it("keeps the exported authoritative schema deeply immutable", () => {
@@ -193,12 +198,12 @@ describe("NemoClawConfig v1", () => {
     );
   });
 
-  it.each(["hermes", "langchain-deepagents-code", "nemocua"])(
+  it.each(["langchain-deepagents-code", "nemocua"])(
     "rejects unsupported v1 agent type %s (#10938)",
     (type) => {
       const value = structuredClone(config()) as unknown as Record<string, any>;
       value.spec.sandboxes[0].agents[0].type = type;
-      expect(() => validateNemoClawConfig(value)).toThrow("must be equal to constant");
+      expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
     },
   );
 
@@ -412,6 +417,15 @@ describe("NemoClawConfig v1", () => {
 });
 
 describe("OpenClaw dashboard configuration", () => {
+  it("rejects dashboard interfaces on Hermes (#10904)", () => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, {
+      type: "hermes",
+      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+    });
+    expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
+  });
+
   it.each([
     { port: 19000, bind: "0.0.0.0" },
     { port: 1024 },
