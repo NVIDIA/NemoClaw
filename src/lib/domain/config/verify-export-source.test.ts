@@ -31,6 +31,7 @@ import { classifyExportRegistry, verifyExportSource } from "./verify-export-sour
 const sandboxId = "018f47e2-9d93-7d15-9c41-3ecf70b2550f";
 const fingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
 const endpoint = "https://api.openai.com/v1";
+const nousEndpoint = "https://inference-api.nousresearch.com/v1";
 const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
 const hermesImageRef = "ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:" + "c".repeat(64);
 const policy =
@@ -242,6 +243,68 @@ function hermesSnapshot(registryOverrides: Partial<SandboxEntry> = {}): Observed
     }),
     sandbox: { ...snapshot().sandbox, imageRef: hermesImageRef },
   });
+}
+
+function hermesManagedAuthSnapshot(
+  registryOverrides: Partial<SandboxEntry> = {},
+): ObservedExportSnapshot {
+  const model = "moonshotai/kimi-k2.6";
+  const api =
+    registryOverrides.preferredInferenceApi === "anthropic-messages"
+      ? "anthropic-messages"
+      : "openai-completions";
+  const endpointUrl = registryOverrides.endpointUrl ?? nousEndpoint;
+  const workload = managedWorkload(
+    {
+      ...hermesProfileInput(),
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "hermes-provider",
+        model,
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: null,
+        api,
+        primaryModelRef: null,
+        compatibility: null,
+      },
+    },
+    hermesImageRef,
+  );
+  const value = hermesSnapshot({
+    provider: "hermes-provider",
+    model,
+    preferredInferenceApi: api,
+    endpointUrl,
+    credentialEnv: "NOUS_API_KEY",
+    hermesAuthMethod: "api_key",
+    workload,
+    ...registryOverrides,
+  });
+  return {
+    ...value,
+    inference: {
+      topology: "hosted",
+      provider: "hermes-provider",
+      model,
+      api,
+      endpoint: endpointUrl,
+      endpointEvidence: {
+        endpoint: endpointUrl,
+        provider: {
+          gatewayName: "nemoclaw",
+          workspace: "default",
+          name: "hermes-provider",
+          id: "hermes-provider-id",
+          resourceVersion: "9",
+        },
+        source: {
+          kind: "provider-config",
+          key: api === "anthropic-messages" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL",
+        },
+      },
+      credentialEnv: "NOUS_API_KEY",
+    },
+  };
 }
 
 function findings(result: ReturnType<typeof verifyExportSource>) {
@@ -797,6 +860,23 @@ describe("config export source verification (#10938)", () => {
     expect(result.publish).not.toHaveBeenCalled();
   });
 
+  it("does not publish while retained Hermes auth provenance is changing (#11432)", async () => {
+    const accepted = hermesManagedAuthSnapshot();
+    const missing = hermesManagedAuthSnapshot({ hermesAuthMethod: null });
+    const result = await exportSnapshots([accepted, missing, accepted, missing]);
+
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: [expect.objectContaining({ category: "unstable-source" })],
+      },
+    });
+    expect(result.read).toHaveBeenCalledTimes(4);
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
   it.each([
     { managedHost: "user:secret-canary@proxy.internal" },
     { managedHost: "http://proxy.internal" },
@@ -887,6 +967,65 @@ describe("config export source verification (#10938)", () => {
     expect(Check(ExportSourceValuesSchema, verifiedSource(result))).toBe(true);
   });
 
+  it("exports explicit retained Hermes Nous API-key authentication (#11432)", async () => {
+    const observed = hermesManagedAuthSnapshot();
+    expect(verifiedSource(verify(observed)).auth).toEqual({ method: "api-key" });
+
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.read).toHaveBeenCalledTimes(2);
+    expect(result.publish).not.toHaveBeenCalled();
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.sandboxes[0]!.agents[0]!.auth).toEqual({
+      method: "api-key",
+      providerRef: "hosted-hermes-provider",
+    });
+    expect(document.spec.inferenceProviders[0]).toMatchObject({
+      name: "hosted-hermes-provider",
+      provider: "hermes-provider",
+      credential: { env: "NOUS_API_KEY" },
+    });
+  });
+
+  it.each([
+    ["OAuth", { hermesAuthMethod: "oauth" as const }, "unsupported", "api-key"],
+    ["missing auth provenance", { hermesAuthMethod: null }, "missing-provenance", "api-key"],
+    ["foreign auth provenance", { hermesAuthMethod: "api_key" as const }, "drifted", "generic"],
+    [
+      "API-key authentication with a foreign API",
+      { preferredInferenceApi: "anthropic-messages" },
+      "drifted",
+      "api-key",
+    ],
+    [
+      "API-key authentication with a foreign endpoint",
+      { endpointUrl: "https://api.example.com/v1" },
+      "drifted",
+      "api-key",
+    ],
+  ])("does not export Hermes %s (#11432)", async (_case, registryOverrides, category, source) => {
+    const observed =
+      source === "generic"
+        ? hermesSnapshot(registryOverrides)
+        : hermesManagedAuthSnapshot(registryOverrides);
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: expect.arrayContaining([
+          expect.objectContaining({
+            category,
+            field: "spec.sandboxes[].agents[0].auth",
+          }),
+        ]),
+      },
+    });
+    expect(result.writeStdout).not.toHaveBeenCalled();
+    expect(result.publish).not.toHaveBeenCalled();
+  });
+
   it.each([
     { sandboxName: "alpha--beta" },
     { runtime: { provider: "docker", imageRef: "registry/image:latest" } },
@@ -959,14 +1098,9 @@ describe("config export source verification (#10938)", () => {
       "spec.sandboxes[].agents[0].dashboard",
     ],
     [
-      "Hermes authentication",
-      { hermesAuthMethod: "api_key" as const },
-      "spec.sandboxes[].agents[0].authentication",
-    ],
-    [
       "Hermes inference provider",
       { hermesInferenceProvider: "hermes-provider" },
-      "spec.sandboxes[].agents[0].authentication",
+      "spec.sandboxes[].agents[0].auth",
     ],
     ["non-default Hermes API port", { hermesApiPort: 8643 }, "spec.sandboxes[].agents[0].api"],
   ])("rejects excluded %s state (#11286)", (_case, registryOverrides, field) => {

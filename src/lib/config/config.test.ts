@@ -359,6 +359,92 @@ describe("NemoClawConfig v1", () => {
     expect(validateNemoClawConfig(value).spec.sandboxes[0]!.agents[0]!.type).toBe("hermes");
   });
 
+  it("round-trips Hermes API-key authentication bound to its inference route (#11432)", () => {
+    const value = structuredClone(config()) as unknown as Record<string, any>;
+    const provider = value.spec.inferenceProviders[0];
+    provider.name = "hosted-hermes-provider";
+    provider.provider = "hermes-provider";
+    provider.api = "openai-completions";
+    provider.endpoint = "https://inference-api.nousresearch.com/v1";
+    provider.credential.env = "NOUS_API_KEY";
+    const agent = value.spec.sandboxes[0].agents[0];
+    agent.type = "hermes";
+    agent.inference.routes[0].providerRef = provider.name;
+    agent.auth = { method: "api-key", providerRef: provider.name };
+
+    const rendered = renderInput(value);
+    expect(validateNemoClawConfig(YAML.parse(rendered.yaml))).toEqual(value);
+  });
+
+  it.each([
+    ["OpenClaw agent", { agentType: "openclaw" }],
+    ["unknown provider", { authProviderRef: "missing" }],
+    ["foreign provider", { provider: "openai" }],
+    ["foreign API", { api: "anthropic-messages" }],
+    ["foreign endpoint", { endpoint: "https://api.example.com/v1" }],
+    ["foreign credential", { credentialEnv: "OPENAI_API_KEY" }],
+  ])("rejects Hermes API-key authentication with an %s (#11432)", (_case, change) => {
+    const options = change as Partial<{
+      agentType: string;
+      api: string;
+      authProviderRef: string;
+      credentialEnv: string;
+      endpoint: string;
+      provider: string;
+      routeProviderRef: string;
+    }>;
+    const value = structuredClone(config()) as unknown as Record<string, any>;
+    const provider = value.spec.inferenceProviders[0];
+    provider.name = "hosted-hermes-provider";
+    provider.provider = options.provider ?? "hermes-provider";
+    provider.api = options.api ?? "openai-completions";
+    provider.endpoint = options.endpoint ?? "https://inference-api.nousresearch.com/v1";
+    provider.credential.env = options.credentialEnv ?? "NOUS_API_KEY";
+    const agent = value.spec.sandboxes[0].agents[0];
+    agent.type = options.agentType ?? "hermes";
+    agent.inference.routes[0].providerRef = options.routeProviderRef ?? provider.name;
+    agent.auth = {
+      method: "api-key",
+      providerRef: options.authProviderRef ?? provider.name,
+    };
+
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
+  it("rejects Hermes API-key authentication unrelated to its inference route", () => {
+    const value = structuredClone(config()) as unknown as Record<string, any>;
+    value.spec.inferenceProviders.push({
+      name: "hosted-hermes-provider",
+      provider: "hermes-provider",
+      api: "openai-completions",
+      endpoint: "https://inference-api.nousresearch.com/v1",
+      credential: { env: "NOUS_API_KEY" },
+    });
+    const agent = value.spec.sandboxes[0].agents[0];
+    agent.type = "hermes";
+    agent.auth = { method: "api-key", providerRef: "hosted-hermes-provider" };
+
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "must match an inference route for this agent",
+    );
+  });
+
+  it.each([
+    { method: "oauth", providerRef: "hosted-openai" },
+    { method: "api_key", providerRef: "hosted-openai" },
+    { method: "api-key", providerRef: "hosted-openai", token: "secret-canary" },
+  ])("rejects unsupported Hermes auth structure %j (#11432)", (auth) => {
+    const value = structuredClone(config()) as unknown as Record<string, any>;
+    value.spec.sandboxes[0].agents[0].type = "hermes";
+    value.spec.sandboxes[0].agents[0].auth = auth;
+    expect(() => validateNemoClawConfig(value)).toThrow();
+    try {
+      validateNemoClawConfig(value);
+    } catch (error) {
+      expect(String(error)).not.toContain("secret-canary");
+    }
+  });
+
   it("keeps the exported authoritative schema deeply immutable", () => {
     expect(Object.isFrozen(NemoClawConfigSchema)).toBe(true);
     expect(Object.isFrozen(NemoClawConfigSchema.properties.spec)).toBe(true);

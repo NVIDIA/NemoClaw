@@ -725,9 +725,11 @@ describe("showSandboxStatus flow", () => {
     });
 
     await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+    const report = await harness.getSandboxStatusReport("alpha");
 
     const output = harness.logSpy.mock.calls.flat().join("\n");
     expect(output).toContain("Failure layer: sandbox_dashboard_port_conflict");
+    expect(report.inferenceHealth).toBeNull();
     expect(process.exitCode).toBe(1);
   });
 

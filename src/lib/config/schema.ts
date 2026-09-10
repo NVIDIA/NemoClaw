@@ -24,6 +24,7 @@ import {
 } from "./model";
 
 const PACKAGE_ROOT = path.resolve(__dirname, "..", "..", "..");
+const HERMES_API_KEY_ENDPOINT = "https://inference-api.nousresearch.com/v1";
 const NETWORK_POLICY_SCHEMA_PATH = path.join(PACKAGE_ROOT, "schemas", "network-policy.schema.json");
 const SANDBOX_POLICY_SCHEMA_PATH = path.join(PACKAGE_ROOT, "schemas", "sandbox-policy.schema.json");
 let validator: ValidateFunction<NemoClawConfig> | undefined;
@@ -64,10 +65,34 @@ function duplicateProblems(values: readonly string[], location: string): string[
   return [...duplicate].sort().map(() => `${location} contains a duplicate name`);
 }
 
+function agentAuthProblems(
+  agent: NemoClawSandboxConfig["agents"][number],
+  location: string,
+  providers: ReadonlyMap<string, NemoClawInferenceProviderConfig>,
+): string[] {
+  const auth = agent.auth;
+  if (!auth) return [];
+  const problems: string[] = [];
+  const provider = providers.get(auth.providerRef);
+  if (agent.type !== "hermes") problems.push(`${location} is supported only for a Hermes agent`);
+  if (!agent.inference.routes.some((route) => route.providerRef === auth.providerRef))
+    problems.push(`${location}/providerRef must match an inference route for this agent`);
+  if (
+    !provider ||
+    "serving" in provider ||
+    !isDeepStrictEqual(
+      [provider.provider, provider.api, provider.endpoint, provider.credential?.env],
+      ["hermes-provider", "openai-completions", HERMES_API_KEY_ENDPOINT, "NOUS_API_KEY"],
+    )
+  )
+    problems.push(`${location}/providerRef must reference the managed Nous API-key provider`);
+  return problems;
+}
+
 function sandboxProblems(
   sandbox: NemoClawSandboxConfig,
   sandboxIndex: number,
-  providers: ReadonlySet<string>,
+  providers: ReadonlyMap<string, NemoClawInferenceProviderConfig>,
 ): string[] {
   const problems: string[] = [];
   if (!isSandboxPolicyCredentialFree(YAML.stringify(sandbox.network.policy.explicit))) {
@@ -99,6 +124,13 @@ function sandboxProblems(
           `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}/inference/routes/${routeIndex}/providerRef does not match an inference provider`,
         );
     }
+    problems.push(
+      ...agentAuthProblems(
+        agent,
+        `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}/auth`,
+        providers,
+      ),
+    );
   }
   problems.push(...webSearchProblems(sandbox, sandboxIndex));
   return problems;
@@ -161,7 +193,9 @@ function semanticProblems(config: NemoClawConfig): string[] {
       "/spec/sandboxes",
     ),
   ];
-  const providers = new Set(config.spec.inferenceProviders.map(({ name }) => name));
+  const providers = new Map(
+    config.spec.inferenceProviders.map((provider) => [provider.name, provider]),
+  );
   for (const [providerIndex, provider] of config.spec.inferenceProviders.entries()) {
     if ("serving" in provider) {
       problems.push(...managedProviderProblems(config, provider, providerIndex));

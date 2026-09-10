@@ -1013,6 +1013,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     prepareManagedDcodeRebuildImageSpy,
     preparedDcodeBuildContext,
     registryUpdateSpy,
+    getSandboxEntry: readCurrentSandboxEntry,
     setDefaultSpy,
     setDefault: (name: string) => registry.setDefault(name),
     registerHermesInferenceProviderSpy,
