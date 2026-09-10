@@ -81,6 +81,41 @@ function renderInput(value: unknown) {
 }
 
 describe("NemoClawConfig v1", () => {
+  it.each(["progressive", "direct"])("validates tool disclosure %s", (disclosure) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, { tools: { disclosure } });
+    expect(validateNemoClawConfig(value)).toEqual(value);
+  });
+
+  it.each([
+    {},
+    { disclosure: "unknown" },
+    { disclosure: "DIRECT" },
+    { disclosure: " direct " },
+    { disclosure: false },
+    { disclosure: "credential-canary" },
+    { disclosure: "direct", token: "credential-canary" },
+    { disclosure: "direct", enabledGateways: ["nous-web"] },
+  ])("rejects malformed or unsupported tool configuration", (tools) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, { tools });
+    expect(() => validateNemoClawConfig(value)).toThrow();
+    try {
+      validateNemoClawConfig(value);
+    } catch (error) {
+      expect(String(error)).not.toContain("credential-canary");
+    }
+  });
+
+  it.each([{ disclosure: "progressive" }, { disclosure: "direct" }, {}])(
+    "rejects OpenClaw tool configuration on Hermes",
+    (tools) => {
+      const value = config();
+      Object.assign(value.spec.sandboxes[0]!.agents[0]!, { type: "hermes", tools });
+      expect(() => validateNemoClawConfig(value)).toThrow();
+    },
+  );
+
   it.each([0, 0.5, 1])("preserves local OTLP sample rate %s in canonical YAML", (sampleRate) => {
     const value = config();
     const observability = {
@@ -813,5 +848,48 @@ describe("fixed managed serving public contract", () => {
     const f = managedServingConfig();
     change(f);
     expect(() => validateNemoClawConfig(f.value)).toThrow();
+  });
+});
+
+describe("OpenClaw dashboard configuration", () => {
+  it("rejects dashboard interfaces on Hermes (#10904)", () => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, {
+      type: "hermes",
+      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+    });
+    expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
+  });
+
+  it.each([
+    { port: 19000, bind: "0.0.0.0" },
+    { port: 1024 },
+    { port: 65535 },
+    { port: 18789, bind: "127.0.0.1" },
+    { bind: "0.0.0.0" },
+  ])("round trips supported dashboard settings %j (#10904)", (dashboard) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, { interfaces: { dashboard } });
+    expect(validateNemoClawConfig(YAML.parse(renderInput(value).yaml))).toEqual(value);
+  });
+
+  it.each([
+    {},
+    { port: 0 },
+    { port: 1023 },
+    { port: 65536 },
+    { port: 19000.5 },
+    { port: "19000" },
+    { port: 8642 },
+    { port: 8652 },
+    { bind: "::" },
+    { bind: "192.0.2.1" },
+    { bind: "0.0.0.0\n" },
+    { port: 19000, url: "https://dashboard.example.com" },
+    { bind: "0.0.0.0", deviceAuth: { enabled: false } },
+  ])("rejects unsupported dashboard settings %j (#10904)", (dashboard) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, { interfaces: { dashboard } });
+    expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
   });
 });

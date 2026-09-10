@@ -12,16 +12,16 @@ import {
 
 export { buildRefreshMutableOpenClawConfigHashCommand };
 
-export function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
+export async function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
   sandboxName: string,
   log: (msg: string) => void,
   runtimeSelection?: OpenShellRuntimeSelection,
-): boolean {
+): Promise<boolean> {
   const result = runtimeSelection
-    ? executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand(), {
+    ? await executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand(), {
         runtimeSelection,
       })
-    : executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand());
+    : await executeSandboxCommand(sandboxName, buildRefreshMutableOpenClawConfigHashCommand());
   if (result && result.status === 0) {
     log("Mutable OpenClaw config hash refreshed after post-restore config writes");
     return true;
@@ -34,16 +34,16 @@ export function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
   return false;
 }
 
-export function verifyFinalMutableOpenClawConfigHash(
+export async function verifyFinalMutableOpenClawConfigHash(
   sandboxName: string,
   log: (msg: string) => void,
   runtimeSelection?: OpenShellRuntimeSelection,
-): boolean {
+): Promise<boolean> {
   const result = runtimeSelection
-    ? executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand(), {
+    ? await executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand(), {
         runtimeSelection,
       })
-    : executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand());
+    : await executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand());
   if (result && result.status === 0) {
     log("Final mutable OpenClaw config hash verified after post-restore finalization");
     return true;

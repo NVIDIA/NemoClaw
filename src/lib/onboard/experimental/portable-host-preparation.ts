@@ -53,6 +53,7 @@ const RETIRED_PORTABLE_HOST_GATEWAY_IP = "169.254.1.2";
 // label renders as `<no value>`, which contains a space and would corrupt
 // whitespace splitting.
 const DOCKER_FIELD_SEPARATOR = "|";
+const PODMAN_NETWORK_IPAM_INSPECT_FORMAT = "{{json .Subnets}}";
 // Portable onboarding created the sandbox network on this subnet before #9707
 // moved it out of the link-local block that netavark refuses. Name the retired
 // value so an upgraded host gets the removal command instead of the generic
@@ -647,11 +648,25 @@ function ensurePortableSandboxNetwork(
   networkName: string,
   assertSocketAuthority: () => void,
 ): void {
-  const networkInspection = docker(
+  let networkInspection = docker(
     ["network", "inspect", "--format", DOCKER_NETWORK_IPAM_INSPECT_FORMAT, networkName],
     env,
   );
   if (networkInspection.error) {
+    requireCommand(networkInspection, "Inspecting the portable sandbox network");
+  }
+  // podman-docker exposes Podman's native network-inspect object, whose IPAM
+  // field is `Subnets` rather than Docker's `IPAM.Config`. Retry only that
+  // explicit template-schema mismatch; an absent network still follows the
+  // create path below.
+  if (
+    networkInspection.status !== 0 &&
+    commandDetail(networkInspection).includes("can't evaluate field IPAM")
+  ) {
+    networkInspection = docker(
+      ["network", "inspect", "--format", PODMAN_NETWORK_IPAM_INSPECT_FORMAT, networkName],
+      env,
+    );
     requireCommand(networkInspection, "Inspecting the portable sandbox network");
   }
   if (networkInspection.status === 0) {
@@ -980,6 +995,7 @@ export const portableHostPreparationInternals = {
   REGISTRY_IMAGE,
   REGISTRY_FRAGMENT,
   PORTABLE_CONTAINERS_CONF,
+  ensurePortableSandboxNetwork,
   ensurePortableHostGatewayAlias,
   portableHostGatewayAliasState,
   validateOwnedConfigAuthority,

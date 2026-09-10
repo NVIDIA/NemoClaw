@@ -19,6 +19,13 @@ Production access to the raw client and generated messages must stay inside this
 `sdk.ts` is shared with sandbox execution. It retains the existing managed state-root check,
 explicit loopback gateway, and bounded local mTLS file reads. No second credential loader is needed.
 
+`sdk-import.mts` keeps the SDK's public entry points behind native ESM imports when
+the CLI compiles to CommonJS. Both connection and policy serialization use this
+lazy boundary because the reviewed SDK exposes import-only package conditions.
+The bridge has no top-level await, so the supported Node runtime can load its
+emitted `.mjs` from CommonJS. Compiled package tests cover both consumers with an
+import-only SDK fixture; SDK installation and gateway qualification remain separate.
+
 The read interfaces require an explicit gateway, workspace, and abort signal. Only a confirmed
 not-found response returns `null`. Other failures use the existing sandbox error categories and
 fixed messages. There is no CLI fallback after an SDK failure. Resource versions stay decimal
