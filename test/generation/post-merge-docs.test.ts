@@ -453,6 +453,7 @@ function runnerTools(
   return { run, state, tools };
 }
 beforeEach(() => {
+  vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 afterEach(() => {
@@ -524,7 +525,7 @@ describe("post-merge documentation publisher", () => {
   it("creates one verified branch and cumulative draft PR", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    await expect(publish(value, api)).resolves.toBeUndefined();
     expect(api.commitBodies[0]?.message).toEqual(expect.stringContaining(signOff));
     expect(api.commitBodies[0]).toMatchObject({
       parents: [value.mainSha],
@@ -586,11 +587,11 @@ describe("post-merge documentation publisher", () => {
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(api.openPulls[0]?.head.ref).not.toBe(api.branch);
   });
-  it("keeps an active PR pending when the approved patch is empty", async () => {
+  it("succeeds without writes when an active draft has no new changes", async () => {
     const value = emptyFixture();
     const api = new FakeGitHub(value);
     api.installActive();
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    await expect(publish(value, api)).resolves.toBeUndefined();
     expect(writeCount(api)).toBe(0);
   });
   it("leaves a ready-for-review managed PR unchanged", async () => {
@@ -688,7 +689,7 @@ describe("post-merge documentation publisher", () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.installActive();
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    await expect(publish(value, api)).resolves.toBeUndefined();
     expect(api.commitBodies[0]).toMatchObject({
       parents: [api.existingSha, value.mainSha],
       tree: value.finalTree,
@@ -714,7 +715,7 @@ describe("post-merge documentation publisher", () => {
     const api = new FakeGitHub(value);
     api.installActive();
     api.projectPullHead = () => undefined;
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    await expect(publish(value, api)).resolves.toBeUndefined();
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(api.openPulls[0]?.head.sha).toBe(api.existingSha);
     expect(requestCount(api, "POST", "/graphql")).toBe(1);
@@ -793,7 +794,7 @@ describe("post-merge documentation publisher", () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.installActive(value.finalTree);
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    await expect(publish(value, api)).resolves.toBeUndefined();
     expect(writeCount(api)).toBe(0);
   });
   it("rejects a human commit at the active branch head", async () => {
@@ -822,7 +823,7 @@ describe("post-merge documentation publisher", () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.installOrphan();
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    await expect(publish(value, api)).resolves.toBeUndefined();
     expect(api.branchRef?.object.sha).toBe(api.existingSha);
     expect(api.openPulls).toHaveLength(1);
     expect(api.openPulls[0]?.head.sha).toBe(api.existingSha);
@@ -839,7 +840,7 @@ describe("post-merge documentation publisher", () => {
       api.openPulls = [api.pull(managedBody, api.existingSha, managedTitle)];
       throw new Error("pull already attached");
     };
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    await expect(publish(value, api)).resolves.toBeUndefined();
     expect(api.branchRef?.object.sha).toBe(api.existingSha);
     expect(api.openPulls).toHaveLength(1);
     expect(api.openPulls[0]?.head.sha).toBe(api.existingSha);
@@ -868,7 +869,7 @@ describe("post-merge documentation publisher", () => {
     api.afterWrite = () => {
       throw new Error("lost response");
     };
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    await expect(publish(value, api)).resolves.toBeUndefined();
     expect(requestCount(api, "POST", "/pulls")).toBe(1);
     expect(requestCount(api, "POST", "/git/refs")).toBe(1);
   });
@@ -879,7 +880,7 @@ describe("post-merge documentation publisher", () => {
     api.afterWrite = () => {
       throw new Error("lost response");
     };
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    await expect(publish(value, api)).resolves.toBeUndefined();
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(requestCount(api, "POST", "/graphql")).toBe(1);
   });
@@ -925,9 +926,9 @@ describe("post-merge documentation runner", () => {
       executePostMergeDocs(input.env, runnerTools(input).tools);
       const api = new FakeGitHub(value, input.env.POST_MERGE_DOCS_PREVIOUS_SHA);
       api.installActive();
-      await expect(publish(value, api, input.env.POST_MERGE_DOCS_ARTIFACT_DIR)).rejects.toThrow(
-        "Documentation remains pending",
-      );
+      await expect(
+        publish(value, api, input.env.POST_MERGE_DOCS_ARTIFACT_DIR),
+      ).resolves.toBeUndefined();
       expect(api.commitBodies[0]).toMatchObject({
         parents: [input.env.POST_MERGE_DOCS_PREVIOUS_SHA, input.env.GITHUB_SHA],
         tree: value.finalTree,
