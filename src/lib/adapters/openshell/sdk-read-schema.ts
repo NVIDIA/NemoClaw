@@ -60,6 +60,7 @@ export const SandboxResponseSchema = Type.Object({
   }),
 });
 export const SandboxConfigResponseSchema = Type.Object({
+  policy: Type.Unknown(),
   workspace: WorkspaceSchema,
   version: IntegerSchema,
   policyHash: ReadTextSchema,
@@ -68,3 +69,59 @@ export const SandboxConfigResponseSchema = Type.Object({
   policySource: Type.Union([Type.Literal(1), Type.Literal(2)]),
   globalPolicyVersion: IntegerSchema,
 });
+
+// ProtoJSON omits implicit defaults. Validate the fields used by policy conversion;
+// other released fields pass through to the existing complete policy validator.
+const PolicyUint32Schema = Type.Integer({ minimum: 0, maximum: 4294967295 });
+const PolicyStringMatcherJsonSchema = Type.Object({
+  glob: Type.Optional(Type.String()),
+  any: Type.Optional(Type.Array(Type.String())),
+});
+const PolicyMatcherMapJsonSchema = Type.Record(Type.String(), PolicyStringMatcherJsonSchema);
+const PolicyMatcherJsonSchema = Type.Object({
+  method: Type.Optional(Type.String()),
+  query: Type.Optional(PolicyMatcherMapJsonSchema),
+  params: Type.Optional(PolicyMatcherMapJsonSchema),
+});
+const PolicyEndpointJsonSchema = Type.Object({
+  host: Type.Optional(Type.String()),
+  port: Type.Optional(PolicyUint32Schema),
+  ports: Type.Optional(Type.Array(PolicyUint32Schema)),
+  protocol: Type.Optional(Type.String()),
+  json_rpc_max_body_bytes: Type.Optional(PolicyUint32Schema),
+  mcp: Type.Optional(
+    Type.Object({
+      strict_tool_names: Type.Optional(Type.Boolean()),
+      allow_all_known_mcp_methods: Type.Optional(Type.Boolean()),
+    }),
+  ),
+  rules: Type.Optional(Type.Array(Type.Object({ allow: Type.Optional(PolicyMatcherJsonSchema) }))),
+  deny_rules: Type.Optional(Type.Array(PolicyMatcherJsonSchema)),
+});
+export const PolicyJsonSchema = Type.Object({
+  version: Type.Optional(PolicyUint32Schema),
+  filesystem: Type.Optional(
+    Type.Object({
+      include_workdir: Type.Optional(Type.Boolean()),
+      read_only: Type.Optional(Type.Array(Type.String())),
+      read_write: Type.Optional(Type.Array(Type.String())),
+    }),
+  ),
+  process: Type.Optional(
+    Type.Object({
+      run_as_user: Type.Optional(Type.String()),
+      run_as_group: Type.Optional(Type.String()),
+    }),
+  ),
+  network_policies: Type.Optional(
+    Type.Record(
+      Type.String(),
+      Type.Object({
+        endpoints: Type.Optional(Type.Array(PolicyEndpointJsonSchema)),
+        binaries: Type.Optional(Type.Array(Type.Object({ path: Type.Optional(Type.String()) }))),
+      }),
+    ),
+  ),
+});
+export type PolicyMatcherJson = TypeBoxModule.Type.Static<typeof PolicyMatcherJsonSchema>;
+export type PolicyEndpointJson = TypeBoxModule.Type.Static<typeof PolicyEndpointJsonSchema>;

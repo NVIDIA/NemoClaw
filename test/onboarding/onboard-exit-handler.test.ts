@@ -1,13 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { testTimeout } from "../helpers/timeouts";
 
 type OnboardModule = typeof import("../../src/lib/onboard") & {
   onboardSession: typeof import("../../src/lib/state/onboard-session");
@@ -100,6 +103,183 @@ describe("onboard exit handler registration", () => {
     expect(loaded.failure).toBeNull();
     expect(loaded.machine.state).toBe("init");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "onboard releases its owned lock during entry setup and preserves replacement and outer-owned locks (#10779)",
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "../..");
+      const scriptPath = path.join(tmpDir, "onboard-entry-signal.cjs");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const sessionPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+      );
+      const lockedRuntimePath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "resume", "locked-runtime.ts"),
+      );
+      const replacement = "replacement lock";
+
+      fs.writeFileSync(
+        scriptPath,
+        `
+const fs = require("node:fs");
+const lockedRuntimePath = ${lockedRuntimePath};
+const lockedRuntime = require(lockedRuntimePath);
+const onboardSession = require(${sessionPath});
+const replaceLock = process.argv.includes("--replace-lock");
+const outerOwnsLock = process.argv.includes("--outer-lock");
+
+if (outerOwnsLock) {
+  const lock = onboardSession.acquireOnboardLock("outer rebuild lifecycle");
+  if (!lock.acquired) throw new Error("outer rebuild lifecycle did not acquire onboard lock");
+  let signalDeliveries = 0;
+  const releaseFromOuterLifecycle = () => {
+    signalDeliveries += 1;
+    if (signalDeliveries === 1) return;
+    const lockContents = fs.readFileSync(onboardSession.LOCK_FILE, "utf8");
+    onboardSession.releaseOnboardLock();
+    process.removeListener("SIGINT", releaseFromOuterLifecycle);
+    process.stdout.write(
+      "NEMOCLAW_OUTER_RELEASE " + JSON.stringify({ lockContents }) + "\\n",
+      () => process.kill(process.pid, "SIGINT"),
+    );
+  };
+  process.on("SIGINT", releaseFromOuterLifecycle);
+}
+
+const pauseDuringLockedRuntimePreparation = async () => {
+  if (replaceLock) {
+    fs.unlinkSync(onboardSession.LOCK_FILE);
+    fs.writeFileSync(onboardSession.LOCK_FILE, ${JSON.stringify(replacement)});
+  }
+  process.stdout.write(
+    "NEMOCLAW_SIGNAL_READY " +
+      JSON.stringify({
+        lockFile: onboardSession.LOCK_FILE,
+        lockContents: fs.readFileSync(onboardSession.LOCK_FILE, "utf8"),
+      }) +
+      "\\n",
+  );
+  await new Promise(() => {});
+  throw new Error("unreachable");
+};
+require.cache[require.resolve(lockedRuntimePath)].exports = {
+  ...lockedRuntime,
+  prepare: pauseDuringLockedRuntimePreparation,
+};
+
+const { onboard } = require(${onboardPath});
+setInterval(() => {}, 1_000);
+onboard({
+  nonInteractive: true,
+  autoYes: true,
+  acceptThirdPartySoftware: true,
+  noGpu: true,
+  sandboxName: "entry-signal",
+  ...(outerOwnsLock
+    ? {
+        resume: true,
+        recreateSandbox: true,
+        authoritativeResumeConfig: true,
+        onboardLockAlreadyHeld: true,
+        targetGatewayName: "nemoclaw-9090",
+        targetGatewayPort: 9090,
+      }
+    : {}),
+}).catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exitCode = 1;
+});
+`,
+      );
+
+      const run = async (mode: "owned" | "replacement" | "outer") => {
+        const replaceLock = mode === "replacement";
+        const outerOwnsLock = mode === "outer";
+        const home = path.join(tmpDir, `${mode}-home`);
+        fs.mkdirSync(home);
+        const child = spawn(
+          process.execPath,
+          [
+            "--require",
+            "tsx/cjs",
+            scriptPath,
+            ...(replaceLock ? ["--replace-lock"] : []),
+            ...(outerOwnsLock ? ["--outer-lock"] : []),
+          ],
+          {
+            cwd: repoRoot,
+            env: {
+              ...process.env,
+              HOME: home,
+              PATH: ONBOARD_FIXTURE_PATH,
+              TMPDIR: tmpDir,
+              NEMOCLAW_TEST_NO_SLEEP: "1",
+            },
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+        let stderr = "";
+        child.stderr.setEncoding("utf8");
+        child.stderr.on("data", (chunk: string) => {
+          stderr += chunk;
+        });
+        let stdout = "";
+
+        try {
+          const ready = await new Promise<string>((resolve, reject) => {
+            child.stdout.setEncoding("utf8");
+            child.stdout.on("data", (chunk: string) => {
+              stdout += chunk;
+              stdout
+                .split("\n")
+                .filter((candidate) => candidate.startsWith("NEMOCLAW_SIGNAL_READY "))
+                .forEach((line) => resolve(line.slice("NEMOCLAW_SIGNAL_READY ".length)));
+            });
+            child.once("exit", (code, signal) => {
+              reject(
+                new Error(
+                  `onboard child exited before readiness: code=${String(code)} signal=${String(signal)} stderr=${stderr}`,
+                ),
+              );
+            });
+          });
+          const { lockFile, lockContents } = JSON.parse(ready) as {
+            lockFile: string;
+            lockContents: string;
+          };
+          expect(fs.existsSync(lockFile)).toBe(true);
+          const exited = once(child, "exit");
+          child.kill("SIGINT");
+          const [code, signal] = await exited;
+          expect(code, stderr).toBeNull();
+          expect(signal, stderr).toBe("SIGINT");
+          const assertResult = {
+            owned: () => expect(fs.existsSync(lockFile)).toBe(false),
+            replacement: () => expect(fs.readFileSync(lockFile, "utf8")).toBe(replacement),
+            outer: () => {
+              const outerRelease = stdout
+                .split("\n")
+                .find((line) => line.startsWith("NEMOCLAW_OUTER_RELEASE "));
+              expect(outerRelease, stderr).toBeDefined();
+              const outerPayload = JSON.parse(
+                outerRelease?.slice("NEMOCLAW_OUTER_RELEASE ".length) ?? "{}",
+              ) as { lockContents?: string };
+              expect(outerPayload.lockContents).toBe(lockContents);
+              expect(fs.existsSync(lockFile)).toBe(false);
+            },
+          } satisfies Record<typeof mode, () => void>;
+          assertResult[mode]();
+        } finally {
+          child.kill("SIGKILL");
+        }
+      };
+
+      await run("owned");
+      await run("replacement");
+      await run("outer");
+    },
+    testTimeout(30_000),
+  );
 
   it("resumes clean validation exits while cleanup failures and unexpected exits stay terminal (#9732)", () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
@@ -210,9 +390,8 @@ const { onboard } = require(${onboardPath});
     ) {
       throw error;
     }
-    const exitHandler = exitListeners.at(-1);
-    if (!exitHandler) throw new Error("missing exit handler");
-    exitHandler(1);
+    if (exitListeners.length === 0) throw new Error("missing exit handler");
+    for (const exitHandler of exitListeners) exitHandler(1);
     const loaded = onboardSession.loadSession();
     console.log(JSON.stringify({ loaded, exitListeners: exitListeners.length }));
   } finally {
@@ -315,7 +494,7 @@ const { onboard } = require(${onboardPath});
     expect(resumePayload.loaded.status).toBe("in_progress");
     expect(resumePayload.loaded.failure).toBeNull();
     expect(resumePayload.loaded.machine.state).toBe("preflight");
-  });
+  }, testTimeout(30_000));
 
   it("onboard() preserves a resumable session after a normal incomplete result (#9048)", () => {
     const repoRoot = path.join(import.meta.dirname, "../..");

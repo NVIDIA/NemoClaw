@@ -187,23 +187,25 @@ describe("gateway guard legacy keepalive fixture", () => {
     );
   });
 
-  it("recreates only the pinned sandbox container with the reviewed supervisor and legacy workload (#9364)", () => {
+  it("recreates only the pinned sandbox container with the reviewed supervisor and legacy workload (#9364)", async () => {
     const dockerCapture = vi.fn(() => managedRuntimeInspect());
-    const recreate = vi.fn((_, deps: Parameters<LegacyKeepaliveFixtureDeps["recreate"]>[1]) => {
-      const rewritten = JSON.parse(
-        deps?.dockerCapture?.(["inspect", "--type", "container", OLD_CONTAINER_ID], {
-          ignoreError: true,
-        }) ?? "null",
-      );
-      expect(rewritten[0].Config).toMatchObject({
-        Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-        Cmd: ["--workdir", "/sandbox"],
-        Env: [MANAGED_RUNTIME_COMMAND_ENV, "OPENSHELL_SANDBOX_UID=", "OPENSHELL_SANDBOX_GID="],
-      });
-      return successfulResult();
-    });
+    const recreate = vi.fn(
+      async (_, deps: Parameters<LegacyKeepaliveFixtureDeps["recreate"]>[1]) => {
+        const rewritten = JSON.parse(
+          deps?.dockerCapture?.(["inspect", "--type", "container", OLD_CONTAINER_ID], {
+            ignoreError: true,
+          }) ?? "null",
+        );
+        expect(rewritten[0].Config).toMatchObject({
+          Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
+          Cmd: ["--workdir", "/sandbox"],
+          Env: [MANAGED_RUNTIME_COMMAND_ENV, "OPENSHELL_SANDBOX_UID=", "OPENSHELL_SANDBOX_GID="],
+        });
+        return successfulResult();
+      },
+    ) as unknown as LegacyKeepaliveFixtureDeps["recreate"];
 
-    const result = createLegacyKeepaliveFixture(
+    const result = await createLegacyKeepaliveFixture(
       {
         sandboxName: "e2e-2701",
         expectedContainerId: OLD_CONTAINER_ID,
@@ -534,10 +536,10 @@ describe("gateway guard legacy keepalive fixture", () => {
       result: { ...successfulResult(), newContainerId: OLD_CONTAINER_ID },
       error: "did not replace the container",
     },
-  ])("fails closed for $name", ({ result, error }) => {
-    const recreate = vi.fn(() => result) as LegacyKeepaliveFixtureDeps["recreate"];
+  ])("fails closed for $name", async ({ result, error }) => {
+    const recreate = vi.fn(async () => result) as unknown as LegacyKeepaliveFixtureDeps["recreate"];
 
-    expect(() =>
+    await expect(
       createLegacyKeepaliveFixture(
         {
           sandboxName: "e2e-2701",
@@ -545,13 +547,15 @@ describe("gateway guard legacy keepalive fixture", () => {
         },
         { recreate },
       ),
-    ).toThrow(error);
+    ).rejects.toThrow(error);
   });
 
-  it("rejects an abbreviated container ID before recreation", () => {
-    const recreate = vi.fn(() => successfulResult());
+  it("rejects an abbreviated container ID before recreation", async () => {
+    const recreate = vi.fn(async () =>
+      successfulResult(),
+    ) as unknown as LegacyKeepaliveFixtureDeps["recreate"];
 
-    expect(() =>
+    await expect(
       createLegacyKeepaliveFixture(
         {
           sandboxName: "e2e-2701",
@@ -559,7 +563,7 @@ describe("gateway guard legacy keepalive fixture", () => {
         },
         { recreate },
       ),
-    ).toThrow("expected container ID must be a full Docker container ID");
+    ).rejects.toThrow("expected container ID must be a full Docker container ID");
     expect(recreate).not.toHaveBeenCalled();
   });
 
