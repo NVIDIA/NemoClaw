@@ -820,7 +820,8 @@ jobs:
         run: |
           $node = Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw\bin\node.exe'
           & $node --experimental-strip-types --no-warnings --test `
-            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-components.test.mts"
+            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-components.test.mts" `
+            "$env:GITHUB_WORKSPACE\packaging\windows\hermes\portable-git-arguments.test.mts"
           if ($LASTEXITCODE -ne 0) { throw 'The component process diagnostic controls failed.' }
 
       - name: Provision pinned official Hermes components
@@ -849,6 +850,18 @@ jobs:
             --runtime-root $env:HERMES_COMPONENT_ROOT `
             --artifact-directory "$env:RUNNER_TEMP\official-hermes-mxc"
           if ($LASTEXITCODE -ne 0) { throw 'The official Hermes MXC component probe failed.' }
+
+      - name: Upload failed component evidence before baseline cleanup
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: official-hermes-windows-mxc-components-precleanup-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/official-hermes-components/
+            ${{ runner.temp }}/official-hermes-mxc/
+            !${{ runner.temp }}/official-hermes-components/downloads/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Uninstall the component probe baseline
         if: always()

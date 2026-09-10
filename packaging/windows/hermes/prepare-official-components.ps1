@@ -63,22 +63,51 @@ function Stop-OwnedComponentProcess {
     } finally { $killer.Dispose() }
 }
 
-function Invoke-ComponentProcess {
+function Get-ComponentProcessCommandLine {
+    [CmdletBinding(DefaultParameterSetName = 'Arguments')]
     param(
-        [Parameter(Mandatory)][string]$FilePath,
-        [Parameter(Mandatory)][string[]]$Arguments,
-        [Parameter(Mandatory)][ValidatePattern('^[a-z0-9-]+$')][string]$Label,
-        [ValidateRange(1, 900000)][int]$TimeoutMilliseconds
+        [Parameter(Mandatory, ParameterSetName = 'Arguments')][string[]]$Arguments,
+        [Parameter(Mandatory, ParameterSetName = 'PortableGit')][string]$PortableGitDestination
     )
-    $stdout = Join-Path $evidence "$Label-stdout.log"
-    $stderr = Join-Path $evidence "$Label-stderr.log"
+    if ($PSCmdlet.ParameterSetName -eq 'PortableGit') {
+        if ($PortableGitDestination -cnotmatch '^[A-Za-z]:\\NemoClawHermesProbe-[a-f0-9]{12}\\git\z') {
+            throw 'PortableGit extraction requires the owned shallow Git directory.'
+        }
+        # The official SFX reads the raw command line. Its v26.00 parser accepts
+        # quoted -o values, but only a bare -y enables noninteractive extraction.
+        return '-o"' + $PortableGitDestination + '" -y'
+    }
     $quoted = @($Arguments | ForEach-Object {
         if ($_.Contains('"') -or $_.EndsWith('\') -or $_.Contains("`n") -or $_.Contains("`r")) {
             throw 'A component argument cannot be represented by this bounded invocation.'
         }
         '"' + $_ + '"'
     })
+    return $quoted -join ' '
+}
+
+function Invoke-ComponentProcess {
+    [CmdletBinding(DefaultParameterSetName = 'Arguments')]
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [Parameter(Mandatory, ParameterSetName = 'Arguments')][string[]]$Arguments,
+        [Parameter(Mandatory, ParameterSetName = 'PortableGit')][string]$PortableGitDestination,
+        [Parameter(Mandatory)][ValidatePattern('^[a-z0-9-]+$')][string]$Label,
+        [ValidateRange(1, 900000)][int]$TimeoutMilliseconds
+    )
+    $stdout = Join-Path $evidence "$Label-stdout.log"
+    $stderr = Join-Path $evidence "$Label-stderr.log"
+    $commandLine = if ($PSCmdlet.ParameterSetName -eq 'PortableGit') {
+        Get-ComponentProcessCommandLine -PortableGitDestination $PortableGitDestination
+    } else {
+        Get-ComponentProcessCommandLine -Arguments $Arguments
+    }
+    if ($PSCmdlet.ParameterSetName -eq 'PortableGit') {
+        # Compile the read-only observer before starting the extraction clock.
+        . (Join-Path $PSScriptRoot '..\performance\windows-observer.ps1')
+    }
     $process = [Diagnostics.Process]::new()
+    $observer = $null
     $outputFile = $null
     $errorFile = $null
     $started = $false
@@ -88,19 +117,34 @@ function Invoke-ComponentProcess {
     try {
         $process.StartInfo = [Diagnostics.ProcessStartInfo]::new()
         $process.StartInfo.FileName = $FilePath
-        $process.StartInfo.Arguments = $quoted -join ' '
+        $process.StartInfo.Arguments = $commandLine
         $process.StartInfo.UseShellExecute = $false
         $process.StartInfo.CreateNoWindow = $true
         $process.StartInfo.RedirectStandardOutput = $true
         $process.StartInfo.RedirectStandardError = $true
         $outputFile = [IO.File]::Open($stdout, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::Read)
         $errorFile = [IO.File]::Open($stderr, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+        $clock = [Diagnostics.Stopwatch]::StartNew()
         $started = $process.Start()
         if (-not $started) { throw "The component process '$Label' did not start." }
         $null = $process.Handle
         $outputCopy = $process.StandardOutput.BaseStream.CopyToAsync($outputFile)
         $errorCopy = $process.StandardError.BaseStream.CopyToAsync($errorFile)
-        if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+        if ($PSCmdlet.ParameterSetName -eq 'PortableGit') {
+            $observer = New-WindowsPerformanceObserver -Process $process -WatchPath $PortableGitDestination
+            $nextProgress = 15000
+            while ($true) {
+                $sample = Write-WindowsPerformanceSample -Observer $observer -OutputPath (Join-Path $evidence "$Label-samples.jsonl")
+                $remaining = $TimeoutMilliseconds - $clock.ElapsedMilliseconds
+                if ($remaining -le 0) { throw "The component process '$Label' exceeded its deadline." }
+                if ($process.WaitForExit([int][Math]::Min(1000, $remaining))) { break }
+                if ($clock.ElapsedMilliseconds -ge $nextProgress) {
+                    Write-Host "[Hermes components] PortableGit extraction is running: $([int]$clock.Elapsed.TotalSeconds)s, $($sample.measurement.fileGrowth.observedFiles) files observed."
+                    $nextProgress += 15000
+                }
+            }
+            Write-WindowsPerformanceSample -Observer $observer -OutputPath (Join-Path $evidence "$Label-samples.jsonl") | Out-Null
+        } elseif (-not $process.WaitForExit($TimeoutMilliseconds)) {
             throw "The component process '$Label' exceeded its deadline."
         }
         if (-not $outputCopy.Wait(10000) -or -not $errorCopy.Wait(10000)) {
@@ -115,7 +159,7 @@ function Invoke-ComponentProcess {
             try { Stop-OwnedComponentProcess -Process $process }
             catch { $cleanupFailure = $_ }
         }
-        foreach ($resource in @($process, $outputFile, $errorFile)) {
+        foreach ($resource in @($observer, $process, $outputFile, $errorFile)) {
             if ($null -ne $resource) {
                 try { $resource.Dispose() }
                 catch { if ($null -eq $cleanupFailure) { $cleanupFailure = $_ } }
@@ -222,7 +266,7 @@ try {
             }
             'portable-git' {
                 $git = Join-Path $runtime 'git'
-                $extraction = Invoke-ComponentProcess -FilePath $target -Arguments @(('-o' + $git), '-y') -Label 'portable-git-extract' -TimeoutMilliseconds 180000
+                $extraction = Invoke-ComponentProcess -FilePath $target -PortableGitDestination $git -Label 'portable-git-extract' -TimeoutMilliseconds 180000
                 if ($extraction.ExitCode -ne 0) { throw 'Official PortableGit extraction failed.' }
             }
             'python' {
