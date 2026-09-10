@@ -60,15 +60,28 @@ try {
                 }
                 $record = [ordered]@{ kind='observation'; rootPid=$RootProcessId; rootStartedUtc=$started.ToString('O');
                     hostPid=$hostProcess.Id; hostStartedUtc=$hostProcess.StartTime.ToUniversalTime().ToString('O');
-                    hostPath=$hostPath; ports=$ports; sessionPid=$null; openEnabled=$false }
+                    hostPath=$hostPath; ports=$ports; sessionPid=$null; openEnabled=$false; windowFound=$false;
+                    openFound=$false; openName=$null; openControlEnabled=$false; phase=$null; status=$null }
                 if ($null -ne $session -and -not $session.HasExited) {
                     $record.sessionPid = $session.Id
                     $condition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ProcessIdProperty, $session.Id)
                     $window = [Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Children, $condition)
                     if ($null -ne $window) {
+                        $record.windowFound = $true
+                        foreach ($entry in @(@('phase','NativeWebSessionPhase'), @('status','NativeWebSessionStatus'))) {
+                            $textCondition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, $entry[1])
+                            $text = $window.FindFirst([Windows.Automation.TreeScope]::Descendants, $textCondition)
+                            if ($null -ne $text) {
+                                $value = [string]$text.Current.Name
+                                if ($value.Length -gt 4096) { throw 'The owned session presentation exceeded its bound.' }
+                                $record[$entry[0]] = $value
+                            }
+                        }
                         $openCondition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, 'NativeWebSessionOpen')
                         $open = $window.FindFirst([Windows.Automation.TreeScope]::Descendants, $openCondition)
                         $record.openEnabled = $null -ne $open -and $open.Current.IsEnabled -and $open.Current.Name -ceq 'Open Web UI'
+                        $record.openFound = $null -ne $open
+                        if ($null -ne $open) { $record.openName = $open.Current.Name; $record.openControlEnabled = $open.Current.IsEnabled }
                         if (-not $stopped -and $inputLine.IsCompleted) {
                             if ($inputLine.GetAwaiter().GetResult() -cne 'stop') { throw 'The owned session command was not Stop.' }
                             $stopCondition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, 'NativeWebSessionStop')

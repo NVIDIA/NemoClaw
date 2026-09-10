@@ -3,8 +3,13 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   captureFailure,
+  decodeDiagnosticOwnerRead,
+  retainNativeSessionDiagnostics,
   childEnvironment,
   exactChatAddress,
   recordedExec,
@@ -178,4 +183,105 @@ test("screenshot failure retains the original failure and a separate sanitized c
   assert.equal(result.primary.chain[0].message, primary.message);
   assert.equal(result.screenshot, null);
   assert.equal(result.screenshotError?.chain[0].message, "screenshot [REDACTED]");
+});
+
+test("native diagnostic framing admits only the bounded canonical read and close reply", () => {
+  const bytes = Buffer.from('{"owned":"ready"}');
+  assert.deepEqual(
+    decodeDiagnosticOwnerRead(`READY\nOK\t${bytes.toString("base64")}\nOK\n`),
+    bytes,
+  );
+  assert.equal(decodeDiagnosticOwnerRead("READY\nMISS\nOK\n"), null);
+  for (const value of [
+    "READY\nOK\tYQ==\nOK",
+    "READY\nOK\tYQ=\nOK\n",
+    "READY\nERR\tread\nOK\n",
+    "READY\nMISS\nOK\nextra\n",
+  ])
+    assert.throws(() => decodeDiagnosticOwnerRead(value));
+  assert.throws(() =>
+    decodeDiagnosticOwnerRead(
+      `READY\nOK\t${Buffer.alloc(1024 * 1024 + 1).toString("base64")}\nOK\n`,
+    ),
+  );
+});
+
+test("native diagnostic retention copies and redacts closed documents before state removal", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "installed-diagnostics-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const name = "session-diagnostics-" + "a".repeat(20);
+  const directory = path.join(root, name);
+  fs.mkdirSync(directory);
+  fs.writeFileSync(path.join(root, "native-windows.json"), "must not read configuration");
+  const data = Buffer.from(
+    JSON.stringify({
+      schemaVersion: 1,
+      classification: "native-session-success",
+      agent: "openclaw",
+      output: { gateway: "Bearer private-value\nknown-secret" },
+    }),
+  );
+  fs.writeFileSync(path.join(directory, "ready"), data);
+  const saved: { name: string; value: unknown }[] = [];
+  const result = await retainNativeSessionDiagnostics(
+    root,
+    async (value) => {
+      assert.equal(value, directory);
+      return fs.readFileSync(path.join(value, "ready"));
+    },
+    (name, value) => {
+      saved.push({ name, value });
+    },
+    "known-secret",
+  );
+  assert.equal(result.status, "retained");
+  assert.equal(result.retained.length, 1);
+  assert.equal(saved[0].name, "native-session-diagnostic-0.json");
+  assert(!JSON.stringify(saved).includes("known-secret"));
+  assert(!JSON.stringify(saved).includes("private-value"));
+  assert.deepEqual(fs.readFileSync(path.join(directory, "ready")), data);
+});
+
+test("native diagnostic enumeration refuses linked directories and invalid documents", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "installed-diagnostics-refuse-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const target = path.join(root, "actual");
+  fs.mkdirSync(target);
+  const linked = path.join(root, "session-diagnostics-" + "b".repeat(20));
+  fs.symlinkSync(target, linked, "junction");
+  let reads = 0;
+  await assert.rejects(
+    retainNativeSessionDiagnostics(
+      root,
+      async () => {
+        reads++;
+        return null;
+      },
+      () => {},
+      "",
+    ),
+  );
+  assert.equal(reads, 0);
+  fs.unlinkSync(linked);
+  fs.mkdirSync(linked);
+  await assert.rejects(
+    retainNativeSessionDiagnostics(
+      root,
+      async () => Buffer.from("not JSON with private bytes"),
+      () => {},
+      "",
+    ),
+    /document is malformed/u,
+  );
+  await assert.rejects(
+    retainNativeSessionDiagnostics(
+      root,
+      async () =>
+        Buffer.from(
+          JSON.stringify({ schemaVersion: 1, classification: "foreign", agent: "openclaw" }),
+        ),
+      () => {},
+      "",
+    ),
+  );
 });

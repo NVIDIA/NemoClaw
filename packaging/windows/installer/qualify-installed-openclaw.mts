@@ -4,13 +4,14 @@
 // CI-only browser acceptance of the installed executable. Never imported by the app.
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { captureOwned } from "./qualify-finished-package.mts";
+import { sanitizeNativeDiagnostic } from "../runtime/native-session-diagnostics.mts";
 
 export function childEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const allowed = new Set([
@@ -169,6 +170,69 @@ export async function captureFailure(
   return failure;
 }
 
+export function decodeDiagnosticOwnerRead(stdout: string): Buffer | null {
+  const lines = stdout.split(/\r?\n/u);
+  if (lines.length !== 4 || lines[0] !== "READY" || lines[2] !== "OK" || lines[3] !== "")
+    throw new Error("The native diagnostic reader returned invalid framing.");
+  if (lines[1] === "MISS") return null;
+  if (!lines[1].startsWith("OK\t")) throw new Error("The native diagnostic reader rejected ready.");
+  const encoded = lines[1].slice(3);
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.length > 1024 * 1024 || bytes.toString("base64") !== encoded)
+    throw new Error("The native diagnostic reader returned invalid bounded data.");
+  return bytes;
+}
+
+// Enumeration only selects fixed names. The installed native file owner validates
+// the directory/ancestors and reads ready through its existing guarded handles.
+export async function retainNativeSessionDiagnostics(
+  stateRoot: string,
+  readReady: (directory: string) => Promise<Buffer | null>,
+  save: (name: string, document: unknown) => void,
+  secret: string,
+) {
+  const retained: { sourceDirectory: string; output: string; sourceSha256: string }[] = [];
+  if (!fs.existsSync(stateRoot)) return { status: "missing", retained };
+  const root = fs.lstatSync(stateRoot);
+  assert(root.isDirectory() && !root.isSymbolicLink());
+  const names = fs
+    .readdirSync(stateRoot)
+    .filter((name) => /^session-diagnostics-[a-f0-9]{20}$/u.test(name))
+    .sort();
+  assert(names.length <= 8, "The fresh session has too many diagnostic documents.");
+  for (const name of names) {
+    const directory = path.join(stateRoot, name);
+    const stat = fs.lstatSync(directory);
+    assert(stat.isDirectory() && !stat.isSymbolicLink());
+    const bytes = await readReady(directory);
+    assert(
+      bytes !== null && bytes.length <= 1024 * 1024,
+      "The native diagnostic document is absent or oversized.",
+    );
+    const text = bytes.toString("utf8");
+    assert(Buffer.from(text, "utf8").equals(bytes), "The native diagnostic document is not UTF8.");
+    let document;
+    try {
+      document = JSON.parse(text);
+    } catch {
+      throw new Error("The native diagnostic document is malformed.");
+    }
+    assert(
+      document.schemaVersion === 1 &&
+        document.agent === "openclaw" &&
+        ["native-session-success", "native-session-failure"].includes(document.classification),
+    );
+    const output = `native-session-diagnostic-${retained.length}.json`;
+    save(output, JSON.parse(sanitizeNativeDiagnostic(text, [secret])));
+    retained.push({
+      sourceDirectory: name,
+      output,
+      sourceSha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+  }
+  return { status: retained.length ? "retained" : "missing", retained };
+}
+
 function argument(name: string, fallback?: string) {
   const position = process.argv.indexOf(name);
   const value = position < 0 ? fallback : process.argv[position + 1];
@@ -185,6 +249,12 @@ type Observation = {
   ports: number[];
   sessionPid: number | null;
   openEnabled: boolean;
+  windowFound?: boolean;
+  openFound?: boolean;
+  openName?: string | null;
+  openControlEnabled?: boolean;
+  phase?: string | null;
+  status?: string | null;
 };
 
 async function main() {
@@ -249,6 +319,27 @@ async function main() {
   let stopInvoked = false,
     stopped = false;
   const logs = { agentStdout: "", agentStderr: "", observerStderr: "" };
+  const observerStarted = performance.now();
+  const observerRecords: { receivedMs: number; record: unknown }[] = [];
+  let omittedObserverRecords = 0;
+  const httpProbes: Record<string, unknown>[] = [];
+  let omittedHttpProbes = 0;
+  const processEvents: Record<
+    string,
+    { pid: number | undefined; exit?: unknown; close?: unknown }
+  > = {};
+  const observerSnapshot = () =>
+    structuredClone({
+      lastObservation: latest ?? null,
+      records: [...observerRecords],
+      omittedRecords: omittedObserverRecords,
+      httpProbes: [...httpProbes],
+      omittedHttpProbes,
+      stopInvoked,
+      stopped,
+      processes: processEvents,
+      observerFailure: observerFailure ? sanitizedFailure(observerFailure, secret) : null,
+    });
   const command = async (name: string, args: string[], input = "") => {
     const result = await captureOwned(launcher, args, environment, input, 60_000);
     results[name] = { ...result, stdout: redact(result.stdout), stderr: redact(result.stderr) };
@@ -272,12 +363,22 @@ async function main() {
       clearTimeout(timer!);
     }
   };
-  const closed = (child: ChildProcess) =>
+  const closed = (child: ChildProcess, label: string) =>
     new Promise<number>((resolve) => {
+      const events: { pid: number | undefined; exit?: unknown; close?: unknown } = {
+        pid: child.pid,
+      };
+      processEvents[label] = events;
+      child.once("exit", (code, signal) => {
+        events.exit = { code, signal, elapsedMs: performance.now() - observerStarted };
+      });
       child.once("error", (error) => {
         observerFailure ??= error;
       });
-      child.once("close", (code) => resolve(code ?? 1));
+      child.once("close", (code, signal) => {
+        events.close = { code, signal, elapsedMs: performance.now() - observerStarted };
+        resolve(code ?? 1);
+      });
     });
   const capture = (child: ChildProcess, channel: "stdout" | "stderr", key: keyof typeof logs) => {
     child[channel]!.on("data", (chunk: Buffer) => {
@@ -345,7 +446,7 @@ async function main() {
       ],
       { env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
     );
-    agentClosed = closed(agent);
+    agentClosed = closed(agent, "guardian");
     agent.stdin!.end();
     capture(agent, "stdout", "agentStdout");
     capture(agent, "stderr", "agentStderr");
@@ -363,7 +464,7 @@ async function main() {
       ],
       { env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
     );
-    observerClosed = closed(observer);
+    observerClosed = closed(observer, "observer");
     observer.stdin!.on("error", () => {});
     capture(observer, "stderr", "observerStderr");
     let pending = "",
@@ -400,6 +501,11 @@ async function main() {
             results.nativeStop = value;
             stopped = true;
           } else throw new Error("Unexpected installed session observer record.");
+          if (observerRecords.length === 128) {
+            observerRecords.shift();
+            omittedObserverRecords++;
+          }
+          observerRecords.push({ receivedMs: performance.now() - observerStarted, record: value });
         } catch (error) {
           observerFailure ??=
             error instanceof Error ? error : new Error("Invalid observer record.");
@@ -416,18 +522,46 @@ async function main() {
       if (latest?.openEnabled)
         for (const port of latest.ports) {
           const candidate = `http://127.0.0.1:${port}`;
+          const probe: Record<string, unknown> = {
+            port,
+            startedMs: performance.now() - observerStarted,
+          };
           try {
             const response = await fetch(candidate + "/chat", {
               redirect: "error",
               signal: AbortSignal.timeout(1000),
             });
+            probe.status = response.status;
+            const type = response.headers.get("content-type") ?? "";
+            probe.contentType = type.startsWith("text/html")
+              ? "html"
+              : type.startsWith("application/json")
+                ? "json"
+                : type
+                  ? "other"
+                  : "absent";
             const html = await response.text();
+            probe.bodyBytes = Buffer.byteLength(html, "utf8");
+            probe.bodyCharacters = html.length;
+            probe.dashboardMarker = /<openclaw-app(?:\s|>)/u.test(html);
             if (response.ok && html.length < 65536 && /<openclaw-app(?:\s|>)/u.test(html)) {
               origin = candidate;
               break;
             }
-          } catch {
-            /* Other explicitly owned loopback listeners are not dashboards. */
+          } catch (error) {
+            // No response body, raw header, URL query or arbitrary error text is retained.
+            probe.errorName = error instanceof Error ? error.name : "UnknownError";
+            const cause = error instanceof Error ? error.cause : null;
+            const code = cause && typeof cause === "object" && "code" in cause ? cause.code : null;
+            probe.errorCode =
+              typeof code === "string" && /^[A-Z0-9_]{1,64}$/u.test(code) ? code : null;
+          } finally {
+            probe.completedMs = performance.now() - observerStarted;
+            if (httpProbes.length === 128) {
+              httpProbes.shift();
+              omittedHttpProbes++;
+            }
+            httpProbes.push(probe);
           }
         }
       if (!origin) await sleep(500);
@@ -593,6 +727,12 @@ async function main() {
     };
   } catch (error) {
     primary = error;
+    results.observerAtFailure = observerSnapshot();
+    try {
+      write("owned-observer-at-failure.json", observerSnapshot());
+    } catch (failure) {
+      results.observerEvidenceFailure = sanitizedFailure(failure, secret);
+    }
     results.failureDiagnostics = await captureFailure(
       error,
       failurePage,
@@ -668,6 +808,28 @@ async function main() {
       } catch (error) {
         cleanupFailed("owned observer", error);
       }
+    }
+    try {
+      write("owned-session-observer.json", observerSnapshot());
+      results.nativeSessionDiagnostics = await retainNativeSessionDiagnostics(
+        stateRoot,
+        async (directory) => {
+          const reply = await captureOwned(
+            launcher,
+            ["--native-ui-file-owner", directory],
+            environment,
+            "read\tready\nclose\n",
+            10_000,
+          );
+          assert.equal(reply.failure, null);
+          assert.equal(reply.exitCode, 0);
+          return decodeDiagnosticOwnerRead(reply.stdout);
+        },
+        write,
+        secret,
+      );
+    } catch (error) {
+      results.nativeSessionDiagnosticFailure = sanitizedFailure(error, secret);
     }
     if (binding) {
       try {

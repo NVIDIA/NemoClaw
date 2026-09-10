@@ -61,7 +61,7 @@ function Get-CompiledMsiCounts([string]$Path) {
             $view = $null; $record = $null; $count = 0
             try {
                 $query = if ($table -ceq 'File') { 'SELECT `FileSize` FROM `File`' } else { 'SELECT `Component` FROM `Component`' }
-                $view = $database.OpenView($query); $view.Execute()
+                $view = $database.OpenView($query); $null = $view.Execute()
                 while ($null -ne ($record = $view.Fetch())) {
                     try {
                         $count++
@@ -72,7 +72,7 @@ function Get-CompiledMsiCounts([string]$Path) {
                 if ($table -ceq 'File') { $result.fileCount = $count } else { $result.componentCount = $count }
             } finally {
                 if ($null -ne $record) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($record) }
-                if ($null -ne $view) { try { $view.Close() } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view) } }
+                if ($null -ne $view) { try { $null = $view.Close() } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view) } }
             }
         }
         return $result

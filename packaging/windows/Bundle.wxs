@@ -15,7 +15,8 @@
     <BootstrapperApplication SourceFile="$(var.BootstrapperPath)">
       <PayloadGroupRef Id="NemoClawBootstrapperPayloads" />
     </BootstrapperApplication>
-    <Chain>
+    <!-- Keep transactional rollback; omit the separate per-install OS restore point. -->
+    <Chain DisableSystemRestore="yes">
       <?if $(var.SystemDriveMetadataPreparation) = "true" ?>
       <!-- Enable only after this exact helper has passed system-root and MXC
            launch qualification. The null-device prerequisite stays upstream. -->

@@ -11,7 +11,7 @@ on:
       finished_windows_product_version:
         description: MSI product version for the finished preview (must be newer than the legacy preview)
         required: false
-        default: "0.1.1"
+        default: "0.1.2"
         type: string
       run_windows_native_installer:
         description: Build the finished native OpenClaw preview installer, then test it
@@ -326,6 +326,26 @@ jobs:
             try {
               Invoke-OwnedSetup '-uninstall' "$work\uninstall.log"
               $timings['installationRootRemoved'] = -not (Test-Path -LiteralPath $installation)
+              $remaining = [Collections.Generic.List[object]]::new()
+              $pending = [Collections.Generic.Queue[IO.FileSystemInfo]]::new()
+              $truncated = $false
+              if (-not $timings.installationRootRemoved) { $pending.Enqueue((Get-Item -LiteralPath $installation -Force)) }
+              while ($pending.Count -gt 0) {
+                $item = $pending.Dequeue()
+                $redirected = ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+                $isDirectory = ($item.Attributes -band [IO.FileAttributes]::Directory) -ne 0
+                $relative = [IO.Path]::GetRelativePath($installation, $item.FullName).Replace('\', '/')
+                $kind = if ($redirected) { 'reparse' } elseif ($isDirectory) { 'directory' } else { 'file' }
+                $length = if (-not $redirected -and $item -is [IO.FileInfo]) { $item.Length } else { $null }
+                $remaining.Add(@{ path=$relative; type=$kind; bytes=$length })
+                if ($isDirectory -and -not $redirected) {
+                  foreach ($child in ([IO.DirectoryInfo]$item).EnumerateFileSystemInfos()) {
+                    if ($remaining.Count + $pending.Count -ge 4096) { $truncated = $true; break }
+                    $pending.Enqueue($child)
+                  }
+                }
+              }
+              $timings['remainingInstallation'] = @{ entries=$remaining.ToArray(); truncated=$truncated; entryLimit=4096; contentRead=$false; reparseTraversal=$false }
             } catch { if ($null -eq $primary) { $primary = $_ } else { Write-Warning 'The original failure is preserved; preview cleanup also failed.' } }
           }
           try { [IO.File]::WriteAllText("$work\installed-stage-timings.json", ($timings | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false)) }
