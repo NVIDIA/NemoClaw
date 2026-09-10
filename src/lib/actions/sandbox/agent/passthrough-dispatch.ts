@@ -87,6 +87,13 @@ import type {
   OpenShellSandboxSessionExecutor,
 } from "../../../adapters/openshell/sandbox-session";
 
+import { getKnownSandboxTargetGatewayName } from "../gateway-target";
+import { wrapOpenClawAgentCommandWithRuntimeEnv } from "../runtime-env";
+import {
+  agentDispatchDeadlineSeconds,
+  canCloseAgentStdin,
+} from "../../../domain/sandbox/openclaw-agent-args";
+
 /**
  * Exit code for a dispatch that reported success without delivering a turn.
  * Matches the wrapper's other non-recoverable dispatch failures.
@@ -106,6 +113,42 @@ export async function runAgentDispatch(
   const result = await executor.start(request).completion;
   result.release();
   return { outcome: result.outcome, stdout: result.stdout, stderr: result.stderr };
+}
+
+export type OpenClawAgentDispatchDeps = {
+  getOpenshellBinary?: () => string;
+  getGatewayName?: (sandboxName: string) => string | null;
+  runDispatch?: AgentDispatchRunner;
+  stdinIsTty?: () => boolean;
+};
+
+/** Both output formats use the same argv, owning gateway, deadline, and stdin policy. */
+export function runOpenClawAgentDispatch(
+  sandboxName: string,
+  command: readonly string[],
+  deps: OpenClawAgentDispatchDeps = {},
+): Promise<AgentDispatchResult> {
+  const gatewayName = (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName);
+  const runDispatch: AgentDispatchRunner =
+    deps.runDispatch ??
+    ((request) =>
+      runAgentDispatch(
+        request,
+        createCliOpenShellSandboxSessionExecutor({
+          resolveBinary: deps.getOpenshellBinary,
+          stdinIsTty: deps.stdinIsTty,
+        }),
+      ));
+  return runDispatch({
+    kind: "command",
+    sandboxName,
+    target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
+    command: wrapOpenClawAgentCommandWithRuntimeEnv(command),
+    tty: false,
+    output: "capture",
+    timeoutSeconds: agentDispatchDeadlineSeconds(command),
+    ...(canCloseAgentStdin(command) ? { stdin: false } : {}),
+  });
 }
 
 /**

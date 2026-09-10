@@ -115,6 +115,8 @@ import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import {
+  type OpenClawAgentDispatchDeps,
+  runOpenClawAgentDispatch,
   isSilentAgentDispatch,
   isTimedOutAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
@@ -126,12 +128,7 @@ import {
   writeSilentAgentDispatchFailure,
   writeTimedOutAgentTurnFailure,
 } from "./passthrough-help";
-import {
-  type AgentJsonPassthroughProcess,
-  type OpenClawAgentDispatchDeps,
-  runAgentJsonPassthrough,
-  runOpenClawAgentDispatch,
-} from "./passthrough-json";
+import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
 import {
   hasOpenClawAgentSelector,
   requestsOpenClawJsonOutput,

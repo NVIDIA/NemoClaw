@@ -83,6 +83,31 @@ afterEach(() => {
 });
 
 describe("OpenShell sessions", () => {
+  it.each([
+    { stdinIsTty: false, forwarded: [["SIGINT"]] },
+    { stdinIsTty: true, forwarded: [] },
+  ])(
+    "forwards inherited-session SIGINT only for a headless parent (TTY: $stdinIsTty)",
+    async ({ stdinIsTty, forwarded }) => {
+      const f = sessionHarness(stdinIsTty);
+      const session = f.executor.start({ ...command, output: "inherit" });
+      try {
+        expect(f.signals.listenerCount("SIGINT")).toBe(1);
+        f.signals.emit("SIGINT");
+        expect(vi.mocked(f.child.kill).mock.calls).toEqual(forwarded);
+      } finally {
+        f.events.emit("close", null, "SIGINT");
+        const completed = await session.completion;
+        expect(completed.outcome).toEqual({ kind: "signalled", signal: "SIGINT", exitCode: 130 });
+        expect(f.restoreTerminal).toHaveBeenCalledOnce();
+        expect(f.signals.listenerCount("SIGINT")).toBe(1);
+        completed.release();
+        expect(f.signals.listenerCount("SIGINT")).toBe(0);
+        expect(f.signals.listenerCount("SIGTERM")).toBe(0);
+      }
+    },
+  );
+
   it.each(
     (["capture", "inherit"] as const).flatMap((output) =>
       [false, undefined].map((stdin) => ({ output, stdin })),

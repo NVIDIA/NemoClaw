@@ -6,18 +6,10 @@ import {
   type OpenClawIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
 } from "../../../openclaw/agent-json-provenance";
-import { wrapOpenClawAgentCommandWithRuntimeEnv } from "../exec";
-import { createCliOpenShellSandboxSessionExecutor } from "../../../adapters/openshell/sandbox-command-cli";
-import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
-  agentDispatchDeadlineSeconds,
-  canCloseAgentStdin,
-} from "../../../domain/sandbox/openclaw-agent-args";
-import {
-  type AgentDispatchRunner,
-  type AgentDispatchResult,
+  type OpenClawAgentDispatchDeps,
+  runOpenClawAgentDispatch,
   isSilentAgentDispatch,
-  runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
 } from "./passthrough-dispatch";
 import {
@@ -25,42 +17,6 @@ import {
   writeSilentAgentDispatchFailure,
   writeTimedOutAgentTurnFailure,
 } from "./passthrough-help";
-
-export type OpenClawAgentDispatchDeps = {
-  getOpenshellBinary?: () => string;
-  getGatewayName?: (sandboxName: string) => string | null;
-  runDispatch?: AgentDispatchRunner;
-  stdinIsTty?: () => boolean;
-};
-
-/** Both output formats use the same argv, owning gateway, deadline, and stdin policy. */
-export function runOpenClawAgentDispatch(
-  sandboxName: string,
-  command: readonly string[],
-  deps: OpenClawAgentDispatchDeps = {},
-): Promise<AgentDispatchResult> {
-  const gatewayName = (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName);
-  const runDispatch: AgentDispatchRunner =
-    deps.runDispatch ??
-    ((request) =>
-      runAgentDispatch(
-        request,
-        createCliOpenShellSandboxSessionExecutor({
-          resolveBinary: deps.getOpenshellBinary,
-          stdinIsTty: deps.stdinIsTty,
-        }),
-      ));
-  return runDispatch({
-    kind: "command",
-    sandboxName,
-    target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
-    command: wrapOpenClawAgentCommandWithRuntimeEnv(command),
-    tty: false,
-    output: "capture",
-    timeoutSeconds: agentDispatchDeadlineSeconds(command),
-    ...(canCloseAgentStdin(command) ? { stdin: false } : {}),
-  });
-}
 
 /** Exit code for a turn the payload itself marks incomplete or abandoned. */
 export const INCOMPLETE_AGENT_TURN_EXIT_CODE = 1;

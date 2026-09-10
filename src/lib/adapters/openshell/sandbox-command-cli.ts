@@ -515,6 +515,7 @@ export function createCliOpenShellSandboxSessionExecutor(
                   "inherit",
                 ]),
               deps.signalSource,
+              { forwardSigint: !stdinIsTty },
             );
       const completion = execution.then((result) => {
         finished = true;

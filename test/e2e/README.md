@@ -36,8 +36,11 @@ before those targets run; local runners must provide it themselves.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
 The `agent-turn-latency` target checks the configured host CLI with both text and
-JSON output, including explicit local mode and a requested timeout. Inline-message
-turns keep the parent stdin pipe open. File-message turns exercise ordinary files,
+JSON output, including explicit local mode and a requested timeout. For inline
+messages, the fixture keeps the host pipe open while the wrapper closes the dispatch
+child's stdin. The fixture holds its writer open until command completion, so
+inheriting that pipe blocks until the test timeout, regardless of the model-time cap.
+File-message turns exercise ordinary files,
 paths with spaces, symlinks and relative chains, with EOF or competing stdin.
 Each successful turn must return the model answer from the selected input.
 Direct OpenClaw and wrapped calls must preserve native rejection of empty files
@@ -45,7 +48,8 @@ and inaccessible stdin paths. OpenShell 0.0.106 creates stdin pipes before dropp
 the child UID: the descriptor remains readable, but pathname reopening fails with
 EACCES. Real-child tests separately verify byte forwarding through readable stdin
 paths and their symlinks; the wrapper preserves that input without changing native
-file permissions.
+file permissions. These live checks cover native OpenClaw file loading and the
+sandbox's UID and filesystem boundaries, which the host-child fixtures do not reproduce.
 These cases are selectable for both Docker and Podman through the existing runtime
 matrix. Host stdin is preserved for nonempty message-file arguments because only
 the sandbox can resolve their paths.

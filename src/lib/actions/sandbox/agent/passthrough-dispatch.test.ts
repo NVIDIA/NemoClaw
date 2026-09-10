@@ -6,9 +6,9 @@ import { EventEmitter } from "node:events";
 import type { CapturedProcessChild } from "../../../core/process-capture";
 import type { ProcessSessionSignals } from "../../../core/process-session";
 import { createCliOpenShellSandboxSessionExecutor } from "../../../adapters/openshell/sandbox-command-cli";
-import { runOpenClawAgentDispatch } from "./passthrough-json";
 import {
   runAgentDispatch,
+  runOpenClawAgentDispatch,
   isSilentAgentDispatch,
   isTimedOutAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
@@ -356,8 +356,9 @@ describe("agent dispatch execution deadline", () => {
               stdinIsTty: () => true,
               signalSource: harness.signalSource,
               spawnChild: (_binary, spawnArgs) => {
-                const hostTimeoutIndex = spawnArgs.indexOf("--timeout");
-                const hostTimeoutMilliseconds = Number(spawnArgs[hostTimeoutIndex + 1]) * 1000;
+                const sessionArgs = spawnArgs.slice(0, spawnArgs.indexOf("--"));
+                const hostTimeoutIndex = sessionArgs.indexOf("--timeout");
+                const hostTimeoutMilliseconds = Number(sessionArgs[hostTimeoutIndex + 1]) * 1000;
                 setTimeout(() => harness.child.kill("SIGTERM"), hostTimeoutMilliseconds);
                 setTimeout(() => {
                   harness.stdout.emit("data", timeoutReport);
