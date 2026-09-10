@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -164,6 +165,23 @@ describe("live E2E target gating", () => {
     });
   });
 
+  it(
+    "keeps the formatted bootstrap entry point valid through real Vitest collection",
+    testTimeoutOptions(35_000),
+    () => {
+      const formatted = spawnSync(
+        process.execPath,
+        [
+          path.join(REPO_ROOT, "node_modules", "oxfmt", "bin", "oxfmt"),
+          "--check",
+          path.join(LIVE_E2E_ROOT, "bootstrap-install-smoke.test.ts"),
+        ],
+        { cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000 },
+      );
+      expect(formatted.status, formatted.stderr || formatted.stdout).toBe(0);
+    },
+  );
+
   it.concurrent(
     "collects the bootstrap install test through the trusted-main legacy path",
     collectorTimeoutOptions(3),
@@ -175,10 +193,12 @@ describe("live E2E target gating", () => {
         files: ["launchable-smoke.test.ts"],
       });
 
-      expect(legacy.status, legacy.stderr || legacy.stdout).toBe(0);
-      expect(linesForFile(legacy.lines, "launchable-smoke.test.ts")).toEqual([
-        "[e2e-live] test/e2e/live/launchable-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
-      ]);
+      context.expect(legacy.status, legacy.stderr || legacy.stdout).toBe(0);
+      context
+        .expect(linesForFile(legacy.lines, "launchable-smoke.test.ts"))
+        .toEqual([
+          "[e2e-live] test/e2e/live/launchable-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
+        ]);
 
       const renamed = await listLiveTests({
         enabled: true,
@@ -186,10 +206,12 @@ describe("live E2E target gating", () => {
         files: ["bootstrap-install-smoke.test.ts"],
       });
 
-      expect(renamed.status, renamed.stderr || renamed.stdout).toBe(0);
-      expect(linesForFile(renamed.lines, "bootstrap-install-smoke.test.ts")).toEqual([
-        "[e2e-live] test/e2e/live/bootstrap-install-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
-      ]);
+      context.expect(renamed.status, renamed.stderr || renamed.stdout).toBe(0);
+      context
+        .expect(linesForFile(renamed.lines, "bootstrap-install-smoke.test.ts"))
+        .toEqual([
+          "[e2e-live] test/e2e/live/bootstrap-install-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
+        ]);
 
       const inactive = await listLiveTests({
         enabled: true,
@@ -197,8 +219,8 @@ describe("live E2E target gating", () => {
         files: ["bootstrap-install-smoke.test.ts"],
       });
 
-      expect(inactive.status, inactive.stderr || inactive.stdout).toBe(0);
-      expect(linesForFile(inactive.lines, "bootstrap-install-smoke.test.ts")).toEqual([]);
+      context.expect(inactive.status, inactive.stderr || inactive.stdout).toBe(0);
+      context.expect(linesForFile(inactive.lines, "bootstrap-install-smoke.test.ts")).toEqual([]);
     },
   );
 
@@ -230,18 +252,20 @@ describe("live E2E target gating", () => {
       const gate = "NEMOCLAW_ISSUE_4434_LIVE";
       const disabled = await listLiveTests({ enabled: true, files: [file] });
 
-      expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
+      context.expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
       const enabled = await listLiveTests({
         enabled: true,
         env: { [gate]: "1" },
         files: [file],
       });
 
-      expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
-      expect(
-        linesForFile(enabled.lines, file).length,
-        `${file} should collect more tests when ${gate}=1`,
-      ).toBeGreaterThan(linesForFile(disabled.lines, file).length);
+      context.expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
+      context
+        .expect(
+          linesForFile(enabled.lines, file).length,
+          `${file} should collect more tests when ${gate}=1`,
+        )
+        .toBeGreaterThan(linesForFile(disabled.lines, file).length);
     },
   );
 
@@ -261,10 +285,10 @@ describe("live E2E target gating", () => {
         files: [file],
       });
 
-      expect(result.status, result.stderr || result.stdout).toBe(0);
-      expect(linesForFile(result.lines, file)).toEqual([
-        `[e2e-live] test/e2e/live/${file} > ${expectedTest}`,
-      ]);
+      context.expect(result.status, result.stderr || result.stdout).toBe(0);
+      context
+        .expect(linesForFile(result.lines, file))
+        .toEqual([`[e2e-live] test/e2e/live/${file} > ${expectedTest}`]);
     },
   );
 
@@ -279,8 +303,8 @@ describe("live E2E target gating", () => {
         env: { NEMOCLAW_MCP_BRIDGE_AGENT: "all" },
         files: [file],
       });
-      expect(invalid.status).not.toBe(0);
-      expect(invalid.stderr).toContain("Unsupported NEMOCLAW_MCP_BRIDGE_AGENT: all");
+      context.expect(invalid.status).not.toBe(0);
+      context.expect(invalid.stderr).toContain("Unsupported NEMOCLAW_MCP_BRIDGE_AGENT: all");
     },
   );
 
@@ -300,13 +324,15 @@ describe("live E2E target gating", () => {
         files: [file],
       });
 
-      expect(unknown.status, unknown.stdout).not.toBe(0);
-      expect(`${unknown.stdout}${unknown.stderr}`).toContain("Unknown target 'does-not-exist'");
+      context.expect(unknown.status, unknown.stdout).not.toBe(0);
+      context
+        .expect(`${unknown.stdout}${unknown.stderr}`)
+        .toContain("Unknown target 'does-not-exist'");
 
       const empty = await listLiveTests({ enabled: true, env: { TARGET_ID: "" }, files: [file] });
 
-      expect(empty.status, empty.stdout).not.toBe(0);
-      expect(`${empty.stdout}${empty.stderr}`).toContain("Selected target ID ''");
+      context.expect(empty.status, empty.stdout).not.toBe(0);
+      context.expect(`${empty.stdout}${empty.stderr}`).toContain("Selected target ID ''");
 
       const unsafe = await listLiveTests({
         enabled: true,
@@ -314,8 +340,10 @@ describe("live E2E target gating", () => {
         files: [file],
       });
 
-      expect(unsafe.status, unsafe.stdout).not.toBe(0);
-      expect(`${unsafe.stdout}${unsafe.stderr}`).toContain("Selected target ID 'unsafe/id'");
+      context.expect(unsafe.status, unsafe.stdout).not.toBe(0);
+      context
+        .expect(`${unsafe.stdout}${unsafe.stderr}`)
+        .toContain("Selected target ID 'unsafe/id'");
     },
   );
 
@@ -335,8 +363,8 @@ describe("live E2E target gating", () => {
         files: [file],
       });
 
-      expect(result.status, result.stderr || result.stdout).toBe(0);
-      expect(linesForFile(result.lines, file).length).toBeGreaterThan(0);
+      context.expect(result.status, result.stderr || result.stdout).toBe(0);
+      context.expect(linesForFile(result.lines, file).length).toBeGreaterThan(0);
     },
   );
 
@@ -361,10 +389,10 @@ describe("live E2E target gating", () => {
         files: [file],
       });
 
-      expect(result.status, result.stderr || result.stdout).toBe(0);
-      expect(linesForFile(result.lines, file).some((line) => line.endsWith(testName))).toBe(
-        process.platform === "linux",
-      );
+      context.expect(result.status, result.stderr || result.stdout).toBe(0);
+      context
+        .expect(linesForFile(result.lines, file).some((line) => line.endsWith(testName)))
+        .toBe(process.platform === "linux");
     },
   );
 });

@@ -14,7 +14,6 @@ import {
   type OpenShellSandboxObservation,
   type OpenShellSandboxObserver,
 } from "../../adapters/openshell/sandbox-observer";
-import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
   captureResolvedOpenshell,
@@ -55,6 +54,7 @@ import {
   assertNoOpenShellGatewayEndpointOverride,
   OpenShellGatewayEndpointOverrideError,
 } from "../../openshell-gateway-endpoint-guard";
+import { emitPortableOpenClawAlreadyRunningTiming } from "../../onboard/experimental/portable-demo-lifecycle-timing";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact, redactFull } from "../../security/redact";
@@ -2207,15 +2207,12 @@ export function printInteractiveSessionHints(sandboxName: string): void {
 
   // Active session hint — inform if already connected in another terminal
   try {
-    const opsBinConnect = resolveOpenshell();
-    if (opsBinConnect) {
-      const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinConnect));
-      if (sessionResult.detected && sessionResult.sessions.length > 0) {
-        const count = sessionResult.sessions.length;
-        console.log(
-          `  ${D}Note: ${count} existing SSH session${count > 1 ? "s" : ""} to '${sandboxName}' detected (another terminal).${R}`,
-        );
-      }
+    const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps());
+    if (sessionResult.detected && sessionResult.sessions.length > 0) {
+      const count = sessionResult.sessions.length;
+      console.log(
+        `  ${D}Note: ${count} existing SSH session${count > 1 ? "s" : ""} to '${sandboxName}' detected (another terminal).${R}`,
+      );
     }
   } catch {
     /* non-fatal — don't block connect on session detection failure */
@@ -2580,7 +2577,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
           ),
         );
         probeTiming!.setLifecycleAction("reused");
-        if (authority.kind === "hermes") {
+        if (authority.kind === "openclaw") {
+          emitPortableOpenClawAlreadyRunningTiming();
+        } else if (authority.kind === "hermes") {
           const acceptedHermesAuthority = hermesReadinessAuthority;
           if (!acceptedHermesAuthority) {
             probeTiming!.markFailureStage("authority");

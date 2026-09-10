@@ -20,7 +20,7 @@ Use this procedure only when the maintainer requests a new trusted `main` dispat
 A generic E2E request must not authorize the Brev Launchable path. Do not infer full mode from “all”
 or “complete.” Ask only when the request contains conflicting mode phrases.
 
-Ordinary mode selects the default E2E suite without `Staging Brev Launchable`. Focused mode
+Ordinary mode selects the default E2E suite without `Exact staging Brev Launchable`. Focused mode
 selects named jobs or typed targets; set only one selector input. Launchable mode runs only that
 job. Full mode adds it to the default suite.
 
@@ -42,7 +42,7 @@ Before dispatch:
 - remove external resources that target cleanup did not remove; and
 - rotate or revoke any credential that candidate code could have copied.
 
-`Staging Brev Launchable` uses `BREV_API_KEY` and `BREV_ORG_ID` during trusted host
+`Exact staging Brev Launchable` uses `BREV_API_KEY` and `BREV_ORG_ID` during trusted host
 preparation. It exposes `NEMOCLAW_IMAGE_DISPATCH_TOKEN` only to the trusted host script as
 `GH_TOKEN`. It exports the public `NVIDIA_API_KEY` secret as `NVIDIA_INFERENCE_API_KEY` into the Brev
 guest for full E2E. Candidate code in that guest can read the inference key.
@@ -66,8 +66,9 @@ git fetch --prune origin main
 CANDIDATE_SHA="$(git rev-parse origin/main)"
 ```
 
-A new dispatch tests the `origin/main` commit resolved here. If the caller supplied another candidate
-SHA, report the difference. Do not reject it or decide the release outcome.
+A new dispatch tests the `origin/main` commit resolved here. It cannot select an arbitrary historical
+commit. If the caller supplied another candidate SHA, report that this path cannot test it. Do not
+dispatch a different commit or decide the release outcome.
 
 ## Dispatch Once
 
@@ -144,7 +145,8 @@ Wait for completion:
 gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw
 ```
 
-The Launchable concurrency group does not cancel a running E2E job. GitHub can replace an older pending run with a newer pending run in the same group.
+The Launchable concurrency group runs one entry at a time and preserves up to 100 pending entries
+with `queue: max`. GitHub cancels new entries when the queue is full.
 
 ## Verify and Report
 
@@ -163,7 +165,7 @@ Require the selected run to report `head_sha` equal to `CANDIDATE_SHA` and `stat
 `completed`. A successful ordinary, focused, Launchable, or full run has workflow conclusion
 `success`. Otherwise, return each failed, cancelled, skipped, or running job and URL.
 
-For Launchable mode, also require one completed, successful `Staging Brev Launchable` job.
+For Launchable mode, also require one completed, successful `Exact staging Brev Launchable` job.
 Preserve links to `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` for diagnosis.
 
 For full mode, also require one completed, successful `Release qualification` job. A skipped, cancelled, queued, or failed aggregate is not a passing full run.

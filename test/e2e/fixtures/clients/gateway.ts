@@ -146,10 +146,10 @@ export class GatewayClient {
       "sh",
       [
         "-lc",
-        `pid_file=\"$HOME/${DOCKER_DRIVER_GATEWAY_PID_RELPATH.join("/")}\"; ` +
-          `if [ -f \"$pid_file\" ]; then ` +
-          `pid=\"$(tr -d '[:space:]' <\"$pid_file\" 2>/dev/null || true)\"; ` +
-          `if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then printf '%s\\n' \"$pid\"; exit 0; fi; ` +
+        `pid_file="$HOME/${DOCKER_DRIVER_GATEWAY_PID_RELPATH.join("/")}"; ` +
+          `if [ -f "$pid_file" ]; then ` +
+          `pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"; ` +
+          `if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then printf '%s\\n' "$pid"; exit 0; fi; ` +
           `fi; exit 1`,
       ],
       {

@@ -159,15 +159,15 @@ function parseRecoveryRecord(raw: string): RebuildRecoveryBackupRecord | null {
             "transactionId",
           ]
         : value?.schemaVersion === 2
-        ? [
-            "backupTimestamp",
-            "gatewayName",
-            "gatewayPort",
-            "sandboxName",
-            "schemaVersion",
-            "transactionId",
-          ]
-        : ["backupTimestamp", "sandboxName", "schemaVersion", "transactionId"];
+          ? [
+              "backupTimestamp",
+              "gatewayName",
+              "gatewayPort",
+              "sandboxName",
+              "schemaVersion",
+              "transactionId",
+            ]
+          : ["backupTimestamp", "sandboxName", "schemaVersion", "transactionId"];
     if (
       !value ||
       typeof value !== "object" ||
@@ -259,10 +259,7 @@ function recoveryRecordMatches(
   );
 }
 
-function replaceRecoveryRecord(
-  backupPath: string,
-  record: RebuildRecoveryBackupRecordV3,
-): void {
+function replaceRecoveryRecord(backupPath: string, record: RebuildRecoveryBackupRecordV3): void {
   const filePath = recoveryPath(backupPath);
   const temporaryPath = `${filePath}.tmp-${randomUUID()}`;
   let descriptor: number | null = null;
