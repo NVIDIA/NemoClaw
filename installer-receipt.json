@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "classification": "unsigned-native-windows-arm64-preview-qualification-failed",
-  "candidateSha": "f8a1d8c702c879d2984d76d2e0419641bb1ccd97",
+  "classification": "unsigned-native-windows-arm64-preview-qualification-pending",
+  "candidateSha": "ed71ba30a6192544d48e373b5a73816ce2ab89b5",
   "sourceRepository": "https://github.com/NVIDIA/NemoClaw",
   "sourcePullRequest": 10799,
-  "sourceWorkflowRun": 34432913829,
+  "sourceWorkflowRun": 34471812081,
   "sourceWorkflowAttempts": [
     1
   ],
-  "sourceArtifactId": 10137183974,
-  "packageManifestSha256": "d36e977401cf8188350e657137bf649c654f4554a6c4da299f9b2b9353e7066e",
+  "sourceArtifactId": 10153321775,
+  "packageManifestSha256": "18ccf6ffebdf3e7af6ff9c0aaab3168b18efc879892f516114355507b20a0f07",
   "openshell": {
     "repository": "https://github.com/NVIDIA/OpenShell",
     "pullRequest": 2721,
@@ -19,25 +19,25 @@
   "files": [
     {
       "name": "NemoClaw-0.1.0-windows-arm64.msi",
-      "size": 260871084,
-      "sha256": "4dce45ab9c1306062fc2d0b4825eca8a9801d9904fbd67748a62a40ba36a3fc8"
+      "size": 259973780,
+      "sha256": "2eadf86ba80fbfbb0b84803c32835fcfff0a33a19e2629ead346610db8fb6a8c"
     },
     {
       "name": "NemoClawSetup-0.1.0-windows-arm64.exe",
-      "size": 304743283,
-      "sha256": "0377de7a402f266f190b62084ada986612538de3cd6bd7358d267d4432bf3f04"
+      "size": 303986241,
+      "sha256": "656bee66ed2f2f8940224433f042d9e05183c4965e8decb89e79d8938dd99ad1"
     }
   ],
   "qualification": {
     "architecture": "arm64",
     "retainedReferenceInstallerChecks": "passed",
     "earlyAndRepeatedProcessAudit": "passed",
-    "installedAcceptance": "failed: source workflow did not complete acceptance",
+    "installedAcceptance": "pending",
     "requiredCompleteNativePasses": 2,
     "completeNativePasses": 0,
-    "physicalN1x": "not-qualified",
+    "physicalWindowsArm64": "not-qualified",
     "productionSupport": false
   },
   "criticalSourcePayloadHashesMatched": 28,
-  "payloadFiles": 83241
+  "payloadFiles": 82320
 }

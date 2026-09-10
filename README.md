@@ -3,29 +3,31 @@
 
 # Native Windows ARM64 preview for PR #10799
 
-[Download the setup EXE](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/73733de5d960ac2daa06f6a43f184df382d12add/NemoClawSetup-0.1.0-windows-arm64.exe).
+[Download the setup EXE](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/NemoClawSetup-0.1.0-windows-arm64.exe).
 
-[Download the MSI](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/73733de5d960ac2daa06f6a43f184df382d12add/NemoClaw-0.1.0-windows-arm64.msi).
+[Download the MSI](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/NemoClaw-0.1.0-windows-arm64.msi).
 
-This unsigned test installer was built from source commit `f8a1d8c702c879d2984d76d2e0419641bb1ccd97`.
+This unsigned test installer was built from source commit `ed71ba30a6192544d48e373b5a73816ce2ab89b5`.
+The separately reviewed PR head at publication was `9d79f3b6e7e70e8b5303b76185828810bf9534fa`.
+All package and acceptance statements here apply to the built source above.
 
-**Source workflow failed; installed acceptance is unqualified (0 of 2 required complete native passes).**
-Physical N1X acceptance and production support remain unqualified.
+**Installed acceptance is pending: 0 of 2 required complete native qualification passes.**
+Physical hardware acceptance and production support remain unqualified.
 
-This intermediate preview does not include the newly reported Hermes shell,
-file-search, or Python temporary-directory repairs. A working conversation
-does not establish tool readiness. Revised diagnostics and compact packaging
-are also still in progress.
-
-The [source run, attempt 1](https://github.com/NVIDIA/NemoClaw/actions/runs/34432913829/attempts/1) passed its early process-audit, authentic Hermes ConPTY,
+The [source run, attempt 1](https://github.com/NVIDIA/NemoClaw/actions/runs/34471812081/attempts/1) passed its early process-audit, authentic Hermes ConPTY,
 native ownership, retained installer, package-build, and artifact-upload prerequisites.
 Those prerequisites do not establish complete installed-agent acceptance.
+
+This preview includes launch-stage diagnostics and the development-asset audit.
+It still uses the prior Hermes payload and session-copy launch path. The canonical
+Hermes runtime replacement and immutable-runtime activation are being qualified
+separately; this installer does not establish those changes as complete.
 
 The bundled OpenShell source is pinned to NVIDIA/OpenShell#2721 commit
 `bcd517bbe08cc80860c9be57699390cd32e8445f`, with the checked-in NemoClaw derivative.
 
 The [receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/installer-receipt.json) records the source and verified package hashes.
-The [package manifest](https://raw.githubusercontent.com/NVIDIA/NemoClaw/73733de5d960ac2daa06f6a43f184df382d12add/package-manifest.json) records the payload inventory.
-The original [source artifact 10137183974](https://github.com/NVIDIA/NemoClaw/actions/runs/34432913829/artifacts/10137183974) is retained by GitHub Actions.
+The [package manifest](https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/package-manifest.json) records the payload inventory.
+The original [source artifact 10153321775](https://github.com/NVIDIA/NemoClaw/actions/runs/34471812081/artifacts/10153321775) is retained by GitHub Actions.
 
 This artifact branch uses Git LFS. No GitHub Release is published.
