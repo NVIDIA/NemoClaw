@@ -38,13 +38,11 @@ export interface GatewayStateOptions<Gpu> {
     resolveGatewayOwner(): GatewayOwner;
     probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe>;
     attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
-    refreshDockerDriverGatewayReuseState(
-      state: GatewayReuseState,
-      externalComponent?: {
-        readonly componentId: string;
-        readonly interceptorSocketPath: string;
-      } | null,
-    ): Promise<GatewayReuseState>;
+    configureExternalComponentGateway(component: {
+      readonly componentId: string;
+      readonly interceptorSocketPath: string;
+    }): void;
+    refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
     gatewayCliSupportsLifecycleCommands(): boolean;
     verifyGatewayContainerRunning(gatewayName: string): GatewayContainerState;
     waitForGatewayHttpReady(): Promise<boolean>;
@@ -84,16 +82,7 @@ export interface GatewayStateOptions<Gpu> {
     ): Promise<Session>;
     note(message: string): void;
     startRecordedStep(stepName: string): Promise<void>;
-    startGateway(
-      gpu: Gpu,
-      options: {
-        externalComponent?: {
-          readonly componentId: string;
-          readonly interceptorSocketPath: string;
-        } | null;
-        gpuPassthrough: boolean;
-      },
-    ): Promise<void>;
+    startGateway(gpu: Gpu, options: { gpuPassthrough: boolean }): Promise<void>;
     recordStepComplete(stepName: string): Promise<Session>;
     exitProcess(code: number): never;
   };
@@ -159,16 +148,14 @@ async function handleGatewayStatePhase<Gpu>({
   }
 
   externalComponent?.revalidateBeforeGateway();
+  if (externalComponent) {
+    deps.configureExternalComponentGateway({
+      componentId: externalComponent.declaration.componentId,
+      interceptorSocketPath: externalComponent.declaration.interceptorSocketPath,
+    });
+  }
 
-  let gatewayReuseState = await deps.refreshDockerDriverGatewayReuseState(
-    initialGatewayReuseState,
-    externalComponent
-      ? {
-          componentId: externalComponent.declaration.componentId,
-          interceptorSocketPath: externalComponent.declaration.interceptorSocketPath,
-        }
-      : null,
-  );
+  let gatewayReuseState = await deps.refreshDockerDriverGatewayReuseState(initialGatewayReuseState);
   const supportsLifecycleCommands = deps.gatewayCliSupportsLifecycleCommands();
 
   if (gatewayReuseState === "healthy" && supportsLifecycleCommands) {
@@ -308,15 +295,7 @@ async function handleGatewayStatePhase<Gpu>({
     } else if (gatewayReuseState === "foreign-active") {
       gatewayReuseState = "missing";
     }
-    await deps.startGateway(gpu, {
-      externalComponent: externalComponent
-        ? {
-            componentId: externalComponent.declaration.componentId,
-            interceptorSocketPath: externalComponent.declaration.interceptorSocketPath,
-          }
-        : null,
-      gpuPassthrough,
-    });
+    await deps.startGateway(gpu, { gpuPassthrough });
     session = await deps.recordStepComplete("gateway");
   }
 

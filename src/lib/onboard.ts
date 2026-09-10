@@ -2929,7 +2929,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
         getInitialGatewayReuseState: () =>
           selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot()).gatewayReuseState,
-        ...component.initialFlowDeps(onboardPreflightGatewayAuthority),
+        ...component.initialFlowDeps(onboardPreflightGatewayAuthority, getDockerDriverGatewayEnv),
         gatewayName: GATEWAY_NAME,
         recreateSandbox: isRecreateSandbox,
         requiresBindMounts: effectiveHostMounts.length > 0,

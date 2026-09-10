@@ -10,7 +10,6 @@ import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
   gatewayIdForStateDir,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
-  type ExternalComponentGatewayConfiguration,
 } from "./docker-driver-gateway-config";
 import {
   createDockerDriverGatewayPortListenerHelpers,
@@ -102,7 +101,6 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   getDockerDriverGatewayEnv(
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
-    externalComponent?: ExternalComponentGatewayConfiguration | null,
   ): Record<string, string>;
   getDockerDriverGatewayPid(): number | null;
   getDockerDriverGatewayPidFile(): string;
@@ -248,7 +246,6 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   function getDockerDriverGatewayEnv(
     versionOutput: string | null = null,
     platform: NodeJS.Platform = process.platform,
-    externalComponent?: ExternalComponentGatewayConfiguration | null,
   ): Record<string, string> {
     const dockerHost = process.env.DOCKER_HOST;
     let podmanSocketPath: string | undefined;
@@ -270,7 +267,6 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
       enableBindMounts: deps.enableBindMounts?.() === true,
-      externalComponent,
     });
     if (gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
       process.env.OPENSHELL_LOCAL_TLS_DIR = gatewayEnv.OPENSHELL_LOCAL_TLS_DIR;
@@ -361,11 +357,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       const actual = processEnv[key];
       const desired = desiredEnv[key];
       if (typeof desired !== "string") {
-        if (
-          (key === "NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS" ||
-            key === "NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY") &&
-          actual !== undefined
-        ) {
+        if (key === "NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS" && actual !== undefined) {
           return { reason: `${key}=${actual} (expected <unset>)` };
         }
         continue;

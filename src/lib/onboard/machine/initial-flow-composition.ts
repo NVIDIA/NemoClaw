@@ -3,6 +3,7 @@
 
 import { destroyGatewayForReuse } from "../gateway-cleanup";
 import { verifyGatewayContainerRunning } from "../gateway-container-running";
+import type { initialFlowDeps as externalComponentInitialFlowDeps } from "../external-component/onboarding";
 import {
   createInitialOnboardFlowPhases as createInitialFlowPhases,
   type InitialOnboardFlowContext,
@@ -21,6 +22,10 @@ const gatewayDeps = {
 };
 
 type GatewayDeps = typeof gatewayDeps;
+type ExternalComponentGatewayDeps = Pick<
+  ReturnType<typeof externalComponentInitialFlowDeps>,
+  "configureExternalComponentGateway"
+>;
 
 export type InitialOnboardFlowCompositionOptions<
   Context extends InitialOnboardFlowContext<Agent, Gpu, Config>,
@@ -32,10 +37,11 @@ export type InitialOnboardFlowCompositionOptions<
 > = Omit<
   InitialOnboardFlowPhaseOptions<Context, Agent, Gpu, SandboxEntry, Host, Config>,
   "gatewayDeps"
-> & {
+> &
+  ExternalComponentGatewayDeps & {
   gatewayDeps: Omit<
     InitialOnboardFlowPhaseOptions<Context, Agent, Gpu, SandboxEntry, Host, Config>["gatewayDeps"],
-    keyof GatewayDeps
+    keyof GatewayDeps | keyof ExternalComponentGatewayDeps
   >;
 };
 
@@ -49,11 +55,13 @@ export function createInitialOnboardFlowPhases<
 >(
   options: InitialOnboardFlowCompositionOptions<Context, Agent, Gpu, SandboxEntry, Host, Config>,
 ): ReturnType<typeof createInitialFlowPhases<Context, Agent, Gpu, SandboxEntry, Host, Config>> {
+  const { configureExternalComponentGateway, ...phaseOptions } = options;
   return createInitialFlowPhases<Context, Agent, Gpu, SandboxEntry, Host, Config>({
-    ...options,
+    ...phaseOptions,
     gatewayDeps: {
-      ...options.gatewayDeps,
+      ...phaseOptions.gatewayDeps,
       ...gatewayDeps,
+      configureExternalComponentGateway,
     },
   });
 }

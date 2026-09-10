@@ -12,7 +12,6 @@ import {
   shouldSelectNamedGatewayForReuse,
 } from "../state/gateway";
 import * as dockerDriverGatewayLaunch from "./docker-driver-gateway-launch";
-import type { ExternalComponentGatewayConfiguration } from "./docker-driver-gateway-config";
 import { configuredRuntimeProviderOwnsHostReadiness } from "./docker-driver-gateway-env";
 import * as gatewayService from "./docker-driver-gateway-service";
 import type { PortProbeResult } from "./preflight";
@@ -44,11 +43,7 @@ export interface DockerDriverGatewayReuseApplicationDeps {
   getGatewayCompatContainerName(): string;
   isDockerDriverGatewayEnabled(): boolean;
   resolveOpenShellGatewayBinary(): string | null;
-  getDockerDriverGatewayEnv(
-    versionOutput?: string | null,
-    platform?: NodeJS.Platform,
-    externalComponent?: ExternalComponentGatewayConfiguration | null,
-  ): Record<string, string>;
+  getDockerDriverGatewayEnv(versionOutput?: string | null): Record<string, string>;
   runCaptureOpenshell(args: string[], opts?: { ignoreError?: boolean }): string;
   getDockerDriverGatewayStateDir(): string;
   resolveOpenShellSandboxBinary(): string | null;
@@ -92,10 +87,7 @@ export type DockerDriverNetworkInspectRunner = (
 ) => DockerDriverNetworkInspectCommandResult;
 
 export interface DockerDriverGatewayReuseApplication {
-  refreshDockerDriverGatewayReuseState(
-    state: GatewayReuseState,
-    externalComponent?: ExternalComponentGatewayConfiguration | null,
-  ): Promise<GatewayReuseState>;
+  refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
 }
 
 function outputText(value: unknown): string {
@@ -152,7 +144,6 @@ export function createDockerDriverGatewayReuseApplication(
 
   async function refreshDockerDriverGatewayReuseState(
     state: GatewayReuseState,
-    externalComponent?: ExternalComponentGatewayConfiguration | null,
   ): Promise<GatewayReuseState> {
     if (!deps.isDockerDriverGatewayEnabled() || state !== "healthy") return state;
     if (configuredRuntimeProviderOwnsHostReadiness()) return state;
@@ -160,8 +151,6 @@ export function createDockerDriverGatewayReuseApplication(
     const gatewayBin = deps.resolveOpenShellGatewayBinary();
     const baseDesiredEnv = deps.getDockerDriverGatewayEnv(
       deps.runCaptureOpenshell(["--version"], { ignoreError: true }),
-      undefined,
-      externalComponent,
     );
     const runtimeIdentity = gatewayBin
       ? buildRuntimeIdentity({

@@ -55,6 +55,7 @@ function preparedExternalComponent(revalidateBeforeGateway = vi.fn()): PreparedE
 
 function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
   const calls = {
+    configureExternalComponentGateway: vi.fn(),
     refresh: vi.fn(async (state: GatewayReuseState) => state),
     lifecycle: vi.fn(() => false),
     verifyContainer: vi.fn((_gatewayName: string): GatewayContainerState => "running"),
@@ -105,6 +106,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
       resolveGatewayOwner: calls.resolveOwner,
       attachGateway: calls.attachGateway,
       probeGatewayAttachment: calls.probeAttachment,
+      configureExternalComponentGateway: calls.configureExternalComponentGateway,
       refreshDockerDriverGatewayReuseState: calls.refresh,
       gatewayCliSupportsLifecycleCommands: calls.lifecycle,
       verifyGatewayContainerRunning: calls.verifyContainer,
@@ -194,6 +196,7 @@ describe("handleGatewayState", () => {
     ).rejects.toThrow("declaration changed");
 
     expect(revalidateBeforeGateway).toHaveBeenCalledOnce();
+    expect(calls.configureExternalComponentGateway).not.toHaveBeenCalled();
     expect(calls.refresh).not.toHaveBeenCalled();
     expect(calls.startStep).not.toHaveBeenCalled();
     expect(calls.retireLegacy).not.toHaveBeenCalled();
@@ -201,7 +204,8 @@ describe("handleGatewayState", () => {
   });
 
   it("passes only the validated component projection to the managed gateway (#11340)", async () => {
-    const component = preparedExternalComponent();
+    const revalidateBeforeGateway = vi.fn();
+    const component = preparedExternalComponent(revalidateBeforeGateway);
     const { deps, calls } = createDeps({
       isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
     });
@@ -216,10 +220,17 @@ describe("handleGatewayState", () => {
       interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
     };
     expect(component.revalidateBeforeGateway).toHaveBeenCalledOnce();
-    expect(calls.refresh).toHaveBeenCalledWith("missing", projection);
+    expect(calls.configureExternalComponentGateway).toHaveBeenCalledWith(projection);
+    expect(calls.refresh).toHaveBeenCalledWith("missing");
     expect(calls.startGateway).toHaveBeenCalledWith(
       { type: "nvidia" },
-      { externalComponent: projection, gpuPassthrough: true },
+      { gpuPassthrough: true },
+    );
+    expect(revalidateBeforeGateway.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.configureExternalComponentGateway.mock.invocationCallOrder[0],
+    );
+    expect(calls.configureExternalComponentGateway.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.refresh.mock.invocationCallOrder[0],
     );
   });
 
@@ -235,6 +246,7 @@ describe("handleGatewayState", () => {
     ).rejects.toMatchObject({ code: "capability_unsupported" });
 
     expect(component.revalidateBeforeGateway).not.toHaveBeenCalled();
+    expect(calls.configureExternalComponentGateway).not.toHaveBeenCalled();
     expect(calls.refresh).not.toHaveBeenCalled();
     expect(calls.startGateway).not.toHaveBeenCalled();
   });
@@ -247,8 +259,9 @@ describe("handleGatewayState", () => {
     expect(calls.startStep).toHaveBeenCalledWith("gateway");
     expect(calls.startGateway).toHaveBeenCalledWith(
       { type: "nvidia" },
-      { externalComponent: null, gpuPassthrough: true },
+      { gpuPassthrough: true },
     );
+    expect(calls.configureExternalComponentGateway).not.toHaveBeenCalled();
     expect(calls.complete).toHaveBeenCalledWith("gateway");
     expect(result.gatewayReuseState).toBe("missing");
     expect(result.stateResult).toEqual({
@@ -299,7 +312,7 @@ describe("handleGatewayState", () => {
     expect(calls.startStep).toHaveBeenCalledWith("gateway");
     expect(calls.startGateway).toHaveBeenCalledWith(
       { type: "nvidia" },
-      { externalComponent: null, gpuPassthrough: true },
+      { gpuPassthrough: true },
     );
     expect(calls.retireLegacy).not.toHaveBeenCalled();
     expect(result.gatewayReuseState).toBe("stale");

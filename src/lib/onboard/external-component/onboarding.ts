@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { inspectPolicyMutationContext } from "../../policy";
+import { configureDockerDriverGatewayExternalComponent } from "../docker-driver-gateway-env";
 import {
   ExternalComponentContractError,
   loadExternalComponentDeclaration,
@@ -21,9 +22,17 @@ export function prepareExternalComponent(
   return loadExternalComponentDeclaration();
 }
 
-export function initialFlowDeps(readiness: { collectGatewayReadiness(): Promise<unknown> }) {
+export function initialFlowDeps(
+  readiness: { collectGatewayReadiness(): Promise<unknown> },
+  getDockerDriverGatewayEnv: () => Record<string, string>,
+) {
   return {
     assertGatewayReadiness: () => readiness.collectGatewayReadiness().then(() => undefined),
+    configureExternalComponentGateway: (externalComponent: {
+      readonly componentId: string;
+      readonly interceptorSocketPath: string;
+    }) =>
+      configureDockerDriverGatewayExternalComponent(getDockerDriverGatewayEnv(), externalComponent),
     prepareExternalComponent,
   };
 }

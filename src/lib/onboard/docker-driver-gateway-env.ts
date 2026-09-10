@@ -92,7 +92,24 @@ export interface BuildDockerDriverGatewayEnvOptions {
   getDockerSupervisorImage: () => string;
   resolveSandboxBin: () => string | null;
   enableBindMounts?: boolean;
-  externalComponent?: ExternalComponentGatewayConfiguration | null;
+}
+
+export function configureDockerDriverGatewayExternalComponent(
+  gatewayEnv: Record<string, string>,
+  externalComponent: ExternalComponentGatewayConfiguration,
+): void {
+  const configPath = gatewayEnv.OPENSHELL_GATEWAY_CONFIG;
+  if (!configPath) {
+    throw new Error("OpenShell Docker-driver gateway requires OPENSHELL_GATEWAY_CONFIG");
+  }
+  prepareDockerDriverGatewayConfigEnv(
+    gatewayEnv,
+    path.dirname(configPath),
+    gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN,
+    {
+      externalComponent,
+    },
+  );
 }
 
 function preparePortableGatewayHostRuntime(
@@ -433,7 +450,6 @@ export function buildDockerDriverGatewayEnv({
   getDockerSupervisorImage,
   resolveSandboxBin,
   enableBindMounts = false,
-  externalComponent,
 }: BuildDockerDriverGatewayEnvOptions): Record<string, string> {
   const portable = isPortableExperimentalProfile();
   const runtime =
@@ -490,7 +506,6 @@ export function buildDockerDriverGatewayEnv({
     allowOpenShell0044PreAuthDatabase:
       process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1",
     gatewayRuntime: runtime,
-    externalComponent,
   });
   return env;
 }

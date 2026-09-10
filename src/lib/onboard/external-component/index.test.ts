@@ -350,10 +350,22 @@ describe("external component declaration", () => {
       homeDirectory: endpointFixture.homeDirectory,
       platform: "linux",
     });
-    await closeServer(endpointFixture.activationServer);
-    fs.rmSync(endpointFixture.activationSocketPath, { force: true });
-    await listen(endpointFixture.activationSocketPath);
+    const realLstatSync = fs.lstatSync.bind(fs);
+    const lstatSync = vi.spyOn(fs, "lstatSync");
+    lstatSync.mockImplementation((candidate) => {
+      const stat = realLstatSync(candidate);
+      return new Proxy(stat, {
+        get: (target, property, receiver) =>
+          property === "ino" && String(candidate) === endpointFixture.activationSocketPath
+            ? target.ino + 1
+            : Reflect.get(target, property, receiver),
+      });
+    });
 
-    expectReason(() => endpointPrepared?.revalidateBeforeActivation(), "socket_ambiguous");
+    try {
+      expectReason(() => endpointPrepared?.revalidateBeforeActivation(), "socket_ambiguous");
+    } finally {
+      lstatSync.mockRestore();
+    }
   });
 });

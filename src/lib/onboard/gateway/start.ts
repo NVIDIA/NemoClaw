@@ -6,7 +6,6 @@ import {
   withSelectedOpenShellCommandOptions,
 } from "../../adapters/openshell/command-argv";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
-import type { ExternalComponentGatewayConfiguration } from "../docker-driver-gateway-config";
 import { normalizeGatewayStartError } from "../gateway-start-failure";
 
 type OnboardGpu = ReturnType<typeof import("../../inference/nim").detectGpu>;
@@ -39,7 +38,6 @@ export interface GatewayStartDeps {
   selectNamedGatewayForReuseIfNeeded: GatewayReuseHelpers["selectNamedGatewayForReuseIfNeeded"];
   startDockerDriverGateway(options?: {
     exitOnFailure?: boolean;
-    externalComponent?: ExternalComponentGatewayConfiguration | null;
     runtimeSelection?: OpenShellRuntimeSelection;
     skipSandboxBridgeReachability?: boolean;
   }): Promise<void>;
@@ -47,18 +45,11 @@ export interface GatewayStartDeps {
 }
 
 export interface GatewayStart {
-  startGateway(
-    gpu: OnboardGpu,
-    options?: {
-      externalComponent?: ExternalComponentGatewayConfiguration | null;
-      gpuPassthrough?: boolean;
-    },
-  ): Promise<void>;
+  startGateway(gpu: OnboardGpu, options?: { gpuPassthrough?: boolean }): Promise<void>;
   startGatewayWithOptions(
     gpu: OnboardGpu,
     options?: {
       exitOnFailure?: boolean;
-      externalComponent?: ExternalComponentGatewayConfiguration | null;
       gpuPassthrough?: boolean;
       runtimeSelection?: OpenShellRuntimeSelection;
     },
@@ -70,12 +61,10 @@ export function createGatewayStart(deps: GatewayStartDeps): GatewayStart {
     gpu: OnboardGpu,
     {
       exitOnFailure = true,
-      externalComponent,
       gpuPassthrough = false,
       runtimeSelection,
     }: {
       exitOnFailure?: boolean;
-      externalComponent?: ExternalComponentGatewayConfiguration | null;
       gpuPassthrough?: boolean;
       runtimeSelection?: OpenShellRuntimeSelection;
     } = {},
@@ -94,7 +83,6 @@ export function createGatewayStart(deps: GatewayStartDeps): GatewayStart {
       );
       return deps.startDockerDriverGateway({
         exitOnFailure,
-        externalComponent,
         ...(runtimeSelection ? { runtimeSelection } : {}),
         skipSandboxBridgeReachability: deps.dockerGpuLocalInference.shouldSkipGpuBridgeProbe(
           gpuPassthrough,
@@ -138,19 +126,9 @@ export function createGatewayStart(deps: GatewayStartDeps): GatewayStart {
 
   async function startGateway(
     gpu: OnboardGpu,
-    {
-      externalComponent,
-      gpuPassthrough = false,
-    }: {
-      externalComponent?: ExternalComponentGatewayConfiguration | null;
-      gpuPassthrough?: boolean;
-    } = {},
+    { gpuPassthrough = false }: { gpuPassthrough?: boolean } = {},
   ): Promise<void> {
-    return startGatewayWithOptions(gpu, {
-      exitOnFailure: true,
-      externalComponent,
-      gpuPassthrough,
-    });
+    return startGatewayWithOptions(gpu, { exitOnFailure: true, gpuPassthrough });
   }
 
   return { startGateway, startGatewayWithOptions };
