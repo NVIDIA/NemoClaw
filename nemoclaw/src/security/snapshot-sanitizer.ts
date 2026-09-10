@@ -139,7 +139,7 @@ export function sanitizeOpenClawConfigFile(configPath: string): boolean {
     }
     if (scan === null || scan.files.length !== 1) return false;
     const file = scan.files[0];
-    if (!file || file.path !== targetName) return false;
+    if (file?.path !== targetName) return false;
     const raw = decodeDescriptorSnapshotContent(file.content);
     if (raw === null) return false;
     const sanitized = sanitizedContents(targetName.toLowerCase(), raw);
