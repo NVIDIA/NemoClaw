@@ -234,6 +234,23 @@ describe("handleGatewayState", () => {
     );
   });
 
+  it("removes a prior component before evaluating managed gateway reuse (#11340)", async () => {
+    const refresh = vi.fn(async () => "stale" as GatewayReuseState);
+    const { deps, calls } = createDeps({
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+      refreshDockerDriverGatewayReuseState: refresh,
+    });
+
+    await handleGatewayState(baseOptions(deps, "healthy"));
+
+    expect(calls.configureExternalComponentGateway).toHaveBeenCalledWith(null);
+    expect(calls.configureExternalComponentGateway.mock.invocationCallOrder[0]).toBeLessThan(
+      refresh.mock.invocationCallOrder[0],
+    );
+    expect(calls.skipped).not.toHaveBeenCalled();
+    expect(calls.startGateway).toHaveBeenCalledOnce();
+  });
+
   it("rejects a registered component outside the supported Linux gateway path (#11340)", async () => {
     const component = preparedExternalComponent();
     const { deps, calls } = createDeps();

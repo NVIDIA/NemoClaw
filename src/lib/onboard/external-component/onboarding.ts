@@ -28,10 +28,12 @@ export function initialFlowDeps(
 ) {
   return {
     assertGatewayReadiness: () => readiness.collectGatewayReadiness().then(() => undefined),
-    configureExternalComponentGateway: (externalComponent: {
-      readonly componentId: string;
-      readonly interceptorSocketPath: string;
-    }) =>
+    configureExternalComponentGateway: (
+      externalComponent: {
+        readonly componentId: string;
+        readonly interceptorSocketPath: string;
+      } | null,
+    ) =>
       configureDockerDriverGatewayExternalComponent(getDockerDriverGatewayEnv(), externalComponent),
     prepareExternalComponent,
   };

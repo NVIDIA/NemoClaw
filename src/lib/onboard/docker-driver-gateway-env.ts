@@ -96,7 +96,7 @@ export interface BuildDockerDriverGatewayEnvOptions {
 
 export function configureDockerDriverGatewayExternalComponent(
   gatewayEnv: Record<string, string>,
-  externalComponent: ExternalComponentGatewayConfiguration,
+  externalComponent: ExternalComponentGatewayConfiguration | null,
 ): void {
   const configPath = gatewayEnv.OPENSHELL_GATEWAY_CONFIG;
   if (!configPath) {

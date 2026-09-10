@@ -38,10 +38,12 @@ export interface GatewayStateOptions<Gpu> {
     resolveGatewayOwner(): GatewayOwner;
     probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe>;
     attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
-    configureExternalComponentGateway(component: {
-      readonly componentId: string;
-      readonly interceptorSocketPath: string;
-    }): void;
+    configureExternalComponentGateway(
+      component: {
+        readonly componentId: string;
+        readonly interceptorSocketPath: string;
+      } | null,
+    ): void;
     refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
     gatewayCliSupportsLifecycleCommands(): boolean;
     verifyGatewayContainerRunning(gatewayName: string): GatewayContainerState;
@@ -148,11 +150,15 @@ async function handleGatewayStatePhase<Gpu>({
   }
 
   externalComponent?.revalidateBeforeGateway();
-  if (externalComponent) {
-    deps.configureExternalComponentGateway({
-      componentId: externalComponent.declaration.componentId,
-      interceptorSocketPath: externalComponent.declaration.interceptorSocketPath,
-    });
+  if (deps.isLinuxDockerDriverGatewayEnabled()) {
+    deps.configureExternalComponentGateway(
+      externalComponent
+        ? {
+            componentId: externalComponent.declaration.componentId,
+            interceptorSocketPath: externalComponent.declaration.interceptorSocketPath,
+          }
+        : null,
+    );
   }
 
   let gatewayReuseState = await deps.refreshDockerDriverGatewayReuseState(initialGatewayReuseState);
