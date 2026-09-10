@@ -189,7 +189,7 @@ function linuxListenerPids(port: number, procRoot: string, workLimit: number): s
         fields[1]?.toUpperCase().endsWith(portSuffix) &&
         /^\d+$/u.test(fields[9] ?? "")
       ) {
-        socketInodes.add(fields[9]!);
+        socketInodes.add(fields[9]);
       }
     }
   } catch {
@@ -208,7 +208,7 @@ function linuxListenerPids(port: number, procRoot: string, workLimit: number): s
           if (++inspected > workLimit) return [];
           const link = readlinkSync(path.join(procRoot, entry.name, "fd", descriptor));
           const match = /^socket:\[(\d+)\]$/u.exec(link);
-          if (match && socketInodes.has(match[1]!)) {
+          if (match && socketInodes.has(match[1])) {
             pids.add(entry.name);
             break;
           }

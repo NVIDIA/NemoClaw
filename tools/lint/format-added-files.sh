@@ -33,10 +33,11 @@ if ((${#candidates[@]} == 0)); then
   done < <(
     git diff --name-only --diff-filter=ACMR -z "${base_commit}" --
     git ls-files --others --exclude-standard -z
+    git ls-files -z -- src/lib/adapters
   )
 fi
 
-added_files=()
+format_files=()
 for file in "${candidates[@]}"; do
   case "${file}" in
     "" | /* | . | .. | ./* | ../* | */./* | */../* | */. | */..)
@@ -55,13 +56,13 @@ for file in "${candidates[@]}"; do
     *.cjs | *.cts | *.js | *.jsx | *.mjs | *.mts | *.ts | *.tsx) ;;
     *) continue ;;
   esac
-  if [[ "${file}" == .dsh/tools/* ]] || ! git cat-file -e "${base_commit}:${file}" 2>/dev/null; then
-    added_files+=("${file}")
+  if [[ "${file}" == .dsh/tools/* || "${file}" == src/lib/adapters/* ]] || ! git cat-file -e "${base_commit}:${file}" 2>/dev/null; then
+    format_files+=("${file}")
   fi
 done
 
-if ((${#added_files[@]} == 0)); then
+if ((${#format_files[@]} == 0)); then
   exit 0
 fi
 
-exec npx oxfmt "${mode}" --no-error-on-unmatched-pattern -- "${added_files[@]}"
+exec npx oxfmt "${mode}" --no-error-on-unmatched-pattern -- "${format_files[@]}"
