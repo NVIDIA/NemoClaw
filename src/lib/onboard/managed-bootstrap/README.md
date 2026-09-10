@@ -87,17 +87,7 @@ and sandbox ID and then enter the destructive cutover. Post-cutover rollback
 publishes `rollback-authorized` before replacement deletion; pre-cutover
 staged cleanup removes only the prepared replacement without that journal
 transition. Commit publishes `shared-state-committed` before backup
-deletion. It then stops the sandbox through OpenShell, proves the exact
-replacement is stopped, removes the backup by full runtime ID, and starts the
-sandbox through OpenShell. Completion requires OpenShell `Ready`, successful
-sandbox execution, and proof that the exact replacement is the sole running
-labelled container. This prevents the removed backup's Docker state from
-temporarily marking the replacement `Error` during onboarding.
-Interrupted commit recovery uses the same handoff and can resume a stopped
-replacement whose identity and launch specification match the durable journal.
-The journal and image-owned commit receipt remain until the handoff succeeds;
-failures after shared-state commit must finish forward. Cleanup is bound to full
-runtime IDs. Commit or rollback is claimed
+deletion. Cleanup is bound to full runtime IDs. Commit or rollback is claimed
 synchronously before asynchronous finalization begins. Repeated calls for the
 claimed outcome share its one pending result, while the opposite outcome remains
 invalid even if acknowledgement of the first finalization is lost. Its private

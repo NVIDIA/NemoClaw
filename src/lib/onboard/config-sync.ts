@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { stripVTControlCharacters } from "node:util";
+
 import type { ProviderSelectionConfig } from "../inference/config";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
@@ -27,19 +29,47 @@ export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
     await runSandboxConfigSync(sandboxName, {
       getSelectionConfig: () => deps.getProviderSelectionConfig(provider, model),
       runConnectScript: async (name, scriptContent) => {
-        revalidateSandboxIdentity(`synchronize OpenClaw config in sandbox '${name}'`);
-        const result = await deps.sandboxCommandExecutor.runBuffered({
-          sandboxName: name,
-          target: selectedOpenShellGateway(),
-          command: ["/bin/bash", "-s"],
-          tty: false,
-          input: scriptContent,
-        });
-        if (result.stderr) process.stderr.write(result.stderr);
-        if (result.outcome.kind === "failed") throw new Error(result.outcome.error.message);
-        if (result.outcome.exitCode !== 0) {
-          throw new Error(`OpenShell command failed (exit ${String(result.outcome.exitCode)})`);
+        const deadlineMs = Date.now() + 60_000;
+        while (Date.now() < deadlineMs) {
+          revalidateSandboxIdentity(`synchronize OpenClaw config in sandbox '${name}'`);
+          const result = await deps.sandboxCommandExecutor.runBuffered({
+            sandboxName: name,
+            target: selectedOpenShellGateway(),
+            command: ["/bin/bash", "-s"],
+            tty: false,
+            input: scriptContent,
+            timeoutMilliseconds: Math.max(1, deadlineMs - Date.now()),
+            timeoutKillSignal: "SIGKILL",
+          });
+          if (result.stderr) process.stderr.write(result.stderr);
+          if (result.outcome.kind === "failed") throw new Error(result.outcome.error.message);
+          // Config sync owns this 60s retry window for stale backup-removal events.
+          // OpenShell rejected execution before the script ran. Recheck identity on each
+          // attempt, retain its diagnostic, and never retry an ambiguous command result.
+          const diagnostic = stripVTControlCharacters(result.stderr)
+            .replace(/[×│]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+          if (
+            result.outcome.exitCode === 1 &&
+            !result.outcome.signal &&
+            !result.stdout &&
+            diagnostic ===
+              `Error: sandbox '${name}' is not ready (phase: Error); wait for it to reach Ready state`
+          ) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, Math.min(2_000, Math.max(0, deadlineMs - Date.now()))),
+            );
+            continue;
+          }
+          if (result.outcome.exitCode !== 0) {
+            throw new Error(`OpenShell command failed (exit ${String(result.outcome.exitCode)})`);
+          }
+          return;
         }
+        throw new Error(
+          `Sandbox '${name}' did not return to Ready within 60s while synchronizing OpenClaw config`,
+        );
       },
     });
   };

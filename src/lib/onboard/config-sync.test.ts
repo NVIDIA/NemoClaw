@@ -6,7 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 
 import {
   buildSandboxConfigSyncScript,
@@ -56,6 +58,111 @@ function modeBits(file: string): number {
 }
 
 describe("sandbox config sync helpers", () => {
+  describe("OpenShell readiness recovery", () => {
+    const notReady = {
+      outcome: { kind: "completed" as const, exitCode: 1 },
+      stdout: "",
+      stderr:
+        "Error: \u001b[31m×\u001b[0m sandbox 'spark-box' is not ready (phase: Error); wait for it to\n  │ reach Ready state\n",
+    };
+    const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>();
+    const syncConfig = createNemoClawConfigSync({
+      getProviderSelectionConfig: () => ({
+        endpointType: "custom",
+        endpointUrl: "https://inference.local/v1",
+        ncpPartner: null,
+        model: "model",
+        profile: "inference-local",
+        credentialEnv: "OPENAI_API_KEY",
+        provider: "provider",
+        providerLabel: "Provider",
+      }),
+      sandboxCommandExecutor: { runBuffered },
+    });
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      runBuffered.mockReset().mockResolvedValue(notReady);
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    it("syncs after a transient Error rejection without changing the script or sandbox identity", async () => {
+      runBuffered.mockResolvedValueOnce(notReady).mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: "",
+        stderr: "",
+      });
+      const revalidate = vi.fn();
+      const pending = expect(
+        syncConfig("spark-box", "provider", "model", revalidate),
+      ).resolves.toBeUndefined();
+
+      await Promise.all([pending, vi.advanceTimersByTimeAsync(2_000)]);
+
+      expect(runBuffered).toHaveBeenCalledTimes(2);
+      expect(revalidate).toHaveBeenCalledTimes(2);
+      expect(runBuffered.mock.calls[1][0].input).toBe(runBuffered.mock.calls[0][0].input);
+      expect(runBuffered.mock.calls[1][0].timeoutMilliseconds).toBe(58_000);
+      expect(process.stderr.write).toHaveBeenCalledWith(notReady.stderr);
+    });
+
+    it("stops after 60 seconds if OpenShell keeps rejecting execution", async () => {
+      const pending = expect(syncConfig("spark-box", "provider", "model")).rejects.toThrow(
+        "did not return to Ready within 60s",
+      );
+      await Promise.all([pending, vi.advanceTimersByTimeAsync(60_000)]);
+      const attempts = runBuffered.mock.calls.length;
+      expect(attempts).toBeGreaterThan(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(runBuffered).toHaveBeenCalledTimes(attempts);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("does not execute again when sandbox identity changes while waiting", async () => {
+      const revalidate = vi
+        .fn()
+        .mockImplementationOnce(() => undefined)
+        .mockImplementation(() => {
+          throw new Error("sandbox identity changed");
+        });
+      const pending = expect(
+        syncConfig("spark-box", "provider", "model", revalidate),
+      ).rejects.toThrow("sandbox identity changed");
+      await Promise.all([pending, vi.advanceTimersByTimeAsync(2_000)]);
+      expect(runBuffered).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["another sandbox", { stderr: notReady.stderr.replace("spark-box", "other-box") }],
+      ["another phase", { stderr: notReady.stderr.replace("phase: Error", "phase: Stopped") }],
+      ["a script error", { stderr: "permission denied\n" }],
+      ["possible script execution", { stdout: "script started\n" }],
+      [
+        "a terminated command",
+        { outcome: { kind: "completed" as const, exitCode: 1, signal: "SIGTERM" as const } },
+      ],
+      [
+        "a transport timeout",
+        {
+          outcome: {
+            kind: "failed" as const,
+            error: { kind: "timeout" as const, message: "config sync timed out" },
+          },
+        },
+      ],
+    ])("does not retry %s", async (_label, override) => {
+      runBuffered.mockResolvedValue({ ...notReady, ...override });
+      await expect(syncConfig("spark-box", "provider", "model")).rejects.toThrow();
+      expect(runBuffered).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
   it("revalidates sandbox identity immediately before sandbox execution", async () => {
     const runBuffered = vi.fn();
     const revalidateSandboxIdentity = vi.fn(() => {
@@ -113,6 +220,8 @@ describe("sandbox config sync helpers", () => {
       command: ["/bin/bash", "-s"],
       tty: false,
       input: expect.stringContaining('"provider": "provider"'),
+      timeoutMilliseconds: expect.any(Number),
+      timeoutKillSignal: "SIGKILL",
     });
   });
 
