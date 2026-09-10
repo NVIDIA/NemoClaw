@@ -3,10 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  legacySandboxForwardRow,
-  retireLegacySandboxForwards,
-} from "./forward-service-migration";
+import { legacySandboxForwardRow, retireLegacySandboxForwards } from "./forward-service-migration";
 
 describe("ForwardTcp legacy migration", () => {
   it("names the listed process for the exact sandbox and port only (#11149)", () => {
@@ -20,7 +17,10 @@ describe("ForwardTcp legacy migration", () => {
 
     expect(legacySandboxForwardRow(output, "demo", 18_789)).toEqual({ pid: 10, status: "running" });
     expect(legacySandboxForwardRow(output, "demo", 19_999)).toEqual({ pid: 11, status: "dead" });
-    expect(legacySandboxForwardRow(output, "demo", 20_000)).toEqual({ pid: null, status: "running" });
+    expect(legacySandboxForwardRow(output, "demo", 20_000)).toEqual({
+      pid: null,
+      status: "running",
+    });
     expect(legacySandboxForwardRow(output, "demo", 19_000)).toBeUndefined();
     expect(legacySandboxForwardRow(output, "other", 19_999)).toBeUndefined();
     expect(legacySandboxForwardRow(null, "demo", 18_789)).toBeUndefined();
