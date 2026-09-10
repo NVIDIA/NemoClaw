@@ -195,7 +195,7 @@ trap 'exit 143' TERM
 
 if [[ -n "$cache_from" ]]; then
   imported_seed="$work_dir/npm-cache-seed-import"
-  node --experimental-strip-types --no-warnings "$seed_helper" copy \
+  node --no-warnings "$seed_helper" copy \
     --lockfile "$source_lockfile" \
     --seed "$cache_from/npm-cache-seed" \
     --output "$imported_seed" \
@@ -208,7 +208,7 @@ if [[ -n "$cache_from" ]]; then
   cp -pR -- "$imported_seed" "$source_seed_dir"
 
   imported_mcp_seed="$work_dir/mcp-runtime-npm-cache-seed-import"
-  node --experimental-strip-types --no-warnings "$seed_helper" copy \
+  node --no-warnings "$seed_helper" copy \
     --lockfile "$source_mcp_lockfile" \
     --seed "$cache_from/mcp-runtime-npm-cache-seed" \
     --output "$imported_mcp_seed" \
@@ -221,7 +221,7 @@ if [[ -n "$cache_from" ]]; then
   cp -pR -- "$imported_mcp_seed" "$source_mcp_seed_dir"
 
   imported_messaging_seed="$work_dir/messaging-npm-cache-seed-import"
-  node --experimental-strip-types --no-warnings "$seed_helper" copy \
+  node --no-warnings "$seed_helper" copy \
     --lockfile "$source_messaging_lockfile" \
     --seed "$cache_from/messaging-npm-cache-seed" \
     --output "$imported_messaging_seed" \
@@ -483,19 +483,19 @@ build_agent \
   "$dcode_base"
 
 if [[ -n "$cache_to" ]]; then
-  node --experimental-strip-types --no-warnings "$seed_helper" export \
+  node --no-warnings "$seed_helper" export \
     --lockfile "$source_lockfile" \
     --output "$cache_to/npm-cache-seed" \
     --os "$npm_target_os" \
     --cpu "$npm_target_cpu" \
     --libc "$npm_target_libc"
-  node --experimental-strip-types --no-warnings "$seed_helper" export \
+  node --no-warnings "$seed_helper" export \
     --lockfile "$source_mcp_lockfile" \
     --output "$cache_to/mcp-runtime-npm-cache-seed" \
     --os "$npm_target_os" \
     --cpu "$npm_target_cpu" \
     --libc "$npm_target_libc"
-  node --experimental-strip-types --no-warnings "$seed_helper" export \
+  node --no-warnings "$seed_helper" export \
     --lockfile "$source_messaging_lockfile" \
     --output "$cache_to/messaging-npm-cache-seed" \
     --os "$npm_target_os" \

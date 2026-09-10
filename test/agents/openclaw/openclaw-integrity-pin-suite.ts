@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { lockedArchives } from "../../../scripts/checks/materialize-locked-npm-cache-seed.mts";
 import { parseAuditExceptionRegistry } from "../../../scripts/lib/reviewed-npm-audit.mts";
 import { createBuiltInChannelManifestRegistry } from "../../../src/lib/messaging";
 import { reviewedOpenClawPluginIntegrityByPackageSpec } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
@@ -650,7 +651,6 @@ export type OpenClawIntegrityPinTestGroup = "base" | "contract" | "plugin-instal
 export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTestGroup): void {
   describe("OpenClaw npm integrity pins", () => {
     if (group === "contract") {
-
       it("keeps NemoClaw's direct tar dependency above the reviewed advisory floor", () => {
         const packageJson = JSON.parse(
           fs.readFileSync(path.join(REPO_ROOT, "nemoclaw", "package.json"), "utf-8"),
@@ -685,6 +685,13 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             resolved: PINNED_NEMOCLAW_TAR_TARBALL,
           }),
         );
+        expect(
+          lockedArchives(packageLockSource.toString("utf-8"), {
+            cpu: "x64",
+            libc: "glibc",
+            os: "linux",
+          }).some(({ archive }) => archive.includes("linux-x64-musl")),
+        ).toBe(false);
       });
 
       it("keeps the Teams OpenClaw plugin manifest pinned to the reviewed 2026.7.1 integrity", () => {

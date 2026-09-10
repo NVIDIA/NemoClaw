@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   bail: vi.fn(),
+  ensureRebuildTargetGatewaySelected: vi.fn(async () => true),
   getMcpPreparationRuntimeSelection: vi.fn(),
   preflightAuthoritativeOnboardRuntime: vi.fn(async (..._args: unknown[]) => false),
   prepareManagedWorkloadRebuildHandoff: vi.fn(),
@@ -14,6 +15,11 @@ const mocks = vi.hoisted(() => ({
   resolveContextWindowForModel: vi.fn(() => 131_072),
   resolveManagedStartupInferenceRoute: vi.fn(),
   stageManagedWorkloadRebuildProfile: vi.fn(),
+}));
+
+vi.mock("./rebuild-flow-helpers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-flow-helpers")>()),
+  ensureRebuildTargetGatewaySelected: mocks.ensureRebuildTargetGatewaySelected,
 }));
 
 vi.mock("./rebuild-mcp-phase", async (importOriginal) => ({
@@ -55,6 +61,11 @@ vi.mock("./rebuild-messaging-conflict-preflight", () => ({
 }));
 
 import { managedRebuildProfileDependencies } from "./agents/managed-workload-rebuild-profile";
+import {
+  evaluateOnboardReadinessAdmission,
+  ONBOARD_REQUIRED_CAPABILITY_IDS,
+} from "../../readiness/onboard-admission";
+import type { ReadinessCapability, SystemReadinessReport } from "../../readiness/types";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { prepareRebuildTargetPreflights } from "./rebuild-preflight-target-phase";
 
@@ -123,8 +134,7 @@ describe("prepareRebuildTargetPreflights", () => {
         openshellDriver: "docker",
         provider: resumeConfig.provider,
         model: resumeConfig.model,
-        endpointUrl:
-          endpointSource === null ? null : "http://host.openshell.internal:8000/v1",
+        endpointUrl: endpointSource === null ? null : "http://host.openshell.internal:8000/v1",
         endpointSource,
         nimContainer,
         ...(endpointSource === null && accepted
@@ -218,6 +228,173 @@ describe("prepareRebuildTargetPreflights", () => {
     expect(mocks.resolveContextWindowForModel).toHaveBeenCalledWith("ollama-local", "qwen3.5:9b");
   });
 
+  it("passes legacy Station authority from the source registry row into rebuild readiness (#10370)", async () => {
+    const resumeConfig = {
+      provider: "ollama-local",
+      model: "llama3.2:1b",
+      preferredInferenceApi: "openai-completions",
+      endpointUrl: null,
+      compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
+      registryInferenceRoute: null,
+    };
+    mocks.prepareRebuildTargetConfig.mockReturnValue({
+      agentDefinition: {},
+      resumeConfig,
+      durableConfig: {
+        toolDisclosure: "progressive",
+        dcodeAutoApprovalMode: "disabled",
+        webSearchConfig: null,
+      },
+      credentialEnv: null,
+      fromDockerfile: false,
+      hermesToolGateways: [],
+    });
+    mocks.prepareRebuildRecreateOptions.mockReturnValue({
+      controlUiPort: 18_789,
+      targetGatewayName: "nemoclaw",
+      toolDisclosure: "progressive",
+      dcodeAutoApprovalMode: "disabled",
+      observabilityEnabled: false,
+    });
+
+    await prepareRebuildTargetPreflights({
+      sandboxName: "legacy-hermes",
+      sandboxEntry: {
+        name: "legacy-hermes",
+        agent: "hermes",
+        nemoclawVersion: "v0.0.83",
+        fromDockerfile: null,
+        gatewayName: "nemoclaw",
+        openshellDriver: "docker",
+        provider: resumeConfig.provider,
+        model: resumeConfig.model,
+      } as never,
+      rebuildAgent: "hermes",
+      autoYes: true,
+      log: vi.fn(),
+      bail: mocks.bail as never,
+    });
+
+    expect(mocks.preflightAuthoritativeOnboardRuntime.mock.calls[0]?.[2]).toEqual(
+      expect.objectContaining({ allowLegacyDgxStationQualification: true }),
+    );
+  });
+
+  it("keeps unrelated readiness blockers ahead of legacy Hermes recovery effects (#10375)", async () => {
+    const resumeConfig = {
+      provider: "ollama-local",
+      model: "llama3.2:1b",
+      preferredInferenceApi: "openai-completions",
+      endpointUrl: null,
+      compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
+      registryInferenceRoute: null,
+    };
+    mocks.prepareRebuildTargetConfig.mockReturnValue({
+      agentDefinition: {},
+      resumeConfig,
+      durableConfig: {
+        toolDisclosure: "progressive",
+        dcodeAutoApprovalMode: "disabled",
+        webSearchConfig: null,
+      },
+      credentialEnv: null,
+      fromDockerfile: false,
+      hermesToolGateways: [],
+    });
+    mocks.prepareRebuildRecreateOptions.mockReturnValue({
+      controlUiPort: 18_789,
+      targetGatewayName: "nemoclaw",
+      targetGatewayPort: 8080,
+      toolDisclosure: "progressive",
+      dcodeAutoApprovalMode: "disabled",
+      observabilityEnabled: false,
+    });
+    const capabilities: ReadinessCapability[] = [
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerAvailable,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerDaemonReachable,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.nvidiaGpuAvailable,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.nvidiaContainerToolkitAvailable,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.nvidiaCdiHealthy,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.platformSupported,
+    ].map((id): ReadinessCapability => ({
+      id,
+      state: id === ONBOARD_REQUIRED_CAPABILITY_IDS.platformSupported ? "absent" : "present",
+    }));
+    capabilities.push({ id: "host.platform.dgx_station", state: "absent" });
+    const readinessReport = {
+      schemaVersion: "1.1.0",
+      status: "incompatible",
+      exitCode: 2,
+      mutated: false,
+      provenance: {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        observedAt: "2026-09-08T00:00:00.000Z",
+      },
+      observations: [],
+      capabilities,
+      qualifications: [],
+      findings: [
+        {
+          id: "host.platform.dgx_station_unqualified",
+          severity: "blocking",
+          summary: "DGX Station is not qualified",
+        },
+        {
+          id: "host.example.blocked",
+          severity: "blocking",
+          summary: "Another readiness blocker remains",
+        },
+      ],
+      evidence: [],
+    } satisfies SystemReadinessReport;
+    mocks.preflightAuthoritativeOnboardRuntime.mockImplementation(
+      async (_sandboxName, _resumeConfig, recreateOptions) =>
+        evaluateOnboardReadinessAdmission(readinessReport, {
+          explicitlyOptedOutGpuPassthrough: false,
+          allowUnsupportedRuntime: false,
+          allowStorageRemediation: false,
+          allowLegacyDgxStationQualification:
+            (recreateOptions as RebuildRecreateOnboardOpts).allowLegacyDgxStationQualification ===
+            true,
+        }).admitted,
+    );
+
+    await expect(
+      prepareRebuildTargetPreflights({
+        sandboxName: "legacy-hermes-blocked",
+        sandboxEntry: {
+          name: "legacy-hermes-blocked",
+          agent: "hermes",
+          nemoclawVersion: "v0.0.83",
+          fromDockerfile: null,
+          gatewayName: "nemoclaw",
+          openshellDriver: "docker",
+          provider: resumeConfig.provider,
+          model: resumeConfig.model,
+        } as never,
+        rebuildAgent: "hermes",
+        autoYes: true,
+        log: vi.fn(),
+        bail: mocks.bail as never,
+      }),
+    ).resolves.toBeNull();
+
+    expect(mocks.preflightAuthoritativeOnboardRuntime).toHaveBeenCalledWith(
+      "legacy-hermes-blocked",
+      resumeConfig,
+      expect.objectContaining({ allowLegacyDgxStationQualification: true }),
+      expect.any(Function),
+      {},
+    );
+    expect(mocks.ensureRebuildTargetGatewaySelected).not.toHaveBeenCalled();
+  });
+
   it("stops managed rebuild when its base-image override cannot be honored (#11138)", async () => {
     mocks.prepareRebuildTargetConfig.mockReturnValue({
       agentDefinition: {},
@@ -266,9 +443,7 @@ describe("prepareRebuildTargetPreflights", () => {
         bail: mocks.bail as never,
       }),
     ).resolves.toBeNull();
-    expect(mocks.bail).toHaveBeenCalledWith(
-      "'NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF' is set",
-    );
+    expect(mocks.bail).toHaveBeenCalledWith("'NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF' is set");
     expect(mocks.prepareSandboxWorkloadSourceFromRebuildHandoff).not.toHaveBeenCalled();
     expect(mocks.preflightAuthoritativeOnboardRuntime).not.toHaveBeenCalled();
   });
@@ -306,20 +481,23 @@ describe("prepareRebuildTargetPreflights", () => {
     ["another endpoint source", "inference-set", null, {}],
     ["a NIM container", null, "nemoclaw-nim", {}],
     ["a malformed receipt", null, null, { hostLocalInferenceReceipt: "invalid" }],
-  ] as const)("withholds explicit recovery for %s (#10959)", async (_case, source, nim, overrides) => {
-    vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
-    const readinessOptions = await prepareN1xTarget(
-      source,
-      null,
-      undefined,
-      undefined,
-      nim,
-      false,
-      overrides,
-    );
+  ] as const)(
+    "withholds explicit recovery for %s (#10959)",
+    async (_case, source, nim, overrides) => {
+      vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
+      const readinessOptions = await prepareN1xTarget(
+        source,
+        null,
+        undefined,
+        undefined,
+        nim,
+        false,
+        overrides,
+      );
 
-    expect(readinessOptions).not.toHaveProperty("allowDeferredN1xManagedVllm");
-  });
+      expect(readinessOptions).not.toHaveProperty("allowDeferredN1xManagedVllm");
+    },
+  );
 
   it("passes recorded Ollama intent into authoritative readiness (#11041)", async () => {
     const readinessOptions = await prepareN1xTarget("onboard", null, "ollama-local", "qwen3.5:9b");

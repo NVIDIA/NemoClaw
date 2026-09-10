@@ -828,7 +828,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
     );
   });
 
-  it("provisions unified mutable .openclaw layout and clean trusted rc files", () => {
+  it("provisions unified mutable .openclaw layout and editable personal profiles", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-layout-"));
     const sandboxRoot = path.join(tmp, "sandbox");
@@ -875,12 +875,12 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         const content = fs.readFileSync(rcPath, "utf-8");
         expect(content.toLowerCase()).not.toContain("proxy");
         expect(content).not.toContain("/tmp/nemoclaw-proxy-env.sh");
-        expect((fs.statSync(rcPath).mode & 0o777).toString(8)).toBe("444");
+        expect((fs.statSync(rcPath).mode & 0o777).toString(8)).toBe("644");
       });
       expect(rc.calls).toContain(
-        `chown root:root ${path.join(sandboxRoot, ".bashrc")} ${path.join(sandboxRoot, ".profile")}`,
+        `chown sandbox:sandbox ${path.join(sandboxRoot, ".bashrc")} ${path.join(sandboxRoot, ".profile")}`,
       );
-      expect(rc.calls).not.toContain("sandbox:sandbox");
+      expect(rc.calls).not.toContainEqual(expect.stringContaining("chown root:root"));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1110,19 +1110,14 @@ describe("Hermes sandbox provisioning", () => {
     }
     const finalizeImageLayout = path.join(tmp, "finalize-image-layout.sh");
     fs.copyFileSync(HERMES_FINALIZE_IMAGE_LAYOUT, finalizeImageLayout);
-    const finalizeImageLayoutSha256 = dockerfile.match(
-      /^ARG NEMOCLAW_HERMES_FINALIZE_IMAGE_LAYOUT_SHA256=([a-f0-9]{64})$/mu,
-    )?.[1] ?? "";
+    const finalizeImageLayoutSha256 =
+      dockerfile.match(
+        /^ARG NEMOCLAW_HERMES_FINALIZE_IMAGE_LAYOUT_SHA256=([a-f0-9]{64})$/mu,
+      )?.[1] ?? "";
     const command = dockerRunCommandBetween(dockerfile, startMarker, endMarker)
       .replaceAll("/root/.cache/pip", path.join(tmp, "root-cache", "pip"))
-      .replaceAll(
-        "/opt/nemoclaw-hermes-config/finalize-image-layout.sh",
-        finalizeImageLayout,
-      )
-      .replaceAll(
-        "$NEMOCLAW_HERMES_FINALIZE_IMAGE_LAYOUT_SHA256",
-        finalizeImageLayoutSha256,
-      );
+      .replaceAll("/opt/nemoclaw-hermes-config/finalize-image-layout.sh", finalizeImageLayout)
+      .replaceAll("$NEMOCLAW_HERMES_FINALIZE_IMAGE_LAYOUT_SHA256", finalizeImageLayoutSha256);
     const result = runDockerShell(command, sandboxRoot);
     return { ...result, tmp, sandboxRoot };
   }

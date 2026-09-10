@@ -32,7 +32,7 @@ const CORPORATE_CA_SHA256 = createHash("sha256")
 function runFixture(args: readonly string[]) {
   return spawnSync(
     process.execPath,
-    ["--experimental-strip-types", "--no-warnings", SCRIPT_PATH, ...args],
+    ["--no-warnings", SCRIPT_PATH, ...args],
     {
       encoding: "utf8",
       timeout: 10_000,

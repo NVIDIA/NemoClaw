@@ -80,7 +80,7 @@ export interface RegisterTunnelOriginDeps {
   readConfig: (sandboxName: string, target: AgentConfigTarget) => ConfigObject;
   writeConfig: (sandboxName: string, target: AgentConfigTarget, config: ConfigObject) => void;
   recomputeHash: (sandboxName: string, target: AgentConfigTarget) => void;
-  reloadGateway: (sandboxName: string) => void;
+  reloadGateway: (sandboxName: string) => Promise<void>;
   info?: (msg: string) => void;
   warn?: (msg: string) => void;
 }
@@ -96,11 +96,11 @@ type SandboxConfigModule = {
  * Default reload: the same managed gateway restart `config set --restart` uses.
  * A container restart re-reads the freshly written in-sandbox config on start.
  */
-function defaultReloadGateway(sandboxName: string): void {
+async function defaultReloadGateway(sandboxName: string): Promise<void> {
   const { restartSandboxGateway } = require("../actions/sandbox/process-recovery") as {
-    restartSandboxGateway: (name: string) => { ok: boolean };
+    restartSandboxGateway: (name: string) => Promise<{ ok: boolean }>;
   };
-  restartSandboxGateway(sandboxName);
+  await restartSandboxGateway(sandboxName);
 }
 
 function resolveDeps(deps: Partial<RegisterTunnelOriginDeps>): Required<RegisterTunnelOriginDeps> {
@@ -149,15 +149,15 @@ function applyAllowedOrigins(config: ConfigObject, origins: string[]): void {
 /**
  * Register the tunnel's public origin into the in-sandbox gateway
  * allowedOrigins so the Web UI over the tunnel is accepted. Best-effort and
- * synchronous: any failure is swallowed with a warning so a working tunnel
+ * asynchronous: any failure is swallowed with a warning so a working tunnel
  * start is never turned into a hard error. Idempotent (no write/reload when the
  * origin list is unchanged) and OpenClaw-only.
  */
-export function registerTunnelOrigin(
+export async function registerTunnelOrigin(
   sandboxName: string,
   tunnelUrl: string,
   deps: Partial<RegisterTunnelOriginDeps> = {},
-): void {
+): Promise<void> {
   const origin = tunnelUrlToOrigin(tunnelUrl);
   if (origin === null) return;
 
@@ -185,7 +185,7 @@ export function registerTunnelOrigin(
     info(`Registered tunnel origin with gateway: ${origin}`);
 
     info("Reloading gateway to apply tunnel origin...");
-    resolved.reloadGateway(sandboxName);
+    await resolved.reloadGateway(sandboxName);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     warn(

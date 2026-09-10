@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { createDockerGpuInspectFixture as inspectFixture } from "./__test-helpers__/docker-gpu-patch-fixtures";
 import {
   getDockerGpuPatchFailureContext,
@@ -20,8 +21,39 @@ function dockerCaptureFixture() {
   return vi.fn((args: readonly string[]) => responses[args[0]] ?? "");
 }
 
+function commandExecutorThrough(
+  runOpenshell: (
+    args: string[],
+    opts?: Record<string, unknown>,
+  ) => {
+    status: number | null;
+    stdout?: string;
+    stderr?: string;
+  },
+): OpenShellSandboxBufferedCommandExecutor {
+  return {
+    runBuffered: vi.fn(async (request) => {
+      const result = runOpenshell(
+        ["sandbox", "exec", "-n", request.sandboxName, "--", ...request.command],
+        { ignoreError: true, suppressOutput: true },
+      );
+      return {
+        outcome:
+          result.status === null
+            ? {
+                kind: "failed" as const,
+                error: { kind: "invocation" as const, message: "failed" },
+              }
+            : { kind: "completed" as const, exitCode: result.status },
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+      };
+    }),
+  };
+}
+
 describe("Docker GPU recreate orchestration", () => {
-  it("recreates the OpenShell-managed container and waits for supervisor exec", () => {
+  it("recreates the OpenShell-managed container and waits for supervisor exec", async () => {
     const dockerCapture = dockerCaptureFixture();
     const dockerRunResults = {
       ps: { status: 0, stdout: `${NEW_CONTAINER_ID}\n` },
@@ -42,7 +74,7 @@ describe("Docker GPU recreate orchestration", () => {
     const runOpenshell = vi.fn(() => ({ status: 0 }));
     const runCaptureOpenshell = vi.fn(() => "alpha  2026-08-23 10:00:02  Ready\n");
 
-    const result = recreateOpenShellDockerSandboxWithGpu(
+    const result = await recreateOpenShellDockerSandboxWithGpu(
       { sandboxName: "alpha", timeoutSecs: 1 },
       {
         dockerCapture,
@@ -54,6 +86,7 @@ describe("Docker GPU recreate orchestration", () => {
         dockerStart,
         runCaptureOpenshell,
         runOpenshell,
+        commandExecutor: commandExecutorThrough(runOpenshell),
         sleep: vi.fn(),
         now: () => new Date("2026-05-12T00:00:00Z"),
         detectSandboxFallbackDns: vi.fn(() => null),
@@ -115,10 +148,11 @@ describe("Docker GPU recreate orchestration", () => {
     );
   });
 
-  it("does not report success when the final OpenShell phase is Deleting (#9531)", () => {
+  it("does not report success when the final OpenShell phase is Deleting (#9531)", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
     let failure: unknown;
     try {
-      recreateOpenShellDockerSandboxWithGpu(
+      await recreateOpenShellDockerSandboxWithGpu(
         { sandboxName: "alpha", timeoutSecs: 1 },
         {
           dockerCapture: dockerCaptureFixture(),
@@ -129,7 +163,8 @@ describe("Docker GPU recreate orchestration", () => {
           dockerRm: vi.fn(() => ({ status: 0 })),
           dockerStart: vi.fn(() => ({ status: 0 })),
           runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:02  Deleting\n"),
-          runOpenshell: vi.fn(() => ({ status: 0 })),
+          runOpenshell,
+          commandExecutor: commandExecutorThrough(runOpenshell),
           sleep: vi.fn(),
           now: () => new Date("2026-05-12T00:00:00Z"),
           detectSandboxFallbackDns: vi.fn(() => null),
