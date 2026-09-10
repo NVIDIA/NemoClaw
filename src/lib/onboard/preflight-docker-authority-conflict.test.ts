@@ -45,6 +45,8 @@ describe("assessHost Docker authority conflict (#10622)", () => {
     const observe = vi.fn(() => CONFLICT);
     const assessment = assessHost({
       platform: "linux",
+      release: "6.8.0-generic",
+      procVersion: "Linux version 6.8.0-generic",
       env: {},
       dockerInfoOutput: "",
       commandExistsImpl,
@@ -68,6 +70,8 @@ describe("assessHost Docker authority conflict (#10622)", () => {
     const observe = vi.fn(() => CONFLICT);
     const assessment = assessHost({
       platform: "linux",
+      release: "6.8.0-generic",
+      procVersion: "Linux version 6.8.0-generic",
       env: { DOCKER_HOST: "unix:///var/run/docker.sock" },
       dockerInfoOutput: "",
       commandExistsImpl,
@@ -86,6 +90,8 @@ describe("assessHost Docker authority conflict (#10622)", () => {
     const observe = vi.fn(() => CONFLICT);
     const assessment = assessHost({
       platform: "linux",
+      release: "6.8.0-generic",
+      procVersion: "Linux version 6.8.0-generic",
       env: {},
       dockerInfoOutput: REACHABLE_DOCKER_INFO,
       dockerVersionOutput: "",
@@ -103,6 +109,8 @@ describe("assessHost Docker authority conflict (#10622)", () => {
     const observe = vi.fn(() => null);
     const assessment = assessHost({
       platform: "linux",
+      release: "6.8.0-generic",
+      procVersion: "Linux version 6.8.0-generic",
       env: {},
       dockerInfoOutput: "",
       commandExistsImpl,
@@ -121,6 +129,8 @@ describe("assessHost Docker authority conflict (#10622)", () => {
     const observe = vi.spyOn(platform, "observeDockerAuthorityConflict").mockReturnValue(CONFLICT);
     const assessment = assessHost({
       platform: "linux",
+      release: "6.8.0-generic",
+      procVersion: "Linux version 6.8.0-generic",
       env: {},
       dockerInfoOutput: "",
       commandExistsImpl,
@@ -138,6 +148,8 @@ describe("assessHost Docker authority conflict (#10622)", () => {
     const observe = vi.fn(() => CONFLICT);
     const assessment = assessHost({
       platform: "linux",
+      release: "6.8.0-generic",
+      procVersion: "Linux version 6.8.0-generic",
       env: {},
       commandExistsImpl,
       runCaptureImpl,
@@ -157,6 +169,8 @@ describe("assessHost Docker authority conflict (#10622)", () => {
     const observe = vi.fn(() => CONFLICT);
     const assessment = assessHost({
       platform: "linux",
+      release: "6.8.0-generic",
+      procVersion: "Linux version 6.8.0-generic",
       env: {},
       dockerInfoOutput: "",
       commandExistsImpl: (name: string) => name === "systemctl",

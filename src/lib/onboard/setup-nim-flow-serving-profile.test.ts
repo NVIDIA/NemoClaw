@@ -51,6 +51,10 @@ async function selectAgainstRunningVllm(
       isNonInteractive: () => true,
       getNonInteractiveProvider: () => "install-vllm",
       detectInferenceProviderHostState: () => runningVllmHostState(),
+      discoverManagedLlamaCppSelections: () => ({
+        choices: [],
+        resolution: { kind: "rejected", reason: "No llama.cpp profile in this vLLM fixture" },
+      }),
       handleVllmSelection,
       resolveRequestedServingProfileModel,
       selectVllmModelFromEnv,
