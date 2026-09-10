@@ -32,7 +32,10 @@ vi.mock("../../onboard/gateway/state-dir", () => ({
 
 import { getLiveGatewayInference } from "../../inference/live";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
-import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
+import {
+  buildManagedStartupProfile,
+  type ManagedStartupProfileBuilderInput,
+} from "../../onboard/managed-startup/profile-builder";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import type { SandboxEntry } from "../../state/registry/types";
@@ -47,7 +50,7 @@ const identityFingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
 const endpoint = "https://integrate.api.nvidia.com/v1";
 const readFailureCanary = "credential-canary-value";
 const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
-const startup = buildManagedStartupProfile({
+const startupInput = {
   agent: "openclaw",
   inference: {
     routeProvider: "inference",
@@ -75,7 +78,8 @@ const startup = buildManagedStartupProfile({
   observabilityEnabled: null,
   environment: {},
   corporateCa: null,
-});
+} satisfies ManagedStartupProfileBuilderInput;
+const startup = buildManagedStartupProfile(startupInput);
 
 const entry: SandboxEntry = {
   name: "alpha",
@@ -194,6 +198,81 @@ function mockSupportedLiveSource(
   raw.getSandboxConfig.mockResolvedValue(configuration(appliedRevision));
 }
 
+function braveProvider() {
+  const readCredential = vi.fn(() => {
+    throw new Error(readFailureCanary);
+  });
+  const credentials = Object.defineProperty({}, "BRAVE_API_KEY", {
+    enumerable: true,
+    get: readCredential,
+  });
+  return {
+    readCredential,
+    provider: {
+      metadata: {
+        id: "brave-id",
+        name: "alpha-brave-search",
+        workspace: "default",
+        resourceVersion: 9n,
+      },
+      type: "brave",
+      credentials,
+      config: {},
+    },
+  };
+}
+
+function mockBraveLiveSource() {
+  const built = buildManagedStartupProfile({
+    ...startupInput,
+    webSearch: { fetchEnabled: true, provider: "brave" },
+  });
+  mockSupportedLiveSource(3, 3, {
+    ...entry,
+    webSearchEnabled: true,
+    webSearchProvider: "brave",
+    workload: {
+      ...(entry.workload as Extract<
+        NonNullable<SandboxEntry["workload"]>,
+        { kind: "managed-image" }
+      >),
+      encodedProfile: built.encodedProfile,
+      startupProfileSha256: built.startupProfileSha256,
+    },
+  });
+  const search = braveProvider();
+  raw.getProvider.mockImplementation(async ({ name }: { name: string }) =>
+    name === "alpha-brave-search" ? { provider: search.provider } : provider(),
+  );
+  raw.getSandbox.mockResolvedValue({
+    sandbox: {
+      ...inventory().sandbox,
+      spec: { template: { image: imageRef }, providers: ["alpha-brave-search"] },
+    },
+  });
+  return search;
+}
+
+async function exportLiveSource() {
+  const writeStdout = vi.fn(async (_yaml: string) => {});
+  const publish = vi.fn();
+  const result = await runConfigExport(
+    {
+      sandboxName: "alpha",
+      documentName: parseNemoClawConfigDocumentName("alpha"),
+      target: { kind: "stdout" },
+    },
+    {
+      observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+      createDocumentUid: () =>
+        parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
+      writeStdout,
+      publish,
+    },
+  );
+  return { result, writeStdout, publish };
+}
+
 function nativeNvidiaProvider() {
   return { ...provider().provider, type: "nvidia", profileWorkspace: "", config: {} };
 }
@@ -214,6 +293,87 @@ function mockNativeNvidiaSource() {
 }
 
 describe("live export snapshot reader", () => {
+  it("exports Brave through SDK metadata without reading its credential value (#10904)", async () => {
+    const search = mockBraveLiveSource();
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const yaml = writeStdout.mock.calls[0]![0];
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.sandboxes[0]!.integrations?.webSearch).toEqual({
+      provider: "brave",
+      agentRefs: ["primary"],
+      credential: { env: "BRAVE_API_KEY" },
+    });
+    expect(document.spec.inferenceProviders).toHaveLength(1);
+    expect(search.readCredential).not.toHaveBeenCalled();
+    expect(yaml).not.toContain(readFailureCanary);
+    expect(raw.getProvider.mock.calls.map(([request]) => request.name)).toEqual([
+      "nvidia-prod",
+      "alpha-brave-search",
+      "nvidia-prod",
+      "alpha-brave-search",
+    ]);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { type: "generic" },
+    { credentials: { OTHER_API_KEY: readFailureCanary } },
+    { config: { BASE_URL: readFailureCanary } },
+  ])("rejects unsupported Brave provider metadata without output %j (#10904)", async (change) => {
+    const search = mockBraveLiveSource();
+    raw.getProvider.mockImplementation(async ({ name }: { name: string }) =>
+      name === "alpha-brave-search" ? { provider: { ...search.provider, ...change } } : provider(),
+    );
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toMatchObject({ ok: false });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(search.readCredential).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+  });
+
+  it("sanitizes a failed Brave metadata read before publication (#10904)", async () => {
+    mockBraveLiveSource();
+    raw.getProvider
+      .mockResolvedValueOnce(provider())
+      .mockRejectedValueOnce(new Error(readFailureCanary));
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it.each(["id", "resourceVersion"])(
+    "rejects changing Brave provider %s without output (#10904)",
+    async (field) => {
+      const search = mockBraveLiveSource();
+      let revision = 10;
+      raw.getProvider.mockImplementation(async ({ name }: { name: string }) =>
+        name === "alpha-brave-search"
+          ? {
+              provider: {
+                ...search.provider,
+                metadata: {
+                  ...search.provider.metadata,
+                  [field]: field === "id" ? `provider-${revision++}` : BigInt(revision++),
+                },
+              },
+            }
+          : provider(),
+      );
+      const { result, writeStdout, publish } = await exportLiveSource();
+      expect(result).toMatchObject({
+        ok: false,
+        failure: { findings: [expect.objectContaining({ category: "unstable-source" })] },
+      });
+      expect(writeStdout).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+      expect(search.readCredential).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     {
       stage: "registry",

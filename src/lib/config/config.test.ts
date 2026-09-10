@@ -83,6 +83,67 @@ describe("NemoClawConfig v1", () => {
     expect(validateNemoClawConfig(config())).toEqual(config());
   });
 
+  it("round-trips Brave search bound to the primary agent (#10904)", () => {
+    const value = config();
+    const integration = {
+      webSearch: {
+        provider: "brave",
+        agentRefs: ["primary"],
+        credential: { env: "BRAVE_API_KEY" },
+      },
+    };
+    Object.assign(value.spec.sandboxes[0]!, { integrations: integration });
+    const rendered = renderInput(value);
+    expect(validateNemoClawConfig(YAML.parse(rendered.yaml))).toEqual(value);
+  });
+
+  it.each([
+    { provider: "tavily" },
+    { agentRefs: [] },
+    { agentRefs: ["primary", "primary"] },
+    { agentRefs: ["other"] },
+    { credential: { env: "NEMOCLAW_PROVIDER_KEY" } },
+    { credential: { env: "TAVILY_API_KEY" } },
+    { credential: { value: "secret-canary" } },
+    { unexpected: true },
+  ])("rejects unsupported Brave configuration %j (#10904)", (change) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!, {
+      integrations: {
+        webSearch: {
+          provider: "brave",
+          agentRefs: ["primary"],
+          credential: { env: "BRAVE_API_KEY" },
+          ...change,
+        },
+      },
+    });
+    expect(() => validateNemoClawConfig(value)).toThrow();
+    try {
+      validateNemoClawConfig(value);
+    } catch (error) {
+      expect(String(error)).not.toContain("secret-canary");
+    }
+  });
+
+  it.each([
+    { label: "missing primary", change: { name: "other" } },
+    { label: "wrong type", change: { type: "hermes" } },
+  ])("rejects a Brave binding with $label (#10904)", ({ change }) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!, {
+      integrations: {
+        webSearch: {
+          provider: "brave",
+          agentRefs: ["primary"],
+          credential: { env: "BRAVE_API_KEY" },
+        },
+      },
+    });
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, change);
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
   it("returns an owned and deeply frozen validated document (#10938)", () => {
     const input = config();
     const validated = validateNemoClawConfig(input);

@@ -9,6 +9,7 @@ import {
   InferenceEndpointSchema,
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
+  NemoClawBraveSearchConfigSchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
   TcpPortSchema,
@@ -99,6 +100,17 @@ export interface ObservedExportEndpointEvidence {
     | { readonly kind: "builtin-profile"; readonly profileId: "nvidia" };
 }
 
+export interface ObservedExportWebSearchProvider {
+  readonly gatewayName: string;
+  readonly workspace: string;
+  readonly name: string;
+  readonly id: string;
+  readonly resourceVersion: string;
+  readonly type: string;
+  readonly credentialKeys: readonly string[];
+  readonly configKeys: readonly string[];
+}
+
 export interface ObservedExportInference {
   readonly topology: "hosted" | "managed" | "local" | "unknown";
   readonly provider: string;
@@ -133,6 +145,7 @@ export type ExportSnapshotReadStage =
   | "sandbox-identity"
   | "inference-route"
   | "provider-metadata"
+  | "web-search-provider"
   | "effective-policy";
 
 /** One complete, untrusted read from all export evidence owners. */
@@ -149,6 +162,7 @@ export type RawExportSnapshot =
       sandbox: ObservedExportSandboxIdentity;
       gateway: ObservedExportGateway;
       inference: ObservedExportInference;
+      webSearchProvider?: ObservedExportWebSearchProvider;
       policy: ObservedExportPolicy;
       configuration: SandboxConfiguration;
     }>;
@@ -203,6 +217,7 @@ export const ExportSourceValuesSchema = Type.Object({
   }),
   gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
   inference: ExportInferenceSchema,
+  webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
 });
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;

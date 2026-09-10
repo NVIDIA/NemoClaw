@@ -39,7 +39,7 @@ const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
-  "gateway" | "inference" | "policy" | "runtime" | "sandboxName"
+  "gateway" | "inference" | "policy" | "runtime" | "sandboxName" | "webSearch"
 >;
 
 function verifiedExportSource(data: VerifiedExportSourceData): VerifiedExportSource {
@@ -72,6 +72,10 @@ function hasEntries(value: unknown): boolean {
     : value !== undefined && value !== null && value !== false;
 }
 
+function hasBraveSearch(entry: ObservedExportRegistry): boolean {
+  return entry.webSearchEnabled === true && entry.webSearchProvider === "brave";
+}
+
 function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
   const excluded: Array<[string, unknown, string]> = [
     [
@@ -88,7 +92,7 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
     ["spec.sandboxes[].observability", entry.observabilityEnabled, "observability"],
     [
       "spec.sandboxes[].integrations.webSearch",
-      entry.webSearchEnabled || entry.webSearchProvider,
+      !hasBraveSearch(entry) && (entry.webSearchEnabled || entry.webSearchProvider),
       "web search",
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
@@ -277,7 +281,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
       bindAddress: "127.0.0.1",
       wslExposure: false,
     },
-    webSearch: null,
+    webSearch: hasBraveSearch(entry) ? { fetchEnabled: true, provider: "brave" } : null,
     toolDisclosure: "progressive",
     hermesToolGateways: [],
     messagingPlan: null,
@@ -419,15 +423,70 @@ function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): Export
         "Registry and live sandbox images differ.",
       ),
     );
-  if (sandbox.providerNames.some((name) => name !== inference.provider))
+  const additionalProviders = sandbox.providerNames.filter((name) => name !== inference.provider);
+  const expectedAdditionalProviders = hasBraveSearch(entry) ? [`${entry.name}-brave-search`] : [];
+  if (
+    !isDeepStrictEqual(additionalProviders, expectedAdditionalProviders) ||
+    new Set(sandbox.providerNames).size !== sandbox.providerNames.length
+  )
     findings.push(
       finding(
         "source.sandbox.providers",
         "unsupported",
-        "V1 export does not support additional provider attachments.",
+        "The sandbox provider attachments do not match its supported configuration.",
       ),
     );
   return findings;
+}
+
+function validateWebSearchProvider(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { registry, webSearchProvider: provider, sandbox, gateway } = snapshot;
+  if (!hasBraveSearch(registry)) {
+    return provider === undefined
+      ? []
+      : [finding("source.webSearch", "ambiguous", "Unexpected web-search provider evidence.")];
+  }
+  if (!provider) {
+    return [
+      finding(
+        "source.webSearch",
+        "missing-provenance",
+        "Live Brave provider evidence is required.",
+      ),
+    ];
+  }
+  if (
+    !isValidNemoClawBoundedText(provider.id) ||
+    !isValidNemoClawBoundedText(provider.resourceVersion) ||
+    !/^[1-9][0-9]*$/u.test(provider.resourceVersion) ||
+    !isDeepStrictEqual(
+      [
+        provider.gatewayName,
+        provider.workspace,
+        provider.name,
+        provider.type,
+        provider.credentialKeys,
+        provider.configKeys,
+      ],
+      [
+        gateway.name,
+        sandbox.workspace,
+        `${registry.name}-brave-search`,
+        "brave",
+        ["BRAVE_API_KEY"],
+        [],
+      ],
+    )
+  ) {
+    return [
+      finding(
+        "source.webSearch",
+        "drifted",
+        "The live Brave provider does not match its managed binding.",
+      ),
+    ];
+  }
+  return [];
 }
 
 function validateGateway(snapshot: QualifiedExportSnapshot): ExportFinding[] {
@@ -642,6 +701,7 @@ function validateAgreement(
     ...classifyExportRegistry(snapshot.registry),
     ...validateSandboxIdentity(requestedSandboxName, snapshot),
     ...validateSandboxConfiguration(snapshot),
+    ...validateWebSearchProvider(snapshot),
     ...validateGateway(snapshot),
     ...validateInferenceSelection(snapshot),
     ...validateInferenceRepresentation(snapshot),
@@ -681,6 +741,15 @@ function completeVerifiedSource(
   const selected = normalizeInferenceSelection(entry);
   const values = {
     sandboxName: requestedSandboxName,
+    ...(hasBraveSearch(entry)
+      ? {
+          webSearch: {
+            provider: "brave",
+            agentRefs: ["primary"],
+            credential: { env: "BRAVE_API_KEY" },
+          },
+        }
+      : {}),
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
     inference: {

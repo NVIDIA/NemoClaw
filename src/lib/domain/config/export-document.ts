@@ -62,6 +62,9 @@ export function buildExportConfig(
             image: { ref: source.runtime.imageRef },
           },
           network: { policy: { explicit: source.policy } },
+          ...(source.webSearch === undefined
+            ? {}
+            : { integrations: { webSearch: source.webSearch } }),
           agents: [
             {
               name: "primary",

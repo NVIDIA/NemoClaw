@@ -114,6 +114,28 @@ describe("OpenShell provider evidence", () => {
     expect(result?.config.OPENAI_BASE_URL).toBe("https://api.example/v1");
   });
 
+  it("never evaluates credential or unrequested configuration values (#10904)", async () => {
+    const { connect, raw } = fixture();
+    const readSecret = vi.fn(() => {
+      throw new Error(canary);
+    });
+    const opaque = () => Object.defineProperty({}, "SECRET", { enumerable: true, get: readSecret });
+    raw.getProvider.mockResolvedValue({
+      provider: {
+        ...provider().provider,
+        credentials: opaque(),
+        credentialHandles: opaque(),
+        config: Object.assign(opaque(), { OPENAI_BASE_URL: "https://api.example/v1" }),
+      },
+    });
+    const result = await createProviders(connect).get(request());
+    expect(result?.credentialKeys).toEqual(["SECRET"]);
+    expect(result?.config).toEqual({ OPENAI_BASE_URL: "https://api.example/v1" });
+    expect(result?.configKeys).toEqual(["OPENAI_BASE_URL", "SECRET"]);
+    expect(readSecret).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain(canary);
+  });
+
   it("verifies the native NVIDIA endpoint through the named gateway profile", async () => {
     const { connect, raw } = nativeNvidiaFixture();
     const input = request();
@@ -257,6 +279,9 @@ describe("OpenShell provider evidence", () => {
 
   it.each([
     { credentials: [] },
+    { credentials: new Date() },
+    { credentialHandles: [] },
+    { credentialHandles: new Map() },
     { config: null },
     { credentialHandles: [] },
     { config: { OPENAI_BASE_URL: { secret: canary } } },

@@ -266,6 +266,15 @@ const NemoClawExplicitPolicySchema = Type.Unsafe<Record<string, unknown>>({
   $ref: NEMOCLAW_SANDBOX_POLICY_SCHEMA_ID,
 });
 
+export const NemoClawBraveSearchConfigSchema = Type.Object(
+  {
+    provider: Type.Literal("brave"),
+    agentRefs: Type.Array(Type.Literal("primary"), { minItems: 1, maxItems: 1 }),
+    credential: CredentialEnvironmentReferenceSchema,
+  },
+  { additionalProperties: false },
+);
+
 const NemoClawSandboxConfigSchema = Type.Object(
   {
     name: SandboxNameSchema,
@@ -280,6 +289,9 @@ const NemoClawSandboxConfigSchema = Type.Object(
       { additionalProperties: false },
     ),
     agents: Type.Array(NemoClawAgentConfigSchema, { minItems: 1 }),
+    integrations: Type.Optional(
+      Type.Object({ webSearch: NemoClawBraveSearchConfigSchema }, { additionalProperties: false }),
+    ),
   },
   { additionalProperties: false },
 );

@@ -210,6 +210,44 @@
                   "additionalProperties": false
                 },
                 "minItems": 1
+              },
+              "integrations": {
+                "type": "object",
+                "required": ["webSearch"],
+                "properties": {
+                  "webSearch": {
+                    "type": "object",
+                    "required": ["provider", "agentRefs", "credential"],
+                    "properties": {
+                      "provider": {
+                        "type": "string",
+                        "const": "brave"
+                      },
+                      "agentRefs": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "const": "primary"
+                        },
+                        "minItems": 1,
+                        "maxItems": 1
+                      },
+                      "credential": {
+                        "type": "object",
+                        "required": ["env"],
+                        "properties": {
+                          "env": {
+                            "type": "string",
+                            "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "additionalProperties": false

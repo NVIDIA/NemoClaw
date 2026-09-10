@@ -93,6 +93,29 @@ function sandboxProblems(
         );
     }
   }
+  problems.push(...webSearchProblems(sandbox, sandboxIndex));
+  return problems;
+}
+
+function webSearchProblems(sandbox: NemoClawSandboxConfig, sandboxIndex: number): string[] {
+  const problems: string[] = [];
+  const search = sandbox.integrations?.webSearch;
+  if (search) {
+    const location = `/spec/sandboxes/${sandboxIndex}/integrations/webSearch`;
+    if (
+      !isCredentialEnvironmentReferenceName(search.credential.env) ||
+      search.credential.env !== "BRAVE_API_KEY"
+    ) {
+      problems.push(`${location}/credential/env must reference the Brave credential`);
+    }
+    if (
+      !search.agentRefs.every((name) =>
+        sandbox.agents.some((agent) => agent.name === name && agent.type === "openclaw"),
+      )
+    ) {
+      problems.push(`${location}/agentRefs must reference an OpenClaw agent in this sandbox`);
+    }
+  }
   return problems;
 }
 

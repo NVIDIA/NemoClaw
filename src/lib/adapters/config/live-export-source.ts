@@ -17,6 +17,7 @@ import type {
   ExportSnapshotReader,
   ObservedExportGateway,
   ObservedExportInference,
+  ObservedExportWebSearchProvider,
   ObservedExportEndpointEvidence,
   ObservedExportRegistry,
   ObservedExportSandboxIdentity,
@@ -192,6 +193,31 @@ async function inferenceFor(
   };
 }
 
+async function readWebSearchProvider(
+  entry: Readonly<SandboxEntry>,
+  gatewayName: string,
+  signal: AbortSignal,
+): Promise<ObservedExportWebSearchProvider> {
+  const provider = await createProviders().get({
+    target: namedOpenShellGateway(gatewayName),
+    workspace: "default",
+    name: `${entry.name}-brave-search`,
+    configKeys: [],
+    signal,
+  });
+  if (!provider) throw new Error("The live web-search provider is missing.");
+  return {
+    gatewayName,
+    workspace: provider.workspace,
+    name: provider.name,
+    id: provider.id,
+    resourceVersion: provider.resourceVersion,
+    type: provider.type,
+    credentialKeys: provider.credentialKeys,
+    configKeys: provider.configKeys,
+  };
+}
+
 async function effectivePolicy(gateway: ObservedExportGateway, row: Sandbox, signal: AbortSignal) {
   const { policy, ...configuration } = await createSandboxConfig().get({
     target: namedOpenShellGateway(gateway.name),
@@ -247,6 +273,11 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
       },
       signal,
     );
+    let webSearchProvider: ObservedExportWebSearchProvider | undefined;
+    if (entry.webSearchEnabled === true && entry.webSearchProvider === "brave") {
+      stage = "web-search-provider";
+      webSearchProvider = await readWebSearchProvider(entry, gateway.name, signal);
+    }
     stage = "effective-policy";
     const { configuration, ...policy } = await effectivePolicy(gateway, row, signal);
     return {
@@ -256,6 +287,7 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
       gateway,
       sandbox,
       inference,
+      ...(webSearchProvider === undefined ? {} : { webSearchProvider }),
       policy,
       configuration,
     };

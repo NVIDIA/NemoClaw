@@ -24,7 +24,13 @@ export const MetadataSchema = Type.Object({
 });
 
 // Validate only consumed fields. Credential values and unrequested config remain opaque.
-const OpaqueMapSchema = Type.Record(Type.String(), Type.Unknown());
+const OpaqueMapSchema = Type.Unsafe<Record<string, unknown>>(
+  Type.Refine(Type.Unknown(), (value) => {
+    if (typeof value !== "object" || value === null) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  }),
+);
 export const ProviderResponseSchema = Type.Object({
   provider: Type.Object({
     metadata: MetadataSchema,
