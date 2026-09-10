@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { command, errorDetail, fileIdentity } from "./probe-component-workload.mts";
 
 export const COMPONENT_ADAPTER_SHA256 =
-  "055f26bd95242d0fbe7e2f69034b19c1fed13ebb71c5e8b5323db374e399427e";
+  "3f8f0b14af77dedee4504bc112869a90fe89b0c8f93c434d0f29313e74bfd1fd";
 const MARKER = "nemoclaw-windows-runtime.json";
 const PTH = "import nemoclaw_native_windows; nemoclaw_native_windows.install()\n";
 

@@ -1048,6 +1048,8 @@ jobs:
             !${{ runner.temp }}/official-hermes-runtime-build/browser-use-wheels/
             !${{ runner.temp }}/official-hermes-runtime-build/uv-cache/
             !${{ runner.temp }}/official-hermes-runtime-build/npm-cache/
+            !${{ runner.temp }}/official-hermes-runtime-build/node-build/
+            !${{ runner.temp }}/official-hermes-runtime-build/node-build-tools/
             !${{ runner.temp }}/official-hermes-runtime-build/node-addon-headers/
           if-no-files-found: error
           retention-days: 14

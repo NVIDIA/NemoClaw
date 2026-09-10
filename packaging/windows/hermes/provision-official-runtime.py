@@ -798,13 +798,12 @@ def main():
                 tool_environment / "uv-receipt.toml",
             ]
         ]
-        headers = evidence / "node-addon-headers"
-        extract_complete(inputs["node-addon-headers"], headers, "tar.gz")
-        (headers / "arm64").mkdir()
-        shutil.copyfile(inputs["node-addon-library"], headers / "arm64/node.lib")
-        environment["npm_config_nodedir"] = str(headers)
-        # Cache only the exact immutable archive inputs. The official installer
-        # still owns platform selection, extraction and all lifecycle scripts.
+        build_tools = evidence / "node-build-tools"
+        build_tools.mkdir()
+        for artifact in lock["nodeBuildTools"]:
+            file = download(artifact, downloads)
+            extract_complete(file, build_tools / artifact["id"], "tar.gz")
+        # Input caching runs no lifecycle scripts and never enters the payload.
         invoke(
             runtime / "node/node.exe",
             [
@@ -872,27 +871,74 @@ def main():
             official_user_path(environment["PATH"]),
         ):
             environment["PLAYWRIGHT_DOWNLOAD_HOST"] = mirror
-            environment["ELECTRON_MIRROR"] = mirror + "/electron/"
             for stage in [
                 "node",
                 "system-packages",
-                "node-deps",
                 "config-templates",
                 "platform-sdks",
             ]:
                 invoke_official_stage(stage)
-        npm_cli = runtime / "node/node_modules/npm/bin/npm-cli.js"
-        invoke(
-            runtime / "node/node.exe",
-            [npm_cli, "--prefix", source, "ls", "--all", "--json"],
-            label="complete-npm-graph",
-        )
-        for workspace in ["web", "ui-tui"]:
+            # The pinned Playwright installer consumes only hash-verified local
+            # archives. It is a CI tool, not a root npm runtime dependency.
             invoke(
                 runtime / "node/node.exe",
-                [npm_cli, "--prefix", source, "run", "build", "--workspace", workspace],
-                label="build-" + workspace,
+                [build_tools / "playwright-core/cli.js", "install", "chromium"],
+                label="official-chromium-install",
             )
+        node_spec = importlib.util.spec_from_file_location(
+            "official_node_build", scripts / "build-official-node.py"
+        )
+        node_builder = importlib.util.module_from_spec(node_spec)
+        node_spec.loader.exec_module(node_builder)
+        receipt["nodeBuild"] = node_builder.build_selected(
+            runtime=runtime,
+            evidence=evidence,
+            source_archive=args.source_archive,
+            npm_root=build_tools / "npm",
+            extract=extract_complete,
+            invoke=invoke,
+        )
+        write_json(evidence / "selected-node-production.json", receipt["nodeBuild"])
+        browser = list(
+            (runtime / "browsers").glob("chromium-*/chrome-win64/chrome.exe")
+        )
+        expected_browser = next(
+            item for item in lock["artifacts"] if item["id"] == "chromium"
+        )
+        agent_browser = runtime / "agent-browser/bin/agent-browser-win32-x64.exe"
+        if (
+            len(browser) != 1
+            or sha256(browser[0]) != expected_browser["executables"][0]["sha256"]
+            or sha256(agent_browser)
+            != lock["selectedBrowserChain"]["agentBrowserSha256"]
+        ):
+            raise ValueError(
+                "The selected official browser executables differ from their pinned inputs"
+            )
+        browser_version = invoke(
+            agent_browser,
+            ["--version"],
+            label="official-agent-browser-version",
+            timeout=30,
+        )
+        if "0.26.0" not in Path(browser_version["stdout"]).read_text(encoding="utf-8"):
+            raise ValueError(
+                "The official agent-browser executable reported another version"
+            )
+        node_contract = {
+            "schemaVersion": 1,
+            "upstreamCommit": UPSTREAM_COMMIT,
+            "profile": node_builder.PROFILE,
+            "tui": "hermes-agent/ui-tui/dist/entry.js",
+            "web": "hermes-agent/hermes_cli/web_dist/index.html",
+            "chromium": browser[0].relative_to(runtime).as_posix(),
+            "agentBrowser": agent_browser.relative_to(runtime).as_posix(),
+            "browserUse": "0.13.10",
+            "browserArchitecture": "x64-emulated",
+            "runtimeQualified": False,
+        }
+        write_json(runtime / "nemoclaw-hermes-node.json", node_contract)
+        receipt["selectedBrowserChain"] = node_contract
         # Ask official uv to regenerate its own editable/tool entrypoints for a
         # relocatable environment. The later adapter owns only generated metadata
         # and the outer delegating wrappers; executable bytes are never patched.
@@ -972,17 +1018,6 @@ def main():
             raise ValueError(
                 "The unmodified official stage changed a locked dependency graph"
             )
-        for relative in [
-            "node_modules/playwright/package.json",
-            "apps/desktop/node_modules/electron/dist/electron.exe",
-            "node_modules/get-windows/lib/binding/napi-9-win32-unknown-arm64/node-get-windows.node",
-            "hermes_cli/web_dist/index.html",
-            "ui-tui/dist/entry.js",
-        ]:
-            if not (source / relative).is_file():
-                raise ValueError(
-                    f"The official build omitted a required artifact: {relative}"
-                )
         receipt["officialSourceFilesVerified"] = (
             inventory_module.verify_official_source(runtime, args.source_archive)
         )
@@ -990,7 +1025,9 @@ def main():
         receipt["status"] = "runtime-provisioned"
         receipt["relocationRequired"] = True
         receipt["productionSplitRequired"] = False
-        receipt["productionPartition"] = "complete-unpruned-candidate"
+        receipt["productionPartition"] = (
+            "full-python-source-with-official-prebuilt-node-outputs"
+        )
         receipt["standaloneDesktopBuilt"] = False
         receipt["profile"] = (
             "official-cli-web-tui-and-browser-use; optional desktop packaging and CUA not selected"

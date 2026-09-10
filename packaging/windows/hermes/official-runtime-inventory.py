@@ -22,7 +22,6 @@ REQUIRED_STAGES = frozenset(
         "node",
         "system-packages",
         "dependencies",
-        "node-deps",
         "path",
         "config-templates",
         "platform-sdks",
@@ -154,6 +153,30 @@ def validate_build_receipt(build):
         raise ValueError("An official stage failed or skipped a required capability")
     if build.get("fallbacks") != [] or build.get("sourceUnchanged") is not True:
         raise ValueError("Dependency fallback or source modification prevents freezing")
+    node = build.get("nodeBuild", {})
+    if (
+        node.get("schemaVersion") != 1
+        or node.get("profile") != "official-prebuilt-cli-web-tui"
+        or node.get("npmVersion") != "12.0.2"
+        or node.get("upstreamLockUnchanged") is not True
+        or node.get("neighboringBuildDependenciesAbsent") is not True
+        or node.get("tuiNonTtyImports") is not True
+        or node.get("desktopSelected") is not False
+        or {item.get("path") for item in node.get("outputs", [])}
+        != {"ui-tui/dist", "hermes_cli/web_dist"}
+        or {item.get("path") for item in node.get("sidecars", [])}
+        != {"plugins/platforms/photon/sidecar", "scripts/whatsapp-bridge"}
+    ):
+        raise ValueError("The selected official production Node closure is incomplete")
+    browser = build.get("selectedBrowserChain", {})
+    if (
+        browser.get("profile") != "official-prebuilt-cli-web-tui"
+        or browser.get("browserUse") != "0.13.10"
+        or browser.get("agentBrowser")
+        != "agent-browser/bin/agent-browser-win32-x64.exe"
+        or browser.get("runtimeQualified") is not False
+    ):
+        raise ValueError("The explicit official browser chain is incomplete")
 
 
 def validate_receipts(runtime, build, relocation):

@@ -254,7 +254,7 @@
       ],
       "id": "chromium",
       "mirrorPath": "/builds/cft/151.0.7922.34/win64/chrome-win64.zip",
-      "owner": "official Hermes Stage-NodeDeps / locked Playwright1.62.1",
+      "owner": "official pinned Playwright1.62.1 CI browser installer",
       "architecture": "x64",
       "runtimePayload": true
     },
@@ -276,7 +276,7 @@
       ],
       "id": "chromium-headless-shell",
       "mirrorPath": "/builds/cft/151.0.7922.34/win64/chrome-headless-shell-win64.zip",
-      "owner": "official Hermes Stage-NodeDeps / locked Playwright1.62.1",
+      "owner": "official pinned Playwright1.62.1 CI browser installer",
       "architecture": "x64",
       "runtimePayload": true
     },
@@ -297,7 +297,7 @@
       ],
       "id": "playwright-ffmpeg",
       "mirrorPath": "/builds/ffmpeg/1011/ffmpeg-win64.zip",
-      "owner": "official Hermes Stage-NodeDeps / locked Playwright1.62.1",
+      "owner": "official pinned Playwright1.62.1 CI browser installer",
       "architecture": "x64",
       "runtimePayload": true
     },
@@ -316,7 +316,7 @@
       ],
       "id": "playwright-winldd",
       "mirrorPath": "/builds/winldd/1007/winldd-win64.zip",
-      "owner": "official Hermes Stage-NodeDeps / locked Playwright1.62.1",
+      "owner": "official pinned Playwright1.62.1 CI browser installer",
       "architecture": "x64",
       "runtimePayload": true
     },
@@ -356,30 +356,6 @@
       "owner": "Gyan.FFmpeg as selected by official Stage-SystemPackages"
     },
     {
-      "file": "electron-v40.10.2-win32-arm64.zip",
-      "url": "https://github.com/electron/electron/releases/download/v40.10.2/electron-v40.10.2-win32-arm64.zip",
-      "size": 137879550,
-      "sha256": "7c3c144e4ddf024d929f73311e8495a7d8e2cb6467e5f4ce3835da5291c0e123",
-      "licenseFiles": [
-        "LICENSES.chromium.html",
-        "LICENSE"
-      ],
-      "architecture": "arm64",
-      "id": "electron",
-      "mirrorPath": "/electron/v40.10.2/electron-v40.10.2-win32-arm64.zip",
-      "owner": "official locked npm Electron postinstall"
-    },
-    {
-      "id": "electron-checksums",
-      "file": "electron-SHASUMS256.txt",
-      "url": "https://github.com/electron/electron/releases/download/v40.10.2/SHASUMS256.txt",
-      "size": 7680,
-      "sha256": "12083374e3cd46e1fd281c7ff62e80962fc8097dee30ecdec5914d2c3e2d6668",
-      "mirrorPath": "/electron/v40.10.2/SHASUMS256.txt",
-      "owner": "official Electron download-integrity verifier",
-      "runtimePayload": false
-    },
-    {
       "id": "agent-browser",
       "file": "agent-browser-0.26.0.tgz",
       "url": "https://registry.npmjs.org/agent-browser/-/agent-browser-0.26.0.tgz",
@@ -395,24 +371,6 @@
         "LICENSE"
       ],
       "advertised": false
-    },
-    {
-      "file": "node-v22.23.2-headers.tar.gz",
-      "url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-headers.tar.gz",
-      "sha256": "daaf13ec5d45a38bbcfcff06d0723f72a6813b89ab27bb5af2ac8e1f6259dde0",
-      "size": 9932325,
-      "owner": "Node22.23.2 native addon build inputs",
-      "runtimePayload": false,
-      "id": "node-addon-headers"
-    },
-    {
-      "file": "node-v22.23.2-arm64.lib",
-      "url": "https://nodejs.org/dist/v22.23.2/win-arm64/node.lib",
-      "sha256": "e56e62f4a7ae6643a40db01f09072e8a93ccbe73be8abff927b793344691d6b7",
-      "size": 2790226,
-      "owner": "Node22.23.2 native addon build inputs",
-      "runtimePayload": false,
-      "id": "node-addon-library"
     }
   ],
   "browserUseWheelLock": "browser-use-win-arm64.lock.json",
@@ -503,6 +461,54 @@
     "setup.py": "d476dd1c28d707acd72f1d0551d7178123832ae18b6e201ca1ac48cd040653ae",
     "uv.lock": "38baf65f5960e6fd930b1aaa817d4d24df312d7b9031a4197998aa9eb8512368",
     "package.json": "8b5b2ea9721e8d4bdedea457f5b5bab038e7f3e11ea4e1381bd43f2e87ce04cd",
-    "package-lock.json": "83beeba3f6e7826312444c7b64067488afae9ed88ad7326ecef61ac235bab86d"
+    "package-lock.json": "83beeba3f6e7826312444c7b64067488afae9ed88ad7326ecef61ac235bab86d",
+    "scripts/install.sh": "5854b15670b51a8daae8f59ddfa917062de9f74be261eb73b4b8d719710f8968",
+    "hermes_cli/main_web_build.py": "798b1ef1053a62caed4e796c346e2ab0df51f583872cb7c33c9c1b35d357db9a",
+    "hermes_cli/main_tui_launch.py": "4b0a20ac887df041328b1c11ed4b0179014095901965f1ed6ac5195ded2e18ef",
+    "Dockerfile": "f4170758ba5427fa330e24e5dee8aa01d13c3180eebd782cfdac8365915546f2",
+    "nix/tui.nix": "1c0d3d5e89919228a67ecca10f35d3d0a6c9b68283fc39b27c7625ebc1bac486",
+    "nix/web.nix": "7edb79e06e34c56cf86571aed03476aba2ee22c715ea85eaebd1917e983213cb",
+    "nix/npm-12-0-2.nix": "4dcff4cf13fc1893c0d0a3ab9ffcbd14fdb0b549c10ffc10e502cc3d0cd75769",
+    "ui-tui/scripts/build.mjs": "152e99169e36953638ac09f86e7cd0e1ce73620af3568a3085d2bf732a0cc76e",
+    "tools/browser_use_cli.py": "12e0c014d725cb2e559ee24986737578ebd96e0ef33a3a5411d4177a8101caf9",
+    "plugins/platforms/photon/sidecar/package-lock.json": "2368d0b886d149c69dfb1fb2201ed7868bd751de2a88467b7848f2649241a313",
+    "scripts/whatsapp-bridge/package-lock.json": "d0d73a45d0c4d22bfe311fc6dcf0e5f498a4db2b8d4a850d54de503290f25c8c"
+  },
+  "nodeBuildTools": [
+    {
+      "id": "npm",
+      "file": "npm-12.0.2.tgz",
+      "url": "https://registry.npmjs.org/npm/-/npm-12.0.2.tgz",
+      "size": 3045132,
+      "sha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1",
+      "owner": "official stable nix/npm-12-0-2.nix",
+      "runtimePayload": false,
+      "licenseFiles": [
+        "package/LICENSE"
+      ]
+    },
+    {
+      "id": "playwright-core",
+      "file": "playwright-core-1.62.1.tgz",
+      "url": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.62.1.tgz",
+      "size": 3070300,
+      "sha256": "954be1e183d0ddb9748fe0d2d08b0b66a9210c74dd75c397aeb70303b9f08a00",
+      "upstreamIntegrity": "sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==",
+      "owner": "official stable root lock; browser install only",
+      "runtimePayload": false,
+      "licenseFiles": [
+        "package/LICENSE",
+        "package/NOTICE"
+      ]
+    }
+  ],
+  "selectedBrowserChain": {
+    "backend": "browser-use==0.13.10",
+    "managedBrowserOwner": "official Hermes tools/browser_use_cli.py _resolve_managed_chromium_cdp",
+    "agentBrowserVersion": "0.26.0",
+    "agentBrowserPath": "agent-browser/bin/agent-browser-win32-x64.exe",
+    "agentBrowserSha256": "540fc7d8b3ec8dea2f84df605492d5ca0e1921281adf8543dc0326109c851b2a",
+    "architecture": "official x64 agent-browser + Chromium, emulated on Windows ARM64",
+    "qualified": false
   }
 }

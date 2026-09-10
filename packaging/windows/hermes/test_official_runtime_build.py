@@ -4,6 +4,7 @@
 """Portable behavior controls; actual Windows/MXC qualification is separate."""
 
 import importlib.util
+import copy
 import contextlib
 import json
 import os
@@ -396,6 +397,26 @@ class BuildControls(unittest.TestCase):
                 for name in freezer.REQUIRED_STAGES
             ],
         }
+        build["nodeBuild"] = {
+            "schemaVersion": 1,
+            "profile": "official-prebuilt-cli-web-tui",
+            "npmVersion": "12.0.2",
+            "upstreamLockUnchanged": True,
+            "neighboringBuildDependenciesAbsent": True,
+            "tuiNonTtyImports": True,
+            "desktopSelected": False,
+            "outputs": [{"path": "ui-tui/dist"}, {"path": "hermes_cli/web_dist"}],
+            "sidecars": [
+                {"path": "plugins/platforms/photon/sidecar"},
+                {"path": "scripts/whatsapp-bridge"},
+            ],
+        }
+        build["selectedBrowserChain"] = {
+            "profile": "official-prebuilt-cli-web-tui",
+            "browserUse": "0.13.10",
+            "agentBrowser": "agent-browser/bin/agent-browser-win32-x64.exe",
+            "runtimeQualified": False,
+        }
         relocation = {
             "schemaVersion": 1,
             "upstreamCommit": freezer.UPSTREAM_COMMIT,
@@ -453,6 +474,219 @@ class BuildControls(unittest.TestCase):
             {"runtime.d.ts", "runtime.js.map", "runtime.pdb"},
         )
         self.assertFalse(value["diagnosticsRemovalValidated"])
+
+
+node_builder = load("official_node_builder", "build-official-node.py")
+adapter = load("official_native_adapter", "nemoclaw_native_windows.py")
+
+
+class SelectedNodeControls(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="hermes-production-node-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def outputs(self):
+        build, source = self.root / "build", self.root / "runtime"
+        for relative in (
+            "ui-tui/dist/entry.js",
+            "hermes_cli/web_dist/index.html",
+            "hermes_cli/web_dist/assets/data.bin",
+        ):
+            file = build / relative
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(b"exact-official-output")
+        return build, source
+
+    def test_complete_output_copy_preserves_dynamic_resource_bytes(self):
+        build, source = self.outputs()
+        rows = node_builder.copy_output(build, source, "hermes_cli/web_dist")
+        self.assertEqual(len(rows["files"]), 2)
+        self.assertEqual(
+            node_builder.regular_inventory(build / rows["path"]),
+            node_builder.regular_inventory(source / rows["path"]),
+        )
+
+    def test_existing_output_is_not_overwritten(self):
+        build, source = self.outputs()
+        node_builder.copy_output(build, source, "ui-tui/dist")
+        with self.assertRaisesRegex(ValueError, "not fresh"):
+            node_builder.copy_output(build, source, "ui-tui/dist")
+
+    def test_empty_output_is_refused(self):
+        empty = self.root / "empty"
+        empty.mkdir()
+        with self.assertRaisesRegex(ValueError, "empty"):
+            node_builder.regular_inventory(empty)
+
+    @unittest.skipIf(
+        os.name == "nt", "Windows link creation requires separate authority"
+    )
+    def test_output_cannot_follow_source_link(self):
+        build, source = self.outputs()
+        (build / "ui-tui/dist/leak").symlink_to(self.root / "outside")
+        with self.assertRaisesRegex(ValueError, "link"):
+            node_builder.copy_output(build, source, "ui-tui/dist")
+        self.assertFalse(source.exists())
+
+    def receipt(self):
+        return {
+            "schemaVersion": 1,
+            "upstreamCommit": freezer.UPSTREAM_COMMIT,
+            "status": "runtime-provisioned",
+            "installedTier": "hash-verified (uv.lock)",
+            "fallbacks": [],
+            "sourceUnchanged": True,
+            "stages": [
+                {"stage": name, "ok": True, "skipped": False}
+                for name in freezer.REQUIRED_STAGES
+            ],
+            "nodeBuild": {
+                "schemaVersion": 1,
+                "profile": "official-prebuilt-cli-web-tui",
+                "npmVersion": "12.0.2",
+                "upstreamLockUnchanged": True,
+                "neighboringBuildDependenciesAbsent": True,
+                "tuiNonTtyImports": True,
+                "desktopSelected": False,
+                "outputs": [{"path": value} for value in node_builder.OUTPUTS],
+                "sidecars": [{"path": value} for value in node_builder.SIDECARS],
+            },
+            "selectedBrowserChain": {
+                "profile": "official-prebuilt-cli-web-tui",
+                "browserUse": "0.13.10",
+                "agentBrowser": "agent-browser/bin/agent-browser-win32-x64.exe",
+                "runtimeQualified": False,
+            },
+        }
+
+    def test_selected_receipt_accepts_build_without_claiming_browser_execution(self):
+        value = self.receipt()
+        freezer.validate_build_receipt(value)
+        self.assertFalse(value["selectedBrowserChain"]["runtimeQualified"])
+        self.assertNotIn("node-deps", {stage["stage"] for stage in value["stages"]})
+
+    def test_missing_or_changed_selected_capability_refuses_export(self):
+        changes = {
+            "profile": "desktop",
+            "npmVersion": "10.9.8",
+            "upstreamLockUnchanged": False,
+            "neighboringBuildDependenciesAbsent": False,
+            "tuiNonTtyImports": False,
+            "desktopSelected": True,
+            "outputs": [{"path": "ui-tui/dist"}],
+            "sidecars": [],
+        }
+        for field, replacement in changes.items():
+            with self.subTest(field=field):
+                value = self.receipt()
+                value["nodeBuild"][field] = replacement
+                with self.assertRaisesRegex(ValueError, "production Node closure"):
+                    freezer.validate_build_receipt(value)
+
+    def test_missing_or_qualified_browser_chain_refuses_build_only_export(self):
+        for field, replacement in {
+            "browserUse": "latest",
+            "agentBrowser": "host/agent-browser.exe",
+            "runtimeQualified": True,
+        }.items():
+            with self.subTest(field=field):
+                value = self.receipt()
+                value["selectedBrowserChain"][field] = replacement
+                with self.assertRaisesRegex(ValueError, "browser chain"):
+                    freezer.validate_build_receipt(value)
+
+    def contract(self):
+        record = {
+            "schemaVersion": 1,
+            "upstreamCommit": adapter.REVISION,
+            "profile": "official-prebuilt-cli-web-tui",
+            "tui": "hermes-agent/ui-tui/dist/entry.js",
+            "web": "hermes-agent/hermes_cli/web_dist/index.html",
+            "chromium": "browsers/chromium-1228/chrome-win64/chrome.exe",
+            "agentBrowser": "agent-browser/bin/agent-browser-win32-x64.exe",
+            "browserUse": "0.13.10",
+        }
+        for key in ("tui", "web", "chromium", "agentBrowser"):
+            file = self.root / record[key]
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(b"owned-component")
+        (self.root / "nemoclaw-hermes-node.json").write_text(json.dumps(record))
+        return record
+
+    def test_exact_prebuilt_env_uses_installed_paths(self):
+        self.contract()
+        with mock.patch.dict(os.environ, {}, clear=True):
+            adapter._install_prebuilt_node(self.root)
+            self.assertEqual(
+                os.environ["HERMES_TUI_DIR"], str(self.root / "hermes-agent/ui-tui")
+            )
+            self.assertEqual(
+                os.environ["HERMES_WEB_DIST"],
+                str(self.root / "hermes-agent/hermes_cli/web_dist"),
+            )
+            self.assertEqual(
+                os.environ["AGENT_BROWSER_EXECUTABLE_PATH"],
+                str(self.root / "browsers/chromium-1228/chrome-win64/chrome.exe"),
+            )
+
+    def test_component_only_probe_does_not_invent_a_production_route(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            adapter._install_prebuilt_node(self.root)
+            self.assertNotIn("HERMES_TUI_DIR", os.environ)
+
+    def test_missing_prebuilt_file_does_not_trigger_source_fallback(self):
+        record = self.contract()
+        (self.root / record["tui"]).unlink()
+        with self.assertRaises(adapter.NativeStartupRefusal):
+            adapter._install_prebuilt_node(self.root)
+
+    def test_external_browser_or_worktree_paths_are_rejected(self):
+        record = self.contract()
+        for field, replacement in {
+            "chromium": "../host/chrome.exe",
+            "tui": "other/dist/entry.js",
+            "agentBrowser": "C:/host/browser.exe",
+        }.items():
+            with self.subTest(field=field):
+                bad = copy.deepcopy(record)
+                bad[field] = replacement
+                (self.root / "nemoclaw-hermes-node.json").write_text(json.dumps(bad))
+                with self.assertRaises(adapter.NativeStartupRefusal):
+                    adapter._prebuilt_node(self.root)
+
+    def test_browser_resolver_keeps_owned_candidate_and_disables_npx_fallback(self):
+        record = self.contract()
+        module = types.ModuleType("tools.browser_tool_install")
+        observed = []
+        module.agent_browser_runnable = lambda value: observed.append(value) or True
+        module._find_agent_browser = lambda **_kwargs: self.fail(
+            "ambient resolver was called"
+        )
+        adapter._adapt_module(module, self.root, self.root / "git/bin/bash.exe")
+        self.assertIsNone(module._resolve_npx_bin())
+        self.assertEqual(
+            module._find_agent_browser(), str(self.root / record["agentBrowser"])
+        )
+        self.assertEqual(
+            module._find_agent_browser(validate=False),
+            str(self.root / record["agentBrowser"]),
+        )
+        self.assertEqual(
+            module._find_agent_browser(), str(self.root / record["agentBrowser"])
+        )
+        self.assertEqual(observed, [str(self.root / record["agentBrowser"])])
+
+    def test_unrunnable_browser_never_enters_install_or_host_fallback(self):
+        self.contract()
+        module = types.ModuleType("tools.browser_tool_install")
+        module.agent_browser_runnable = lambda _value: False
+        module._find_agent_browser = lambda **_kwargs: self.fail(
+            "installer fallback was called"
+        )
+        adapter._adapt_module(module, self.root, self.root / "git/bin/bash.exe")
+        with self.assertRaisesRegex(FileNotFoundError, "Repair NemoClaw"):
+            module._find_agent_browser()
 
 
 if __name__ == "__main__":

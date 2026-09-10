@@ -13,6 +13,7 @@ import importlib.abc
 import importlib.machinery
 import json
 import os
+import re
 from pathlib import Path, PureWindowsPath
 import stat
 import sys
@@ -24,6 +25,7 @@ MARKER = "nemoclaw-windows-runtime.json"
 _MODULES = {
     "tools.environments.local": "tools/environments/local.py",
     "tools.lazy_deps": "tools/lazy_deps.py",
+    "tools.browser_tool_install": "tools/browser_tool_install.py",
     "hermes_cli.update_contract": "hermes_cli/update_contract.py",
 }
 _active_root: Path | None = None
@@ -157,6 +159,51 @@ def _discover_root(module_path: Path) -> Path:
     _refuse("the installer-owned deployment marker is missing.")
 
 
+def _prebuilt_node(root: Path) -> dict | None:
+    contract = root / "nemoclaw-hermes-node.json"
+    try:
+        _path_kind(contract)
+    except FileNotFoundError:
+        return None  # The separately labeled component-only probe has no Node outputs.
+    _regular_file(contract, root)
+    with contract.open("rb") as stream:
+        data = stream.read(8193)
+    if len(data) > 8192:
+        _refuse("the production Node contract exceeds its bound.")
+    record = json.loads(data)
+    if (
+        type(record) is not dict
+        or type(record.get("schemaVersion")) is not int
+        or record.get("schemaVersion") != 1
+        or record.get("upstreamCommit") != REVISION
+        or record.get("profile") != "official-prebuilt-cli-web-tui"
+        or record.get("tui") != "hermes-agent/ui-tui/dist/entry.js"
+        or record.get("web") != "hermes-agent/hermes_cli/web_dist/index.html"
+        or record.get("agentBrowser") != "agent-browser/bin/agent-browser-win32-x64.exe"
+        or record.get("browserUse") != "0.13.10"
+        or not isinstance(record.get("chromium"), str)
+        or not re.fullmatch(
+            r"browsers/chromium-[0-9]+/chrome-win64/chrome\.exe", record["chromium"]
+        )
+    ):
+        _refuse("the production Node contract differs from the installed profile.")
+    return {
+        key: _regular_file(root / record[key], root)
+        for key in ("tui", "web", "chromium", "agentBrowser")
+    }
+
+
+def _install_prebuilt_node(root: Path) -> None:
+    files = _prebuilt_node(root)
+    if files is None:
+        return
+    # Official Docker/Nix prebuilt branches bypass source compilation and lazy npm.
+    os.environ["HERMES_TUI_DIR"] = str(files["tui"].parent.parent)
+    os.environ["HERMES_WEB_DIST"] = str(files["web"].parent)
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(root / "browsers")
+    os.environ["AGENT_BROWSER_EXECUTABLE_PATH"] = str(files["chromium"])
+
+
 class _TempfileOs:
     """Delegate the official tempfile algorithm, changing only directory mode."""
 
@@ -201,6 +248,28 @@ def _adapt_module(module: ModuleType, root: Path, bash: Path) -> None:
         module._windows_bash_candidates = only_owned_candidates
         module._find_bash = owned_bash
         module._git_bash_bin_dirs_cache = None
+    elif module.__name__ == "tools.browser_tool_install":
+        files = _prebuilt_node(root)
+        if files is None:
+            _refuse("the installed production browser chain is missing.")
+        executable = files["agentBrowser"]
+        validated = False
+        module._resolve_npx_bin = lambda: None
+
+        def owned_browser(*, validate=True):
+            nonlocal validated
+            result = str(_regular_file(executable, root))
+            # Keep upstream's runnable check, but never enter its npx/Ensure
+            # installer fallback when the immutable official binary cannot run.
+            if validate and not validated:
+                if not module.agent_browser_runnable(result):
+                    raise FileNotFoundError(
+                        "The installed Hermes browser executable could not run. Repair NemoClaw."
+                    )
+                validated = True
+            return result
+
+        module._find_agent_browser = owned_browser
     elif module.__name__ == "tools.lazy_deps":
         # Config security.allow_lazy_installs:false and the upstream environment
         # switch remain set by the launcher. This native deployment admission
@@ -271,6 +340,7 @@ def install() -> None:
             _refuse("the startup adapter must load before Hermes policy modules.")
         os.environ["HERMES_GIT_BASH_PATH"] = str(bash)
         os.environ["HERMES_DISABLE_LAZY_INSTALLS"] = "1"
+        _install_prebuilt_node(root)
         _install_temp_directories()
         sys.meta_path.insert(0, _NativeFinder(root, bash))
         _active_root = root

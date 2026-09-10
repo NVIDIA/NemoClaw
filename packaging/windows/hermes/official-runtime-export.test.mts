@@ -14,6 +14,8 @@ import importlib.util,sys,json,pathlib,tarfile,hashlib
 spec=importlib.util.spec_from_file_location('exporter',sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 root=pathlib.Path(sys.argv[2]);mode=sys.argv[3];inv=m.load_inventory()
 build={'schemaVersion':1,'upstreamCommit':inv.UPSTREAM_COMMIT,'status':'runtime-provisioned','installedTier':'hash-verified (uv.lock)','sourceUnchanged':True,'fallbacks':[],'stages':[{'stage':s,'ok':True,'skipped':False} for s in inv.REQUIRED_STAGES]}
+build["nodeBuild"]={'schemaVersion': 1, 'profile': 'official-prebuilt-cli-web-tui', 'npmVersion': '12.0.2', 'upstreamLockUnchanged': True, 'neighboringBuildDependenciesAbsent': True, 'tuiNonTtyImports': True, 'desktopSelected': False, 'outputs': [{'path': 'ui-tui/dist'}, {'path': 'hermes_cli/web_dist'}], 'sidecars': [{'path': 'plugins/platforms/photon/sidecar'}, {'path': 'scripts/whatsapp-bridge'}]}
+build["selectedBrowserChain"]={'profile': 'official-prebuilt-cli-web-tui', 'browserUse': '0.13.10', 'agentBrowser': 'agent-browser/bin/agent-browser-win32-x64.exe', 'runtimeQualified': False}
 try:
  if mode in ('archive','drift','link'):
   runtime=root/'runtime';runtime.mkdir();(runtime/'empty').mkdir();(runtime/'LICENSE').write_bytes(b'license');(runtime/'dynamic.dat').write_bytes(b'opaque-runtime-bytes');(runtime/'runtime.d.ts').write_text('unpruned');
