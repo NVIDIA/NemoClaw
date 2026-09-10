@@ -42,6 +42,7 @@ export type SandboxExecOptions = {
 };
 
 export type SandboxExecChildOptions = SandboxExecOptions & {
+  forwardSigint?: boolean;
   hostCwd?: string;
   hostEnv?: NodeJS.ProcessEnv;
   subprocessEnv?: NodeJS.ProcessEnv;
@@ -215,6 +216,7 @@ export async function runSandboxExecChild(
   signalSource?: SandboxExecSignalSource,
 ): Promise<SpawnLikeResult> {
   const childOptions: OpenShellCommandChildOptions = {
+    ...(options.forwardSigint ? { forwardSigint: true } : {}),
     stdin: options.stdin,
     hostCwd: options.hostCwd,
     hostEnv: options.hostEnv ?? options.subprocessEnv,

@@ -194,17 +194,14 @@ export async function runAgentDispatch(
   const captureBudget: AgentDispatchCaptureBudget = { bytes: 0, overflowed: false };
   let overflowError: Error | undefined;
   const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_AGENT_DISPATCH_MAX_BUFFER_BYTES;
+  const stdinIsTty = options.stdinIsTty ?? isStdinTty();
   const spawnChild = deps.spawnChild ?? defaultAgentDispatchSpawner;
   const result = await runSandboxExecChild(
     binary,
     args,
-    { tty: false },
+    { tty: false, forwardSigint: !stdinIsTty },
     (runBinary, runArgs) => {
-      const child = spawnChild(
-        runBinary,
-        runArgs,
-        agentDispatchStdio(options.stdinIsTty ?? isStdinTty(), options.stdin),
-      );
+      const child = spawnChild(runBinary, runArgs, agentDispatchStdio(stdinIsTty, options.stdin));
       const setOverflowError = (error: Error) => {
         overflowError ??= error;
       };

@@ -132,116 +132,118 @@ describe.skipIf(process.platform === "win32")("agent dispatch stdin", () => {
     },
   );
 
-  it.each([false, true])(
-    "releases the lifecycle lock after cancelling the real child (JSON: %s)",
-    async (json) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-cancel-"));
-      const signalEvents = new EventEmitter();
-      const entered: string[] = [];
-      const pending: Promise<unknown>[] = [];
-      const options = { stateDir: root, pollIntervalMs: 5, timeoutMs: 5_000 };
-      let closeInput = () => {};
-      let stopChild = () => {};
-      let childStarted!: () => void;
-      const started = new Promise<void>((resolve) => {
-        childStarted = resolve;
-      });
-      try {
-        const inputFd = openPipe(path.join(root, "input"));
-        closeInput = () => fs.closeSync(inputFd);
-        const invoke = json ? runAgentJsonPassthrough : runAgentNonJsonPassthrough;
-        const proc = {
-          exit(code: number): never {
-            throw new Error(`exit:${code}`);
-          },
-          stdout: { write: () => {} },
-          stderr: { write: () => {} },
-        };
-        const operation = withMcpLifecycleLock(
-          "alpha",
-          async () => {
-            entered.push("agent");
-            return invoke(
-              "alpha",
-              ["openclaw", "agent", "--agent", "main", "--verbose", "off", "-m", "ping"],
-              proc,
-              {
-                getOpenshellBinary: () => process.execPath,
-                getGatewayName: () => "nemoclaw-8081",
-                stdinIsTty: () => false,
-                runDispatch: (binary, args, dispatchOptions) =>
-                  runAgentDispatch(binary, args, dispatchOptions, {
-                    signalSource: {
-                      add: (signal, listener) => signalEvents.on(signal, listener),
-                      remove: (signal, listener) => signalEvents.off(signal, listener),
-                    },
-                    spawnChild: (_binary, _args, stdio) => {
-                      const child = spawn(
-                        process.execPath,
-                        [
-                          "-e",
-                          "require('node:fs').readFileSync(0); setInterval(()=>{},1000); process.stdout.write('started');",
-                        ],
-                        {
-                          stdio: [
-                            Array.isArray(stdio) && stdio[0] === "inherit" ? inputFd : "ignore",
-                            "pipe",
-                            "pipe",
-                          ],
-                        },
-                      );
-                      stopChild = () => {
-                        child.kill("SIGKILL");
-                      };
-                      child.stdout?.once("data", childStarted);
-                      const deadline = setTimeout(stopChild, 3_000);
-                      child.once("close", () => {
-                        clearTimeout(deadline);
-                        childStarted();
-                      });
-                      return child;
-                    },
-                  }),
-              },
-            );
-          },
-          options,
-        ).catch((error: Error) => error.message);
-        pending.push(operation);
-        await started;
-        await expect(
-          withMcpLifecycleLock(
+  it.each(
+    [
+      { signal: "SIGTERM" as const, code: 143 },
+      { signal: "SIGINT" as const, code: 130 },
+    ].flatMap((signal) => [false, true].map((json) => ({ ...signal, json }))),
+  )("releases the lifecycle lock after $signal (JSON: $json)", async ({ json, signal, code }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-cancel-"));
+    const signalEvents = new EventEmitter();
+    const entered: string[] = [];
+    const pending: Promise<unknown>[] = [];
+    const options = { stateDir: root, pollIntervalMs: 5, timeoutMs: 5_000 };
+    let closeInput = () => {};
+    let stopChild = () => {};
+    let childStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      childStarted = resolve;
+    });
+    try {
+      const inputFd = openPipe(path.join(root, "input"));
+      closeInput = () => fs.closeSync(inputFd);
+      const invoke = json ? runAgentJsonPassthrough : runAgentNonJsonPassthrough;
+      const proc = {
+        exit(code: number): never {
+          throw new Error(`exit:${code}`);
+        },
+        stdout: { write: () => {} },
+        stderr: { write: () => {} },
+      };
+      const operation = withMcpLifecycleLock(
+        "alpha",
+        async () => {
+          entered.push("agent");
+          return invoke(
             "alpha",
-            () => {
-              entered.push("overlap");
-            },
+            ["openclaw", "agent", "--agent", "main", "--verbose", "off", "-m", "ping"],
+            proc,
             {
-              ...options,
-              timeoutMs: 100,
+              getOpenshellBinary: () => process.execPath,
+              getGatewayName: () => "nemoclaw-8081",
+              stdinIsTty: () => false,
+              runDispatch: (binary, args, dispatchOptions) =>
+                runAgentDispatch(binary, args, dispatchOptions, {
+                  signalSource: {
+                    add: (signal, listener) => signalEvents.on(signal, listener),
+                    remove: (signal, listener) => signalEvents.off(signal, listener),
+                  },
+                  spawnChild: (_binary, _args, stdio) => {
+                    const child = spawn(
+                      process.execPath,
+                      [
+                        "-e",
+                        "require('node:fs').readFileSync(0); setInterval(()=>{},1000); process.stdout.write('started');",
+                      ],
+                      {
+                        stdio: [
+                          Array.isArray(stdio) && stdio[0] === "inherit" ? inputFd : "ignore",
+                          "pipe",
+                          "pipe",
+                        ],
+                      },
+                    );
+                    stopChild = () => {
+                      child.kill("SIGKILL");
+                    };
+                    child.stdout?.once("data", childStarted);
+                    const deadline = setTimeout(stopChild, 3_000);
+                    child.once("close", () => {
+                      clearTimeout(deadline);
+                      childStarted();
+                    });
+                    return child;
+                  },
+                }),
             },
-          ),
-        ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
-        const queued = withMcpLifecycleLock(
+          );
+        },
+        options,
+      ).catch((error: Error) => error.message);
+      pending.push(operation);
+      await started;
+      await expect(
+        withMcpLifecycleLock(
           "alpha",
           () => {
-            entered.push("next");
+            entered.push("overlap");
           },
-          options,
-        );
-        pending.push(queued);
-        expect(entered).toEqual(["agent"]);
-        signalEvents.emit("SIGTERM");
-        expect(await operation).toBe("exit:143");
-        await queued;
-        expect(entered).toEqual(["agent", "next"]);
-        expect(signalEvents.listenerCount("SIGTERM")).toBe(0);
-        expect(signalEvents.listenerCount("SIGINT")).toBe(0);
-      } finally {
-        stopChild();
-        await Promise.allSettled(pending);
-        closeInput();
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    },
-  );
+          {
+            ...options,
+            timeoutMs: 100,
+          },
+        ),
+      ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
+      const queued = withMcpLifecycleLock(
+        "alpha",
+        () => {
+          entered.push("next");
+        },
+        options,
+      );
+      pending.push(queued);
+      expect(entered).toEqual(["agent"]);
+      signalEvents.emit(signal);
+      expect(await operation).toBe(`exit:${code}`);
+      await queued;
+      expect(entered).toEqual(["agent", "next"]);
+      expect(signalEvents.listenerCount("SIGTERM")).toBe(0);
+      expect(signalEvents.listenerCount("SIGINT")).toBe(0);
+    } finally {
+      stopChild();
+      await Promise.allSettled(pending);
+      closeInput();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

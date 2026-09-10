@@ -48,6 +48,8 @@ export type OpenShellCommandSignalSource = OpenshellAsyncCaptureSignalSource;
 
 export type OpenShellCommandChildOptions = Readonly<{
   stdin?: boolean;
+  /** Headless callers forward SIGINT without relying on terminal-group delivery. */
+  forwardSigint?: boolean;
   hostCwd?: string;
   hostEnv?: NodeJS.ProcessEnv;
 }>;
@@ -216,14 +218,17 @@ export async function runCliOpenShellStreamingCommand(
 
   return new Promise((resolve) => {
     let spawnError: Error | undefined;
-    const forwardTerm = () => {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    const forward = (signal: "SIGTERM" | "SIGINT") => {
+      if (child.exitCode === null && child.signalCode === null) child.kill(signal);
     };
-    // A terminal Ctrl+C already reaches every member of the foreground process
-    // group. Hold it in the parent without delivering it to the child twice.
-    const holdInt = () => {};
+    const forwardTerm = () => forward("SIGTERM");
+    // Interactive children already receive terminal-group Ctrl+C. Headless
+    // automation can signal only the parent and needs explicit forwarding.
+    const forwardInt = () => {
+      if (options.forwardSigint) forward("SIGINT");
+    };
     signalSource.add("SIGTERM", forwardTerm);
-    signalSource.add("SIGINT", holdInt);
+    signalSource.add("SIGINT", forwardInt);
     child.once("error", (error) => {
       spawnError = error;
     });
@@ -234,7 +239,7 @@ export async function runCliOpenShellStreamingCommand(
         ...(spawnError ? { error: spawnError } : {}),
         releaseSignals: () => {
           signalSource.remove("SIGTERM", forwardTerm);
-          signalSource.remove("SIGINT", holdInt);
+          signalSource.remove("SIGINT", forwardInt);
         },
       });
     });
