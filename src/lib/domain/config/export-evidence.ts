@@ -11,6 +11,7 @@ import {
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
   NemoClawBraveSearchConfigSchema,
+  NemoClawAgentTypeSchema,
   NemoClawManagedProxyConfigSchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
@@ -44,6 +45,14 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "fromDockerfile",
   "gatewayName",
   "gatewayPort",
+  "hermesApiPort",
+  "hermesAuthMethod",
+  "hermesDashboardEnabled",
+  "hermesDashboardInternalPort",
+  "hermesDashboardPort",
+  "hermesDashboardTui",
+  "hermesInferenceProvider",
+  "hermesToolGateways",
   "hostLocalInferenceProvenance",
   "hostLocalInferenceReceipt",
   "hostMounts",
@@ -254,6 +263,7 @@ const ExportInferenceSchema = Type.Union([
 /** Representable values only; provenance and policy qualification remain separate. */
 export const ExportSourceValuesSchema = Type.Object({
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
+  agent: NemoClawAgentTypeSchema,
   runtime: Type.Object({
     provider: RuntimeProviderSchema,
     imageRef: ImmutableImageReferenceSchema,

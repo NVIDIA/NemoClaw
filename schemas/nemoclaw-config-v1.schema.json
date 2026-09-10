@@ -306,8 +306,7 @@
                       "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
                     },
                     "type": {
-                      "type": "string",
-                      "const": "openclaw"
+                      "enum": ["openclaw", "hermes"]
                     },
                     "inference": {
                       "type": "object",
