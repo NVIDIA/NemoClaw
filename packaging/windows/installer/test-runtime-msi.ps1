@@ -78,6 +78,33 @@ function Add-FixtureSnapshotEvidence {
     }
 }
 
+function Compare-RecreatedFixtureFiles {
+    param([Parameter(Mandatory)][string]$Before, [Parameter(Mandatory)][string]$After)
+    $previous = @($Before -split "`n"); $current = @($After -split "`n")
+    if ($previous.Count -ne $current.Count) { throw 'Repair changed the exact fixture inventory.' }
+    $changes = [Collections.Generic.List[object]]::new()
+    for ($index = 0; $index -lt $previous.Count; $index++) {
+        if ($previous[$index] -ceq $current[$index]) { continue }
+        $left = @($previous[$index] -split '\|', 4); $right = @($current[$index] -split '\|', 4)
+        # Only MSI-owned recreated files may lose the AI control metadata. The
+        # selector, directories, owner/group, protection, ACE order/flags/masks,
+        # path and content hash must stay byte-for-byte equal. No ACL is edited.
+        # SE_DACL_AUTO_INHERITED describes propagation support; regular files
+        # have no children. This exception is never used for busy or rollback.
+        if ($left.Count -ne 4 -or $right.Count -ne 4 -or $left[0] -cne 'F' -or
+            $left[1] -cnotmatch '^/(?:bin/node\.exe|runtimes/[a-f0-9]{64}/(?:NODE-LICENSE\.txt|payload\.txt|runtime\.manifest|runtime\.ready))$' -or
+            $left[0] -cne $right[0] -or $left[1] -cne $right[1] -or $left[2] -cne $right[2]) {
+            throw 'Repair changed a protected fixture identity or security descriptor.'
+        }
+        $metadata = [regex]::Match($left[3], '\A(?<prefix>[^()]*D:)AI(?<body>\(.*)\z')
+        if (-not $metadata.Success -or ($metadata.Groups['prefix'].Value + $metadata.Groups['body'].Value) -cne $right[3]) {
+            throw 'Repair changed file access, ownership, protection or inheritance flags.'
+        }
+        $changes.Add([pscustomobject]@{ path = $left[1]; control = 'SE_DACL_AUTO_INHERITED'; before = 'set'; after = 'clear' })
+    }
+    return $changes.ToArray()
+}
+
 function Get-FixtureSnapshot {
     param([string]$Label = '')
     $records = [Collections.Generic.List[string]]::new()
@@ -232,6 +259,7 @@ try {
         & (Join-Path $owner 'audit-runtime-msi.ps1') -MsiPath $fixture.msi -HelperSha256 $receipt.helperSha256 `
             -ReceiptPath (Join-Path $ArtifactDirectory ($fixture.label + '.compiled-msi.json'))
     }
+    & (Join-Path $PSScriptRoot 'test-runtime-msi-repair-snapshot.ps1') -SourcePath $PSCommandPath
     $first = $fixtures[0]; $upgrade = $fixtures[1]
     $installed = Invoke-FixtureMsi '/i' $first.msi 'first-install'; $results.Add($installed)
     if ($installed.exitCode -ne 0) { throw 'The first MSI fixture did not install successfully.' }
@@ -254,12 +282,18 @@ try {
         }
         Assert-FixtureCurrent $first
     }
-    [void](Get-FixtureSnapshot -Label 'before-lease-release')
+    if ((Get-FixtureSnapshot -Label 'before-lease-release') -cne $snapshot) { throw 'The active lease changed the exact fixture snapshot.' }
     $closingLease = $lease; $lease = $null
     Stop-FixtureLease $closingLease
-    [void](Get-FixtureSnapshot -Label 'after-lease-release')
+    if ((Get-FixtureSnapshot -Label 'after-lease-release') -cne $snapshot) { throw 'Lease release changed the exact fixture snapshot.' }
     $repair = Invoke-FixtureMsi '/fa' $first.msi 'released-direct-repair'; $results.Add($repair)
-    if ($repair.exitCode -ne 0 -or (Get-FixtureSnapshot -Label 'released-direct-repair') -cne $snapshot) { throw 'Repair after lease release did not preserve the exact runtime.' }
+    $repairedSnapshot = Get-FixtureSnapshot -Label 'released-direct-repair'
+    if ($repair.exitCode -ne 0) { throw 'Repair after lease release failed.' }
+    $receipt['recreatedFileMetadataChanges'] = @(Compare-RecreatedFixtureFiles -Before $snapshot -After $repairedSnapshot)
+    # Later failed transactions must restore this exact post-repair baseline.
+    # Their comparison remains strict; no metadata normalization occurs there.
+    $snapshot = $repairedSnapshot
+    Assert-FixtureCurrent $first
     foreach ($fixture in @($fixtures[2],$fixtures[3])) {
         $failed = Invoke-FixtureMsi '/i' $fixture.msi $fixture.label; $results.Add($failed)
         if ($failed.exitCode -ne 1603 -or (Get-FixtureSnapshot -Label $fixture.label) -cne $snapshot) {
