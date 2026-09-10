@@ -180,16 +180,12 @@ function runConfigScriptRaw(
 ) {
   fs.mkdirSync(path.join(tmpDir, ".hermes"), { recursive: true });
   const env = buildHermesTestEnv(envOverrides);
-  return spawnSync(
-    process.execPath,
-    [opts.scriptPath || SCRIPT_PATH],
-    {
-      encoding: "utf-8",
-      cwd: opts.cwd,
-      env,
-      timeout: 10_000,
-    },
-  );
+  return spawnSync(process.execPath, [opts.scriptPath || SCRIPT_PATH], {
+    encoding: "utf-8",
+    cwd: opts.cwd,
+    env,
+    timeout: 10_000,
+  });
 }
 
 function expectGenerationError(

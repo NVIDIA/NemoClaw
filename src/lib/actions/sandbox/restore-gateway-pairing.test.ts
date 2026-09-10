@@ -17,7 +17,7 @@ afterEach(() => {
 describe("establishRestoredSandboxGatewayPairing", () => {
   it("restarts the restored gateway before warm-up and after approval (#7431)", async () => {
     const order: string[] = [];
-    const restartRestoredSandboxGateway = vi.fn(() => {
+    const restartRestoredSandboxGateway = vi.fn(async () => {
       order.push("restart");
     });
     const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
@@ -48,7 +48,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
   });
 
   it("keeps the ordinary verifier as the sole success condition (#7431)", async () => {
-    const restartRestoredSandboxGateway = vi.fn();
+    const restartRestoredSandboxGateway = vi.fn(async () => undefined);
     const warmupScopeUpgrade = vi.fn();
     const approveRestoredClonePairing = vi.fn(() => "approve-failed" as const);
     const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
@@ -68,7 +68,9 @@ describe("establishRestoredSandboxGatewayPairing", () => {
 
   it("approves once when the first verifier publishes the clone scope upgrade (#7834)", async () => {
     const order: string[] = [];
-    const restartRestoredSandboxGateway = vi.fn(() => order.push("restart"));
+    const restartRestoredSandboxGateway = vi.fn(async () => {
+      order.push("restart");
+    });
     const warmupScopeUpgrade = vi.fn(() => order.push("warmup"));
     const approveRestoredClonePairing = vi
       .fn<RestoreGatewayPairingDeps["approveRestoredClonePairing"]>(() => {
@@ -214,7 +216,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
 
     await expect(
       establishRestoredSandboxGatewayPairing("beta", {
-        restartRestoredSandboxGateway: vi.fn(() => {}),
+        restartRestoredSandboxGateway: vi.fn(async () => undefined),
         warmupScopeUpgrade,
         approveRestoredClonePairing,
         verifyGatewayPairing,
@@ -313,16 +315,20 @@ describe("restartRestoredSandboxGateway", () => {
     expect(waitForManagedGatewaySupervisor).toHaveBeenCalledWith("beta");
   });
 
-  it("restarts through the existing supervisor-mediated gateway lifecycle (#7431)", () => {
-    const restartSandboxGateway = vi.fn(() => ({
+  it("restarts through the existing supervisor-mediated gateway lifecycle (#7431)", async () => {
+    const restartSandboxGateway = vi.fn(async () => ({
       ok: true as const,
       restarted: true as const,
       healthPassed: true as const,
       forwardRecovered: true,
     }));
-    const checkAndRecoverSandboxProcesses = vi.fn();
+    const checkAndRecoverSandboxProcesses = vi.fn(async () => ({
+      checked: false,
+      recovered: false,
+      forwardRecovered: false,
+    }));
 
-    restartRestoredSandboxGateway("beta", {
+    await restartRestoredSandboxGateway("beta", {
       restartSandboxGateway,
       checkAndRecoverSandboxProcesses,
     });
@@ -331,8 +337,8 @@ describe("restartRestoredSandboxGateway", () => {
     expect(checkAndRecoverSandboxProcesses).not.toHaveBeenCalled();
   });
 
-  it("transactionally relaunches an exactly missing restored supervisor (#7818)", () => {
-    const restartSandboxGateway = vi.fn(() => ({
+  it("transactionally relaunches an exactly missing restored supervisor (#7818)", async () => {
+    const restartSandboxGateway = vi.fn(async () => ({
       ok: false as const,
       failureLayer: "supervisor not running" as const,
       detail: "SUPERVISOR_NOT_RUNNING",
@@ -342,16 +348,17 @@ describe("restartRestoredSandboxGateway", () => {
         _sandboxName: string,
         _options?: {
           quiet?: boolean;
-          isSandboxGatewayRunningImpl?: (sandboxName: string) => boolean | null;
+          isSandboxGatewayRunningImpl?: (sandboxName: string) => Promise<boolean | null>;
         },
-      ) => ({
-        checked: true,
-        recovered: true,
-        forwardRecovered: true,
-      }),
+      ) =>
+        Promise.resolve({
+          checked: true,
+          recovered: true,
+          forwardRecovered: true,
+        }),
     );
 
-    restartRestoredSandboxGateway("beta", {
+    await restartRestoredSandboxGateway("beta", {
       restartSandboxGateway,
       checkAndRecoverSandboxProcesses,
     });
@@ -361,27 +368,31 @@ describe("restartRestoredSandboxGateway", () => {
       isSandboxGatewayRunningImpl: expect.any(Function),
     });
     const recoveryOptions = checkAndRecoverSandboxProcesses.mock.calls[0]?.[1];
-    expect(recoveryOptions?.isSandboxGatewayRunningImpl?.("beta")).toBe(false);
+    await expect(recoveryOptions?.isSandboxGatewayRunningImpl?.("beta")).resolves.toBe(false);
   });
 
-  it("waits for a newly created clone supervisor before retrying restart (#7818)", () => {
+  it("waits for a newly created clone supervisor before retrying restart (#7818)", async () => {
     const restartSandboxGateway = vi
       .fn()
-      .mockReturnValueOnce({
+      .mockResolvedValueOnce({
         ok: false as const,
         failureLayer: "supervisor not running" as const,
         detail: "SUPERVISOR_NOT_RUNNING",
       })
-      .mockReturnValueOnce({
+      .mockResolvedValueOnce({
         ok: true as const,
         restarted: true as const,
         healthPassed: true as const,
         forwardRecovered: true,
       });
-    const checkAndRecoverSandboxProcesses = vi.fn();
+    const checkAndRecoverSandboxProcesses = vi.fn(async () => ({
+      checked: false,
+      recovered: false,
+      forwardRecovered: false,
+    }));
     const waitForManagedGatewaySupervisor = vi.fn(() => true);
 
-    restartRestoredSandboxGateway("beta", {
+    await restartRestoredSandboxGateway("beta", {
       restartSandboxGateway,
       checkAndRecoverSandboxProcesses,
       waitForManagedGatewaySupervisor,
@@ -392,32 +403,32 @@ describe("restartRestoredSandboxGateway", () => {
     expect(checkAndRecoverSandboxProcesses).not.toHaveBeenCalled();
   });
 
-  it("preserves the supervisor classification when relaunch is not fully proven (#7818)", () => {
-    const restartSandboxGateway = vi.fn(() => ({
+  it("preserves the supervisor classification when relaunch is not fully proven (#7818)", async () => {
+    const restartSandboxGateway = vi.fn(async () => ({
       ok: false as const,
       failureLayer: "supervisor not running" as const,
       detail: "SUPERVISOR_NOT_RUNNING",
     }));
-    const checkAndRecoverSandboxProcesses = vi.fn(() => ({
+    const checkAndRecoverSandboxProcesses = vi.fn(async () => ({
       checked: true,
       recovered: true,
       forwardRecovered: false,
       forwardRecoveryFailed: true,
     }));
 
-    expect(() =>
+    await expect(
       restartRestoredSandboxGateway("beta", {
         restartSandboxGateway,
         checkAndRecoverSandboxProcesses,
       }),
-    ).toThrow("supervisor not running");
+    ).rejects.toThrow("supervisor not running");
   });
 
-  it("propagates only the classified gateway restart failure (#7431)", () => {
+  it("propagates only the classified gateway restart failure (#7431)", async () => {
     let failure: unknown;
     try {
-      restartRestoredSandboxGateway("beta", {
-        restartSandboxGateway: () => ({
+      await restartRestoredSandboxGateway("beta", {
+        restartSandboxGateway: async () => ({
           ok: false,
           failureLayer: "health timeout",
           detail: "raw gateway output must stay private",

@@ -31,19 +31,18 @@ import {
   type ServingProcessHealth,
 } from "./status-snapshot";
 
-export interface SandboxStatusTextContext
-  extends Pick<
-    SandboxStatusSnapshot,
-    | "sb"
-    | "lookup"
-    | "currentModel"
-    | "currentProvider"
-    | "routeDrift"
-    | "llamaCpp"
-    | "inferenceHealth"
-    | "terminalRuntimeHealth"
-    | "servingProcessHealth"
-  > {
+export interface SandboxStatusTextContext extends Pick<
+  SandboxStatusSnapshot,
+  | "sb"
+  | "lookup"
+  | "currentModel"
+  | "currentProvider"
+  | "routeDrift"
+  | "llamaCpp"
+  | "inferenceHealth"
+  | "terminalRuntimeHealth"
+  | "servingProcessHealth"
+> {
   sandboxName: string;
   statusAgent: SandboxStatusAgentInfo;
 }

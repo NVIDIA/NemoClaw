@@ -105,9 +105,9 @@ export function prepareRebuildResumeConfig(
   );
   const sessionSelectionMatchesRegistry = Boolean(
     matchingSessionSelection &&
-      (!registrySelection.provider ||
-        matchingSessionSelection.provider === registrySelection.provider) &&
-      (!registrySelection.model || matchingSessionSelection.model === registrySelection.model),
+    (!registrySelection.provider ||
+      matchingSessionSelection.provider === registrySelection.provider) &&
+    (!registrySelection.model || matchingSessionSelection.model === registrySelection.model),
   );
   const legacySelection = sessionSelectionMatchesRegistry ? matchingSessionSelection : null;
   const trustedSelection = normalizeInferenceSelection({

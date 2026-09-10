@@ -32,5 +32,4 @@ describe("messaging plan final image environment contract", () => {
       ),
     ).toEqual(["MODERN", "OTHER", "LEGACY", "LEGACY_B64"]);
   });
-
 });

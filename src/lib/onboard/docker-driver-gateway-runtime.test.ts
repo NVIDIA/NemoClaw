@@ -130,16 +130,13 @@ describe("docker-driver gateway runtime helpers", () => {
   it.each([
     ["relative", "relative-gateway-state"],
     ["shared root", path.join(os.homedir(), ".local", "state", "nemoclaw")],
-  ])(
-    "rejects a %s state-directory override through the binding owner",
-    (_scenario, configured) => {
-      withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: configured }, () => {
-        expect(() => makeHelpers().helpers.getDockerDriverGatewayStateDir()).toThrow(
-          /absolute dedicated gateway state directory|shared NemoClaw state root/,
-        );
-      });
-    },
-  );
+  ])("rejects a %s state-directory override through the binding owner", (_scenario, configured) => {
+    withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: configured }, () => {
+      expect(() => makeHelpers().helpers.getDockerDriverGatewayStateDir()).toThrow(
+        /absolute dedicated gateway state directory|shared NemoClaw state root/,
+      );
+    });
+  });
 
   it("uses the moving dev supervisor image for an explicit or detected dev runtime", () => {
     const explicit = makeHelpers({ shouldUseOpenshellDevChannel: () => true });
@@ -282,8 +279,7 @@ describe("docker-driver gateway runtime helpers", () => {
                 const gone = new Error("ESRCH") as NodeJS.ErrnoException;
                 gone.code = "ESRCH";
                 throw gone;
-              })()
-        ) as typeof process.kill);
+              })()) as typeof process.kill);
         const originalExistsSync = fs.existsSync.bind(fs);
         const originalReadFileSync = fs.readFileSync.bind(fs);
         const replacementCmdline = `/proc/${String(replacementPid)}/cmdline`;
@@ -291,15 +287,13 @@ describe("docker-driver gateway runtime helpers", () => {
         vi.spyOn(fs, "existsSync").mockImplementation(((candidate) =>
           candidate === gatewayBin || candidate === replacementCmdline
             ? true
-            : originalExistsSync(candidate)
-        ) as typeof fs.existsSync);
+            : originalExistsSync(candidate)) as typeof fs.existsSync);
         vi.spyOn(fs, "readFileSync").mockImplementation(((candidate, options) =>
           candidate === replacementCmdline
             ? `${gatewayBin}\0`
             : candidate === replacementEnvironment
               ? `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${namespace}\0`
-              : originalReadFileSync(candidate, options as never)
-        ) as typeof fs.readFileSync);
+              : originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync);
 
         expect(helpers.isDockerDriverGatewayStateInUse()).toBe(true);
       });

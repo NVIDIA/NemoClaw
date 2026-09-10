@@ -4,10 +4,8 @@
 import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "./max-tokens-field";
 import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
 
-export const STANDARD_NVIDIA_ENDPOINT_PROBE_POLICY =
-  "nvidia.endpoint-validation.standard/v1";
-export const EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY =
-  "nvidia.endpoint-validation.extended/v1";
+export const STANDARD_NVIDIA_ENDPOINT_PROBE_POLICY = "nvidia.endpoint-validation.standard/v1";
+export const EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY = "nvidia.endpoint-validation.extended/v1";
 
 const NVIDIA_ENDPOINT_PROVIDERS = new Set(["nvidia-prod", "nvidia-nim"]);
 

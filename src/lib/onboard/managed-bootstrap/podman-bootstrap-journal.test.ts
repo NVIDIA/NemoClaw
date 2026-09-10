@@ -241,7 +241,7 @@ describe("Podman bootstrap phase journal", () => {
 
   it("rejects noncanonical or oversized serialized state", () => {
     expect(() => parsePodmanBootstrapJournal(JSON.stringify(journal))).toThrow("not canonical");
-    expect(() => parsePodmanBootstrapJournal(`{\"value\":\"${"x".repeat(33 * 1024)}\"}\n`)).toThrow(
+    expect(() => parsePodmanBootstrapJournal(`{"value":"${"x".repeat(33 * 1024)}"}\n`)).toThrow(
       "too large",
     );
   });

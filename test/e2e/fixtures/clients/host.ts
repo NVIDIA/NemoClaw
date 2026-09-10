@@ -80,10 +80,7 @@ export class HostCliClient {
       merged,
     );
     const environment = merged.env ?? {};
-    if (
-      result.exitCode === 0 &&
-      shouldAssertStockManagedImageReceipt(command, args, environment)
-    ) {
+    if (result.exitCode === 0 && shouldAssertStockManagedImageReceipt(command, args, environment)) {
       const sandboxName = environment.NEMOCLAW_SANDBOX_NAME?.trim();
       if (!sandboxName) {
         throw new Error("stock managed-image receipt assertion requires a sandbox name");
@@ -205,12 +202,21 @@ export class HostCliClient {
       }),
     ]);
     const pids = [
-      ...new Set(before.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)),
+      ...new Set(
+        before.stdout
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      ),
     ];
     const pid = pids.length === 1 && /^[1-9]\d*$/u.test(pids[0]!) ? pids[0]! : "";
     const commandPath = command.stdout.trim();
     if (!pid || !commandPath) {
-      return { valid: false, identity: "", output: `${resultText(before)}\n${resultText(command)}` };
+      return {
+        valid: false,
+        identity: "",
+        output: `${resultText(before)}\n${resultText(command)}`,
+      };
     }
 
     const [actualExecutable, expectedExecutable, commandLine, after] = await Promise.all([
@@ -243,7 +249,12 @@ export class HostCliClient {
     );
     const expectedCommandLine = [commandPath, ...buildForwardServiceArgs(target)].join(" ");
     const afterPids = [
-      ...new Set(after.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)),
+      ...new Set(
+        after.stdout
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      ),
     ];
     const probes = [before, command, actualExecutable, expectedExecutable, commandLine, after];
     const identity = `${pid}\t${actualExecutable.stdout.trim()}\t${commandLine.stdout.trim()}`;

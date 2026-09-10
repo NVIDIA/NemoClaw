@@ -104,7 +104,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
+  group: e2e-${{ github.ref }}-${{ (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
   cancel-in-progress: ${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
 
 env:
@@ -115,7 +115,6 @@ env:
 
 jobs:
   package-openshell-sdk:
-    if: ${{ github.event_name == 'workflow_dispatch' && contains(format(',{0},', inputs.jobs), ',external-gateway-health,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -2587,6 +2586,7 @@ jobs:
       contents: read
     concurrency:
       group: staging-brev-launchable-cpu
+      queue: max
       cancel-in-progress: false
     env:
       CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
@@ -2628,7 +2628,7 @@ jobs:
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
           GH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}
-          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.NVIDIA_API_KEY || '' }}
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: tools/e2e/brev-launchable-e2e.sh
 
@@ -2653,6 +2653,7 @@ jobs:
       contents: read
     concurrency:
       group: staging-brev-launchable-cpu
+      queue: max
       cancel-in-progress: false
     env:
       CANDIDATE_SHA: ${{ github.sha }}
@@ -3055,7 +3056,7 @@ jobs:
 
   catalogue-standard:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ needs.generate-matrix.outputs.catalogue_standard_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3071,6 +3072,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
@@ -3101,7 +3103,7 @@ jobs:
 
   catalogue-nvidia-api:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_api_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3117,6 +3119,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
@@ -3148,7 +3151,7 @@ jobs:
 
   catalogue-nvidia-inference:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3164,6 +3167,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
@@ -3195,7 +3199,7 @@ jobs:
 
   catalogue-github-read:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ needs.generate-matrix.outputs.catalogue_github_read_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3211,6 +3215,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
@@ -3241,7 +3246,7 @@ jobs:
 
   catalogue-brave-nvidia-inference:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ needs.generate-matrix.outputs.catalogue_brave_nvidia_inference_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3258,6 +3263,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
@@ -5012,6 +5018,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Reuse or refresh reviewed audit evidence before the offline build
+        uses: ./.github/actions/ci-reviewed-npm-audit
+        with:
+          target-root: ${{ github.workspace }}/.candidate-runtime
+          report-dir: artifacts/reviewed-npm-audit
+          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
+
       - name: Download exact protected runtime build cache
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -5169,6 +5182,7 @@ jobs:
             --platform linux/amd64 \
             --source-root "$GITHUB_WORKSPACE/.candidate-runtime" \
             --cache-from "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE" \
+            --audit-evidence-from "$GITHUB_WORKSPACE/.candidate-runtime/artifacts/reviewed-npm-audit" \
             --openclaw-base "$BASE_OPENCLAW" \
             --hermes-base "$BASE_HERMES" \
             --dcode-base "$BASE_DCODE"
