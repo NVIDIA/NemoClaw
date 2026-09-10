@@ -105,7 +105,7 @@ describe("onboard exit handler registration", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "onboard releases its lock when signaled during entry setup and preserves a replacement lock (#10779)",
+    "onboard releases its owned lock during entry setup and preserves replacement and outer-owned locks (#10779)",
     async () => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const scriptPath = path.join(tmpDir, "onboard-entry-signal.cjs");
@@ -126,6 +126,25 @@ const lockedRuntimePath = ${lockedRuntimePath};
 const lockedRuntime = require(lockedRuntimePath);
 const onboardSession = require(${sessionPath});
 const replaceLock = process.argv.includes("--replace-lock");
+const outerOwnsLock = process.argv.includes("--outer-lock");
+
+if (outerOwnsLock) {
+  const lock = onboardSession.acquireOnboardLock("outer rebuild lifecycle");
+  if (!lock.acquired) throw new Error("outer rebuild lifecycle did not acquire onboard lock");
+  let signalDeliveries = 0;
+  const releaseFromOuterLifecycle = () => {
+    signalDeliveries += 1;
+    if (signalDeliveries === 1) return;
+    const lockContents = fs.readFileSync(onboardSession.LOCK_FILE, "utf8");
+    onboardSession.releaseOnboardLock();
+    process.removeListener("SIGINT", releaseFromOuterLifecycle);
+    process.stdout.write(
+      "NEMOCLAW_OUTER_RELEASE " + JSON.stringify({ lockContents }) + "\\n",
+      () => process.kill(process.pid, "SIGINT"),
+    );
+  };
+  process.on("SIGINT", releaseFromOuterLifecycle);
+}
 
 const pauseDuringLockedRuntimePreparation = async () => {
   if (replaceLock) {
@@ -133,7 +152,12 @@ const pauseDuringLockedRuntimePreparation = async () => {
     fs.writeFileSync(onboardSession.LOCK_FILE, ${JSON.stringify(replacement)});
   }
   process.stdout.write(
-    "NEMOCLAW_SIGNAL_READY " + JSON.stringify({ lockFile: onboardSession.LOCK_FILE }) + "\\n",
+    "NEMOCLAW_SIGNAL_READY " +
+      JSON.stringify({
+        lockFile: onboardSession.LOCK_FILE,
+        lockContents: fs.readFileSync(onboardSession.LOCK_FILE, "utf8"),
+      }) +
+      "\\n",
   );
   await new Promise(() => {});
   throw new Error("unreachable");
@@ -151,6 +175,16 @@ onboard({
   acceptThirdPartySoftware: true,
   noGpu: true,
   sandboxName: "entry-signal",
+  ...(outerOwnsLock
+    ? {
+        resume: true,
+        recreateSandbox: true,
+        authoritativeResumeConfig: true,
+        onboardLockAlreadyHeld: true,
+        targetGatewayName: "nemoclaw-9090",
+        targetGatewayPort: 9090,
+      }
+    : {}),
 }).catch((error) => {
   console.error(error && error.stack ? error.stack : String(error));
   process.exitCode = 1;
@@ -158,12 +192,20 @@ onboard({
 `,
       );
 
-      const run = async (replaceLock: boolean) => {
-        const home = path.join(tmpDir, replaceLock ? "replacement-home" : "owned-home");
+      const run = async (mode: "owned" | "replacement" | "outer") => {
+        const replaceLock = mode === "replacement";
+        const outerOwnsLock = mode === "outer";
+        const home = path.join(tmpDir, `${mode}-home`);
         fs.mkdirSync(home);
         const child = spawn(
           process.execPath,
-          ["--require", "tsx/cjs", scriptPath, ...(replaceLock ? ["--replace-lock"] : [])],
+          [
+            "--require",
+            "tsx/cjs",
+            scriptPath,
+            ...(replaceLock ? ["--replace-lock"] : []),
+            ...(outerOwnsLock ? ["--outer-lock"] : []),
+          ],
           {
             cwd: repoRoot,
             env: {
@@ -181,10 +223,10 @@ onboard({
         child.stderr.on("data", (chunk: string) => {
           stderr += chunk;
         });
+        let stdout = "";
 
         try {
           const ready = await new Promise<string>((resolve, reject) => {
-            let stdout = "";
             child.stdout.setEncoding("utf8");
             child.stdout.on("data", (chunk: string) => {
               stdout += chunk;
@@ -201,24 +243,42 @@ onboard({
               );
             });
           });
-          const { lockFile } = JSON.parse(ready) as { lockFile: string };
+          const { lockFile, lockContents } = JSON.parse(ready) as {
+            lockFile: string;
+            lockContents: string;
+          };
           expect(fs.existsSync(lockFile)).toBe(true);
           const exited = once(child, "exit");
           child.kill("SIGINT");
           const [code, signal] = await exited;
           expect(code, stderr).toBeNull();
           expect(signal, stderr).toBe("SIGINT");
-          expect(replaceLock ? fs.readFileSync(lockFile, "utf8") : fs.existsSync(lockFile)).toBe(
-            replaceLock ? replacement : false,
-          );
+          const assertResult = {
+            owned: () => expect(fs.existsSync(lockFile)).toBe(false),
+            replacement: () => expect(fs.readFileSync(lockFile, "utf8")).toBe(replacement),
+            outer: () => {
+              const outerRelease = stdout
+                .split("\n")
+                .find((line) => line.startsWith("NEMOCLAW_OUTER_RELEASE "));
+              expect(outerRelease, stderr).toBeDefined();
+              const outerPayload = JSON.parse(
+                outerRelease?.slice("NEMOCLAW_OUTER_RELEASE ".length) ?? "{}",
+              ) as { lockContents?: string };
+              expect(outerPayload.lockContents).toBe(lockContents);
+              expect(fs.existsSync(lockFile)).toBe(false);
+            },
+          } satisfies Record<typeof mode, () => void>;
+          assertResult[mode]();
         } finally {
           child.kill("SIGKILL");
         }
       };
 
-      await run(false);
-      await run(true);
+      await run("owned");
+      await run("replacement");
+      await run("outer");
     },
+    testTimeout(30_000),
   );
 
   it("resumes clean validation exits while cleanup failures and unexpected exits stay terminal (#9732)", () => {

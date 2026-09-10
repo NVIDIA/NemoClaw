@@ -2677,7 +2677,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   let completed = false;
   let preserveIncompleteSession = false;
   registerIncompleteOnboardExitHandlerForSession(
-    onboardSession,
+    { ...onboardSession, releaseOnboardLock: portableRetirementEntry.release },
     () => completed || preserveIncompleteSession,
   );
   let preserveDeferredExitSession = false;
