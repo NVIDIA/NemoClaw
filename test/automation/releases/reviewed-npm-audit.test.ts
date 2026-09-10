@@ -22,6 +22,7 @@ import {
   parseAuditExceptionRegistry,
   npmAuditProcessOptions,
   parseReviewedNpmAuditCliArgs,
+  parseReviewedNpmIdentity,
   parseAuditReport,
   provenanceSidecarPath,
   readAuditCache,
@@ -533,6 +534,12 @@ describe("npm audit raw cache", () => {
         {},
       ),
     ).toThrow("npm audit cache requires --audit-config");
+  });
+
+  it("rejects a truncated reviewed npm SHA-512 integrity", () => {
+    expect(() =>
+      parseReviewedNpmIdentity({ ...npmIdentity, npmIntegrity: "sha512-A" }),
+    ).toThrow("npm audit configuration has an invalid npmIntegrity");
   });
 
   it("fails closed when a cache caller omits the reviewed npm identity", () => {

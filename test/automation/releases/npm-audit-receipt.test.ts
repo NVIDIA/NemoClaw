@@ -93,7 +93,12 @@ describe("npm audit receipt", () => {
       npmIntegrity: _npmIntegrity,
       ...versionOnly
     } = receipt();
-    const legacy = { ...versionOnly, schemaVersion: 1 } as const;
+    const legacy = {
+      ...versionOnly,
+      argv: ["audit", "--omit=dev", "--json"],
+      registryOrigin: "https://registry.npmjs.org/",
+      schemaVersion: 1,
+    } as const;
     expect(() => parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), inputs)).toThrow(
       /version-only receipt schema/,
     );

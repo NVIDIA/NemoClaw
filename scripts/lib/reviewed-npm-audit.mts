@@ -32,7 +32,7 @@ export function parseReviewedNpmIdentity(value: unknown): ReviewedNpmIdentity {
   }
   if (
     typeof npmIntegrity !== "string" ||
-    !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(npmIntegrity) ||
+    !/^sha512-[A-Za-z0-9+/]{86}==$/.test(npmIntegrity) ||
     /[\r\n]/.test(npmIntegrity)
   ) {
     throw new Error("npm audit configuration has an invalid npmIntegrity");
