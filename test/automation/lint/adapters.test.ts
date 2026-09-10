@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
+import YAML from "yaml";
 
 it.each([
   {
@@ -123,6 +124,54 @@ it.each([
     expect(result.status, result.stdout + result.stderr).toBe(rule ? 1 : 0);
     expect(fs.readFileSync(path.join(root, file), "utf8") !== source).toBe(fixes ?? false);
     expect(result.stdout + result.stderr).toContain(rule && !fixes ? rule : "");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it.each([
+  { hook: "oxlint-adapters-type-aware", file: "src/lib/adapters/example.ts" },
+  { hook: "oxlint-type-aware", file: "nemoclaw/src/example.ts" },
+])("runs repository checks after $hook fixes source", ({ hook, file }) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lint-order-"));
+  try {
+    fs.symlinkSync(path.resolve("node_modules"), path.join(root, "node_modules"), "dir");
+    fs.mkdirSync(path.join(root, "src/lib/adapters"), { recursive: true });
+    fs.mkdirSync(path.join(root, "nemoclaw/src"), { recursive: true });
+    fs.copyFileSync("oxlint.config.ts", path.join(root, "oxlint.config.ts"));
+    fs.copyFileSync("oxc.ignore-patterns.ts", path.join(root, "oxc.ignore-patterns.ts"));
+    fs.copyFileSync("tsconfig.cli.json", path.join(root, "tsconfig.cli.json"));
+    fs.copyFileSync(
+      "src/lib/adapters/tsconfig.json",
+      path.join(root, "src/lib/adapters/tsconfig.json"),
+    );
+    fs.copyFileSync("nemoclaw/src/tsconfig.json", path.join(root, "nemoclaw/src/tsconfig.json"));
+    fs.copyFileSync("nemoclaw/tsconfig.json", path.join(root, "nemoclaw/tsconfig.json"));
+    fs.copyFileSync("nemoclaw/tsconfig.test.json", path.join(root, "nemoclaw/tsconfig.test.json"));
+    const config = YAML.parse(fs.readFileSync(".pre-commit-config.yaml", "utf8")) as {
+      repos: Array<{ repo: string; hooks: Array<{ id: string; entry?: string }> }>;
+    };
+    const hooks = config.repos
+      .flatMap((repo) => repo.hooks)
+      .filter(({ id }) => id === hook || id === "repository-checks");
+    const observer = hooks.find(({ id }) => id === "repository-checks")!;
+    observer.entry = `node -e "require('node:fs').copyFileSync(process.argv[1], 'observed.ts')" ${file}`;
+    config.repos = [{ repo: "local", hooks }];
+    fs.writeFileSync(path.join(root, ".pre-commit-config.yaml"), YAML.stringify(config));
+    const source = "type Result = string; export { Result };";
+    fs.writeFileSync(path.join(root, file), source);
+    const init = spawnSync("git", ["init", "--quiet"], { cwd: root, encoding: "utf8" });
+    expect(init.status, init.stderr).toBe(0);
+    const add = spawnSync("git", ["add", "--", file], { cwd: root, encoding: "utf8" });
+    expect(add.status, add.stderr).toBe(0);
+    const result = spawnSync(path.resolve("node_modules/.bin/prek"), ["run", "--files", file], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    const fixed = fs.readFileSync(path.join(root, file), "utf8");
+    expect(fixed).not.toBe(source);
+    expect(fs.readFileSync(path.join(root, "observed.ts"), "utf8")).toBe(fixed);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
