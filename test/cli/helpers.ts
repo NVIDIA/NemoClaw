@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChildProcess } from "node:child_process";
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -156,12 +156,24 @@ export function run(args: string): CliRunResult {
   return runWithEnv(args);
 }
 
+export function runAsync(args: string): Promise<CliRunResult> {
+  return runWithEnvAsync(args);
+}
+
 export function runWithEnv(
   args: string,
   env: Record<string, string | undefined> = {},
   timeout: number = execTimeout(),
 ): CliRunResult {
   return runWithEnvInternal(args, env, timeout);
+}
+
+export function runWithEnvAsync(
+  args: string,
+  env: Record<string, string | undefined> = {},
+  timeout: number = execTimeout(),
+): Promise<CliRunResult> {
+  return runWithEnvInternalAsync(args, env, timeout);
 }
 
 export function runWithInput(
@@ -212,6 +224,51 @@ function runWithEnvInternal(
       return { code, out: mergeStderrOnSuccess ? `${stdout}${stderr}` : stdout };
     }
     return { code, out: `${stdout}${stderr}${errorOutput}` };
+  } finally {
+    if (implicitHome) fs.rmSync(implicitHome, { force: true, recursive: true });
+  }
+}
+
+async function runWithEnvInternalAsync(
+  args: string,
+  env: Record<string, string | undefined>,
+  timeout: number,
+): Promise<CliRunResult> {
+  const parsedArgs = splitCliArgs(args);
+  const mergeStderrOnSuccess = parsedArgs.includes("2>&1");
+  const cliArgs = parsedArgs.filter((token) => token !== "2>&1");
+  const implicitHome = Object.hasOwn(env, "HOME")
+    ? null
+    : fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-"));
+  try {
+    return await new Promise<CliRunResult>((resolve) => {
+      const child = execFile(
+        process.execPath,
+        [CLI, ...cliArgs],
+        {
+          encoding: "utf-8",
+          timeout,
+          env: {
+            ...process.env,
+            ...(implicitHome ? { HOME: implicitHome } : {}),
+            NEMOCLAW_HEALTH_POLL_COUNT: "1",
+            NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+            NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS: "0",
+            ...env,
+          },
+        },
+        (error, stdout, stderr) => {
+          const code = typeof error?.code === "number" ? error.code : error ? 1 : 0;
+          if (code === 0) {
+            resolve({ code, out: mergeStderrOnSuccess ? `${stdout}${stderr}` : stdout });
+            return;
+          }
+          const errorOutput = error && typeof error.code !== "number" ? String(error) : "";
+          resolve({ code, out: `${stdout}${stderr}${errorOutput}` });
+        },
+      );
+      child.stdin?.end();
+    });
   } finally {
     if (implicitHome) fs.rmSync(implicitHome, { force: true, recursive: true });
   }

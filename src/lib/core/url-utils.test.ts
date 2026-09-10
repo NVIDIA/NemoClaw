@@ -165,6 +165,8 @@ describe("unsafeEndpointUrlViolation", () => {
       "https://example.test/v1%0Dx",
       "encoded-control-characters",
     ],
+    ["encoded newline followed by malformed escape", "https://example.test/v1%0A%", "invalid-url"],
+    ["malformed percent escape", "https://example.test/v1%ZZ", "invalid-url"],
     ["encoded NUL", "https://example.test/v1%00x", "encoded-control-characters"],
     ["encoded UTF-8 C1 control", "https://example.test/v1%C2%80x", "encoded-control-characters"],
     [

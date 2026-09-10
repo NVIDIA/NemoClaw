@@ -1696,24 +1696,8 @@ export function releaseOnboardLock(): void {
     return;
   }
 
-  // Fallback (no fd held — e.g., a test wrote the lock file directly,
-  // or a previous release already ran): preserve the legacy pid-based
-  // behavior so we never unlink a malformed lock and never unlink a
-  // lock owned by another pid.
-  try {
-    let snapshot: LockFileSnapshot;
-    try {
-      snapshot = readLockFileSnapshot();
-    } catch (error) {
-      if (isErrnoException(error) && error.code === "ENOENT") return;
-      throw error;
-    }
-    if (!snapshot.info) return;
-    if (snapshot.info.pid !== process.pid) return;
-    unlinkIfInodeMatches(LOCK_FILE, snapshot.inode);
-  } catch {
-    return;
-  }
+  // A PID match does not prove ownership across hosts or PID namespaces.
+  // Without the retained descriptor, this process has no cleanup authority.
 }
 
 // ── Step management ──────────────────────────────────────────────
@@ -2391,6 +2375,29 @@ export function checkpointVllmInstallModel(modelId: string): Session {
       );
     }
     session.vllmInstallModel = model;
+  });
+}
+
+/** Persist the exact profile needed to retry an interrupted managed llama.cpp install. */
+export function checkpointManagedLlamaCppSelection(input: {
+  model: string;
+  servingProfileProvenance: ServingProfileProvenance;
+}): Session {
+  const model = parseVllmInstallModel(input.model);
+  const provenance = parseServingProfileProvenance(input.servingProfileProvenance);
+  if (!model || provenance?.recipe.backend !== "install-llama-cpp") {
+    throw new Error("Managed llama.cpp install produced an invalid selection checkpoint.");
+  }
+  return updateSession((session) => {
+    const providerStep = session.steps.provider_selection;
+    if (providerStep?.status !== "in_progress") {
+      throw new Error(
+        "Managed llama.cpp selection can only be checkpointed during provider selection.",
+      );
+    }
+    session.provider = "llama-cpp-local";
+    session.model = model;
+    session.servingProfileProvenance = provenance;
   });
 }
 

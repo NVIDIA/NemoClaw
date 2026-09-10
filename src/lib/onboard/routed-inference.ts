@@ -30,7 +30,7 @@ export type RoutedProviderDeps = {
     credentialEnv: string,
     baseUrl: string | null,
     env: NodeJS.ProcessEnv,
-  ) => UpsertProviderResult;
+  ) => UpsertProviderResult | Promise<UpsertProviderResult>;
   hydrateCredentialEnv: (credentialEnv: string) => string | null | undefined;
 };
 
@@ -99,17 +99,17 @@ export function resolveRoutedCredentialEnv(
  * Upsert the routed provider into the gateway with a normalized, sandbox-facing
  * base URL. Used by both fresh routed setup and resume repair.
  */
-export function upsertRoutedProvider(
+export async function upsertRoutedProvider(
   provider: string,
   endpointUrl: string | null,
   credentialEnv: string | null,
   deps: RoutedProviderDeps,
-): RoutedProviderUpsert {
+): Promise<RoutedProviderUpsert> {
   const resolvedCredentialEnv = resolveRoutedCredentialEnv(credentialEnv);
   const normalizedEndpoint = normalizeRoutedEndpointUrl(endpointUrl);
   const credentialValue = deps.hydrateCredentialEnv(resolvedCredentialEnv);
   const env = credentialValue ? { [resolvedCredentialEnv]: credentialValue } : {};
-  const result = deps.upsertProvider(
+  const result = await deps.upsertProvider(
     provider,
     "openai",
     resolvedCredentialEnv,

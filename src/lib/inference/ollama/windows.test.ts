@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const WINDOWS_DIST_PATH = require.resolve("./windows");
+const { buildWindowsOllamaInstallerCommand } = require(WINDOWS_DIST_PATH);
 const DOCKER_ADAPTER_PATH = require.resolve("../../adapters/docker/runtime");
 const PLATFORM_PATH = require.resolve("../../platform");
 const RUNNER_PATH = require.resolve("../../runner");
@@ -309,15 +310,9 @@ describe("Windows Ollama helper", () => {
   });
 
   it("leaves the persistent installer binding under the mutation transaction", () => {
-    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
-
-    try {
-      const installerCommand = windows.buildWindowsOllamaInstallerCommand();
-      expect(installerCommand).toContain("$env:OLLAMA_HOST='127.0.0.1:11434'");
-      expect(installerCommand).not.toContain("SetEnvironmentVariable('OLLAMA_HOST'");
-    } finally {
-      restore();
-    }
+    const installerCommand = buildWindowsOllamaInstallerCommand();
+    expect(installerCommand).toContain("$env:OLLAMA_HOST='127.0.0.1:11434'");
+    expect(installerCommand).not.toContain("SetEnvironmentVariable('OLLAMA_HOST'");
   });
 
   it("terminates the PowerShell wrapper when cancellation precedes the PID sentinel", async () => {

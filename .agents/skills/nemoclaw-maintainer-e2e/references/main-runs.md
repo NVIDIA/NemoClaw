@@ -44,8 +44,9 @@ Before dispatch:
 
 `Staging Brev Launchable` uses `BREV_API_KEY` and `BREV_ORG_ID` during trusted host
 preparation. It exposes `NEMOCLAW_IMAGE_DISPATCH_TOKEN` only to the trusted host script as
-`GH_TOKEN`. It exports `NVIDIA_INFERENCE_API_KEY` into the Brev guest for full E2E. Candidate code in
-that guest can read the inference key. The workflow requires repository `maintain` or `admin`
+`GH_TOKEN`. It exports the public `NVIDIA_API_KEY` secret as `NVIDIA_INFERENCE_API_KEY` into the Brev
+guest for full E2E. Candidate code in that guest can read the inference key.
+The workflow requires repository `maintain` or `admin`
 permission before source checkout. If cleanup fails, remove the recorded workspace. Rotate or revoke
 credentials that may remain accessible.
 

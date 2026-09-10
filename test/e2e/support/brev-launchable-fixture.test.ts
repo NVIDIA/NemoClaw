@@ -134,7 +134,13 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     const ownership = fixture.ownership("fixture-workspace");
 
     const workspace = await fixture.create(ownership, "env-fixture123");
-    expect(workspace.id).toBe("workspace-id");
+    expect(workspace).toMatchObject({
+      id: "workspace-id",
+      name: "fixture-workspace",
+      status: "RUNNING",
+      buildStatus: "COMPLETED",
+      shellStatus: "READY",
+    });
     expect(ownership).toEqual({
       name: "fixture-workspace",
       createRequested: true,
