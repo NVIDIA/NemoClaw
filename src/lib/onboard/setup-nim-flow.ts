@@ -19,10 +19,12 @@ import {
   resumeManagedLlamaCppRuntime,
 } from "../inference/llama-cpp/managed-installer";
 import {
+  type ManagedLlamaCppDiscoveryResult,
   type ManagedLlamaCppSelectionChoice,
   type ManagedLlamaCppSelectionResult,
-  listManagedLlamaCppSelectionChoices,
-  resolveManagedLlamaCppSelectionForGpu,
+  type ServingProfileProvenance,
+  discoverManagedLlamaCppSelectionsForGpu,
+  servingProfileProvenanceFromResolvedLlamaCpp,
 } from "../inference/llama-cpp/managed-selection";
 import { getOllamaContextWindowFloorForAgent } from "../inference/ollama-runtime-context";
 import {
@@ -149,6 +151,14 @@ export interface SetupNimFlowDeps {
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
   ): string | null;
+  readRecordedManagedLlamaCpp?(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): boolean;
+  readRecordedManagedLlamaCppRecipeId?(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
   readRecordedModel(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -170,12 +180,12 @@ export interface SetupNimFlowDeps {
   exitProcess(code: number): never;
   abortNonInteractive(message: string): never;
   localModelProfileIntegration?: ReturnType<typeof createLocalModelProfileIntegration>;
-  resolveManagedLlamaCppSelection?(
-    env?: NodeJS.ProcessEnv,
-    gpu?: SetupNimGpu,
-  ): ManagedLlamaCppSelectionResult;
-  listManagedLlamaCppSelectionChoices?(): readonly ManagedLlamaCppSelectionChoice[];
+  discoverManagedLlamaCppSelections?: typeof discoverManagedLlamaCppSelectionsForGpu;
   installManagedLlamaCpp?: typeof installManagedLlamaCpp;
+  checkpointManagedLlamaCppSelection?(input: {
+    model: string;
+    servingProfileProvenance: ServingProfileProvenance;
+  }): void;
   handleRemoteProviderSelection(
     args: SetupNimRemoteSelectionArgs,
     state: SetupNimSelectionState,
@@ -206,7 +216,6 @@ export interface SetupNimFlowDeps {
     gpu: SetupNimGpu,
     selectedKey: string,
     requestedModel: string | null,
-    windowsOllamaReachable: boolean,
     winOllamaLoopbackOnly: boolean,
     winOllamaInstalledPath: string | null,
     state: SetupNimSelectionState,
@@ -266,6 +275,17 @@ function maybePromptForSupportedInferenceInputCapability(
   return deps.maybePromptForInferenceInputCapability(model);
 }
 
+function exitAfterPinnedVllmFailure(
+  deps: Pick<SetupNimFlowDeps, "abortNonInteractive" | "exitProcess" | "isNonInteractive">,
+  requestedProvider: string | null,
+  message: string,
+): void {
+  if (deps.isNonInteractive()) {
+    deps.abortNonInteractive(message);
+  }
+  if (requestedProvider) deps.exitProcess(1);
+}
+
 function requireSelectedProvider(
   selected: ProviderMenuChoice | undefined,
   deps: Pick<SetupNimFlowDeps, "error" | "exitProcess">,
@@ -302,7 +322,7 @@ function assertVllmGpuProviderSelection(
   recoveredFromSandbox: boolean,
   deps: Pick<
     SetupNimFlowDeps,
-    "abortNonInteractive" | "error" | "exitProcess" | "isNonInteractive"
+    "abortNonInteractive" | "error" | "exitProcess" | "isNonInteractive" | "vllmPort"
   >,
 ): void {
   const requestedDevice = String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim();
@@ -310,8 +330,13 @@ function assertVllmGpuProviderSelection(
   if (!requestedDevice || selected.key === "install-vllm" || resumedManagedVllm) return;
 
   const message =
-    `--vllm-gpu-device applies only when NemoClaw installs managed vLLM; ` +
-    `the selected provider is '${selected.key}'.`;
+    selected.key === "vllm"
+      ? `vLLM is already running on localhost:${deps.vllmPort}, so --vllm-gpu-device cannot change its GPU. ` +
+        `Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm to reuse that server. ` +
+        `To select a different GPU, stop the server only if no other gateway or distributed deployment uses it. ` +
+        `Otherwise, keep it running and set NEMOCLAW_VLLM_PORT to an unused port before rerunning managed onboarding.`
+      : `--vllm-gpu-device applies only when NemoClaw installs managed vLLM; ` +
+        `the selected provider is '${selected.key}'.`;
   deps.error(`  ${message}`);
   if (deps.isNonInteractive()) deps.abortNonInteractive(message);
   deps.exitProcess(1);
@@ -426,48 +451,43 @@ function prepareEndpointProviderPolicyRoute(
   state.credentialEnv = tentative.credentialEnv;
 }
 
-function resolveManagedLlamaCppSafely(
+function discoverManagedLlamaCppSafely(
   deps: SetupNimFlowDeps,
   env?: NodeJS.ProcessEnv,
   gpu: SetupNimGpu = null,
-): ManagedLlamaCppSelectionResult {
+  runtimeProviderId?: string,
+): ManagedLlamaCppDiscoveryResult {
   try {
-    return deps.resolveManagedLlamaCppSelection
-      ? deps.resolveManagedLlamaCppSelection(env, gpu)
-      : resolveManagedLlamaCppSelectionForGpu(env, gpu);
+    return deps.discoverManagedLlamaCppSelections
+      ? deps.discoverManagedLlamaCppSelections(env, gpu, undefined, undefined, {
+          runtimeProviderId,
+        })
+      : discoverManagedLlamaCppSelectionsForGpu(env, gpu, undefined, undefined, {
+          runtimeProviderId,
+        });
   } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    deps.note(`  Managed llama.cpp profiles unavailable: ${reason}`);
     return {
-      kind: "rejected",
-      reason: error instanceof Error ? error.message : String(error),
+      choices: [],
+      resolution: {
+        kind: "rejected",
+        reason,
+      },
     };
   }
 }
 
 function buildManagedLlamaCppOptions(input: {
-  deps: SetupNimFlowDeps;
   candidate: boolean;
   requestedProvider: string | null;
-  resolution: ManagedLlamaCppSelectionResult | null;
+  discovery: ManagedLlamaCppDiscoveryResult | null;
 }): ProviderMenuChoice[] {
-  const { deps, candidate, requestedProvider, resolution } = input;
+  const { candidate, requestedProvider, discovery } = input;
   if (!candidate) return [];
 
-  let choices: readonly ManagedLlamaCppSelectionChoice[] = [];
-  try {
-    if (deps.listManagedLlamaCppSelectionChoices) {
-      choices = deps.listManagedLlamaCppSelectionChoices();
-    } else if (deps.resolveManagedLlamaCppSelection) {
-      choices =
-        resolution?.kind === "selected" ? [{ priority: 0, selection: resolution.selection }] : [];
-    } else {
-      choices = listManagedLlamaCppSelectionChoices();
-    }
-  } catch (error) {
-    deps.note(
-      `  Managed llama.cpp profiles unavailable: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    choices = [];
-  }
+  const choices: readonly ManagedLlamaCppSelectionChoice[] = discovery?.choices ?? [];
+  const resolution = discovery?.resolution ?? null;
 
   const defaultRecipeId =
     resolution?.kind === "selected" ? resolution.selection.recipe.metadata.id : null;
@@ -497,34 +517,70 @@ function prepareManagedLlamaCppMenu(input: {
 } {
   const { deps, gpu, requestedProvider } = input;
   const platform = gpu?.platform;
-  const candidate = platform === "spark" || requestedProvider === "install-llama-cpp";
-  const resolution = candidate
-    ? resolveManagedLlamaCppSafely(
+  const candidate =
+    platform === "spark" || platform === "n1x" || requestedProvider === "install-llama-cpp";
+  const runtimeProviderId = candidate ? deps.getRuntimeProvider().identity.id : undefined;
+  const discovery = candidate
+    ? discoverManagedLlamaCppSafely(
         deps,
         !deps.isNonInteractive() && !requestedProvider
           ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "" }
           : undefined,
         gpu,
+        runtimeProviderId,
       )
     : null;
+  const resolution = discovery?.resolution ?? null;
+  if (platform === "n1x" && resolution?.kind === "rejected") {
+    deps.note(
+      `  Managed llama.cpp is unavailable on this N1x host: ${resolution.reason} Fix the reported readiness or runtime-provider requirement, then rerun onboarding.`,
+    );
+  }
   return {
     resolution,
-    options: buildManagedLlamaCppOptions({ deps, candidate, requestedProvider, resolution }),
+    options: buildManagedLlamaCppOptions({ candidate, requestedProvider, discovery }),
   };
+}
+
+function platformDefaultProviderKey(input: {
+  gpu: SetupNimGpu;
+  isWsl: boolean;
+  managedLlamaCpp: ManagedLlamaCppSelectionResult | null;
+  requestedModel: string | null;
+}): "install-llama-cpp" | "install-ollama" | "install-vllm" | undefined {
+  if (
+    input.gpu?.platform === "n1x" &&
+    !input.requestedModel &&
+    input.managedLlamaCpp?.kind === "selected"
+  ) {
+    return "install-llama-cpp";
+  }
+  if (input.gpu?.platform === "spark") return "install-vllm";
+  if (input.isWsl) return "install-ollama";
+  return undefined;
 }
 
 function resolveSelectedManagedLlamaCpp(input: {
   deps: SetupNimFlowDeps;
   gpu: SetupNimGpu;
+  recoveredFromSandbox: boolean;
   selectedFromInteractiveMenu: boolean;
   selectedRecipeId: string | undefined;
-}): ManagedLlamaCppSelectionResult {
-  const { deps, gpu, selectedFromInteractiveMenu, selectedRecipeId } = input;
+}): {
+  resolution: ManagedLlamaCppSelectionResult;
+  runtimeProvider: RuntimeProviderBundle;
+} {
+  const { deps, gpu, recoveredFromSandbox, selectedFromInteractiveMenu, selectedRecipeId } = input;
   const env =
-    selectedFromInteractiveMenu && selectedRecipeId
+    selectedRecipeId && (recoveredFromSandbox || selectedFromInteractiveMenu)
       ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
       : undefined;
-  return resolveManagedLlamaCppSafely(deps, env, gpu);
+  const runtimeProvider = deps.getRuntimeProvider();
+  return {
+    resolution: discoverManagedLlamaCppSafely(deps, env, gpu, runtimeProvider.identity.id)
+      .resolution,
+    runtimeProvider,
+  };
 }
 
 async function runDedicatedLocalModelProfile(input: {
@@ -622,11 +678,15 @@ async function handleEndpointProviderSelection(input: {
 function vllmPortConflictMessage(
   platform: InferenceProviderHostGpu["platform"],
   port: number,
+  hasGpuSelection: boolean,
 ): string {
   if (platform === "n1x") {
-    return `The N1x Deferred preview requires managed vLLM, but vLLM is already running on localhost:${port}. Stop the existing server, then rerun with NEMOCLAW_PROVIDER=install-vllm.`;
+    return `The N1x Deferred preview requires managed vLLM, but vLLM is already running on localhost:${port}. Stop the server only if no other gateway or distributed deployment uses it. Otherwise, keep it running and set NEMOCLAW_VLLM_PORT to an unused port. Then rerun with NEMOCLAW_PROVIDER=install-vllm.`;
   }
-  return "vLLM is already running on this host. Select Local vLLM, or stop the existing server before selecting the managed install path.";
+  const reuseAction = hasGpuSelection
+    ? "Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm to reuse it."
+    : "Rerun with NEMOCLAW_PROVIDER=vllm to reuse it.";
+  return `vLLM is already running on localhost:${port}. ${reuseAction} To change its GPU or port, stop the server only if no other gateway or distributed deployment uses it. Otherwise, keep it running and set NEMOCLAW_VLLM_PORT to an unused port before rerunning managed onboarding.`;
 }
 
 /**
@@ -642,21 +702,18 @@ function requestedVllmServingProfileModel(
   return requested?.backend === "vllm" ? requested : null;
 }
 
-/** Model ID that an explicit managed-vLLM model selection exposes through `/v1/models`. */
-function requestedManagedVllmModel(
-  resolve: SetupNimFlowDeps["selectVllmModelFromEnv"],
-): string | null {
-  if (!resolve) throw new Error("Managed vLLM model selection could not be resolved.");
-  const requested = resolve();
-  return requested?.servedModelId ?? requested?.id ?? null;
-}
-
 /** Preserve explicit route intent while converting a known catalog alias to its served name. */
 function requestedManagedVllmRouteModel(input: {
   requestedModel: string | null;
   selectVllmModelFromEnv: SetupNimFlowDeps["selectVllmModelFromEnv"];
 }): string | null {
-  if (!input.requestedModel) return requestedManagedVllmModel(input.selectVllmModelFromEnv);
+  if (!input.requestedModel) {
+    if (!input.selectVllmModelFromEnv) {
+      throw new Error("Managed vLLM model selection could not be resolved.");
+    }
+    const requested = input.selectVllmModelFromEnv();
+    return requested?.servedModelId ?? requested?.id ?? null;
+  }
   if (!input.selectVllmModelFromEnv) return input.requestedModel;
   try {
     const catalogModel = input.selectVllmModelFromEnv({
@@ -760,13 +817,18 @@ function policyCheckedVllmInstallRecovery(
   recovery: ReturnType<typeof vllmInstallRecoveryOptions>,
   state: SetupNimSelectionState,
   seedVllmInstallRoute: (modelId: string) => void,
+  selectVllmModelFromEnv: SetupNimFlowDeps["selectVllmModelFromEnv"],
 ): ReturnType<typeof vllmInstallRecoveryOptions> {
   const checkpointInstallIntent = recovery.checkpointInstallIntent;
   if (!checkpointInstallIntent) return recovery;
   return {
     ...recovery,
     checkpointInstallIntent: (modelId: string) => {
-      seedVllmInstallRoute(modelId);
+      const routeModel = requestedManagedVllmRouteModel({
+        requestedModel: modelId,
+        selectVllmModelFromEnv,
+      });
+      seedVllmInstallRoute(routeModel ?? modelId);
       state.revalidateSandboxIdentity?.("record managed vLLM install intent");
       checkpointInstallIntent(modelId);
     },
@@ -816,6 +878,7 @@ export function createSetupNim(
     let endpointPinnedAddresses: string[] | undefined;
     let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
     let vllmModelIdentity: string | undefined;
+    let selectedServingProfileProvenance: ServingProfileProvenance | null = null;
     const inferenceCapabilityCache = new OnboardInferenceCapabilityCache();
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
       defaultModel: resolveAgentDefaultCloudModel(agent),
@@ -924,11 +987,12 @@ export function createSetupNim(
       gpuNimCapable,
     } = providerHostState;
     const agentProviderOptions = deps.getAgentInferenceProviderOptions(agent);
-    const { options: managedLlamaCppOptions } = prepareManagedLlamaCppMenu({
-      deps,
-      gpu,
-      requestedProvider,
-    });
+    const { resolution: managedLlamaCppResolution, options: managedLlamaCppOptions } =
+      prepareManagedLlamaCppMenu({
+        deps,
+        gpu,
+        requestedProvider,
+      });
 
     const blueprintRouterCfg = deps.loadRoutedProfile();
     const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
@@ -997,6 +1061,7 @@ export function createSetupNim(
     vllmModelIdentity = localModelState?.vllmModelIdentity;
     if (localModelProfile.providerMenuOptionCount > 1) {
       selectionLoop: while (true) {
+        selectedServingProfileProvenance = null;
         let selected: ProviderMenuChoice | undefined;
         let selectedFromInteractiveMenu = false;
         recoveredFromSandbox = false;
@@ -1016,7 +1081,12 @@ export function createSetupNim(
             windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
             windowsHostOllamaReachable: windowsOllamaReachable,
             hermesProviderAvailable,
-            preferManagedVllmDefault: gpu?.platform === "spark",
+            platformDefaultProviderKey: platformDefaultProviderKey({
+              gpu,
+              isWsl: isWslHost,
+              managedLlamaCpp: managedLlamaCppResolution,
+              requestedModel,
+            }),
             ...recordedProviderReaders,
           });
           if (providerSelection.kind === "failure") {
@@ -1109,9 +1179,10 @@ export function createSetupNim(
           // inputs immediately before any install effect so a delayed interactive
           // choice cannot activate against stale host state.
           const selectedRecipeId = selected.managedLlamaCppRecipeId;
-          const resolved = resolveSelectedManagedLlamaCpp({
+          const { resolution: resolved, runtimeProvider } = resolveSelectedManagedLlamaCpp({
             deps,
             gpu,
+            recoveredFromSandbox,
             selectedFromInteractiveMenu,
             selectedRecipeId,
           });
@@ -1128,12 +1199,19 @@ export function createSetupNim(
           state.preferredInferenceApi = "openai-completions";
           state.assertRouteCompatible?.();
           state.revalidateSandboxIdentity?.("install managed llama.cpp runtime");
+          selectedServingProfileProvenance = servingProfileProvenanceFromResolvedLlamaCpp(
+            resolved.selection,
+          );
+          deps.checkpointManagedLlamaCppSelection?.({
+            model: state.model,
+            servingProfileProvenance: selectedServingProfileProvenance,
+          });
           const installed = await (deps.installManagedLlamaCpp ?? installManagedLlamaCpp)(
             resolved.selection,
             {
               sandboxName,
               gatewayPort: deps.getGatewayPort(),
-              runtimeProvider: deps.getRuntimeProvider(),
+              runtimeProvider,
               revalidateSandboxIdentity: state.revalidateSandboxIdentity,
             },
           );
@@ -1206,7 +1284,6 @@ export function createSetupNim(
             gpu,
             selected.key,
             requestedModel,
-            windowsOllamaReachable,
             winOllamaLoopbackOnly,
             winOllamaInstalledPath,
             state,
@@ -1247,11 +1324,11 @@ export function createSetupNim(
             continue selectionLoop;
           }
           if (vllmRunning) {
-            const message = vllmPortConflictMessage(gpu?.platform, deps.vllmPort);
+            const hasGpuSelection =
+              String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim() !== "";
+            const message = vllmPortConflictMessage(gpu?.platform, deps.vllmPort, hasGpuSelection);
             deps.error(`  ${message}`);
-            if (deps.isNonInteractive()) {
-              deps.abortNonInteractive(message);
-            }
+            exitAfterPinnedVllmFailure(deps, requestedProvider, message);
             continue selectionLoop;
           }
           const vllmState = createSelectionState();
@@ -1268,6 +1345,7 @@ export function createSetupNim(
             vllmInstallRecoveryOptions(deps),
             vllmState,
             seedVllmInstallRoute,
+            deps.selectVllmModelFromEnv,
           );
           const result = await deps.installVllm(vllmProfile, {
             hasImage: hasVllmImage,
@@ -1280,8 +1358,11 @@ export function createSetupNim(
             },
           });
           if (!result.ok) {
-            if (deps.isNonInteractive())
-              deps.abortNonInteractive("vLLM install failed. See errors above.");
+            exitAfterPinnedVllmFailure(
+              deps,
+              requestedProvider,
+              "vLLM install failed. See errors above.",
+            );
             continue selectionLoop;
           }
           selected = {
@@ -1380,6 +1461,9 @@ export function createSetupNim(
       compatibleEndpointReasoning,
       compatibleEndpointReasoningEffort,
       nimContainer,
+      ...(selectedServingProfileProvenance
+        ? { servingProfileProvenance: selectedServingProfileProvenance }
+        : {}),
       allowToolsIncompatible,
       skipHostInferenceSmoke: reuseGatewayCredential,
       reuseGatewayCredentialWithoutLocalKey: reuseGatewayCredential,

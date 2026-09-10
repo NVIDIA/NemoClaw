@@ -33,10 +33,14 @@ import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
 export const PODMAN_BOOTSTRAP_IMAGE_TRANSACTION_SCHEMA_VERSION = 1 as const;
 
 const COMPLETION_TEMP_PREFIX = "nemoclaw-podman-bootstrap-completion";
+const START_LOG_TEMP_PREFIX = "nemoclaw-podman-bootstrap-start-log";
+const START_LOG_PATH = "/tmp/nemoclaw-start.log";
+const START_LOG_MAX_BYTES = 64 * 1024;
 const FULL_RUNTIME_ID = /^[a-f0-9]{64}$/u;
 const IMAGE_CONTENT_ID = /^sha256:[a-f0-9]{64}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$/u;
+const SAFE_AGENT_ID = /^[a-z0-9][a-z0-9-]{0,127}$/u;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const DEFAULT_START_TIMEOUT_MS = 90_000;
 const DEFAULT_POLL_INTERVAL_MS = 250;
@@ -44,13 +48,6 @@ const MAX_TIMEOUT_SECONDS = 3_600;
 
 type BootstrapEngine = ContainerEngine & { readonly authorityId: string };
 type ManagedStartupAgent = ManagedStartupRootApplyRequest["agent"];
-
-const PODMAN_BOOTSTRAP_AGENTS = Object.freeze({
-  openclaw: true,
-  hermes: true,
-  "langchain-deepagents-code": true,
-  pi: false,
-} satisfies Record<ManagedStartupAgent, boolean>);
 
 export interface PodmanBootstrapImageTransactionInput {
   readonly engine: BootstrapEngine;
@@ -99,10 +96,14 @@ export interface PodmanBootstrapImageTransactionDeps {
 }
 
 interface ExactPodmanContainerState {
+  readonly error: string;
+  readonly exitCode: number | null;
   readonly imageContentId: string;
   readonly name: string;
+  readonly oomKilled: boolean | null;
   readonly runtimeId: string;
   readonly running: boolean;
+  readonly status: string;
   readonly stateVolumeMountpoint: string;
   readonly stateVolumeName: string;
 }
@@ -127,15 +128,8 @@ function exactEngine(engine: BootstrapEngine, expectedAuthorityId?: string): Boo
 }
 
 function exactAgent(value: string): ManagedStartupAgent {
-  if (Object.prototype.hasOwnProperty.call(PODMAN_BOOTSTRAP_AGENTS, value)) {
-    if (PODMAN_BOOTSTRAP_AGENTS[value as ManagedStartupAgent]) {
-      return value as ManagedStartupAgent;
-    }
-    return fail(
-      `agent '${value}' is not supported on Podman; onboard it through the Docker compute runtime`,
-    );
-  }
-  return fail("the managed agent is unsupported");
+  if (!SAFE_AGENT_ID.test(value)) fail("the managed agent identity is invalid");
+  return value as ManagedStartupAgent;
 }
 
 function exactSha256(value: string, label: string): string {
@@ -223,12 +217,12 @@ function exactWatcherLease(lease: PodmanGatewayWatcherLease, expectedLeaseId?: s
   if (
     !lease ||
     typeof lease !== "object" ||
-    lease.record?.phase !== "stopped" ||
+    (lease.record?.phase !== "stopped" && lease.record?.phase !== "observing") ||
     (expectedLeaseId !== undefined && lease.record.leaseId !== expectedLeaseId)
   ) {
-    fail("the exact stopped OpenShell watcher lease is unavailable");
+    fail("the exact OpenShell watcher transaction lease is unavailable");
   }
-  lease.assertStillStopped();
+  lease.assertStillHeld();
 }
 
 function commandFailure(result: ContainerEngineCommandResult, action: string): never {
@@ -358,7 +352,28 @@ function parseInspect(
   ) {
     return fail("the exact replacement is not in a stable running or stopped state");
   }
-  return Object.freeze({ imageContentId, name, runtimeId, running: state.Running, ...stateVolume });
+  const exitCode =
+    typeof state.ExitCode === "number" && Number.isSafeInteger(state.ExitCode)
+      ? state.ExitCode
+      : null;
+  const oomKilled = typeof state.OOMKilled === "boolean" ? state.OOMKilled : null;
+  const status =
+    typeof state.Status === "string" && state.Status.length <= 64 && !/[\r\n\0]/u.test(state.Status)
+      ? state.Status
+      : "unknown";
+  const error =
+    typeof state.Error === "string" ? state.Error.replace(/\s+/gu, " ").trim().slice(-300) : "";
+  return Object.freeze({
+    error,
+    exitCode,
+    imageContentId,
+    name,
+    oomKilled,
+    runtimeId,
+    running: state.Running,
+    status,
+    ...stateVolume,
+  });
 }
 
 function inspectExact(
@@ -381,9 +396,80 @@ function sameState(left: ExactPodmanContainerState, right: ExactPodmanContainerS
     left.imageContentId === right.imageContentId &&
     left.name === right.name &&
     left.running === right.running &&
+    left.status === right.status &&
+    left.exitCode === right.exitCode &&
+    left.error === right.error &&
+    left.oomKilled === right.oomKilled &&
     left.stateVolumeMountpoint === right.stateVolumeMountpoint &&
     left.stateVolumeName === right.stateVolumeName
   );
+}
+
+function safeBootstrapFailureLine(output: string): string | null {
+  const allowed = output.split(/\r?\n/u).flatMap((line) => {
+    if (!/^[\x20-\x7e]+$/u.test(line)) return [];
+    const boundedPrefix =
+      /^(?:(?:\[SECURITY\] Managed bootstrap (?:entrypoint|trampoline)|Managed startup (?:image application|shared-state transaction) failed): |\[SECURITY\] (?:Refusing Hermes startup because |Config integrity check failed|HERMES_[A-Z0-9_]+: ))/u.test(
+        line,
+      );
+    const exactFixedFailure =
+      /^(?:\[SECURITY\] (?:Required entrypoint env-wrapper normalizer is missing|Managed startup env wrapper has too many assignments|Managed startup env wrapper contains a malformed assignment|Required runtime state mutation startup gate is unavailable|Runtime state mutation startup gate failed|Managed DCode login profile is missing or unsafe|Could not protect the managed DCode login profile|DCode login profile is not protected; rebuild this sandbox)\.|runtime-state-mutation-startup-gate: held)$/u.test(
+        line,
+      );
+    if (!boundedPrefix && !exactFixedFailure) {
+      return [];
+    }
+    return [line.slice(0, 400)];
+  });
+  return allowed.at(-1) ?? null;
+}
+
+function boundedBootstrapStartLogFailure(
+  engine: BootstrapEngine,
+  runtimeId: string,
+): string | null {
+  const file = secureTempFile(START_LOG_TEMP_PREFIX, ".log");
+  let descriptor: number | null = null;
+  try {
+    const copied = engine.capture(
+      ["container", "cp", `${runtimeId}:${START_LOG_PATH}`, file],
+      DEFAULT_COMMAND_TIMEOUT_MS,
+    );
+    if (copied.status !== 0 || copied.error) return null;
+    descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > START_LOG_MAX_BYTES) {
+      return null;
+    }
+    const uid = process.getuid?.();
+    if (uid !== undefined && stat.uid !== uid) return null;
+    const output = fs.readFileSync(descriptor, "utf8");
+    return Buffer.byteLength(output) === stat.size ? safeBootstrapFailureLine(output) : null;
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+    cleanupTempDir(file, START_LOG_TEMP_PREFIX);
+  }
+}
+
+function boundedBootstrapSecurityFailure(
+  engine: BootstrapEngine,
+  runtimeId: string,
+): string | null {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = engine.capture(
+      ["container", "logs", "--tail", "80", runtimeId],
+      DEFAULT_COMMAND_TIMEOUT_MS,
+    );
+    const containerLogFailure =
+      result.status === 0 && !result.error
+        ? safeBootstrapFailureLine(`${result.stdout}\n${result.stderr}`)
+        : null;
+    if (containerLogFailure) return containerLogFailure;
+    if (attempt < 2) defaultSleep(100);
+  }
+  return boundedBootstrapStartLogFailure(engine, runtimeId);
 }
 
 function inspectStable(
@@ -394,7 +480,20 @@ function inspectStable(
   const first = inspectExact(engine, prepared);
   const second = inspectExact(engine, prepared);
   if (!sameState(first, second) || second.running !== expectedRunning) {
-    fail(`the exact replacement is not stably ${expectedRunning ? "running" : "stopped"}`);
+    const bootstrapFailure =
+      expectedRunning && !second.running
+        ? boundedBootstrapSecurityFailure(engine, prepared.replacementRuntimeId)
+        : null;
+    const detail = [
+      `status ${second.status}`,
+      `exit ${second.exitCode === null ? "unknown" : String(second.exitCode)}`,
+      `oom ${second.oomKilled === null ? "unknown" : String(second.oomKilled)}`,
+      ...(second.error ? [`error ${second.error}`] : []),
+      ...(bootstrapFailure ? [`bootstrap ${bootstrapFailure}`] : []),
+    ].join("; ");
+    fail(
+      `the exact replacement is not stably ${expectedRunning ? "running" : "stopped"} (${detail})`,
+    );
   }
   return second;
 }
@@ -484,7 +583,18 @@ function tryCopyCompletion(
       DEFAULT_COMMAND_TIMEOUT_MS,
     );
     if (result.status !== 0) return { completion: null, status: result.status };
-    return { completion: readProtectedCompletion(file), status: result.status };
+    try {
+      return { completion: readProtectedCompletion(file), status: result.status };
+    } catch (error) {
+      // Podman can report a successful archive copy before its destination is
+      // visible to the host caller. Treat only that absent destination as an
+      // unpublished receipt and retain the existing bounded poll. All unsafe
+      // metadata and unstable-read failures remain fatal.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return { completion: null, status: result.status };
+      }
+      throw error;
+    }
   } finally {
     cleanupTempDir(file, COMPLETION_TEMP_PREFIX);
   }
@@ -572,7 +682,7 @@ export function startPodmanBootstrapImageTransaction(
   });
 }
 
-/** Poll one protected image-owned completion while the exact watcher stays stopped. */
+/** Poll one protected image-owned completion while exact watcher authority stays held. */
 export function awaitPodmanBootstrapImageTransaction(
   input: {
     readonly engine: BootstrapEngine;

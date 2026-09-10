@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { dockerSpawn, dockerSpawnSync } from "../../../src/lib/adapters/docker/exec";
+import { openRegularFileNoFollow } from "../../../src/lib/adapters/fs/regular-file";
 import { createAgentSandbox } from "../../../src/lib/agent/base-image";
 import type { AgentDefinition } from "../../../src/lib/agent/defs";
 import { isWsl } from "../../../src/lib/platform";
@@ -117,10 +118,13 @@ describe("sandbox build context staging", () => {
 
     writeFixture("Dockerfile");
     writeFixture("tsconfig.runtime-preloads.json", "{}\n");
-    writeFixture(path.join("agents", "openclaw", "state-lock-plan.json"), "{}\n");
     writeFixture(
       path.join("ci", "npm-audit-exceptions.json"),
       `${JSON.stringify({ schemaVersion: 1, exceptions: [] })}\n`,
+    );
+    writeFixture(
+      path.join("ci", "reviewed-npm-audit.json"),
+      `${JSON.stringify({ npmVersion: "10.9.4" })}\n`,
     );
     for (const runtimeName of [
       "managed-image-messaging-runtime",
@@ -229,7 +233,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "managed-bootstrap-trampoline.sh"));
     writeFixture(path.join("scripts", "gateway-control.sh"));
     writeFixture(path.join("scripts", "managed-gateway-control.py"));
-    writeFixture(path.join("scripts", "state-dir-guard.py"));
     writeFixture(path.join("scripts", "openclaw-config-guard.py"));
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.mts"));
@@ -244,7 +247,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "gateway-supervisor.sh"));
     writeFixture(path.join("scripts", "lib", "sandbox-rlimits.sh"));
     writeFixture(path.join("scripts", "lib", "openclaw_device_approval_policy.py"));
-    writeFixture(path.join("scripts", "lib", "clean_runtime_shell_env_shim.py"));
     writeFixture(path.join("scripts", "lib", "normalize_mutable_config_perms.py"));
     writeFixture(path.join("scripts", "lib", "refresh-openclaw-wechat-placeholder.py"));
     writeFixture(
@@ -255,6 +257,7 @@ describe("sandbox build context staging", () => {
     );
     writeFixture(path.join("src", "lib", "tool-disclosure.ts"));
     for (const relativePath of [
+      "extra-agents-validation.ts",
       path.join("core", "json-types.ts"),
       path.join("core", "ports.ts"),
       path.join("onboard", "managed-bootstrap", "envelope.ts"),
@@ -286,6 +289,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "bundled-npm-package.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "seed-reviewed-npm-cache.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "reviewed-npm-audit.mts"), "fixture\n", 0o700);
+    writeFixture(path.join("scripts", "lib", "npm-audit-receipt.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "openclaw-npm-remediation.mts"), "fixture\n", 0o700);
     fs.chmodSync(path.join(sourceRoot, "scripts"), 0o700);
     fs.chmodSync(path.join(sourceRoot, "scripts", "lib"), 0o700);
@@ -472,9 +476,17 @@ describe("sandbox build context staging", () => {
         "reviewed-runtime-bundle",
         relativePath,
       );
-      expect(fs.lstatSync(stagedPath).isFile(), relativePath).toBe(true);
-      expect(fs.readFileSync(stagedPath), relativePath).toEqual(fs.readFileSync(sourcePath));
-      expect((fs.statSync(stagedPath).mode & 0o777).toString(8), relativePath).toBe("644");
+      const staged = openRegularFileNoFollow(stagedPath);
+      const source = openRegularFileNoFollow(sourcePath);
+      try {
+        expect(staged.readBytes(16 * 1024 * 1024), relativePath).toEqual(
+          source.readBytes(16 * 1024 * 1024),
+        );
+        expect((staged.stat().mode & 0o777).toString(8), relativePath).toBe("644");
+      } finally {
+        staged.close();
+        source.close();
+      }
     }
   }
 
@@ -484,6 +496,7 @@ describe("sandbox build context staging", () => {
 
   function expectStagedManagedStartupRuntimeSources(buildCtx: string, sourceRoot: string) {
     for (const relativePath of [
+      path.join("src", "lib", "extra-agents-validation.ts"),
       path.join("src", "lib", "core", "json-types.ts"),
       path.join("src", "lib", "core", "ports.ts"),
       path.join("src", "lib", "onboard", "managed-bootstrap", "envelope.ts"),
@@ -527,6 +540,16 @@ describe("sandbox build context staging", () => {
         8,
       ),
     ).toBe("644");
+  }
+
+  function expectStagedReviewedNpmAuditPolicy(buildCtx: string, sourceRoot: string) {
+    for (const fileName of ["npm-audit-exceptions.json", "reviewed-npm-audit.json"]) {
+      const stagedFile = path.join(buildCtx, "ci", fileName);
+      expect(fs.readFileSync(stagedFile, "utf8")).toBe(
+        fs.readFileSync(path.join(sourceRoot, "ci", fileName), "utf8"),
+      );
+      expect((fs.statSync(stagedFile).mode & 0o777).toString(8)).toBe("644");
+    }
   }
 
   it("normalizes restrictive and group-writable modes for Docker COPY", () => {
@@ -580,6 +603,7 @@ describe("sandbox build context staging", () => {
     try {
       writeBuildContextFixture(sourceRoot);
       const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
+      expectStagedReviewedNpmAuditPolicy(buildCtx, sourceRoot);
       expectStagedBlueprintModes(buildCtx);
       expectStagedOpenClawRuntimeGraphs(buildCtx, sourceRoot);
       expectStagedMcpToolDiscoveryRuntime(buildCtx, sourceRoot);
@@ -611,6 +635,7 @@ describe("sandbox build context staging", () => {
     try {
       writeBuildContextFixture(sourceRoot);
       const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
+      expectStagedReviewedNpmAuditPolicy(buildCtx, sourceRoot);
       expectStagedBlueprintModes(buildCtx);
       expectStagedOpenClawRuntimeGraphs(buildCtx, sourceRoot);
       expectStagedMcpToolDiscoveryRuntime(buildCtx, sourceRoot);

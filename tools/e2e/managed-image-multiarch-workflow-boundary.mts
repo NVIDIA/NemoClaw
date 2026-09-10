@@ -155,7 +155,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
       "${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}",
     E2E_JOB: "1",
     E2E_TARGET_ID: JOB_ID,
-    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
+    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha || github.sha }}",
     NEMOCLAW_E2E_SHARD: "${{ matrix.shard }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA:
       "${{ inputs.base_sha || github.event.before || github.sha }}",
@@ -292,8 +292,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
 
   const bases = requireStep(errors, steps, "Resolve digest-pinned platform base images");
   requireValues(errors, `${JOB_ID} exact base resolution`, record(bases?.env), {
-    DCODE_BASE_CONTRACT:
-      "${{ needs.base-image-publication.outputs.dcode_base_contract }}",
+    DCODE_BASE_CONTRACT: "${{ needs.base-image-publication.outputs.dcode_base_contract }}",
     PLATFORM: "${{ matrix.platform }}",
   });
   requireFragments(errors, bases, [
@@ -306,7 +305,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "'.platformReferences[$platform]' <<< \"$DCODE_BASE_CONTRACT\"",
     'docker buildx imagetools inspect "$dcode_reference" --raw',
     '"sha256:$(sha256sum "$work_dir/dcode-exact.raw" | awk \'{print $1}\')" == "$dcode_digest"',
-    "printf 'dcode=%s\\n' \"$dcode_reference\" >> \"$GITHUB_OUTPUT\"",
+    'printf \'dcode=%s\\n\' "$dcode_reference" >> "$GITHUB_OUTPUT"',
   ]);
   if (
     text(bases?.run).includes(
@@ -323,7 +322,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   requireFragments(errors, registry, [
     'docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME"',
     "http://127.0.0.1:5000/v2/",
-    "io.nvidia.nemoclaw.e2e-owner=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}",
+    "io.nvidia.nemoclaw.managed-image.cohort=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}",
     "--publish 127.0.0.1:5000:5000",
     REGISTRY_IMAGE,
   ]);
@@ -367,10 +366,22 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   const cleanup = requireStep(errors, steps, "Remove isolated protected managed-image registry");
   if (cleanup?.if !== "always()") errors.push(`${JOB_ID} registry cleanup must always run`);
   requireFragments(errors, cleanup, [
-    "io.nvidia.nemoclaw.e2e-owner",
+    "io.nvidia.nemoclaw.managed-image.cohort",
     '[[ "$owner" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" ]]',
     'docker rm -f "$NEMOCLAW_PROTECTED_REGISTRY_NAME"',
     "http://127.0.0.1:5000/v2/",
+  ]);
+
+  const cohortCleanup = requireStep(
+    errors,
+    steps,
+    "Remove protected managed-image cohort resources",
+  );
+  if (cohortCleanup?.if !== "always()") errors.push(`${JOB_ID} cohort cleanup must always run`);
+  requireFragments(errors, cohortCleanup, [
+    'label="io.nvidia.nemoclaw.managed-image.cohort=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}"',
+    'docker image rm -f "${owned_images[@]}"',
+    'docker volume rm -f "${owned_volumes[@]}"',
   ]);
 
   const evidence = requireStep(errors, steps, "Validate protected managed-image evidence");
@@ -397,6 +408,31 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "compression-level": 0,
     overwrite: true,
   });
+  const security = requireStep(errors, steps, "Validate OpenClaw managed-image security boundary");
+  if (security?.["continue-on-error"] !== undefined) {
+    errors.push(`${JOB_ID} managed-image security boundary must not continue on error`);
+  }
+  requireFragments(errors, security, [
+    "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN",
+    "npx vitest run --project integration",
+    "test/e2e-runtime/managed-image-openclaw-security.test.ts",
+    "--reporter=test/e2e/risk-signal-reporter.ts",
+  ]);
+  const glibc = requireStep(errors, steps, "Validate managed-image glibc probe lifecycle");
+  if (glibc?.if !== "${{ !cancelled() }}") {
+    errors.push(`${JOB_ID} managed-image glibc probe must run unless cancelled`);
+  }
+  if (glibc?.["continue-on-error"] !== undefined) {
+    errors.push(`${JOB_ID} managed-image glibc probe must not continue on error`);
+  }
+  requireFragments(errors, glibc, [
+    "export NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E=1",
+    "NEMOCLAW_TEST_IMAGE=",
+    "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN",
+    "npx vitest run --project integration",
+    "test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts",
+    "--reporter=test/e2e/risk-signal-reporter.ts",
+  ]);
   requireStep(errors, steps, "Upload protected managed-image evidence");
   requireStep(errors, steps, "Clean up Docker auth");
   requireOrderedSteps(errors, steps, [
@@ -413,6 +449,9 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Run every exact managed-image contract directly",
     "Remove isolated protected managed-image registry",
     "Validate protected managed-image evidence",
+    "Validate OpenClaw managed-image security boundary",
+    "Validate managed-image glibc probe lifecycle",
+    "Remove protected managed-image cohort resources",
     "Publish exact amd64 protected runtime build cache",
     "Upload protected managed-image evidence",
     "Clean up Docker auth",

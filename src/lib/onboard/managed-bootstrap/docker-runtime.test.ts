@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
 import {
   dockerEnv,
@@ -86,6 +87,16 @@ import type { ManagedBootstrapRuntimeCreateLifecycleInput } from "./runtime-crea
 
 const temporaryStateRoots: string[] = [];
 
+function successfulCommandExecutor(): OpenShellSandboxBufferedCommandExecutor {
+  return {
+    runBuffered: vi.fn(async () => ({
+      outcome: { kind: "completed" as const, exitCode: 0 },
+      stdout: "",
+      stderr: "",
+    })),
+  };
+}
+
 function compatibilityLifecycleInput(
   seed: ReturnType<typeof authority>,
   dependencies: ManagedBootstrapRuntimeCreateLifecycleInput["dependencies"] & DockerGpuPatchDeps,
@@ -94,11 +105,18 @@ function compatibilityLifecycleInput(
   temporaryStateRoots.push(stateRoot);
   return {
     providerId: "docker",
+    environment: {},
     stateRoot,
     bootstrapIdentity: IDENTITY,
     request: seed.request,
     image: seed.plan.image,
     agentIdentity: seed.plan.agentIdentity,
+    workspaceRoot: {
+      uid: seed.plan.agentIdentity.uid,
+      gid: seed.plan.agentIdentity.gid,
+      mode: 0o755,
+    },
+    managedStateRoots: seed.plan.managedStateRoots,
     intendedWorkloadArgv: seed.plan.intendedWorkloadArgv,
     expectedSupervisorArgv: seed.plan.expectedSupervisorArgv,
     launchArgv: ["openshell", "sandbox", "create", "--name", "alpha"],
@@ -127,8 +145,9 @@ function compatibilityLifecycleInput(
       inferenceProvider: "openai",
       gatewayUsesContainerBridge: true,
       gatewayPort: 8080,
+      reverifyBridgeReachability: vi.fn(),
     },
-    dependencies,
+    dependencies: { commandExecutor: successfulCommandExecutor(), ...dependencies },
   };
 }
 
@@ -165,6 +184,7 @@ function gpuModeDependencies() {
   return {
     dockerRun,
     dependencies: {
+      commandExecutor: successfulCommandExecutor(),
       dockerCapture: vi.fn(() => ""),
       dockerRun,
       dockerRm: vi.fn(() => ({ status: 0 })),
@@ -514,11 +534,18 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
     });
     const lifecycle = createDockerManagedBootstrapSurface().createLifecycle({
       providerId: "docker",
+      environment: {},
       stateRoot,
       bootstrapIdentity: IDENTITY,
       request: seed.request,
       image: seed.plan.image,
       agentIdentity: seed.plan.agentIdentity,
+      workspaceRoot: {
+        uid: seed.plan.agentIdentity.uid,
+        gid: seed.plan.agentIdentity.gid,
+        mode: 0o755,
+      },
+      managedStateRoots: seed.plan.managedStateRoots,
       intendedWorkloadArgv: seed.plan.intendedWorkloadArgv,
       expectedSupervisorArgv: seed.plan.expectedSupervisorArgv,
       launchArgv: ["openshell", "sandbox", "create", "--name", "alpha"],
@@ -544,8 +571,9 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         inferenceProvider: "openai",
         gatewayUsesContainerBridge: false,
         gatewayPort: 0,
+        reverifyBridgeReachability: () => undefined,
       },
-      dependencies: {},
+      dependencies: { commandExecutor: successfulCommandExecutor() },
     });
     const child = new FakeChild();
     let ready = false;
@@ -612,11 +640,18 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
     });
     const lifecycle = createDockerManagedBootstrapSurface().createLifecycle({
       providerId: "docker",
+      environment: {},
       stateRoot,
       bootstrapIdentity: IDENTITY,
       request: seed.request,
       image: seed.plan.image,
       agentIdentity: seed.plan.agentIdentity,
+      workspaceRoot: {
+        uid: seed.plan.agentIdentity.uid,
+        gid: seed.plan.agentIdentity.gid,
+        mode: 0o755,
+      },
+      managedStateRoots: seed.plan.managedStateRoots,
       intendedWorkloadArgv: seed.plan.intendedWorkloadArgv,
       expectedSupervisorArgv: seed.plan.expectedSupervisorArgv,
       launchArgv: ["openshell", "sandbox", "create", "--name", "alpha"],
@@ -643,8 +678,9 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         inferenceProvider: "openai",
         gatewayUsesContainerBridge: false,
         gatewayPort: 0,
+        reverifyBridgeReachability: () => undefined,
       },
-      dependencies: {},
+      dependencies: { commandExecutor: successfulCommandExecutor() },
     });
 
     await expect(

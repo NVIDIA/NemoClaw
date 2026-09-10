@@ -3,6 +3,7 @@
 
 import { assert, describe, expect, it, vi } from "vitest";
 
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import {
   MANAGED_BOOTSTRAP_IDENTITY_ENV,
   ManagedBootstrapDurableCommitCleanupPendingError,
@@ -17,7 +18,7 @@ import {
   authority,
   completion,
   durablePreparation,
-  fixture,
+  fixture as createFixture,
   heldArgv,
   IDENTITY,
   NEW_ID,
@@ -25,6 +26,36 @@ import {
   parseFixtureDockerUlimits,
   SUPPORTED_AGENTS,
 } from "./docker-test-fixture";
+
+function commandExecutorThrough(
+  fake: ReturnType<typeof createFixture>,
+): OpenShellSandboxBufferedCommandExecutor {
+  return {
+    runBuffered: vi.fn(async (request) => {
+      const result = fake.deps.runOpenshell?.(
+        ["sandbox", "exec", "-n", request.sandboxName, "--", ...request.command],
+        { ignoreError: true, suppressOutput: true },
+      );
+      return {
+        outcome:
+          result?.status == null
+            ? {
+                kind: "failed" as const,
+                error: { kind: "invocation" as const, message: "failed" },
+              }
+            : { kind: "completed" as const, exitCode: result.status },
+        stdout: String(result?.stdout ?? ""),
+        stderr: String(result?.stderr ?? ""),
+      };
+    }),
+  };
+}
+
+function fixture(options?: Parameters<typeof createFixture>[0]) {
+  const fake = createFixture(options);
+  fake.deps.commandExecutor = commandExecutorThrough(fake);
+  return fake;
+}
 
 function expectEventBefore(events: readonly string[], before: string, after: string): void {
   expect(events).toContain(before);
@@ -185,7 +216,7 @@ describe("Docker managed bootstrap adapter", () => {
   it("preserves signed and accepts Docker-normalized required ulimits before cutover", async () => {
     const fake = fixture();
     fake.original!.HostConfig!.Ulimits = [
-      { Name: "nofile", Soft: 65_536, Hard: 65_536 },
+      { Name: "RLIMIT_NOFILE", Soft: 65_536, Hard: 65_536 },
       { Name: "memlock", Soft: -1, Hard: -1 },
     ];
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);

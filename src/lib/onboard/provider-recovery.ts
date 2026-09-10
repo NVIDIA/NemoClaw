@@ -10,8 +10,12 @@ import {
   normalizeInferenceEndpointSource,
 } from "../inference/selection";
 import { getLiveGatewayInference } from "../inference/live";
+import {
+  persistedProviderNameToSelectionKey,
+  type RemoteProviderConfigEntryLike,
+} from "./inference-providers/provider-selection-keys";
 
-export type RemoteProviderConfigEntryLike = { providerName?: string };
+export type { RemoteProviderConfigEntryLike } from "./inference-providers/provider-selection-keys";
 
 interface VllmInstallResumeSession {
   readonly vllmInstallModel?: string | null;
@@ -52,10 +56,7 @@ export function applyVllmInstallResumeDefaults<T extends VllmInstallResumeDeps>(
 }
 
 export function vllmInstallRecoveryOptions(
-  deps: Pick<
-    VllmInstallResumeDeps,
-    "checkpointVllmInstallModel" | "getVllmInstallResumeModel"
-  >,
+  deps: Pick<VllmInstallResumeDeps, "checkpointVllmInstallModel" | "getVllmInstallResumeModel">,
   access: VllmInstallResumeSessionAccess = onboardSession,
 ): {
   checkpointInstallIntent?: (modelId: string) => void;
@@ -76,26 +77,10 @@ export function vllmInstallRecoveryOptions(
 export function providerNameToOptionKey(
   remoteProviderConfig: Record<string, RemoteProviderConfigEntryLike>,
   name: string | null | undefined,
-  opts: { hasNimContainer?: boolean } = {},
+  opts: { hasManagedLlamaCpp?: boolean; hasNimContainer?: boolean } = {},
 ): string | null {
   if (!name) return null;
-  if (name === "nvidia-router") return "routed";
-  if (name === "ollama-local") return "ollama";
-  // Local NIM and standalone vLLM both persist as provider="vllm-local". NIM
-  // is positively identified by a nimContainer record; the absence of one in
-  // registry/session recovery reliably means standalone vLLM (the standalone
-  // path never records a container), so default to "vllm" there. Live-gateway
-  // recovery doesn't carry container info either, but the caller's
-  // option-availability check still gates on whether vllm is actually running.
-  if (name === "vllm-local") return opts.hasNimContainer ? "nim-local" : "vllm";
-  // `nvidia-nim` is a legacy alias for cloud NVIDIA Endpoints (see
-  // setupInference: it routes nvidia-nim through REMOTE_PROVIDER_CONFIG.build),
-  // not a marker for Local NIM. Local NIM persists as vllm-local + nimContainer.
-  if (name === "nvidia-nim") return "build";
-  for (const [key, cfg] of Object.entries(remoteProviderConfig)) {
-    if (cfg.providerName === name) return key;
-  }
-  return null;
+  return persistedProviderNameToSelectionKey(name, opts, remoteProviderConfig);
 }
 
 export interface ProviderRecoveryDeps {
@@ -104,10 +89,7 @@ export interface ProviderRecoveryDeps {
   warn?(message: string): void;
 }
 
-export interface ProviderRecoveryHelpers {
-  readLiveInference(
-    sandboxName: string | null | undefined,
-  ): { provider: string | null; model: string | null } | null;
+export interface ProviderSelectionRecoveryReaderBundle {
   readRecordedProvider(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -116,10 +98,25 @@ export interface ProviderRecoveryHelpers {
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
   ): string | null;
+  readRecordedManagedLlamaCpp(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): boolean;
+  readRecordedManagedLlamaCppRecipeId(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
   readRecordedModel(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
   ): string | null;
+}
+
+export interface ProviderRecoveryHelpers extends ProviderSelectionRecoveryReaderBundle {
+  readonly providerSelectionReaders: ProviderSelectionRecoveryReaderBundle;
+  readLiveInference(
+    sandboxName: string | null | undefined,
+  ): { provider: string | null; model: string | null } | null;
   readRecordedEndpointUrl(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -238,6 +235,28 @@ function completeRecordedInferenceRoute(
 }
 
 export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): ProviderRecoveryHelpers {
+  const isManagedLlamaCppState = (value: {
+    provider?: string | null;
+    servingProfileProvenance?: { recipe: { backend: string; id?: string } } | null;
+    hostLocalInferenceProvenance?: unknown;
+  }): boolean =>
+    value.provider === "llama-cpp-local" &&
+    (value.servingProfileProvenance?.recipe.backend === "install-llama-cpp" ||
+      value.hostLocalInferenceProvenance != null);
+
+  const managedLlamaCppRecipeId = (value: {
+    provider?: string | null;
+    servingProfileProvenance?: { recipe: { backend: string; id?: string } } | null;
+  }): string | null => {
+    const recipe = value.servingProfileProvenance?.recipe;
+    return value.provider === "llama-cpp-local" &&
+      recipe?.backend === "install-llama-cpp" &&
+      typeof recipe.id === "string" &&
+      recipe.id.length > 0
+      ? recipe.id
+      : null;
+  };
+
   function refuseRecoveryAfterRegistryError(sandboxName: string, error: unknown): null {
     const detail = error instanceof Error ? error.message : String(error);
     deps.warn?.(
@@ -305,6 +324,46 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
       return live.provider;
     }
     return null;
+  }
+
+  function readRecordedManagedLlamaCpp(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): boolean {
+    if (!sandboxName) return false;
+    try {
+      const { authority, entry } = readRegistryRecoveryState(sandboxName, recoverySessionId);
+      if (authority === "unauthorized") return false;
+      if (entry) return isManagedLlamaCppState(entry);
+    } catch {
+      return false;
+    }
+    try {
+      const session = onboardSession.loadSession();
+      return Boolean(session?.sandboxName === sandboxName && isManagedLlamaCppState(session));
+    } catch {
+      return false;
+    }
+  }
+
+  function readRecordedManagedLlamaCppRecipeId(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null {
+    if (!sandboxName) return null;
+    try {
+      const { authority, entry } = readRegistryRecoveryState(sandboxName, recoverySessionId);
+      if (authority === "unauthorized") return null;
+      if (entry) return managedLlamaCppRecipeId(entry);
+    } catch {
+      return null;
+    }
+    try {
+      const session = onboardSession.loadSession();
+      return session?.sandboxName === sandboxName ? managedLlamaCppRecipeId(session) : null;
+    } catch {
+      return null;
+    }
   }
 
   function readRecordedNimContainer(
@@ -442,9 +501,18 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
   }
 
   return {
+    providerSelectionReaders: {
+      readRecordedProvider,
+      readRecordedNimContainer,
+      readRecordedManagedLlamaCpp,
+      readRecordedManagedLlamaCppRecipeId,
+      readRecordedModel,
+    },
     readLiveInference,
     readRecordedProvider,
     readRecordedNimContainer,
+    readRecordedManagedLlamaCpp,
+    readRecordedManagedLlamaCppRecipeId,
     readRecordedModel,
     readRecordedEndpointUrl,
     readRecordedInferenceRoute,

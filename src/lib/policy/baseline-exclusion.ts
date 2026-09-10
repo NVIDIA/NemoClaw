@@ -34,6 +34,7 @@ const BASELINE_EXCLUSION_FEATURE_IMPACTS: Readonly<
   },
   "langchain-deepagents-code": {
     github: "Git operations and GitHub API or source access may stop working.",
+    "observability-otlp-local": "DCode host-local trace export may stop working.",
     pypi: "Python package installation through pip may stop working.",
   },
 };

@@ -123,7 +123,6 @@ if (args[0] === "api" && args[1] === "--paginate" && args[2]?.startsWith("repos/
   fs.chmodSync(ghPath, 0o755);
 
   const args = [
-    "--experimental-strip-types",
     "--no-warnings",
     ".agents/skills/nemoclaw-maintainer-day/scripts/triage.ts",
     "--limit",

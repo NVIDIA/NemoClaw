@@ -274,7 +274,7 @@ describe("llama.cpp image PR workflow", () => {
       ),
     ).toBe(true);
     expect(namedStep(config, "Compile image manifest").run).toBe(
-      "node --experimental-strip-types --no-warnings scripts/checks/export-llama-cpp-image-config.mts",
+      "node --no-warnings scripts/checks/export-llama-cpp-image-config.mts",
     );
     expect(build.needs).toBe("config");
     expect(build["runs-on"]).toBe("${{ matrix.runner }}");
@@ -507,7 +507,7 @@ describe("llama.cpp image PR workflow", () => {
     const downloadAnonymousPull = namedStep(verify, "Download anonymous pull evidence");
 
     expect(scan.needs).toEqual(["config", "publication-gate", "assemble-candidate"]);
-    expect(scanStep.uses).toBe("anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2");
+    expect(scanStep.uses).toBe("anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439");
     expect(scanStep.with).toMatchObject({
       "severity-cutoff": "${{ needs.config.outputs.publication_vulnerability_severity_cutoff }}",
       "only-fixed": "${{ needs.config.outputs.publication_vulnerability_only_fixed }}",
@@ -625,8 +625,8 @@ describe("llama.cpp image PR workflow", () => {
     );
     expect(sbomSteps).toHaveLength(2);
     expect(sbomSteps.map((step) => step.uses)).toEqual([
-      "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
-      "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
+      "anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26",
+      "anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26",
     ]);
     expect(sbomSteps.map((step) => step.with?.["artifact-name"])).toEqual([
       "llama-cpp-sbom-amd64-${{ needs.validate-inputs.outputs.candidate_tag }}",

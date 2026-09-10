@@ -6,7 +6,6 @@ import path from "node:path";
 
 import { describe, expect, it, onTestFinished } from "vitest";
 
-import { isSupportedGatewayDockerHost } from "../../src/lib/domain/docker-host";
 import {
   createInstallerCheckout,
   runInstallerSourcedBody,
@@ -26,6 +25,7 @@ function writePendingStationReceiptRetirement(tmp: string): void {
   );
 }
 
+/** Supply persisted Docker selection without depending on the host's Docker configuration. */
 function writePersistedDockerContext(tmp: string, currentContext: string): string {
   const dockerConfig = path.join(tmp, "docker-config");
   fs.mkdirSync(dockerConfig);
@@ -36,15 +36,7 @@ function writePersistedDockerContext(tmp: string, currentContext: string): strin
   return dockerConfig;
 }
 
-function installerSupportsDockerHost(value: string | undefined): boolean {
-  const run = runInstallerSourcedBody("installer_docker_host_has_supported_shape", {
-    extraEnv: value === undefined ? {} : { DOCKER_HOST: value },
-  });
-  onTestFinished(run.remove);
-  expect([0, 1], run.result.stderr).toContain(run.result.status);
-  return run.result.status === 0;
-}
-
+/** Exercise installer admission and recovery with disposable state and controlled external commands. */
 function runRecoveryBeforeOnboard(
   preexistingCount: number,
   recoveryExitCode: number | [first: number, second: number],
@@ -57,6 +49,7 @@ function runRecoveryBeforeOnboard(
     interactive?: boolean;
     orphanedRecovery?: boolean;
     persistedDockerContext?: string;
+    podmanSocket?: string;
     portableProfile?: boolean;
     registryJson?: string;
     realCompletionSummary?: boolean;
@@ -85,6 +78,10 @@ function runRecoveryBeforeOnboard(
   const payloadLibDir = path.join(payloadDir, "lib");
   fs.mkdirSync(payloadDir);
   fs.mkdirSync(payloadLibDir);
+  fs.copyFileSync(
+    path.join(path.dirname(INSTALLER_PAYLOAD), "prepare-dgx-station-host.sh"),
+    path.join(payloadDir, "prepare-dgx-station-host.sh"),
+  );
   fs.copyFileSync(
     path.join(path.dirname(INSTALLER_PAYLOAD), "lib", "station-vllm-conflict.sh"),
     path.join(payloadLibDir, "station-vllm-conflict.sh"),
@@ -167,8 +164,11 @@ exit 0
     needs_shell_reload() { return ${options.shellNeedsReload ? 0 : 1}; }
     print_cli_path_refresh_actions() { printf 'PATH_REFRESH_ACTION\n'; }
     command_exists() {
-      [[ "$1" == "docker" ]] && return 1
-      command -v "$1" >/dev/null 2>&1
+      if [[ "$1" == "docker" ]]; then
+        [[ "\${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]]
+      else
+        command -v "$1" >/dev/null 2>&1
+      fi
     }
     detect_express_platform() { printf '%s' "$DETECTED_EXPRESS_PLATFORM"; }
     record_install_phase() {
@@ -181,13 +181,14 @@ exit 0
     maybe_offer_express_install() {
       ${options.stationExpressSelected ? '_SELECTED_EXPRESS_PLATFORM="DGX Station"' : ":"}
     }
-    prepare_portable_experimental_runtime_override() {
-      [[ "\${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]] || return 0
-      unset DOCKER_CONTEXT
-      export DOCKER_HOST=unix:///run/user/4242/podman/podman.sock
-      if [[ "$RECORD_RUNTIME_TARGET" = "1" ]]; then
-        record_install_phase "portable-target=host:\${DOCKER_HOST},context:\${DOCKER_CONTEXT-unset}"
-      fi
+    uname() { printf 'Linux\n'; }
+    systemctl() {
+      [[ "$*" == "--user enable --now podman.socket" ]] || return 99
+      record_install_phase podman-socket-started
+    }
+    podman() {
+      [[ "$*" == "info --format {{.Host.RemoteSocket.Path}}" ]] || return 99
+      printf '%s\n' "$PODMAN_SOCKET"
     }
     sleep() { printf 'sleep=%s\n' "$*" >> "${callLog}"; }
     step() { :; }
@@ -229,12 +230,14 @@ exit 0
       ...(options.dockerHost !== undefined ? { DOCKER_HOST: options.dockerHost } : {}),
       NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
       NODE_BIN_DIR: path.dirname(process.execPath),
+      PODMAN_SOCKET: options.podmanSocket ?? "/run/user/4242/podman/podman.sock",
       ...(options.singleSession ? { NEMOCLAW_SINGLE_SESSION: "1" } : {}),
       RECORD_INSTALL_PHASES: options.recordInstallPhases ? "1" : "",
       RECORD_PREINSTALL: options.recordPreinstall ? "1" : "",
       RECORD_RUNTIME_TARGET: options.recordRuntimeTarget ? "1" : "",
       RECOVERY_LOG_ALLOCATION_FAILS: options.recoveryLogAllocationFails ? "1" : "",
       RECOVERY_LOG_WRITE_FAILS: options.recoveryLogWriteFails ? "1" : "",
+      TMPDIR: tmp,
     },
     home: tmp,
     includeNodeOnPath: options.includeNodeOnPath ?? true,
@@ -247,25 +250,12 @@ exit 0
 
 describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
   it.each([
-    ["an unset value", undefined],
-    ["an empty value", ""],
-    ["a whitespace-only value", " \t "],
+    ["an unset Docker host", undefined],
+    ["an empty Docker host", ""],
     ["an absolute Unix socket", "unix:///var/run/docker.sock"],
-    ["a padded absolute Unix socket", "  unix:///var/run/docker.sock\t"],
-    ["a TCP endpoint", "tcp://203.0.113.10:2375"],
-    ["an SSH endpoint", "ssh://user@example.test"],
-    ["a relative Unix socket", "unix://relative/docker.sock"],
-    ["an empty Unix socket path", "unix://"],
-    ["a newline-bearing Unix socket", "unix:///var/run/docker.sock\n"],
-    ["a carriage-return-bearing Unix socket", "unix:///var/run/docker.sock\r"],
-    ["a quote-bearing Unix socket", "unix:///tmp/bad'sock"],
-  ] as const)("keeps the early Docker host gate aligned for %s", (_name, value) => {
-    expect(installerSupportsDockerHost(value)).toBe(isSupportedGatewayDockerHost(value));
-  });
-
-  it("recovers through a supported Docker socket without generic onboarding", () => {
+  ] as const)("recovers through %s without generic onboarding", (_name, dockerHost) => {
     const result = runRecoveryBeforeOnboard(2, 0, {
-      dockerHost: "unix:///var/run/docker.sock",
+      ...(dockerHost === undefined ? {} : { dockerHost }),
       recordPreinstall: true,
     });
 
@@ -403,6 +393,21 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.output).toContain("docker context use default");
   });
 
+  it("rejects a non-local Podman socket before sandbox recovery", () => {
+    const result = runRecoveryBeforeOnboard(2, 0, {
+      podmanSocket: "ssh://remote.test/run/podman.sock",
+      portableProfile: true,
+      recordInstallPhases: true,
+      recordPreinstall: true,
+    });
+
+    expect(result.status, result.output).toBe(1);
+    expect(result.calls).not.toContain("ensure-docker-started");
+    expect(result.calls).not.toContain("preinstall-backup-retirement");
+    expect(result.calls.some((call) => call.includes("upgrade-sandboxes"))).toBe(false);
+    expect(result.output).toContain("Podman reported an invalid rootless API socket path");
+  });
+
   it.each([
     ["a TCP endpoint", "tcp://203.0.113.10:2375"],
     ["an SSH endpoint", "ssh://user@example.test"],
@@ -417,9 +422,7 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     });
 
     expect(result.status, result.output).toBe(0);
-    expect(result.calls[0]).toBe(
-      "portable-target=host:unix:///run/user/4242/podman/podman.sock,context:unset",
-    );
+    expect(result.calls[0]).toBe("podman-socket-started");
     expect(result.calls).toContain("preinstall-backup-retirement");
     expect(result.calls).toContain(
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',

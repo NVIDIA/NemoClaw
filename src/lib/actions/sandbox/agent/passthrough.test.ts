@@ -66,11 +66,6 @@ vi.mock("../../../agent/defs", () => ({
   listAgents: listAgentsMock,
   loadAgent: loadAgentMock,
 }));
-// Default to no recent shields auto-restore so tests that don't inject
-// getRecentShieldsAutoRestore don't read ~/.nemoclaw/state/shields-audit.jsonl.
-vi.mock("../../../shields/audit", () => ({
-  readRecentShieldsAutoRestore: vi.fn(() => ({ kind: "none" })),
-}));
 vi.mock("../../../../../nemoclaw/src/onboard/config.js", () => ({
   loadOnboardConfig: vi.fn(() => null),
   describeOnboardEndpoint: vi.fn(() => "build.nvidia.com"),
@@ -148,7 +143,7 @@ describe("runAgentPassthrough", () => {
     ).rejects.toThrow("__exit:2");
     const stderr = writes.join("");
     expect(stderr).toMatch(/port 8643/);
-    expect(stderr).toMatch(/openshell forward start --background 8643 beta/);
+    expect(stderr).toMatch(/nemoclaw beta recover/);
     expect(stderr).toMatch(/http:\/\/127\.0\.0\.1:8643\/v1\/chat\/completions/);
     expect(stderr).not.toMatch(/8642/);
   });
@@ -241,7 +236,7 @@ describe("runAgentPassthrough", () => {
       runAgentPassthrough(
         "alpha",
         { extraArgs: ["--agent", "main", "-m", "ping"] },
-        { execNonJson, process: proc, getRecentShieldsAutoRestore: () => ({ kind: "none" }) },
+        { execNonJson, process: proc },
       ),
     ).rejects.toThrow("__exit:0");
 

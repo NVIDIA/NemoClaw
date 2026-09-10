@@ -25,8 +25,6 @@ on:
       - "src/commands/internal/uninstall/run-plan.ts"
       - "src/lib/state/portable-uninstall-retirement.ts"
       - "src/lib/state/registry/lock.ts"
-      - "src/lib/onboard/runtime-provider/container-state-mutation.ts"
-      - "src/lib/onboard/runtime-provider/docker-state-mutation.ts"
       - "src/lib/onboard/experimental/portable-host-preparation*.ts"
       - "src/lib/onboard/experimental/portable-profile.ts"
       - "src/lib/onboard/runtime-provider/podman*.ts"
@@ -85,25 +83,25 @@ jobs:
 
       - name: Prepare system and app slice CPU settings without service delegation
         shell: bash
-        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts prepare
+        run: node scripts/checks/run-portable-cpu-delegation-proof.mts prepare
 
       - name: Verify missing delegation blocks portable configuration and service activation
         shell: bash
-        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts reject
+        run: node scripts/checks/run-portable-cpu-delegation-proof.mts reject
 
       - name: Apply administrator delegation and prove admission
         shell: bash
-        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts admit
+        run: node scripts/checks/run-portable-cpu-delegation-proof.mts admit
 
       - name: Capture CPU delegation failure diagnostics
         if: failure()
         shell: bash
-        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts diagnostics
+        run: node scripts/checks/run-portable-cpu-delegation-proof.mts diagnostics
 
       - name: Restore the user manager boundary
         if: always()
         shell: bash
-        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts cleanup
+        run: node scripts/checks/run-portable-cpu-delegation-proof.mts cleanup
 
       - name: Upload CPU delegation evidence
         if: always()

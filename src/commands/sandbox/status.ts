@@ -40,7 +40,8 @@ export default class SandboxStatusCommand extends NemoClawCommand {
             report.rpcIssue ||
             report.failureLayer ||
             isInferenceHealthFailing(report.inferenceHealth) ||
-            report.terminalRuntimeHealth?.kind === "degraded")
+            report.terminalRuntimeHealth?.kind === "degraded" ||
+            report.llamaCpp?.kind === "unavailable")
       ) {
         process.exitCode = 1;
       }

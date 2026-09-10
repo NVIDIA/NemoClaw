@@ -69,12 +69,14 @@ import {
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
+  validSafeEvidence,
 } from "./onboard-session/retained-sandbox-recovery";
-import type { SandboxHostMount } from "./registry/types";
+import type { SandboxEntry, SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
 
 export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
+export type { RetainedSandboxRecoveryRecord } from "./onboard-session/retained-sandbox-recovery";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
@@ -1694,24 +1696,8 @@ export function releaseOnboardLock(): void {
     return;
   }
 
-  // Fallback (no fd held — e.g., a test wrote the lock file directly,
-  // or a previous release already ran): preserve the legacy pid-based
-  // behavior so we never unlink a malformed lock and never unlink a
-  // lock owned by another pid.
-  try {
-    let snapshot: LockFileSnapshot;
-    try {
-      snapshot = readLockFileSnapshot();
-    } catch (error) {
-      if (isErrnoException(error) && error.code === "ENOENT") return;
-      throw error;
-    }
-    if (!snapshot.info) return;
-    if (snapshot.info.pid !== process.pid) return;
-    unlinkIfInodeMatches(LOCK_FILE, snapshot.inode);
-  } catch {
-    return;
-  }
+  // A PID match does not prove ownership across hosts or PID namespaces.
+  // Without the retained descriptor, this process has no cleanup authority.
 }
 
 // ── Step management ──────────────────────────────────────────────
@@ -1992,6 +1978,82 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
   });
 }
 
+const safeRecoveryEvidence = (value: unknown): string[] =>
+  validSafeEvidence(value) ? [value] : [];
+
+function pendingCreateRecoveryResources(
+  entry: SandboxEntry,
+): RecordRetainedSandboxRecoveryInput["resources"] {
+  return {
+    sharedInferenceProviders: safeRecoveryEvidence(entry.provider),
+    sandboxScopedProviders: safeRecoveryEvidence(entry.hermesInferenceProvider),
+    credentialEnvironmentVariables: safeRecoveryEvidence(entry.credentialEnv),
+  };
+}
+
+function retainedRecoveryMatchesPendingCreate(
+  record: RetainedSandboxRecoveryRecord,
+  entry: SandboxEntry,
+): boolean {
+  const checkpoint = entry.pendingCreateIdentity;
+  return Boolean(
+    checkpoint &&
+    record.sandboxName === checkpoint.sandboxName &&
+    record.sandboxIdentityFingerprint === checkpoint.sandboxIdentityFingerprint &&
+    record.gatewayName === checkpoint.gatewayName &&
+    record.gatewayPort === checkpoint.gatewayPort &&
+    record.lifecycleGeneration === checkpoint.lifecycleGeneration &&
+    record.createAttemptNonce === checkpoint.createAttemptNonce,
+  );
+}
+
+/**
+ * Reconstruct the independent retained-sandbox record when the verified-create
+ * registry checkpoint is the only recovery authority that survived a crash.
+ */
+export function reconstructRetainedSandboxRecoveryFromPendingCreate(
+  entry: SandboxEntry,
+): RetainedSandboxRecoveryRecord | null {
+  const checkpoint = entry.pendingCreateIdentity;
+  const createAttemptNonce = checkpoint?.createAttemptNonce;
+  if (!checkpoint || entry.pendingRouteReservation !== true || !createAttemptNonce) {
+    return null;
+  }
+  if (
+    entry.name !== checkpoint.sandboxName ||
+    entry.gatewayName !== checkpoint.gatewayName ||
+    entry.gatewayPort !== checkpoint.gatewayPort ||
+    entry.lifecycleGeneration !== checkpoint.lifecycleGeneration ||
+    entry.lifecycleLiveIdentityFingerprint !== checkpoint.sandboxIdentityFingerprint
+  ) {
+    throw new Error(
+      `Cannot reconstruct retained sandbox recovery for '${entry.name}': its verified create checkpoint does not match the registry lifecycle authority.`,
+    );
+  }
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery reconstruction", () => {
+    const records = readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE);
+    const sameName = records.filter((record) => record.sandboxName === entry.name);
+    if (sameName.length === 1 && retainedRecoveryMatchesPendingCreate(sameName[0]!, entry)) {
+      return sameName[0]!;
+    }
+    if (sameName.length > 0) {
+      throw new Error(
+        `Cannot reconstruct retained sandbox recovery for '${entry.name}': its independent recovery authority conflicts with the verified create checkpoint.`,
+      );
+    }
+    return writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, {
+      sandboxName: checkpoint.sandboxName,
+      sandboxIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+      gatewayName: checkpoint.gatewayName,
+      gatewayPort: checkpoint.gatewayPort,
+      lifecycleGeneration: checkpoint.lifecycleGeneration,
+      createAttemptNonce,
+      resources: pendingCreateRecoveryResources(entry),
+      reason: "retained_after_sandbox_creation_failure",
+    });
+  });
+}
+
 export function recordRetainedSandboxRecovery(
   input: RecordRetainedSandboxRecoveryInput,
 ): RetainedSandboxRecoveryRecord {
@@ -2070,7 +2132,7 @@ export function markCancellationRecovery(
       session.failure = {
         step: session.lastStepStarted,
         message:
-          "Onboarding was cancelled after sandbox creation; administrator recovery is required.",
+          "Onboarding was cancelled after sandbox creation; retained recovery blocks this sandbox name until destroy confirms absence and completes cleanup.",
         recordedAt,
         interrupted: true,
       };
@@ -2313,6 +2375,29 @@ export function checkpointVllmInstallModel(modelId: string): Session {
       );
     }
     session.vllmInstallModel = model;
+  });
+}
+
+/** Persist the exact profile needed to retry an interrupted managed llama.cpp install. */
+export function checkpointManagedLlamaCppSelection(input: {
+  model: string;
+  servingProfileProvenance: ServingProfileProvenance;
+}): Session {
+  const model = parseVllmInstallModel(input.model);
+  const provenance = parseServingProfileProvenance(input.servingProfileProvenance);
+  if (!model || provenance?.recipe.backend !== "install-llama-cpp") {
+    throw new Error("Managed llama.cpp install produced an invalid selection checkpoint.");
+  }
+  return updateSession((session) => {
+    const providerStep = session.steps.provider_selection;
+    if (providerStep?.status !== "in_progress") {
+      throw new Error(
+        "Managed llama.cpp selection can only be checkpointed during provider selection.",
+      );
+    }
+    session.provider = "llama-cpp-local";
+    session.model = model;
+    session.servingProfileProvenance = provenance;
   });
 }
 

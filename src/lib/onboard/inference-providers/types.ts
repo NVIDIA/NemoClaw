@@ -45,7 +45,7 @@ export type UpsertProvider = (
   credentialEnv: any,
   baseUrl: any,
   env?: NodeJS.ProcessEnv,
-) => UpsertProviderResult;
+) => Promise<UpsertProviderResult>;
 
 export type RemoteProviderConfigEntry = {
   label: string;
@@ -176,7 +176,7 @@ export type HermesDeps = CommonDeps & {
   lookup?: LookupFn;
   hermesProviderAuth: {
     HERMES_PROVIDER_NAME: string;
-    isHermesProviderRegistered(runOpenshell: any): boolean;
+    isHermesProviderRegistered(runOpenshell: any): Promise<boolean>;
     ensureHermesProviderApiKeyCredentials(
       sandboxName: string,
       opts: { apiKey: unknown; runOpenshell: any; baseUrl?: string | undefined },
@@ -194,10 +194,12 @@ export type HermesDeps = CommonDeps & {
   getHermesToolGatewayBroker: () => {
     getHermesToolGatewayProviderName(sandboxName: string): string;
   };
-  providerExistsInGateway: (name: string) => boolean;
+  providerExistsInGateway: (name: string) => Promise<boolean>;
   normalizeHermesAuthMethod: (m: HermesAuthMethod | string | null) => HermesAuthMethod | null;
   resolveHermesNousApiKey: () => any;
-  checkHermesProviderStoreReachable: (runOpenshell: any) => { ok: boolean; message?: string };
+  checkHermesProviderStoreReachable: (
+    runOpenshell: any,
+  ) => { ok: boolean; message?: string } | Promise<{ ok: boolean; message?: string }>;
   hermesAuthMethodLabel: (m: HermesAuthMethod) => string;
   hermesConstants: {
     HERMES_NOUS_API_KEY_CREDENTIAL_ENV: string;
@@ -213,7 +215,7 @@ export type HermesDeps = CommonDeps & {
 // loosely so callers can pass either shape without casting.
 export type RunFn = (
   cmd: any,
-  opts?: { ignoreError?: boolean; suppressOutput?: boolean },
+  opts?: { ignoreError?: boolean; suppressOutput?: boolean; env?: NodeJS.ProcessEnv },
 ) => RunResult;
 
 export type VllmDeps = CommonDeps & {
@@ -242,7 +244,6 @@ export type OllamaDeps = CommonDeps & {
   };
   getLocalProviderBaseUrl: (provider: string) => any;
   applyLocalInferenceRoute: (provider: string, model: string) => Promise<boolean>;
-  getOllamaWarmupCommand: (model: string) => any;
   run: RunFn;
   shouldFrontOllamaWithProxy: () => boolean;
   ensureOllamaAuthProxy: () => void;
@@ -255,6 +256,15 @@ export type OllamaDeps = CommonDeps & {
       allowToolsIncompatible: boolean,
     ): { ok: boolean; message?: string };
     validateSandboxFacingOllamaModel(model: string): { ok: boolean; message?: string };
+    runOllamaWarmup(model: string, runImpl: RunFn): void;
+    loadPendingOllamaModelCleanup?(sandboxName: string): readonly string[];
+    persistPendingOllamaModelCleanup?(sandboxName: string, models: readonly string[]): void;
+    clearPendingOllamaModelCleanup?(sandboxName: string, releasedModels?: readonly string[]): void;
+    persistResolvedOllamaHost(): () => void;
+    loadPersistedOllamaHost?(): "127.0.0.1" | "host.docker.internal" | null;
+    clearPersistedOllamaHostIfUnused?(
+      routes: readonly { provider?: string | null; endpointUrl?: string | null }[],
+    ): boolean;
   };
   /** Exact provider-owned proof used instead of legacy host warmup/probes. */
   providerOwnedInferenceProof?: {
@@ -276,7 +286,9 @@ export type RoutedDeps = CommonDeps & {
         upsertProvider: UpsertProvider;
         hydrateCredentialEnv: (envName: any, resolveCredential?: any) => any;
       },
-    ): { ok: boolean; result: { message?: string; status?: number } };
+    ):
+      | { ok: boolean; result: { message?: string; status?: number } }
+      | Promise<{ ok: boolean; result: { message?: string; status?: number } }>;
   };
   hydrateCredentialEnv: (envName: any, resolveCredential?: any) => any;
   redact: (input: string) => string;

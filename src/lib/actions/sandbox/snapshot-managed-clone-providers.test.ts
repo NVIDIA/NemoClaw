@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import {
@@ -177,8 +178,14 @@ function providerRunner(initial: readonly LiveBinding[] = []) {
   const run = vi.fn((args: string[]) => {
     commands.push(args.join(" "));
     switch (args.slice(0, 2).join(" ")) {
-      case "provider profile":
-        return args[2] === "import" ? profileImportResult : profileExportResult;
+      case "provider profile": {
+        const importing = args[2] === "import";
+        profileExportResult =
+          importing && profileImportResult.status === 0
+            ? EXACT_MESSAGING_PROFILE
+            : profileExportResult;
+        return importing ? profileImportResult : profileExportResult;
+      }
       case "provider get": {
         const name = args[2] ?? "";
         const binding = live.get(name);
@@ -241,22 +248,24 @@ function authorityDeps(
   };
 }
 
-function prepareWithBinding(input: {
+async function prepareWithBinding(input: {
   readonly agent?: ManagedStartupAgent;
   readonly binding?: ManagedCloneProviderBinding;
   readonly destination?: SandboxEntry | null;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly providerAdapter?: OpenShellProviderAdapter;
   readonly runner?: ReturnType<typeof providerRunner>;
 }) {
   const profile = managedStartupE2eProfile(input.agent ?? "openclaw");
   const source = entry("source", profile);
   const runner = input.runner ?? providerRunner();
   const destination = input.destination ?? null;
-  const prepared = prepareManagedCloneProviderTransaction({
+  const prepared = await prepareManagedCloneProviderTransaction({
     handoff: handoff(profile, source),
     destination,
     additionalBindings: [input.binding ?? TOKEN_BINDING],
     environment: input.environment ?? { RUNTIME_TOKEN: "test-only-runtime-token" },
+    providerAdapter: input.providerAdapter,
     runOpenshell: runner.run,
     transactionId: "1".repeat(32),
   });
@@ -264,34 +273,63 @@ function prepareWithBinding(input: {
 }
 
 describe("managed clone provider transaction", () => {
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("keeps the %s transaction provider-neutral, secret-free, and deeply frozen", (agent) => {
-    const { prepared } = prepareWithBinding({ agent });
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "keeps the %s transaction provider-neutral, secret-free, and deeply frozen (#8931)",
+    async (agent) => {
+      const { prepared } = await prepareWithBinding({ agent });
 
-    expect(prepared).toMatchObject({
-      providerId: "docker",
-      sourceSandboxName: "source",
-      destinationSandboxName: "destination",
-      snapshotRestoreAuthority: CONTENT_AUTHORITY,
-      providers: [{ binding: TOKEN_BINDING, action: "create" }],
+      expect(prepared).toMatchObject({
+        providerId: "docker",
+        sourceSandboxName: "source",
+        destinationSandboxName: "destination",
+        snapshotRestoreAuthority: CONTENT_AUTHORITY,
+        providers: [{ binding: TOKEN_BINDING, action: "create" }],
+      });
+      expect(JSON.stringify(prepared)).not.toContain("test-only-runtime-token");
+      expect(Object.isFrozen(prepared)).toBe(true);
+      expect(Object.isFrozen(prepared.snapshotRestoreAuthority)).toBe(true);
+      expect(Object.isFrozen(prepared.sourceRegistryAuthority.workload)).toBe(true);
+      expect(Object.isFrozen(prepared.providers[0]?.binding)).toBe(true);
+    },
+  );
+
+  it("routes preparation inspection through the injected provider adapter", async () => {
+    const runner = providerRunner();
+    const getProvider: OpenShellProviderAdapter["getProvider"] = vi.fn(async () => ({
+      ok: false,
+      error: { kind: "command", reason: "not_found", message: "Provider was not found." },
+    }) as const);
+
+    const { prepared } = await prepareWithBinding({
+      providerAdapter: { getProvider } as OpenShellProviderAdapter,
+      runner,
     });
-    expect(JSON.stringify(prepared)).not.toContain("test-only-runtime-token");
-    expect(Object.isFrozen(prepared)).toBe(true);
-    expect(Object.isFrozen(prepared.snapshotRestoreAuthority)).toBe(true);
-    expect(Object.isFrozen(prepared.sourceRegistryAuthority.workload)).toBe(true);
-    expect(Object.isFrozen(prepared.providers[0]?.binding)).toBe(true);
+
+    expect(prepared.providers[0]?.action).toBe("create");
+    expect(getProvider).toHaveBeenCalledWith({
+      providerName: TOKEN_BINDING.providerName,
+      target: { kind: "selected" },
+      timeoutMs: 5_000,
+    });
+    expect(runner.commands.some((command) => command.startsWith("provider get"))).toBe(false);
   });
 
-  it("resolves active messaging providers from the handoff", () => {
+  it("rejects credential keys outside the provider adapter contract during preflight", async () => {
+    await expect(
+      prepareWithBinding({
+        binding: { ...TOKEN_BINDING, providerEnvKey: "_RUNTIME_TOKEN" },
+        environment: { _RUNTIME_TOKEN: "test-only-runtime-token" },
+      }),
+    ).rejects.toThrow(/invalid credential binding/u);
+  });
+
+  it("resolves active messaging providers from the handoff", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const source = entry("source", profile);
     const runner = providerRunner();
     const plan = messagingPlan("destination");
 
-    const prepared = prepareManagedCloneProviderTransaction({
+    const prepared = await prepareManagedCloneProviderTransaction({
       handoff: handoff(profile, source, plan),
       destination: null,
       environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
@@ -312,7 +350,7 @@ describe("managed clone provider transaction", () => {
     ]);
   });
 
-  it("imports the endpointless profile before creating a cloned messaging provider (#9875)", () => {
+  it("imports the endpointless profile before creating a cloned messaging provider (#9875)", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const source = entry("source", profile);
     const runner = providerRunner();
@@ -321,7 +359,7 @@ describe("managed clone provider transaction", () => {
       stdout: "",
       stderr: "provider profile not found",
     });
-    const prepared = prepareManagedCloneProviderTransaction({
+    const prepared = await prepareManagedCloneProviderTransaction({
       handoff: handoff(profile, source, messagingPlan("destination")),
       destination: null,
       environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
@@ -329,7 +367,7 @@ describe("managed clone provider transaction", () => {
       transactionId: "9".repeat(32),
     });
 
-    provisionManagedCloneProviderTransaction(prepared, {
+    await provisionManagedCloneProviderTransaction(prepared, {
       ...authorityDeps(source),
       environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
       runOpenshell: runner.run,
@@ -353,11 +391,11 @@ describe("managed clone provider transaction", () => {
     expect(createIndex).toBeGreaterThan(importIndex);
   });
 
-  it("rejects stale clone authority before importing the messaging profile (#9875)", () => {
+  it("rejects stale clone authority before importing the messaging profile (#9875)", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const source = entry("source", profile);
     const runner = providerRunner();
-    const prepared = prepareManagedCloneProviderTransaction({
+    const prepared = await prepareManagedCloneProviderTransaction({
       handoff: handoff(profile, source, messagingPlan("destination")),
       destination: null,
       environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
@@ -365,7 +403,7 @@ describe("managed clone provider transaction", () => {
       transactionId: "8".repeat(32),
     });
 
-    expect(() =>
+    await expect(
       provisionManagedCloneProviderTransaction(prepared, {
         ...authorityDeps(source, null, {
           ...CONTENT_AUTHORITY,
@@ -374,7 +412,7 @@ describe("managed clone provider transaction", () => {
         environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
         runOpenshell: runner.run,
       }),
-    ).toThrow(/snapshot content changed before mutation/u);
+    ).rejects.toThrow(/snapshot content changed before mutation/u);
     expect(
       runner.commands.some((command) => command.startsWith("provider profile import --file ")),
     ).toBe(false);
@@ -383,7 +421,7 @@ describe("managed clone provider transaction", () => {
     );
   });
 
-  it("does not create a cloned messaging provider after profile import fails (#9875)", () => {
+  it("does not create a cloned messaging provider after profile import fails (#9875)", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const source = entry("source", profile);
     const runner = providerRunner();
@@ -393,7 +431,7 @@ describe("managed clone provider transaction", () => {
       stderr: "provider profile not found",
     });
     runner.setProfileImportResult({ status: 1, stdout: "", stderr: "gateway unavailable" });
-    const prepared = prepareManagedCloneProviderTransaction({
+    const prepared = await prepareManagedCloneProviderTransaction({
       handoff: handoff(profile, source, messagingPlan("destination")),
       destination: null,
       environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
@@ -401,17 +439,17 @@ describe("managed clone provider transaction", () => {
       transactionId: "7".repeat(32),
     });
 
-    expect(() =>
+    await expect(
       provisionManagedCloneProviderTransaction(prepared, {
         ...authorityDeps(source),
         environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
         runOpenshell: runner.run,
       }),
-    ).toThrow(/Could not import the OpenShell messaging credential profile/);
+    ).rejects.toThrow(/Could not import the OpenShell messaging credential profile/);
     expect(runner.commands.some((command) => command.startsWith("provider create"))).toBe(false);
   });
 
-  it("reuses an exact provider only with exact destination registry ownership", () => {
+  it("reuses an exact provider only with exact destination registry ownership", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const source = entry("source", profile);
     const plan = messagingPlan("destination");
@@ -422,7 +460,7 @@ describe("managed clone provider transaction", () => {
       providerEnvKey: "TELEGRAM_BOT_TOKEN",
     };
     const runner = providerRunner([liveBinding]);
-    const prepared = prepareManagedCloneProviderTransaction({
+    const prepared = await prepareManagedCloneProviderTransaction({
       handoff: handoff(profile, source, plan),
       destination,
       environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
@@ -431,7 +469,7 @@ describe("managed clone provider transaction", () => {
     });
 
     expect(prepared.providers[0]?.action).toBe("reuse-destination-owned");
-    const receipt = provisionManagedCloneProviderTransaction(prepared, {
+    const receipt = await provisionManagedCloneProviderTransaction(prepared, {
       ...authorityDeps(source, destination),
       environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
       runOpenshell: runner.run,
@@ -446,7 +484,7 @@ describe("managed clone provider transaction", () => {
     });
   });
 
-  it("rejects clone reuse backed by an incompatible global messaging profile (#9875)", () => {
+  it("rejects clone reuse backed by an incompatible global messaging profile (#9875)", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const source = entry("source", profile);
     const plan = messagingPlan("destination");
@@ -469,7 +507,7 @@ describe("managed clone provider transaction", () => {
       }),
       stderr: "",
     });
-    const prepared = prepareManagedCloneProviderTransaction({
+    const prepared = await prepareManagedCloneProviderTransaction({
       handoff: handoff(profile, source, plan),
       destination,
       environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
@@ -477,34 +515,36 @@ describe("managed clone provider transaction", () => {
       transactionId: "4".repeat(32),
     });
 
-    expect(() =>
+    await expect(
       provisionManagedCloneProviderTransaction(prepared, {
         ...authorityDeps(source, destination),
         environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
         runOpenshell: runner.run,
       }),
-    ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
+    ).rejects.toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
     expect(
       runner.commands.some((command) => /provider (create|delete|update)/u.test(command)),
     ).toBe(false);
   });
 
-  it("rejects an exact same-name provider without destination ownership", () => {
+  it("rejects an exact same-name provider without destination ownership", async () => {
     const runner = providerRunner([TOKEN_BINDING]);
 
-    expect(() => prepareWithBinding({ runner })).toThrow(/without exact destination ownership/u);
+    await expect(prepareWithBinding({ runner })).rejects.toThrow(
+      /without exact destination ownership/u,
+    );
     expect(
       runner.commands.some((command) => /provider (create|delete|update)/u.test(command)),
     ).toBe(false);
   });
 
-  it("rejects a destination registered under another runtime provider", () => {
+  it("rejects a destination registered under another runtime provider", async () => {
     const profile = managedStartupE2eProfile("langchain-deepagents-code");
     const source = entry("source", profile);
     const destination = entry("destination", profile, { openshellDriver: "mxc" });
     const runner = providerRunner();
 
-    expect(() =>
+    await expect(
       prepareManagedCloneProviderTransaction({
         handoff: handoff(profile, source),
         destination,
@@ -512,11 +552,11 @@ describe("managed clone provider transaction", () => {
         runOpenshell: runner.run,
         transactionId: "8".repeat(32),
       }),
-    ).toThrow(/destination registry authority uses a different runtime provider/u);
+    ).rejects.toThrow(/destination registry authority uses a different runtime provider/u);
     expect(runner.run).not.toHaveBeenCalled();
   });
 
-  it("fails closed on indeterminate provider inspection with bounded diagnostics", () => {
+  it("fails closed on indeterminate provider inspection with bounded diagnostics", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const source = entry("source", profile);
     const runOpenshell = vi.fn(() => ({
@@ -525,7 +565,7 @@ describe("managed clone provider transaction", () => {
       stderr: "gateway transport unavailable",
     }));
 
-    expect(() =>
+    await expect(
       prepareManagedCloneProviderTransaction({
         handoff: handoff(profile, source),
         destination: null,
@@ -534,7 +574,7 @@ describe("managed clone provider transaction", () => {
         runOpenshell,
         transactionId: "7".repeat(32),
       }),
-    ).toThrow(/could not prove whether provider/u);
+    ).rejects.toThrow(/could not prove whether provider/u);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["provider", "get", TOKEN_BINDING.providerName],
       expect.objectContaining({
@@ -546,26 +586,26 @@ describe("managed clone provider transaction", () => {
     expect(runOpenshell).toHaveBeenCalledOnce();
   });
 
-  it("rejects an incompatible provider collision during read-only preflight", () => {
+  it("rejects an incompatible provider collision during read-only preflight", async () => {
     const runner = providerRunner([{ ...TOKEN_BINDING, providerType: "other" }]);
 
-    expect(() => prepareWithBinding({ runner })).toThrow(/incompatible live binding/u);
+    await expect(prepareWithBinding({ runner })).rejects.toThrow(/incompatible live binding/u);
     expect(
       runner.commands.some((command) => /provider (create|delete|update)/u.test(command)),
     ).toBe(false);
   });
 
-  it("revalidates snapshot, source, and destination authority before provider mutation", () => {
-    const { prepared, runner, source } = prepareWithBinding({});
+  it("revalidates snapshot, source, and destination authority before provider mutation", async () => {
+    const { prepared, runner, source } = await prepareWithBinding({});
     const changedContent = { ...CONTENT_AUTHORITY, contentSha256: "d".repeat(64) };
 
-    expect(() =>
+    await expect(
       provisionManagedCloneProviderTransaction(prepared, {
         ...authorityDeps(source, null, changedContent),
         environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
         runOpenshell: runner.run,
       }),
-    ).toThrow(/snapshot content changed before mutation/u);
+    ).rejects.toThrow(/snapshot content changed before mutation/u);
     expect(runner.commands.some((command) => command.startsWith("provider create"))).toBe(false);
 
     expect(() =>
@@ -580,11 +620,11 @@ describe("managed clone provider transaction", () => {
     ).toThrow(/destination appeared after clone preflight/u);
   });
 
-  it("revalidates content authority for an agent with no credential providers", () => {
+  it("revalidates content authority for an agent with no credential providers", async () => {
     const profile = managedStartupE2eProfile("langchain-deepagents-code");
     const source = entry("source", profile);
     const runner = providerRunner();
-    const prepared = prepareManagedCloneProviderTransaction({
+    const prepared = await prepareManagedCloneProviderTransaction({
       handoff: handoff(profile, source),
       destination: null,
       environment: {},
@@ -593,7 +633,7 @@ describe("managed clone provider transaction", () => {
     });
 
     expect(prepared.providers).toEqual([]);
-    expect(() =>
+    await expect(
       provisionManagedCloneProviderTransaction(prepared, {
         ...authorityDeps(source, null, {
           ...CONTENT_AUTHORITY,
@@ -602,13 +642,13 @@ describe("managed clone provider transaction", () => {
         environment: {},
         runOpenshell: runner.run,
       }),
-    ).toThrow(/snapshot content changed before mutation/u);
+    ).rejects.toThrow(/snapshot content changed before mutation/u);
     expect(runner.commands).toEqual([]);
   });
 
-  it("creates with an exact receipt and makes cleanup idempotent against name reuse", () => {
-    const { prepared, runner, source } = prepareWithBinding({});
-    const receipt = provisionManagedCloneProviderTransaction(prepared, {
+  it("creates with an exact receipt and makes cleanup idempotent against name reuse", async () => {
+    const { prepared, runner, source } = await prepareWithBinding({});
+    const receipt = await provisionManagedCloneProviderTransaction(prepared, {
       ...authorityDeps(source),
       environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
       runOpenshell: runner.run,
@@ -634,10 +674,10 @@ describe("managed clone provider transaction", () => {
     expect(runner.live.get(TOKEN_BINDING.providerName)?.providerType).toBe("other");
   });
 
-  it("bounds provider creation before exact-result reconciliation", () => {
-    const { prepared, runner, source } = prepareWithBinding({});
+  it("bounds provider creation before exact-result reconciliation", async () => {
+    const { prepared, runner, source } = await prepareWithBinding({});
 
-    provisionManagedCloneProviderTransaction(prepared, {
+    await provisionManagedCloneProviderTransaction(prepared, {
       ...authorityDeps(source),
       environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
       runOpenshell: runner.run,
@@ -662,7 +702,7 @@ describe("managed clone provider transaction", () => {
     );
   });
 
-  it("rolls back confirmed providers when a later credential disappears", () => {
+  it("rolls back confirmed providers when a later credential disappears", async () => {
     const first = { ...TOKEN_BINDING, providerName: "destination-first-token" };
     const second = {
       ...TOKEN_BINDING,
@@ -672,7 +712,7 @@ describe("managed clone provider transaction", () => {
     const profile = managedStartupE2eProfile("openclaw");
     const source = entry("source", profile);
     const runner = providerRunner();
-    const prepared = prepareManagedCloneProviderTransaction({
+    const prepared = await prepareManagedCloneProviderTransaction({
       handoff: handoff(profile, source),
       destination: null,
       additionalBindings: [first, second],
@@ -686,7 +726,7 @@ describe("managed clone provider transaction", () => {
 
     let failure: ManagedCloneProviderTransactionError | null = null;
     try {
-      provisionManagedCloneProviderTransaction(prepared, {
+      await provisionManagedCloneProviderTransaction(prepared, {
         ...authorityDeps(source),
         environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
         runOpenshell: runner.run,
@@ -711,44 +751,47 @@ describe("managed clone provider transaction", () => {
       0,
       { ...TOKEN_BINDING, providerType: "other" } satisfies ManagedCloneProviderBinding,
     ],
-  ] as const)("preserves an unowned provider after an ambiguous create: %s", (_name, status, materialize) => {
-    const runner = providerRunner();
-    runner.setCreateBehavior(() => ({ status, ...(materialize ? { materialize } : {}) }));
-    const { prepared, source } = prepareWithBinding({ runner });
+  ] as const)(
+    "preserves an unowned provider after an ambiguous create: %s",
+    async (_name, status, materialize) => {
+      const runner = providerRunner();
+      runner.setCreateBehavior(() => ({ status, ...(materialize ? { materialize } : {}) }));
+      const { prepared, source } = await prepareWithBinding({ runner });
 
-    expect(() =>
-      provisionManagedCloneProviderTransaction(prepared, {
-        ...authorityDeps(source),
-        environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
-        runOpenshell: runner.run,
-      }),
-    ).toThrow(/preserving the observed/u);
-    expect(runner.commands).not.toContain(`provider delete ${TOKEN_BINDING.providerName}`);
-    expect(runner.live.has(TOKEN_BINDING.providerName)).toBe(Boolean(materialize));
-  });
+      await expect(
+        provisionManagedCloneProviderTransaction(prepared, {
+          ...authorityDeps(source),
+          environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
+          runOpenshell: runner.run,
+        }),
+      ).rejects.toThrow(/preserving the observed/u);
+      expect(runner.commands).not.toContain(`provider delete ${TOKEN_BINDING.providerName}`);
+      expect(runner.live.has(TOKEN_BINDING.providerName)).toBe(Boolean(materialize));
+    },
+  );
 
-  it("reconciles and preserves an exact provider when the create adapter throws", () => {
+  it("reconciles and preserves an exact provider when the create adapter throws", async () => {
     const runner = providerRunner();
     runner.setCreateBehavior((binding) => {
       runner.live.set(binding.providerName, binding);
       throw new Error("synthetic child-process transport loss");
     });
-    const { prepared, source } = prepareWithBinding({ runner });
+    const { prepared, source } = await prepareWithBinding({ runner });
 
-    expect(() =>
+    await expect(
       provisionManagedCloneProviderTransaction(prepared, {
         ...authorityDeps(source),
         environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
         runOpenshell: runner.run,
       }),
-    ).toThrow(/exact but unowned/u);
+    ).rejects.toThrow(/exact but unowned/u);
     expect(runner.commands).not.toContain(`provider delete ${TOKEN_BINDING.providerName}`);
     expect(runner.live.has(TOKEN_BINDING.providerName)).toBe(true);
   });
 
-  it("reports cleanup failure without discarding its exact retry receipt", () => {
-    const { prepared, runner, source } = prepareWithBinding({});
-    const receipt = provisionManagedCloneProviderTransaction(prepared, {
+  it("reports cleanup failure without discarding its exact retry receipt", async () => {
+    const { prepared, runner, source } = await prepareWithBinding({});
+    const receipt = await provisionManagedCloneProviderTransaction(prepared, {
       ...authorityDeps(source),
       environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
       runOpenshell: runner.run,
@@ -762,9 +805,9 @@ describe("managed clone provider transaction", () => {
     expect(runner.live.has(TOKEN_BINDING.providerName)).toBe(true);
   });
 
-  it("rejects a cloned or fabricated cleanup receipt", () => {
-    const { prepared, runner, source } = prepareWithBinding({});
-    const receipt = provisionManagedCloneProviderTransaction(prepared, {
+  it("rejects a cloned or fabricated cleanup receipt", async () => {
+    const { prepared, runner, source } = await prepareWithBinding({});
+    const receipt = await provisionManagedCloneProviderTransaction(prepared, {
       ...authorityDeps(source),
       environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
       runOpenshell: runner.run,
@@ -776,12 +819,12 @@ describe("managed clone provider transaction", () => {
     expect(runner.live.has(TOKEN_BINDING.providerName)).toBe(true);
   });
 
-  it("fails a force-replace transaction when destination authority becomes stale", () => {
+  it("fails a force-replace transaction when destination authority becomes stale", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const source = entry("source", profile);
     const destination = entry("destination", profile);
     const runner = providerRunner();
-    const prepared = prepareManagedCloneProviderTransaction({
+    const prepared = await prepareManagedCloneProviderTransaction({
       handoff: handoff(profile, source),
       destination,
       additionalBindings: [TOKEN_BINDING],
@@ -791,20 +834,20 @@ describe("managed clone provider transaction", () => {
     });
     const staleDestination = { ...destination, model: "changed-model" };
 
-    expect(() =>
+    await expect(
       provisionManagedCloneProviderTransaction(prepared, {
         ...authorityDeps(source, staleDestination),
         environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
         runOpenshell: runner.run,
       }),
-    ).toThrow(/destination registry authority changed/u);
+    ).rejects.toThrow(/destination registry authority changed/u);
     expect(runner.commands.some((command) => command.startsWith("provider create"))).toBe(false);
   });
 
-  it("captures the complete destination row in the reuse authority receipt", () => {
+  it("captures the complete destination row in the reuse authority receipt", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const destination = entry("destination", profile);
-    const { prepared } = prepareWithBinding({ destination });
+    const { prepared } = await prepareWithBinding({ destination });
 
     expect(prepared.destinationRegistryAuthority).toEqual(
       captureSandboxRebuildAuthority(destination, "docker") as SandboxRebuildAuthority,

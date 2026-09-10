@@ -230,7 +230,6 @@ prepare_installer_host() { record prepare-installer-host; }
 step() { record "step-$1-$2"; }
 install_nodejs() { record install-nodejs; }
 ensure_supported_runtime() { record ensure-supported-runtime; }
-resolve_pending_express_wsl_provider() { record resolve-pending-express-wsl-provider; }
 ensure_station_express_pair() { record ensure-station-express-pair; }
 fix_npm_permissions() { record fix-npm-permissions; }
 preinstall_backup_and_retire_legacy_gateway() { record preinstall-backup; }
@@ -252,7 +251,6 @@ main --non-interactive --yes-i-accept-third-party-software
       "step-1-Node.js",
       "install-nodejs",
       "ensure-supported-runtime",
-      "resolve-pending-express-wsl-provider",
       "ensure-station-express-pair",
       "step-2-NemoClaw CLI",
       "fix-npm-permissions",

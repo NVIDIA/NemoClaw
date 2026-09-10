@@ -23,9 +23,6 @@ filesystem_policy:
     - /app
     - /run/nemoclaw/managed-startup-ca-bundle.pem
     - /run/nemoclaw/managed-startup-runtime.env
-    # Root-owned state-mutation receipts are mode 0444 only when the immutable
-    # startup gate must consume them; the durable marker and locks remain 0600.
-    - /var/lib/nemoclaw/runtime-state-mutation
     - /etc
     - /var/log
     - /var/lib/dpkg                  # Allow package-version inspection without package mutation.
@@ -47,14 +44,8 @@ filesystem_policy:
                                     # directory, not /dev/ptmx itself — it is a
                                     # symlink the supervisor refuses to chown.
                                     # Mirrors the OpenClaw policy grant (#4513).
-    # The root controller creates one nonce-bound sandbox-owned directory here
-    # for the immutable startup gate's checkpoint and retry acknowledgement.
-    - /run/nemoclaw/runtime-state-mutation-startup
-    # Agent config/state root. Shields-up locks config.yaml/.env and the
-    # parent directory, but intentionally leaves /sandbox/.hermes/.hermes_history
-    # as sandbox:sandbox 0660 because prompt_toolkit FileHistory appends there
-    # on every Hermes TUI keypress. Remove that exception if upstream supports
-    # redirecting or disabling file history.
+    # Agent config/state root. prompt_toolkit FileHistory appends to
+    # /sandbox/.hermes/.hermes_history on every Hermes TUI keypress.
     - /sandbox/.hermes
 
 landlock:

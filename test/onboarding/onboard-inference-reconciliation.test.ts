@@ -8,8 +8,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import {
+  clearPersistedOllamaHostIfUnused,
+  loadPersistedOllamaHost,
+  persistResolvedOllamaHost,
+} from "../../src/lib/inference/local.js";
 import { createLocalInferenceRouteApplier } from "../../src/lib/onboard/local-inference-route.js";
-import type { SetupInference } from "../../src/lib/onboard/setup-inference.js";
+import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import {
   bedrockRuntimeOnboard,
@@ -23,6 +28,30 @@ import {
   withProcessEnv,
 } from "../support/setup-inference-test-harness.js";
 
+const HERMES_OAUTH_PROVIDER_METADATA = [
+  "Name: hermes-provider",
+  "Type: openai",
+  "Credential keys: OPENAI_API_KEY",
+  "Config keys: OPENAI_BASE_URL",
+  "",
+].join("\n");
+
+const HERMES_API_KEY_PROVIDER_METADATA = [
+  "Name: hermes-provider",
+  "Type: openai",
+  "Credential keys: NOUS_API_KEY",
+  "Config keys: OPENAI_BASE_URL",
+  "",
+].join("\n");
+
+const OPENAI_API_PROVIDER_METADATA = [
+  "Name: openai-api",
+  "Type: openai",
+  "Credential keys: OPENAI_API_KEY",
+  "Config keys: OPENAI_BASE_URL",
+  "",
+].join("\n");
+
 describe("onboard helpers", () => {
   it("reuses a registered Hermes Provider without re-collecting host credentials", async () => {
     await withProcessEnv(
@@ -34,7 +63,7 @@ describe("onboard helpers", () => {
         const harness = createDirectSetupInferenceHarness({
           runOpenshell: (args) =>
             args.join(" ") === "provider get -g nemoclaw hermes-provider"
-              ? { status: 0, stdout: "Provider: hermes-provider", stderr: "" }
+              ? { status: 0, stdout: HERMES_OAUTH_PROVIDER_METADATA, stderr: "" }
               : undefined,
           overrides: { isNonInteractive: () => true },
         });
@@ -205,8 +234,8 @@ describe("onboard helpers", () => {
       const preflightPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
       );
-      const bridgeDnsPreflightPath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "onboard", "bridge-dns-preflight.ts"),
+      const runtimeEffectfulPreflightPath = JSON.stringify(
+        path.join(repoRoot, "src/lib/onboard/machine/runtime-effectful-preflight.ts"),
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
@@ -245,8 +274,8 @@ preflight.assessHost = () => ({
   nvidiaContainerToolkitInstalled: false,
   notes: [],
 });
-const bridgeDnsPreflight = require(${bridgeDnsPreflightPath});
-bridgeDnsPreflight.assertDockerBridgeAndContainerDnsHealthy = () => {};
+const runtimeEffectfulPreflight = require(${runtimeEffectfulPreflightPath});
+runtimeEffectfulPreflight.bindConfiguredRuntimeProviderHealth = () => () => {};
 const preflightGatewayAuthority = require(${preflightGatewayAuthorityPath});
 const createPreflightGatewayAuthority =
   preflightGatewayAuthority.createOnboardPreflightGatewayAuthority;
@@ -277,6 +306,7 @@ const prompts = [];
 const registryUpdates = [];
 const done = new Error("INFERENCE_STEP_DONE");
 let inferenceSessionSnapshot = null;
+const hermesApiKeyProviderMetadata = ${JSON.stringify(HERMES_API_KEY_PROVIDER_METADATA)};
 
 delete process.env.NEMOCLAW_NON_INTERACTIVE;
 delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -300,6 +330,10 @@ try {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  const providerGet = "provider get -g nemoclaw hermes-provider";
+  if (normalized === providerGet || normalized.endsWith(" " + providerGet)) {
+    return { status: 0, stdout: hermesApiKeyProviderMetadata, stderr: "" };
+  }
   return { status: 0, stdout: "", stderr: "" };
 };
 runner.runCapture = (command) => {
@@ -512,7 +546,7 @@ const { onboard } = require(${onboardPath});
         const harness = createDirectSetupInferenceHarness({
           runOpenshell: (args) =>
             args.join(" ") === "provider get -g nemoclaw hermes-provider"
-              ? { status: 0, stdout: "Provider: hermes-provider", stderr: "" }
+              ? { status: 0, stdout: HERMES_OAUTH_PROVIDER_METADATA, stderr: "" }
               : undefined,
           overrides: { isNonInteractive: () => true },
         });
@@ -903,7 +937,7 @@ console.log(JSON.stringify({
       const harness = createDirectSetupInferenceHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: "", stderr: "" }
+            ? { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" }
             : undefined,
       });
 
@@ -930,7 +964,10 @@ console.log(JSON.stringify({
         {
           name: "provider-get",
           matches: (command) => command.startsWith("provider get"),
-          results: [{ status: 0, stdout: "", stderr: "" }],
+          results: [
+            { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" },
+            { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" },
+          ],
         },
         {
           name: "inference-set",
@@ -975,7 +1012,7 @@ console.log(JSON.stringify({
         {
           name: "provider-get",
           matches: (command) => command.startsWith("provider get"),
-          results: [{ status: 0, stdout: "", stderr: "" }],
+          results: [{ status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" }],
         },
         {
           name: "inference-set",
@@ -1011,13 +1048,31 @@ console.log(JSON.stringify({
 });
 
 describe("re-onboard Ollama GPU release (#9110)", () => {
-  const priorEntry = { name: "test-box", provider: "ollama-local", model: "llama3" };
+  type ReleaseEntry = {
+    name: string;
+    provider: string;
+    model: string;
+    endpointUrl?: string | null;
+  };
+  const priorEntry: ReleaseEntry = {
+    name: "test-box",
+    provider: "ollama-local",
+    model: "llama3",
+  };
 
   function releaseHarness(options: {
-    getSandbox: () => typeof priorEntry | null;
-    sandboxes: (typeof priorEntry)[];
-    unloadOllamaModels: (onlyModels: readonly string[]) => void;
+    getSandbox: () => ReleaseEntry | null;
+    sandboxes: ReleaseEntry[] | (() => ReleaseEntry[]);
+    unloadOllamaModels: NonNullable<SetupInferenceDeps["unloadOllamaModels"]>;
     applyLocalInferenceRoute?: () => Promise<boolean>;
+    loadPersistedOllamaHost?: () => "127.0.0.1" | "host.docker.internal" | null;
+    clearPersistedOllamaHostIfUnused?: SetupInferenceDeps["localInference"]["clearPersistedOllamaHostIfUnused"];
+    loadPendingOllamaModelCleanup?: (sandboxName: string) => readonly string[];
+    persistPendingOllamaModelCleanup?: (sandboxName: string, models: readonly string[]) => void;
+    clearPendingOllamaModelCleanup?: (
+      sandboxName: string,
+      releasedModels?: readonly string[],
+    ) => void;
   }) {
     return createDirectSetupInferenceHarness({
       runOpenshell: (args) =>
@@ -1032,8 +1087,23 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
         persistAndProbeOllamaProxy: async () => {},
         applyLocalInferenceRoute: options.applyLocalInferenceRoute,
         getSandbox: options.getSandbox,
-        listSandboxes: () => ({ sandboxes: options.sandboxes, defaultSandbox: null }),
+        listSandboxes: () => ({
+          sandboxes:
+            typeof options.sandboxes === "function" ? options.sandboxes() : options.sandboxes,
+          defaultSandbox: null,
+        }),
         unloadOllamaModels: options.unloadOllamaModels,
+        localInference: {
+          validateOllamaModelWithToolsOverride: () => ({ ok: true }),
+          validateSandboxFacingOllamaModel: () => ({ ok: true }),
+          runOllamaWarmup: () => {},
+          persistResolvedOllamaHost: () => () => {},
+          loadPersistedOllamaHost: options.loadPersistedOllamaHost,
+          clearPersistedOllamaHostIfUnused: options.clearPersistedOllamaHostIfUnused,
+          loadPendingOllamaModelCleanup: options.loadPendingOllamaModelCleanup ?? (() => []),
+          persistPendingOllamaModelCleanup: options.persistPendingOllamaModelCleanup ?? (() => {}),
+          clearPendingOllamaModelCleanup: options.clearPendingOllamaModelCleanup ?? (() => {}),
+        },
       },
     });
   }
@@ -1054,6 +1124,33 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
   });
 
+  it("retires the final Windows-host Ollama route receipt after switching providers", async () => {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-switch-ollama-"));
+    const finalRoutes = [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }];
+    const clearReceipt = vi.fn((routes: readonly ReleaseEntry[]) =>
+      clearPersistedOllamaHostIfUnused(routes, stateRoot),
+    );
+    try {
+      persistResolvedOllamaHost("host.docker.internal", stateRoot);
+      const harness = releaseHarness({
+        getSandbox: () => priorEntry,
+        sandboxes: finalRoutes,
+        unloadOllamaModels: vi.fn(),
+        loadPersistedOllamaHost: () => loadPersistedOllamaHost(stateRoot),
+        clearPersistedOllamaHostIfUnused: clearReceipt,
+      });
+
+      await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual(
+        { ok: true },
+      );
+
+      expect(clearReceipt).toHaveBeenCalledWith(finalRoutes);
+      expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the successful route when the superseded model unload fails (#9110)", async () => {
     const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>(() => {
       throw new Error("synthetic unload failure");
@@ -1067,11 +1164,129 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     let result: Awaited<ReturnType<SetupInference>>;
     try {
       result = await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("synthetic unload failure"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("retry only the recorded models"));
     } finally {
       warn.mockRestore();
     }
     expect(result).toEqual({ ok: true });
     expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
+  });
+
+  it("reports structured cleanup failure after a successful provider switch", async () => {
+    const unloadOllamaModels = vi.fn(() => ({
+      ok: false as const,
+      outcome: "unload-request-failed" as const,
+      endpoint: "http://host.docker.internal:11434",
+      selectedModels: ["llama3"],
+      discoveries: [],
+      requests: [],
+      message: "connection refused",
+    }));
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [priorEntry],
+      unloadOllamaModels,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let result: Awaited<ReturnType<SetupInference>>;
+    try {
+      result = await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("http://host.docker.internal:11434"),
+      );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("unload-request-failed"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Allow the model unload request"));
+      const warning = warn.mock.calls.map(([message]) => String(message)).join("\n");
+      expect(warning).toContain("Re-run onboarding or destroy 'test-box'");
+      expect(warning).not.toContain("stop, or destroy");
+    } finally {
+      warn.mockRestore();
+    }
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("persists a failed superseded cleanup and retries only that model on re-onboard", async () => {
+    let current = priorEntry;
+    let pending: readonly string[] = [];
+    const persistPendingOllamaModelCleanup = vi.fn((_sandboxName, models: readonly string[]) => {
+      pending = models;
+    });
+    const clearPendingOllamaModelCleanup = vi.fn(
+      (_sandboxName, releasedModels?: readonly string[]) => {
+        pending = releasedModels ? pending.filter((model) => !releasedModels.includes(model)) : [];
+      },
+    );
+    const unloadOllamaModels = vi
+      .fn<NonNullable<SetupInferenceDeps["unloadOllamaModels"]>>()
+      .mockReturnValueOnce({
+        ok: false,
+        outcome: "unload-request-failed",
+        endpoint: "http://host.docker.internal:11434",
+        selectedModels: ["llama3"],
+        discoveries: [],
+        requests: [],
+        message: "connection refused",
+      })
+      .mockReturnValueOnce(undefined);
+    const harness = releaseHarness({
+      getSandbox: () => current,
+      sandboxes: () => [current],
+      unloadOllamaModels,
+      loadPendingOllamaModelCleanup: () => pending,
+      persistPendingOllamaModelCleanup,
+      clearPendingOllamaModelCleanup,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      expect(pending).toEqual(["llama3"]);
+      current = { ...priorEntry, model: "qwen3.5:9b" };
+
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(unloadOllamaModels).toHaveBeenNthCalledWith(1, ["llama3"]);
+    expect(unloadOllamaModels).toHaveBeenNthCalledWith(2, ["llama3"]);
+    expect(clearPendingOllamaModelCleanup).toHaveBeenCalledWith("test-box", ["llama3"]);
+    expect(pending).toEqual([]);
+  });
+
+  it("names manual cleanup when a superseded-model retry record cannot be written", async () => {
+    const persistPendingOllamaModelCleanup = vi.fn(() => {
+      throw new Error("state directory is unavailable");
+    });
+    const unloadOllamaModels = vi.fn(() => ({
+      ok: false as const,
+      outcome: "unload-request-failed" as const,
+      endpoint: "http://host.docker.internal:11434",
+      selectedModels: ["llama3"],
+      discoveries: [],
+      requests: [],
+      message: "connection refused",
+    }));
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [priorEntry],
+      unloadOllamaModels,
+      persistPendingOllamaModelCleanup,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      const warning = warn.mock.calls.map(([message]) => String(message)).join("\n");
+      expect(warning).toContain("Manually release only llama3");
+      expect(warning).toContain("http://host.docker.internal:11434");
+      expect(warning).not.toContain("Re-run onboarding, stop, or destroy");
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(persistPendingOllamaModelCleanup.mock.invocationCallOrder[0]).toBeLessThan(
+      unloadOllamaModels.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 
   it("keeps the model when the re-onboard selects the same one (#9110)", async () => {
@@ -1106,6 +1321,40 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
       warn.mockRestore();
     }
     expect(unloadOllamaModels).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Windows-host route and shared model for a compatible local Ollama peer", async () => {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-switch-peer-"));
+    const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
+    const clearReceipt = vi.fn((routes: readonly ReleaseEntry[]) =>
+      clearPersistedOllamaHostIfUnused(routes, stateRoot),
+    );
+    const peer: ReleaseEntry = {
+      name: "peer",
+      provider: "compatible-endpoint",
+      model: "llama3:latest",
+      endpointUrl: "http://host.docker.internal:11434/v1",
+    };
+    try {
+      persistResolvedOllamaHost("host.docker.internal", stateRoot);
+      const harness = releaseHarness({
+        getSandbox: () => priorEntry,
+        sandboxes: [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }, peer],
+        unloadOllamaModels,
+        loadPersistedOllamaHost: () => loadPersistedOllamaHost(stateRoot),
+        clearPersistedOllamaHostIfUnused: clearReceipt,
+      });
+
+      await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual(
+        { ok: true },
+      );
+
+      expect(unloadOllamaModels).not.toHaveBeenCalled();
+      expect(clearReceipt).not.toHaveBeenCalled();
+      expect(loadPersistedOllamaHost(stateRoot)).toBe("host.docker.internal");
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
   });
 
   it("reads the prior route and releases the model inside the sandbox mutation lock (#9110)", async () => {

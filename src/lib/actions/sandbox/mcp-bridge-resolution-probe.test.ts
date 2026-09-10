@@ -46,6 +46,11 @@ const readyProbe = {
   providerAttached: true,
   providerCredentialReady: true,
 } as const;
+const runtimeSelection = {
+  gatewayName: "nemoclaw-8091",
+  localTlsDir: "/recorded/gateway/tls",
+  workspace: "default",
+} as const;
 
 function probeStdout(
   parts: {
@@ -290,43 +295,57 @@ describe("MCP credential-resolution probe execution gates", () => {
     [{ ...readyProbe, providerCredentialReady: false }, "does not match"],
   ] as const)(
     "fails closed before sandbox traffic unless policy and provider readiness are all true [case %#] (#6379)",
-    (readiness, expectedDetail) => {
-      const probe = probeCredentialResolution("alpha", baseEntry, "mcporter", readiness);
+    async (readiness, expectedDetail) => {
+      const probe = await probeCredentialResolution(
+        "alpha",
+        baseEntry,
+        "mcporter",
+        readiness,
+        runtimeSelection,
+      );
       expect(probe).toMatchObject({ ok: null });
       expect(probe.detail).toContain(expectedDetail);
       expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
     },
   );
 
-  it("skips without contacting the sandbox when the adapter is not declared (#6379)", () => {
-    const probe = probeCredentialResolution("alpha", baseEntry, undefined, readyProbe);
+  it("skips without contacting the sandbox when the adapter is not declared (#6379)", async () => {
+    const probe = await probeCredentialResolution(
+      "alpha",
+      baseEntry,
+      undefined,
+      readyProbe,
+      runtimeSelection,
+    );
     expect(probe).toEqual({ ok: null, detail: "MCP adapter is not declared" });
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
 
-  it("skips without contacting the sandbox while an add transaction is incomplete (#6379)", () => {
-    const probe = probeCredentialResolution(
+  it("skips without contacting the sandbox while an add transaction is incomplete (#6379)", async () => {
+    const probe = await probeCredentialResolution(
       "alpha",
       { ...baseEntry, addState: "preflighted" },
       "mcporter",
       readyProbe,
+      runtimeSelection,
     );
     expect(probe).toEqual({ ok: null, detail: "add transaction incomplete" });
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
 
-  it("skips without contacting the sandbox when the stored URL is unsafe (#6379)", () => {
-    const probe = probeCredentialResolution(
+  it("skips without contacting the sandbox when the stored URL is unsafe (#6379)", async () => {
+    const probe = await probeCredentialResolution(
       "alpha",
       { ...baseEntry, url: "http://api.githubcopilot.com/mcp/" },
       "mcporter",
       readyProbe,
+      runtimeSelection,
     );
     expect(probe).toEqual({ ok: null, detail: "no credential binding or safe endpoint to probe" });
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
 
-  it("executes the probe in the sandbox and classifies the outcome (#6379)", () => {
+  it("executes the probe in the sandbox and classifies the outcome (#6379)", async () => {
     mocks.executeSandboxCommand.mockImplementation((_sandboxName: string, command: string) => {
       const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
       return {
@@ -341,16 +360,23 @@ describe("MCP credential-resolution probe execution gates", () => {
         stderr: "",
       };
     });
-    const probe = probeCredentialResolution("alpha", baseEntry, "mcporter", readyProbe);
+    const probe = await probeCredentialResolution(
+      "alpha",
+      baseEntry,
+      "mcporter",
+      readyProbe,
+      runtimeSelection,
+    );
     expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
     expect(mocks.executeSandboxCommand).toHaveBeenCalledTimes(1);
     const [, command] = mocks.executeSandboxCommand.mock.calls[0];
     expect(command).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
     expect(command).not.toContain("authorization: Bearer openshell:resolve:env:GITHUB_TOKEN");
     expect(command).toContain(MCP_PROBE_CONTROL_BEARER);
+    expect(mocks.executeSandboxCommand.mock.calls[0]?.[2]).toEqual({ runtimeSelection });
   });
 
-  it("reuses a status observation instead of starting a second revision check (#10079)", () => {
+  it("reuses a status observation instead of starting a second revision check (#10079)", async () => {
     mocks.executeSandboxCommand.mockImplementation((_sandboxName: string, command: string) => {
       const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
       return {
@@ -366,7 +392,14 @@ describe("MCP credential-resolution probe execution gates", () => {
       };
     });
 
-    const probe = probeCredentialResolution("alpha", baseEntry, "mcporter", readyProbe, "v12");
+    const probe = await probeCredentialResolution(
+      "alpha",
+      baseEntry,
+      "mcporter",
+      readyProbe,
+      runtimeSelection,
+      "v12",
+    );
 
     expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
     expect(mocks.observeMcpCredentialRevision).not.toHaveBeenCalled();
@@ -375,10 +408,16 @@ describe("MCP credential-resolution probe execution gates", () => {
     );
   });
 
-  it("does not probe with an identityless canonical placeholder (#10079)", () => {
+  it("does not probe with an identityless canonical placeholder (#10079)", async () => {
     mocks.observeMcpCredentialRevision.mockReturnValue("canonical");
 
-    const probe = probeCredentialResolution("alpha", baseEntry, "mcporter", readyProbe);
+    const probe = await probeCredentialResolution(
+      "alpha",
+      baseEntry,
+      "mcporter",
+      readyProbe,
+      runtimeSelection,
+    );
 
     expect(probe).toEqual({
       ok: null,

@@ -199,6 +199,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxId: "fixture-managed-sandbox",
   lifecycleState: recreate ? "created" : "absent",
 });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 createdSandbox.installRuntimeObservation();
 
 const coreVersion = require(${source("src/lib/core/version.ts")});
@@ -427,11 +428,14 @@ runner.run = (command, options = {}) => {
   const argv = Array.isArray(command) ? command.map(String) : [];
   const normalized = normalize(command);
   runnerCommands.push(normalized);
+  const providerResult = fixtureMocks.mockNvidiaProviderGetRun(command, "nemoclaw");
+  if (providerResult !== null) return providerResult;
   if (
     normalized.includes("sandbox delete") &&
     createdSandbox.state.lifecycleState === "created"
   ) {
     createdSandbox.delete();
+    forwardService.release();
     existingEntryAvailable = false;
   }
   if (/(?:^|\s)docker(?:\s+buildx)?\s+build(?:\s|$)/u.test(normalized)) {
@@ -458,6 +462,10 @@ runner.run = (command, options = {}) => {
   }
   return createdSandbox.run(command) ?? { status: 0, stdout: "", stderr: "" };
 };
+const doctorHostCommand = require(${source("src/lib/actions/sandbox/doctor-host-command.ts")});
+replace(doctorHostCommand, "captureHostCommand", (command, args) =>
+  runner.run([command, ...args]),
+);
 runner.runFile = (file, args = []) => runner.run([file, ...args]);
 runner.runCapture = (command) => {
   const normalized = normalize(command);
@@ -573,10 +581,11 @@ credentials.prompt = async () => "";
 childProcess.spawn = (command, args = [], options = {}) => {
   const argv = Array.isArray(args) ? args.map(String) : [];
   const normalized = normalize([command, ...argv]);
+  const forwardSpawn = forwardService.recordSpawn([command, argv, options]);
   if (/(?:^|\s)docker(?:\s+buildx)?\s+build(?:\s|$)/u.test(normalized)) {
     return poison("docker build");
   }
-  if (normalized.includes("sandbox create")) {
+  if (!forwardSpawn && normalized.includes("sandbox create")) {
     if (createdSandbox.state.lifecycleState === "deleted") {
       createdSandbox.recreate([command, ...argv]);
     } else {
@@ -596,6 +605,36 @@ childProcess.spawn = (command, args = [], options = {}) => {
   });
   return child;
 };
+
+const sandboxCommandCli = require(
+  ${source("src/lib/adapters/openshell/sandbox-command-cli.ts")},
+);
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+replace(sandboxCommandCli, "createCliOpenShellSandboxCommandExecutor", (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const command = [
+        "openshell",
+        "sandbox",
+        "exec",
+        "--name",
+        request.sandboxName,
+        ...gatewayArgs,
+        "--",
+        ...request.command,
+      ];
+      const stdout = runner.runCapture(command);
+      return {
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: String(stdout || ""),
+        stderr: "",
+      };
+    },
+  };
+});
 
 const { loadAgent } = require(${source("src/lib/agent/defs.ts")});
 const { createSandbox } = require(${source("src/lib/onboard.ts")});
@@ -834,7 +873,7 @@ function assertManagedLaunch(
     );
     expect(sandboxExecCommands).toHaveLength(1);
     expect(sandboxExecCommands[0]).toContain(
-      `sandbox exec --name ${bootstrapRequest?.sandboxName} --gateway nemoclaw -- /usr/local/bin/dcode identity`,
+      `sandbox exec --name ${bootstrapRequest?.sandboxName} -g nemoclaw -- /usr/local/bin/dcode identity`,
     );
   } else {
     expect(
@@ -845,7 +884,7 @@ function assertManagedLaunch(
     expect(
       result.payload.runnerCommands.some((command) =>
         command.includes(
-          `sandbox exec -g nemoclaw --name ${bootstrapRequest?.sandboxName} -- true`,
+          `sandbox exec --name ${bootstrapRequest?.sandboxName} -g nemoclaw -- true`,
         ),
       ),
     ).toBe(true);
