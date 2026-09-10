@@ -1146,39 +1146,6 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.journal?.phase).toBe("owner-cleanup-required");
   });
 
-  it("fences rollback when image-owned shared state is already committed", async () => {
-    const fake = fixture({ sharedState: "committed" });
-    const { handle, request: rootRequest, snapshot } = authority();
-    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
-    const prepared = await adapter.prepareBootstrapReplacement({
-      handle,
-      snapshot,
-      request: rootRequest,
-      replacementOptions: { values: {} },
-    });
-    const durable = durablePreparation(handle, snapshot, prepared);
-    const replacement = await adapter.activateBootstrapReplacement({
-      handle,
-      snapshot,
-      prepared,
-      durablePreparation: durable,
-    });
-    const eventCount = fake.events.length;
-    await expect(
-      adapter.finalizeBootstrap({
-        outcome: "rollback",
-        handle,
-        snapshot,
-        prepared,
-        durablePreparation: durable,
-        replacement,
-        completion: null,
-      }),
-    ).rejects.toMatchObject({ name: "ManagedBootstrapDurableCommitCleanupPendingError" });
-    expect(fake.journal?.phase).toBe("shared-state-committed");
-    expect(fake.events.slice(eventCount)).toEqual(["journal:shared-state-committed"]);
-  });
-
   it("rejects cutover before the exact durable authority receipt", async () => {
     const fake = fixture();
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);

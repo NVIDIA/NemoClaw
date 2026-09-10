@@ -66,9 +66,19 @@ export function classifyMcpBridgeRuntimeCompatibility(
   assertRuntimeVersion: AssertRuntimeVersion = assertMcpCredentialBoundaryRuntimeVersion,
 ): McpBridgeRuntimeCompatibilityResult {
   try {
-    const actualVersion = assertRuntimeVersion() ?? MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION;
+    const assertedVersion = assertRuntimeVersion();
+    if (
+      assertedVersion !== undefined &&
+      assertedVersion !== MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION
+    ) {
+      return {
+        actualVersion: assertedVersion,
+        expectedVersion: MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION,
+        mode: "expected-version-mismatch",
+      };
+    }
     return {
-      actualVersion,
+      actualVersion: MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION,
       expectedVersion: MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION,
       mode: "full-lifecycle",
     };

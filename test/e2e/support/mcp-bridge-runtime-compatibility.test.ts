@@ -60,6 +60,17 @@ describe("MCP bridge dev runtime compatibility", () => {
     });
   });
 
+  it.each(["", "0.0.117"])(
+    "does not accept an injected unvalidated runtime version %j",
+    (actualVersion) => {
+      expect(classifyMcpBridgeRuntimeCompatibility(() => actualVersion)).toEqual({
+        actualVersion,
+        expectedVersion: MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION,
+        mode: "expected-version-mismatch",
+      });
+    },
+  );
+
   it("labels aligned evidence as preflight-only until the lifecycle runs (#6426)", () => {
     const result = classifyMcpBridgeRuntimeCompatibility(
       assertRuntimeVersion(MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION),

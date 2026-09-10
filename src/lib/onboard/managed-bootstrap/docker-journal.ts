@@ -191,7 +191,6 @@ const ALLOWED_TRANSITIONS = new Set([
   "staged->owner-cleanup-required",
   "cutover->rollback-authorized",
   "cutover->bootstrap-complete",
-  "cutover->shared-state-committed",
   "bootstrap-complete->rollback-authorized",
   "bootstrap-complete->shared-state-committed",
   "rollback-authorized->owner-cleanup-required",

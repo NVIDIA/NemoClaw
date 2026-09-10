@@ -514,6 +514,44 @@ describe("Hermes portable lifecycle", () => {
     );
   });
 
+  it("arms the stop assistant before rolling back a started OpenShell Stopped sandbox", () => {
+    const receipt = activeReceipt();
+    publishSuccessor();
+    const fixture = lifecycleDeps(receipt, false, {
+      sandboxPhase: (running) => (running ? "Ready" : "Stopped"),
+    });
+    const defaultCapture = fixture.captureOpenShell.getMockImplementation()!;
+    fixture.captureOpenShell.mockImplementation((args: readonly string[]) =>
+      args.includes(hermesPortableLifecycleInternals.healthWaitProgram)
+        ? { status: 0, stdout: "unavailable\n", stderr: "" }
+        : defaultCapture(args),
+    );
+    let now = 0;
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () =>
+          recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
+            ...fixture.deps,
+            now: () => now,
+            sleep: (milliseconds) => {
+              now += milliseconds;
+            },
+          }),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("managed startup did not pass authenticated health");
+
+    const calls = fixture.captureOpenShell.mock.calls.map(([args]) => args);
+    const assist = calls.findIndex((args) =>
+      args.includes(hermesPortableLifecycleInternals.openShellV0116StopAssistProgram),
+    );
+    const stop = calls.findIndex((args) => args[0] === "sandbox" && args[1] === "stop");
+    expect(assist).toBeGreaterThanOrEqual(0);
+    expect(stop).toBeGreaterThan(assist);
+  });
+
   it("rejects live sandbox rebind before the name-addressed startup launch (#10423)", () => {
     const receipt = activeReceipt();
     publishSuccessor();

@@ -238,6 +238,9 @@ describe("Docker managed bootstrap journal", () => {
     );
 
     expect(store.transition(IDENTITY, "staged", "cutover").phase).toBe("cutover");
+    expect(() => store.transition(IDENTITY, "cutover", "shared-state-committed")).toThrow(
+      "unsupported",
+    );
     expect(store.recordCompletion(IDENTITY, finalization.commitReceipt).commitReceipt).toEqual(
       finalization.commitReceipt,
     );
@@ -303,7 +306,7 @@ describe("Docker managed bootstrap journal", () => {
     fs.unlinkSync(`${file}.decision`);
     expect(store.load(IDENTITY)?.phase).toBe("rollback-authorized");
     expect(() => store.transition(IDENTITY, "cutover", "shared-state-committed")).toThrow(
-      "expected phase cutover",
+      "unsupported",
     );
     store.remove(IDENTITY, ["rollback-authorized"]);
   });

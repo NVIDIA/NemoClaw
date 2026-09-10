@@ -16,6 +16,7 @@ import {
 } from "./docker-journal";
 import {
   authority,
+  completion,
   type DockerFixtureOptions,
   durablePreparation,
   fixture as createFixture,
@@ -86,6 +87,57 @@ function dockerMutationEvents(events: readonly string[]): readonly string[] {
 }
 
 describe("Docker managed bootstrap restart recovery", () => {
+  it("recovers a completed cutover through the bootstrap-complete fence", async () => {
+    const fake = fixture({ sharedState: "committed" });
+    const transaction = await prepareTransaction(fake);
+    const replacement = await transaction.adapter.activateBootstrapReplacement({
+      handle: transaction.handle,
+      snapshot: transaction.snapshot,
+      prepared: transaction.prepared,
+      durablePreparation: transaction.durable,
+    });
+    fake.deps.journalStore!.recordCompletion(
+      transaction.handle.bootstrapIdentity,
+      completion(replacement),
+    );
+    const eventCount = fake.events.length;
+
+    const recovery = await createDockerManagedBootstrapAdapter(
+      fake.deps,
+    ).recoverUnfinishedTransactions();
+
+    expect(recovery.failures).toEqual([]);
+    expect(recovery.receipts).toEqual([
+      expect.objectContaining({ outcome: "committed", sourcePhase: "cutover" }),
+    ]);
+    expect(fake.events.slice(eventCount, eventCount + 2)).toEqual([
+      "journal:bootstrap-complete",
+      "journal:shared-state-committed",
+    ]);
+  });
+
+  it("rejects committed shared state at cutover without a completion receipt", async () => {
+    const fake = fixture({ sharedState: "committed" });
+    const transaction = await prepareTransaction(fake);
+    await transaction.adapter.activateBootstrapReplacement({
+      handle: transaction.handle,
+      snapshot: transaction.snapshot,
+      prepared: transaction.prepared,
+      durablePreparation: transaction.durable,
+    });
+
+    const recovery = await createDockerManagedBootstrapAdapter(
+      fake.deps,
+    ).recoverUnfinishedTransactions();
+
+    expect(recovery.receipts).toEqual([]);
+    expect(recovery.failures).toEqual([
+      expect.objectContaining({ code: "commit-state-indeterminate", sourcePhase: "cutover" }),
+    ]);
+    expect(fake.journal?.phase).toBe("cutover");
+    expect(fake.events).not.toContain("journal:shared-state-committed");
+  });
+
   it("scopes an exact legacy journal to its durable sandbox without inventing agent authority", async () => {
     const fake = fixture();
     const delegate = fake.deps.journalStore as DockerManagedBootstrapJournalStore;

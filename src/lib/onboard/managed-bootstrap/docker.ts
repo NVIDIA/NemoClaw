@@ -2826,6 +2826,35 @@ export function createDockerManagedBootstrapAdapter(
             detail: "shared state committed after durable rollback authorization",
           });
         }
+        if (journal.phase === "cutover") {
+          if (journal.commitReceipt === null) {
+            throw new ManagedBootstrapCommitStateIndeterminateError({
+              bootstrapIdentity: journal.bootstrapIdentity,
+              runtimeId: journal.replacementRuntimeId,
+              detail: "shared state committed before a durable bootstrap completion receipt",
+            });
+          }
+          const replacementSpec = normalizeDockerManagedBootstrapLaunchSpec(replacement);
+          if (
+            dockerContainerName(replacement) !== journal.originalName ||
+            !isStableRunning(replacement) ||
+            replacementSpec.hash !== journal.replacementSpecHash ||
+            dockerContainerName(original) !== journal.backupName ||
+            !isExplicitlyStopped(original)
+          ) {
+            throw new ManagedBootstrapCommitStateIndeterminateError({
+              bootstrapIdentity: journal.bootstrapIdentity,
+              runtimeId: journal.replacementRuntimeId,
+              detail: "cutover completion receipt no longer identifies the exact completed runtime",
+            });
+          }
+          const completed = transitionDockerBootstrapJournalDurably(
+            journal,
+            "bootstrap-complete",
+            deps,
+          );
+          return finishRecoveredBootstrapComplete(completed, sourcePhase);
+        }
         activeJournal = transitionDockerBootstrapJournalDurably(
           journal,
           "shared-state-committed",
@@ -3123,8 +3152,31 @@ export function createDockerManagedBootstrapAdapter(
           deps,
         );
         if (sharedStatus === "committed") {
+          if (journal.phase === "cutover") {
+            if (
+              journal.commitReceipt === null ||
+              observedReplacement === null ||
+              !isStableRunning(observedReplacement) ||
+              dockerContainerName(observedReplacement) !== journal.originalName ||
+              normalizeDockerManagedBootstrapLaunchSpec(observedReplacement).hash !==
+                journal.replacementSpecHash ||
+              !originalAtBackupRecoverable
+            ) {
+              throw new ManagedBootstrapCommitStateIndeterminateError({
+                bootstrapIdentity: journal.bootstrapIdentity,
+                runtimeId: journal.replacementRuntimeId,
+                detail:
+                  "committed shared state lacks the exact durable bootstrap completion authority",
+              });
+            }
+            activeJournal = transitionDockerBootstrapJournalDurably(
+              journal,
+              "bootstrap-complete",
+              deps,
+            );
+          }
           const committedJournal = transitionDockerBootstrapJournalDurably(
-            journal,
+            activeJournal,
             "shared-state-committed",
             deps,
           );

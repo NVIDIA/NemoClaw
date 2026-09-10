@@ -670,6 +670,9 @@ export function buildDockerGpuCloneRunArgs(
       args.push("--env", `${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=${intendedMainProcessSpec}`);
       continue;
     }
+    if (key === OPENSHELL_SANDBOX_COMMAND_ENV && inspectedMainProcessSpec) {
+      continue;
+    }
     if (key === OPENSHELL_SANDBOX_COMMAND_ENV && sandboxCommand) {
       sawSandboxCommand = true;
       args.push("--env", `${OPENSHELL_SANDBOX_COMMAND_ENV}=${sandboxCommand}`);
