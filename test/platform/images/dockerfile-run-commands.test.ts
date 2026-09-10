@@ -71,7 +71,7 @@ describe("Dockerfile RUN command discovery", () => {
   it("ignores command text in comments, strings, and non-RUN instructions", () => {
     const source = [
       `# ${command}`,
-      `LABEL remediation=\"${command}\"`,
+      `LABEL remediation="${command}"`,
       `RUN printf '%s\\n' '${command}'`,
       `RUN printf '%s\\n' complete # ${command}`,
       "",
