@@ -214,6 +214,9 @@ Use these details when your first-run path needs more control.
     Run `openshell forward list` to read the host bind for each of that sandbox's forwards.
     Choose how the remote client reaches the host forwards.
     If a reverse proxy or tunnel already reaches the loopback dashboard forward, set `CHAT_UI_URL` to its externally reachable HTTPS origin before onboarding.
+    Do not include credentials in the URL.
+    Hostname validation does not authenticate clients of your reverse proxy or tunnel.
+    Protect that ingress before exposing the dashboard.
 
     ```bash
     export NEMOCLAW_AGENT=hermes
