@@ -2,8 +2,165 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { cp, lstat, readdir } from "node:fs/promises";
+import type { Writable } from "node:stream";
 import type { NativeFailurePresentation } from "./native-session-diagnostics.mts";
+
+export type NativeProgressStage =
+  | "inference"
+  | "runtime"
+  | "gateway"
+  | "sandbox"
+  | "bootstrap"
+  | "dashboard"
+  | "browser"
+  | "running"
+  | "cleanup";
+export type NativeProgressCounts = {
+  completed: number;
+  total: number;
+  unit: "bytes" | "files" | "items";
+};
+const PROGRESS_STAGES: readonly NativeProgressStage[] = [
+  "inference",
+  "runtime",
+  "gateway",
+  "sandbox",
+  "bootstrap",
+  "dashboard",
+  "browser",
+  "running",
+  "cleanup",
+];
+
+/** Send only bounded progress data, retaining at most one coalesced update. */
+export function createNativeProgressWriter(stream: Writable) {
+  let pending:
+    | ({ kind: "progress"; stage: NativeProgressStage } & Partial<NativeProgressCounts>)
+    | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let ended = false;
+  let lastSent = 0;
+  let lastStage: NativeProgressStage | undefined;
+  const flush = () => {
+    clearTimeout(timer);
+    timer = undefined;
+    if (ended || !pending || stream.destroyed || stream.writableEnded || stream.writableNeedDrain)
+      return;
+    const record = pending;
+    pending = undefined;
+    lastSent = performance.now();
+    stream.write(JSON.stringify(record) + "\n");
+  };
+  stream.on("drain", flush);
+  return {
+    progress(stage: NativeProgressStage, counts?: NativeProgressCounts) {
+      if (ended || !PROGRESS_STAGES.includes(stage)) return;
+      const valid =
+        counts &&
+        Number.isSafeInteger(counts.completed) &&
+        Number.isSafeInteger(counts.total) &&
+        counts.completed >= 0 &&
+        counts.total > 0 &&
+        counts.completed <= counts.total &&
+        ["bytes", "files", "items"].includes(counts.unit);
+      pending = {
+        kind: "progress",
+        stage,
+        ...(valid
+          ? {
+              completed: counts.completed,
+              total: counts.total,
+              unit: counts.unit,
+            }
+          : {}),
+      };
+      const changed = stage !== lastStage;
+      lastStage = stage;
+      if (changed) flush();
+      else if (timer === undefined)
+        timer = setTimeout(flush, Math.max(0, 250 - (performance.now() - lastSent)));
+    },
+    clear() {
+      pending = undefined;
+      clearTimeout(timer);
+      timer = undefined;
+    },
+    close() {
+      ended = true;
+      pending = undefined;
+      clearTimeout(timer);
+      timer = undefined;
+      stream.off("drain", flush);
+    },
+  };
+}
+
+type CopyTarget = { source: string; destination: string };
+type CopyOptions = {
+  signal?: AbortSignal;
+  onProgress?: (counts?: NativeProgressCounts) => void;
+  onTargetStart?: (index: number) => void;
+};
+
+/** Stage installed files without blocking Stop; the caller owns partial-copy cleanup. */
+export async function copyNativeRuntime(targets: readonly CopyTarget[], options: CopyOptions = {}) {
+  let total = 0;
+  let completed = 0;
+  options.signal?.throwIfAborted();
+  options.onProgress?.();
+
+  const visit = async (target: CopyTarget, copying: boolean): Promise<void> => {
+    options.signal?.throwIfAborted();
+    const entry = await lstat(target.source);
+    options.signal?.throwIfAborted();
+    if (entry.isDirectory()) {
+      if (copying) {
+        // Let cp retain its source/destination identity, alias, directory-mode
+        // and symlink checks. Copy just this directory; children are awaited
+        // individually so progress means a completed operation, not a queue.
+        await cp(target.source, target.destination, {
+          recursive: true,
+          filter: (source) => source === target.source,
+        });
+      }
+      for (const name of await readdir(target.source)) {
+        await visit(
+          { source: join(target.source, name), destination: join(target.destination, name) },
+          copying,
+        );
+      }
+      return;
+    }
+    if (!copying) {
+      total++;
+      if (!Number.isSafeInteger(total))
+        throw new Error("The native runtime file count is invalid.");
+      return;
+    }
+    await cp(target.source, target.destination);
+    options.signal?.throwIfAborted();
+    completed++;
+    if (completed > total) throw new Error("The installed native runtime changed during staging.");
+    options.onProgress?.({ completed, total, unit: "files" });
+  };
+
+  const normalized = targets.map(({ source, destination }) => ({
+    source: resolve(source),
+    destination: resolve(destination),
+  }));
+  for (const target of normalized) await visit(target, false);
+  if (total > 0) options.onProgress?.({ completed, total, unit: "files" });
+  for (const [index, target] of normalized.entries()) {
+    options.signal?.throwIfAborted();
+    options.onTargetStart?.(index);
+    await visit(target, true);
+  }
+  options.signal?.throwIfAborted();
+  if (completed !== total) throw new Error("The installed native runtime changed during staging.");
+  return { completed, total };
+}
 
 function validateAddress(url: string) {
   const address = new URL(url);
@@ -34,13 +191,16 @@ export async function openNativeWebSession(
   );
   child.stderr.resume();
   child.stdin.on("error", () => {});
+  const progressWriter = createNativeProgressWriter(child.stdin);
   let ended = false;
   let completing = false;
   let stopRequested = false;
+  let capabilitiesSent = false;
   const cancellation = new AbortController();
   const closed = new Promise<number>((resolve) =>
     child.once("close", (code) => {
       ended = true;
+      progressWriter.close();
       resolve(code ?? 1);
     }),
   );
@@ -128,16 +288,28 @@ export async function openNativeWebSession(
       if (failure || ended || stopRequested)
         throw new Error("The native Web UI session was stopped.");
       validateAddress(address);
+      progressWriter.clear();
       child.stdin.write(JSON.stringify({ kind: "ready", url: address }) + "\n");
     },
-    progress(stage: "inference" | "runtime" | "sandbox" | "bootstrap" | "dashboard") {
-      if (!ended && !completing)
-        child.stdin.write(JSON.stringify({ kind: "progress", stage }) + "\n");
+    progress(stage: NativeProgressStage, counts?: NativeProgressCounts) {
+      if (!ended && !completing) progressWriter.progress(stage, counts);
+    },
+    capabilities(search: "available" | "unconfigured" | "unavailable") {
+      if (
+        ended ||
+        completing ||
+        capabilitiesSent ||
+        !["available", "unconfigured", "unavailable"].includes(search)
+      )
+        return;
+      capabilitiesSent = true;
+      child.stdin.write(JSON.stringify({ kind: "capabilities", search }) + "\n");
     },
     async complete(cleanupSucceeded: boolean, detail?: NativeFailurePresentation) {
       if (completion) return await completion;
       completion = (async () => {
         completing = true;
+        progressWriter.close();
         if (!ended)
           child.stdin.end(
             JSON.stringify({ kind: cleanupSucceeded ? "stopped" : "failed", ...detail }) + "\n",

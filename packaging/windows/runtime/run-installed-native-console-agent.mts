@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { hermesDashboardPythonSource } from "./native-hermes-dashboard.mts";
 import { openNativeUiFileOwner } from "./native-ui-file-owner.mts";
 import { startFileTcpRelay } from "./native-ui-relay.mts";
-import { openNativeWebSession } from "./native-web-session.mts";
+import { copyNativeRuntime, openNativeWebSession } from "./native-web-session.mts";
 import { waitForNativeMxcCompletion } from "./native-ui-lifecycle.mts";
 import {
   createNativeSessionDiagnostics,
@@ -23,6 +23,7 @@ import { startNativeBrokerRelay } from "./native-broker-relay.mts";
 import { acquireNativeStateSession } from "./native-state.mts";
 
 import { resolveNativeConfiguredInference } from "./native-configured-inference.mts";
+import type { NativeInferenceProgress } from "./native-inference-manifest.mts";
 
 import { readOpenedRegularFile, writeNativeGatewayConfig } from "./native-security.mts";
 
@@ -709,7 +710,20 @@ async function runNativeConsoleAgentInternal(
     installRoot,
     launcher,
     storedConfig,
-    { signal: options.webSession?.signal },
+    {
+      signal: options.webSession?.signal,
+      ...(options.webSession
+        ? {
+            onProgress: (event: NativeInferenceProgress) =>
+              options.webSession?.progress(
+                "inference",
+                typeof event.completedBytes === "number" && typeof event.totalBytes === "number"
+                  ? { completed: event.completedBytes, total: event.totalBytes, unit: "bytes" }
+                  : undefined,
+              ),
+          }
+        : {}),
+    },
   );
   options.webSession?.assertRunning();
   options.webSession?.progress("runtime");
@@ -734,6 +748,7 @@ async function runNativeConsoleAgentInternal(
   try {
     const services = await readNativeServiceEnvironment(launcher, agentId, config.options);
     diagnostics.secret(...Object.values(services.environment));
+    webSession?.capabilities(services.options.search ? "available" : "unconfigured");
     diagnostics.stage("broker");
     broker = await startNativeInferenceBroker(config, credential, brokerToken, services);
     const hostProbe = await fetch(`http://127.0.0.1:${broker.port}/native/bootstrap`, {
@@ -775,12 +790,42 @@ async function runNativeConsoleAgentInternal(
     fs.mkdirSync(runtimeRoot);
     const gatewayConfig = writeNativeGatewayConfig(installRoot, runRoot);
     const node = path.join(runtimeRoot, "node.exe");
-    fs.copyFileSync(installedNode, node);
     const runtime = path.join(runtimeRoot, adapter.runtimeDirectory);
-    fs.cpSync(installedRuntime, runtime, { recursive: true });
     const pythonRoot = path.join(runtimeRoot, "python");
+    if (dashboard) {
+      await copyNativeRuntime(
+        [
+          { source: installedNode, destination: node },
+          { source: installedRuntime, destination: runtime },
+          ...(installedPython === null
+            ? []
+            : [{ source: installedPython, destination: pythonRoot }]),
+        ],
+        {
+          signal: webSession?.signal,
+          onTargetStart: (index) =>
+            diagnostics.stage(
+              index === 0
+                ? "runtime-copy-node"
+                : index === 1
+                  ? "runtime-copy-agent"
+                  : "runtime-copy-python",
+            ),
+          onProgress: (counts) => webSession?.progress("runtime", counts),
+        },
+      );
+    } else {
+      diagnostics.stage("runtime-copy-node");
+      fs.copyFileSync(installedNode, node);
+      diagnostics.stage("runtime-copy-agent");
+      fs.cpSync(installedRuntime, runtime, { recursive: true });
+      if (installedPython !== null) {
+        diagnostics.stage("runtime-copy-python");
+        fs.cpSync(installedPython, pythonRoot, { recursive: true });
+      }
+    }
+    diagnostics.stage("runtime");
     if (installedPython !== null) {
-      fs.cpSync(installedPython, pythonRoot, { recursive: true });
       fs.writeFileSync(
         path.join(pythonRoot, "python313._pth"),
         [
@@ -825,8 +870,7 @@ async function runNativeConsoleAgentInternal(
         path.join(runtimeRoot, "native-ui-tunnel.mts"),
       );
     webSession?.assertRunning();
-    webSession?.progress("sandbox");
-    diagnostics.stage("gateway");
+    webSession?.progress("gateway");
     const policyPath = path.join(runRoot, "policy.yaml");
     fs.writeFileSync(
       policyPath,
@@ -860,6 +904,7 @@ async function runNativeConsoleAgentInternal(
       XDG_CONFIG_HOME: configRoot,
       XDG_STATE_HOME: gatewayState,
     });
+    diagnostics.stage("gateway");
     const gateway = spawn(
       gatewayExecutable,
       [
@@ -1101,6 +1146,7 @@ async function runNativeConsoleAgentInternal(
         return null;
       };
       diagnostics.stage("sandbox");
+      webSession?.progress("sandbox");
       try {
         await run(
           openshell,
@@ -1158,12 +1204,15 @@ async function runNativeConsoleAgentInternal(
               : []),
           ]);
           const url = `http://127.0.0.1:${relay.browserPort}/`;
+          webSession?.progress("browser");
+          diagnostics.stage("browser");
           if (webSession) webSession.ready(url);
           else
             webSession = await openNativeWebSession(installRoot, "hermes", url, {
               qualification: dashboardQualification,
             });
           options.webSession = webSession;
+          webSession.capabilities(services.options.search ? "available" : "unconfigured");
           diagnostics.stage("agent");
           if (dashboardEvidenceRoot)
             fs.writeFileSync(
@@ -1189,6 +1238,7 @@ async function runNativeConsoleAgentInternal(
               throw new Error("The Hermes dashboard stopped unexpectedly.");
             }),
           ]);
+          webSession.progress("cleanup");
           await relay.close();
           // Let the contained owner stop its real messaging gateway and publish
           // its exit receipt before MXC removes the complete descendant tree.
@@ -1238,6 +1288,8 @@ async function runNativeConsoleAgentInternal(
       diagnostics.fail(error);
       throw error;
     } finally {
+      webSession?.progress("cleanup");
+      diagnostics.stage("cleanup");
       if (!passed) {
         const cleanup = async (label: string, operation: () => Promise<unknown>) => {
           try {
@@ -1313,6 +1365,8 @@ async function runNativeConsoleAgentInternal(
     diagnostics.fail(error);
     throw error;
   } finally {
+    webSession?.progress("cleanup");
+    diagnostics.stage("cleanup");
     const cleanupFailures: string[] = [];
     const attempt = async (label: string, operation: () => Promise<unknown> | unknown) => {
       try {
@@ -1414,13 +1468,13 @@ export async function runNativeConsoleAgent(
     path.join(localAppData, "NVIDIA", "NemoClaw", "agents", agent),
     agent,
   );
-  let failure: unknown;
   let presentation;
   try {
     await runNativeConsoleAgentInternal(options, diagnostics);
   } catch (error) {
-    failure = error;
-    presentation = await diagnostics.persist(error);
+    diagnostics.fail(error);
+    options.webSession?.progress("cleanup");
+    presentation = await diagnostics.persist(diagnostics.primaryError());
     if (
       process.argv.includes("--console-qualification") ||
       process.argv.includes("--dashboard-qualification")
@@ -1458,12 +1512,16 @@ export async function runNativeConsoleAgent(
     }
   }
   try {
-    await options.webSession?.complete(failure === undefined, presentation);
+    if (options.webSession) diagnostics.stage("control-close");
+    await options.webSession?.complete(!diagnostics.hasFailure(), presentation);
   } catch (error) {
-    failure ??= error;
-    presentation ??= await diagnostics.persist(failure);
+    diagnostics.fail(error);
+    presentation ??= await diagnostics.persist(diagnostics.primaryError());
   }
-  if (failure !== undefined) throw new NativeSessionFailure(presentation!, failure);
+  if (diagnostics.hasFailure())
+    throw new NativeSessionFailure(presentation!, diagnostics.primaryError());
+  const completed = await diagnostics.persistSuccess();
+  if (!completed.diagnosticPath) console.error(completed.message);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))

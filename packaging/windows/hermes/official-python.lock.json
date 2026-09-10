@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "classification": "official-hermes-python-phase-inputs",
+  "upstreamCommit": "2237be355906fbe6065ce1815711eee52b2d646e",
+  "upstreamFiles": {
+    "scripts/install.ps1": "53a077364aa28bbd6e8d987cdec11a4552e22ff2c5137845725a1c99770f392f",
+    "pyproject.toml": "1f0d8d7e9e19c3a1cc25521a5cf56f3c885e4604d3081246cd42d9924a983174",
+    "setup.py": "d476dd1c28d707acd72f1d0551d7178123832ae18b6e201ca1ac48cd040653ae",
+    "uv.lock": "38baf65f5960e6fd930b1aaa817d4d24df312d7b9031a4197998aa9eb8512368",
+    "package.json": "8b5b2ea9721e8d4bdedea457f5b5bab038e7f3e11ea4e1381bd43f2e87ce04cd",
+    "package-lock.json": "83beeba3f6e7826312444c7b64067488afae9ed88ad7326ecef61ac235bab86d"
+  },
+  "requirementsFile": "official-python-build.requirements.txt",
+  "requirementsSha256": "8401d4a4adac4cf302c748c0b95c3d34f7548c5222035755a0e9c9ab7ea40a08",
+  "artifacts": [
+    {
+      "id": "maturin",
+      "file": "maturin-1.15.0-py3-none-win_arm64.whl",
+      "url": "https://files.pythonhosted.org/packages/8b/10/15d4314edf130955edf2dc237aa393a8a7c10f2b9b57b89fa2f61f915659/maturin-1.15.0-py3-none-win_arm64.whl",
+      "sha256": "c7dc0c66c78d3debdd9c5aa807e861fbcbf07f3505d34b125df74c03986b0f48",
+      "size": 9713795,
+      "licenseExpression": "MIT OR Apache-2.0",
+      "licenseDeclared": null,
+      "runtimePayload": false,
+      "licenseFiles": [
+        "maturin-1.15.0.dist-info/licenses/license-apache",
+        "maturin-1.15.0.dist-info/licenses/license-mit"
+      ]
+    },
+    {
+      "id": "packaging",
+      "file": "packaging-26.3-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl",
+      "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+      "size": 129956,
+      "licenseExpression": "Apache-2.0 OR BSD-2-Clause",
+      "licenseDeclared": null,
+      "runtimePayload": false,
+      "licenseFiles": [
+        "packaging-26.3.dist-info/licenses/LICENSE",
+        "packaging-26.3.dist-info/licenses/LICENSE.APACHE",
+        "packaging-26.3.dist-info/licenses/LICENSE.BSD"
+      ]
+    },
+    {
+      "id": "setuptools",
+      "file": "setuptools-83.0.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/5d/40/e1e72872c6354b306daef1703549e8e83b4d43cfea356311bf722a043752/setuptools-83.0.0-py3-none-any.whl",
+      "sha256": "29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3",
+      "size": 1008090,
+      "licenseExpression": "MIT",
+      "licenseDeclared": null,
+      "runtimePayload": false,
+      "licenseFiles": [
+        "setuptools/_vendor/importlib_metadata-8.7.1.dist-info/licenses/LICENSE",
+        "setuptools/_vendor/jaraco_context-6.1.0.dist-info/licenses/LICENSE",
+        "setuptools/_vendor/jaraco_functools-4.4.0.dist-info/licenses/LICENSE",
+        "setuptools/_vendor/more_itertools-10.8.0.dist-info/licenses/LICENSE",
+        "setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE",
+        "setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE.APACHE",
+        "setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE.BSD",
+        "setuptools/_vendor/platformdirs-4.4.0.dist-info/licenses/LICENSE",
+        "setuptools/_vendor/tomli-2.4.0.dist-info/licenses/LICENSE",
+        "setuptools/_vendor/wheel-0.46.3.dist-info/licenses/LICENSE.txt",
+        "setuptools/_vendor/zipp-3.23.0.dist-info/licenses/LICENSE",
+        "setuptools/config/NOTICE",
+        "setuptools/config/_validate_pyproject/NOTICE",
+        "setuptools-83.0.0.dist-info/licenses/LICENSE",
+        "setuptools/_vendor/autocommand-2.2.2.dist-info/LICENSE",
+        "setuptools/_vendor/backports.tarfile-1.2.0.dist-info/LICENSE",
+        "setuptools/_vendor/jaraco.text-4.0.0.dist-info/LICENSE"
+      ]
+    },
+    {
+      "id": "wheel",
+      "file": "wheel-0.48.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/2e/29/69cfbb602cd91690c55d38ba9fe53e6a7e76a6fa647bf38f19c138d25449/wheel-0.48.0-py3-none-any.whl",
+      "sha256": "3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab",
+      "size": 33320,
+      "licenseExpression": "MIT",
+      "licenseDeclared": null,
+      "runtimePayload": false,
+      "licenseFiles": ["wheel-0.48.0.dist-info/licenses/LICENSE.txt"]
+    }
+  ],
+  "rustToolchain": "1.95.0-aarch64-pc-windows-msvc",
+  "rustVersion": "1.95.0",
+  "rustHost": "aarch64-pc-windows-msvc",
+  "msvcTarget": "arm64",
+  "msvcHost": "arm64",
+  "msvcPinEvidence": "Prior b9 observed Visual Studio18.9.2; this phase measures actual compiler/toolset/SDK hashes and versions. No immutable MSVC pin is claimed.",
+  "priorObservedVisualStudioProductVersion": "18.9.2"
+}

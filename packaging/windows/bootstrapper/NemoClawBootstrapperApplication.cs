@@ -26,6 +26,9 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
     private bool preparingMaintenance;
     private bool replacedPreviousPreview;
     private bool cancelRequested;
+    private bool executingPackage;
+    private readonly NativePresentationUpdates stepProgressUpdates = new();
+    private readonly NativePresentationUpdates overallProgressUpdates = new();
     private LaunchAction plannedAction = LaunchAction.Unknown;
     private int result;
     private CancellationTokenSource? modelSetupCancellation;
@@ -129,22 +132,37 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         this.CacheAcquireProgress += (_, args) =>
         {
             args.Cancel = this.cancelRequested;
-            this.Ui(() => this.window?.ShowProgress("Checking installer files", "Verifying the packaged files before installation."));
+            if (!this.executingPackage)
+            {
+                var completed = args.Progress;
+                var total = args.Total;
+                var phase = "cache-acquire-" + args.PackageOrContainerId + "-" + args.PayloadId;
+                this.UiProgress(() => this.window?.ShowMeasuredProgress(phase, "Preparing installer files", "Reading the packaged files needed for the installation.", completed, total));
+            }
         };
         this.CacheContainerOrPayloadVerifyProgress += (_, args) =>
         {
             args.Cancel = this.cancelRequested;
-            this.Ui(() => this.window?.ShowProgress("Checking installer files", "Verifying the packaged files before installation."));
+            if (!this.executingPackage)
+            {
+                var completed = args.Progress;
+                var total = args.Total;
+                var phase = "cache-verify-" + args.PackageOrContainerId + "-" + args.PayloadId;
+                this.UiProgress(() => this.window?.ShowMeasuredProgress(phase, "Checking installer files", "Verifying the packaged files before Windows installs them.", completed, total));
+            }
         };
         this.ExecutePackageBegin += this.OnExecutePackageBegin;
         this.ExecuteProgress += (_, args) =>
         {
             args.Cancel = this.cancelRequested;
+            var percentage = args.ProgressPercentage;
+            this.UiProgress(() => this.window?.SetPackageProgress(percentage));
         };
         this.Progress += (_, args) =>
         {
             args.Cancel = this.cancelRequested;
-            this.Ui(() => this.window?.SetInstallerProgress(args.OverallPercentage));
+            var percentage = args.OverallPercentage;
+            this.UiProgress(() => this.window?.SetInstallerProgress(percentage), overall: true);
         };
         this.Error += this.OnError;
         this.ApplyComplete += this.OnApplyComplete;
@@ -318,6 +336,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
 
     private void OnExecutePackageBegin(object? sender, ExecutePackageBeginEventArgs args)
     {
+        this.executingPackage = true;
         var (title, detail) = args.PackageId switch
         {
             "MxcSystemDrivePreparation" => ("Preparing native isolation", "Windows is preparing protected access for the native agent runtimes."),
@@ -328,13 +347,13 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             _ => ("Installing required components", "Windows is processing the next component in the installation."),
         };
         args.Cancel = this.cancelRequested;
-        this.Ui(() => this.window?.ShowProgress(title, detail));
+        this.Ui(() => this.window?.ShowProgress(title, detail, "package-" + args.PackageId));
     }
 
     private void OnError(object? sender, WixToolset.BootstrapperApplicationApi.ErrorEventArgs args)
     {
         this.Engine.Log(LogLevel.Error, $"NemoClaw setup error {args.ErrorCode}: {args.ErrorMessage}");
-        this.Ui(() => this.window?.ShowRecoverableError(args.ErrorMessage));
+        this.Ui(() => this.window?.ShowRecoverableError($"Windows reported setup error {args.ErrorCode}. Setup log contains the saved details."));
         args.Result = this.cancelRequested ? Result.Cancel : args.Recommendation;
     }
 
@@ -435,8 +454,18 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         }
     }
 
+    private void UiProgress(Action action, bool overall = false)
+    {
+        var target = this.dispatcher;
+        if (target is null || target.HasShutdownStarted) return;
+        (overall ? this.overallProgressUpdates : this.stepProgressUpdates).Post(action,
+            render => { _ = target.BeginInvoke(render, DispatcherPriority.Background); });
+    }
+
     private void Ui(Action action)
     {
+        this.stepProgressUpdates.Clear();
+        this.overallProgressUpdates.Clear();
         if (this.dispatcher is null)
         {
             return;

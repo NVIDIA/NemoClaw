@@ -23,13 +23,18 @@ import {
   selectedNativeServices,
 } from "./native-options.mts";
 
-import { openNativeWebSession } from "./native-web-session.mts";
+import { copyNativeRuntime, openNativeWebSession } from "./native-web-session.mts";
+import {
+  createNativeSessionDiagnostics,
+  NativeSessionFailure,
+} from "./native-session-diagnostics.mts";
 import { removeNativeAgentData } from "./native-remove-data.mts";
 import { startNativeInferenceBroker } from "./native-inference-broker.mts";
 import { startNativeBrokerRelay } from "./native-broker-relay.mts";
 import { startFileTcpRelay } from "./native-ui-relay.mts";
 import { acquireNativeStateSession } from "./native-state.mts";
 import { resolveNativeConfiguredInference } from "./native-configured-inference.mts";
+import type { NativeInferenceProgress } from "./native-inference-manifest.mts";
 
 import {
   deleteCredentialByBinding,
@@ -49,7 +54,6 @@ import {
   requiredDirectory,
   requiredFile,
   run,
-  sanitizedDiagnostic,
   stopChild,
   waitForPort,
 } from "./run-installed-native-turn.mts";
@@ -1190,10 +1194,26 @@ async function main() {
   }
 
   const launcherPath = requiredFile(path.join(binRoot, "NemoClaw.exe"), "NemoClaw launcher");
-  const webSession = configured ? await openNativeWebSession(installRoot, "openclaw") : null;
-  let interfacePassed = false;
-  let interfaceError;
+  const diagnostics = createNativeSessionDiagnostics(
+    launcherPath,
+    path.join(
+      requiredDirectory(process.env.LOCALAPPDATA ?? "", "Windows local application-data directory"),
+      "NVIDIA",
+      "NemoClaw",
+      "agents",
+      "openclaw",
+    ),
+    "openclaw",
+  );
+  diagnostics.secret(installRoot);
+  let webSession: Awaited<ReturnType<typeof openNativeWebSession>> | null = null;
+  let presentation;
   try {
+    if (configured) {
+      diagnostics.stage("control-open");
+      webSession = await openNativeWebSession(installRoot, "openclaw");
+    }
+    diagnostics.stage("inference");
     webSession?.progress("inference");
     const configuredIdentity = configured ? readNativeAgentConfiguration("openclaw") : null;
     const resolvedInference = configuredIdentity
@@ -1201,13 +1221,33 @@ async function main() {
           installRoot,
           launcherPath,
           configuredIdentity.config,
-          { signal: webSession?.signal },
+          {
+            signal: webSession?.signal,
+            ...(webSession
+              ? {
+                  onProgress: (event: NativeInferenceProgress) =>
+                    webSession?.progress(
+                      "inference",
+                      typeof event.completedBytes === "number" &&
+                        typeof event.totalBytes === "number"
+                        ? {
+                            completed: event.completedBytes,
+                            total: event.totalBytes,
+                            unit: "bytes",
+                          }
+                        : undefined,
+                    ),
+                }
+              : {}),
+          },
         )
       : null;
     if (configuredIdentity) configuredIdentity.config = resolvedInference.configuration;
     const modelId = configuredIdentity?.config.model ?? "native-preview";
     const modelToken = randomBytes(32).toString("base64url");
     const credential = resolvedInference?.credential ?? "";
+    diagnostics.secret(modelToken, credential);
+    diagnostics.stage("runtime");
     webSession?.assertRunning();
     webSession?.progress("runtime");
     const stateSession = configuredIdentity
@@ -1231,9 +1271,6 @@ async function main() {
       brokerRelayToken = "";
     let gatewayLogPath = "",
       gatewayErrorPath = "";
-    let createOutput = "",
-      createError = "";
-    let primaryError;
     let cleanupPromise;
     let monitor;
     const monitoring = new AbortController();
@@ -1351,38 +1388,19 @@ async function main() {
           },
         ],
         [
-          "failure diagnostics",
+          "gateway diagnostic capture",
           async () => {
-            if (!primaryError) return;
-            const parts = [createOutput, createError];
-            for (const file of [gatewayLogPath, gatewayErrorPath].filter(Boolean)) {
+            for (const [channel, file] of [
+              ["gateway.stdout", gatewayLogPath],
+              ["gateway.stderr", gatewayErrorPath],
+            ]) {
+              if (!file) continue;
               const text = readOpenedRegularFile(file, {
                 encoding: "utf8",
                 maxBytes: 2 * 1024 * 1024,
               });
-              if (text) parts.push(text);
+              if (text) diagnostics.capture(channel, text);
             }
-            if (!parts.some(Boolean)) return;
-            const diagnostic = sanitizedDiagnostic(
-              parts.join("\n"),
-              [
-                [modelToken, "<model-token>"],
-                [relayToken, "<relay-token>"],
-                [brokerRelayToken, "<broker-relay-token>"],
-                [installRoot, "<install-root>"],
-                [runtimeRoot, "<runtime-root>"],
-                [shareRoot, "<share-root>"],
-                [runRoot, "<run-root>"],
-              ].filter(([value]) => value),
-            );
-            fs.writeFileSync(
-              path.join(evidenceRoot, `native-windows-web-ui-diagnostic-${runId}.log`),
-              diagnostic,
-              "utf8",
-            );
-            console.error(
-              "WEB UI> Failure diagnostics were saved with session identities removed.",
-            );
           },
         ],
         [
@@ -1416,19 +1434,30 @@ async function main() {
         ],
       ]));
     try {
-      inferenceBroker = configuredIdentity
-        ? await startNativeInferenceBroker(
-            configuredIdentity.config,
-            credential,
-            modelToken,
-            await readNativeServiceEnvironment(
-              launcherPath,
-              "openclaw",
-              configuredIdentity.config.options,
-            ),
+      diagnostics.stage("broker");
+      const services = configuredIdentity
+        ? await readNativeServiceEnvironment(
+            launcherPath,
+            "openclaw",
+            configuredIdentity.config.options,
           )
         : null;
+      if (services) diagnostics.secret(...Object.values(services.environment));
+      inferenceBroker =
+        configuredIdentity && services
+          ? await startNativeInferenceBroker(
+              configuredIdentity.config,
+              credential,
+              modelToken,
+              services,
+            )
+          : null;
+      diagnostics.stage("runtime");
 
+      if (configuredIdentity)
+        webSession?.capabilities(
+          configuredIdentity.config.options?.search ? "available" : "unconfigured",
+        );
       const systemDrive = process.env.SystemDrive;
       if (!systemDrive || !/^[A-Za-z]:$/u.test(systemDrive)) fail("SystemDrive is invalid");
       const systemRoot = requiredDirectory(process.env.SystemRoot ?? "", "Windows system root");
@@ -1440,10 +1469,13 @@ async function main() {
         fs.mkdirSync(directory);
         ownedRoots.push(directory);
       }
+      diagnostics.secret(runRoot, shareRoot, runtimeRoot);
       const gatewayConfig = writeNativeGatewayConfig(installRoot, runRoot);
       if (inferenceBroker) {
         brokerRelayRoot = path.join(shareRoot, "inference-relay");
         brokerRelayToken = randomBytes(32).toString("base64url");
+        diagnostics.secret(brokerRelayToken);
+        diagnostics.stage("broker");
         brokerRelay = await startNativeBrokerRelay({
           relayRoot: brokerRelayRoot,
           relayToken: brokerRelayToken,
@@ -1452,14 +1484,34 @@ async function main() {
           signal: webSession?.signal,
         });
       }
+      diagnostics.stage("runtime");
       relayToken = randomBytes(32).toString("base64url");
+      diagnostics.secret(relayToken);
       const relayRoot = path.join(shareRoot, "ui-relay");
       uiRelay = await startFileTcpRelay(relayRoot, relayToken, launcherPath);
       const node = path.join(runtimeRoot, "node.exe");
       const openClawRoot = path.join(runtimeRoot, "openclaw");
       console.log("WEB UI> Staging the exact installed OpenClaw runtime for MXC");
-      fs.copyFileSync(installedNode, node);
-      fs.cpSync(installedOpenClawRoot, openClawRoot, { recursive: true });
+      if (webSession) {
+        await copyNativeRuntime(
+          [
+            { source: installedNode, destination: node },
+            { source: installedOpenClawRoot, destination: openClawRoot },
+          ],
+          {
+            signal: webSession.signal,
+            onTargetStart: (index) =>
+              diagnostics.stage(index === 0 ? "runtime-copy-node" : "runtime-copy-agent"),
+            onProgress: (counts) => webSession?.progress("runtime", counts),
+          },
+        );
+      } else {
+        diagnostics.stage("runtime-copy-node");
+        fs.copyFileSync(installedNode, node);
+        diagnostics.stage("runtime-copy-agent");
+        fs.cpSync(installedOpenClawRoot, openClawRoot, { recursive: true });
+      }
+      diagnostics.stage("runtime");
       const openClawEntry = requiredFile(
         path.join(openClawRoot, "node_modules", "openclaw", "openclaw.mjs"),
         "staged OpenClaw entrypoint",
@@ -1524,7 +1576,8 @@ async function main() {
       });
       webSession?.assertRunning();
       stateSession?.assertHeld();
-      webSession?.progress("sandbox");
+      webSession?.progress("gateway");
+      diagnostics.stage("gateway");
       gateway = spawn(
         gatewayExecutable,
         [
@@ -1561,12 +1614,16 @@ async function main() {
         ["gateway", "add", `http://127.0.0.1:${openShellPort}`, "--local", "--name", gatewayName],
         cliEnvironment,
         "Registering the native UI gateway",
+        undefined,
+        diagnostics,
       );
       await run(
         openshell,
         ["gateway", "select", gatewayName],
         cliEnvironment,
         "Selecting the native UI gateway",
+        undefined,
+        diagnostics,
       );
       const sandboxEnvironment = {
         LOCALAPPDATA: home,
@@ -1620,7 +1677,9 @@ async function main() {
       ];
       for (const [name, value] of Object.entries(sandboxEnvironment))
         createArgs.push("--env", `${name}=${value}`);
+      webSession?.progress("sandbox");
       console.log("WEB UI> Creating the native MXC OpenClaw Control UI sandbox");
+      diagnostics.stage("sandbox");
       create = spawn(openshell, createArgs, {
         env: cliEnvironment,
         stdio: ["ignore", "pipe", "pipe"],
@@ -1628,11 +1687,12 @@ async function main() {
       });
       create.once("error", () => {});
       create.stdout.on("data", (chunk) => {
-        createOutput = `${createOutput}${chunk.toString("utf8")}`.slice(-64 * 1024);
+        diagnostics.capture("create.stdout", chunk);
       });
       create.stderr.on("data", (chunk) => {
-        createError = `${createError}${chunk.toString("utf8")}`.slice(-64 * 1024);
+        diagnostics.capture("create.stderr", chunk);
       });
+      webSession?.progress("bootstrap");
       console.log("WEB UI> Waiting for the real OpenClaw Control UI");
       await withTimeout(
         Promise.race([
@@ -1660,6 +1720,7 @@ async function main() {
       );
       void monitor.catch(() => {});
       const uiUrl = `http://127.0.0.1:${uiRelay.browserPort}`;
+      diagnostics.stage(qualification ? "verification" : "browser");
       let browserProof;
       let onboardingSelection = null;
       if (qualification && skipOnboarding) {
@@ -1705,7 +1766,9 @@ async function main() {
         };
         if (!webSession) fail("the native Web UI control is unavailable");
         webSession.assertRunning();
+        webSession?.progress("browser");
         webSession.ready(uiUrl);
+        diagnostics.stage("agent");
         await Promise.race([
           webSession.stopped,
           uiRelay.failure,
@@ -1714,6 +1777,8 @@ async function main() {
           ...(brokerRelay ? [brokerRelay.failure] : []),
         ]);
       }
+      webSession?.progress("cleanup");
+      diagnostics.stage("cleanup");
       const cleanupFailures = await cleanup();
       if (cleanupFailures.length)
         throw new Error(`Native OpenClaw cleanup failed: ${cleanupFailures.join(", ")}.`);
@@ -1753,30 +1818,35 @@ async function main() {
           : "WEB UI> NemoClaw preview session closed cleanly",
       );
     } catch (error) {
-      primaryError = error;
+      diagnostics.fail(error);
       throw error;
     } finally {
+      webSession?.progress("cleanup");
+      diagnostics.stage("cleanup");
       const cleanupFailures = await cleanup();
+      diagnostics.cleanupFailed(...cleanupFailures);
       if (cleanupFailures.length) {
-        if (primaryError)
+        if (diagnostics.hasFailure())
           console.error(`WEB UI> Cleanup also failed: ${cleanupFailures.join(", ")}.`);
         else throw new Error(`Native OpenClaw cleanup failed: ${cleanupFailures.join(", ")}.`);
       }
     }
-    interfacePassed = true;
   } catch (error) {
-    interfaceError = error;
-    throw error;
-  } finally {
-    if (webSession) {
-      try {
-        await webSession.complete(interfacePassed);
-      } catch (error) {
-        if (!interfaceError) throw error;
-        console.error("WEB UI> The native session control also failed to close cleanly.");
-      }
-    }
+    diagnostics.fail(error);
+    presentation = await diagnostics.persist(diagnostics.primaryError());
   }
+  try {
+    if (webSession) diagnostics.stage("control-close");
+    webSession?.progress("cleanup");
+    await webSession?.complete(!diagnostics.hasFailure(), presentation);
+  } catch (error) {
+    diagnostics.fail(error);
+    presentation ??= await diagnostics.persist(diagnostics.primaryError());
+  }
+  if (diagnostics.hasFailure())
+    throw new NativeSessionFailure(presentation!, diagnostics.primaryError());
+  const completed = await diagnostics.persistSuccess();
+  if (!completed.diagnosticPath) console.error(completed.message);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))

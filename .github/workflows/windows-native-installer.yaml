@@ -17,10 +17,18 @@ on:
         default: ""
         type: string
       probe_official_hermes_components:
-        description: Probe official Hermes components and installed runtime access in MXC without publishing an installer
+        description: Run the selected official Hermes Windows probe without publishing an installer
         required: false
         default: false
         type: boolean
+      official_hermes_phase:
+        description: Official Hermes probe phase (requires the probe input above)
+        required: false
+        default: components
+        type: choice
+        options:
+          - components
+          - python
   push:
     branches:
       - feat/windows-native-installer
@@ -352,6 +360,37 @@ jobs:
         with:
           path: ${{ runner.temp }}/nemoclaw-native-runtime-payload
           key: ${{ steps.windows-runtime-payload-cache.outputs.cache-primary-key }}
+
+      - name: Separate runtime-unneeded development assets
+        id: windows-development-assets
+        shell: powershell
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
+          $payloadRoot = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\nemoclaw-native-runtime-payload")
+          $diagnosticsRoot = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\nemoclaw-windows-development-assets")
+          # A restored payload does not restore the build checkout's dependencies.
+          # This happens on the package builder, never on the user's machine.
+          if (-not (Test-Path -LiteralPath "$candidate\node_modules\typescript\lib\typescript.js" -PathType Leaf)) {
+            Push-Location $candidate
+            try {
+              & npm.cmd ci --ignore-scripts --no-audit --no-fund
+              if ($LASTEXITCODE -ne 0) { throw 'The locked development-asset auditor could not be prepared.' }
+            } finally { Pop-Location }
+          }
+          & node --experimental-strip-types --no-warnings "$candidate\packaging\windows\performance\partition-payload.mts" `
+            partition $payloadRoot $diagnosticsRoot $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'The production/development payload partition failed.' }
+
+      - name: Upload development assets and complete partition provenance
+        if: ${{ always() && steps.windows-development-assets.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-native-development-assets-${{ github.sha }}
+          path: ${{ runner.temp }}/nemoclaw-windows-development-assets/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Build ARM64 MSI and setup executable
         id: windows-package
@@ -799,7 +838,7 @@ jobs:
           retention-days: 3
 
   official-hermes-components:
-    name: Official Hermes component feasibility (Windows ARM64, MXC)
+    name: Official Hermes ${{ inputs.official_hermes_phase || 'components' }} probe (Windows ARM64)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 60
@@ -821,7 +860,52 @@ jobs:
             -RuntimeRoot $runtimeRoot `
             -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-components"
 
+      - name: Check the canonical Python phase result contract
+        if: ${{ inputs.official_hermes_phase == 'python' }}
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-python.ps1"
+
+      - name: Set up pinned native Rust for canonical Hermes Python
+        if: ${{ inputs.official_hermes_phase == 'python' }}
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.95.0-aarch64-pc-windows-msvc
+          target: aarch64-pc-windows-msvc
+          cache: false
+          rustflags: ""
+
+      - name: Provision canonical Hermes Python before baseline setup
+        if: ${{ inputs.official_hermes_phase == 'python' }}
+        id: hermes-python
+        shell: powershell
+        timeout-minutes: 25
+        env:
+          HERMES_COMPONENT_ROOT: ${{ steps.hermes-components.outputs.runtime_root }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $toolchain = '1.95.0-aarch64-pc-windows-msvc'
+          $rustc = (& rustup which --toolchain $toolchain rustc).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'The pinned native Rust compiler is missing.' }
+          $cargo = (& rustup which --toolchain $toolchain cargo).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'The pinned native Cargo is missing.' }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsDevCmd = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -find 'Common7\Tools\VsDevCmd.bat' | Select-Object -First 1)
+          if ($LASTEXITCODE -ne 0 -or -not $vsDevCmd) { throw 'The runner does not contain the required Visual Studio ARM64 tools.' }
+          $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $script = "$env:GITHUB_WORKSPACE\packaging\windows\hermes\prepare-official-python.ps1"
+          $evidence = "$env:RUNNER_TEMP\official-hermes-python"
+          $components = "$env:RUNNER_TEMP\official-hermes-components"
+          foreach ($value in @($vsDevCmd, $powershell, $script, $evidence, $components, $rustc, $cargo, $env:HERMES_COMPONENT_ROOT)) {
+            if ($value -match '["\r\n%!]') { throw 'A build-prerequisite path cannot be represented safely.' }
+          }
+          $command = 'call "' + $vsDevCmd + '" -arch=arm64 -host_arch=arm64 && "' + $powershell + '" -NoProfile -ExecutionPolicy Bypass -File "' + $script + '" -RuntimeRoot "' + $env:HERMES_COMPONENT_ROOT + '" -ArtifactDirectory "' + $evidence + '" -ComponentEvidenceDirectory "' + $components + '" -RustcPath "' + $rustc + '" -CargoPath "' + $cargo + '"'
+          & "$env:SystemRoot\System32\cmd.exe" /d /c $command
+          if ($LASTEXITCODE -ne 0) { throw 'The canonical Hermes Python phase failed; baseline setup will not run.' }
+
       - name: Install the immutable MXC baseline
+        if: ${{ inputs.official_hermes_phase != 'python' }}
         id: component-baseline
         shell: powershell
         run: |
@@ -829,9 +913,11 @@ jobs:
             -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-baseline"
 
       - name: Check bounded component process diagnostics on Windows
+        if: ${{ steps.component-baseline.outcome == 'success' }}
         id: component-controls
         shell: powershell
         run: |
+          & "$env:GITHUB_WORKSPACE\packaging\windows\performance\acl-snapshot.test.ps1"
           $node = Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw\bin\node.exe'
           & $node --experimental-strip-types --no-warnings --test `
             "$env:GITHUB_WORKSPACE\packaging\windows\hermes\probe-components.test.mts" `
@@ -840,6 +926,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'The component process diagnostic controls failed.' }
 
       - name: Execute the official components inside MXC
+        if: ${{ steps.component-baseline.outcome == 'success' && steps.component-controls.outcome == 'success' }}
         shell: powershell
         env:
           HERMES_COMPONENT_ROOT: ${{ steps.hermes-components.outputs.runtime_root }}
@@ -875,14 +962,18 @@ jobs:
           name: official-hermes-windows-mxc-components-precleanup-${{ github.sha }}
           path: |
             ${{ runner.temp }}/official-hermes-components/
+            ${{ runner.temp }}/official-hermes-python/
             ${{ runner.temp }}/official-hermes-mxc/
             ${{ runner.temp }}/installed-runtime-readonly/
             !${{ runner.temp }}/official-hermes-components/downloads/
+            !${{ runner.temp }}/official-hermes-python/downloads/
+            !${{ runner.temp }}/official-hermes-python/cargo-home/
+            !${{ runner.temp }}/official-hermes-python/dependency-stage/uv-cache/
           if-no-files-found: warn
           retention-days: 14
 
       - name: Uninstall the component probe baseline
-        if: always()
+        if: ${{ always() && steps.component-baseline.outcome != 'skipped' }}
         shell: powershell
         run: |
           & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\component-probe-baseline.ps1" `
@@ -896,9 +987,13 @@ jobs:
           path: |
             ${{ runner.temp }}/official-hermes-baseline/
             ${{ runner.temp }}/official-hermes-components/
+            ${{ runner.temp }}/official-hermes-python/
             ${{ runner.temp }}/official-hermes-mxc/
             ${{ runner.temp }}/installed-runtime-readonly/
             !${{ runner.temp }}/official-hermes-baseline/baseline-setup.exe
             !${{ runner.temp }}/official-hermes-components/downloads/
+            !${{ runner.temp }}/official-hermes-python/downloads/
+            !${{ runner.temp }}/official-hermes-python/cargo-home/
+            !${{ runner.temp }}/official-hermes-python/dependency-stage/uv-cache/
           if-no-files-found: error
           retention-days: 14

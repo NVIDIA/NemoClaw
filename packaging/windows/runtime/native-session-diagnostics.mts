@@ -119,36 +119,154 @@ function errorDetail(error: unknown, secrets: readonly string[], depth = 0): unk
   };
 }
 
-const STAGES: Record<string, string> = {
+const STAGES = {
+  "control-open": "opening the native session control",
   inference: "preparing inference",
   runtime: "preparing the agent runtime",
+  "runtime-copy-node": "copying the installed Node runtime",
+  "runtime-copy-agent": "copying the installed agent runtime",
+  "runtime-copy-python": "copying the installed Python runtime",
   broker: "starting the local inference broker",
   gateway: "starting the native gateway",
   sandbox: "creating the private sandbox",
   bootstrap: "connecting the sandbox to the local broker",
   dashboard: "opening the dashboard",
-  agent: "running the agent",
+  browser: "requesting the agent browser interface",
+  verification: "verifying the agent interface",
+  agent: "observing the running agent session",
   cleanup: "closing the private session",
+  "control-close": "closing the native session control",
+} as const;
+
+type NativeDiagnosticStage = keyof typeof STAGES;
+// Existing qualification snapshots deliberately accept only these coarse phases.
+const PRESENTATION_STAGES = {
+  "control-open": "runtime",
+  "runtime-copy-node": "runtime",
+  "runtime-copy-agent": "runtime",
+  "runtime-copy-python": "runtime",
+  browser: "dashboard",
+  verification: "dashboard",
+  "control-close": "cleanup",
+} as const;
+const presentationStage = (stage: NativeDiagnosticStage) =>
+  Object.hasOwn(PRESENTATION_STAGES, stage)
+    ? PRESENTATION_STAGES[stage as keyof typeof PRESENTATION_STAGES]
+    : stage;
+type StageTiming = {
+  stage: NativeDiagnosticStage;
+  startMs: number;
+  endMs: number;
+  elapsedMs: number;
 };
+const MAX_STAGE_RECORDS = 128;
 
 export function createNativeSessionDiagnostics(launcher: string, stateRoot: string, agent: string) {
   const secrets: string[] = [];
   const captures = new Map<string, ReturnType<typeof createNativeDiagnosticCapture>>();
-  let stage = "inference";
+  const started = process.hrtime.bigint();
+  const elapsed = () => Number(process.hrtime.bigint() - started) / 1_000_000;
+  let stage: NativeDiagnosticStage = "inference";
+  let stageStartMs = 0;
+  const stages: StageTiming[] = [];
+  let omittedStageRecords = 0;
+  const finishStage = (endMs: number) => {
+    const record = { stage, startMs: stageStartMs, endMs, elapsedMs: endMs - stageStartMs };
+    if (stages.length < MAX_STAGE_RECORDS) stages.push(record);
+    else omittedStageRecords++;
+    stageStartMs = endMs;
+  };
   let primary: unknown;
-  let failureStage = stage;
+  let failed = false;
+  let failureStage: NativeDiagnosticStage = stage;
+  let failureElapsedMs: number | null = null;
   let saved: Promise<NativeFailurePresentation> | undefined;
   let document: string | undefined;
   const cleanup: string[] = [];
+  const fail = (error: unknown) => {
+    if (!failed && !saved) {
+      failed = true;
+      primary = error;
+      failureStage = stage;
+      failureElapsedMs = elapsed();
+    }
+  };
+  const persist = async () => {
+    if (saved) return await saved;
+    // Freeze before diagnostic I/O. Failure callers save before the long notice
+    // wait; success callers record native-control shutdown as its own phase.
+    // These are elapsed host phases, not CPU/I/O attribution.
+    const elapsedMs = elapsed();
+    finishStage(elapsedMs);
+    const presentation: NativeFailurePresentation = {
+      stage: presentationStage(failed ? failureStage : stage),
+      message: failed
+        ? `NemoClaw failed while ${STAGES[failureStage]}.`
+        : "NemoClaw session completed.",
+    };
+    document =
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          classification: failed ? "native-session-failure" : "native-session-success",
+          agent,
+          stage: presentationStage(failed ? failureStage : stage),
+          recordedAt: new Date().toISOString(),
+          failure: failed ? errorDetail(primary, secrets) : null,
+          timing: {
+            clock: "process.hrtime.bigint",
+            unit: "milliseconds",
+            scope: "host-session-through-owned-cleanup",
+            elapsedMs,
+            failureElapsedMs,
+            stages,
+            omittedStageRecords,
+          },
+          cleanupFailures: cleanup.map((label) => sanitizeNativeDiagnostic(label, secrets)),
+          output: Object.fromEntries(
+            [...captures].map(([name, capture]) => [
+              sanitizeNativeDiagnostic(name, secrets),
+              capture.finish(),
+            ]),
+          ),
+        },
+        null,
+        2,
+      ) + "\n";
+    saved = (async () => {
+      const root = path.join(stateRoot, `session-diagnostics-${randomBytes(10).toString("hex")}`);
+      let owner: Awaited<ReturnType<typeof openNativeUiFileOwner>> | undefined;
+      try {
+        owner = await openNativeUiFileOwner(launcher, root);
+        await owner.write("ready", document!);
+        presentation.diagnosticPath = path.join(root, "ready");
+      } catch {
+        presentation.message += " The diagnostic file could not be saved.";
+      } finally {
+        try {
+          await owner?.close();
+        } catch {
+          presentation.message += " The diagnostic file owner could not close cleanly.";
+        }
+      }
+      if (presentation.diagnosticPath)
+        presentation.message += ` Details: ${presentation.diagnosticPath}`;
+      return presentation;
+    })();
+    return await saved;
+  };
   return {
     secret(...values: string[]) {
       secrets.push(...values.filter(Boolean));
     },
-    stage(value: keyof typeof STAGES) {
+    stage(value: NativeDiagnosticStage) {
       if (!Object.hasOwn(STAGES, value)) throw new Error("Invalid native diagnostic stage.");
+      if (saved || value === stage) return;
+      finishStage(elapsed());
       stage = value;
     },
     capture(channel: string, chunk: Buffer | string) {
+      if (saved) return;
       if (!captures.has(channel)) {
         if (captures.size >= 6) return;
         captures.set(
@@ -158,62 +276,39 @@ export function createNativeSessionDiagnostics(launcher: string, stateRoot: stri
       }
       captures.get(channel)!.write(chunk);
     },
-    fail(error: unknown) {
-      if (primary === undefined) {
-        primary = error;
-        failureStage = stage;
-      }
+    fail,
+    hasFailure() {
+      return failed;
+    },
+    primaryError() {
+      return primary;
     },
     cleanupFailed(...labels: string[]) {
       cleanup.push(...labels);
     },
+    // Kept for existing qualification consumers; success has its separate API.
     failureEvidence() {
       if (document === undefined) throw new Error("Native failure details have not been saved.");
+      // Preserve the closed schema consumed by the installed qualifier. The
+      // file at diagnosticPath and evidence() retain the full timing document.
+      const legacy = JSON.parse(document);
+      delete legacy.timing;
+      return JSON.stringify(legacy, null, 2) + "\n";
+    },
+    evidence() {
+      if (document === undefined) throw new Error("Native session details have not been saved.");
       return document;
     },
     async persist(error: unknown, cleanupFailures: string[] = []) {
-      if (saved) return await saved;
-      this.fail(error);
-      saved = (async () => {
-        const presentation: NativeFailurePresentation = {
-          stage: failureStage,
-          message: `NemoClaw failed while ${STAGES[failureStage]}.`,
-        };
-        const root = path.join(stateRoot, `session-diagnostics-${randomBytes(10).toString("hex")}`);
-        let owner: Awaited<ReturnType<typeof openNativeUiFileOwner>> | undefined;
-        document =
-          JSON.stringify(
-            {
-              schemaVersion: 1,
-              classification: "native-session-failure",
-              agent,
-              stage: failureStage,
-              recordedAt: new Date().toISOString(),
-              failure: errorDetail(primary, secrets),
-              cleanupFailures: [...cleanup, ...cleanupFailures].map((label) =>
-                sanitizeNativeDiagnostic(label, secrets),
-              ),
-              output: Object.fromEntries(
-                [...captures].map(([name, capture]) => [name, capture.finish()]),
-              ),
-            },
-            null,
-            2,
-          ) + "\n";
-        try {
-          owner = await openNativeUiFileOwner(launcher, root);
-          await owner.write("ready", document);
-          presentation.diagnosticPath = path.join(root, "ready");
-        } catch {
-          presentation.message += " The diagnostic file could not be saved.";
-        } finally {
-          await owner?.close().catch(() => {});
-        }
-        if (presentation.diagnosticPath)
-          presentation.message += ` Details: ${presentation.diagnosticPath}`;
-        return presentation;
-      })();
-      return await saved;
+      if (!saved) {
+        fail(error);
+        cleanup.push(...cleanupFailures);
+      }
+      return await persist();
+    },
+    async persistSuccess() {
+      if (!saved && cleanup.length) fail(new Error("Native session cleanup failed."));
+      return await persist();
     },
   };
 }

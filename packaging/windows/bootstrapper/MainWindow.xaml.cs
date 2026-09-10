@@ -11,6 +11,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using WixToolset.BootstrapperApplicationApi;
 
@@ -26,10 +27,8 @@ public partial class MainWindow : Window
         ["pi"] = "Pi",
         ["nemocua"] = "NemoCUA",
     };
-    private readonly Stopwatch elapsed = new();
-    private readonly Stopwatch phaseElapsed = new();
-    private TimeSpan lastStatusUpdate;
-    private bool hasInstallerProgress;
+    private readonly NativeProgressPresentation progress = new();
+    private double? displayedPercentage;
     private readonly DispatcherTimer elapsedTimer;
     private bool busy;
     private bool canCancel;
@@ -42,7 +41,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         this.InitializeComponent();
-        this.elapsedTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, this.UpdateElapsed, this.Dispatcher);
+        this.elapsedTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100), DispatcherPriority.Background, this.UpdateElapsed, this.Dispatcher);
         this.elapsedTimer.Stop();
         this.ProviderChoice.SelectedIndex = 0;
         this.ShowProgress("Checking this PC", "Looking for an existing NemoClaw installation.");
@@ -121,8 +120,8 @@ public partial class MainWindow : Window
     {
         this.busy = false;
         this.StopElapsed();
-        this.elapsed.Reset();
-        this.hasInstallerProgress = false;
+        this.progress.Reset();
+        this.OverallProgressText.Visibility = Visibility.Collapsed;
         this.SetJourneyStage(installed ? 4 : 1);
         this.HidePanels();
         (installed ? this.MaintenancePanel : this.ReadyPanel).Visibility = Visibility.Visible;
@@ -131,50 +130,83 @@ public partial class MainWindow : Window
     public void ShowMaintenance()
     {
         this.busy = false;
+        this.StopElapsed();
         this.MaintenanceError.Visibility = Visibility.Collapsed;
         this.HidePanels();
         this.MaintenancePanel.Visibility = Visibility.Visible;
     }
 
-    public void ShowProgress(string title, string detail)
+    public void ShowProgress(string title, string detail, string? phase = null)
     {
+        if (!this.busy) this.progress.Reset();
         this.busy = true;
         this.canCancel = true;
         this.SetJourneyStage(3);
         this.HidePanels();
         this.ProgressPanel.Visibility = Visibility.Visible;
-        var currentTitle = this.cancelling ? "Cancelling safely" : title;
-        if (this.ProgressTitle.Text != currentTitle) this.phaseElapsed.Restart();
-        this.ProgressTitle.Text = currentTitle;
+        this.ProgressTitle.Text = this.cancelling ? "Cancelling safely" : title;
         this.ProgressDetail.Text = this.cancelling ? "Please keep this window open while Windows completes rollback." : detail;
-        if (!this.hasInstallerProgress)
-        {
-            this.ProgressBar.IsIndeterminate = true;
-            this.ProgressPercent.Text = "In progress";
-        }
+        this.progress.Report(this.cancelling ? "cancelling" : phase ?? title);
+        this.ProgressLabel.Text = "CURRENT STEP";
         this.CancelButton.IsEnabled = !this.cancelling;
-        if (!this.elapsed.IsRunning)
-        {
-            this.elapsed.Start();
-            this.elapsedTimer.Start();
-        }
-        this.lastStatusUpdate = this.elapsed.Elapsed;
-        this.UpdateElapsed(this, EventArgs.Empty);
+        this.elapsedTimer.Start();
+        this.RenderProgress();
     }
 
     public void SetInstallerProgress(int percentage)
     {
-        this.hasInstallerProgress = true;
-        this.ProgressBar.IsIndeterminate = false;
-        this.ProgressBar.Value = Math.Clamp(percentage, 0, 100);
-        this.ProgressPercent.Text = $"{this.ProgressBar.Value:0}%";
-        this.lastStatusUpdate = this.elapsed.Elapsed;
+        if (percentage is < 0 or > 100 || !this.busy) return;
+        this.OverallProgressText.Text = $"Windows installation · {percentage}% reported";
+        this.OverallProgressText.Visibility = NativePreviewPresentation.DiagnosticsEnabled ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    public void SetPackageProgress(int percentage)
+    {
+        if (!this.busy || this.cancelling) return;
+        this.progress.Report(this.progress.Phase, NativeProgressMeasurement.Create(percentage, 100, "percent"));
+        this.RenderProgress();
+    }
+
+    public void ShowMeasuredProgress(string phase, string title, string detail, long completed, long total)
+    {
+        this.ShowProgress(title, detail, phase);
+        if (this.cancelling) return;
+        this.progress.Report(this.progress.Phase, NativeProgressMeasurement.Create(completed, total, "bytes"));
+        this.RenderProgress();
+    }
+
+    private void RenderProgress()
+    {
+        var measurement = this.progress.Measurement;
+        this.ProgressBar.IsIndeterminate = measurement is null;
+        this.ProgressPercent.Text = measurement?.Label ?? "Working…";
+        if (measurement is not null && this.displayedPercentage != measurement.Percentage)
+        {
+            if (measurement.Percentage < this.ProgressBar.Value)
+            {
+                this.ProgressBar.BeginAnimation(System.Windows.Controls.Primitives.RangeBase.ValueProperty, null);
+                this.ProgressBar.Value = measurement.Percentage;
+            }
+            else
+            {
+                var animation = new DoubleAnimation(this.ProgressBar.Value, measurement.Percentage, TimeSpan.FromMilliseconds(200))
+                { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut } };
+                this.ProgressBar.BeginAnimation(System.Windows.Controls.Primitives.RangeBase.ValueProperty, animation, HandoffBehavior.SnapshotAndReplace);
+            }
+            this.displayedPercentage = measurement.Percentage;
+        }
+        else if (measurement is null)
+        {
+            this.ProgressBar.BeginAnimation(System.Windows.Controls.Primitives.RangeBase.ValueProperty, null);
+            this.ProgressBar.Value = 0;
+            this.displayedPercentage = null;
+        }
+        this.UpdateElapsed(this, EventArgs.Empty);
     }
 
     public void ShowConfiguring()
     {
         this.packageInstalled = true;
-        this.hasInstallerProgress = false;
         this.ShowProgress("Saving your agent settings", "Saving your choices and protecting the API key in Windows Credential Manager.");
         this.canCancel = false;
         this.CancelButton.IsEnabled = false;
@@ -189,16 +221,14 @@ public partial class MainWindow : Window
             return;
         }
         this.preparingModel = true;
-        this.hasInstallerProgress = false;
-        this.ShowProgress("Preparing your on-device model", progress.Message);
+        this.ShowProgress("Preparing your on-device model", progress.Message, "model-" + progress.Phase);
         this.ProgressLabel.Text = "N1X EXPRESS MODEL SETUP";
         this.canCancel = true;
         this.CancelButton.Content = "Cancel model setup";
         if (progress.CompletedBytes is long completed && progress.TotalBytes is long total && total > 0 && completed >= 0 && completed <= total)
         {
-            this.ProgressBar.IsIndeterminate = false;
-            this.ProgressBar.Value = 100d * completed / total;
-            this.ProgressPercent.Text = $"{completed / 1_000_000_000d:0.0} / {total / 1_000_000_000d:0.0} GB";
+            this.progress.Report(this.progress.Phase, NativeProgressMeasurement.Create(completed, total, "bytes"));
+            this.RenderProgress();
         }
     }
 
@@ -257,7 +287,9 @@ public partial class MainWindow : Window
 
     public void MarkLaunched()
     {
-        this.SuccessDetail.Text = "Your configured agent is opening. You can close this setup window.";
+        this.SuccessDetail.Text = this.SelectedAgent is "openclaw" or "hermes"
+            ? "The session window is opening. It shows preparation progress and opens the browser after the agent's Web UI becomes available. You can close Setup."
+            : "Your configured agent's own window is opening. You can close this setup window.";
         this.LaunchButton.IsEnabled = false;
     }
 
@@ -269,7 +301,7 @@ public partial class MainWindow : Window
         this.ClearCredential();
         this.HidePanels();
         this.FailurePanel.Visibility = Visibility.Visible;
-        this.FailureDetail.Text = File.Exists(setupLog) ? $"{detail}\n\nSetup log:\n{setupLog}" : detail;
+        this.FailureDetail.Text = File.Exists(setupLog) ? $"{detail}\n\nChoose Setup log to open the saved details." : detail;
     }
 
     public void ShowRecoverableError(string detail)
@@ -461,8 +493,8 @@ public partial class MainWindow : Window
         this.CancelButton.IsEnabled = false;
         this.CancelRequested?.Invoke(this, EventArgs.Empty);
         this.ProgressTitle.Text = "Cancelling safely";
-        this.phaseElapsed.Restart();
-        this.lastStatusUpdate = this.elapsed.Elapsed;
+        this.progress.Report("cancelling");
+        this.RenderProgress();
         this.ProgressDetail.Text = "Please keep this window open while Windows completes rollback.";
     }
 
@@ -512,14 +544,14 @@ public partial class MainWindow : Window
 
     private void UpdateElapsed(object? sender, EventArgs args)
     {
-        this.ElapsedText.Text = $"Elapsed {this.elapsed.Elapsed:hh\\:mm\\:ss}";
-        var sinceUpdate = this.elapsed.Elapsed - this.lastStatusUpdate;
-        this.PhaseActivityText.Text = $"This step {this.phaseElapsed.Elapsed:hh\\:mm\\:ss} · last status update {sinceUpdate:hh\\:mm\\:ss} ago";
+        this.ElapsedText.Text = $"Total elapsed {NativeProgressPresentation.Duration(this.progress.SessionElapsed)}";
+        this.PhaseActivityText.Text = this.progress.ActivityText;
+        this.PhaseActivityIndicator.Opacity = this.progress.ActivityOpacity;
+        this.PhaseActivityPanel.Visibility = NativePreviewPresentation.DiagnosticsEnabled ? Visibility.Visible : Visibility.Collapsed;
     }
     private void StopElapsed()
     {
-        this.elapsed.Stop();
-        this.phaseElapsed.Stop();
         this.elapsedTimer.Stop();
+        this.PhaseActivityIndicator.Opacity = 1;
     }
 }
