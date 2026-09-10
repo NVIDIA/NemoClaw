@@ -46,6 +46,9 @@ describe("Pi release cohort separation", () => {
 describe("Pi candidate contract validation", () => {
   it("accepts an exact candidate contract", () => {
     const contract = validateCandidateContract(candidateContract(), "linux/amd64");
+    expect(contract.agent).toBe("pi");
+    expect(contract.platform).toBe("linux/amd64");
+    expect(contract.source.repository).toBe("NVIDIA/NemoClaw");
     expect(contract.reference).toBe(`ghcr.io/nvidia/nemoclaw/pi-sandbox@${DIGEST}`);
   });
 
@@ -78,7 +81,7 @@ describe("Pi managed model catalog generation", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-config-"));
     const result = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", path.join(root, "agents/pi/generate-config.ts")],
+      [path.join(root, "agents/pi/generate-config.ts")],
       {
         cwd: root,
         encoding: "utf8",

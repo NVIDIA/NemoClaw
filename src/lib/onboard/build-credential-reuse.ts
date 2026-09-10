@@ -22,12 +22,12 @@ import { logMissingNvidiaApiKeyHelp } from "./missing-credential-hints";
  *
  * Exits the process when the credential is missing/invalid and unrecoverable.
  */
-export function resolveNonInteractiveBuildCredential(opts: {
+export async function resolveNonInteractiveBuildCredential(opts: {
   provider: string;
   helpUrl: string | null | undefined;
   recoveredFromSandbox: boolean;
-  providerExistsInGateway: (name: string) => boolean;
-}): boolean {
+  providerExistsInGateway: (name: string) => boolean | Promise<boolean>;
+}): Promise<boolean> {
   const { provider, helpUrl, recoveredFromSandbox, providerExistsInGateway } = opts;
   const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
   if (resolvedNvidiaKey) {
@@ -39,7 +39,7 @@ export function resolveNonInteractiveBuildCredential(opts: {
     }
     return false;
   }
-  if (!recoveredFromSandbox || !providerExistsInGateway(provider)) {
+  if (!recoveredFromSandbox || !(await providerExistsInGateway(provider))) {
     logMissingNvidiaApiKeyHelp(helpUrl);
     process.exit(1);
   }

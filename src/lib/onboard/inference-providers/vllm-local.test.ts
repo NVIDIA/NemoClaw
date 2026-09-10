@@ -10,7 +10,7 @@ const CREDENTIAL_ENV = "NEMOCLAW_VLLM_LOCAL_TOKEN";
 function deps(overrides: Partial<VllmDeps> = {}): VllmDeps {
   return {
     runOpenshell: vi.fn(() => ({ status: 0 })),
-    upsertProvider: vi.fn(() => ({ ok: true })),
+    upsertProvider: vi.fn(async () => ({ ok: true })),
     verifyInferenceRoute: vi.fn(),
     verifyOnboardInferenceSmoke: vi.fn(),
     isNonInteractive: () => true,
@@ -33,7 +33,7 @@ function deps(overrides: Partial<VllmDeps> = {}): VllmDeps {
 
 describe("vLLM local provider credential", () => {
   it("preserves the literal dummy credential for legacy single-host vLLM", async () => {
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
 
     await expect(
       setupVllmLocalInference(
@@ -53,7 +53,7 @@ describe("vLLM local provider credential", () => {
 
   it("registers the persisted managed key through provider env, never as an argv field", async () => {
     const apiKey = "c".repeat(64);
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
 
     await expect(
       setupVllmLocalInference(
@@ -80,7 +80,7 @@ describe("vLLM local provider credential", () => {
   it("fails closed without rendering credential-loader details", async () => {
     const leaked = "d".repeat(64);
     const error = vi.fn();
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
 
     await expect(
       setupVllmLocalInference(

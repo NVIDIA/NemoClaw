@@ -37,7 +37,7 @@ runs:
         set -euo pipefail
         current_bucket="$(( $(date -u +%s) / 43200 ))"
         previous_bucket="$(( current_bucket - 1 ))"
-        node --experimental-strip-types --input-type=module - \
+        node --input-type=module - \
           "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json" \
           "$GITHUB_ACTION_PATH/../../../scripts/lib/repository-input-path.mts" <<'NODE'
         import { createHash } from "node:crypto";
@@ -106,7 +106,7 @@ runs:
         NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIR: ${{ inputs.cache-directory }}
         NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
         NPM_CONFIG_USERCONFIG: /dev/null
-      run: env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN node --experimental-strip-types "$GITHUB_ACTION_PATH/../../../scripts/audit-reviewed-npm-graph.mts"
+      run: env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN node "$GITHUB_ACTION_PATH/../../../scripts/audit-reviewed-npm-graph.mts"
 
     - name: Save current reviewed npm audit cache bucket
       if: inputs.trusted-cache-write == 'true' && steps.cache-current.outputs.cache-hit != 'true'

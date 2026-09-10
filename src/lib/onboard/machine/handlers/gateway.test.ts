@@ -566,7 +566,7 @@ describe("handleGatewayState", () => {
     );
   });
 
-  it("replaces legacy metadata before starting the Docker-driver gateway", async () => {
+  it("replaces legacy metadata before starting the managed gateway", async () => {
     const { deps, calls } = createDeps({
       isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
       reconcileGatewayGpuReuseForGpuIntent: vi.fn(() => "stale" as GatewayReuseState),
@@ -574,15 +574,13 @@ describe("handleGatewayState", () => {
 
     const result = await handleGatewayState(baseOptions(deps, "healthy"));
 
-    expect(calls.note).toHaveBeenCalledWith(
-      "  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.",
-    );
+    expect(calls.note).toHaveBeenCalledWith("  Replacing legacy OpenShell gateway metadata.");
     expect(calls.retireLegacy).toHaveBeenCalledOnce();
     expect(calls.startGateway).toHaveBeenCalledOnce();
     expect(result.gatewayReuseState).toBe("missing");
   });
 
-  it("emits the step [2/8] header before retiring the legacy Docker-driver gateway", async () => {
+  it("emits the step [2/8] header before retiring the legacy gateway", async () => {
     const order: string[] = [];
     const { deps, calls } = createDeps({
       isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
@@ -601,9 +599,7 @@ describe("handleGatewayState", () => {
     await handleGatewayState(baseOptions(deps, "healthy"));
 
     expect(order).toEqual(["startRecordedStep:gateway", "retireLegacy", "startGateway"]);
-    expect(calls.note).toHaveBeenCalledWith(
-      "  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.",
-    );
+    expect(calls.note).toHaveBeenCalledWith("  Replacing legacy OpenShell gateway metadata.");
   });
 
   it("does not retire a foreign-active Docker-driver gateway (concurrent instances)", async () => {
@@ -615,9 +611,7 @@ describe("handleGatewayState", () => {
     const result = await handleGatewayState(baseOptions(deps, "foreign-active"));
 
     expect(calls.retireLegacy).not.toHaveBeenCalled();
-    expect(calls.note).not.toHaveBeenCalledWith(
-      "  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.",
-    );
+    expect(calls.note).not.toHaveBeenCalled();
     expect(calls.startGateway).toHaveBeenCalledOnce();
     expect(result.gatewayReuseState).toBe("missing");
   });

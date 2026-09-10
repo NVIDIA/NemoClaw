@@ -619,14 +619,6 @@ export function patchStagedDockerfile(
   if (baseResolutionLabels) {
     dockerfile = `${dockerfile.trimEnd()}\n\n# NemoClaw sandbox-base warm-resolution metadata\n${baseResolutionLabels}\n`;
   }
-  // NEMOCLAW_EXTRA_AGENTS_JSON — bake secondary OpenClaw agents into
-  // agents.list[] alongside the canonical "main" entry. Pass the raw operator
-  // payload through to the build-time validator in
-  // scripts/generate-openclaw-config.mts. The host-side encode does not
-  // parse or shape-check the JSON: that would duplicate validation logic and
-  // could silently drop a malformed payload here while the docs/contract
-  // promise an image-build failure. Encoding the raw bytes makes the build
-  // the single source of truth for validation errors.
   const extraAgentsRaw = process.env.NEMOCLAW_EXTRA_AGENTS_JSON;
   if (extraAgentsRaw && extraAgentsRaw.trim()) {
     const encoded = sanitizeDockerArg(Buffer.from(extraAgentsRaw, "utf8").toString("base64"));

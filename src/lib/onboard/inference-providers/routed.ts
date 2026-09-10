@@ -36,7 +36,7 @@ export async function setupRoutedInference(
     error(`  ✗ Failed to start model router: ${err instanceof Error ? err.message : String(err)}`);
     return exitProcess(1);
   }
-  const routed = routedInference.upsertRoutedProvider(provider, endpointUrl, credentialEnv, {
+  const routed = await routedInference.upsertRoutedProvider(provider, endpointUrl, credentialEnv, {
     upsertProvider,
     hydrateCredentialEnv,
   });

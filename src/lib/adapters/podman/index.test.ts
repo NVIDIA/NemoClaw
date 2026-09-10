@@ -841,7 +841,6 @@ describe("Podman container engine command adapter", () => {
     expect(secondCapture).not.toHaveBeenCalled();
   });
 
-
   it("latches executable authority failure even when socket failure wins the first guard", () => {
     const socketChanged = new Error("socket changed");
     const defaultDeps = executableAuthorityDeps();

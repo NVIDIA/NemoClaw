@@ -230,7 +230,6 @@ process.exit(0);
     const result = spawnSync(
       process.execPath,
       [
-        "--experimental-strip-types",
         path.join(trustedRootAlias, "scripts/audit-reviewed-npm-graph.mts"),
       ],
       {
@@ -606,7 +605,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     );
   });
 
-  // source-shape-contract: security -- One reviewed package field prevents a second package identity from bypassing the credential-isolation workflow
+  // source-shape-contract: security -- One active package plus one same-package replacement prevents an open-ended identity list from bypassing the credential-isolation workflow
   it("rejects the removed plural source-registry package shape", () => {
     const configFile = path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json");
     const config = JSON.parse(fs.readFileSync(configFile, "utf-8")) as Record<string, unknown>;
