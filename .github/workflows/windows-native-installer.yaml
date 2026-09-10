@@ -52,8 +52,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-native-installer-${{ github.ref }}${{ inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || '' }}
-  cancel-in-progress: true
+  group: windows-native-installer-${{ github.ref }}${{ inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || inputs.probe_official_hermes_components && '-hermes-components' || inputs.windows_native_diagnostic_source_run_id != '' && '-package-diagnostic' || '' }}
+  # Finish the in-flight artifact/evidence; keep only the latest queued request.
+  cancel-in-progress: false
 
 jobs:
   windows-native-installer:
