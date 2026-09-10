@@ -116,11 +116,11 @@ try {
         if ($eventCount -gt 100000) { throw 'The bounded trace event count was exceeded.' }
         if ($_.ProviderName -ceq $providerName -and $_.Id -eq 20) {
             $record = $_; $xml = [xml]$record.ToXml(); $payload = @{}
-            foreach ($item in $xml.Event.EventData.Data) { $payload[[string]$item.Name] = [string]$item.'#text' }
+            foreach ($item in $xml.Event.EventData.Data) { $payload[[string]$item.Name] = [string]$item.InnerText }
             $issuingThread = 0L
             foreach ($name in @('IssuingThreadId','ThreadId')) {
                 if ($payload.ContainsKey($name)) {
-                    $text = $payload[$name]
+                    $text = $payload[$name].Trim()
                     if ($text.StartsWith('0x')) { $issuingThread = [Convert]::ToInt64($text.Substring(2),16) }
                     else { $issuingThread = [Convert]::ToInt64($text,10) }
                 }
@@ -128,7 +128,7 @@ try {
             if ($record.ProcessId -eq $bounds.processId -or $issuingThread -eq $bounds.threadId) {
                 $time = $record.TimeCreated.ToUniversalTime()
                 foreach ($interval in $bounds.intervals) {
-                    if ($time -ge [DateTime]::Parse($interval.beginUtc).ToUniversalTime() -and $time -le [DateTime]::Parse($interval.endUtc).ToUniversalTime()) {
+                    if ($time -ge ([DateTime]$interval.beginUtc).ToUniversalTime() -and $time -le ([DateTime]$interval.endUtc).ToUniversalTime()) {
                         $counts[$interval.name]++
                         if ($matched.Count -ge 10000) { throw 'The bounded matching-event inventory was exceeded.' }
                         $matched.Add([pscustomobject]@{ interval = $interval.name; utc = $time.ToString('O'); processId = $record.ProcessId
