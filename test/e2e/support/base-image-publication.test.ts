@@ -16,6 +16,7 @@ import {
   githubRequest,
   type PublicationRun,
   isBaseImagePublicationEvent,
+  matchesBaseImagePushPath,
   parseBaseImagePushPaths,
   resolveFirstParentHistory,
   selectPublicationRun,
@@ -244,15 +245,23 @@ describe("base-image publication evidence", () => {
     const expanded = expandBaseImagePushPaths(EXPECTED_SHA, [
       "Dockerfile",
       "agents/**",
+      ".github/actions/ci-reviewed-npm-audit/**",
       "src/lib/messaging/**",
       "test/e2e/live/managed-image-activation-e2e*.ts",
     ]);
     expect(expanded).toEqual([
+      ":(glob).github/actions/ci-reviewed-npm-audit/**",
       ":(glob)agents/**",
       ":(glob)src/lib/messaging/**",
       ":(glob)test/e2e/live/managed-image-activation-e2e*.ts",
       "Dockerfile",
     ]);
+    expect(
+      matchesBaseImagePushPath(
+        ".github/actions/ci-reviewed-npm-audit/**",
+        ".github/actions/ci-reviewed-npm-audit/verify-and-install-npm.sh",
+      ),
+    ).toBe(true);
   });
 
   it("binds the applicable commit to the checked-out first-parent chain (#7372)", () => {
