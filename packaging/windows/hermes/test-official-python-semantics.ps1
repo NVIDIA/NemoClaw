@@ -16,8 +16,11 @@ function Read-ControlAst([string]$Path){
 $official=Read-ControlAst $OfficialInstallerPath
 $resolver=$official.Find({param($item) $item -is [Management.Automation.Language.FunctionDefinitionAst] -and $item.Name -eq 'Resolve-UvCmd'},$false)
 $wrapper=Read-ControlAst (Join-Path $PSScriptRoot 'complete-official-python.ps1')
+$pathAssignment=$wrapper.Find({param($item) $item -is [Management.Automation.Language.AssignmentStatementAst] -and $item.Left -is [Management.Automation.Language.VariableExpressionAst] -and $item.Left.VariablePath.UserPath -ceq 'runtimeBuildOwnedPath'},$true)
 $stageCall=$wrapper.Find({param($item) $item -is [Management.Automation.Language.TryStatementAst] -and $item.Extent.Text.Contains('Get-InstallStage')},$true)
-if($null -eq $resolver -or $null -eq $stageCall){throw 'The actual upstream resolver or stage invocation is missing.'}
+if($null -eq $resolver -or $null -eq $stageCall -or $null -eq $pathAssignment){throw 'The actual upstream resolver or stage invocation is missing.'}
+$priorPath=$env:PATH
+$priorSystemRoot=$env:SystemRoot
 $root=Join-Path ([IO.Path]::GetTempPath()) ('hermes stage control '+[guid]::NewGuid().ToString('N'))
 try {
     [IO.Directory]::CreateDirectory((Join-Path $root 'bin'))|Out-Null
@@ -39,6 +42,16 @@ function Invoke-Stage([hashtable]$StageDef){Resolve-UvCmd;if($script:ExpectedSta
     $runtimeBuildInstaller=Join-Path $root 'fixture-installer.ps1'
     [IO.File]::WriteAllText($runtimeBuildInstaller,$fixture)
     $runtimeBuildRoot=$root;$runtimeBuildSource=$root
+    # Evaluate the actual production build PATH, with only owned fixture roots.
+    # Native command discovery must not inherit the runner's unrelated Git tools.
+    $runtimeBuildPython=Join-Path $root 'python/python.exe'
+    $runtimeBuildSystem32=Join-Path $root 'system32'
+    $runtimeBuildPowerShell=Join-Path $runtimeBuildSystem32 'WindowsPowerShell/powershell.exe'
+    $BuildToolPath=Join-Path $root 'native-tools'
+    $env:SystemRoot=Join-Path $root 'windows'
+    . ([scriptblock]::Create($pathAssignment.Extent.Text))
+    $controlledPath=($runtimeBuildOwnedPath -split ';') -join [IO.Path]::PathSeparator
+    $env:PATH=$controlledPath
     $runtimeBuildLock=[pscustomobject]@{upstream=[pscustomobject]@{tag='v2026.9.7';commit='2237be355906fbe6065ce1815711eee52b2d646e'}}
     $exercise=[scriptblock]::Create('try {'+"`n"+$stageCall.Extent.Text+@'
 
@@ -55,8 +68,24 @@ if(-not $script:ExpectedStageFailure -and $stageError){throw $stageError}
         & $exercise
         if(-not [string]::Equals($script:UvCmd,$expectedUv,[StringComparison]::OrdinalIgnoreCase)){throw 'The upstream resolver did not select managed uv.'}
     }
-    Write-Host 'Official installer semantics: original strict-mode failure reproduced; managed resolution and strict restoration pass on success and failure.'
+    $legacy=Join-Path $root 'git/usr/bin'
+    [IO.Directory]::CreateDirectory($legacy)|Out-Null
+    $agentName=if($env:OS -ceq 'Windows_NT'){'winpty-agent.exe'}else{'winpty-agent'}
+    $agent=Join-Path $legacy $agentName
+    [IO.File]::WriteAllText($agent,'Not executed: legacy command-discovery fixture.')
+    if($env:OS -cne 'Windows_NT'){
+        [IO.File]::SetUnixFileMode($agent,([IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute))
+    }
+    $env:PATH=$legacy+[IO.Path]::PathSeparator+$controlledPath
+    if(-not(Get-Command winpty-agent -CommandType Application -ErrorAction SilentlyContinue)){throw 'Legacy discovery control did not expose its fixture.'}
+    $script:ExpectedStageFailure=$false;$stageError=$null;$guarded=$false
+    try {& $exercise}catch{$guarded=$_.Exception.Message -ceq 'Legacy WinPTY is unexpectedly discoverable in the native ARM64 dependency build.'}
+    if(-not $guarded){throw 'The actual stage guard accepted discoverable legacy WinPTY.'}
+    $env:PATH=$controlledPath
+    Write-Host 'Official installer semantics: original strict-mode failure reproduced; managed resolution and strict restoration pass on success and failure; legacy WinPTY discovery is rejected.'
 } finally {
+    $env:PATH=$priorPath
+    $env:SystemRoot=$priorSystemRoot
     Remove-Variable UvCmd,ExpectedStageFailure -Scope Script -ErrorAction SilentlyContinue
     if([IO.Directory]::Exists($root)){[IO.Directory]::Delete($root,$true)}
 }
