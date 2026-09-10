@@ -588,4 +588,130 @@ describe("CLI sandbox status text output", () => {
       expect(parsed.dockerPaused).toBe(true);
     },
   );
+
+  it.each(["missing", "present"] as const)(
+    "sandbox <name> status reports clean Stopped state with a %s live lookup (#11025)",
+    testTimeoutOptions(30_000),
+    (gatewayState) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-stopped-"));
+      const localBin = path.join(home, "bin");
+      const stoppedState = path.join(home, "docker-stopped");
+      fs.mkdirSync(localBin, { recursive: true });
+      writeSandboxRegistry(home, "alpha", {
+        openshellDriver: "docker",
+        openshellVersion: "0.0.44",
+      });
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          ...(gatewayState === "missing"
+            ? [
+                `if [ -f ${JSON.stringify(stoppedState)} ] && [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then echo 'NotFound: sandbox not found'; exit 1; fi`,
+              ]
+            : []),
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
+          "  echo 'Sandbox:'",
+          "  echo",
+          "  echo '  Id: abc'",
+          "  echo '  Name: alpha'",
+          "  echo '  Namespace: openshell'",
+          "  echo '  Phase: Provisioning'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+          "  echo '  Provider: nvidia-prod'",
+          "  echo '  Model: nvidia/nemotron'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "status" ]; then',
+          "  echo 'Gateway: nemoclaw'",
+          "  echo 'Status: Connected'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+          "  echo 'Gateway: nemoclaw'",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "docker"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+          `if [ "$1" = "stop" ]; then touch ${JSON.stringify(stoppedState)}; exit 0; fi`,
+          'if [ "$1" = "ps" ]; then',
+          `  if [ ! -f ${JSON.stringify(stoppedState)} ]; then echo "openshell-alpha-abc123"; exit 0; fi`,
+          '  for a in "$@"; do [ "$a" = "-a" ] && { echo "openshell-alpha-abc123"; exit 0; }; done',
+          '  for a in "$@"; do',
+          '    case "$a" in',
+          '      *Status*) printf "openshell-alpha-abc123\\tExited (0) 2 hours ago\\n"; exit 0 ;;',
+          "    esac",
+          "  done",
+          '  echo ""',
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "inspect" ]; then',
+          '  for a in "$@"; do',
+          '    case "$a" in',
+          `      *Running*) if [ -f ${JSON.stringify(stoppedState)} ]; then echo "false"; else echo "true"; fi; exit 0 ;;`,
+          '      *Paused*) echo "false"; exit 0 ;;',
+          '      *Health*) echo "none"; exit 0 ;;',
+          "    esac",
+          "  done",
+          '  echo ""; exit 0',
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const stopped = runWithEnv(
+        "alpha stop",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        30_000,
+      );
+      expect(stopped.code, stopped.out).toBe(0);
+
+      const r = runWithEnv(
+        "alpha status",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        30000,
+      );
+
+      expect(r.code, r.out).toBe(0);
+      expect(r.out).not.toContain("Failure layer:");
+      expect(r.out).toContain("Phase: Stopped");
+      expect(r.out).not.toContain("Phase: Provisioning");
+      expect(r.out).not.toContain("not present in the live OpenShell gateway");
+      expect(r.out).toContain("Sandbox 'alpha' is stopped.");
+      expect(r.out).toContain("Workspace state is preserved.");
+      expect(r.out).toContain("Start it again with `nemoclaw alpha start`.");
+      expect(r.out).not.toContain("rebuild --yes");
+      expect(r.out).not.toContain("The sandbox is alive but the");
+
+      const j = runWithEnv(
+        "alpha status --json",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        30000,
+      );
+      expect(j.code).toBe(0);
+      const parsed = JSON.parse(j.out);
+      expect(parsed.phase).toBe("Stopped");
+      expect(parsed.gatewayState).toBe(gatewayState);
+      expect(parsed.failureLayer).toBeNull();
+    },
+  );
 });
