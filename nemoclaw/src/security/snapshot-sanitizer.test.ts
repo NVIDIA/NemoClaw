@@ -192,12 +192,12 @@ describe("migration snapshot sanitizer", () => {
         wrapper,
         [
           "#!/bin/sh",
-          `if [ \"\${4-}\" = apply ] && [ ! -e ${shellQuote(marker)} ]; then`,
+          `if [ "\${4-}" = apply ] && [ ! -e ${shellQuote(marker)} ]; then`,
           `  mv ${shellQuote(nested)} ${shellQuote(movedNested)}`,
           `  ln -s ${shellQuote(outside)} ${shellQuote(nested)}`,
           `  : > ${shellQuote(marker)}`,
           "fi",
-          `exec ${shellQuote(python as string)} \"$@\"`,
+          `exec ${shellQuote(python as string)} "$@"`,
         ].join("\n"),
       );
       chmodSync(wrapper, 0o755);
