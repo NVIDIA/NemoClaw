@@ -1128,6 +1128,20 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
+  it.each([
+    ["installer", "installer-changed-url", "installer operational template"],
+    ["Brev launchable", "brev-changed-url", "Brev launchable operational template"],
+  ] as const)(
+    "rejects an operational mutation of the base-trusted v0.0.116 %s fixture",
+    (_consumer, mode, diagnostic) => {
+      const result = runFixture(mode, "0.0.116", true);
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain(`${diagnostic} is not base-trusted`);
+      expect(result.stdout).not.toContain("All installer hashes are current");
+    },
+  );
+
   it("accepts a base-trusted release with non-default consumer cardinality", () => {
     const result = runFixture("allowlisted-alternate-version", "9.9.9", true);
 

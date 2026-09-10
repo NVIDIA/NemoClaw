@@ -52,7 +52,7 @@ function expectedReceipt(cohort: string, receiptAttempt: number): Record<string,
 }
 
 describe("managed-image publication promotion", () => {
-  it("stages all multi-platform cohort aliases before moving the sole root pointer (#7744)", () => {
+  it("stages all multi-platform cohort aliases before moving the shipped root pointers (#7744, #11228)", () => {
     const promotion = required(
       step(
         managedPromoter(readWorkflow("managed-images.yaml")),
@@ -76,6 +76,7 @@ describe("managed-image publication promotion", () => {
     expect(failedCalls).toContain(`langchain-deepagents-code-sandbox:cohort-${cohort}`);
     expect(failedCalls).toContain(`openclaw-sandbox:cohort-${cohort}`);
     expect(failedCalls).not.toContain(`openclaw-sandbox:${revision}`);
+    expect(failedCalls).not.toContain(`hermes-sandbox:${revision}`);
 
     const accepted = runManagedImagePromotion(promotion, "", pointer);
     const acceptedCalls = accepted.calls.join("\n");
@@ -95,6 +96,7 @@ describe("managed-image publication promotion", () => {
       acceptedCalls.lastIndexOf(`openclaw-sandbox:cohort-${cohort}`),
     );
     const rootPointer = acceptedCalls.indexOf(`openclaw-sandbox:${revision}`);
+    const hermesPointer = acceptedCalls.indexOf(`hermes-sandbox:${revision}`);
 
     expect(accepted.calls.filter((call) => call.startsWith("pull ")).sort()).toEqual(
       expectedPullCalls.sort(),
@@ -108,7 +110,9 @@ describe("managed-image publication promotion", () => {
     });
     expect(lastCohortStage).toBeGreaterThanOrEqual(0);
     expect(rootPointer).toBeGreaterThan(lastCohortStage);
-    expect(acceptedCalls).not.toContain(`hermes-sandbox:${revision}`);
+    // Hermes ships its root pointer alongside OpenClaw (#11228); Deep Agents
+    // Code stays cohort-only.
+    expect(hermesPointer).toBeGreaterThan(lastCohortStage);
     expect(acceptedCalls).not.toContain(`langchain-deepagents-code-sandbox:${revision}`);
     expect(Object.keys(accepted.platformContracts).sort()).toEqual(
       publicationAgents
@@ -203,6 +207,6 @@ describe("managed-image publication promotion", () => {
     });
 
     expect(stalePointer.status).not.toBe(0);
-    expect(stalePointer.stderr).toContain("OpenClaw cohort pointer is not exact");
+    expect(stalePointer.stderr).toContain("cohort pointer is not exact");
   });
 });

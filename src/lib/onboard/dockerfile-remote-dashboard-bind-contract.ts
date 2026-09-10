@@ -13,15 +13,15 @@ const REMOTE_BIND_ARG_RE = /^ARG\s+NEMOCLAW_DASHBOARD_BIND=/;
 const REMOTE_BIND_PATCHED_ARG_RE = /^ARG\s+NEMOCLAW_DASHBOARD_BIND=0\.0\.0\.0$/;
 const REMOTE_BIND_PROMOTION_RE = /NEMOCLAW_DASHBOARD_BIND=\$\{NEMOCLAW_DASHBOARD_BIND\}/;
 const OPENCLAW_CONFIG_GENERATOR_RE =
-  /^RUN\s+(?:NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0\s+)?(?:NEMOCLAW_OPENCLAW_MANAGED_PROXY=0\s+)?node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/;
+  /^RUN\s+(?:NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0\s+)?(?:NEMOCLAW_OPENCLAW_MANAGED_PROXY=0\s+)?node\s+\/scripts\/generate-openclaw-config\.mts$/;
 const SAFE_VALIDATION_GENERATOR_RE =
-  /^RUN\s+validation_home="\$validation_root\/progressive";\s+HOME=(?:"\$validation_home"|\$validation_home)\s+node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/;
+  /^RUN\s+validation_home="\$validation_root\/progressive";\s+HOME=(?:"\$validation_home"|\$validation_home)\s+node\s+\/scripts\/generate-openclaw-config\.mts$/;
 const PASSIVE_FINAL_STAGE_INSTRUCTION_RE = /^(?:ARG|ENV|WORKDIR|USER|HEALTHCHECK|ENTRYPOINT|CMD)\b/;
 const CONFIG_MODE_RE = /^RUN\s+chmod\s+660\s+\/sandbox\/\.openclaw\/openclaw\.json$/;
 const CONFIG_HASH_RE =
   /^RUN\s+sha256sum\s+\/sandbox\/\.openclaw\/openclaw\.json\s+>\s+\/sandbox\/\.openclaw\/\.config-hash(?:\s+&&\s+chmod\s+660\s+\/sandbox\/\.openclaw\/\.config-hash)?(?:\s+&&\s+chown\s+sandbox:sandbox\s+\/sandbox\/\.openclaw\/\.config-hash)?$/;
 const MESSAGING_BUILD_APPLIER_RE =
-  /^RUN\s+OPENCLAW_VERSION="\$\{OPENCLAW_VERSION\}"\s+node\s+--experimental-strip-types\s+\/src\/lib\/messaging\/applier\/build\/messaging-build-applier\.mts\s+--agent\s+openclaw\s+--phase\s+(?:agent-install|post-agent-install)$/;
+  /^RUN\s+OPENCLAW_VERSION="\$\{OPENCLAW_VERSION\}"\s+node\s+\/src\/lib\/messaging\/applier\/build\/messaging-build-applier\.mts\s+--agent\s+openclaw\s+--phase\s+(?:agent-install|post-agent-install)$/;
 const EXACT_CUSTOM_POST_GENERATOR_RUN_RE = [
   CONFIG_MODE_RE,
   CONFIG_HASH_RE,
@@ -34,7 +34,7 @@ const EXACT_CUSTOM_POST_GENERATOR_RUN_RE = [
 // openclaw.json>` to an otherwise safe command. A lifecycle test verifies
 // these digests against the checked-in Dockerfile.
 const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
-  "9300de0b56a7d8a1498fd36cb9c05313b6691d6756b455f91628ed989221afc2",
+  "d0ed2268f42964e8a150deb39e68e31313e520503fa2c131a4d7cc8b21191da0",
   "6f457f365f5c0d128e5e3b549a630b5bd9ebd223919f2c2c8e6a31235d763781",
   "dca7d3dbc030e4efa77c850b9d21a826358c69c7d2062f3eee2f5a57eeb07aa2",
   "b01b5f5d2cba5778cd8eb87139f2c6a8174082a7f6775e443a1dbdc0629ce7e5",
@@ -43,8 +43,8 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "4e548aafe9484a887a0ab0cf92ec82f77843fd346de7a2dff50b93ebd632b044",
   "737edaaa69f80cf10d42fd349e0be068c1ef6e7375d5dcb4055b012420b58736",
   "5b814e92449a6778385f588877fe72ebed80e601f8eb0c90c2842b17a489f3da",
-  "0e1a9a7bab2fab0a974577c3af8785157b4b9be2b4db32d5f4f9e5aa3c8c8171",
-  "ede14966118316b58139830b4a1ffaceca86a6d0857cd0c1705d69db109907b0",
+  "7c2cf32df8b7ad57a7bc155707df0dd706dd74fe640d726df25f9b8c4d150a90",
+  "71abf445c5919eb84d25c3d15fc70ddf71b02eb7e22177794d425e295bb14e5e",
   "a68297161e2c6463440b822f4e4be0518e745fb5fba8c61ab53b876724f7b666",
   "a54e2ac58ef00d7080ad697cb1892bf91b7bffe011f698df17b936c9906cd4af",
   "ca493ae7905fae5c587a8e5c31fcb3d423235940589c2decee99d7b338e87d88",
@@ -65,8 +65,8 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "4165899eb1f0f948f8883eddf4136136caac21cee1df39b12afea7672b23a378",
   "7e6a6879382f833f17be02ca7d287685b6afa1c423b1e087b3b05dd677d6e325",
   "4a54da2c1c33c681ae0dad181a5a7456c926051d91420aa60cf7edef6330ba65",
-  "e958e532c3e770fa426a6662652dbde2ddaeb41a214ccffe2def5a43a8b5b023",
-  "c6894538ce0c377566a22b11af9682a9952bfd936fd4d011f6f50da30c8e875e",
+  "e69b86c132e44c502b3dce8b9359c8798079e93489bd2d27f75d514b45502d4e",
+  "d4b6c80ecc6f243f2141a439e2690aa563c55e19e7d6f3965d3d8685507866c1",
   "e1b6dca3e6b30624f364b36ff52e654978bc120cc7800df2ff209c14949acd64",
   "c682148fc7efec9f947c326c6029181cd879b7cba3e8361246aba7d0e6fe70a3",
   "2801e488822e10a39a5586bd150279e54df4612e30c2fa782453534a466def59",
@@ -74,7 +74,7 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // Reviewed late messaging inputs, metadata setup, and runtime assertions.
   "7e5f7e1dfb90e5e4b863afdfb9ba58e57e3693bdc6f47ac8c13e80bdc9eff56b",
   "8f5966da093ef75cefd35c2b7f1361fbf5b32e63a4a8a34cb3ac7f76a1330e5e",
-  "c6b042ac2cc3d5570ae43f1e387a951cbe89fbb22e8cd9df486f99719bb32939",
+  "4c2f29cb433ff14ca386e71373b53e88c705e2ed255b435715681a0dd64e43f9",
   "761ea4fbb0da5cf3390ee8f2e56f3703a7da88c96ac47fea89d0fff800f728ae",
   "bda3ce8d453fa143943eac44bea4288e44a3cdbf5e9e54a3da68154f06d08c3d",
   // COPY --from=openclaw-runtime-payload / /
