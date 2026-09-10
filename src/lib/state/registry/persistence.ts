@@ -88,10 +88,7 @@ function normalizeDeferredN1xManagedVllmAcceptance(
   operation: "load" | "save",
 ): SandboxEntry["deferredN1xManagedVllmAccepted"] {
   const value = entry.deferredN1xManagedVllmAccepted;
-  if (
-    value !== undefined &&
-    (value !== true || !isDeferredN1xManagedVllmAcceptanceRoute(entry))
-  ) {
+  if (value !== undefined && (value !== true || !isDeferredN1xManagedVllmAcceptanceRoute(entry))) {
     throw new Error(`Cannot ${operation} a sandbox entry with invalid N1x preview acceptance`);
   }
   return value;
@@ -173,10 +170,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     entry.servingProfileProvenance,
     "load",
   );
-  const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(
-    entry,
-    "load",
-  );
+  const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(entry, "load");
   const policyEntry = normalizeSandboxPolicyAttribution(entry);
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
@@ -235,10 +229,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     durable.servingProfileProvenance,
     "save",
   );
-  const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(
-    durable,
-    "save",
-  );
+  const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(durable, "save");
   const policyEntry = normalizeSandboxPolicyAttribution(durable);
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,

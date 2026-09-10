@@ -14,10 +14,7 @@ import {
   type McpScrubbedAdapterEntry,
 } from "./mcp-bridge-adapter-teardown";
 import { McpBridgeError } from "./mcp-bridge-contracts";
-import {
-  cloneMcpSourceEntry,
-  inspectExactMcpDestroyProvider,
-} from "./mcp-bridge-destroy";
+import { cloneMcpSourceEntry, inspectExactMcpDestroyProvider } from "./mcp-bridge-destroy";
 import {
   assertGeneratedPolicyMutationSafe,
   buildMcpBridgePolicyKey,
@@ -35,10 +32,7 @@ import {
 } from "./mcp-bridge-provider";
 import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
 import { assertMcpAdapterTeardownRuntimeCapabilities } from "./mcp-bridge-runtime-capabilities";
-import {
-  ensureSandboxGatewaySelected,
-  getSandboxOrThrow,
-} from "./mcp-bridge-state";
+import { ensureSandboxGatewaySelected, getSandboxOrThrow } from "./mcp-bridge-state";
 import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
 
 export interface McpRebuildPreparation {
@@ -90,7 +84,6 @@ function assertMcpTeardownPolicyUnchanged(
     );
   }
 }
-
 
 async function getCompleteMcpRebuildEntries(
   sandboxName: string,
@@ -217,7 +210,7 @@ export async function prepareMcpBridgesForRebuild(
       // Hermes/agent cannot boot with a stale placeholder while its provider
       // is intentionally detached during recreate.
       scrubbedAdapters.push(
-        scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry, providerRuntimeSelection),
+        await scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry, providerRuntimeSelection),
       );
     }
     for (const entry of entries) {
@@ -244,7 +237,7 @@ export async function prepareMcpBridgesForRebuild(
           `Could not prove provider detach for MCP server '${entry.server}'.`,
         );
       }
-      waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+      await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
       // A binding already absent on retry was still detached by this rebuild
       // transaction (possibly before a prior process died), so it must be
       // reattached if sandbox deletion later aborts.
@@ -269,12 +262,12 @@ export async function prepareMcpBridgesForRebuild(
     }
     if (!runtimeRestored) {
       rollbackFailures.push(
-        ...rollbackScrubbedMcpAdapters(
+        ...(await rollbackScrubbedMcpAdapters(
           sandboxName,
           sandbox,
           scrubbedAdapters,
           providerRuntimeSelection,
-        ),
+        )),
       );
     }
     const detail = error instanceof Error ? error.message : String(error);
@@ -333,12 +326,12 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   }
   if (!runtimeRestored) {
     failures.push(
-      ...rollbackScrubbedMcpAdapters(
+      ...(await rollbackScrubbedMcpAdapters(
         sandboxName,
         sandbox,
         scrubbedAdapterEntries,
         providerRuntimeSelection,
-      ),
+      )),
     );
   }
   if (failures.length > 0) {

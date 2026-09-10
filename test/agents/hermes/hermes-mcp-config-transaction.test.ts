@@ -19,7 +19,11 @@ const TRANSACTION = path.resolve(
   "../../..",
   "agents/hermes/mcp-config-transaction.py",
 );
-const GUARD = path.resolve(import.meta.dirname, "../../..", "agents/hermes/runtime-config-guard.py");
+const GUARD = path.resolve(
+  import.meta.dirname,
+  "../../..",
+  "agents/hermes/runtime-config-guard.py",
+);
 
 function runPython(source: string, args: string[] = []) {
   const canonicalEnvironment = Object.fromEntries(
@@ -473,13 +477,15 @@ print(json.dumps({"exit_code": module.main()}))
       expect(result.status, result.stdout).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual({ exit_code: 2 });
       expect(result.stderr).toContain("<REDACTED>");
-      expect([
-            "SAFE_MCP_TOKEN",
-            "runtime-secret-123",
-            "second-secret-456",
-            "password",
-            "query-secret-789",
-          ].every((secret) => !result.stderr.includes(secret))).toBe(true);
+      expect(
+        [
+          "SAFE_MCP_TOKEN",
+          "runtime-secret-123",
+          "second-secret-456",
+          "password",
+          "query-secret-789",
+        ].every((secret) => !result.stderr.includes(secret)),
+      ).toBe(true);
       expect(result.stderr).not.toContain("\u001b");
       expect(result.stderr).not.toContain("\u202e");
       expect(result.stderr.trim().split("\n")).toHaveLength(1);
@@ -752,9 +758,11 @@ print(json.dumps(results, sort_keys=True))
     Object.entries(scenarios).forEach(([name, scenario]) => {
       expect(scenario.blocked, name).toBe(true);
       expect(scenario.error, `${name}.error`).toBe(expectedErrors[name]);
-      expect(Object.entries(scenario).filter(
-            ([property]) => property.endsWith("preserved") || property === "temp_cleaned",
-          ).every(([property, value]) => Object.is(value, true))).toBe(true);
+      expect(
+        Object.entries(scenario)
+          .filter(([property]) => property.endsWith("preserved") || property === "temp_cleaned")
+          .every(([property, value]) => Object.is(value, true)),
+      ).toBe(true);
     });
   });
 

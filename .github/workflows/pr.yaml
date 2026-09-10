@@ -63,7 +63,7 @@ jobs:
       - name: Setup Node.js for docs-only checks
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           cache: npm
 
       - name: Install docs-only check dependencies
@@ -159,7 +159,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           cache: npm
 
       - name: Install dependencies
@@ -243,7 +243,7 @@ jobs:
           decision="$(
             NEMOCLAW_CI_NPM_PACKAGE_MODE=inspect \
               NEMOCLAW_CI_TARGET_ROOT="$GITHUB_WORKSPACE" \
-              node --experimental-strip-types "$trusted_inspector"
+              node "$trusted_inspector"
           )"
           required="$(
             jq -ser '
@@ -385,6 +385,7 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/check-dist-sourcemaps.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
@@ -413,7 +414,15 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Detect legacy coverage artifact reader
+        id: legacy_coverage
+        run: |
+          if grep -q 'name: cli-build-output' .trusted-ci-actions/.github/actions/ci-cli-coverage-merge/action.yaml; then
+            echo 'required=true' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload compiled CLI artifact
+        if: steps.legacy_coverage.outputs.required == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cli-build-output
@@ -470,7 +479,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           cache: npm
           cache-dependency-path: |
             package-lock.json

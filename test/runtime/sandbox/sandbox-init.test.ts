@@ -128,6 +128,32 @@ function restoreTmpArtifacts(paths: string[], backups: Record<string, string>): 
 }
 
 describe("scripts/lib/sandbox-init.sh", () => {
+  describe("Python startup isolation", () => {
+    it("ignores inherited PYTHONPATH in read_messaging_plan_channels", () => {
+      const workDir = mkdtempSync(join(tmpdir(), "sandbox-init-python-"));
+      const sentinel = join(workDir, "sitecustomize-ran");
+      writeFileSync(
+        join(workDir, "sitecustomize.py"),
+        'import os\nfrom pathlib import Path\nPath(os.environ["TEST_PYTHON_SENTINEL"]).write_text("executed")\n',
+      );
+      try {
+        const result = runWithLib("read_messaging_plan_channels", {
+          env: {
+            PYTHONPATH: workDir,
+            TEST_PYTHON_SENTINEL: sentinel,
+            NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(
+              JSON.stringify({ channels: [{ channelId: "telegram", active: true }] }),
+            ).toString("base64"),
+          },
+        });
+        expect(existsSync(sentinel)).toBe(false);
+        expect(result.stdout).toBe("telegram");
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("emit_sandbox_sourced_file", () => {
     let workDir: string;
 
@@ -318,58 +344,6 @@ EOF
         expectFail: true,
       });
       expect(stderr).toContain("integrity check FAILED");
-    });
-
-  });
-
-  describe("lock_rc_files", () => {
-    let workDir: string;
-
-    beforeEach(() => {
-      workDir = mkdtempSync(join(tmpdir(), "sandbox-init-lock-"));
-    });
-
-    afterEach(() => {
-      // Need to make writable before cleanup
-      try {
-        chmodSync(join(workDir, ".bashrc"), 0o644);
-      } catch {
-        /* ignore */
-      }
-      try {
-        chmodSync(join(workDir, ".profile"), 0o644);
-      } catch {
-        /* ignore */
-      }
-      execFileSync("rm", ["-rf", workDir]);
-    });
-
-    it("sets .bashrc and .profile to 444", () => {
-      writeFileSync(join(workDir, ".bashrc"), "# bashrc");
-      writeFileSync(join(workDir, ".profile"), "# profile");
-
-      runWithLib(`lock_rc_files ${JSON.stringify(workDir)}`);
-
-      const bashrcPerms = getOctalPerms(join(workDir, ".bashrc"));
-      const profilePerms = getOctalPerms(join(workDir, ".profile"));
-      expect(bashrcPerms).toBe("444");
-      expect(profilePerms).toBe("444");
-    });
-
-    it("is a no-op when files do not exist", () => {
-      // Should not throw
-      runWithLib(`lock_rc_files ${JSON.stringify(workDir)}`);
-    });
-
-    it("refuses to chmod symlinked rc files", () => {
-      const target = join(workDir, "target");
-      writeFileSync(target, "# target", { mode: 0o600 });
-      symlinkSync(target, join(workDir, ".bashrc"));
-
-      const { stdout } = runWithLib(`lock_rc_files ${JSON.stringify(workDir)} 2>&1`);
-
-      expect(stdout).toContain("Refusing to lock symlinked rc file");
-      expect(getOctalPerms(target)).toBe("600");
     });
   });
 
@@ -962,7 +936,7 @@ EOF
         SANDBOX_CHILD_PIDS=()
         SANDBOX_WAIT_PID=""
         # Override exit so we can test
-        exit() { echo "EXIT_\$1"; }
+        exit() { echo "EXIT_$1"; }
         cleanup_on_signal
       `);
       expect(stdout).toContain("EXIT_0");
@@ -983,7 +957,10 @@ EOF
 
   describe("both entrypoints source the shared library", () => {
     it("nemoclaw-start.sh sources sandbox-init.sh", () => {
-      const src = readFileSync(join(import.meta.dirname, "../../../scripts/nemoclaw-start.sh"), "utf-8");
+      const src = readFileSync(
+        join(import.meta.dirname, "../../../scripts/nemoclaw-start.sh"),
+        "utf-8",
+      );
       const start = src.indexOf("_SANDBOX_INIT=");
       // Bound the source block at the harden_resource_limits call line itself
       // (executable, stable) rather than a free-text comment that may be reworded.

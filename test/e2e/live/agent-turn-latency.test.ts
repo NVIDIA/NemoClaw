@@ -253,7 +253,9 @@ runAgentTurnLatencyTest(
     expect(hermesTurn.exitCode, resultText(hermesTurn)).toBe(0);
     const hermesResponse = responseBodyAndStatus(hermesTurn.stdout);
     expect(hermesResponse.status, resultText(hermesTurn)).toBe("200");
-    expect(containsAnswer(chatContent(hermesResponse.body), "42"), resultText(hermesTurn)).toBe(true);
+    expect(containsAnswer(chatContent(hermesResponse.body), "42"), resultText(hermesTurn)).toBe(
+      true,
+    );
     expect(hermesMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
     results.hermes = { elapsedMs: hermesMs };
     progress.phase("record hosted inference timing evidence");

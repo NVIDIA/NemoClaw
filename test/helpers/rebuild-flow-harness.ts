@@ -54,6 +54,7 @@ export const removedImmutabilityMigration = requireDist(
   "../../state/migrations/removed-immutability.js",
 );
 export const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+export const providerCommand = requireDist("../../adapters/openshell/provider-command.js");
 export const policies = requireDist("../../policy/index.js");
 export const policyState = requireDist("../../adapters/openshell/policy-state.js");
 export const policyGet = requireDist("./policy-get.js");
@@ -169,6 +170,7 @@ export function installRebuildFlowTestHooks(options: RebuildFlowTestHookOptions 
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    providerCommand.setProviderCommandRuntimeHooksForTest({});
     purgeRebuildModule();
     for (const dir of harnessTempDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });

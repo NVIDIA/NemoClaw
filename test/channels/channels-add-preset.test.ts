@@ -293,7 +293,7 @@ beforeEach(() => {
 
   execSpy = vi
     .spyOn(processRecovery, "executeSandboxExecCommand")
-    .mockImplementation((_name, command) => {
+    .mockImplementation(async (_name, command) => {
       return command.includes("/sandbox/.openclaw/openclaw.json")
         ? { status: 0, stdout: JSON.stringify(testConfig), stderr: "" }
         : command.includes("tail -n 400") && command.includes("/tmp/gateway.log")
@@ -604,10 +604,9 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       lifecycleGeneration: "generation-1",
       lifecycleLiveIdentityFingerprint: "fingerprint-1",
     } as SandboxEntry;
-    vi.spyOn(
-      policyChannelDependencies,
-      "inspectMessagingProviderAttachmentTarget",
-    ).mockReturnValue("fingerprint-1");
+    vi.spyOn(policyChannelDependencies, "inspectMessagingProviderAttachmentTarget").mockReturnValue(
+      "fingerprint-1",
+    );
     applyPresetSpy
       .mockImplementationOnce((_name, presetName) => {
         callOrder.push(`applyPreset:${presetName}`);

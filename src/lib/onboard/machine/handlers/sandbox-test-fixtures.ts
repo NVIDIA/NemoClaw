@@ -283,7 +283,7 @@ export function createDeps(
       getSandboxReuseState: () => "missing",
       getSandboxRecreateObservation: () =>
         ({ state: "missing", liveIdentityFingerprint: null }) as const,
-      getDcodeSelectionDrift: () => ({ changed: false, unknown: false }),
+      getDcodeSelectionDrift: async () => ({ changed: false, unknown: false }),
       hasSandboxGpuDrift: () => false,
       getSandboxHermesToolGateways: () => [],
       getSandboxRegistryEntry: (name: string) => ({

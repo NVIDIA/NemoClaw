@@ -13,7 +13,7 @@ See [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md
 ## Step 1: Determine Target Version and Stragglers
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
 ```
 
 This fetches tags, computes the next patch version, and finds open items still carrying older version labels. Surface stragglers first — they indicate post-tag housekeeping was interrupted or an item slipped across multiple cycles. Decide whether to relabel them to today's target or defer them out of the daily release flow.
@@ -23,7 +23,7 @@ This fetches tags, computes the next patch version, and finds open items still c
 Run the triage script to rank the full backlog:
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/triage.ts --approved-only
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/triage.ts --approved-only
 ```
 
 If too few results, run without `--approved-only`. The script fetches open PRs through `gh`, reads Project 199 Priority, enriches candidates with review, CI, file, and risky-area data, and applies the scoring model documented in [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md).
@@ -45,8 +45,8 @@ gh issue edit <number> --repo NVIDIA/NemoClaw --add-label "<version>"
 Pipe triage output into state:
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/triage.ts \
-  | node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts set-queue
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/triage.ts \
+  | node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts set-queue
 ```
 
 Output the daily plan:

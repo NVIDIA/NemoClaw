@@ -36,6 +36,7 @@ import {
   onboardCredentialEnv,
   onboardSession,
   openshellRuntime,
+  providerCommand,
   policies,
   policyGet,
   policyState,
@@ -733,12 +734,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       return argv[0] === "provider" && argv[1] === "get"
         ? {
             status: 0,
-            stdout:
-              "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+            stdout: `Name: ${argv[2]}\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL\n`,
             stderr: "",
           }
         : { status: 0, output: "" };
     });
+  providerCommand.setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshellSpy });
   const captureOpenshellSpy = vi
     .spyOn(openshellRuntime, "captureOpenshell")
     .mockImplementation((args: unknown, options?: unknown) => {
@@ -966,15 +967,16 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       adapter: "adapter" in entry ? entry.adapter : defaultMcpAdapter,
       url: "url" in entry ? entry.url : "https://mcp.example.test/mcp",
       env: "env" in entry ? entry.env : ["GITHUB_TOKEN"],
-      policyName:
-        "policyName" in entry ? entry.policyName : `mcp-bridge-${String(entry.server)}`,
+      policyName: "policyName" in entry ? entry.policyName : `mcp-bridge-${String(entry.server)}`,
     });
   }
   const mcpSourceEntries = overrides.mcpPreparation?.entries ?? [];
-  vi.spyOn(mcpBridgeProviderInspection, "getMcpProviderInspectionRuntimeSelection").mockReturnValue({
-    gatewayName: "nemoclaw",
-    workspace: "default",
-  });
+  vi.spyOn(mcpBridgeProviderInspection, "getMcpProviderInspectionRuntimeSelection").mockReturnValue(
+    {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    },
+  );
   const nativeMcpSources = Object.fromEntries(
     mcpSourceEntries.map((entry) => [String(entry.server), structuredClone(entry)]),
   );
@@ -995,14 +997,15 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   };
   const configuredMcpPreparation = (
     runtimeSelection?: Parameters<typeof mcpBridge.prepareMcpBridgesForRebuild>[1],
-  ) => overrides.mcpPreparation
-    ? {
-        ...overrides.mcpPreparation,
-        ...(runtimeSelection && !overrides.mcpPreparation.runtimeSelection
-          ? { runtimeSelection }
-          : {}),
-      }
-    : defaultMcpPreparation(runtimeSelection);
+  ) =>
+    overrides.mcpPreparation
+      ? {
+          ...overrides.mcpPreparation,
+          ...(runtimeSelection && !overrides.mcpPreparation.runtimeSelection
+            ? { runtimeSelection }
+            : {}),
+        }
+      : defaultMcpPreparation(runtimeSelection);
   const prepareMcpBridgesForRebuildSpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForRebuild")
     .mockImplementation(async (_sandboxName, runtimeSelection) =>

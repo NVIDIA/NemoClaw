@@ -336,9 +336,7 @@ describe("managed-cluster vLLM executor", () => {
     };
 
     expect(() => assertManagedClusterVllmExecutorConfig(config)).not.toThrow();
-    expect(plan.roles[0].command.arguments).toEqual(
-      expect.arrayContaining(["--port", "19000"]),
-    );
+    expect(plan.roles[0].command.arguments).toEqual(expect.arrayContaining(["--port", "19000"]));
   });
 
   it("validates selected definition digests without pinning the aggregate catalog", () => {
@@ -505,63 +503,64 @@ describe("managed-cluster vLLM executor", () => {
     ).resolves.toBe(false);
   });
 
-  it.each(
-    STOPPED_FOREIGN_CONTAINER_FIXTURES,
-  )("keeps the worker-first boundary closed for a stopped foreign $signal", async (foreign) => {
-    const dockerCapture = vi.fn((args: readonly string[], options?: DockerCaptureOptions) => {
-      const role = options?.env?.DOCKER_HOST ? "worker" : "head";
-      const id = role === "worker" ? WORKER_ID : FOREIGN_ID;
-      return routeDockerCapture(args, options, {
-        quiet: fixedDockerCapture(id),
-        inspect: fixedDockerCapture(
-          role === "worker"
-            ? inspectionRow({
-                id,
-                name: plan.roles[1].containerName,
-                image: plan.roles[1].image,
-                running: true,
-                labels: launchLabels(plan.roles[1]),
-              })
-            : inspectionRow({
-                id,
-                name: foreign.name,
-                image: foreign.image,
-                running: false,
-                labels: foreign.labels,
-              }),
-        ),
-        exec: fixedDockerCapture("ready"),
-        fallback: unexpectedDockerCapture,
+  it.each(STOPPED_FOREIGN_CONTAINER_FIXTURES)(
+    "keeps the worker-first boundary closed for a stopped foreign $signal",
+    async (foreign) => {
+      const dockerCapture = vi.fn((args: readonly string[], options?: DockerCaptureOptions) => {
+        const role = options?.env?.DOCKER_HOST ? "worker" : "head";
+        const id = role === "worker" ? WORKER_ID : FOREIGN_ID;
+        return routeDockerCapture(args, options, {
+          quiet: fixedDockerCapture(id),
+          inspect: fixedDockerCapture(
+            role === "worker"
+              ? inspectionRow({
+                  id,
+                  name: plan.roles[1].containerName,
+                  image: plan.roles[1].image,
+                  running: true,
+                  labels: launchLabels(plan.roles[1]),
+                })
+              : inspectionRow({
+                  id,
+                  name: foreign.name,
+                  image: foreign.image,
+                  running: false,
+                  labels: foreign.labels,
+                }),
+          ),
+          exec: fixedDockerCapture("ready"),
+          fallback: unexpectedDockerCapture,
+        });
       });
-    });
-    let tick = 0;
-    const executor = createManagedClusterVllmExecutor(
-      {
-        plan,
-        nodes: [
-          { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
-          {
-            nodeId: plan.roles[1].nodeId,
-            modelCacheRoot: PEER_CACHE_ROOT,
-            sshBinding: bindingFixture.binding,
-          },
-        ],
-      },
-      runtimeOverrides({
-        dockerCapture,
-        now: vi.fn(() => (tick += 1_000)),
-      }),
-    );
+      let tick = 0;
+      const executor = createManagedClusterVllmExecutor(
+        {
+          plan,
+          nodes: [
+            { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+            {
+              nodeId: plan.roles[1].nodeId,
+              modelCacheRoot: PEER_CACHE_ROOT,
+              sshBinding: bindingFixture.binding,
+            },
+          ],
+        },
+        runtimeOverrides({
+          dockerCapture,
+          now: vi.fn(() => (tick += 1_000)),
+        }),
+      );
 
-    await expect(
-      executor.waitForWorkerDistributedReady({
-        rolePlan: plan.roles[1],
-        containerId: WORKER_ID,
-        expectedLabels: launchLabels(plan.roles[1]),
-        timeoutMs: 1,
-      }),
-    ).resolves.toBe(false);
-  });
+      await expect(
+        executor.waitForWorkerDistributedReady({
+          rolePlan: plan.roles[1],
+          containerId: WORKER_ID,
+          expectedLabels: launchLabels(plan.roles[1]),
+          timeoutMs: 1,
+        }),
+      ).resolves.toBe(false);
+    },
+  );
 
   it("starts one exact head with the bearer only in the Docker subprocess environment", async () => {
     const labels = launchLabels(plan.roles[0]);

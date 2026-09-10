@@ -31,6 +31,8 @@ export {
   clearRebuildPolicyHandoff,
   readRebuildMcpHandoff,
   writeRebuildMcpHandoff,
+  clearHermesOperatorConfigHandoff,
+  writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "../../state/sandbox";
 
@@ -149,11 +151,7 @@ export async function runRebuildBackupPhase(
   const capturedPolicy =
     input.staleRecovery || preparedRetainedPolicy
       ? null
-      : captureRebuildPolicyDocument(
-          input.sandboxName,
-          input.gatewayName,
-          input.runtimeSelection,
-        );
+      : captureRebuildPolicyDocument(input.sandboxName, input.gatewayName, input.runtimeSelection);
   let backupManifest =
     preparedRecoveryManifest ??
     (await backupStateForRebuild(

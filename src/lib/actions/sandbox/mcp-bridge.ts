@@ -192,11 +192,7 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
   entries: readonly McpSourceEntry[] = [],
 ): Promise<McpRebuildPreparation> {
-  return prepareMcpBridgesForAbsentSandboxRebuildLifecycle(
-    sandboxName,
-    entries,
-    runtimeSelection,
-  );
+  return prepareMcpBridgesForAbsentSandboxRebuildLifecycle(sandboxName, entries, runtimeSelection);
 }
 
 export async function prepareMcpBridgesForRebuild(
@@ -360,7 +356,7 @@ FLAGS
   --json      Emit MCP server status as JSON
   --probe     Request the wire-level credential-resolution probe for every server
   --no-probe  Skip the probe (it defaults on only when a single server is named)
-  --tools     Discover names advertised by one named MCP server`);
+  --tools     Discover names advertised by one named MCP server; exit nonzero on failure`);
       return;
     case "restart":
       console.log(`USAGE
@@ -462,6 +458,7 @@ export async function dispatchMcpBridgeCommand(
             )}\n`,
           );
         } else renderMcpBridgeStatus(sandboxName, statuses, agent);
+        if (tools && statuses[0]?.toolDiscovery?.ok !== true) process.exitCode = 1;
         return;
       }
       case "restart": {
@@ -500,7 +497,9 @@ export async function dispatchMcpBridgeCommand(
             `  ${item.action === "migrate" ? "Migrate" : "Verify"} '${item.server}': legacy -> native (${item.url})`,
           );
           if (item.activationChanges) {
-            console.log("    This activates an OpenClaw server that the legacy Mcporter adapter did not load.");
+            console.log(
+              "    This activates an OpenClaw server that the legacy Mcporter adapter did not load.",
+            );
           }
         }
         console.log(

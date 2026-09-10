@@ -80,7 +80,20 @@ async function dockerExecSh(
   script: string,
   artifactName: string,
 ): Promise<DockerCommandResult> {
-  return probe.run(["exec", container, "sh", "-lc", script], { artifactName });
+  return probe.run(
+    [
+      "exec",
+      container,
+      "bash",
+      "-Eeuo",
+      "pipefail",
+      "-c",
+      `
+trap 'printf "Probe failed at line %s\\n" "$LINENO" >&2' ERR
+${script}`,
+    ],
+    { artifactName },
+  );
 }
 
 async function expectContainerSh(
@@ -101,7 +114,7 @@ async function expectContainerShFails(
   script: string,
 ): Promise<void> {
   const result = await dockerExecSh(probe, container, script, message);
-  expect(result.exitCode, `${container}: ${message}\n${resultText(result)}`).not.toBe(0);
+  expect(result.exitCode, `${container}: ${message}\n${resultText(result)}`).toBe(1);
 }
 
 async function dumpContainerDiagnostics(probe: DockerProbe, container: string): Promise<void> {
@@ -220,7 +233,7 @@ async function assertRuntimeLayout(probe: DockerProbe, container: string): Promi
     container,
     "Hermes runtime, API authorization, or dashboard credential-boundary contract failed",
     String.raw`set -eu
-/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -lc 'for dir in hooks image_cache audio_cache logs/curator; do p="/sandbox/.hermes/$dir/.nemoclaw-write-test"; : >"$p" && rm -f "$p"; done'
+/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -euc 'for dir in hooks image_cache audio_cache logs/curator; do p="/sandbox/.hermes/$dir/.nemoclaw-write-test"; : >"$p"; rm -f "$p"; done'
 for dir in sessions gateway runtime; do
   stat -c '%U:%G %a' "/sandbox/.hermes/$dir" | grep -Fx 'gateway:sandbox 2770'
   /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -lc ": > /sandbox/.hermes/$dir/.nemoclaw-gateway-write-test && rm -f /sandbox/.hermes/$dir/.nemoclaw-gateway-write-test"
@@ -228,10 +241,19 @@ for dir in sessions gateway runtime; do
 done
 history=/sandbox/.hermes/.hermes_history
 stat -c '%U:%G %a' "$history" | grep -Fx 'gateway:sandbox 660'
-/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -lc 'printf "sandbox history probe\n" >>/sandbox/.hermes/.hermes_history'
-! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- rm -f "$history"
+/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- python3 -I -c 'import os; fd = os.open("/sandbox/.hermes/.hermes_history", os.O_WRONLY | os.O_APPEND); os.write(fd, b"sandbox history probe\n"); os.close(fd)'
 stat -c '%F' "$history" | grep -Fx 'regular file'
-token="$(python3 -I -c 'from pathlib import Path; lines=(line.strip().removeprefix("export ").lstrip() for line in Path("/sandbox/.hermes/.env").read_text(encoding="utf-8").splitlines()); print(next(line.split("=", 1)[1].strip().strip("\\\"'\"'\"'") for line in lines if line.startswith("API_SERVER_KEY=")))')"
+token="$(python3 -I - <<'PYTOKEN'
+from pathlib import Path
+
+lines = (
+    line.strip().removeprefix("export ").lstrip()
+    for line in Path("/sandbox/.hermes/.env").read_text(encoding="utf-8").splitlines()
+)
+value = next(line.split("=", 1)[1] for line in lines if line.startswith("API_SERVER_KEY="))
+print(value.strip().strip("\"'"))
+PYTOKEN
+)"
 printf '%s\n' "$token" | grep -Eq '^[[:xdigit:]]{64}$'
 curl -sS -o /dev/null -w '%{http_code}\n' --max-time 15 http://127.0.0.1:8642/v1/models | grep -Fx 401
 printf 'header = "Authorization: Bearer %s"\n' wrong-token | curl -sS -o /dev/null -w '%{http_code}\n' --max-time 15 --config - http://127.0.0.1:8642/v1/models | grep -Fx 401
@@ -242,7 +264,7 @@ stat -c '%U:%G %a' "$dashboard" | grep -Fx 'sandbox:sandbox 700'
 stat -c '%U:%G %a' "$dashboard/config.yaml" | grep -Fx 'sandbox:sandbox 600'
 stat -c '%U:%G %a' "$dashboard/.env" | grep -Fx 'sandbox:sandbox 600'
 sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' -e 's/^[[:space:]]*export[[:space:]]*//' "$dashboard/.env" | cut -d= -f1 | sort > /tmp/nemoclaw-dashboard-env-keys
-printf '%s\n' API_SERVER_HOST API_SERVER_PORT NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER FIRECRAWL_GATEWAY_URL OPENAI_AUDIO_GATEWAY_URL BROWSER_USE_GATEWAY_URL FAL_QUEUE_GATEWAY_URL MODAL_GATEWAY_URL | sort > /tmp/nemoclaw-dashboard-env-keys.expected
+printf '%s\n' API_SERVER_HOST API_SERVER_PORT | sort > /tmp/nemoclaw-dashboard-env-keys.expected
 cmp /tmp/nemoclaw-dashboard-env-keys.expected /tmp/nemoclaw-dashboard-env-keys
 grep -Eq '^[[:space:]]*(export[[:space:]]+)?API_SERVER_KEY=' "$dashboard/.env" && exit 1 || :
 grep -F 'model:' "$dashboard/config.yaml" >/dev/null
@@ -326,12 +348,12 @@ async function assertGatewayProcess(
   const dispatcherProbe =
     expectedDispatcher === undefined
       ? ":"
-      : `pid="$(ps -eo pid=,user=,args= | awk '$2 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1; exit }')" && printf '%s\\n' "$pid" | grep -Ex '[0-9]+' && tr '\\0' '\\n' <"/proc/$pid/environ" | grep -Fx 'HERMES_KANBAN_DISPATCH_IN_GATEWAY=${expectedDispatcher}'`;
+      : `pid="$(ps -eo pid=,user=,args= | awk '$2 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1; exit }')" && printf '%s\\n' "$pid" | grep -Ex '[0-9]+' && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c 'tr "\\0" "\\n" <"/proc/$1/environ"' sh "$pid" | grep -Fx 'HERMES_KANBAN_DISPATCH_IN_GATEWAY=${expectedDispatcher}'`;
   await expectContainerSh(
     probe,
     container,
     "Hermes gateway process does not preserve its user, launch, or dispatcher contract",
-    `ps -eo user=,args= | awk '$1 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { found = 1 } END { exit found ? 0 : 1 }' && grep -F "hermes gateway launched as 'gateway' user" /tmp/nemoclaw-start.log && ${dispatcherProbe}`,
+    `ps -o user=,pid=,ppid=,args= -p 1 | awk '$1 == "root" && $2 == 1 && $3 == 0 && index($0, "/usr/local/bin/nemoclaw-start") { found = 1 } END { exit found ? 0 : 1 }' && ps -eo user=,args= | awk '$1 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { found = 1 } END { exit found ? 0 : 1 }' && grep -F "hermes gateway launched as 'gateway' user" /tmp/nemoclaw-start.log && ${dispatcherProbe}`,
   );
 }
 
@@ -342,6 +364,7 @@ async function runCleanVariant(
   containers: string[],
 ): Promise<void> {
   const container = `nemoclaw-hermes-root-clean-${runId}`;
+  containers.push(container);
   await probe.expect(
     [
       "run",
@@ -355,8 +378,6 @@ async function runCleanVariant(
     ],
     { artifactName: "start-clean-root-entrypoint-container", timeoutMs: RUN_TIMEOUT_MS },
   );
-  containers.push(container);
-
   await waitForHealth(probe, container);
   await assertGatewayProcess(probe, container, "1");
   await assertGatewayLogClean(probe, container);
@@ -390,12 +411,11 @@ chmod 444 /tmp/nemoclaw-hostile-python/sitecustomize.py
 export PYTHONPATH=/tmp/nemoclaw-hostile-python
 exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
 
+  containers.push(container);
   await probe.expect(
     ["run", "-d", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", legacyBootstrap],
     { artifactName: "start-legacy-layout-root-entrypoint-container", timeoutMs: RUN_TIMEOUT_MS },
   );
-  containers.push(container);
-
   await waitForHealth(probe, container);
   await assertGatewayProcess(probe, container);
   await assertGatewayLogClean(probe, container);
@@ -407,6 +427,37 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
     "legacy recovery or root Python isolation evidence was missing",
     "grep -F 'Removing unsafe stale Hermes legacy PID file symlink' /tmp/nemoclaw-start.log && test ! -e /tmp/nemoclaw-root-sitecustomize-ran",
   );
+}
+
+async function runRefusalVariant(
+  probe: DockerProbe,
+  image: string,
+  container: string,
+  containers: string[],
+  scenario: string,
+  entrypoint = "/usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start",
+  expectedExitCode: 1 | 78 = 1,
+): Promise<void> {
+  // Each scenario defines setup and verify. Claim startup once; subsequent starts
+  // only verify the retained filesystem. No startup mutation is retried.
+  const bootstrap = `set -euo pipefail
+${scenario}
+mkdir /tmp/nemoclaw-refusal-started 2>/dev/null || { cat /tmp/nemoclaw-refusal.log; verify; exit; }
+setup
+exec ${entrypoint} >/tmp/nemoclaw-refusal.log 2>&1`;
+
+  containers.push(container);
+  const result = await probe.run(
+    ["run", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", bootstrap],
+    { artifactName: `start-${container}`, timeoutMs: RUN_TIMEOUT_MS },
+  );
+  // Establish the expected exit before restarting; an interrupted Docker client
+  // does not prove that production startup stopped.
+  expect(result.exitCode, resultText(result)).toBe(expectedExitCode);
+  await probe.expect(["start", "--attach", container], {
+    artifactName: `verify-${container}`,
+    timeoutMs: RUN_TIMEOUT_MS,
+  });
 }
 
 async function runHardLinkRefusalVariant(
@@ -427,30 +478,22 @@ ln /sandbox/.hermes/config.yaml /sandbox/.hermes/.hermes_history`
 install -d -m 2770 -o sandbox -g sandbox /sandbox/.hermes/logs/curator
 rm -f /sandbox/.hermes/logs/curator/hardlink.log
 ln /sandbox/.hermes/config.yaml /sandbox/.hermes/logs/curator/hardlink.log`;
-  const expectedEvent =
-    kind === "history"
-      ? "Hermes pre-launch layout repair failed at history file"
-      : "Hermes pre-launch layout repair failed at logs directory";
-  const bootstrap = `set -euo pipefail
+  await runRefusalVariant(
+    probe,
+    image,
+    container,
+    containers,
+    `
+setup() {
 ${setup}
 stat -c '%U:%G %a' ${target} >/tmp/nemoclaw-protected-file.stat
 sha256sum ${target} >/tmp/nemoclaw-protected-file.sha256
-set +e
-/usr/bin/timeout 30s /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start >/tmp/nemoclaw-hardlink-start.log 2>&1
-startup_status=$?
-set -e
-test "$startup_status" -ne 0
-test "$startup_status" -ne 124
+}
+verify() {
 test "$(stat -c '%U:%G %a' ${target})" = "$(cat /tmp/nemoclaw-protected-file.stat)"
 sha256sum -c /tmp/nemoclaw-protected-file.sha256
-grep -F 'has hard-link count' /tmp/nemoclaw-hardlink-start.log
-grep -F ${JSON.stringify(expectedEvent)} /tmp/nemoclaw-hardlink-start.log
-cat /tmp/nemoclaw-hardlink-start.log`;
-
-  containers.push(container);
-  await probe.expect(
-    ["run", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", bootstrap],
-    { artifactName: `start-${kind}-hardlink-refusal-container`, timeoutMs: RUN_TIMEOUT_MS },
+grep -F 'refusing hardlinked runtime config path: ${target}' /tmp/nemoclaw-refusal.log
+}`,
   );
 }
 
@@ -461,7 +504,8 @@ async function runMutableLayoutSwapRefusalVariant(
   containers: string[],
 ): Promise<void> {
   const container = `nemoclaw-hermes-root-layout-swap-${runId}`;
-  const bootstrap = String.raw`set -euo pipefail
+  const scenario = String.raw`
+setup() {
 startup_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 python_path="$(PATH="$startup_path" command -v python3)"
 real_python="$python_path.nemoclaw-test-real"
@@ -478,13 +522,18 @@ fi
 tee /tmp/nemoclaw-layout-repair.py >/dev/null
 exec "$NEMOCLAW_TEST_REAL_PYTHON" -I -c '
 import os
+import subprocess
 
 real_fchown = os.fchown
 
 
 def swap_then_fchown(fd, uid, gid):
-    os.rename("/sandbox/.hermes", "/tmp/nemoclaw-original-hermes-root")
-    os.symlink("/tmp/nemoclaw-layout-external", "/sandbox/.hermes")
+    # The sandbox owner can replace this directory after root drops DAC_OVERRIDE.
+    subprocess.run([
+        "/usr/bin/setpriv", "--reuid=sandbox", "--regid=sandbox", "--init-groups", "--",
+        "/bin/sh", "-eu", "-c",
+        "mv /sandbox/.hermes /tmp/nemoclaw-original-hermes-root; ln -s /tmp/nemoclaw-layout-external /sandbox/.hermes",
+    ], check=True)
     return real_fchown(fd, uid, gid)
 
 
@@ -498,24 +547,15 @@ chmod 755 "$python_path"
 export NEMOCLAW_TEST_REAL_PYTHON="$real_python"
 stat -c '%U:%G %a %s' /tmp/nemoclaw-layout-external /tmp/nemoclaw-layout-external/sentinel.txt >/tmp/nemoclaw-layout-external.stat
 sha256sum /tmp/nemoclaw-layout-external/sentinel.txt >/tmp/nemoclaw-layout-external.sha256
-set +e
-/usr/bin/timeout 30s /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start >/tmp/nemoclaw-layout-swap-start.log 2>&1
-startup_status=$?
-set -e
-test "$startup_status" -ne 0
-test "$startup_status" -ne 124
+}
+verify() {
 test -L /sandbox/.hermes
 test "$(readlink /sandbox/.hermes)" = "/tmp/nemoclaw-layout-external"
 test "$(stat -c '%U:%G %a %s' /tmp/nemoclaw-layout-external /tmp/nemoclaw-layout-external/sentinel.txt)" = "$(cat /tmp/nemoclaw-layout-external.stat)"
 sha256sum -c /tmp/nemoclaw-layout-external.sha256
-grep -F '/sandbox/.hermes changed during repair' /tmp/nemoclaw-layout-swap-start.log
-cat /tmp/nemoclaw-layout-swap-start.log`;
-
-  containers.push(container);
-  await probe.expect(
-    ["run", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", bootstrap],
-    { artifactName: "start-root-layout-swap-refusal-container", timeoutMs: RUN_TIMEOUT_MS },
-  );
+grep -F '/sandbox/.hermes changed during repair' /tmp/nemoclaw-refusal.log
+}`;
+  await runRefusalVariant(probe, image, container, containers, scenario);
 }
 
 async function runNonRootHistoryOwnershipRefusalVariant(
@@ -525,21 +565,22 @@ async function runNonRootHistoryOwnershipRefusalVariant(
   containers: string[],
 ): Promise<void> {
   const container = `nemoclaw-hermes-nonroot-history-owner-${runId}`;
-  const result = await probe.run(
-    [
-      "run",
-      "--name",
-      container,
-      "--entrypoint",
-      "/bin/bash",
-      image,
-      "-lc",
-      "chown sandbox:root /sandbox/.hermes/.hermes_history && chmod 660 /sandbox/.hermes/.hermes_history && exec /usr/bin/timeout 30s /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start",
-    ],
-    { artifactName: "start-nonroot-history-owner-refusal-container", timeoutMs: RUN_TIMEOUT_MS },
+  await runRefusalVariant(
+    probe,
+    image,
+    container,
+    containers,
+    `
+setup() {
+chown sandbox:root /sandbox/.hermes/.hermes_history
+chmod 660 /sandbox/.hermes/.hermes_history
+}
+verify() {
+grep -F '.hermes_history has group gid 0, expected sandbox gid' /tmp/nemoclaw-refusal.log
+}`,
+    "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start",
+    78,
   );
-  containers.push(container);
-  expect(result.exitCode, resultText(result)).toBe(78);
 }
 
 type RootEntrypointTestContext = Pick<
@@ -568,13 +609,13 @@ async function runRootEntrypointScenario(
   scenario: RootEntrypointScenario,
   runVariant: (variant: RootEntrypointVariant) => Promise<void>,
 ): Promise<void> {
-  const { artifacts, cleanup, progress, secrets, signal, skip } = context;
+  const { artifacts, cleanup, progress, secrets, skip } = context;
   const probe = new DockerProbe(
     artifacts,
     (text, extraValues) => secrets.redact(text, extraValues),
     undefined,
     progress,
-    signal,
+    () => cleanup.currentSignal(),
   );
   const containers: string[] = [];
 
@@ -589,7 +630,7 @@ async function runRootEntrypointScenario(
   cleanup.add(`remove Hermes ${scenario.id} containers`, async () => {
     await Promise.all(
       containers.map((container) =>
-        probe.run(["rm", "-f", container], {
+        probe.expect(["rm", "-f", container], {
           artifactName: `cleanup-${container}`,
           timeoutMs: 30_000,
         }),

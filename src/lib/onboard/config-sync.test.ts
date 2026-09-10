@@ -12,7 +12,6 @@ import {
   buildSandboxConfigSyncScript,
   createNemoClawConfigSync,
   runSandboxConfigSync,
-  sandboxConfigSyncArgs,
 } from "./config-sync";
 
 const itUnix = process.platform === "win32" ? it.skip : it;
@@ -57,8 +56,8 @@ function modeBits(file: string): number {
 }
 
 describe("sandbox config sync helpers", () => {
-  it("revalidates sandbox identity immediately before sandbox execution", () => {
-    const run = vi.fn();
+  it("revalidates sandbox identity immediately before sandbox execution", async () => {
+    const runBuffered = vi.fn();
     const revalidateSandboxIdentity = vi.fn(() => {
       throw new Error("sandbox identity changed");
     });
@@ -73,31 +72,77 @@ describe("sandbox config sync helpers", () => {
         provider: "provider",
         providerLabel: "Provider",
       }),
-      run,
-      openshellArgv: (args) => ["openshell", ...args],
+      sandboxCommandExecutor: { runBuffered },
     });
 
-    expect(() => syncConfig("spark-box", "provider", "model", revalidateSandboxIdentity)).toThrow(
-      "sandbox identity changed",
-    );
+    await expect(
+      syncConfig("spark-box", "provider", "model", revalidateSandboxIdentity),
+    ).rejects.toThrow("sandbox identity changed");
 
     expect(revalidateSandboxIdentity).toHaveBeenCalledExactlyOnceWith(
       "synchronize OpenClaw config in sandbox 'spark-box'",
     );
-    expect(run).not.toHaveBeenCalled();
+    expect(runBuffered).not.toHaveBeenCalled();
   });
 
-  it("uses noninteractive sandbox exec for stdin scripts", () => {
-    expect(sandboxConfigSyncArgs("spark-box")).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "spark-box",
-      "--no-tty",
-      "--",
-      "/bin/bash",
-      "-s",
-    ]);
+  it("uses noninteractive buffered sandbox exec for stdin scripts", async () => {
+    const runBuffered = vi.fn(async () => ({
+      outcome: { kind: "completed" as const, exitCode: 0 },
+      stdout: "",
+      stderr: "",
+    }));
+    const syncConfig = createNemoClawConfigSync({
+      getProviderSelectionConfig: () => ({
+        endpointType: "custom",
+        endpointUrl: "https://inference.local/v1",
+        ncpPartner: null,
+        model: "model",
+        profile: "inference-local",
+        credentialEnv: "OPENAI_API_KEY",
+        provider: "provider",
+        providerLabel: "Provider",
+      }),
+      sandboxCommandExecutor: { runBuffered },
+    });
+
+    await syncConfig("spark-box", "provider", "model");
+
+    expect(runBuffered).toHaveBeenCalledWith({
+      sandboxName: "spark-box",
+      target: { kind: "selected" },
+      command: ["/bin/bash", "-s"],
+      tty: false,
+      input: expect.stringContaining('"provider": "provider"'),
+    });
+  });
+
+  it("propagates typed sandbox execution failures", async () => {
+    const syncConfig = createNemoClawConfigSync({
+      getProviderSelectionConfig: () => ({
+        endpointType: "custom",
+        endpointUrl: "https://inference.local/v1",
+        ncpPartner: null,
+        model: "model",
+        profile: "inference-local",
+        credentialEnv: "OPENAI_API_KEY",
+        provider: "provider",
+        providerLabel: "Provider",
+      }),
+      sandboxCommandExecutor: {
+        runBuffered: async () => ({
+          outcome: {
+            kind: "failed",
+            error: { kind: "timeout", message: "config sync timed out" },
+          },
+          stdout: "",
+          stderr: "",
+        }),
+      },
+    });
+
+    await expect(syncConfig("spark-box", "provider", "model")).rejects.toThrow(
+      "config sync timed out",
+    );
   });
 
   itUnix("writes provider selection and tightens managed config permissions", () => {
@@ -193,9 +238,11 @@ describe("sandbox config sync helpers", () => {
     }
   });
 
-  itUnix("passes the generated script directly to the sandbox executor", () => {
+  itUnix("passes the generated script directly to the sandbox executor", async () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sync-home-"));
-    const runConnectScript = vi.fn();
+    const runConnectScript = vi.fn<(sandboxName: string, scriptContent: string) => Promise<void>>(
+      async () => undefined,
+    );
     const selection = {
       endpointType: "custom",
       endpointUrl: "https://inference.local/v1",
@@ -207,7 +254,7 @@ describe("sandbox config sync helpers", () => {
       providerLabel: "Provider",
     } as const;
     try {
-      runSandboxConfigSync("spark-box", {
+      await runSandboxConfigSync("spark-box", {
         getSelectionConfig: () => selection,
         runConnectScript,
       });

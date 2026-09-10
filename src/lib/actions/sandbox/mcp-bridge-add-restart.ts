@@ -600,12 +600,12 @@ async function addMcpBridgeUnlocked(
       allowExisting: recovery.resuming,
       expectedProviderId: entry.providerId,
       runtimeSelection: providerRuntimeSelection,
-      prepareMutation: (action) => {
+      prepareMutation: async (action) => {
         // A fresh create has no prior revision to compare. Observe only the
         // bounded placeholder classification for an actual update, after the
         // running supervisor has accepted the authenticated MCP policy.
         if (action === "update") {
-          previousCredentialRevision = observeMcpCredentialRevision(
+          previousCredentialRevision = await observeMcpCredentialRevision(
             sandboxName,
             entry,
             providerRuntimeSelection,
@@ -699,7 +699,7 @@ async function addMcpBridgeUnlocked(
       );
     }
     adapterMutationAttempted = true;
-    registerAgentAdapterAtCurrentCredentialRevision(
+    await registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       adapter,
       entry,
@@ -712,7 +712,7 @@ async function addMcpBridgeUnlocked(
         replaceExisting: recovery.adapterRegistered,
       },
     );
-    reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter]);
+    await reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter]);
   } catch (error) {
     const rollbackProviderInspection =
       (providerAttachAttempted || providerCreated) && entry.providerId
@@ -752,7 +752,7 @@ async function addMcpBridgeUnlocked(
     let reservationCleanupProved = !providerAttachAttempted;
     if (providerAttachAttempted && detachOutcome !== "unknown") {
       try {
-        waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+        await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
         reservationCleanupProved = true;
       } catch {
         reservationCleanupProved = false;

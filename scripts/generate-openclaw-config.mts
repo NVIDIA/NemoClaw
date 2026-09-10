@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --experimental-strip-types
+#!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -38,6 +38,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertNoPerAgentMaxSpawnDepth } from "../src/lib/extra-agents-validation.ts";
 import { readToolDisclosureEnv } from "../src/lib/tool-disclosure.ts";
 
 type Env = Record<string, string | undefined>;
@@ -146,11 +147,13 @@ const MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
   ...MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
   ...MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
 ] as const;
+// The managed-image capability union installs diagnostics-otel and brave-plugin. It does not
+// install the Tavily Search plugin. OpenClaw validates each plugins.entries key even when
+// the entry is disabled, so omit Tavily from a neutral managed image (#10325).
 const MANAGED_IMAGE_OPENCLAW_PLUGIN_IDS = [
   ...MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES.map(({ pluginId }) => pluginId),
   "diagnostics-otel",
   "brave",
-  "tavily",
 ] as const;
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(SCRIPT_PATH);
@@ -848,11 +851,6 @@ function validateSubagentsBlock(raw: unknown, label: string, primaryProvider: st
       `${label} must be an object with any of: ${[...ALLOWED_SUBAGENTS_KEYS].sort().join(", ")}`,
     );
   }
-  if ("maxSpawnDepth" in raw) {
-    throw new Error(
-      `${label}.maxSpawnDepth is not accepted per-agent; OpenClaw honours it only on agents.defaults.subagents. Set it under the manifest 'defaults.subagents.maxSpawnDepth' instead.`,
-    );
-  }
   rejectUnknownKeys(raw, ALLOWED_SUBAGENTS_KEYS, label);
   const out: JsonObject = {};
   if (raw.delegationMode !== undefined) {
@@ -972,6 +970,7 @@ function validateExtraAgents(value: unknown, primaryProvider: string): ExtraAgen
   if (value === null || value === undefined) {
     return { agents: [], defaults: { subagents: {} }, main: {} };
   }
+  assertNoPerAgentMaxSpawnDepth(value);
   let agentsRaw: unknown;
   let defaultsRaw: unknown;
   let mainRaw: unknown;
@@ -1553,8 +1552,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   if (webSearchProvider) {
     // OpenClaw 2026.5.x keeps provider-owned credentials under
     // plugins.entries.<provider>.config rather than inline on tools.web.search.
-    // Brave is installed externally during the image build; Tavily ships as a
-    // bundled OpenClaw extension. Both use the same plugin-scoped config shape.
+    // Both providers use the same plugin-scoped configuration shape.
     const credentialEnv = WEB_SEARCH_PROVIDERS[webSearchProvider].credentialEnv;
     tools.web.search = { enabled: true, provider: webSearchProvider };
     config.plugins.entries[webSearchProvider] = {

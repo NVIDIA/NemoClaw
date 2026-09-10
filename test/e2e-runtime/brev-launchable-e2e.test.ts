@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { FULL_E2E_TEST_TIMEOUT_MINUTES } from "../../tools/e2e/full-e2e-timeout-contract.mts";
 import {
   candidateSha,
   cleanupFixtures,
@@ -28,6 +29,16 @@ function identitySmokeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 describe("focused staging Brev Launchable lane", () => {
+  it("keeps the staging SSH wrapper outside the full E2E deadline", () => {
+    const source = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../../tools/e2e/brev-launchable-e2e.sh"),
+      "utf8",
+    );
+    const defaultTimeout = source.match(/FULL_E2E_TIMEOUT_SECONDS:-([0-9]+)\}/u)?.[1];
+
+    expect(Number(defaultTimeout)).toBe(FULL_E2E_TEST_TIMEOUT_MINUTES * 60 + 300);
+  });
+
   it("runs the strict lane without inherited lane controls (#9925)", () => {
     vi.stubEnv("BREV_CREATE_RECONCILE_SECONDS", "0");
     vi.stubEnv("NEMOCLAW_BREV_DEFER_CLEANUP", "1");

@@ -693,10 +693,7 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
       : removeV00106OperationalTrust(withPinFunction);
   const releaseTemplate =
     openshellVersion === "0.0.116"
-      ? operationalTemplate.replace(
-          STABLE_GNU_SANDBOX_SELECTOR,
-          STABLE_MUSL_SANDBOX_SELECTOR,
-        )
+      ? operationalTemplate.replace(STABLE_GNU_SANDBOX_SELECTOR, STABLE_MUSL_SANDBOX_SELECTOR)
       : operationalTemplate;
   const sandboxFunctionStart = releaseTemplate.indexOf("pinned_sandbox_build_version() {");
   const sandboxFunctionEnd = releaseTemplate.indexOf(
@@ -1127,6 +1124,20 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("installer operational template is not base-trusted");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
+
+  it.each([
+    ["installer", "installer-changed-url", "installer operational template"],
+    ["Brev launchable", "brev-changed-url", "Brev launchable operational template"],
+  ] as const)(
+    "rejects an operational mutation of the base-trusted v0.0.116 %s fixture",
+    (_consumer, mode, diagnostic) => {
+      const result = runFixture(mode, "0.0.116", true);
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain(`${diagnostic} is not base-trusted`);
+      expect(result.stdout).not.toContain("All installer hashes are current");
+    },
+  );
 
   it("accepts a base-trusted release with non-default consumer cardinality", () => {
     const result = runFixture("allowlisted-alternate-version", "9.9.9", true);

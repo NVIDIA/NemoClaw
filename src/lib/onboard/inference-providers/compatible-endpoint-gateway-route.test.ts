@@ -31,13 +31,13 @@ describe("compatible endpoint gateway routing", () => {
     },
   );
 
-  it("leaves a generic compatible-endpoint loopback URL unchanged on port 8081 (#8161)", () => {
+  it("leaves a generic compatible-endpoint loopback URL unchanged on port 8081 (#8161)", async () => {
     expect(
       gatewayReachableCompatibleEndpointUrl("compatible-endpoint", "http://127.0.0.1:8081/v1"),
     ).toBe("http://127.0.0.1:8081/v1");
   });
 
-  it("rewrites only fixed loopback port 8081 for llama.cpp attachment (#8161)", () => {
+  it("rewrites only fixed loopback port 8081 for llama.cpp attachment (#8161)", async () => {
     expect(
       gatewayReachableCompatibleEndpointUrl("llama-cpp-local", "http://127.0.0.1:8081/v1"),
     ).toBe("http://host.openshell.internal:8081/v1");
@@ -46,7 +46,7 @@ describe("compatible endpoint gateway routing", () => {
     ).toBe("http://127.0.0.1:8000/v1");
   });
 
-  it("preserves query strings and fragments for root and non-root routes (#5744)", () => {
+  it("preserves query strings and fragments for root and non-root routes (#5744)", async () => {
     expect(
       gatewayReachableCompatibleEndpointUrl(
         "compatible-endpoint",
@@ -61,7 +61,7 @@ describe("compatible endpoint gateway routing", () => {
     ).toBe("http://host.openshell.internal:8000/v1?tenant=local#models");
   });
 
-  it("leaves default, privileged, unsupported, and adjacent URL shapes unchanged (#5744)", () => {
+  it("leaves default, privileged, unsupported, and adjacent URL shapes unchanged (#5744)", async () => {
     const unchanged = [
       "http://localhost/v1",
       "http://localhost:80/v1",
@@ -115,7 +115,18 @@ describe("recovered provider reuse and the openai provider profile (#9895)", () 
       commands.push(args.join(" "));
       return args[1] === "profile"
         ? (profileResults.shift() ?? { status: 1, stderr: "unexpected profile call" })
-        : { status: 0, stdout: "", stderr: "" };
+        : {
+            status: 0,
+            stdout: [
+              "Id: provider-compatible-endpoint",
+              "Name: compatible-endpoint",
+              "Type: openai",
+              "Resource version: 1",
+              "Credential keys: COMPATIBLE_API_KEY",
+              "Config keys: OPENAI_BASE_URL",
+            ].join("\n"),
+            stderr: "",
+          };
     });
     return { commands, runOpenshell };
   }
@@ -128,14 +139,18 @@ describe("recovered provider reuse and the openai provider profile (#9895)", () 
     gatewayEndpointUrl: REGISTERED_URL,
   };
 
-  it("declares the openai profile for an unchanged gateway route that performs no upsert", () => {
+  it("declares the openai profile for an unchanged gateway route that performs no upsert", async () => {
     const { commands, runOpenshell } = createRunOpenshell([
       { status: 0, stdout: OPENAI_ENDPOINTLESS_PROFILE },
     ]);
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
 
     expect(
-      reuseRegisteredProviderWithGatewayEndpoint({ ...reuseArgs, runOpenshell, upsertProvider }),
+      await reuseRegisteredProviderWithGatewayEndpoint({
+        ...reuseArgs,
+        runOpenshell,
+        upsertProvider,
+      }),
     ).toEqual({ ok: true });
 
     expect(upsertProvider).not.toHaveBeenCalled();
@@ -145,14 +160,14 @@ describe("recovered provider reuse and the openai provider profile (#9895)", () 
     ]);
   });
 
-  it("reports a failed profile import instead of reusing the recovered provider", () => {
+  it("reports a failed profile import instead of reusing the recovered provider", async () => {
     const { runOpenshell } = createRunOpenshell([
       { status: 1, stderr: "provider profile not found" },
       { status: 1, stderr: "import refused" },
     ]);
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
 
-    const result = reuseRegisteredProviderWithGatewayEndpoint({
+    const result = await reuseRegisteredProviderWithGatewayEndpoint({
       ...reuseArgs,
       runOpenshell,
       upsertProvider,
@@ -167,12 +182,12 @@ describe("recovered provider reuse and the openai provider profile (#9895)", () 
     expect(upsertProvider).not.toHaveBeenCalled();
   });
 
-  it("leaves a non-openai recovered provider untouched", () => {
+  it("leaves a non-openai recovered provider untouched", async () => {
     const { commands, runOpenshell } = createRunOpenshell([]);
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
 
     expect(
-      reuseRegisteredProviderWithGatewayEndpoint({
+      await reuseRegisteredProviderWithGatewayEndpoint({
         ...reuseArgs,
         providerType: "anthropic",
         runOpenshell,

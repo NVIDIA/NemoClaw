@@ -98,7 +98,7 @@ export async function removeMcpBridge(
           if (outcome === "unknown") {
             warnings.push(`Provider detach state for '${entry.providerName}' is unknown.`);
           } else {
-            waitForDetachedMcpCredential(sandboxName, entry, runtimeSelection);
+            await waitForDetachedMcpCredential(sandboxName, entry, runtimeSelection);
           }
         } catch (error) {
           warnings.push(error instanceof Error ? error.message : String(error));
@@ -115,7 +115,9 @@ export async function removeMcpBridge(
       }
     }
 
-    console.log(`  Removed MCP server '${server}' from the agent configuration on '${sandboxName}'.`);
+    console.log(
+      `  Removed MCP server '${server}' from the agent configuration on '${sandboxName}'.`,
+    );
     for (const warning of warnings) console.warn(`  MCP cleanup warning: ${warning}`);
     if (warnings.length > 0 && !options.allowResidual && !options.force) {
       throw new McpBridgeError(

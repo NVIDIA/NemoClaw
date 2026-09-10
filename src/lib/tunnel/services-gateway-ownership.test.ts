@@ -129,6 +129,22 @@ describe("releaseGatewayPortForStop", () => {
     );
   });
 
+  it("does not treat a restored automatic port as authority for a no-name stop (#10824)", () => {
+    const release = gatewayRelease(releaseResult({ port: 8990, stopped: [99] }));
+
+    const outcome = gatewayStop.releaseGatewayPortForStop(undefined, {
+      env: {
+        NEMOCLAW_GATEWAY_PORT: "8990",
+        _NEMOCLAW_AUTOMATIC_GATEWAY_PORT: "1",
+      },
+      listSandboxes: sandboxList([]),
+      releaseManagedGatewayPort: release,
+    });
+
+    expect(outcome).toBe("not-scoped");
+    expect(release).not.toHaveBeenCalled();
+  });
+
   it("does not release when NEMOCLAW_GATEWAY_PORT is set but not a usable port (#8952)", () => {
     const release = gatewayRelease(releaseResult({ port: 8814, stopped: [99] }));
 

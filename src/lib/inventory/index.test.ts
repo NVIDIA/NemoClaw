@@ -1298,7 +1298,9 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("      Inference (configured): nvidia-prod / nvidia/nemotron-3-super-120b-a12b");
+    expect(lines).toContain(
+      "      Inference (configured): nvidia-prod / nvidia/nemotron-3-super-120b-a12b",
+    );
     expect(lines).toContain("      Inference (configured): ollama-local / qwen3.5:9b");
   });
 

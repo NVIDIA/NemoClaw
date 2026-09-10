@@ -424,7 +424,7 @@ $$nemoclaw list
 
 A gateway port that keeps listening after you uninstall, or that keeps serving after you re-onboard without `NEMOCLAW_GATEWAY_PORT` set, can belong to a second environment.
 
-Onboarding under a non-default `NEMOCLAW_GATEWAY_PORT` registers the sandbox on gateway `nemoclaw-<port>` and stores its registry and state under `~/.nemoclaw/gateways/<port>/`. Every later command reads the state root that its own `NEMOCLAW_GATEWAY_PORT` selects, so a command run without that variable operates on port `8080` and neither reuses nor stops the other environment. Clearing the variable does not move an existing sandbox back to the default port.
+Onboarding under a non-default `NEMOCLAW_GATEWAY_PORT` registers the sandbox on gateway `nemoclaw-<port>` and stores its registry and state under `~/.nemoclaw/gateways/<port>/`. Every later command reads the state root that its own `NEMOCLAW_GATEWAY_PORT` selects. A command without that variable uses port `8080` unless the installer recorded an automatic alternate-port selection; in that case, the CLI restores the recorded port. Clearing an explicitly supplied variable does not move an existing sandbox back to the default port.
 
 List the gateways the host still has:
 
@@ -575,11 +575,12 @@ migration N was previously applied
 has been modified
 ```
 
-The first error means the installed OpenShell migration set does not contain migration N. The second error means that migration set defines migration N with different contents. NemoClaw identifies `<selected-state-dir>/openshell.db` as incompatible with the installed OpenShell migration set for both errors. This failure can happen after an OpenShell downgrade. Installing a NemoClaw release that is older than the installed one performs that downgrade, because each release pins one OpenShell version and the installer reinstalls OpenShell at the pin. You reach that state in one of three ways:
+The first error means the installed OpenShell migration set does not contain migration N. The second error means that migration set defines migration N with different contents. NemoClaw identifies `<selected-state-dir>/openshell.db` as incompatible with the installed OpenShell migration set for both errors. This failure can happen after an OpenShell downgrade. Installing a NemoClaw release that is older than the installed one performs that downgrade, because each release pins one OpenShell version and the installer reinstalls OpenShell at the pin. You reach that state in one of two ways:
 
 - You select an older release with `NEMOCLAW_INSTALL_TAG` or `NEMOCLAW_INSTALL_REF`.
-- The default `lkg` release is older than the NemoClaw release already on the host.
 - You install an older OpenShell yourself.
+
+The default installer stops before replacing a newer installed NemoClaw release whenever the selected ref is `lkg` or `refs/tags/lkg`, whether it came from `NEMOCLAW_INSTALL_TAG` or the higher-priority `NEMOCLAW_INSTALL_REF`. Other explicit refs can replace the installed release; use a version tag or full commit SHA when you need a fixed source.
 
 The diagnosis always prints the database path. When an unused archive path is available, it also prints that archive path beside the selected state directory and the profile-specific onboarding command. When no unused archive path is available, it asks you to keep the gateway stopped and inspect the state directory instead.
 
@@ -611,9 +612,37 @@ On Linux, an OpenShell package can install `/usr/lib/systemd/user/openshell-gate
 Failed to connect to bus: No medium found
 ```
 
-The installer accepts only recognized user-manager-unavailable diagnostics for the standalone gateway fallback. It checks `.wants`, `.requires`, and `.upholds` links in the standard systemd user unit paths. The installer keeps the standalone lifecycle only when neither gateway service has an activation path that can later claim port `8080`. The installer also stops when `SYSTEMD_UNIT_PATH` overrides the standard paths. The installer does not parse, modify, or remove a package or foreign unit to make this decision.
+The installer accepts only recognized user-manager-unavailable diagnostics for the standalone gateway fallback.
+It checks `.wants`, `.requires`, and `.upholds` links in the standard systemd user unit paths.
+When `NEMOCLAW_GATEWAY_PORT` selects port `8080` and no activation path exists, the installer keeps the standalone gateway on port `8080`.
 
-If an activation path exists, the installer stops because the service can start later and compete for port `8080`. Restore the systemd user manager, then inspect both possible services:
+When `NEMOCLAW_GATEWAY_PORT` is unset, the installer can continue with one qualified `openshell-gateway.service` activation.
+The activation must point to a trusted package unit without drop-ins, and its environment must set `OPENSHELL_SERVER_PORT=8080` exactly once.
+The installer selects the first nonreserved and unconfigured port from `8990` through `9005` that has no listener, gateway registration, or port-scoped NemoClaw state.
+A supported listener probe must conclusively confirm that the port is unused.
+Installation stops if no candidate passes, including when listener inspection is unavailable or inconclusive for every remaining candidate.
+It does not modify the existing service or activation link.
+
+After selection and before onboarding runs or is deferred, the installer records the selected value under `~/.nemoclaw/gateways/<port>/automatic-gateway-port.pending`.
+After installer-driven or direct CLI onboarding succeeds, it promotes that file to `automatic-gateway-port`.
+Deferred, failed, or cancelled onboarding keeps the pending identity so a later installer or CLI process restores the same port and reaches its onboarding or cleanup path instead of creating another environment.
+Later NemoClaw commands restore either recorded identity when `NEMOCLAW_GATEWAY_PORT` is unset.
+You can still use the printed export command when a script or surrounding process must carry the same scope explicitly.
+Exporting it makes that port an explicit operator selection, including authority for a no-name gateway stop.
+If the installer selects port `8990`, it prints this command:
+
+```bash
+export NEMOCLAW_GATEWAY_PORT=8990
+```
+
+Later `list`, `status`, `connect`, `stop`, `rebuild`, and `uninstall` commands use the recorded automatic port unless this variable explicitly selects another supported port.
+A restored automatic port selects command state but does not count as explicit operator authority for the deprecated no-name `$$nemoclaw stop`; name the sandbox or set `NEMOCLAW_GATEWAY_PORT` explicitly when you intend to release a gateway.
+
+The installer does not replace a supported explicit non-default gateway port.
+It uses that port's detached lifecycle without automatic selection.
+The installer stops when port `8080` is explicit, the activation evidence is ambiguous, the activation is not an `openshell-gateway.service` symlink to an accepted package-unit path, or the effective service port is not proven to be `8080`.
+It also stops when `SYSTEMD_UNIT_PATH` overrides the standard paths.
+Restore the systemd user manager, then inspect both possible services:
 
 ```bash
 systemctl --user status openshell-gateway.service
@@ -622,7 +651,9 @@ systemctl --user status nemoclaw-openshell-gateway.service
 systemctl --user is-enabled nemoclaw-openshell-gateway.service
 ```
 
-Resolve the competing service through its package or platform owner. Do not delete an activation link or edit a unit file by hand. Rerun the installer only after the owner confirms that no enabled user service can claim port `8080`.
+Resolve an unqualified service through its package or platform owner.
+Do not delete an activation link or edit a unit file by hand.
+Rerun the installer after the owner confirms the effective port and activation state.
 
 Unknown service query errors remain fatal. The installer also stops for malformed effective metadata, an untrusted unit or executable path, an executable failure, or a gateway version mismatch. Follow the reported condition instead of forcing the standalone fallback.
 
@@ -630,7 +661,7 @@ Unknown service query errors remain fatal. The installer also stops for malforme
 
 ### Sandbox build fails during OpenClaw plugin install
 
-During sandbox creation, the OpenClaw image setup can install managed plugins for selected features such as web search or diagnostics. If the build reaches `openclaw plugins install` and the npm registry or ClawHub is blocked, NemoClaw classifies that narrow failure and prints a policy hint instead of only generic resume guidance. Brave Search uses an external OpenClaw plugin and can reach this install path. Tavily ships with the pinned OpenClaw runtime, so NemoClaw verifies the bundled extension instead of installing a separate Tavily package.
+During sandbox creation, the OpenClaw image setup can install managed plugins for selected features such as web search or diagnostics. If the build reaches `openclaw plugins install` and the npm registry or ClawHub is blocked, NemoClaw classifies that narrow failure and prints a policy hint instead of only generic resume guidance. Brave Search uses an external OpenClaw plugin and can reach this install path. Tavily ships with the pinned OpenClaw runtime, so NemoClaw verifies the bundled extension instead of installing a separate Tavily package. The neutral managed image does not declare `plugins.entries.tavily`; onboarding adds that entry only when you select Tavily Search.
 
 Check that the active policy and host network allow the npm registry and ClawHub endpoints needed by the plugin, or disable the feature that requested the plugin. For example, if the plugin is for web search, disable that feature and resume onboarding:
 
@@ -1435,12 +1466,21 @@ $$nemoclaw <name> status
 
 When `recover` repairs a stopped built-in gateway, NemoClaw repeats the recovery action only for these transient results:
 
-- Status `1` with blank stdout and exactly one stderr line: `SUPERVISOR_NOT_RUNNING`, `SUPERVISOR_DISCOVERY_PENDING`, `PRIVILEGED_CONTROL_UNAVAILABLE`, or `GATEWAY_HEALTH_TIMEOUT`.
+- Status `1` with blank stdout and exactly one stderr line: `SUPERVISOR_NOT_RUNNING`, `SUPERVISOR_DISCOVERY_PENDING`, or `GATEWAY_HEALTH_TIMEOUT`. A typed host-side container-not-found result is sanitized to the exact `PRIVILEGED_CONTROL_UNAVAILABLE` line and is also retryable. The same line without that typed result is terminal.
 - Status `1` with blank stdout and exactly one stderr line, `SUPERVISOR_BUSY`.
 - Status `137` with blank stdout and stderr.
 - Status `1` with blank stdout and exactly one stderr line, `Error response from daemon: Container <id> is restarting, wait until the container is running`.
 
-For the Docker result, `<id>` must be a 64-character lowercase hexadecimal ID that matches the selected registry-owned container. Recovery makes at most 11 controller attempts in total. It stops after 3 of those attempts return `SUPERVISOR_BUSY`. The managed controller emits `SUPERVISOR_DISCOVERY_PENDING` only when an incomplete process-table scan during startup cannot yet prove either one exact supervisor or clean supervisor absence. That result does not authorize container recreation or accept a supervisor identity; a later controller request must perform the full identity proof again. Managed settle confirmation treats exact `SUPERVISOR_BUSY` and `SUPERVISOR_DISCOVERY_PENDING` results as inconclusive within its configured window. Status `137` and the Docker restart result remain terminal during that confirmation. The managed supervisor startup waiter accepts the four exact startup results, `SUPERVISOR_BUSY`, and the two container-transition results within its separate 11-attempt bound. Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results stop immediately. NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because it can report unreadable or untrusted supervisor state, ambiguous discovery, or a process-identity change. `SUPERVISOR_NOT_RUNNING` is a separate result that requires two zero-supervisor scans with a stable PID 1. It enters the bounded startup retry first; only an exact missing-supervisor result that remains after the bound can authorize a container-identity-pinned recreation on a supported local Docker-driver sandbox with the legacy keepalive startup. That recreation commits only after managed health and settle checks pass. At the final commit handoff, NemoClaw asks OpenShell to stop the sandbox before it mutates either exact container. After OpenShell acknowledges that stop, NemoClaw stops the exact replacement, removes the rollback container, and asks OpenShell to start the sandbox through its authoritative lifecycle path. This preserves OpenShell's stopped/starting event fence while stale Docker removal snapshots settle; raw Docker stop/start events cannot strand the lifecycle row in `Error` or `Deleting`. If the authoritative stop fails, NemoClaw leaves both containers intact. If the start or final `Ready`/exec/exact-container proof fails after rollback-container removal, NemoClaw reports that automatic rollback is unavailable. To bypass that trusted recreation while troubleshooting, run `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH=1 $$nemoclaw <name> recover`; NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance. If recovery stops after 3 `SUPERVISOR_BUSY` results, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command. If recovery exhausts the transition bound after status `137` or the Docker restart result, wait for the container to finish restarting and retry the command. If the error mentions `SUPERVISOR_NOT_RUNNING` and trusted recreation could not proceed, `SUPERVISOR_REBUILD_REQUIRED`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract. An exact `SUPERVISOR_UNAVAILABLE` result instead means the managed controller refused the current supervisor state rather than guessing which same-UID process is the gateway. The current recovery action and any managed settle confirmation stop immediately. If `recover` reports this result, follow its host-side `gateway restart` guidance. If restart also reports `SUPERVISOR_UNAVAILABLE`, or the image is incompatible, rebuild the image:
+For the Docker result, `<id>` must be a 64-character lowercase hexadecimal ID that matches the selected registry-owned container.
+Recovery counts typed container-not-found results separately from other retryable results.
+It stops when either count reaches its limit: 21 container-not-found results or 11 other retryable results.
+A mixed sequence permits at most 31 attempts.
+At the default interval, the polling delay is at most 60 seconds for container discovery, 30 seconds for other startup results, or 90 seconds for a mixed sequence.
+The recovery loop also has a 210-second deadline that includes controller execution and polling.
+Recovery stops after 3 attempts return `SUPERVISOR_BUSY`.
+The managed controller emits `SUPERVISOR_DISCOVERY_PENDING` only when an incomplete process-table scan during startup cannot yet prove either one exact supervisor or clean supervisor absence. That result does not authorize container recreation or accept a supervisor identity; a later controller request must perform the full identity proof again. Managed settle confirmation treats exact `SUPERVISOR_BUSY` and `SUPERVISOR_DISCOVERY_PENDING` results as inconclusive within its configured window. Status `137` and the Docker restart result remain terminal during that confirmation. The managed supervisor startup waiter accepts the three exact controller startup results, the typed container-not-found result, `SUPERVISOR_BUSY`, and the two container-transition results.
+The final supervisor startup loop uses the same separate attempt allowances and its own 210-second deadline.
+Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results stop immediately. NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because it can report unreadable or untrusted supervisor state, ambiguous discovery, or a process-identity change. `SUPERVISOR_NOT_RUNNING` is a separate result that requires two zero-supervisor scans with a stable PID 1. It enters the bounded startup retry first; only an exact missing-supervisor result that remains after the bound can authorize a container-identity-pinned recreation on a supported local Docker-driver sandbox with the legacy keepalive startup. That recreation commits only after managed health and settle checks pass. At the final commit handoff, NemoClaw asks OpenShell to stop the sandbox before it mutates either exact container. After OpenShell acknowledges that stop, NemoClaw stops the exact replacement, removes the rollback container, and asks OpenShell to start the sandbox through its authoritative lifecycle path. This preserves OpenShell's stopped/starting event fence while stale Docker removal snapshots settle; raw Docker stop/start events cannot strand the lifecycle row in `Error` or `Deleting`. If the authoritative stop fails, NemoClaw leaves both containers intact. If the start or final `Ready`/exec/exact-container proof fails after rollback-container removal, NemoClaw reports that automatic rollback is unavailable. To bypass that trusted recreation while troubleshooting, run `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH=1 $$nemoclaw <name> recover`; NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance. If recovery stops after 3 `SUPERVISOR_BUSY` results, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command. If recovery exhausts the transition bound after status `137` or the Docker restart result, wait for the container to finish restarting and retry the command. If the error mentions `SUPERVISOR_NOT_RUNNING` and trusted recreation could not proceed, `SUPERVISOR_REBUILD_REQUIRED`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract. An exact `SUPERVISOR_UNAVAILABLE` result instead means the managed controller refused the current supervisor state rather than guessing which same-UID process is the gateway. The current recovery action and any managed settle confirmation stop immediately. If `recover` reports this result, follow its host-side `gateway restart` guidance. If restart also reports `SUPERVISOR_UNAVAILABLE`, or the image is incompatible, rebuild the image:
 
 ```bash
 $$nemoclaw <name> rebuild --yes
@@ -1451,6 +1491,24 @@ For a custom image, update its Dockerfile to preserve the current NemoClaw entry
 </AgentOnly>
 
 <AgentOnly variant="hermes">
+
+### Hermes Portable Port Forward Recovery Fails
+
+If Hermes Portable host-forward recovery fails, use the reported cause before retrying.
+Every failure prevents launch-readiness publication.
+
+| Reported Cause | Meaning and Action |
+| --- | --- |
+| `Recorded host port <port> is occupied` | Another sandbox or listener owns the port. NemoClaw changes no forwards. Inspect `openshell forward list` and the host listener. Stop it only after you confirm ownership. |
+| OpenShell `forward list` failed | NemoClaw could not prove the recorded forward state. Restore OpenShell access before you retry. |
+| OpenShell `forward list` returned malformed or ambiguous state | Inspect the complete forward list before you retry. |
+| NemoClaw could not resolve the required recorded host ports | Inspect the sandbox registry and launch-forward configuration before you retry. NemoClaw changes no forwards. |
+| NemoClaw could not verify whether recorded host port `<port>` is reachable | Inspect the listener and recorded forward state before you retry. |
+| The required recorded host forwards did not become healthy before the recovery deadline | Inspect the recorded forward state before another probe or launch. |
+| NemoClaw could not confirm that OpenShell forward `start` or `stop` completed | Inspect the named port and recorded forward state before you retry. |
+
+If recovery cannot prove rollback or reports authority drift, do not run another probe or launch.
+Inspect the recorded forward state or current Portable authority first.
 
 ### Hermes config reports a mutation already in progress
 
@@ -2309,6 +2367,10 @@ NODE
 
 Any HTTP status from these probes means the Node.js process reached the endpoint; the exact status can vary by unauthenticated path. A transport error or OpenShell policy denial means the probe failed. If the REST probe works but the Discord channel is still unhealthy, investigate the native gateway path instead of widening the preset. Check the gateway logs and blocked-request output with `openshell term`, and look for `gateway.discord.gg` connection or WebSocket upgrade failures.
 
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+
 ### Messaging bridge appears running but no messages arrive
 
 Telegram `getUpdates` allows only one active poller per bot token. Reusing Discord or Slack credentials can create competing gateway or Socket Mode sessions and unreliable message delivery. `$$nemoclaw status` can still report a bridge as running because the gateway process itself is alive.
@@ -2738,7 +2800,11 @@ For bridge-networked compatibility recreation without an explicit container DNS 
 
 #### Ordinary native Linux bounded fallback
 
-Ordinary Linux GPU onboarding uses native OpenShell GPU injection and stops on failure by default. Unset, `auto`, and `0` all preserve this native-only confinement boundary. `NEMOCLAW_DOCKER_GPU_PATCH=fallback` is the explicit operator authorization for one bounded retry. With that control set, if sandbox creation rejects the native GPU flag before progress, the exact OpenShell-managed container labeled for that sandbox records a host runtime GPU-injection error, or an explicit `nvidia-smi` driver proof fails while that container's immutable host configuration confirms that no GPU was attached, NemoClaw captures redacted diagnostics, deletes the incomplete sandbox, verifies that no OpenShell-managed Docker container labeled for that sandbox remains, and retries exactly once through the compatibility path. Free-form build/list text and sandbox-reported CUDA output never independently authorize the broader retry. Without corroborating host evidence, onboarding fails closed even when `fallback` is set and directs the operator to clean up and explicitly select compatibility with `NEMOCLAW_DOCKER_GPU_PATCH=1` if desired. Before the authorized retry, NemoClaw warns that the legacy GPU compatibility envelope recreates the OpenShell-managed Docker container and may relax container confinement compared with native injection. Specifically, compatibility recreation adds `SYS_PTRACE`, adds `apparmor=unconfined` when the original container has no AppArmor option, and uses a compatibility policy that makes `/proc` writable for the NVIDIA runtime's process-name initialization. These broader settings are why onboarding warns before the swap and retains a native-only opt-out. NemoClaw verifies cleanup with two stable checks (that sandbox is absent from the gateway list and no OpenShell-managed Docker containers labeled for that sandbox remain) before retrying through the compatibility path. Cleanup is polled at most five times, one second apart, and both conditions must pass twice consecutively; otherwise onboarding stops before the retry. These fail-closed safety limits are the internal constants `STABLE_ABSENCE_CHECKS` (2), `MAX_CLEANUP_ATTEMPTS` (5), and `CLEANUP_POLL_INTERVAL_MS` (1,000 ms); they are not configurable through environment variables. The first observation is immediate, so the default bound performs at most four one-second sleeps plus the five gateway/container queries. The bounds are intentionally fixed. Allowing environment input to weaken or extend the cleanup proof would make a security gate deployment-dependent. On a host that cannot prove absence within the bound, onboarding fails closed; select compatibility from the outset with `NEMOCLAW_DOCKER_GPU_PATCH=1` instead of weakening the handoff proof. If deletion or container cleanup cannot be proven safe, onboarding stops before the retry and prints manual cleanup guidance. Image build, upload, TLS, provider, policy, dashboard, and inference failures stay on their existing error paths and do not trigger the GPU compatibility fallback. Set `NEMOCLAW_DOCKER_GPU_PATCH=1` to use only the compatibility path for diagnostics or older host compatibility. Other legacy nonzero values keep that behavior through the `v0.0.x` release line and will be removed in `v0.1.0`.
+Ordinary Linux GPU onboarding uses native OpenShell GPU injection and stops on failure by default. Unset, `auto`, and `0` all preserve this native-only confinement boundary. `NEMOCLAW_DOCKER_GPU_PATCH=fallback` is the explicit operator authorization for one bounded retry. With that control set, if sandbox creation rejects the native GPU flag before progress, the exact OpenShell-managed container labeled for that sandbox records a host runtime GPU-injection error, or an explicit `nvidia-smi` driver proof fails while that container's immutable host configuration confirms that no GPU was attached, NemoClaw captures redacted diagnostics before one compatibility retry.
+For a native flag rejection before creation progress, it proves that the sandbox and its labeled containers are absent without deleting by name.
+For the other eligible failures, it requires verified cleanup before retrying.
+When the managed runtime requires cleanup tied to its recorded resource identities, NemoClaw stops before the compatibility retry.
+Free-form build/list text and sandbox-reported CUDA output never independently authorize the broader retry. Without corroborating host evidence, onboarding fails closed even when `fallback` is set and directs the operator to clean up and explicitly select compatibility with `NEMOCLAW_DOCKER_GPU_PATCH=1` if desired. Before the authorized retry, NemoClaw warns that the legacy GPU compatibility envelope recreates the OpenShell-managed Docker container and may relax container confinement compared with native injection. Specifically, compatibility recreation adds `SYS_PTRACE`, adds `apparmor=unconfined` when the original container has no AppArmor option, and uses a compatibility policy that makes `/proc` writable for the NVIDIA runtime's process-name initialization. These broader settings are why onboarding warns before the swap and retains a native-only opt-out. NemoClaw verifies cleanup with two stable checks (that sandbox is absent from the gateway list and no OpenShell-managed Docker containers labeled for that sandbox remain) before retrying through the compatibility path. Cleanup is polled at most five times, one second apart, and both conditions must pass twice consecutively; otherwise onboarding stops before the retry. These fail-closed safety limits are the internal constants `STABLE_ABSENCE_CHECKS` (2), `MAX_CLEANUP_ATTEMPTS` (5), and `CLEANUP_POLL_INTERVAL_MS` (1,000 ms); they are not configurable through environment variables. The first observation is immediate, so the default bound performs at most four one-second sleeps plus the five gateway/container queries. The bounds are intentionally fixed. Allowing environment input to weaken or extend the cleanup proof would make a security gate deployment-dependent. On a host that cannot prove absence within the bound, onboarding fails closed; select compatibility from the outset with `NEMOCLAW_DOCKER_GPU_PATCH=1` instead of weakening the handoff proof. If deletion or container cleanup cannot be proven safe, onboarding stops before the retry and prints manual cleanup guidance. Image build, upload, TLS, provider, policy, dashboard, and inference failures stay on their existing error paths and do not trigger the GPU compatibility fallback. Set `NEMOCLAW_DOCKER_GPU_PATCH=1` to use only the compatibility path for diagnostics or older host compatibility. Other legacy nonzero values keep that behavior through the `v0.0.x` release line and will be removed in `v0.1.0`.
 
 #### Docker Desktop WSL compatibility route
 
@@ -2920,7 +2986,8 @@ For native rootless Podman on Linux, select the provider explicitly:
 NEMOCLAW_GATEWAY_RUNTIME=podman $$nemoclaw onboard
 ```
 
-Native preflight fails closed unless the current-user Podman socket and service, rootless engine, cgroups v2 hierarchy, bridge networking, DNS, host architecture, and exact managed-image contract are all qualified.
+Native preflight fails closed unless the current-user Podman socket and service, rootless engine, cgroups v2 hierarchy, bridge networking, DNS, host architecture, exact managed-image contract, and `lsof` listener enumeration are all qualified.
+If `lsof` is unavailable, install it through the host's package-management policy and retry; NemoClaw does not install it.
 Do not redirect it with `DOCKER_HOST`, `DOCKER_CONTEXT`, `CONTAINER_HOST`, or a named Podman connection; restore the current user's reported socket authority and retry with the explicit selector.
 Native Podman supports stock managed-image onboarding only. Use the Docker provider for an explicit `--from <Dockerfile>` or a read-only host mount.
 

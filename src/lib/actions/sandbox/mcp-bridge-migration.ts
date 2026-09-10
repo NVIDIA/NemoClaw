@@ -399,7 +399,7 @@ export async function migrateMcpBridges(
           );
         }
       }
-      reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter]);
+      await reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter]);
       for (const entry of entries) {
         if (observed.sources.legacy[entry.server]) {
           cleanupStarted = true;
