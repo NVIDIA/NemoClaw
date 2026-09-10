@@ -547,8 +547,9 @@ processRecovery.executeSandboxCommand = (_sandboxName, command) => {
 };
 const adapter = require("./src/lib/actions/sandbox/mcp-bridge-adapter-openclaw.js");
 const entry = ${JSON.stringify(baseEntry)};
-adapter.registerOpenClawAdapter("custom-root-lifecycle", entry);
-adapter.unregisterOpenClawAdapter("custom-root-lifecycle", entry);
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
+adapter.registerOpenClawAdapter("custom-root-lifecycle", entry, runtimeSelection);
+adapter.unregisterOpenClawAdapter("custom-root-lifecycle", entry, runtimeSelection);
 process.stdout.write(JSON.stringify(commands));
 `;
     const result = spawnSync(process.execPath, ["-e", script], {

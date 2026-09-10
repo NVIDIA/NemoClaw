@@ -79,6 +79,14 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(stderr()).toContain("reached the gateway");
   });
 
+  it("refreshes gateway trust before resuming a certificate mismatch", () => {
+    printSandboxCreateRecoveryHints("invalid peer certificate: BadSignature");
+
+    expect(stderr()).toMatch(
+      /Fix:  openshell gateway trust -g nemoclaw[\s\S]*Then: .*onboard --resume/u,
+    );
+  });
+
   // Manual / ARM64 E2E note (#3266):
   //
   // The misleading "failed to upload image tar into container" Docker 404 only

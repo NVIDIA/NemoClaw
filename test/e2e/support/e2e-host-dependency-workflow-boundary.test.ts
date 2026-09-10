@@ -29,6 +29,7 @@ const ACTION_USES =
   "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75";
 
 interface WorkflowStep {
+  if?: string;
   name?: string;
   run?: string;
   uses?: string;
@@ -117,6 +118,20 @@ describe("E2E host dependency action boundary (#6961)", () => {
     )!;
     install["continue-on-error"] = true;
     expect(validateE2eWorkflow(workflow)).toContain("live host dependency setup must fail closed");
+  });
+
+  it("keeps DCode TUI dependencies available on every selected runtime", () => {
+    const workflow = readWorkflow();
+    const install = workflow.jobs.live?.steps.find(
+      (step) => step.name === "Install Deep Agents Code TUI host dependencies",
+    )!;
+    const expectedError =
+      "live DCode TUI host dependencies must be scoped to the typed DCode target";
+    expect(validateE2eWorkflow(workflow)).not.toContain(expectedError);
+    install.if =
+      "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(expectedError);
   });
 
   it.each(["", "   ", "expect\ncurl", "curl"])(
@@ -222,37 +237,44 @@ exit 64
       "if command -v docker >/dev/null 2>&1",
       "if command -v docker-does-not-exist >/dev/null 2>&1",
     );
-    hide.run = hide.run?.replace(
-      "NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s",
-      "NEMOCLAW_E2E_DISABLED_DOCKER_CLI_MISSING=%s",
-    );
-    restore.run = restore.run?.replace(
-      'sudo mv -- "${disabled_path}" "${restore_path}"',
-      'sudo mv -- "${disabled_path}" "${restore_path}.wrong"',
-    );
+    restore.uses = "NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@" + "0".repeat(40);
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "step 'Hide Docker CLI from native Podman public install' run script must include if command -v docker >/dev/null 2>&1",
-        "step 'Hide Docker CLI from native Podman public install' run script must include NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s",
-        'step \'Restore Docker CLI after native Podman public install\' run script must include sudo mv -- "${disabled_path}" "${restore_path}"',
+        "cloud-onboard must restore Docker through the reviewed Podman cleanup action",
+        "cloud-onboard must restore the Docker CLI exactly once after native Podman execution",
       ]),
     );
   });
 
-  it("records Docker CLI recovery state before moving the executable", () => {
+  it("keeps Docker restoration after the native Podman public install", () => {
     const workflow = readWorkflow();
     const steps = workflow.jobs["cloud-onboard"].steps;
-    const hide =
-      steps[requireStepIndex(steps, "Hide Docker CLI from native Podman public install")]!;
-    const moveDockerCli = 'sudo mv -- "${docker_cli}" "${disabled_path}"';
-    hide.run = `${moveDockerCli}\n${hide.run ?? ""}`;
+    const restoreIndex = requireStepIndex(
+      steps,
+      "Restore Docker CLI after native Podman public install",
+    );
+    const [restore] = steps.splice(restoreIndex, 1);
+    steps.splice(requireStepIndex(steps, "Run cloud-onboard live Vitest test"), 0, restore!);
 
-    expect(validateE2eWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "step 'Hide Docker CLI from native Podman public install' run script must include NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s before sudo mv -- \"${docker_cli}\" \"${disabled_path}\"",
-        "step 'Hide Docker CLI from native Podman public install' run script must include NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s before sudo mv -- \"${docker_cli}\" \"${disabled_path}\"",
-      ]),
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "cloud-onboard must hide Docker through the live test and artifact upload before restoring it",
+    );
+  });
+
+  it.each([
+    ["live", "Run live E2E tests"],
+    ["shared-e2e", "Run tagged credential-free test"],
+  ] as const)("rejects Docker restoration before %s workload execution", (jobName, runStep) => {
+    const workflow = readWorkflow();
+    const steps = workflow.jobs[jobName].steps;
+    const restoreIndex = requireStepIndex(steps, "Restore Docker CLI after native Podman E2E");
+    const [restore] = steps.splice(restoreIndex, 1);
+    steps.splice(requireStepIndex(steps, runStep), 0, restore!);
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      `${jobName} must keep Docker unavailable through result artifact upload`,
     );
   });
 });

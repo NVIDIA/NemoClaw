@@ -749,15 +749,6 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     ["missing approvals", { approvals: undefined }],
     ["wrong browser boolean", { browser: { restrict_evaluate: "true" } }],
     ["incomplete session policy", { session_reset: { mode: "both" } }],
-    [
-      "unexpected session policy field",
-      {
-        session_reset: {
-          ...EXPECTED_DASHBOARD_POLICY.session_reset,
-          dashboard_only: true,
-        },
-      },
-    ],
     ["wrong display boolean", { display: { show_reasoning: "false", show_commentary: false } }],
     ["wrong update mode", { updates: { pre_update_backup: 0, refresh_cua_driver: false } }],
   ])("fails closed on %s", (_label, override) => {
@@ -776,6 +767,33 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     expect(res.stderr).toContain("[SECURITY]");
     expect(res.stderr).toContain("gateway policy is invalid");
     expect(fs.readFileSync(dst, "utf-8")).toBe(before);
+  });
+
+  it("allows operator siblings beside managed policy leaves without mirroring them", () => {
+    const src = writeYaml("gw.yaml", {
+      ...GATEWAY_CONFIG,
+      approvals: { ...EXPECTED_DASHBOARD_POLICY.approvals, timeout: 184 },
+      session_reset: {
+        ...EXPECTED_DASHBOARD_POLICY.session_reset,
+        operator_note: "preserve across rebuild",
+      },
+    });
+    const dst = writeYaml("dash.yaml", {
+      approvals: { dashboard_note: "keep" },
+      session_reset: { dashboard_scope: "keep" },
+    });
+
+    const res = runSeed(src, dst);
+
+    expect(res.status, res.stderr).toBe(0);
+    const dash = readYaml(dst);
+    expect(dash.approvals).toEqual({ mode: "manual", dashboard_note: "keep" });
+    expect(dash.session_reset).toEqual({
+      ...EXPECTED_DASHBOARD_POLICY.session_reset,
+      dashboard_scope: "keep",
+    });
+    expect(dash.approvals).not.toHaveProperty("timeout");
+    expect(dash.session_reset).not.toHaveProperty("operator_note");
   });
 
   it("is idempotent across repeated launches", () => {

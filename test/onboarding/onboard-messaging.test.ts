@@ -95,7 +95,7 @@ runner.runCapture = (command) => {
     if (mockedCapture !== null) return mockedCapture;
   }
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -368,7 +368,7 @@ runner.runCapture = (command) => {
     if (mockedCapture !== null) return mockedCapture;
   }
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = (entry) => {
   registeredSandbox = entry;
   return true;
@@ -539,7 +539,7 @@ runner.runCapture = (command) => {
   if (mockedCapture !== null) return mockedCapture;
   if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = (entry) => { registered = entry; return true; }; registry.updateSandbox = () => true; registry.setDefault = () => true; registry.removeSandbox = () => true;
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
   sandboxName: "my-assistant",
@@ -649,7 +649,7 @@ const { createSandbox } = require(${onboardPath});
       assert.deepEqual(deniedPayload.temporaryCreateSources, []);
       assert.match(
         deniedPayload.error,
-        /did not confirm messaging provider 'my-assistant-telegram-bridge' before sandbox creation/,
+        /Could not inspect messaging provider 'my-assistant-telegram-bridge': OpenShell could not inspect the provider/,
       );
       const combinedOutput = result.stdout + result.stderr + denied.stdout + denied.stderr;
       assert.equal(
@@ -697,7 +697,6 @@ const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
-
 const commands = []; let dockerfileContent;
 const registerCalls = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
@@ -711,7 +710,7 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
-  if (normalized.includes("provider get")) return { status: 1 };
+  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw"); if (providerGetResult !== null) return providerGetResult;
   return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -723,7 +722,7 @@ runner.runCapture = (command) => {
   }
   if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);
   return true;
@@ -871,7 +870,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbo
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get")) return { status: 1 };
+  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw"); if (providerGetResult !== null) return providerGetResult;
   return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -883,7 +882,7 @@ runner.runCapture = (command) => {
   }
   if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);
   return true;
@@ -960,8 +959,9 @@ const { createSandbox } = require(${onboardPath});
         assert.equal(result.status, 0, result.stderr);
         const payload = parseStdoutJson(result.stdout);
 
-        const providerMutationCommands = payload.commands.filter((entry: CommandEntry) =>
-          /\bprovider (create|update)\b/.test(entry.command),
+        const providerMutationCommands = payload.commands.filter(
+          (entry: CommandEntry) =>
+            /\bprovider (create|update)\b/.test(entry.command) && entry.command.includes("-bridge"),
         );
         assert.equal(
           providerMutationCommands.length,
@@ -1041,7 +1041,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbo
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get")) return { status: 1 };
+  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw"); if (providerGetResult !== null) return providerGetResult;
   return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -1053,7 +1053,7 @@ runner.runCapture = (command) => {
   }
   if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);
   return true;
@@ -1198,7 +1198,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get")) return "";
   if (_n(command).includes("sandbox list")) return "";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -1389,7 +1389,7 @@ runner.runCapture = (command) => {
   }
   if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -1519,7 +1519,7 @@ const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
-  return createdSandbox.run(command) ?? { status: 0 };
+  return fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw") ?? createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
   const createdIdentity = createdSandbox.capture(command);
@@ -1530,7 +1530,7 @@ runner.runCapture = (command) => {
   }
   if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+}; require(${onboardScriptMocksPath}).mockIsolatedDockerSandboxLifecycleFromRunner();
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;

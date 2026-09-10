@@ -8,7 +8,7 @@ model-backed analysis in OpenShell sandboxes from trusted GitHub Actions jobs an
 read-only data. It posts a sticky comment that links to the complete specialist reviews in the
 workflow run.
 
-For each configured pull-request event, it runs every specialist prompt in `tools/pr-review-advisor/specialists`. Each prompt owns a distinct review concern and defines its purpose, investigation method, evidence expectations, and finding threshold.
+After a required `CI / Pull Request` run whose name ends in `gate true` succeeds, it runs every specialist prompt in `tools/pr-review-advisor/specialists`. Other completed CI runs do not schedule the Advisor. Each prompt owns a distinct review concern and defines its purpose, investigation method, evidence expectations, and finding threshold.
 
 Specialists inspect their assigned concern and recommend the smallest direct correction. They run independently and publish separate reports. The advisor does not select, aggregate, or summarize their findings.
 
@@ -18,12 +18,13 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 
 `.github/workflows/pr-review-advisor.yaml`:
 
-1. Runs on `pull_request_target` for internal and fork PRs, plus trusted manual dispatch.
-2. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
-3. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
-4. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
-5. Each specialist publishes its complete Markdown review as the job summary and uploads the Markdown and native session trace as one artifact.
-6. After every specialist completes successfully, one publisher attempts to post a sticky comment that links to the workflow run. A failed specialist keeps the workflow failed and suppresses publication.
+1. Runs after `CI / Pull Request` completes, plus trusted manual dispatch.
+2. Runs automatically only when the source workflow succeeds for a required PR revision.
+3. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
+4. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
+5. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
+6. Each specialist publishes its complete Markdown review as the job summary and uploads the Markdown and native session trace as one artifact.
+7. After every specialist completes successfully, one publisher attempts to post a sticky comment that links to the workflow run. A failed specialist keeps the workflow failed and suppresses publication.
 
 `investigate-turn.mts` owns the shared investigation turn and deterministic context contract. `specialist-tools.mts` owns specialist tool policy and implementations. `specialists.mts` applies each specialist prompt and tool policy. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `run-specialist.mts` composes these modules and writes each specialist's Markdown review and native session trace.
 
@@ -43,9 +44,9 @@ For PRs from this repository, the PR E2E controller separately rebuilds the plan
 changed-file list and dispatches every selected job after `CI / Pull Request` completes. `E2E / PR
 Gate` does not consume advisor output.
 
-Required-check status is point-in-time context, not a settled-CI gate. Earlier
-`PR_REVIEW_ADVISOR_WAIT_*` workflow variables were inert and have been removed; any future waiting
-behavior must be implemented and tested before the workflow claims to provide it.
+On automatic runs, the gate accepts a successful `CI / Pull Request` run whose name ends in
+`gate true`. It uses the source repository, branch, and commit to resolve one open PR through the
+GitHub API. Manual dispatch does not require CI-run evidence.
 
 ## Author and agent follow-up
 
@@ -61,6 +62,7 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - Manual target analysis validates the repository token, decimal PR number, and base-ref token before running any `git` command.
 - Generated Pi configuration is written under the sandbox's runtime-only configuration directory, not uploaded artifacts.
 - The review job is limited to `NVIDIA/NemoClaw` and has read-only GitHub permissions. Within it, only the trusted host provider-configuration step receives the upstream model secret.
+- The gate uses a job-scoped GitHub token to read open PR identity. It receives no model credential.
 - A separate trusted host step collects deterministic GitHub context with `github.token` and writes a bounded, identity-checked context file before model work. The sandbox receives that file, not the token.
 - The OpenShell gateway binds only to loopback and holds the upstream provider credential. The sandbox uses `https://inference.local/v1` with an inert SDK key, and receives neither the provider credential nor a GitHub token.
 - The separate publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.

@@ -8,15 +8,54 @@ import test from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   buildMcpToolDiscoveryAuthorizationPlaceholder,
   createBoundedMcpFetch,
   MCP_TOOL_DISCOVERY_LIMITS,
   type McpToolDiscoveryResult,
+  mcpToolDiscoveryFailure,
   normalizeMcpToolPage,
   runMcpToolDiscoverySession,
 } from "./tool-discovery-core.ts";
+import { normalizeMcpSdkError } from "./mcp-tool-discovery.ts";
+
+test("classifies only the SDK request-timeout code as a remote request timeout (#10944)", () => {
+  const timeout = mcpToolDiscoveryFailure(
+    normalizeMcpSdkError(new McpError(ErrorCode.RequestTimeout, "Bearer untrusted-timeout-detail")),
+    "tool-discovery",
+  );
+  assert.deepEqual(timeout, {
+    ok: false,
+    count: 0,
+    tools: [],
+    truncated: false,
+    detail: "MCP request timed out after 10s",
+    failedStage: "tool-discovery",
+    failureClass: "connection",
+  });
+
+  const remoteFailure = mcpToolDiscoveryFailure(
+    normalizeMcpSdkError(
+      new McpError(
+        ErrorCode.InternalError,
+        "remote tool operation timed out with Bearer untrusted-timeout-detail",
+      ),
+    ),
+    "tool-discovery",
+  );
+  assert.deepEqual(remoteFailure, {
+    ok: false,
+    count: 0,
+    tools: [],
+    truncated: false,
+    detail: "MCP request failed",
+    failedStage: "tool-discovery",
+    failureClass: "tool-operation",
+  });
+  assert.doesNotMatch(JSON.stringify({ timeout, remoteFailure }), /untrusted-timeout-detail/u);
+});
 
 interface ObservedRequest {
   httpMethod: string;
@@ -35,6 +74,109 @@ function closeServer(server: http.Server): Promise<void> {
     });
   });
 }
+
+test("classifies malformed tools/list JSON as a protocol failure", async () => {
+  const sessionId = "malformed-tool-list-session";
+  const server = http.createServer(async (request, response) => {
+    const bodyChunks: Buffer[] = [];
+    for await (const chunk of request) {
+      bodyChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    let payload: { id?: string | number; method?: string; params?: { protocolVersion?: string } } =
+      {};
+    try {
+      payload = JSON.parse(Buffer.concat(bodyChunks).toString("utf8")) as typeof payload;
+    } catch {
+      // GET and DELETE requests have no JSON body.
+    }
+
+    if (request.method === "GET") {
+      response.writeHead(405, { Allow: "POST" });
+      response.end();
+      return;
+    }
+    if (request.method === "DELETE") {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (payload.method === "notifications/initialized") {
+      response.writeHead(202);
+      response.end();
+      return;
+    }
+    if (payload.method === "initialize") {
+      response.writeHead(200, {
+        "Content-Type": "application/json",
+        "Mcp-Session-Id": sessionId,
+      });
+      response.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: payload.id,
+          result: {
+            protocolVersion: payload.params?.protocolVersion,
+            capabilities: { tools: {} },
+            serverInfo: { name: "malformed-tool-list", version: "1.0.0" },
+          },
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end("{not-json");
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  const deadlineSignal = AbortSignal.timeout(MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs);
+  const transport = new StreamableHTTPClientTransport(
+    new URL(`http://127.0.0.1:${address.port}/mcp`),
+    { fetch: createBoundedMcpFetch(globalThis.fetch, deadlineSignal) },
+  );
+  const client = new Client(
+    { name: "nemoclaw-mcp-tool-discovery-test", version: "1.0.0" },
+    { capabilities: {} },
+  );
+  const callSdk = async <T>(operation: () => Promise<T>): Promise<T> => {
+    try {
+      return await operation();
+    } catch (error) {
+      throw normalizeMcpSdkError(error);
+    }
+  };
+  let result: McpToolDiscoveryResult | undefined;
+
+  try {
+    await runMcpToolDiscoverySession({
+      connect: () => callSdk(() => client.connect(transport)),
+      loadPage: (cursor) =>
+        callSdk(async () => {
+          const page = await client.listTools(cursor ? { cursor } : undefined);
+          return normalizeMcpToolPage(page);
+        }),
+      hasSession: () => Boolean(transport.sessionId),
+      terminateSession: () => transport.terminateSession(),
+      close: () => client.close(),
+      publishResult: (published) => {
+        result = published;
+      },
+    });
+  } finally {
+    await closeServer(server);
+  }
+
+  assert.deepEqual(result, {
+    ok: false,
+    count: 0,
+    tools: [],
+    truncated: false,
+    detail: "MCP endpoint returned an invalid response",
+    failedStage: "tool-discovery",
+    failureClass: "protocol",
+  });
+});
 
 test("discovers tools from case-variant SSE response media types (#7726)", async () => {
   const observed: ObservedRequest[] = [];

@@ -18,7 +18,7 @@ import {
   withGatewayRouteMutationLock,
   withModelRouterPortLifecycleLock,
 } from "../inference/gateway-route-mutation-lock";
-import { getManagedVllmProviderBinding } from "../inference/local";
+import { getManagedVllmProviderBinding, shouldFrontOllamaWithProxy } from "../inference/local";
 import {
   clearPendingOllamaModelCleanup,
   isLocalOllamaRouteOwner,
@@ -43,7 +43,6 @@ import {
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
-import { shouldFrontOllamaWithProxy } from "./local-inference-topology";
 import { resolveModelRouterPort } from "./model-router";
 import {
   type RoutedProviderDeps,
@@ -153,6 +152,7 @@ import {
   hostLocalInferenceRuntimeOwnerSandboxName,
 } from "./runtime-provider/host-local-inference-routing";
 import { requireRuntimeProviderHostLocalInferenceOperation } from "./runtime-provider/registry";
+import { releaseAbandonedRouteReservation } from "./sandbox-lifecycle";
 
 type ProviderBranchDeps = Pick<
   CommonDeps,
@@ -219,7 +219,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
     options?: { revalidateSandboxIdentity?(operation: string): void },
   ) => ReturnType<CommonDeps["upsertProvider"]>;
   verifyInferenceRoute: (gatewayName: string, provider: string, model: string) => void;
-  providerExistsInGateway: (name: string, gatewayName: string) => boolean;
+  providerExistsInGateway: (name: string, gatewayName: string) => Promise<boolean>;
   run: typeof import("../runner").run;
   updateSandbox: typeof import("../state/registry").reserveSandboxInferenceRoute;
   // #9110 optional GPU-release seams; omitted by test literals that build deps
@@ -296,13 +296,13 @@ export function createRoutedResumeProviderUpsert(deps: {
   error?: CommonDeps["error"];
   exitProcess?: CommonDeps["exitProcess"];
 }) {
-  return (
+  return async (
     gatewayName: string,
     provider: string,
     endpointUrl: string | null,
     credentialEnv: string | null,
   ) => {
-    const result = upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
+    const result = await upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
       upsertProvider: bindOpenAiProviderProfile(
         bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
         deps.runGatewayOpenshell,
@@ -768,6 +768,13 @@ export function createSetupInference(
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
           revalidateSandboxIdentity?.("reserve the sandbox inference route");
+          // A route-only reservation abandoned by an earlier run otherwise
+          // refuses this one and blames a session that no longer exists
+          // (#11051). Release it here, before the first write, so the refusal
+          // is reserved for a reservation that is genuinely contended.
+          if (releaseAbandonedRouteReservation(name)) {
+            deps.log(`  Released an abandoned inference route reservation for sandbox '${name}'.`);
+          }
           const reserved = deps.updateSandbox(name, {
             provider: selectedProvider,
             model: selectedModel,
@@ -806,11 +813,11 @@ export function createSetupInference(
             }
           : deps.error;
         const profiledUpsertProvider = bindOpenAiProviderProfile(
-          (...args) => {
+          async (...args) => {
             revalidateSandboxIdentity?.("register the inference provider");
             const selectedUpsertProvider =
               hostLocalGatewayMutation?.upsertProvider ?? defaultUpsertProvider;
-            return selectedUpsertProvider(...args);
+            return await selectedUpsertProvider(...args);
           },
           runGatewayOpenshell,
           providerError,

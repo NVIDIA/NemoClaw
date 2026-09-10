@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxMessagingPlan } from "../../messaging";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import {
   ensureMessagingHostForwardIfConfigured,
   resolveMessagingHostForward,
@@ -14,15 +15,17 @@ import {
 export function ensureMessagingHostForwardAfterRebuild(
   sandboxName: string,
   plan: SandboxMessagingPlan | null | undefined,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): boolean {
   const forward = resolveMessagingHostForward(plan);
   if (!forward) return true;
-  const health = isSandboxPortForwardHealthy(sandboxName, forward.port);
+  const health = isSandboxPortForwardHealthy(sandboxName, forward.port, undefined, runtimeSelection);
   if (health === true) return true;
   return ensureMessagingHostForwardIfConfigured({
     sandboxName,
     plan,
-    ensureForward: (name, port) => ensureSandboxPortForwardForPort(name, port),
+    ensureForward: (name, port) =>
+      ensureSandboxPortForwardForPort(name, port, { runtimeSelection }),
     note: console.log,
   });
 }

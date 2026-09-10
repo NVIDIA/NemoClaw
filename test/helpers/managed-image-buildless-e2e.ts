@@ -428,6 +428,8 @@ runner.run = (command, options = {}) => {
   const argv = Array.isArray(command) ? command.map(String) : [];
   const normalized = normalize(command);
   runnerCommands.push(normalized);
+  const providerResult = fixtureMocks.mockNvidiaProviderGetRun(command, "nemoclaw");
+  if (providerResult !== null) return providerResult;
   if (
     normalized.includes("sandbox delete") &&
     createdSandbox.state.lifecycleState === "created"
@@ -603,6 +605,36 @@ childProcess.spawn = (command, args = [], options = {}) => {
   });
   return child;
 };
+
+const sandboxCommandCli = require(
+  ${source("src/lib/adapters/openshell/sandbox-command-cli.ts")},
+);
+const createCommandExecutor = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor;
+replace(sandboxCommandCli, "createCliOpenShellSandboxCommandExecutor", (deps) => {
+  const executor = createCommandExecutor(deps);
+  return {
+    ...executor,
+    runBuffered: async (request) => {
+      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+      const command = [
+        "openshell",
+        "sandbox",
+        "exec",
+        "--name",
+        request.sandboxName,
+        ...gatewayArgs,
+        "--",
+        ...request.command,
+      ];
+      const stdout = runner.runCapture(command);
+      return {
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: String(stdout || ""),
+        stderr: "",
+      };
+    },
+  };
+});
 
 const { loadAgent } = require(${source("src/lib/agent/defs.ts")});
 const { createSandbox } = require(${source("src/lib/onboard.ts")});
@@ -841,7 +873,7 @@ function assertManagedLaunch(
     );
     expect(sandboxExecCommands).toHaveLength(1);
     expect(sandboxExecCommands[0]).toContain(
-      `sandbox exec --name ${bootstrapRequest?.sandboxName} --gateway nemoclaw -- /usr/local/bin/dcode identity`,
+      `sandbox exec --name ${bootstrapRequest?.sandboxName} -g nemoclaw -- /usr/local/bin/dcode identity`,
     );
   } else {
     expect(
@@ -852,7 +884,7 @@ function assertManagedLaunch(
     expect(
       result.payload.runnerCommands.some((command) =>
         command.includes(
-          `sandbox exec -g nemoclaw --name ${bootstrapRequest?.sandboxName} -- true`,
+          `sandbox exec --name ${bootstrapRequest?.sandboxName} -g nemoclaw -- true`,
         ),
       ),
     ).toBe(true);

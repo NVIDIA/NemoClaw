@@ -79,12 +79,13 @@ createdSandbox.installRuntimeObservation();
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
-  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete")) {
     createdSandbox.delete();
     return { status: 0 };
   }
+  if (cmd.includes("sandbox start")) createdSandbox.setPhase("Ready");
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
 };
@@ -165,7 +166,7 @@ childProcess.spawn = (...args) => {
 };
 
 const { createSandbox } = require(${onboardPath});
-const { runSandboxExecCommand } = require(${execActionPath});
+const { execSandbox } = require(${execActionPath});
 
 const MARKER_PATH = "/sandbox/workspace/marker.txt";
 const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -174,34 +175,75 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   delete process.env.NEMOCLAW_RECREATE_SANDBOX;
   process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
-  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+  const firstSandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
     [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
+    createFixture,
+  ));
+  createdSandbox.setPhase("NotReady");
+  const legacyCheckpoint = createFixture.seedLegacyCompatibilityCreate({
+    sandboxId: createdSandbox.state.sandboxId,
+    createAttemptNonce: createdSandbox.state.createAttemptNonce,
+  });
+  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+    [null, "gpt-5.4", "nvidia-prod", null, firstSandboxName, null, null, null, null, null, null, null, []],
     createFixture,
   ));
 
   // Prove the recreated + restored sandbox is reachable through the real
   // "nemoclaw <name> exec" boundary and can read a preserved workspace marker.
-  const completion = await runSandboxExecCommand(
-    "openshell",
+  let execCode = null;
+  const execFinished = new Error("__exec_finished__");
+  try {
+    await execSandbox(
+      sandboxName,
+      ["sha256sum", MARKER_PATH],
+      {},
+      {
+        selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+        commandExecutor: {
+          probeDirectory: async () => ({ state: "present" }),
+          runStreaming: async (request) => {
+            const joined = _n([
+              "openshell",
+              "sandbox",
+              "exec",
+              "--name",
+              request.sandboxName,
+              "--",
+              ...request.command,
+            ]);
+            const reads =
+              joined.includes("sandbox exec") &&
+              joined.includes("--name " + sandboxName) &&
+              joined.includes("sha256sum " + MARKER_PATH);
+            events.push({ kind: "exec", cmd: joined, marker: reads ? MARKER_SHA : null });
+            return {
+              outcome: { kind: "completed", exitCode: reads ? 0 : 1 },
+              release: () => {},
+            };
+          },
+        },
+        cleanupDeps: {
+          getSandbox: () => ({ agent: "openclaw" }),
+          inspectMutableConfigPerms: () => ({ applies: true, ok: true }),
+          repairMutableConfigPerms: () => ({ applied: false }),
+        },
+        exit: (code) => {
+          execCode = code;
+          throw execFinished;
+        },
+      },
+    );
+  } catch (error) {
+    if (error !== execFinished) throw error;
+  }
+  console.log(JSON.stringify({
     sandboxName,
-    ["sha256sum", MARKER_PATH],
-    {},
-    async (binary, args) => {
-      const joined = _n([binary, ...args]);
-      const reads =
-        joined.includes("sandbox exec") &&
-        joined.includes("--name " + sandboxName) &&
-        joined.includes("sha256sum " + MARKER_PATH);
-      events.push({ kind: "exec", cmd: joined, marker: reads ? MARKER_SHA : null });
-      return { status: reads ? 0 : 1 };
-    },
-    {
-      getSandbox: () => ({ agent: "openclaw" }),
-      inspectMutableConfigPerms: () => ({ applies: true, ok: true }),
-      repairMutableConfigPerms: () => ({ applied: false }),
-    },
-  );
-  console.log(JSON.stringify({ sandboxName, events, execCode: completion.code }));
+    events,
+    execCode,
+    legacyCheckpoint,
+    publishedEntry: registry.getSandbox(sandboxName),
+  }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -240,6 +282,26 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
         payload.sandboxName,
         "my-assistant",
         "should recreate and return the sandbox name",
+      );
+      assert.equal(
+        payload.legacyCheckpoint.exactFinalHandoffCommitStarted,
+        undefined,
+        "v0.0.55-shaped checkpoint should not synthesize a final-handoff receipt",
+      );
+      assert.equal(
+        payload.publishedEntry.pendingCreateIdentity,
+        undefined,
+        "resumed publication should consume the legacy pending checkpoint",
+      );
+      assert.equal(
+        payload.publishedEntry.lifecycleGeneration,
+        payload.legacyCheckpoint.lifecycleGeneration,
+        "resumed publication should preserve the recreate generation",
+      );
+      assert.equal(
+        payload.publishedEntry.lifecycleLiveIdentityFingerprint,
+        payload.legacyCheckpoint.sandboxIdentityFingerprint,
+        "resumed publication should preserve the exact replacement identity",
       );
 
       const events = payload.events as Array<{

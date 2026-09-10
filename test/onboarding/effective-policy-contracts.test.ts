@@ -461,6 +461,18 @@ describe("effective built-in policy contracts", () => {
       );
       expect(browserHosts.length > 0).toBe(presetName === "nous-browser");
     });
+
+    const browser = requireNetworkPolicy(effective, "nous_browser");
+    expect(binaries(browser)).toEqual(
+      expect.arrayContaining([
+        "/sandbox/.hermes/node/bin/node*",
+        "/sandbox/.hermes/node/bin/npx*",
+        "/sandbox/.hermes/node/bin/agent-browser*",
+      ]),
+    );
+    expect(binaries(browser).filter((binary) => binary.startsWith("/sandbox/.hermes-data/"))).toEqual(
+      [],
+    );
   });
 
   it("keeps OpenClaw messaging credentials and WebSockets inside inspected endpoints", () => {
@@ -534,7 +546,7 @@ describe("effective built-in policy contracts", () => {
     const teams = requireNetworkPolicy(effective, "teams");
     expectDistinctSlackCredentialSelectors(slack);
 
-    for (const policy of [telegram, discord, slack, wechat, teams]) {
+    for (const policy of [telegram, slack, wechat, teams]) {
       expect(binaries(policy)).toEqual(
         expect.arrayContaining([
           "/usr/bin/python3*",
@@ -544,6 +556,12 @@ describe("effective built-in policy contracts", () => {
         ]),
       );
     }
+    expect(binaries(discord)).toEqual([
+      "/opt/hermes/.venv/bin/python",
+      "/opt/hermes/.venv/bin/python3",
+      "/usr/bin/python3",
+      "/usr/bin/python3.13",
+    ]);
     for (const host of ["gateway.discord.gg", "*.discord.gg"]) {
       expectInspectedWebSocket(requireEndpoint(discord, host));
     }

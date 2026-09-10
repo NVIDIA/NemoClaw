@@ -39,12 +39,14 @@ jobs:
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
       - name: Setup Node.js for reviewed package download
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           registry-url: https://npm.pkg.github.com
           scope: "@nvidia"
 
@@ -52,10 +54,11 @@ jobs:
         id: package
         env:
           NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
+          NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1"
           NODE_AUTH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          artifact_path="$(node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts)"
+          artifact_path="$(node scripts/checks/package-openshell-sdk-for-pr.mts)"
           [ -n "$artifact_path" ]
           printf 'artifact_path=%s\n' "$artifact_path" >> "$GITHUB_OUTPUT"
 

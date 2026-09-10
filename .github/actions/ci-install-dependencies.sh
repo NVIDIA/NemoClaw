@@ -4,6 +4,25 @@
 
 set -euo pipefail
 
+if [ "$#" -gt 1 ]; then
+  echo "Usage: ci-install-dependencies.sh [full|production|none]" >&2
+  exit 1
+fi
+
+plugin_install_mode="${1:-full}"
+plugin_install_args=(--prefix nemoclaw ci)
+case "$plugin_install_mode" in
+  full) ;;
+  production)
+    plugin_install_args+=(--omit=dev)
+    ;;
+  none) ;;
+  *)
+    echo "Unsupported plugin dependency install mode: $plugin_install_mode" >&2
+    exit 1
+    ;;
+esac
+
 candidate_npmrc="$(find . -path './.git' -prune -o -name .npmrc -print -quit)"
 if [ -n "$candidate_npmrc" ]; then
   echo "Candidate repository npm configuration is not allowed during trusted dependency installation." >&2
@@ -36,7 +55,7 @@ NEMOCLAW_CI_NPM_CACHE="$npm_cache" \
   NEMOCLAW_CI_NPM_PACKAGE_MODE="$package_mode" \
   NEMOCLAW_CI_TARGET_ROOT="$target_root" \
   NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY="${RUNNER_TEMP:-$target_root/.ci-artifacts}/openshell-sdk" \
-  node --experimental-strip-types "$trusted_root/scripts/checks/prepare-ci-npm-install.mts"
+  node "$trusted_root/scripts/checks/prepare-ci-npm-install.mts"
 
 trusted_npmrc=""
 cleanup() {
@@ -56,5 +75,8 @@ if [ "$package_mode" = "registry" ] && [ -n "${NODE_AUTH_TOKEN:-}" ]; then
   export NPM_CONFIG_USERCONFIG="$trusted_npmrc"
 fi
 
-npm ci --ignore-scripts --prefer-offline --cache "$npm_cache"
-npm --prefix nemoclaw ci --ignore-scripts --prefer-offline --cache "$npm_cache"
+npm ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
+if [ "$plugin_install_mode" != "none" ]; then
+  npm "${plugin_install_args[@]}" \
+    --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
+fi

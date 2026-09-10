@@ -1014,7 +1014,7 @@ describe("Hermes managed-tool gateway broker", () => {
       const brokerPort = await freePort();
 
       const child = resources.ownChild(
-        spawn(process.execPath, ["--experimental-strip-types", SCRIPT], {
+        spawn(process.execPath, [SCRIPT], {
           env: {
             ...process.env,
             HERMES_TOOL_GATEWAY_PORT: String(brokerPort),
@@ -1264,7 +1264,7 @@ describe("Hermes managed-tool gateway broker", () => {
       );
       const brokerPort = await freePort();
       const child = resources.ownChild(
-        spawn(process.execPath, ["--experimental-strip-types", SCRIPT], {
+        spawn(process.execPath, [SCRIPT], {
           env: {
             ...process.env,
             HERMES_TOOL_GATEWAY_PORT: String(brokerPort),

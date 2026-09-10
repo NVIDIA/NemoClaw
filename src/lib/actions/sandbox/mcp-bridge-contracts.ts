@@ -25,10 +25,40 @@ export interface ParsedMcpAddArgs {
   server: string;
   url: string;
   env: ParsedEnvReference[];
+  denyTools?: string[];
   trustedPrivateHosts?: string[];
 }
 
 export interface McpBridgeAddOptions extends ParsedMcpAddArgs {}
+
+export type McpBridgeToolDiscoveryFailedStage =
+  | "preflight"
+  | "runtime"
+  | "initialization"
+  | "tool-discovery";
+export type McpBridgeToolDiscoveryFailureClass =
+  | "precondition"
+  | "runtime"
+  | "connection"
+  | "authentication"
+  | "protocol"
+  | "tool-operation";
+
+export interface McpBridgeToolDiscoveryResult {
+  ok: boolean;
+  count: number;
+  tools: string[];
+  truncated: boolean;
+  commandStatus: number | null;
+  detail?: string;
+  failedStage?: McpBridgeToolDiscoveryFailedStage;
+  failureClass?: McpBridgeToolDiscoveryFailureClass;
+}
+
+export interface ParsedMcpUpdateArgs {
+  server: string;
+  denyTools: string[];
+}
 
 export interface McpBridgeStatus {
   server: string;
@@ -76,19 +106,14 @@ export interface McpBridgeStatus {
     name?: string;
     registryPresent: boolean;
     gatewayPresent: boolean | null;
+    state?: "drift";
   };
   adapter: {
     registered: boolean | null;
     detail?: string;
   };
   /** Names advertised by the MCP endpoint when live discovery is requested. */
-  toolDiscovery?: {
-    ok: boolean;
-    count: number;
-    tools: string[];
-    truncated: boolean;
-    detail?: string;
-  };
+  toolDiscovery?: McpBridgeToolDiscoveryResult;
   addState?: "prepared" | "preflighted";
   addedAt?: string;
   updatedAt?: string;
