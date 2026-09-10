@@ -28,6 +28,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/onboard-timeout-contract.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
+  "test/e2e/support/openshell-sdk-install.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
   "test/e2e/support/runner-pressure-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
@@ -325,7 +326,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e-standard-profile\.yaml$/,
-    testsToRun: runTests("test/e2e/support/standard-profile-workflow-boundary.test.ts"),
+    testsToRun: runTests(
+      "test/e2e/support/standard-profile-workflow-boundary.test.ts",
+      "test/e2e/support/openshell-sdk-install.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/portable-profile-e2e\.yaml$/,

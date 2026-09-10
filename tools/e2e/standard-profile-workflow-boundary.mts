@@ -90,7 +90,7 @@ const SDK_INSTALL_SCRIPT = [
   "mapfile -t archives < <(find \"$RUNNER_TEMP/openshell-sdk\" -maxdepth 1 -type f -name '*.tgz' -print)",
   'test "${#archives[@]}" -eq 1',
   "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
-  '  npm install --no-save --package-lock=false --ignore-scripts "${archives[0]}"',
+  '  npm install --no-save --ignore-scripts "${archives[0]}"',
   "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
   '  node --input-type=module -e \'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");\'',
   "",
