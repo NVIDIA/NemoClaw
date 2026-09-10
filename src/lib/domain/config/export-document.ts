@@ -42,12 +42,8 @@ function inferenceProvider(
     : { ...provider, credential: { env: source.inference.credentialEnv } };
 }
 
-function exportAgent(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig {
+function agentSettings(source: VerifiedExportSource) {
   return {
-    name: "primary",
-    ...(source.auth === undefined
-      ? {}
-      : { auth: { method: source.auth.method, providerRef: providerName } }),
     ...(source.agent === "openclaw"
       ? {
           type: "openclaw" as const,
@@ -59,6 +55,16 @@ function exportAgent(source: VerifiedExportSource, providerName: string): NemoCl
           ...(source.interfaces ? { interfaces: source.interfaces } : {}),
         }),
     ...(source.execution ? { execution: source.execution } : {}),
+  };
+}
+
+function exportAgent(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig {
+  return {
+    name: "primary",
+    ...(source.auth === undefined
+      ? {}
+      : { auth: { method: source.auth.method, providerRef: providerName } }),
+    ...agentSettings(source),
     inference: {
       routes: [
         {

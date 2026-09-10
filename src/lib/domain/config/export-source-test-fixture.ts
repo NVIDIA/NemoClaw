@@ -253,11 +253,11 @@ export function changeRetainedProfile(
 }
 
 const nousEndpoint = "https://inference-api.nousresearch.com/v1";
+const hermesAuthModel = "moonshotai/kimi-k2.6";
 
 export function hermesManagedAuthSnapshot(
   registryOverrides: Partial<SandboxEntry> = {},
 ): ObservedExportSnapshot {
-  const model = "moonshotai/kimi-k2.6";
   const api =
     registryOverrides.preferredInferenceApi === "anthropic-messages"
       ? "anthropic-messages"
@@ -269,7 +269,7 @@ export function hermesManagedAuthSnapshot(
       inference: {
         routeProvider: "inference",
         upstreamProvider: "hermes-provider",
-        model,
+        model: hermesAuthModel,
         routedBaseUrl: "https://inference.local/v1",
         upstreamEndpointUrl: null,
         api,
@@ -281,7 +281,7 @@ export function hermesManagedAuthSnapshot(
   );
   const value = hermesSnapshot({
     provider: "hermes-provider",
-    model,
+    model: hermesAuthModel,
     preferredInferenceApi: api,
     endpointUrl,
     credentialEnv: "NOUS_API_KEY",
@@ -294,7 +294,7 @@ export function hermesManagedAuthSnapshot(
     inference: {
       topology: "hosted",
       provider: "hermes-provider",
-      model,
+      model: hermesAuthModel,
       api,
       endpoint: endpointUrl,
       endpointEvidence: {

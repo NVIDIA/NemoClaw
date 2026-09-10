@@ -158,6 +158,7 @@ describe("export config builder", () => {
       {
         ...source,
         agent: "hermes",
+        interfaces: undefined,
         auth: { method: "api-key" },
         inference: {
           provider: "hermes-provider",
