@@ -134,6 +134,24 @@
                 "type": "object",
                 "required": ["policy"],
                 "properties": {
+                  "proxy": {
+                    "type": "object",
+                    "required": ["host", "port"],
+                    "properties": {
+                      "host": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "pattern": "^[A-Za-z0-9._-]+$(?![\\s\\S])"
+                      },
+                      "port": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 65535
+                      }
+                    },
+                    "additionalProperties": false
+                  },
                   "policy": {
                     "type": "object",
                     "required": ["explicit"],
