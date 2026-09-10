@@ -122,10 +122,17 @@ try {
     if ($LASTEXITCODE -ne 0 -or $wixVersion -cnotmatch '^5\.0\.2(?:\+.*)?$') { throw 'The package requires pinned WiX 5.0.2.' }
     $receipt.phase = 'native-guardian-build'
     $launcherTarget = Join-Path $work 'launcher-target'
+    $nativeArtifacts = Join-Path $work 'compiled-native'
+    [IO.Directory]::CreateDirectory($nativeArtifacts) | Out-Null
+    $materializer = Join-Path $owner 'materialize-compiled-executable.py'
     Invoke-BuildTool 'rustup' @('run', '1.95.0-aarch64-pc-windows-msvc', 'cargo', 'rustc', '--locked', '--release',
         '--target', 'aarch64-pc-windows-msvc', '--features', 'immutable-runtime', '--manifest-path',
         (Join-Path $windows 'launcher\Cargo.toml'), '--target-dir', $launcherTarget, '--', '-C', 'target-feature=+crt-static') 'launcher-build'
-    $launcher = Join-Path $launcherTarget 'aarch64-pc-windows-msvc\release\NemoClaw.exe'
+    $launcherBuilt = Join-Path $launcherTarget 'aarch64-pc-windows-msvc\release\NemoClaw.exe'
+    $launcher = Join-Path $nativeArtifacts 'NemoClaw.exe'
+    $launcherCopyReceipt = Join-Path $OutputDirectory 'compiled-launcher.json'
+    Invoke-BuildTool $PythonPath @($materializer, '--source', $launcherBuilt, '--output', $launcher,
+        '--receipt', $launcherCopyReceipt) 'launcher-materialization'
     $capabilityText = (& $launcher --runtime-capabilities | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $capabilityText.Length -gt 4096) { throw 'The actual launcher capability query failed.' }
     $capabilities = $capabilityText | ConvertFrom-Json
@@ -138,7 +145,14 @@ try {
     Invoke-BuildTool 'rustup' @('run', '1.95.0-aarch64-pc-windows-msvc', 'cargo', 'rustc', '--locked', '--release',
         '--target', 'aarch64-pc-windows-msvc', '--manifest-path', (Join-Path $owner 'Cargo.toml'),
         '--target-dir', $helperTarget, '--', '-C', 'target-feature=+crt-static') 'transaction-build'
-    $helper = Join-Path $helperTarget 'aarch64-pc-windows-msvc\release\NemoClawRuntimeTransaction.exe'
+    $helperBuilt = Join-Path $helperTarget 'aarch64-pc-windows-msvc\release\NemoClawRuntimeTransaction.exe'
+    $helper = Join-Path $nativeArtifacts 'NemoClawRuntimeTransaction.exe'
+    $helperCopyReceipt = Join-Path $OutputDirectory 'compiled-transaction-helper.json'
+    Invoke-BuildTool $PythonPath @($materializer, '--source', $helperBuilt, '--output', $helper,
+        '--receipt', $helperCopyReceipt) 'transaction-helper-materialization'
+    $receipt['compiledArtifacts'] = @($launcherCopyReceipt, $helperCopyReceipt) | ForEach-Object {
+        @{ file = [IO.Path]::GetFileName($_); sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant() }
+    }
     $helperSha = (Get-FileHash -LiteralPath $helper -Algorithm SHA256).Hash.ToLowerInvariant()
     $receipt.phase = 'selected-package-composition'
     $payload = Join-Path $work 'payload'
