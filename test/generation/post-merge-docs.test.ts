@@ -332,6 +332,11 @@ function publish(
     sourceRepository: value.source,
   });
 }
+function expectDraftNotice(api: FakeGitHub): void {
+  expect(console.log).toHaveBeenCalledWith(
+    `::notice::Documentation draft awaits maintainer review and merge: ${api.openPulls[0]?.html_url}`,
+  );
+}
 function requestCount(api: FakeGitHub, method: string, suffix?: string): number {
   return api.request.mock.calls.filter(
     ([calledMethod, url]) => calledMethod === method && (!suffix || url.endsWith(suffix)),
@@ -540,6 +545,7 @@ describe("post-merge documentation publisher", () => {
       "https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#post-merge-documentation-catch-up",
     );
     expect(api.openPulls[0]?.body).not.toContain("## Release cutoff");
+    expectDraftNotice(api);
   });
   it("creates no writes for an approved empty patch without an active PR", async () => {
     const value = emptyFixture();
@@ -593,6 +599,7 @@ describe("post-merge documentation publisher", () => {
     api.installActive();
     await expect(publish(value, api)).resolves.toBeUndefined();
     expect(writeCount(api)).toBe(0);
+    expectDraftNotice(api);
   });
   it("leaves a ready-for-review managed PR unchanged", async () => {
     const value = fixture();
@@ -709,6 +716,7 @@ describe("post-merge documentation publisher", () => {
       },
     });
     expect(requestCount(api, "POST", "/pulls")).toBe(0);
+    expectDraftNotice(api);
   });
   it("accepts a confirmed fast-forward before the PR head projection catches up", async () => {
     const value = fixture();
@@ -831,6 +839,7 @@ describe("post-merge documentation publisher", () => {
     expect(requestCount(api, "POST", "/pulls")).toBe(1);
     expect(requestCount(api, "POST", "/git/refs")).toBe(0);
     expect(requestCount(api, "POST", "/graphql")).toBe(0);
+    expectDraftNotice(api);
   });
   it("preserves a concurrently attached draft while recovering an orphan", async () => {
     const value = fixture();
