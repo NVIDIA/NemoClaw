@@ -2,12 +2,44 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, it } from "vitest";
+import { afterAll, describe, it, vi } from "vitest";
+
+// Every case owns a separate HOME; keep child-process overlap bounded on CI.
+vi.setConfig({ maxConcurrency: 3 });
+
+type ScriptResult = { readonly status: number; readonly stderr: string; readonly stdout: string };
+const CHILD_COMPILE_CACHE = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-node-cache-"));
+
+afterAll(() => fs.rmSync(CHILD_COMPILE_CACHE, { recursive: true, force: true }));
+
+function runNodeScript(
+  repoRoot: string,
+  scriptPath: string,
+  env: NodeJS.ProcessEnv,
+): Promise<ScriptResult> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [scriptPath],
+      {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...env, NODE_COMPILE_CACHE: CHILD_COMPILE_CACHE },
+      },
+      (error, stdout, stderr) => {
+        const exitCode = error?.code;
+        error && typeof exitCode !== "number"
+          ? reject(error)
+          : resolve({ status: typeof exitCode === "number" ? exitCode : 0, stderr, stdout });
+      },
+    );
+  });
+}
 
 /** Parse JSON from the last stdout line, stripping any non-JSON prefix. */
 function parseStdoutJson<T>(stdout: string): T {
@@ -36,14 +68,14 @@ interface StartupResult {
  * the scenario under test. `invocation` selects the entry point under test so a
  * scenario can drive the compatible-endpoint route as well as the Ollama one.
  */
-function runStartupScenario(
+async function runStartupScenario(
   setup: string,
   invocation = "proxy.startOllamaAuthProxy()",
-): {
-  status: number | null;
+): Promise<{
+  status: number;
   stderr: string;
   payload: StartupResult;
-} {
+}> {
   const repoRoot = path.join(import.meta.dirname, "../../..");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-startup-"));
   const scriptPath = path.join(tmpDir, "startup-check.js");
@@ -85,22 +117,21 @@ console.log(JSON.stringify({ returned: Boolean(returned), threw, backendUrls, sp
   delete childEnv.NEMOCLAW_OLLAMA_PROXY_PORT;
   delete childEnv.NEMOCLAW_OLLAMA_PORT;
 
-  const result = spawnSync(process.execPath, [scriptPath], {
-    cwd: repoRoot,
-    encoding: "utf-8",
-    env: childEnv,
-  });
-
-  return {
-    status: result.status,
-    stderr: result.stderr,
-    payload: parseStdoutJson<StartupResult>(result.stdout),
-  };
+  try {
+    const result = await runNodeScript(repoRoot, scriptPath, childEnv);
+    return {
+      status: result.status,
+      stderr: result.stderr,
+      payload: parseStdoutJson<StartupResult>(result.stdout),
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
-describe("startOllamaAuthProxy", () => {
-  it("reports the owning process and remediation when a foreign process holds the port", () => {
-    const { payload, stderr } = runStartupScenario(String.raw`
+describe.concurrent("startOllamaAuthProxy", () => {
+  it("reports the owning process and remediation when a foreign process holds the port", async () => {
+    const { payload, stderr } = await runStartupScenario(String.raw`
 runner.runCapture = (command) => {
   const text = Array.isArray(command) ? command.join(" ") : command;
   if (text.includes("lsof") && text.includes("11435")) return "2222";
@@ -137,8 +168,8 @@ childProcess.spawnSync = (...args) => {
     assert.match(stderr, /NEMOCLAW_OLLAMA_PROXY_PORT=<port>/);
   });
 
-  it("starts the proxy when the port is free and the process binds it", () => {
-    const { payload } = runStartupScenario(String.raw`
+  it("starts the proxy when the port is free and the process binds it", async () => {
+    const { payload } = await runStartupScenario(String.raw`
 runner.runCapture = (command) => {
   const text = Array.isArray(command) ? command.join(" ") : command;
   if (text.includes("lsof") && text.includes("11435")) return "";
@@ -172,14 +203,14 @@ childProcess.spawnSync = (...args) => {
     assert.ok(payload.unauthProbes >= 1, "expected an unauthenticated 401 probe");
   });
 
-  it("starts despite an IPv6-only listener the IPv4-scoped preflight ignores", () => {
+  it("starts despite an IPv6-only listener the IPv4-scoped preflight ignores", async () => {
     // Pins the address-family contract: the pre-start conflict check must use an
     // IPv4-scoped lsof (-ti4TCP), since the proxy binds IPv4 0.0.0.0. An IPv6-only
     // listener does not block that bind, so startup must still succeed. The stub
     // returns a foreign owner ONLY for a broad (-tiTCP) query — if the preflight
     // regressed to the broad probe it would see the owner and falsely abort,
     // failing this test.
-    const { payload } = runStartupScenario(String.raw`
+    const { payload } = await runStartupScenario(String.raw`
 runner.runCapture = (command) => {
   const text = Array.isArray(command) ? command.join(" ") : command;
   if (text.includes("lsof") && text.includes("11435")) {
@@ -216,8 +247,8 @@ childProcess.spawnSync = (...args) => {
     assert.ok(payload.authedProbes >= 1 && payload.unauthProbes >= 1);
   });
 
-  it("recovers when a slow host binds the port only after a retry", () => {
-    const { payload } = runStartupScenario(String.raw`
+  it("recovers when a slow host binds the port only after a retry", async () => {
+    const { payload } = await runStartupScenario(String.raw`
 runner.runCapture = (command) => {
   const text = Array.isArray(command) ? command.join(" ") : command;
   if (text.includes("lsof") && text.includes("11435")) return "";
@@ -256,8 +287,8 @@ childProcess.spawnSync = (...args) => {
     assert.ok(payload.unauthProbes >= 1, "expected an unauthenticated 401 probe");
   });
 
-  it("reports a spawn failure distinctly from a port conflict", () => {
-    const { payload, stderr } = runStartupScenario(String.raw`
+  it("reports a spawn failure distinctly from a port conflict", async () => {
+    const { payload, stderr } = await runStartupScenario(String.raw`
 runner.runCapture = (command) => {
   const text = Array.isArray(command) ? command.join(" ") : command;
   // Port stays free: the spawned proxy exited without anyone owning the port.
@@ -291,8 +322,8 @@ childProcess.spawnSync = (...args) => {
     assert.doesNotMatch(stderr, /already in use/);
   });
 
-  it("reclaims a prior NemoClaw proxy on the port instead of reporting a conflict", () => {
-    const { payload, stderr } = runStartupScenario(String.raw`
+  it("reclaims a prior NemoClaw proxy on the port instead of reporting a conflict", async () => {
+    const { payload, stderr } = await runStartupScenario(String.raw`
 // Reclaim is driven by the ACTUAL kill of pid 4242: the port/process only frees
 // up once killStaleProxy issues \`kill 4242\`. A regression that skips reclaiming
 // it leaves reclaimed=false, so lsof keeps reporting 4242 and startup cannot
@@ -352,8 +383,8 @@ childProcess.spawnSync = (...args) => {
     );
   });
 
-  it("names the compatible endpoint, not Ollama, when its backend is not loopback-bound (#9730)", () => {
-    const { payload, stderr } = runStartupScenario(
+  it("names the compatible endpoint, not Ollama, when its backend is not loopback-bound (#9730)", async () => {
+    const { payload, stderr } = await runStartupScenario(
       String.raw`
 runner.runCapture = (command) => {
   const text = Array.isArray(command) ? command.join(" ") : command;
@@ -397,8 +428,8 @@ childProcess.spawnSync = (...args) => {
     assert.doesNotMatch(stderr, /bind Ollama to loopback/);
   });
 
-  it("keeps endpoint remediation for a compatible endpoint on the Ollama port (#9730)", () => {
-    const { payload, stderr } = runStartupScenario(
+  it("keeps endpoint remediation for a compatible endpoint on the Ollama port (#9730)", async () => {
+    const { payload, stderr } = await runStartupScenario(
       String.raw`
 runner.runCapture = (command) => {
   const text = Array.isArray(command) ? command.join(" ") : command;
