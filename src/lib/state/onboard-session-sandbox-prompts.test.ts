@@ -64,60 +64,63 @@ describe("onboard session sandbox prompt checkpoints", () => {
   it.each([
     ["OpenShell defaults", null],
     ["a selected profile", { cpu: "75%", memory: "75%" }],
-  ] as const)("round-trips completed choices with %s without transient secrets or intent (#6743)", (_label, resourceProfile) => {
-    const braveCredential = "brave-secret-value";
-    const telegramCredential = "telegram-secret-value";
-    const created = session.createSession({
-      sandboxName: "tm",
-      webSearchConfig: { fetchEnabled: true, provider: "brave" },
-      messagingPlan: makeTelegramPlan("tm"),
-      sandboxPromptProgress: {
+  ] as const)(
+    "round-trips completed choices with %s without transient secrets or intent (#6743)",
+    (_label, resourceProfile) => {
+      const braveCredential = "brave-secret-value";
+      const telegramCredential = "telegram-secret-value";
+      const created = session.createSession({
+        sandboxName: "tm",
+        webSearchConfig: { fetchEnabled: true, provider: "brave" },
+        messagingPlan: makeTelegramPlan("tm"),
+        sandboxPromptProgress: {
+          sandboxName: true,
+          webSearch: true,
+          messaging: true,
+          resourceProfile: true,
+        },
+        resourceProfile,
+        stagedCredentialProviders: ["tm-brave-search", "tm-telegram-bridge"],
+      });
+      Object.assign(created as unknown as Record<string, unknown>, {
+        BRAVE_API_KEY: braveCredential,
+        TELEGRAM_BOT_TOKEN: telegramCredential,
+        sandboxCreateIntent: { resolved: { resourceCreateArgs: ["--cpu", "6"] } },
+      });
+
+      session.saveSession(created);
+
+      const raw = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf-8"));
+      expect(raw).toMatchObject({
+        sandboxName: "tm",
+        webSearchConfig: { fetchEnabled: true, provider: "brave" },
+        sandboxPromptProgress: {
+          sandboxName: true,
+          webSearch: true,
+          messaging: true,
+          resourceProfile: true,
+        },
+        resourceProfile,
+        stagedCredentialProviders: ["tm-brave-search", "tm-telegram-bridge"],
+      });
+      const serialized = JSON.stringify(raw);
+      expect(serialized).not.toContain(braveCredential);
+      expect(serialized).not.toContain(telegramCredential);
+      expect(serialized).not.toContain('"sandboxCreateIntent"');
+      expect(serialized).not.toContain('"resolved"');
+      expect(serialized).not.toContain('"resourceCreateArgs"');
+
+      const loaded = requireLoadedSession(session.loadSession());
+      expect(loaded.sandboxPromptProgress).toEqual({
         sandboxName: true,
         webSearch: true,
         messaging: true,
         resourceProfile: true,
-      },
-      resourceProfile,
-      stagedCredentialProviders: ["tm-brave-search", "tm-telegram-bridge"],
-    });
-    Object.assign(created as unknown as Record<string, unknown>, {
-      BRAVE_API_KEY: braveCredential,
-      TELEGRAM_BOT_TOKEN: telegramCredential,
-      sandboxCreateIntent: { resolved: { resourceCreateArgs: ["--cpu", "6"] } },
-    });
-
-    session.saveSession(created);
-
-    const raw = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf-8"));
-    expect(raw).toMatchObject({
-      sandboxName: "tm",
-      webSearchConfig: { fetchEnabled: true, provider: "brave" },
-      sandboxPromptProgress: {
-        sandboxName: true,
-        webSearch: true,
-        messaging: true,
-        resourceProfile: true,
-      },
-      resourceProfile,
-      stagedCredentialProviders: ["tm-brave-search", "tm-telegram-bridge"],
-    });
-    const serialized = JSON.stringify(raw);
-    expect(serialized).not.toContain(braveCredential);
-    expect(serialized).not.toContain(telegramCredential);
-    expect(serialized).not.toContain('"sandboxCreateIntent"');
-    expect(serialized).not.toContain('"resolved"');
-    expect(serialized).not.toContain('"resourceCreateArgs"');
-
-    const loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.sandboxPromptProgress).toEqual({
-      sandboxName: true,
-      webSearch: true,
-      messaging: true,
-      resourceProfile: true,
-    });
-    expect(loaded.resourceProfile).toEqual(resourceProfile);
-    expect(loaded.stagedCredentialProviders).toEqual(["tm-brave-search", "tm-telegram-bridge"]);
-  });
+      });
+      expect(loaded.resourceProfile).toEqual(resourceProfile);
+      expect(loaded.stagedCredentialProviders).toEqual(["tm-brave-search", "tm-telegram-bridge"]);
+    },
+  );
 
   it("defaults unanswered progress and resources for fresh sessions (#6743)", () => {
     const fresh = session.createSession();

@@ -169,7 +169,6 @@ writeFileSync(outputPath, staged.buildCtx);
     process.execPath,
     [
       "--no-warnings",
-      "--experimental-strip-types",
       "--input-type=module",
       "--eval",
       runner,

@@ -19,6 +19,10 @@ documentation task, use the commit range supplied by the user or current checkou
 
 Release-entry completion belongs to `nemoclaw-maintainer-evening`, not this workflow.
 
+For an existing managed draft, extend its staged changes after the workflow merges them with `main`.
+Preserve previous documentation changes unless current source and tests justify a revision or removal.
+The independent reviewer checks those revisions against the previous draft commit.
+
 ## Load current authority
 
 Follow [Discover the Current Implementation](../_shared/implementation-discovery.md).

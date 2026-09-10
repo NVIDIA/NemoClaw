@@ -1297,12 +1297,20 @@ describe("onboard session", () => {
     }
   });
 
-  it("ignores malformed lock files when releasing the onboard lock", () => {
+  it("preserves a foreign lock that uses the local PID when no descriptor is held", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
-    fs.writeFileSync(session.LOCK_FILE, "{not-json", { mode: 0o600 });
+    const contents = JSON.stringify({
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      command: "foreign owner",
+      processGeneration: "foreign-generation",
+      hostIdentity: "foreign-host",
+      pidNamespaceIdentity: "foreign-namespace",
+    });
+    fs.writeFileSync(session.LOCK_FILE, contents, { mode: 0o600 });
 
     session.releaseOnboardLock();
-    expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
+    expect(fs.readFileSync(session.LOCK_FILE, "utf8")).toBe(contents);
   });
 
   it("redacts sensitive values from persisted failure messages", () => {

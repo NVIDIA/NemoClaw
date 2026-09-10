@@ -164,7 +164,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         preferredInferenceApi: "anthropic-messages",
       }),
-      restartSandboxGateway: () => ({
+      restartSandboxGateway: async () => ({
         ok: false,
         failureLayer: "health timeout",
         detail: "replacement gateway did not become healthy",

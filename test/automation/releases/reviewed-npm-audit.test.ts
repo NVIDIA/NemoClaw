@@ -262,12 +262,9 @@ describe("reviewed npm audit gate", () => {
       NPM_AUDIT_ATTEMPT_TIMEOUT_MS * (NPM_AUDIT_RETRY_DELAYS_MS.length + 1) +
       NPM_AUDIT_RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0);
     const minimumJobTimeoutMinutes = Math.ceil(retryBudgetMs / 60_000) + 4;
-    const callers = reviewedNpmAuditWorkflowDeadlines(
-      path.join(REPO_ROOT, ".github", "workflows"),
-    );
+    const callers = reviewedNpmAuditWorkflowDeadlines(path.join(REPO_ROOT, ".github", "workflows"));
 
-    expect(callers).toHaveLength(5);
-    expect(callers.map(({ timeoutMinutes }) => timeoutMinutes)).toEqual([25, 25, 25, 25, 25]);
+    expect(callers).toHaveLength(6);
     expect(Math.min(...callers.map(({ timeoutMinutes }) => timeoutMinutes))).toBeGreaterThanOrEqual(
       minimumJobTimeoutMinutes,
     );

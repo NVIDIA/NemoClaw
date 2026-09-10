@@ -22,13 +22,12 @@ export type ManagedImageProtectedRouteKind = ManagedImageLocalInferenceKind | "r
 // free without relying on truncation.
 export const MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX = "nmc-mi-";
 
-const PROTECTED_SANDBOX_AGENT_TOKENS: Readonly<Record<ShippedManagedImageAgent, string>> = Object.freeze(
-  {
+const PROTECTED_SANDBOX_AGENT_TOKENS: Readonly<Record<ShippedManagedImageAgent, string>> =
+  Object.freeze({
     openclaw: "oc",
     hermes: "he",
     "langchain-deepagents-code": "dc",
-  },
-);
+  });
 
 const PROTECTED_SANDBOX_ROUTE_TOKENS: Readonly<Record<ManagedImageProtectedRouteKind, string>> =
   Object.freeze({

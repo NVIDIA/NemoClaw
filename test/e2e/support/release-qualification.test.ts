@@ -70,11 +70,7 @@ describe("release qualification", () => {
   it("exits with status 1 when a required job fails (#7912)", () => {
     const result = spawnSync(
       process.execPath,
-      [
-        "--experimental-strip-types",
-        "--no-warnings",
-        path.join(process.cwd(), "tools/e2e/release-qualification.mts"),
-      ],
+      ["--no-warnings", path.join(process.cwd(), "tools/e2e/release-qualification.mts")],
       {
         encoding: "utf8",
         env: {

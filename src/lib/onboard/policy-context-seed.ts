@@ -33,7 +33,6 @@ export interface SeedPolicyContextDeps {
 }
 
 function defaultRefresh(sandboxName: string): unknown {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mod = require("../actions/sandbox/policy-context-refresh") as {
     refreshSandboxPolicyContextFile: (name: string) => unknown;
   };

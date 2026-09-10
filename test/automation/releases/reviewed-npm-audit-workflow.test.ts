@@ -229,10 +229,7 @@ process.exit(0);
     );
     const result = spawnSync(
       process.execPath,
-      [
-        "--experimental-strip-types",
-        path.join(trustedRootAlias, "scripts/audit-reviewed-npm-graph.mts"),
-      ],
+      [path.join(trustedRootAlias, "scripts/audit-reviewed-npm-graph.mts")],
       {
         cwd: trustedRoot,
         encoding: "utf-8",

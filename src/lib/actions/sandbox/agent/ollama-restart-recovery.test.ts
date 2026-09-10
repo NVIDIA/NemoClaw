@@ -127,8 +127,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           model: "qwen3.6:35b",
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
-        { getOllamaHost: () => "host.docker.internal",
-          revalidateOllamaHost: () => "host.docker.internal", runRecoveryCaptureImpl },
+        {
+          getOllamaHost: () => "host.docker.internal",
+          revalidateOllamaHost: () => "host.docker.internal",
+          runRecoveryCaptureImpl,
+        },
       ),
     ).resolves.toEqual({ kind: "warmed", ok: true });
 
@@ -564,7 +567,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       },
       {
         getOllamaHost: () => "host.docker.internal",
-          revalidateOllamaHost: () => "host.docker.internal",
+        revalidateOllamaHost: () => "host.docker.internal",
         runRecoveryCaptureImpl,
       },
     );
@@ -767,8 +770,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           model: "gemma4:26b",
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
-        { getOllamaHost: () => "host.docker.internal",
-          revalidateOllamaHost: () => "host.docker.internal", runRecoveryCaptureImpl },
+        {
+          getOllamaHost: () => "host.docker.internal",
+          revalidateOllamaHost: () => "host.docker.internal",
+          runRecoveryCaptureImpl,
+        },
       ),
     ).resolves.toEqual({
       kind: "skipped",

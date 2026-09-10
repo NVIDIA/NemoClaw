@@ -3,7 +3,11 @@
 
 import type { AdvisorPromptTurn } from "../advisors/session.mts";
 import { buildInvestigateTurn, type InvestigateTurnContext } from "./investigate-turn.mts";
-import { ADVISOR_SPECIALISTS, type AdvisorInterest, type AdvisorSpecialist } from "./specialist-catalog.mts";
+import {
+  ADVISOR_SPECIALISTS,
+  type AdvisorInterest,
+  type AdvisorSpecialist,
+} from "./specialist-catalog.mts";
 import { specialistToolNames } from "./specialist-tools.mts";
 
 function advisorSpecialist(interest: AdvisorInterest): AdvisorSpecialist {

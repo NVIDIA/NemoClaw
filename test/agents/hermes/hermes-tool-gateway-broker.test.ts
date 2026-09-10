@@ -102,12 +102,7 @@ async function startForeignHealthListener(
     'listener.listen(port, "127.0.0.1", () => process.stdout.write("ready\\n"));',
     'process.once("SIGTERM", () => listener.close(() => process.exit(0)));',
   ].join("\n");
-  return startInlineListener(
-    resources,
-    "foreign health listener",
-    source,
-    [String(port)],
-  );
+  return startInlineListener(resources, "foreign health listener", source, [String(port)]);
 }
 
 async function startBrokerLikeListener(
@@ -1014,7 +1009,7 @@ describe("Hermes managed-tool gateway broker", () => {
       const brokerPort = await freePort();
 
       const child = resources.ownChild(
-        spawn(process.execPath, ["--experimental-strip-types", SCRIPT], {
+        spawn(process.execPath, [SCRIPT], {
           env: {
             ...process.env,
             HERMES_TOOL_GATEWAY_PORT: String(brokerPort),
@@ -1264,7 +1259,7 @@ describe("Hermes managed-tool gateway broker", () => {
       );
       const brokerPort = await freePort();
       const child = resources.ownChild(
-        spawn(process.execPath, ["--experimental-strip-types", SCRIPT], {
+        spawn(process.execPath, [SCRIPT], {
           env: {
             ...process.env,
             HERMES_TOOL_GATEWAY_PORT: String(brokerPort),

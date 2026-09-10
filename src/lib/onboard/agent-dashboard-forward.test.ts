@@ -172,11 +172,9 @@ describe("ensureAgentDashboardForward", () => {
       }),
     ).toBe(8647);
 
-    expect(ensureDashboardForward).toHaveBeenCalledWith(
-      "api-agent",
-      "http://127.0.0.1:8647",
-      { allowPortReallocation: false },
-    );
+    expect(ensureDashboardForward).toHaveBeenCalledWith("api-agent", "http://127.0.0.1:8647", {
+      allowPortReallocation: false,
+    });
     expect(ensureDashboardForward).not.toHaveBeenCalledWith(
       "api-agent",
       "http://127.0.0.1:8642",

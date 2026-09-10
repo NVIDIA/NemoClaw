@@ -25,11 +25,7 @@ export function inspectLocalImageMetadata(imageRef: string): LocalImageMetadata 
   }
 }
 
-function isExactSameRepositoryDigestRef(
-  imageName: string,
-  digest: string,
-  ref: string,
-): boolean {
+function isExactSameRepositoryDigestRef(imageName: string, digest: string, ref: string): boolean {
   return /^sha256:[0-9a-f]{64}$/u.test(digest) && ref === `${imageName}@${digest}`;
 }
 

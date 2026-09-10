@@ -50,13 +50,14 @@ function stdoutText(): string {
 }
 
 describe("snapshot command", () => {
-  it.each([{ argv: [] }, { argv: ["--help"] }, { argv: ["-h"] }])("shows usage for $argv", async ({
-    argv,
-  }) => {
-    actionSnapshots(argv, { snapshotsDir });
+  it.each([{ argv: [] }, { argv: ["--help"] }, { argv: ["-h"] }])(
+    "shows usage for $argv",
+    async ({ argv }) => {
+      actionSnapshots(argv, { snapshotsDir });
 
-    expect(stdoutText()).toContain("Usage: snapshots <list|prune|delete>");
-  });
+      expect(stdoutText()).toContain("Usage: snapshots <list|prune|delete>");
+    },
+  );
 
   it("rejects an unknown subcommand", async () => {
     expect(() => actionSnapshots(["bogus"], { snapshotsDir })).toThrow(
@@ -99,12 +100,12 @@ describe("snapshot command", () => {
     );
   });
 
-  it.each([
-    { argv: ["prune"] },
-    { argv: ["delete"] },
-  ])("rejects missing arguments for $argv", async ({ argv }) => {
-    expect(() => actionSnapshots(argv, { snapshotsDir })).toThrow();
-  });
+  it.each([{ argv: ["prune"] }, { argv: ["delete"] }])(
+    "rejects missing arguments for $argv",
+    async ({ argv }) => {
+      expect(() => actionSnapshots(argv, { snapshotsDir })).toThrow();
+    },
+  );
 
   it("rejects delete paths outside the snapshots root", async () => {
     expect(() =>
