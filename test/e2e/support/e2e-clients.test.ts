@@ -22,6 +22,9 @@ import {
   trustedSandboxShellScript,
   validateSandboxName,
 } from "../fixtures/clients/index.ts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { ShellProbe } from "../fixtures/shell-probe.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -115,6 +118,39 @@ describe("E2E fixture clients", () => {
       /sandbox name is invalid for fixture client/,
     );
   });
+
+  it.each([
+    { stdin: undefined, expectedTimeout: false },
+    { stdin: "open-pipe" as const, expectedTimeout: true },
+  ])(
+    "keeps the configured host command's input open only when requested ($stdin)",
+    async ({ stdin, expectedTimeout }) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-host-stdin-"));
+      const progress = startTestProgress("host stdin", ["run configured command", "verify input"], {
+        logLine: () => undefined,
+      });
+      try {
+        const probe = new ShellProbe({
+          artifacts: new ArtifactSink(tmp),
+          progress,
+          redact: (text) => text,
+          signal: new AbortController().signal,
+        });
+        const host = new HostCliClient(probe, { cliPath: process.execPath });
+        progress.phase("run configured command");
+        const result = await host.nemoclaw(
+          ["-e", "process.stdin.resume(); process.stdin.on('end', () => console.log('EOF'));"],
+          { stdin, timeoutMs: 2_000, persistArtifacts: false },
+        );
+        progress.phase("verify input");
+        expect(result.timedOut).toBe(expectedTimeout);
+        expect(result.stdout.trim()).toBe(expectedTimeout ? "" : "EOF");
+      } finally {
+        progress.stop();
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("host client runs the configured NemoClaw CLI", async () => {
     const runner = new FakeRunner();

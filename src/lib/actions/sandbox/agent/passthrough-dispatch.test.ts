@@ -7,13 +7,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   type AgentDispatchChild,
-  AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS,
-  agentDispatchDeadlineSeconds,
   agentDispatchStdio,
   isSilentAgentDispatch,
   isTimedOutAgentDispatch,
-  replaceRequestedAgentTimeoutSeconds,
-  requestedAgentTimeoutSeconds,
   runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
   TIMED_OUT_AGENT_TURN_EXIT_CODE,
@@ -23,6 +19,10 @@ import {
   canCloseAgentStdin,
   hasOpenClawAgentSelector,
   requestsOpenClawJsonOutput,
+  AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS,
+  agentDispatchDeadlineSeconds,
+  replaceRequestedAgentTimeoutSeconds,
+  requestedAgentTimeoutSeconds,
 } from "../../../domain/sandbox/openclaw-agent-args";
 
 function dispatchHarness() {

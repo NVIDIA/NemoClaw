@@ -358,36 +358,6 @@ describe("E2E fixture primitives", () => {
     ).toThrow(/argument cannot contain NUL bytes/);
   });
 
-  it.each([
-    { stdin: undefined, expectedTimeout: false },
-    { stdin: "open-pipe" as const, expectedTimeout: true },
-  ])("holds stdin open only when requested ($stdin)", async ({ stdin, expectedTimeout }) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-stdin-"));
-    try {
-      const probe = new ShellProbe({
-        artifacts: new ArtifactSink(tmp),
-        progress: supportProgress(),
-        redact: (text) => text,
-        signal: new AbortController().signal,
-      });
-      const result = await probe.run(
-        trustedShellCommand({
-          command: process.execPath,
-          args: [
-            "-e",
-            "process.stdin.resume(); process.stdin.on('end', () => console.log('EOF'));",
-          ],
-          reason: "observe EOF or timeout with the caller's stdin posture",
-        }),
-        { stdin, timeoutMs: 2_000, persistArtifacts: false },
-      );
-      expect(result.timedOut).toBe(expectedTimeout);
-      expect(result.stdout.trim()).toBe(expectedTimeout ? "" : "EOF");
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
   it("redacts ShellProbe output and retained logs when the secret is registered on both surfaces", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-enforce-"));
     try {

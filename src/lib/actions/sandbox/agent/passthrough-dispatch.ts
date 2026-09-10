@@ -84,12 +84,6 @@ import { spawn, type StdioOptions } from "node:child_process";
 
 import { isStdinTty } from "../../../core/stdin";
 import { runSandboxExecChild, type SandboxExecChild, type SandboxExecSignalSource } from "../exec";
-export {
-  AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS,
-  agentDispatchDeadlineSeconds,
-  replaceRequestedAgentTimeoutSeconds,
-  requestedAgentTimeoutSeconds,
-} from "../../../domain/sandbox/openclaw-agent-args";
 
 /**
  * Exit code for a dispatch that reported success without delivering a turn.

@@ -116,8 +116,6 @@ import { ensureLiveSandboxOrExit } from "../gateway-state";
 import {
   isSilentAgentDispatch,
   isTimedOutAgentDispatch,
-  replaceRequestedAgentTimeoutSeconds,
-  requestedAgentTimeoutSeconds,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
   TIMED_OUT_AGENT_TURN_EXIT_CODE,
 } from "./passthrough-dispatch";
@@ -137,6 +135,8 @@ import {
   hasOpenClawAgentSelector,
   requestsOpenClawJsonOutput,
   requestsOpenClawLocalMode,
+  replaceRequestedAgentTimeoutSeconds,
+  requestedAgentTimeoutSeconds,
 } from "../../../domain/sandbox/openclaw-agent-args";
 import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
 

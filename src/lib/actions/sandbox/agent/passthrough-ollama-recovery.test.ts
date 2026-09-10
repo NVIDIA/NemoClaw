@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { type AgentPassthroughDeps, runAgentPassthrough } from "./passthrough";
-import { requestedAgentTimeoutSeconds } from "./passthrough-dispatch";
+import { requestedAgentTimeoutSeconds } from "../../../domain/sandbox/openclaw-agent-args";
 import { runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
 
 function makeProcMock() {

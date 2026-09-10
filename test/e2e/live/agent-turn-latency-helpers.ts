@@ -461,10 +461,8 @@ export async function openclawTurn(
   const started = process.hrtime.bigint();
   // The host fixture holds stdin open until the CLI exits. The released
   // wrapper waits for EOF before OpenShell dispatches to the Ready sandbox.
-  const result = await host.command(
-    "node",
+  const result = await host.nemoclaw(
     [
-      CLI,
       OPENCLAW_SANDBOX,
       "agent",
       "--agent",
