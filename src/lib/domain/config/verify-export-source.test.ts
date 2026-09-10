@@ -13,56 +13,27 @@ import {
   managedWorkload,
   entry,
   snapshot,
+  tunedEnvironment,
   hermesSnapshot,
   hermesManagedAuthSnapshot,
+  braveSnapshot,
+  tunedSnapshot,
+  compatibleSnapshot,
+  proxySnapshot,
 } from "./export-source-test-fixture";
 import YAML from "yaml";
 import { Check } from "typebox/value";
 import { ExportSourceValuesSchema } from "./export-evidence";
-import { describe, expect, it, vi } from "vitest";
-import { runConfigExport } from "../../actions/config/export";
+import { describe, expect, it } from "vitest";
+import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import { validateNemoClawConfig } from "../../config/schema";
-import {
-  parseNemoClawConfigDocumentName,
-  parseNemoClawConfigDocumentUid,
-  type NemoClawConfig,
-} from "../../config/model";
-import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
+import { type NemoClawConfig } from "../../config/model";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
-import {
-  buildManagedStartupProfile,
-  type ManagedStartupProfileBuilderInput,
-} from "../../onboard/managed-startup/profile-builder";
+import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import type { ObservedExportSnapshot, QualifiedExportSnapshot } from "./export-evidence";
 import { classifyExportRegistry, verifyExportSource } from "./verify-export-source";
-
-function braveSnapshot(): ObservedExportSnapshot {
-  const value = snapshot();
-  return {
-    ...value,
-    registry: entry({
-      webSearchEnabled: true,
-      webSearchProvider: "brave",
-      workload: managedWorkload(
-        profileInput({ webSearch: { fetchEnabled: true, provider: "brave" } }),
-      ),
-    }),
-    sandbox: { ...value.sandbox, providerNames: ["alpha-brave-search"] },
-    webSearchProvider: {
-      gatewayName: "nemoclaw",
-      workspace: "default",
-      name: "alpha-brave-search",
-      id: "brave-provider-id",
-      resourceVersion: "4",
-      type: "brave",
-      profileWorkspace: "default",
-      profile: { id: "brave", source: "user", scope: "workspace", resourceVersion: "4" },
-      credentialKeys: ["BRAVE_API_KEY"],
-      configKeys: [],
-    },
-  };
-}
+import { buildChain } from "../../dashboard/contract";
 
 function findings(result: ReturnType<typeof verifyExportSource>) {
   return result.kind === "verified" ? [] : result.findings;
@@ -88,279 +59,13 @@ function verify(
   return verifyExportSource(requestedSandboxName, qualified);
 }
 
-async function exportSnapshots(sequence: readonly ObservedExportSnapshot[]) {
-  let index = 0;
-  const read = vi.fn(async () => sequence[Math.min(index++, sequence.length - 1)]!);
-  const writeStdout = vi.fn(async (_contents: string) => undefined);
-  const publish = vi.fn(() => ({ ok: true, outputPath: "/tmp/alpha.yaml" }) as const);
-  const outcome = await runConfigExport(
-    {
-      sandboxName: "alpha",
-      documentName: parseNemoClawConfigDocumentName("alpha"),
-      target: { kind: "stdout" },
-    },
-    {
-      observe: (name) => observeStableExportSource(name, { read }),
-      createDocumentUid: () => parseNemoClawConfigDocumentUid(sandboxId),
-      writeStdout,
-      publish,
-    },
-  );
-  return { outcome, read, writeStdout, publish };
-}
-
 function primaryOpenClawAgent(config: NemoClawConfig) {
   const agent = config.spec.sandboxes[0]!.agents[0]!;
   expect(agent.type).toBe("openclaw");
   return agent as Extract<typeof agent, { type: "openclaw" }>;
 }
 
-function directToolsSnapshot(overrides: Partial<SandboxEntry> = {}) {
-  return snapshot({
-    registry: entry({
-      toolDisclosure: "direct",
-      workload: managedWorkload(
-        profileInput({
-          toolDisclosure: "direct",
-          environment: { NEMOCLAW_TOOL_DISCLOSURE: "direct" },
-        }),
-      ),
-      ...overrides,
-    }),
-  });
-}
-
-const tunedEnvironment = {
-  NEMOCLAW_CONTEXT_WINDOW: "65536",
-  NEMOCLAW_MAX_TOKENS: "8192",
-  NEMOCLAW_REASONING: "true",
-  NEMOCLAW_REASONING_EFFORT: "high",
-  NEMOCLAW_AGENT_TIMEOUT: "900",
-  NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m",
-};
-
-function tunedSnapshot(environment: NodeJS.ProcessEnv = tunedEnvironment) {
-  return snapshot({
-    registry: entry({ workload: managedWorkload(profileInput({ environment })) }),
-  });
-}
-
-function compatibleSnapshot(
-  environment: NodeJS.ProcessEnv,
-  registryOverrides: Partial<SandboxEntry>,
-) {
-  const base = profileInput({ environment });
-  const route = resolveManagedStartupInferenceRoute(
-    "openclaw",
-    "compatible-endpoint",
-    "gpt-5",
-    "openai-completions",
-  );
-  const input = {
-    ...base,
-    inference: {
-      ...base.inference,
-      routeProvider: route.providerKey,
-      upstreamProvider: "compatible-endpoint",
-      api: "openai-completions" as const,
-      routedBaseUrl: route.inferenceBaseUrl,
-      primaryModelRef: route.primaryModelRef,
-      compatibility: route.inferenceCompat ?? {},
-    },
-  };
-  const observed = snapshot();
-  return snapshot({
-    registry: entry({
-      provider: "compatible-endpoint",
-      preferredInferenceApi: "openai-completions",
-      workload: managedWorkload(input),
-      ...registryOverrides,
-    }),
-    inference: {
-      ...observed.inference,
-      provider: "compatible-endpoint",
-      api: "openai-completions",
-      endpointEvidence: {
-        ...observed.inference.endpointEvidence!,
-        provider: { ...observed.inference.endpointEvidence!.provider, name: "compatible-endpoint" },
-      },
-    },
-  });
-}
-
-function proxySnapshot(
-  environment = { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
-) {
-  return {
-    ...snapshot(),
-    registry: { ...entry(), workload: managedWorkload(profileInput({ environment })) },
-  } satisfies ObservedExportSnapshot;
-}
-
 describe("config export source verification (#10938)", () => {
-  it("exports direct tools when the registry and managed profile agree", async () => {
-    const observed = directToolsSnapshot();
-    const result = await exportSnapshots([observed]);
-    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-    expect(result.read).toHaveBeenCalledTimes(2);
-    expect(result.publish).not.toHaveBeenCalled();
-    const [yaml] = result.writeStdout.mock.calls[0]!;
-    const document = validateNemoClawConfig(YAML.parse(yaml));
-    expect(document.spec.sandboxes[0]!.agents[0]!).toHaveProperty("tools", {
-      disclosure: "direct",
-    });
-    expect(document.spec.sandboxes[0]!.network.policy.explicit).toEqual(canonicalPolicy);
-    expect(Object.isFrozen(verifiedSource(verify(observed)).tools)).toBe(true);
-  });
-
-  it("exports direct tools together with retained managed proxy settings", async () => {
-    const result = await exportSnapshots([
-      directToolsSnapshot({
-        workload: managedWorkload(
-          profileInput({
-            toolDisclosure: "direct",
-            environment: { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
-          }),
-        ),
-      }),
-    ]);
-    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-    const [yaml] = result.writeStdout.mock.calls[0]!;
-    const sandbox = validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!;
-    expect(sandbox.agents[0]!).toHaveProperty("tools", { disclosure: "direct" });
-    expect(sandbox.network.proxy).toEqual({ host: "proxy.internal", port: 3129 });
-  });
-
-  it.each([undefined, "progressive"] as const)(
-    "omits canonical progressive tools for registry selection %s",
-    async (toolDisclosure) => {
-      const result = await exportSnapshots([snapshot({ registry: entry({ toolDisclosure }) })]);
-      expect(result.outcome.ok).toBe(true);
-      const [yaml] = result.writeStdout.mock.calls[0]!;
-      expect(
-        validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agents[0],
-      ).not.toHaveProperty("tools");
-    },
-  );
-
-  it.each([
-    { label: "absent registry selection", change: { toolDisclosure: undefined } },
-    { label: "conflicting registry selection", change: { toolDisclosure: "progressive" as const } },
-    { label: "conflicting retained mode", change: { workload: managedWorkload() } },
-    { label: "missing workload", change: { workload: undefined } },
-    { label: "another agent", change: { agent: "hermes" as const } },
-    {
-      label: "stale image identity",
-      change: { imageTag: imageRef.replace(/a{64}$/, "b".repeat(64)) },
-    },
-    {
-      label: "stale live identity",
-      change: { lifecycleLiveIdentityFingerprint: "other-generation" },
-    },
-    { label: "custom image", change: { fromDockerfile: "/tmp/custom-image" } },
-    {
-      label: "minimal bootstrap",
-      change: {
-        workload: managedWorkload(
-          profileInput({
-            toolDisclosure: "direct",
-            environment: { NEMOCLAW_MINIMAL_BOOTSTRAP: "1" },
-          }),
-        ),
-      },
-    },
-  ])("does not publish direct tools with $label", async ({ change }) => {
-    const result = await exportSnapshots([directToolsSnapshot(change)]);
-    expect(result.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
-    expect(result.writeStdout).not.toHaveBeenCalled();
-    expect(result.publish).not.toHaveBeenCalled();
-  });
-
-  it.each([null, "", "DIRECT", " direct ", "credential-canary", false])(
-    "rejects malformed retained registry disclosure without exposing its value",
-    async (toolDisclosure) => {
-      const result = await exportSnapshots([
-        directToolsSnapshot({ toolDisclosure } as unknown as Partial<SandboxEntry>),
-      ]);
-      expect(result.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
-      expect(result.writeStdout).not.toHaveBeenCalled();
-      expect(result.publish).not.toHaveBeenCalled();
-      expect(JSON.stringify(result.outcome)).not.toContain("credential-canary");
-    },
-  );
-
-  it.each([
-    { disclosure: undefined },
-    { disclosure: null },
-    { disclosure: "credential-canary" },
-    { enabledGateways: ["nous-web"] },
-    { token: "credential-canary" },
-  ])("rejects malformed or unsupported retained tools without output", async (change) => {
-    const input = profileInput({ toolDisclosure: "direct" });
-    const built = buildManagedStartupProfile(input);
-    const canonical = JSON.parse(
-      Buffer.from(built.encodedProfile, "base64url").toString("utf8"),
-    ) as typeof built.profile;
-    const changed = { ...canonical, tools: { ...canonical.tools, ...change } };
-    const encodedProfile = Buffer.from(JSON.stringify(changed)).toString("base64url");
-    const observed = directToolsSnapshot({
-      workload: {
-        ...managedWorkload(input),
-        encodedProfile,
-        startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
-      },
-    });
-    const result = await exportSnapshots([observed]);
-    expect(result.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
-    expect(result.writeStdout).not.toHaveBeenCalled();
-    expect(result.publish).not.toHaveBeenCalled();
-    expect(JSON.stringify(result.outcome)).not.toContain("credential-canary");
-  });
-
-  it.each([{ startupProfileSha256: "f".repeat(64) }, { capabilityContractVersion: 0 }])(
-    "retains managed image contract and profile hash checks for direct tools",
-    async (change) => {
-      const workload = managedWorkload(profileInput({ toolDisclosure: "direct" }));
-      const invalid = { ...workload, ...change } as unknown as SandboxWorkloadReceipt;
-      const result = await exportSnapshots([directToolsSnapshot({ workload: invalid })]);
-      expect(result.outcome.ok).toBe(false);
-      expect(result.writeStdout).not.toHaveBeenCalled();
-      expect(result.publish).not.toHaveBeenCalled();
-    },
-  );
-
-  it("reobserves changed tool selection before publishing a stable direct profile", async () => {
-    const direct = directToolsSnapshot();
-    const result = await exportSnapshots([snapshot(), direct, direct, direct]);
-    expect(result.outcome.ok).toBe(true);
-    expect(result.read).toHaveBeenCalledTimes(4);
-    const [yaml] = result.writeStdout.mock.calls[0]!;
-    expect(validateNemoClawConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agents[0]!).toHaveProperty(
-      "tools",
-      {
-        disclosure: "direct",
-      },
-    );
-  });
-
-  it("does not publish when tool selection changes during both observations", async () => {
-    const result = await exportSnapshots([
-      snapshot(),
-      directToolsSnapshot(),
-      snapshot(),
-      directToolsSnapshot(),
-    ]);
-    expect(result.outcome).toMatchObject({
-      ok: false,
-      failure: {
-        kind: "observation",
-        findings: [expect.objectContaining({ category: "unstable-source" })],
-      },
-    });
-    expect(result.writeStdout).not.toHaveBeenCalled();
-    expect(result.publish).not.toHaveBeenCalled();
-  });
-
   it.each([
     { label: "default proxy", environment: {}, expected: {} },
     {
@@ -1392,15 +1097,26 @@ describe("config export source verification (#10938)", () => {
     },
   );
 
-  it("rejects unsupported startup settings alongside a managed proxy", async () => {
+  it.each([
+    { label: "default proxy", environment: {} },
+    {
+      label: "managed proxy",
+      environment: { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
+    },
+  ])("rejects a custom dashboard URL alongside $label", async ({ environment }) => {
     const base = profileInput();
     const dashboard = base.dashboard as Extract<
       ManagedStartupProfileBuilderInput["dashboard"],
       { agent: "openclaw" }
     >;
     const configured = profileInput({
-      dashboard: { ...dashboard, url: "http://127.0.0.1:18888", port: 18_888 },
-      environment: { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
+      dashboard: {
+        ...dashboard,
+        mode: "remote",
+        url: "https://dashboard.example.com:18888",
+        port: 18_888,
+      },
+      environment,
     });
     const workload = managedWorkload(configured);
     const raw = snapshot({ registry: entry({ imageTag: workload.reference, workload }) });
@@ -1443,5 +1159,312 @@ describe("config export source verification (#10938)", () => {
       expect.objectContaining({ category: "policy-not-representable" }),
     );
     expect(JSON.stringify(result)).not.toContain(canary);
+  });
+});
+
+function dashboardSnapshot(
+  port = 19000,
+  bind: "127.0.0.1" | "0.0.0.0" = "0.0.0.0",
+  environment: ManagedStartupProfileBuilderInput["environment"] = {},
+) {
+  const chain = buildChain({ port, bindOverride: bind });
+  const workload = managedWorkload(
+    profileInput({
+      dashboard: {
+        agent: "openclaw",
+        mode: chain.shouldDisableDeviceAuth ? "remote" : "loopback",
+        url: chain.accessUrl,
+        port: chain.port,
+        bindAddress: bind,
+        wslExposure: false,
+      },
+      environment,
+    }),
+  );
+  return snapshot({
+    registry: entry({
+      dashboardPort: port,
+      dashboardRemoteBindPrepared: bind === "0.0.0.0",
+      workload,
+    }),
+  });
+}
+
+function changeDashboardProfile(
+  observed: ObservedExportSnapshot,
+  change: (profile: Record<string, Record<string, unknown>>) => void,
+) {
+  const workload = observed.registry.workload as Extract<
+    SandboxWorkloadReceipt,
+    { kind: "managed-image" }
+  >;
+  expect(workload?.kind).toBe("managed-image");
+  const value = JSON.parse(Buffer.from(workload.encodedProfile, "base64url").toString("utf8"));
+  change(value);
+  const serialized = JSON.stringify(value);
+  const encodedProfile = Buffer.from(serialized).toString("base64url");
+  return {
+    ...observed,
+    registry: {
+      ...observed.registry,
+      workload: {
+        ...workload,
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+      },
+    },
+  };
+}
+
+describe("dashboard settings export", () => {
+  it("keeps canonical Hermes export free of dashboard interfaces (#10904)", async () => {
+    const exported = await exportSnapshots([hermesSnapshot()]);
+    expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.agents[0]).toEqual({
+      type: "hermes",
+      name: "primary",
+      inference: {
+        routes: [
+          { name: "primary", providerRef: "hosted-openai-api", overrides: { model: "gpt-5" } },
+        ],
+      },
+    });
+  });
+
+  it.each([
+    { hermesDashboardEnabled: true, hermesDashboardPort: 19000 },
+    { dashboardRemoteBindPrepared: true },
+  ])("does not publish unsupported Hermes dashboard state %j (#10904)", async (registry) => {
+    const exported = await exportSnapshots([hermesSnapshot(registry)]);
+    expect(exported.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: expect.arrayContaining([
+          expect.objectContaining({
+            category: "unsupported",
+            field: "spec.sandboxes[].agents[0].dashboard",
+          }),
+        ]),
+      },
+    });
+    expect(exported.writeStdout).not.toHaveBeenCalled();
+    expect(exported.publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [19000, "0.0.0.0", { port: 19000, bind: "0.0.0.0" }],
+    [19000, "127.0.0.1", { port: 19000 }],
+    [18789, "0.0.0.0", { bind: "0.0.0.0" }],
+  ] as const)(
+    "exports prepared dashboard port %s and bind %s (#10904)",
+    async (port, bind, dashboard) => {
+      const observed = dashboardSnapshot(port, bind);
+      const outcome = await exportSnapshots([observed]);
+      expect(outcome.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const raw = outcome.writeStdout.mock.calls[0]![0];
+      const document = validateNemoClawConfig(YAML.parse(raw));
+      expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
+        type: "openclaw",
+        interfaces: { dashboard },
+      });
+      expect(raw).not.toContain("deviceAuth");
+      expect(raw).not.toContain("http://127.0.0.1");
+      expect(outcome.read).toHaveBeenCalledTimes(2);
+      expect(outcome.publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it("exports prepared dashboard settings alongside a managed proxy (#10904)", async () => {
+    const observed = dashboardSnapshot(19000, "0.0.0.0", {
+      NEMOCLAW_PROXY_HOST: "proxy.internal",
+      NEMOCLAW_PROXY_PORT: "3129",
+    });
+    const exported = await exportSnapshots([observed]);
+    expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
+      type: "openclaw",
+      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+    });
+    expect(document.spec.sandboxes[0]!.network.proxy).toEqual({
+      host: "proxy.internal",
+      port: 3129,
+    });
+  });
+
+  it("keeps explicit and legacy canonical dashboard exports identical (#10904)", async () => {
+    const legacy = await exportSnapshots([snapshot()]);
+    const explicit = await exportSnapshots([dashboardSnapshot(18789, "127.0.0.1")]);
+    expect(explicit.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(explicit.writeStdout.mock.calls).toEqual(legacy.writeStdout.mock.calls);
+    expect(explicit.writeStdout.mock.calls[0]![0]).not.toContain("interfaces:");
+  });
+
+  it("preserves inference and execution tuning alongside dashboard settings (#10904)", async () => {
+    const observed = dashboardSnapshot(19000, "0.0.0.0", {
+      NEMOCLAW_CONTEXT_WINDOW: "65536",
+      NEMOCLAW_MAX_TOKENS: "8192",
+      NEMOCLAW_AGENT_TIMEOUT: "900",
+      NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m",
+    });
+    const exported = await exportSnapshots([observed]);
+    expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const document = validateNemoClawConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
+      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+      execution: { timeoutSeconds: 900, heartbeatEvery: "30m" },
+      inference: { routes: [{ overrides: { contextWindow: 65536, maxTokens: 8192 } }] },
+    });
+  });
+
+  it.each([
+    ["missing port", { dashboardPort: undefined }],
+    ["null port", { dashboardPort: null }],
+    ["different port", { dashboardPort: 19001 }],
+    ["missing preparation", { dashboardRemoteBindPrepared: undefined }],
+    ["unprepared bind", { dashboardRemoteBindPrepared: false }],
+  ] as const)("rejects %s without output (#10904)", async (_label, registry) => {
+    const observed = dashboardSnapshot();
+    const outcome = await exportSnapshots([
+      { ...observed, registry: { ...observed.registry, ...registry } },
+    ]);
+    expect(outcome.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(outcome.writeStdout).not.toHaveBeenCalled();
+    expect(outcome.publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { dashboardPort: "19000" },
+    { dashboardPort: 19000.5 },
+    { dashboardRemoteBindPrepared: "true" },
+    { dashboardRemoteBindPrepared: null },
+  ])("rejects malformed registry dashboard evidence %j (#10904)", async (invalid) => {
+    const observed = dashboardSnapshot();
+    const changed = { ...observed, registry: { ...observed.registry } };
+    Object.assign(changed.registry, invalid);
+    const outcome = await exportSnapshots([changed]);
+    expect(outcome.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(outcome.writeStdout).not.toHaveBeenCalled();
+    expect(outcome.publish).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale preparation for a loopback dashboard (#10904)", async () => {
+    const observed = dashboardSnapshot(19000, "127.0.0.1");
+    const outcome = await exportSnapshots([
+      { ...observed, registry: { ...observed.registry, dashboardRemoteBindPrepared: true } },
+    ]);
+    expect(outcome.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        findings: expect.arrayContaining([expect.objectContaining({ category: "drifted" })]),
+      },
+    });
+    expect(outcome.writeStdout).not.toHaveBeenCalled();
+    expect(outcome.publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "custom URL",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.dashboard!.url = "https://dashboard.example.com:19000";
+      },
+    ],
+    [
+      "URL credential",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.dashboard!.url = "https://user:dashboard-secret-canary@dashboard.example.com:19000";
+      },
+    ],
+    [
+      "URL path",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.dashboard!.url = "http://127.0.0.1:19000/custom";
+      },
+    ],
+    [
+      "WSL exposure",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.dashboard!.wslExposure = true;
+      },
+    ],
+    [
+      "malformed port",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.dashboard!.port = "dashboard-secret-canary";
+      },
+    ],
+    [
+      "device auth change",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.agentConfig!.deviceAuth = { disabled: true, optOutSource: "operator" };
+      },
+    ],
+    [
+      "unrepresented setting",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.agentConfig!.minimalBootstrap = true;
+      },
+    ],
+  ] as const)(
+    "rejects retained %s without output or private values (#10904)",
+    async (label, change) => {
+      const outcome = await exportSnapshots([changeDashboardProfile(dashboardSnapshot(), change)]);
+      const category = ["malformed port", "URL credential"].includes(label)
+        ? "missing-provenance"
+        : "unsupported";
+      expect(outcome.outcome).toMatchObject({
+        ok: false,
+        failure: {
+          kind: "observation",
+          findings: expect.arrayContaining([expect.objectContaining({ category })]),
+        },
+      });
+      expect(JSON.stringify(outcome.outcome)).not.toContain("dashboard-secret-canary");
+      expect(outcome.writeStdout).not.toHaveBeenCalled();
+      expect(outcome.publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects an invalid retained dashboard receipt hash (#10904)", async () => {
+    const observed = dashboardSnapshot();
+    const workload = observed.registry.workload as Extract<
+      SandboxWorkloadReceipt,
+      { kind: "managed-image" }
+    >;
+    expect(workload?.kind).toBe("managed-image");
+    const outcome = await exportSnapshots([
+      {
+        ...observed,
+        registry: {
+          ...observed.registry,
+          workload: { ...workload, startupProfileSha256: "f".repeat(64) },
+        },
+      },
+    ]);
+    expect(outcome.outcome).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(outcome.writeStdout).not.toHaveBeenCalled();
+    expect(outcome.publish).not.toHaveBeenCalled();
+  });
+
+  it("rejects dashboard changes across both observation pairs (#10904)", async () => {
+    const outcome = await exportSnapshots([
+      dashboardSnapshot(),
+      dashboardSnapshot(19001),
+      dashboardSnapshot(),
+      dashboardSnapshot(19001),
+    ]);
+    expect(outcome.outcome).toMatchObject({
+      ok: false,
+      failure: {
+        attempts: 2,
+        findings: [expect.objectContaining({ category: "unstable-source" })],
+      },
+    });
+    expect(outcome.read).toHaveBeenCalledTimes(4);
+    expect(outcome.writeStdout).not.toHaveBeenCalled();
+    expect(outcome.publish).not.toHaveBeenCalled();
   });
 });

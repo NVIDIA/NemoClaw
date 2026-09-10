@@ -162,7 +162,11 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o700 });
 }
 
-function runPodmanCleanupFixture(withDockerState: boolean, podmanStopFails = false) {
+function runPodmanCleanupFixture(
+  withDockerState: boolean,
+  podmanStopFails = false,
+  withUnrelatedServiceUnit = false,
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-cleanup-"));
   const runnerTemp = path.join(root, "runner-temp");
   const home = path.join(root, "home");
@@ -201,6 +205,13 @@ function runPodmanCleanupFixture(withDockerState: boolean, podmanStopFails = fal
     "owned\n",
   );
   fs.writeFileSync(path.join(serviceUnitDirectory, "nemoclaw-native-podman-e2e.socket"), "owned\n");
+  new Map<boolean, () => void>([
+    [
+      true,
+      () => fs.writeFileSync(path.join(serviceUnitDirectory, "unrelated.service"), "unowned\n"),
+    ],
+    [false, () => undefined],
+  ]).get(withUnrelatedServiceUnit)!();
   fs.writeFileSync(path.join(runnerTemp, "native-podman-e2e-service.env"), "owned\n");
   fs.writeFileSync(path.join(runnerTemp, "native-podman-e2e-storage.conf"), "owned\n");
   fs.writeFileSync(path.join(runnerTemp, "native-podman-e2e-containers.conf"), "owned\n");
@@ -539,6 +550,25 @@ describe("native Podman E2E setup boundary", () => {
       expect(fs.readFileSync(fixture.systemctlLog, "utf8")).toContain(
         "--user stop nemoclaw-native-podman-e2e.socket nemoclaw-native-podman-e2e.service",
       );
+    } finally {
+      fs.rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves unrelated user units while completing native Podman cleanup", () => {
+    const fixture = runPodmanCleanupFixture(true, false, true);
+    const unrelatedServiceUnit = path.join(fixture.serviceUnitDirectory, "unrelated.service");
+
+    try {
+      expect(fixture.result.status, fixture.result.stderr).toBe(0);
+      expect(fs.readFileSync(unrelatedServiceUnit, "utf8")).toBe("unowned\n");
+      expect(
+        fs.existsSync(
+          path.join(fixture.serviceUnitDirectory, "nemoclaw-native-podman-e2e.service"),
+        ),
+      ).toBe(false);
+      expect(fs.existsSync(fixture.toolchainRoot)).toBe(false);
+      expect(fs.existsSync(fixture.destination)).toBe(true);
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });
     }

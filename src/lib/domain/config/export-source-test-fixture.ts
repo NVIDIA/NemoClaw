@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import {
   buildManagedStartupProfile,
@@ -126,6 +127,28 @@ export function entry(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
   };
 }
 
+function hostedInference(): ObservedExportSnapshot["inference"] {
+  return {
+    topology: "hosted",
+    provider: "openai-api",
+    model: "gpt-5",
+    api: "openai-responses",
+    endpoint,
+    endpointEvidence: {
+      endpoint,
+      provider: {
+        gatewayName: "nemoclaw",
+        workspace: "default",
+        name: "openai-api",
+        id: "provider-id",
+        resourceVersion: "8",
+      },
+      source: { kind: "provider-config", key: "OPENAI_BASE_URL" },
+    },
+    credentialEnv: "OPENAI_API_KEY",
+  };
+}
+
 export function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): ObservedExportSnapshot {
   return {
     kind: "observed",
@@ -146,25 +169,7 @@ export function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): Obser
       management: "nemoclaw",
       stateRootOwned: true,
     },
-    inference: {
-      topology: "hosted",
-      provider: "openai-api",
-      model: "gpt-5",
-      api: "openai-responses",
-      endpoint,
-      endpointEvidence: {
-        endpoint,
-        provider: {
-          gatewayName: "nemoclaw",
-          workspace: "default",
-          name: "openai-api",
-          id: "provider-id",
-          resourceVersion: "8",
-        },
-        source: { kind: "provider-config", key: "OPENAI_BASE_URL" },
-      },
-      credentialEnv: "OPENAI_API_KEY",
-    },
+    inference: hostedInference(),
     policy: {
       sandboxId,
       revision: "3",
@@ -184,6 +189,36 @@ export function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): Obser
   };
 }
 
+const nousEndpoint = "https://inference-api.nousresearch.com/v1";
+const model = "moonshotai/kimi-k2.6";
+
+export function braveSnapshot(): ObservedExportSnapshot {
+  const value = snapshot();
+  return {
+    ...value,
+    registry: entry({
+      webSearchEnabled: true,
+      webSearchProvider: "brave",
+      workload: managedWorkload(
+        profileInput({ webSearch: { fetchEnabled: true, provider: "brave" } }),
+      ),
+    }),
+    sandbox: { ...value.sandbox, providerNames: ["alpha-brave-search"] },
+    webSearchProvider: {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      name: "alpha-brave-search",
+      id: "brave-provider-id",
+      resourceVersion: "4",
+      type: "brave",
+      profileWorkspace: "default",
+      profile: { id: "brave", source: "user", scope: "workspace", resourceVersion: "4" },
+      credentialKeys: ["BRAVE_API_KEY"],
+      configKeys: [],
+    },
+  };
+}
+
 export function hermesSnapshot(
   registryOverrides: Partial<SandboxEntry> = {},
 ): ObservedExportSnapshot {
@@ -200,12 +235,9 @@ export function hermesSnapshot(
   });
 }
 
-const nousEndpoint = "https://inference-api.nousresearch.com/v1";
-
 export function hermesManagedAuthSnapshot(
   registryOverrides: Partial<SandboxEntry> = {},
 ): ObservedExportSnapshot {
-  const model = "moonshotai/kimi-k2.6";
   const api =
     registryOverrides.preferredInferenceApi === "anthropic-messages"
       ? "anthropic-messages"
@@ -227,17 +259,18 @@ export function hermesManagedAuthSnapshot(
     },
     hermesImageRef,
   );
+  const value = hermesSnapshot({
+    provider: "hermes-provider",
+    model,
+    preferredInferenceApi: api,
+    endpointUrl,
+    credentialEnv: "NOUS_API_KEY",
+    hermesAuthMethod: "api_key",
+    workload,
+    ...registryOverrides,
+  });
   return {
-    ...hermesSnapshot({
-      provider: "hermes-provider",
-      model,
-      preferredInferenceApi: api,
-      endpointUrl,
-      credentialEnv: "NOUS_API_KEY",
-      hermesAuthMethod: "api_key",
-      workload,
-      ...registryOverrides,
-    }),
+    ...value,
     inference: {
       topology: "hosted",
       provider: "hermes-provider",
@@ -261,4 +294,71 @@ export function hermesManagedAuthSnapshot(
       credentialEnv: "NOUS_API_KEY",
     },
   };
+}
+
+export const tunedEnvironment = {
+  NEMOCLAW_CONTEXT_WINDOW: "65536",
+  NEMOCLAW_MAX_TOKENS: "8192",
+  NEMOCLAW_REASONING: "true",
+  NEMOCLAW_REASONING_EFFORT: "high",
+  NEMOCLAW_AGENT_TIMEOUT: "900",
+  NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m",
+};
+
+export function tunedSnapshot(environment: NodeJS.ProcessEnv = tunedEnvironment) {
+  return snapshot({
+    registry: entry({ workload: managedWorkload(profileInput({ environment })) }),
+  });
+}
+
+export function compatibleSnapshot(
+  environment: NodeJS.ProcessEnv,
+  registryOverrides: Partial<SandboxEntry>,
+) {
+  const base = profileInput({ environment });
+  const route = resolveManagedStartupInferenceRoute(
+    "openclaw",
+    "compatible-endpoint",
+    "gpt-5",
+    "openai-completions",
+  );
+  const input = {
+    ...base,
+    inference: {
+      ...base.inference,
+      routeProvider: route.providerKey,
+      upstreamProvider: "compatible-endpoint",
+      api: "openai-completions" as const,
+      routedBaseUrl: route.inferenceBaseUrl,
+      primaryModelRef: route.primaryModelRef,
+      compatibility: route.inferenceCompat ?? {},
+    },
+  };
+  const observed = snapshot();
+  return snapshot({
+    registry: entry({
+      provider: "compatible-endpoint",
+      preferredInferenceApi: "openai-completions",
+      workload: managedWorkload(input),
+      ...registryOverrides,
+    }),
+    inference: {
+      ...observed.inference,
+      provider: "compatible-endpoint",
+      api: "openai-completions",
+      endpointEvidence: {
+        ...observed.inference.endpointEvidence!,
+        provider: { ...observed.inference.endpointEvidence!.provider, name: "compatible-endpoint" },
+      },
+    },
+  });
+}
+
+export function proxySnapshot(
+  environment = { NEMOCLAW_PROXY_HOST: "proxy.internal", NEMOCLAW_PROXY_PORT: "3129" },
+) {
+  return {
+    ...snapshot(),
+    registry: { ...entry(), workload: managedWorkload(profileInput({ environment })) },
+  } satisfies ObservedExportSnapshot;
 }

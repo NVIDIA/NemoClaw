@@ -546,27 +546,6 @@ describe("live export snapshot reader", () => {
     expect(raw.getProvider).not.toHaveBeenCalled();
   });
 
-  it("retains direct tool selection through the live reader and stable verifier", async () => {
-    const profile = {
-      ...startup.profile,
-      tools: { ...startup.profile.tools, disclosure: "direct" as const },
-    };
-    const encodedProfile = encodeManagedStartupProfile(profile);
-    mockSupportedLiveSource(3, 3, {
-      ...entry,
-      toolDisclosure: "direct",
-      workload: {
-        ...entry.workload,
-        encodedProfile,
-        startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
-      },
-    });
-    const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
-    expect(result).toMatchObject({ ok: true, source: { tools: { disclosure: "direct" } } });
-    expect(raw.getSandbox).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
-  });
-
   it("returns a complete non-secret raw snapshot", async () => {
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", readFailureCanary);
     mockSupportedLiveSource();
@@ -1427,5 +1406,92 @@ describe("managed vLLM export pipeline", () => {
       stage: "managed-serving",
     });
     expect(raw.getProvider).not.toHaveBeenCalled();
+  });
+});
+
+describe("dashboard export observation", () => {
+  it("projects registered dashboard and direct tools through complete live observation (#10904)", async () => {
+    const workload = entry.workload as Extract<
+      NonNullable<SandboxEntry["workload"]>,
+      { kind: "managed-image" }
+    >;
+    expect(workload?.kind).toBe("managed-image");
+    const profile = {
+      ...startup.profile,
+      tools: { ...startup.profile.tools, disclosure: "direct" as const },
+      dashboard: {
+        agent: "openclaw" as const,
+        mode: "remote" as const,
+        url: "http://127.0.0.1:19000",
+        port: 19000,
+        bindAddress: "0.0.0.0" as const,
+        wslExposure: false,
+      },
+    };
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const sourceEntry = {
+      ...entry,
+      toolDisclosure: "direct" as const,
+      dashboardPort: 19000,
+      dashboardRemoteBindPrepared: true,
+      workload: {
+        ...workload,
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+      },
+    };
+    mockSupportedLiveSource(3, 3, sourceEntry);
+    const reader = createLiveExportSnapshotReader();
+    const observed = await reader.read("alpha");
+    expect(observed).toMatchObject({
+      kind: "observed",
+      registry: {
+        dashboardPort: 19000,
+        dashboardRemoteBindPrepared: true,
+        toolDisclosure: "direct",
+      },
+    });
+    const writeStdout = vi.fn(async (_yaml: string) => {});
+    const result = await runConfigExport(
+      {
+        sandboxName: "alpha",
+        documentName: parseNemoClawConfigDocumentName("alpha"),
+        target: { kind: "stdout" },
+      },
+      {
+        observe: (name) => observeStableExportSource(name, reader),
+        createDocumentUid: () =>
+          parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
+        writeStdout,
+        publish: vi.fn(),
+      },
+    );
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(raw.getSandbox).toHaveBeenCalledTimes(3);
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+    const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
+    expect(yaml).not.toContain(readFailureCanary);
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.sandboxes[0]?.agents[0]).toMatchObject({
+      type: "openclaw",
+      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+      tools: { disclosure: "direct" },
+    });
+  });
+
+  it("retains dashboard registry changes in both complete snapshots (#10904)", async () => {
+    mockSupportedLiveSource();
+    let reads = 0;
+    vi.mocked(loadRegistry).mockImplementation(() => ({
+      sandboxes: { alpha: { ...entry, dashboardPort: reads++ % 2 === 0 ? 18789 : 19000 } },
+      defaultSandbox: null,
+    }));
+    const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
+    expect(result).toMatchObject({
+      ok: false,
+      attempts: 2,
+      findings: [expect.objectContaining({ category: "unstable-source" })],
+    });
+    expect(loadRegistry).toHaveBeenCalledTimes(4);
   });
 });
