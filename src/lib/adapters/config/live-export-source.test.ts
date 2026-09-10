@@ -17,9 +17,14 @@ vi.mock("../openshell/sdk", () => ({ connectManagedOpenShellSdk: vi.fn() }));
 vi.mock("../openshell/sanitized-capture", () => ({
   captureSanitizedResolvedOpenshell: vi.fn(),
 }));
-vi.mock("../openshell/sandbox-policy-cli", () => ({
-  syncCliOpenShellSandboxPolicyReader: { readSandboxPolicy: vi.fn() },
-}));
+vi.mock("../openshell/sandbox-config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../openshell/sandbox-config")>();
+  return {
+    ...actual,
+    createSandboxConfig: () =>
+      actual.createSandboxConfig(undefined, async (policy) => YAML.stringify(policy)),
+  };
+});
 vi.mock("../../onboard/gateway/state-dir", () => ({
   managedGatewayStateRootOwnershipFailure: vi.fn(() => null),
   resolveGatewayStateDirForPort: vi.fn(() => "/managed/gateway"),
@@ -35,7 +40,6 @@ import { connectManagedOpenShellSdk } from "../openshell/sdk";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import { fingerprintOpenShellSandboxId } from "../openshell/sandbox-identity";
-import { syncCliOpenShellSandboxPolicyReader } from "../openshell/sandbox-policy-cli";
 import { createLiveExportSnapshotReader } from "./live-export-source";
 
 const sandboxId = "123e4567-e89b-42d3-a456-426614174000";
@@ -142,6 +146,18 @@ function provider() {
 }
 function configuration(revision = 3) {
   return {
+    policy: {
+      version: 1,
+      process: { run_as_user: "sandbox", run_as_group: "sandbox" },
+      filesystem_policy: { include_workdir: false, read_only: ["/usr"], read_write: ["/sandbox"] },
+      network_policies: {
+        api: {
+          name: "api",
+          endpoints: [{ host: "api.example.com", port: 443 }],
+          binaries: [{ path: "/usr/bin/curl" }],
+        },
+      },
+    },
     workspace: "default",
     version: revision,
     policyHash: "a".repeat(64),
@@ -175,15 +191,7 @@ function mockSupportedLiveSource(
   vi.mocked(connectManagedOpenShellSdk).mockResolvedValue({ raw });
   raw.getProvider.mockResolvedValue(provider());
   raw.getSandbox.mockResolvedValue(inventory(7, policyVersion));
-  raw.getSandboxConfig.mockResolvedValue(configuration(policyVersion));
-  vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
-    ok: true,
-    value: {
-      document:
-        "version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\nnetwork_policies:\n  api:\n    name: api\n    endpoints: [{host: api.example.com, port: 443}]\n    binaries: [{path: /usr/bin/curl}]\nfilesystem_policy:\n  include_workdir: false\n  read_only: [/usr]\n  read_write: [/sandbox]\n",
-      appliedRevision,
-    },
-  });
+  raw.getSandboxConfig.mockResolvedValue(configuration(appliedRevision));
 }
 
 function nativeNvidiaProvider() {
@@ -255,11 +263,9 @@ describe("live export snapshot reader", () => {
     {
       stage: "effective-policy",
       fail: () =>
-        vi
-          .mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy)
-          .mockImplementationOnce(() => {
-            throw new Error(readFailureCanary);
-          }),
+        raw.getSandboxConfig.mockImplementationOnce(() => {
+          throw new Error(readFailureCanary);
+        }),
     },
   ] as const)("tags a sanitized $stage read failure", async ({ stage, fail }) => {
     mockSupportedLiveSource();
@@ -325,10 +331,6 @@ describe("live export snapshot reader", () => {
     const first = await reader.read("alpha");
     raw.getSandbox.mockResolvedValue(inventory(8, 4));
     raw.getSandboxConfig.mockResolvedValue(configuration(4));
-    vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
-      ok: true,
-      value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: 4 },
-    });
 
     const second = await reader.read("alpha");
 
@@ -347,12 +349,9 @@ describe("live export snapshot reader", () => {
   it("sanitizes credential-bearing policy failures", async () => {
     mockSupportedLiveSource();
     const canary = "credential-canary-value";
-    vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
-      ok: true,
-      value: {
-        document: `version: 1\nenv: {TOKEN: "${canary}"}\nnetwork_policies: {}\n`,
-        appliedRevision: 3,
-      },
+    raw.getSandboxConfig.mockResolvedValue({
+      ...configuration(),
+      policy: { ...configuration().policy, env: { TOKEN: canary } },
     });
 
     const result = await createLiveExportSnapshotReader().read("alpha");
@@ -373,6 +372,37 @@ describe("live export snapshot reader", () => {
     await expect(createLiveExportSnapshotReader().read("alpha")).resolves.toEqual({
       kind: "read-failed",
       stage: "provider-metadata",
+    });
+  });
+
+  it.each([0, 3])(
+    "preserves global policy revision agreement for revision %i",
+    async (globalPolicyVersion) => {
+      mockSupportedLiveSource();
+      raw.getSandboxConfig.mockResolvedValue({
+        ...configuration(),
+        policySource: 2,
+        globalPolicyVersion,
+      });
+      const result = await createLiveExportSnapshotReader().read("alpha");
+      expect(result).toMatchObject({
+        kind: "observed",
+        policy: { revision: "3" },
+        configuration: { policySource: "global", globalPolicyVersion },
+      });
+    },
+  );
+
+  it("rejects a global policy revision that differs from the sandbox revision", async () => {
+    mockSupportedLiveSource();
+    raw.getSandboxConfig.mockResolvedValue({
+      ...configuration(),
+      policySource: 2,
+      globalPolicyVersion: 4,
+    });
+    await expect(createLiveExportSnapshotReader().read("alpha")).resolves.toEqual({
+      kind: "read-failed",
+      stage: "effective-policy",
     });
   });
 
@@ -515,6 +545,7 @@ describe("live export snapshot reader", () => {
       },
     });
     expect(raw.getProvider).toHaveBeenCalledTimes(2);
+    expect(raw.getSandboxConfig).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
