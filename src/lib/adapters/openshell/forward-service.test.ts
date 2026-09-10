@@ -555,7 +555,9 @@ setInterval(() => {}, 1000);
         launchError = error;
       }
 
-      expect(launchError).toEqual(expect.objectContaining({ message: expect.stringMatching(/did not bind/u) }));
+      expect(launchError).toEqual(
+        expect.objectContaining({ message: expect.stringMatching(/did not bind/u) }),
+      );
       expect(existsSync(markerPath)).toBe(true);
       expect(existsSync(releasePath)).toBe(true);
       const pids = JSON.parse(readFileSync(markerPath, "utf8")) as {
