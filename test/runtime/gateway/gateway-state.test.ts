@@ -232,8 +232,8 @@ describe("isGatewayHealthy", () => {
   });
 
   it.each([
-    "Starting OpenShell gateway...",
-    "Starting OpenShell gateway via managed service...",
+    "  Starting OpenShell gateway...",
+    "  Starting OpenShell gateway via managed service...",
   ])("does not treat startup progress as gateway health: %s", (startupMessage) => {
     expect(isGatewayHealthy(startupMessage, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(false);
   });
