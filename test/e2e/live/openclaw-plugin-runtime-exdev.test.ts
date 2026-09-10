@@ -566,11 +566,15 @@ test(
       "after-restart",
       "v1-exdev",
     );
-    await host.cleanupForward(DASHBOARD_PORT, {
-      artifactName: "openclaw-weather-plugin-forward-before-recreate",
-      env: liveEnv(),
-      timeoutMs: PROBE_TIMEOUT_MS,
-    });
+    await host.cleanupForward(
+      DASHBOARD_PORT,
+      {
+        artifactName: "openclaw-weather-plugin-forward-before-recreate",
+        env: liveEnv(),
+        timeoutMs: PROBE_TIMEOUT_MS,
+      },
+      { gatewayName: "nemoclaw", sandboxName: SANDBOX_NAME },
+    );
 
     // Change an actual build-context input so recreation must produce a distinct
     // plugin artifact and expose v2 through the same runtime boundary.

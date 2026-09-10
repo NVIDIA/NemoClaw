@@ -300,11 +300,20 @@ export class HostCliClient {
     assertExitZero(destroy, `cleanup gateway registration ${gatewayName}`);
   }
 
-  async cleanupForward(port: number, options: ShellProbeRunOptions = {}): Promise<void> {
-    const result = await this.command(this.openshellPath, ["forward", "stop", String(port)], {
-      ...options,
-      artifactName: options.artifactName ?? `cleanup-forward-${port}`,
-    });
+  async cleanupForward(
+    port: number,
+    options: ShellProbeRunOptions = {},
+    target?: { gatewayName: string; sandboxName: string },
+  ): Promise<void> {
+    const targetArgs = target ? [target.sandboxName, "--gateway", target.gatewayName] : [];
+    const result = await this.command(
+      this.openshellPath,
+      ["forward", "stop", String(port), ...targetArgs],
+      {
+        ...options,
+        artifactName: options.artifactName ?? `cleanup-forward-${port}`,
+      },
+    );
     if (result.exitCode === 0 || FORWARD_ALREADY_ABSENT.test(resultText(result))) return;
     assertExitZero(result, `cleanup forward ${port}`);
   }
