@@ -385,7 +385,8 @@ It stores fingerprints instead of credential values or raw OpenShell sandbox IDs
 Rebuilding another sandbox can retain this session in `.onboard-rebuild-<sandbox>.json` under the selected NemoClaw state directory.
 Rerunning the affected sandbox's rebuild restores its retained session automatically.
 For a non-default gateway port, these files reside under `~/.nemoclaw/gateways/<port>/`.
-An unfinished ordinary onboarding session must be resumed or completed before retained rebuild recovery can replace it.
+Resume or clear an unfinished ordinary onboarding session before retrying retained rebuild recovery.
+To discard that ordinary onboarding attempt and start over, run `$$nemoclaw onboard --fresh` as described in [Previous onboarding session failed](../../reference/troubleshooting#previous-onboarding-session-failed).
 
 <Warning title="Preserve Rebuild Recovery Files">
 Do not manually delete `onboard-session.json` or retained `.onboard-rebuild-<sandbox>.json` files to resolve an interrupted replacement.
