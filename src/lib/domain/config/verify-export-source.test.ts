@@ -30,6 +30,7 @@ const sandboxId = "018f47e2-9d93-7d15-9c41-3ecf70b2550f";
 const fingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
 const endpoint = "https://api.openai.com/v1";
 const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
+const hermesImageRef = "ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:" + "c".repeat(64);
 const policy =
   "version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\nnetwork_policies:\n  api:\n    name: api\n    endpoints: [{host: api.example.com, port: 443}]\n    binaries: [{path: /usr/bin/curl}]\nfilesystem_policy:\n  include_workdir: false\n  read_only: [/usr]\n  read_write: [/sandbox]\n";
 const canonicalPolicy = {
@@ -76,6 +77,27 @@ function profileInput(
     environment: {},
     corporateCa: null,
     ...overrides,
+  };
+}
+
+function hermesProfileInput(): ManagedStartupProfileBuilderInput {
+  return {
+    ...profileInput(),
+    agent: "hermes",
+    inference: {
+      ...profileInput().inference,
+      primaryModelRef: null,
+      compatibility: null,
+    },
+    dashboard: {
+      agent: "hermes",
+      mode: "disabled",
+      url: "http://127.0.0.1:18789",
+      browserUrl: "http://127.0.0.1:18789",
+      publicPort: null,
+      internalPort: null,
+      tuiEnabled: false,
+    },
   };
 }
 
@@ -177,6 +199,20 @@ function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): ObservedExpo
     },
     ...overrides,
   };
+}
+
+function hermesSnapshot(registryOverrides: Partial<SandboxEntry> = {}): ObservedExportSnapshot {
+  const workload = managedWorkload(hermesProfileInput(), hermesImageRef);
+  return snapshot({
+    registry: entry({
+      agent: "hermes",
+      imageTag: hermesImageRef,
+      workload,
+      hermesApiPort: 8642,
+      ...registryOverrides,
+    }),
+    sandbox: { ...snapshot().sandbox, imageRef: hermesImageRef },
+  });
 }
 
 function findings(result: ReturnType<typeof verifyExportSource>) {
@@ -374,6 +410,7 @@ describe("config export source verification (#10938)", () => {
       kind: "verified",
       source: {
         sandboxName: "alpha",
+        agent: "openclaw",
         runtime: { provider: "docker", imageRef },
         inference: { api: "openai-responses" },
       },
@@ -383,6 +420,21 @@ describe("config export source verification (#10938)", () => {
     expect(source).not.toHaveProperty("registry");
     expect(Object.isFrozen(source)).toBe(true);
     expect(Object.isFrozen(source.policy)).toBe(true);
+  });
+
+  it("verifies a canonical managed Hermes source (#11286)", () => {
+    const result = verify(hermesSnapshot());
+
+    expect(result).toMatchObject({
+      kind: "verified",
+      source: {
+        sandboxName: "alpha",
+        agent: "hermes",
+        runtime: { provider: "docker", imageRef: hermesImageRef },
+        inference: { api: "openai-responses" },
+      },
+    });
+    expect(Check(ExportSourceValuesSchema, verifiedSource(result))).toBe(true);
   });
 
   it.each([
@@ -408,7 +460,7 @@ describe("config export source verification (#10938)", () => {
   it("reports every excluded registry capability", () => {
     const result = classifyExportRegistry(
       entry({
-        agent: "hermes",
+        agent: "unsupported-agent",
         fromDockerfile: "/tmp/Dockerfile",
         sandboxGpuEnabled: true,
         hostMounts: [{ source: "/host", target: "/sandbox", readOnly: true }],
@@ -436,6 +488,83 @@ describe("config export source verification (#10938)", () => {
         "spec.sandboxes[].agents[0].type",
         "spec.inferenceProviders",
       ]),
+    );
+  });
+
+  it.each([
+    [
+      "Hermes tool gateways",
+      { hermesToolGateways: ["browser"] },
+      "spec.sandboxes[].agents[0].tools",
+    ],
+    [
+      "Hermes dashboard",
+      { hermesDashboardEnabled: true, hermesDashboardPort: 18_790 },
+      "spec.sandboxes[].agents[0].dashboard",
+    ],
+    [
+      "invalid Hermes dashboard port evidence",
+      { hermesDashboardPort: 0 },
+      "spec.sandboxes[].agents[0].dashboard",
+    ],
+    [
+      "Hermes authentication",
+      { hermesAuthMethod: "api_key" as const },
+      "spec.sandboxes[].agents[0].authentication",
+    ],
+    [
+      "Hermes inference provider",
+      { hermesInferenceProvider: "hermes-provider" },
+      "spec.sandboxes[].agents[0].authentication",
+    ],
+    ["non-default Hermes API port", { hermesApiPort: 8643 }, "spec.sandboxes[].agents[0].api"],
+  ])("rejects excluded %s state (#11286)", (_case, registryOverrides, field) => {
+    expect(findings(verify(hermesSnapshot(registryOverrides)))).toContainEqual(
+      expect.objectContaining({ category: "unsupported", field }),
+    );
+  });
+
+  it("rejects stale agent-specific state on an OpenClaw registry row (#11286)", () => {
+    expect(
+      findings(verify(snapshot({ registry: entry({ hermesToolGateways: ["browser"] }) }))),
+    ).toContainEqual({
+      category: "unsupported",
+      diagnostic: "V1 export does not support stale agent-specific registry state.",
+      field: "source.registry",
+    });
+  });
+
+  it("rejects OpenClaw workload authority for a Hermes registry row (#11286)", () => {
+    const result = verify(
+      hermesSnapshot({ workload: managedWorkload(profileInput(), hermesImageRef) }),
+    );
+
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({ field: "source.workload", category: "missing-provenance" }),
+    );
+  });
+
+  it("rejects a noncanonical managed Hermes startup profile (#11286)", () => {
+    const configured = hermesProfileInput();
+    const workload = managedWorkload(
+      {
+        ...configured,
+        dashboard: {
+          agent: "hermes",
+          mode: "loopback-forwarded",
+          url: "http://127.0.0.1:19189",
+          browserUrl: "http://127.0.0.1:19189",
+          publicPort: 19_189,
+          internalPort: 29_189,
+          tuiEnabled: false,
+        },
+      },
+      hermesImageRef,
+    );
+    const result = verify(hermesSnapshot({ workload }));
+
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({ field: "source.workload.startupProfile", category: "unsupported" }),
     );
   });
 

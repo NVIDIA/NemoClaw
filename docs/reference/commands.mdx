@@ -205,7 +205,7 @@ Start a new shell session to refresh the cached sandbox names after creating or 
 
 ### `$$nemoclaw config export <sandbox>`
 
-Export a supported registered OpenClaw sandbox as a secret-free `NemoClawConfig` document. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
+Export a supported registered OpenClaw or Hermes sandbox as a secret-free `NemoClawConfig` document. The same command is available as `$$nemohermes config export <sandbox>`. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
 For NVIDIA Endpoints, it verifies the gateway's built-in NVIDIA provider profile and default endpoint.
@@ -240,8 +240,9 @@ Before manual removal, use `stat` to verify both identities and confirm that the
 If either identity cannot be verified, do not remove files by name alone.
 Do not remove the requested output file to clean up a temporary link.
 
-Version 1 exports managed OpenClaw sandboxes in the default workspace.
+Version 1 exports managed OpenClaw sandboxes and canonical managed Hermes sandboxes in the default workspace.
 Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
+Hermes export also requires the default API configuration, a disabled dashboard, no Hermes tool gateways, and no Hermes-specific authentication settings.
 Other profiles fail with a diagnostic instead of producing an incomplete document.
 
 ### `$$nemoclaw resources`
