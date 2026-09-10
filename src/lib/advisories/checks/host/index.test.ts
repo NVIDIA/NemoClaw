@@ -46,6 +46,7 @@ describe("host advisory registry (#3213)", () => {
       "install_docker",
       "invalid_docker_host",
       "docker_probe_inconclusive",
+      "docker_authority_conflict",
       "docker_group_permission",
       "start_docker",
       "docker_desktop_credential_store_headless",
