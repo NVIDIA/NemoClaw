@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
+import fs, {
   chmodSync,
   closeSync,
   fstatSync,
@@ -24,6 +24,7 @@ import {
   inspectDescriptorSnapshotRoot,
   installDescriptorSnapshotFile,
   resolveSnapshotSanitizerHelperPath,
+  resolveTrustedSnapshotSanitizerPythonPath,
   SnapshotSanitizerOperationError,
   SnapshotSanitizerPrerequisiteError,
   type SnapshotFileIdentity,
@@ -32,7 +33,22 @@ import {
 } from "../shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapshot-sanitizer.js";
 
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    realpathSync: vi.fn(actual.realpathSync),
+    statSync: vi.fn(actual.statSync),
+  };
+});
+
 const roots: string[] = [];
+const helperTempDirectory = realpathSync(
+  spawnSync(process.execPath, ["-p", "require('node:os').tmpdir()"], {
+    env: {},
+    encoding: "utf8",
+  }).stdout.trim(),
+);
 
 function makeRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-migration-sanitizer-failure-"));
@@ -73,9 +89,11 @@ function writeStaticHelperResult(result: unknown): string {
 
 afterEach(() => {
   setSnapshotSanitizerHelperPathForTest(undefined);
+  vi.mocked(realpathSync).mockImplementation(fs.realpathSync);
+  vi.mocked(statSync).mockImplementation(fs.statSync);
   vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true });
-});
+}, 60_000);
 
 describe("migration snapshot sanitizer fallbacks", () => {
   const identity: SnapshotFileIdentity = {
@@ -364,7 +382,8 @@ describe("migration snapshot sanitizer fallbacks", () => {
     vi.stubEnv("WINDIR", "C:\\Windows");
     vi.stubEnv("NEMOCLAW_TEST_SECRET", "must-not-reach-helper");
     writeRawNodeHelper([
-      "const keys = Object.keys(process.env).sort();",
+      // CoreFoundation can add this process metadata on macOS after launch.
+      'const keys = Object.keys(process.env).filter((name) => process.platform !== "darwin" || name !== "__CF_USER_TEXT_ENCODING").sort();',
       `const valid = process.env.SYSTEMROOT === "C:\\\\Windows" && process.env.WINDIR === "C:\\\\Windows" && process.env.NEMOCLAW_TEST_SECRET === undefined && JSON.stringify(keys) === '["SYSTEMROOT","WINDIR"]';`,
       `const result = valid ? ${JSON.stringify({ root: identity, files: [] })} : null;`,
       "process.stdout.write(JSON.stringify({ ok: true, result }));",
@@ -395,7 +414,8 @@ describe("migration snapshot sanitizer fallbacks", () => {
   });
 
   it("reports the exact retained native probe when its cleanup fails", () => {
-    const retainedPath = path.join(realpathSync(tmpdir()), ".nemoclaw-native-probe-retained");
+    vi.stubEnv("TMPDIR", makeRoot());
+    const retainedPath = path.join(helperTempDirectory, ".nemoclaw-native-probe-retained");
     const probeTestPath = path.join(makeRoot(), "native-probe-cleanup.mts");
     writeFileSync(
       probeTestPath,
@@ -442,7 +462,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
         JSON.stringify({
           ok: false,
           code: "native-probe-failed",
-          retainedPath: path.join(realpathSync(tmpdir()), "nested", "untrusted-probe"),
+          retainedPath: path.join(helperTempDirectory, "nested", "untrusted-probe"),
         }),
       )});`,
     ]);
@@ -455,8 +475,30 @@ describe("migration snapshot sanitizer fallbacks", () => {
     );
   });
 
+  it("reports a bounded failure when the native probe cannot start", () => {
+    const wrapper = path.join(makeRoot(), "snapshot-helper.mts");
+    writeFileSync(
+      wrapper,
+      [
+        `import { main } from ${JSON.stringify(resolveSnapshotSanitizerHelperPath())};`,
+        'await main(async () => { throw new Error("private-probe-diagnostic"); });',
+      ].join("\n"),
+    );
+    setSnapshotSanitizerHelperPathForTest(wrapper);
+
+    expect(() =>
+      scanDescriptorSnapshot({ canonicalPath: makeRoot(), identity }, new Set()),
+    ).toThrow(
+      expect.objectContaining({
+        code: "native-probe-failed",
+        message: "Native snapshot sanitization failed: native-probe-failed",
+        retainedPath: undefined,
+      }),
+    );
+  });
+
   it("reports the retained native probe when cleanup rejects", () => {
-    const retainedPath = path.join(realpathSync(tmpdir()), ".nemoclaw-native-probe-rejected");
+    const retainedPath = path.join(helperTempDirectory, ".nemoclaw-native-probe-rejected");
     const wrapper = path.join(makeRoot(), "snapshot-helper.mts");
     writeFileSync(
       wrapper,
@@ -619,6 +661,30 @@ describe("migration snapshot sanitizer fallbacks", () => {
 
       expect(() => sanitizeMigrationDirectory(root)).toThrow(/snapshot-scan-failed/u);
       expect(readFileSync(path.join(movedRoot, "config.json"), "utf-8")).toContain("raw");
+    },
+  );
+});
+
+describe("migration restore interpreter selection", () => {
+  it("rejects all candidates when their canonical paths cannot be verified", () => {
+    vi.mocked(realpathSync).mockImplementation(() => {
+      throw new Error("interpreter is unavailable");
+    });
+
+    expect(resolveTrustedSnapshotSanitizerPythonPath()).toBeNull();
+  });
+
+  it.each(["writable", "wrong-owner"] as const)(
+    "rejects a %s interpreter before executing it",
+    (rejected) => {
+      const metadata = statSync(process.execPath);
+      Object.assign(
+        metadata,
+        rejected === "writable" ? { mode: metadata.mode | 0o022 } : { uid: process.getuid!() + 1 },
+      );
+      vi.mocked(statSync).mockReturnValue(metadata as unknown as ReturnType<typeof fs.statSync>);
+
+      expect(resolveTrustedSnapshotSanitizerPythonPath()).toBeNull();
     },
   );
 });

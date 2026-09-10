@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { lstatSync, realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { accessSync, constants, lstatSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 import {
   isSnapshotSanitizerFailureCode,
+  snapshotSanitizerTempDirectory,
   MAX_SNAPSHOT_FILE_BASE64_LENGTH,
   MAX_SNAPSHOT_FILE_BYTES,
 } from "./snapshot-sanitizer-protocol.cjs";
@@ -33,6 +33,50 @@ export type {
 const HELPER_TIMEOUT_MS = 60_000;
 const HELPER_MAX_BUFFER_BYTES = 48 * 1024 * 1024;
 let snapshotSanitizerHelperPathForTest: string | null | undefined;
+
+const TRUSTED_PYTHON_LOCATIONS = [
+  "/usr/bin/python3",
+  "/usr/local/bin/python3",
+  "/opt/homebrew/bin/python3",
+  "/opt/local/bin/python3",
+] as const;
+
+function isTrustedAbsoluteExecutable(candidate: string): string | null {
+  try {
+    const canonical = realpathSync(candidate);
+    const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
+    let inspected = canonical;
+    while (true) {
+      const metadata = statSync(inspected);
+      if ((metadata.mode & 0o022) !== 0) return null;
+      if (currentUid !== null && metadata.uid !== 0 && metadata.uid !== currentUid) return null;
+      const parent = path.dirname(inspected);
+      if (parent === inspected) break;
+      inspected = parent;
+    }
+    const executable = statSync(canonical);
+    if (!executable.isFile()) return null;
+    accessSync(canonical, constants.R_OK | constants.X_OK);
+    return canonical;
+  } catch {
+    return null;
+  }
+}
+
+/** Migration restore still requires a verified interpreter; the sanitizer uses Node.js. */
+export function resolveTrustedSnapshotSanitizerPythonPath(): string | null {
+  const candidates: string[] = [...TRUSTED_PYTHON_LOCATIONS];
+  try {
+    candidates.push(path.join(path.dirname(realpathSync(process.execPath)), "python3"));
+  } catch {
+    // The fixed system locations remain authoritative when Node cannot be canonicalized.
+  }
+  for (const candidate of new Set(candidates)) {
+    const trusted = isTrustedAbsoluteExecutable(candidate);
+    if (trusted !== null) return trusted;
+  }
+  return null;
+}
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -79,7 +123,7 @@ function validatedRetainedProbePath(value: unknown): string | undefined {
   ) {
     return undefined;
   }
-  return path.dirname(value) === realpathSync(tmpdir()) ? value : undefined;
+  return path.dirname(value) === snapshotSanitizerTempDirectory() ? value : undefined;
 }
 
 /** Resolve the packaged Node helper beside this source or compiled boundary. */

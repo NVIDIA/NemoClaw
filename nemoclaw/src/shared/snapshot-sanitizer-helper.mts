@@ -3,7 +3,6 @@
 
 import { lstatSync, realpathSync, type BigIntStats } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 
@@ -29,7 +28,7 @@ import type {
 } from "./snapshot-sanitizer-protocol.cjs";
 
 const protocolExtension = import.meta.url.endsWith(".mts") ? ".cts" : ".cjs";
-const { MAX_SNAPSHOT_FILE_BYTES } = createRequire(import.meta.url)(
+const { MAX_SNAPSHOT_FILE_BYTES, snapshotSanitizerTempDirectory } = createRequire(import.meta.url)(
   `./snapshot-sanitizer-protocol${protocolExtension}`,
 ) as typeof import("./snapshot-sanitizer-protocol.cjs");
 
@@ -362,7 +361,12 @@ function isPrerequisiteError(error: unknown): boolean {
 
 function classifyFailure(mode: string, error: unknown): SnapshotSanitizerFailureCode {
   const message = error instanceof Error ? error.message : "";
-  if (message === "native support probe cleanup failed") return "native-probe-failed";
+  if (
+    message === "native support probe cleanup failed" ||
+    message === "native support probe failed"
+  ) {
+    return "native-probe-failed";
+  }
   if (
     message === "snapshot file exceeds the read limit" ||
     message === "snapshot content exceeds the total read limit" ||
@@ -399,9 +403,15 @@ class NativeProbeCleanupError extends Error {
 /** @visibleForTesting Verify native staging and report an exact retained probe when cleanup fails. */
 export async function assertNativeSupport(
   createProbe: () => Promise<NativeSupportProbe> = () =>
-    stageFileInDirectory({ directory: tmpdir(), content: Buffer.alloc(0) }),
+    stageFileInDirectory({ directory: snapshotSanitizerTempDirectory(), content: Buffer.alloc(0) }),
 ): Promise<void> {
-  const probe = await createProbe();
+  let probe: NativeSupportProbe;
+  try {
+    probe = await createProbe();
+  } catch (error) {
+    if (isPrerequisiteError(error)) throw error;
+    throw new Error("native support probe failed", { cause: error });
+  }
   const retainedPath = path.join(probe.receipt.directory.realPath, probe.receipt.temporaryBasename);
   let cleanup: { readonly status: string };
   try {

@@ -1,6 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { realpathSync } from "node:fs";
+import path from "node:path";
+
+// The helper drops ambient temporary-directory overrides before it starts.
+export function snapshotSanitizerTempDirectory(): string {
+  const directory =
+    process.platform === "win32"
+      ? path.join(process.env.SYSTEMROOT || process.env.WINDIR || "C:\Windows", "temp")
+      : "/tmp";
+  return realpathSync(directory);
+}
+
 export const MAX_SNAPSHOT_FILE_BYTES = 16 * 1024 * 1024;
 export const MAX_SNAPSHOT_FILE_BASE64_LENGTH = Math.ceil(MAX_SNAPSHOT_FILE_BYTES / 3) * 4;
 

@@ -1,14 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -48,7 +41,7 @@ function writeNodeHelperWrapper(beforeForward: readonly string[]): string {
       "const result = spawnSync(process.execPath, helperArguments, {",
       '  encoding: "utf8", env: {}, input, maxBuffer: 48 * 1024 * 1024,',
       "});",
-      'if (result.stdout) process.stdout.write(result.stdout);',
+      "if (result.stdout) process.stdout.write(result.stdout);",
       "process.exit(result.status ?? 1);",
     ].join("\n"),
   );
@@ -57,6 +50,22 @@ function writeNodeHelperWrapper(beforeForward: readonly string[]): string {
 }
 
 describe("migration snapshot sanitizer", () => {
+  it.runIf(process.platform === "darwin")(
+    "sanitizes on macOS when the helper drops temporary-directory overrides (#11174)",
+    () => {
+      const root = makeRoot();
+      const configPath = path.join(root, "openclaw.json");
+      writeFileSync(configPath, JSON.stringify({ apiKey: "sk-macos-probe-secret", label: "keep" }));
+      vi.stubEnv("TMPDIR", path.join(root, "unused-temp-override"));
+
+      expect(sanitizeOpenClawConfigFile(configPath)).toBe(true);
+      expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({
+        apiKey: "[STRIPPED_BY_MIGRATION]",
+        label: "keep",
+      });
+    },
+  );
+
   it("sanitizes credential-shaped values in every supported external artifact", () => {
     const root = makeRoot();
     writeFileSync(
