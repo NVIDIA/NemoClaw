@@ -42,6 +42,7 @@ const target: ForwardServiceTarget = {
 };
 
 const ownerTarget: ForwardServiceTarget = { ...target, executable: process.execPath };
+const detachedChildPid = process.pid + 1;
 const temporaryDirectories: string[] = [];
 const startedProcessGroups: number[] = [];
 const processSleepBuffer = new Int32Array(new SharedArrayBuffer(4));
@@ -304,7 +305,7 @@ describe("OpenShell forward service", () => {
   });
 
   it("terminates a detached service that does not bind before the deadline", () => {
-    const child = { pid: 4_321, unref: vi.fn() };
+    const child = { pid: detachedChildPid, unref: vi.fn() };
     const terminateProcessTree = vi.fn();
 
     expect(() =>
@@ -326,7 +327,7 @@ describe("OpenShell forward service", () => {
     expect(() =>
       launchForwardService(target, {
         isReachable: () => false,
-        spawnDetached: () => ({ pid: 4_321, unref: vi.fn() }),
+        spawnDetached: () => ({ pid: detachedChildPid, unref: vi.fn() }),
         terminateProcessTree: () => {
           throw cleanupError;
         },
@@ -347,7 +348,7 @@ describe("OpenShell forward service", () => {
     const signalProcess = vi.fn();
 
     terminateForwardServiceProcessTree(
-      { pid: 4_321, unref: vi.fn() },
+      { pid: detachedChildPid, unref: vi.fn() },
       {
         platform: "linux",
         processGroupHasRunnableMember: () => false,
@@ -355,7 +356,7 @@ describe("OpenShell forward service", () => {
       },
     );
 
-    expect(signalProcess).toHaveBeenCalledWith(-4_321, "SIGKILL");
+    expect(signalProcess).toHaveBeenCalledWith(-detachedChildPid, "SIGKILL");
   });
 
   it("fails closed when POSIX process-group settlement is not proved", () => {
@@ -365,7 +366,7 @@ describe("OpenShell forward service", () => {
     expect(() =>
       launchForwardService(target, {
         isReachable: () => false,
-        spawnDetached: () => ({ pid: 4_321, unref: vi.fn() }),
+        spawnDetached: () => ({ pid: detachedChildPid, unref: vi.fn() }),
         terminateProcessTree: (child) =>
           terminateForwardServiceProcessTree(child, {
             now,
@@ -377,7 +378,7 @@ describe("OpenShell forward service", () => {
         timeoutMs: 0,
       }),
     ).toThrow(expect.objectContaining({ name: ForwardServiceStartupCleanupError.name }));
-    expect(signalProcess).toHaveBeenCalledWith(-4_321, "SIGKILL");
+    expect(signalProcess).toHaveBeenCalledWith(-detachedChildPid, "SIGKILL");
   });
 
   it("resolves Windows taskkill from SystemRoot while PATH is poisoned", () => {
@@ -386,7 +387,7 @@ describe("OpenShell forward service", () => {
     const trustedTaskkill = "C:\\Windows\\System32\\taskkill.exe";
 
     terminateForwardServiceProcessTree(
-      { pid: 4_321, unref: vi.fn() },
+      { pid: detachedChildPid, unref: vi.fn() },
       {
         environment: {
           PATH: "C:\\attacker-controlled",
@@ -399,7 +400,12 @@ describe("OpenShell forward service", () => {
       },
     );
 
-    expect(taskkill).toHaveBeenCalledWith(trustedTaskkill, ["/PID", "4321", "/T", "/F"]);
+    expect(taskkill).toHaveBeenCalledWith(trustedTaskkill, [
+      "/PID",
+      String(detachedChildPid),
+      "/T",
+      "/F",
+    ]);
     expect(signalProcess).not.toHaveBeenCalled();
   });
 
@@ -421,7 +427,7 @@ describe("OpenShell forward service", () => {
 
     expect(() =>
       terminateForwardServiceProcessTree(
-        { pid: 4_321, unref: vi.fn() },
+        { pid: detachedChildPid, unref: vi.fn() },
         {
           environment: {
             PATH: "C:\\attacker-controlled",
@@ -443,7 +449,7 @@ describe("OpenShell forward service", () => {
 
       expect(() =>
         terminateForwardServiceProcessTree(
-          { pid: 4_321, unref: vi.fn() },
+          { pid: detachedChildPid, unref: vi.fn() },
           {
             environment: {
               PATH: "C:\\attacker-controlled",
@@ -464,7 +470,7 @@ describe("OpenShell forward service", () => {
 
     expect(() =>
       terminateForwardServiceProcessTree(
-        { pid: 4_321, unref: vi.fn() },
+        { pid: detachedChildPid, unref: vi.fn() },
         {
           environment: { SystemRoot: "C:\\Windows" },
           isTrustedTaskkillExecutable: () => true,

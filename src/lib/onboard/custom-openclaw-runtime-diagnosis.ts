@@ -4,7 +4,7 @@
 export type SandboxCommandExecutor = (
   name: string,
   script: string,
-) => { status: number; stdout: string; stderr: string } | null;
+) => Promise<{ status: number; stdout: string; stderr: string } | null>;
 
 export type OpenClawRuntimeFailureKind =
   | "normal_runtime"
@@ -53,11 +53,11 @@ export function shouldDiagnoseCustomOpenClawRuntime(
  * Distinguish the documented sandbox-base-only failure from an ordinary
  * gateway startup failure without reading config or log contents.
  */
-export function classifyOpenClawRuntimeFailure(
+export async function classifyOpenClawRuntimeFailure(
   sandboxName: string,
   executeSandboxCommand: SandboxCommandExecutor,
-): OpenClawRuntimeFailureDiagnosis {
-  const result = executeSandboxCommand(sandboxName, OPENCLAW_RUNTIME_PROBE);
+): Promise<OpenClawRuntimeFailureDiagnosis> {
+  const result = await executeSandboxCommand(sandboxName, OPENCLAW_RUNTIME_PROBE);
   if (!result) {
     return {
       kind: "sandbox_unreachable",
