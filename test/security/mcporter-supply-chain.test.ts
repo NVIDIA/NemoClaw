@@ -51,8 +51,7 @@ const reviewedAuditDriver = fs.readFileSync(
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
   const start = contents.indexOf(startMarker);
-  const helperMarker =
-    "node /scripts/lib/reviewed-npm-archive.mts --verify-only";
+  const helperMarker = "node /scripts/lib/reviewed-npm-archive.mts --verify-only";
   const helperStart = contents.indexOf(helperMarker, start);
   const helperEndMarker = '--label "mcporter ${MCPORTER_VERSION}"';
   const helperEnd = contents.indexOf(helperEndMarker, helperStart) + helperEndMarker.length;
@@ -213,9 +212,7 @@ describe("mcporter image supply-chain controls", () => {
     expect(contents).toContain(
       "--mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false",
     );
-    expect(flattenedContents).toContain(
-      "node /scripts/lib/npm-audit-receipt.mts --receipt",
-    );
+    expect(flattenedContents).toContain("node /scripts/lib/npm-audit-receipt.mts --receipt");
     expect(flattenedContents).toContain(
       "--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json --raw-report",
     );

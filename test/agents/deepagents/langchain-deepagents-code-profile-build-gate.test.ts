@@ -93,17 +93,21 @@ exit 0
 }
 
 describe("LangChain Deep Agents Code profile build gate", () => {
-  it.each(
-    unreviewedArgCases,
-  )("rejects an unreviewed ARG with $label in $dockerfile", (testCase) => {
-    const result = runGateWithFakeDocker("expected-failure-with-marker", (fixtureRoot) =>
-      fs.appendFileSync(path.join(fixtureRoot, testCase.dockerfile), `\n${testCase.declaration}\n`),
-    );
+  it.each(unreviewedArgCases)(
+    "rejects an unreviewed ARG with $label in $dockerfile",
+    (testCase) => {
+      const result = runGateWithFakeDocker("expected-failure-with-marker", (fixtureRoot) =>
+        fs.appendFileSync(
+          path.join(fixtureRoot, testCase.dockerfile),
+          `\n${testCase.declaration}\n`,
+        ),
+      );
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(`unreviewed ARG UNREVIEWED_SECRET in ${testCase.dockerfile}`);
-    expect(result.calls).not.toContain("--file");
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(`unreviewed ARG UNREVIEWED_SECRET in ${testCase.dockerfile}`);
+      expect(result.calls).not.toContain("--file");
+    },
+  );
 
   it.each([
     "NEMOCLAW_CORPORATE_CA_B64",

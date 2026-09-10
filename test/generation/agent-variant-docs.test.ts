@@ -550,6 +550,15 @@ Real content.
     expect(() => renderAgentVariantPage(mixed, "openclaw")).not.toThrow();
   });
 
+  it("points Hermes recovery at the variant recover command fragment (#11147)", () => {
+    const sourcePath = path.join(repoRoot, "docs/manage-sandboxes/recover-rebuild-sandboxes.mdx");
+    const pageSource = readFileSync(sourcePath, "utf8");
+    const rendered = renderAgentVariantPage(pageSource, "hermes", { sourcePath });
+
+    expect(rendered).toContain("#nemohermes-name-recover");
+    expect(rendered).not.toContain("#nemoclaw-name-recover");
+  });
+
   it("leaves no shared page section heading without content in any published variant (#9731)", () => {
     const pages = sharedVariantPages();
     const renderEveryPublishedVariant = () =>

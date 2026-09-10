@@ -152,15 +152,11 @@ describe("E2E recommendation normalizer", () => {
         path.join(tmp, "tools/advisors/e2e-recommendations.mts"),
       ).href;
       const script = `const module = await import(${JSON.stringify(moduleUrl)}); const inventory = module.trustedE2eRecommendationInventory(); if (!inventory.allowedJobIds.includes("onboard-resume") || !inventory.allowedJobIds.includes("vllm-docker-storage")) process.exit(2);`;
-      const result = spawnSync(
-        process.execPath,
-        ["--input-type=module", "--eval", script],
-        {
-          cwd: tmp,
-          encoding: "utf8",
-          env: { PATH: process.env.PATH ?? "" },
-        },
-      );
+      const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: { PATH: process.env.PATH ?? "" },
+      });
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(fs.existsSync(path.join(tmp, "node_modules"))).toBe(false);
     } finally {

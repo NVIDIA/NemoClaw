@@ -585,7 +585,9 @@ describe("complete managed-image publication workflow", () => {
     expect(contractSource).toContain('result = JSON.parse(require("node:fs").readFileSync(0');
     expect(contractSource).toContain("record.protocol !== expected.protocol");
     expect(contractSource).toContain("record.ok !== expected.ok");
-    expect(contractSource).toMatch(/Object\.keys.*record\.count.*record\.tools.*record\.truncated/su);
+    expect(contractSource).toMatch(
+      /Object\.keys.*record\.count.*record\.tools.*record\.truncated/su,
+    );
     expect(contractSource).toContain("record.detail !== expected.detail");
     expect(contractSource).not.toContain(
       '[ "$actual_discovery_contract" != "$expected_discovery_contract" ]',
@@ -1261,7 +1263,7 @@ fi
     expect(promotion.run).not.toContain('imagetools create "${consumer_tag_args[@]}"');
     expect(pointer.run).toContain("shipped_agents=(openclaw hermes)");
     expect(pointer.run).toContain(
-      "exact_reference=\"$(jq -er --arg agent \"$agent\" '.agents[$agent].reference'",
+      'exact_reference="$(jq -er --arg agent "$agent" \'.agents[$agent].reference\'',
     );
     expect(pointer.run).toContain('imagetools create "${consumer_tag_args[@]}" "$exact_reference"');
     expect(pointer.run).toContain('cmp -s "$exact_raw" "$alias_raw"');

@@ -326,7 +326,6 @@ describe("applyChannelPresetIfAvailable refresh contract", () => {
     expect(ok).toBe(false);
     expect(refreshSpy).not.toHaveBeenCalled();
   });
-
 });
 
 describe("removeChannelPresetIfPresent refresh contract", () => {
