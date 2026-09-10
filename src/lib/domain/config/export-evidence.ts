@@ -15,6 +15,7 @@ import {
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
+  NemoClawOpenClawObservabilitySchema,
   NemoClawManagedProxyConfigSchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
@@ -276,6 +277,7 @@ const exportSourceFields = {
   gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
   proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
+  observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
   webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
 };
 

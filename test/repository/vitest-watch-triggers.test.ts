@@ -315,9 +315,13 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/e2e-manifests.test.ts",
     ]);
     expect(triggeredBy("test/e2e/manifests/openclaw-nvidia.yml")).toEqual([]);
-    expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
+    expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual([
+      ...E2E_WORKFLOW_CONTRACTS,
+      "test/e2e/support/openshell-sdk-install.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/e2e-standard-profile.yaml")).toEqual([
       "test/e2e/support/standard-profile-workflow-boundary.test.ts",
+      "test/e2e/support/openshell-sdk-install.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/portable-profile-e2e.yaml")).toEqual([
       "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",

@@ -40,7 +40,11 @@ import {
 } from "../fixtures/security-posture.ts";
 import type { ShellProbeOutputEvent, ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
-import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import {
+  nativeStateDoctorReportIsValid,
+  nativeStateProcessIdentitiesAreValid,
+  parseOpenClawAgentText,
+} from "../fixtures/openclaw-agent-output.ts";
 import { buildOpenClawFirstTurnLatencyEvidence } from "./agent-turn-latency-helpers.ts";
 import {
   FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
@@ -113,6 +117,21 @@ async function repoNemoclaw(
   });
 }
 
+async function readNativeStateDoctor(sandbox: SandboxClient, artifactName: string) {
+  return sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "/usr/local/bin/openclaw",
+      "doctor",
+      "--lint",
+      "--json",
+      "--only",
+      "core/doctor/state-integrity",
+    ],
+    { artifactName, env: env(), timeoutMs: 180_000 },
+  );
+}
+
 async function waitForSandboxStatus(host: HostCliClient): Promise<ShellProbeResult> {
   const status = await pollUntil({
     artifactPrefix: "phase-3-nemoclaw-status",
@@ -123,6 +142,35 @@ async function waitForSandboxStatus(host: HostCliClient): Promise<ShellProbeResu
     accept: (result) => result.exitCode === 0,
   });
   return status.value;
+}
+
+async function inspectNativeNetwork(sandbox: SandboxClient, artifactName: string) {
+  return sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "/usr/bin/env",
+      "-u",
+      "NODE_OPTIONS",
+      "-u",
+      "NODE_PATH",
+      "/usr/local/bin/node",
+      "-e",
+      `
+const fs = require("node:fs");
+console.log(JSON.stringify({
+  interfaces: require("node:os").networkInterfaces(),
+  nodeOptions: process.env.NODE_OPTIONS ?? null,
+  nodePath: process.env.NODE_PATH ?? null,
+  guardPresent: [
+    "/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js",
+    "/tmp/nemoclaw-ciao-network-guard.js",
+  ].some(file => fs.lstatSync(file, { throwIfNoEntry: false })),
+  guardRequired: fs.readFileSync("/tmp/nemoclaw-proxy-env.sh", "utf8").includes("ciao-network-guard"),
+  interfaceError: fs.readFileSync("/tmp/gateway.log", "utf8").includes("uv_interface_addresses"),
+}));`,
+    ],
+    { artifactName, env: env(), timeoutMs: 30_000 },
+  );
 }
 
 async function runOpenClawLaunchTurnAfterRecovery(input: {
@@ -137,6 +185,11 @@ async function runOpenClawLaunchTurnAfterRecovery(input: {
 for f in /sandbox/.bashrc /sandbox/.profile; do
   printf '%s\\n' 'export NEMOCLAW_E2E_PERSONAL_PROFILE=loaded' '[ "$(id -u)" -ne 0 ] || touch /tmp/nemoclaw-e2e-root-profile-loaded' >> "$f"
 done
+${
+  securityPostureEnabled()
+    ? "bash -lc 'openclaw doctor --fix --yes --non-interactive && /usr/local/bin/openclaw config set agents.defaults.timeoutSeconds 119 && openclaw config validate'"
+    : ""
+}
 sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
 ${GATEWAY_STOP_SCRIPT}`),
     {
@@ -146,7 +199,18 @@ ${GATEWAY_STOP_SCRIPT}`),
       timeoutMs: 120_000,
     },
   );
-  expect(stopGateway.exitCode, resultText(stopGateway)).toBe(0);
+  const afterNativeFix = securityPostureEnabled()
+    ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-fix")
+    : null;
+  expect(
+    !stopGateway.timedOut &&
+      stopGateway.exitCode === 0 &&
+      (!afterNativeFix || nativeStateDoctorReportIsValid(afterNativeFix)),
+    [stopGateway, afterNativeFix]
+      .filter((result) => result !== null)
+      .map(resultText)
+      .join("\n"),
+  ).toBe(true);
   await sleep(3_000);
 
   const recovery = await repoNemoclaw(
@@ -156,7 +220,29 @@ ${GATEWAY_STOP_SCRIPT}`),
     {},
     120_000,
   );
-  expect(recovery.exitCode, resultText(recovery)).toBe(0);
+  const configEdit =
+    !recovery.timedOut && recovery.exitCode === 0 && securityPostureEnabled()
+      ? await repoNemoclaw(
+          input.host,
+          [
+            SANDBOX_NAME,
+            "config",
+            "set",
+            "--key",
+            "agents.defaults.timeoutSeconds",
+            "--value",
+            "120",
+            "--restart",
+          ],
+          "phase-4-host-config-edit-private-state",
+        )
+      : null;
+  expect(
+    !recovery.timedOut &&
+      recovery.exitCode === 0 &&
+      (!configEdit || (!configEdit.timedOut && configEdit.exitCode === 0)),
+    resultText(configEdit ?? recovery),
+  ).toBe(true);
 
   await runOpenClawLaunchReadinessLeaseTurns({
     artifactName: "phase-4-openclaw-launch-turn",
@@ -169,11 +255,15 @@ ${GATEWAY_STOP_SCRIPT}`),
     sandboxName: SANDBOX_NAME,
   });
 
+  const nativeNetwork = await inspectNativeNetwork(
+    input.sandbox,
+    "phase-4-native-network-after-recovery",
+  );
+  const network = nativeNetwork.exitCode === 0 ? JSON.parse(nativeNetwork.stdout) : null;
   const permissions = await input.sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
-      "test \"$(stat -c '%a %U:%G' /sandbox/.openclaw)\" = '2770 sandbox:sandbox' && " +
-        "test \"$(stat -c '%a %U:%G' /sandbox/.openclaw/openclaw.json)\" = '660 sandbox:sandbox' && " +
+      "test -w /sandbox/.openclaw && test -w /sandbox/.openclaw/openclaw.json && " +
         "/usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE bash -lc 'test \"$NEMOCLAW_E2E_PERSONAL_PROFILE\" = loaded' && " +
         "/usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE bash -ic 'test \"$NEMOCLAW_E2E_PERSONAL_PROFILE\" = loaded' && " +
         "/usr/bin/sha256sum -c /tmp/nemoclaw-e2e-profiles.sha256 && " +
@@ -186,7 +276,28 @@ ${GATEWAY_STOP_SCRIPT}`),
       timeoutMs: 30_000,
     },
   );
-  expect(permissions.exitCode, resultText(permissions)).toBe(0);
+  const afterRecovery = securityPostureEnabled()
+    ? await readNativeStateDoctor(input.sandbox, "phase-4-native-state-after-recovery")
+    : null;
+  expect(
+    !permissions.timedOut &&
+      permissions.exitCode === 0 &&
+      nativeNetwork.exitCode === 0 &&
+      !nativeNetwork.timedOut &&
+      network.nodeOptions === null &&
+      network.nodePath === null &&
+      !network.guardPresent &&
+      !network.guardRequired &&
+      !network.interfaceError &&
+      Object.values(network.interfaces)
+        .flat()
+        .some((entry) => (entry as os.NetworkInterfaceInfo).internal) &&
+      (!afterRecovery || nativeStateDoctorReportIsValid(afterRecovery)),
+    [permissions, nativeNetwork, afterRecovery]
+      .filter((result) => result !== null)
+      .map(resultText)
+      .join("\n"),
+  ).toBe(true);
 }
 
 async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
@@ -454,7 +565,7 @@ test(
         "nemoclaw logs produces output and cleanup removes registry state",
         ...(securityPostureEnabled()
           ? [
-              "non-root host, editable personal profiles, protected proxy files, configure guard, and clean startup log",
+              "non-root host, native private state through doctor/fix/config edit/recovery, editable profiles, protected proxy files, and clean startup log",
             ]
           : []),
       ],
@@ -547,23 +658,50 @@ test(
       : Promise.resolve());
 
     progress.phase("validate CLI sandbox and policy state");
+    const nativeNetwork = await inspectNativeNetwork(sandbox, "phase-2-first-native-network");
+    const network = nativeNetwork.exitCode === 0 ? JSON.parse(nativeNetwork.stdout) : null;
     const nativeDoctor = await sandbox.exec(
       SANDBOX_NAME,
       ["/usr/local/bin/openclaw", "doctor", "--lint", "--json"],
       { artifactName: "phase-2-first-native-openclaw-doctor", env: env(), timeoutMs: 180_000 },
     );
+    // State-integrity is opt-in upstream; run it before repair and retain all findings.
+    const nativeStateDoctor = securityPostureEnabled()
+      ? await readNativeStateDoctor(sandbox, "phase-2-first-native-state-doctor")
+      : null;
+    const identities = securityPostureEnabled()
+      ? await sandbox.exec(SANDBOX_NAME, ["/usr/bin/ps", "-eo", "euid,egid,pid,ppid,comm"], {
+          artifactName: "phase-2-native-state-identities",
+          env: env(),
+          timeoutMs: 30_000,
+        })
+      : null;
     const doctorReports = parseOpenClawJsonDocuments(nativeDoctor.stdout);
     const doctorReport = doctorReports[0] as Record<string, unknown> | undefined;
-    // Exit 1 is a completed diagnostic with findings, including the state modes
-    // tracked separately in #11257. Preserve those findings in the raw artifact.
     expect(
-      doctorReports.length === 1 &&
+      nativeNetwork.exitCode === 0 &&
+        !nativeNetwork.timedOut &&
+        network.nodeOptions === null &&
+        network.nodePath === null &&
+        !network.guardPresent &&
+        !network.guardRequired &&
+        !network.interfaceError &&
+        Object.values(network.interfaces)
+          .flat()
+          .some((entry) => (entry as os.NetworkInterfaceInfo).internal) &&
+        doctorReports.length === 1 &&
+        !nativeDoctor.timedOut &&
         (nativeDoctor.exitCode === 0 || nativeDoctor.exitCode === 1) &&
         doctorReport?.ok === (nativeDoctor.exitCode === 0) &&
         Number.isInteger(doctorReport?.checksRun) &&
         Number(doctorReport?.checksRun) > 0 &&
-        Array.isArray(doctorReport?.findings),
-      resultText(nativeDoctor),
+        Array.isArray(doctorReport?.findings) &&
+        (!nativeStateDoctor || nativeStateDoctorReportIsValid(nativeStateDoctor)) &&
+        (!identities || nativeStateProcessIdentitiesAreValid(identities)),
+      [nativeNetwork, nativeDoctor, nativeStateDoctor, identities]
+        .filter((result) => result !== null)
+        .map(resultText)
+        .join("\n"),
     ).toBe(true);
     const pathProbe = await host.command(
       "bash",

@@ -49,6 +49,7 @@ function exportAgent(source: VerifiedExportSource, providerName: string): NemoCl
       ? {
           type: "openclaw" as const,
           ...(source.interfaces ? { interfaces: source.interfaces } : {}),
+          ...(source.observability ? { observability: source.observability } : {}),
         }
       : {
           type: "hermes" as const,

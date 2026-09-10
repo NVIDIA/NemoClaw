@@ -41,3 +41,10 @@ Hermes omits disabled dashboards, false TUI, public port 18789, internal port 19
 dashboard requires an explicit allocation. Dashboard ports retain the onboarding parser's
 restrictions, including API ports 8642–8652, port 18642 and equal public/internal ports. Export
 describes retained intent and does not inspect current processes or require a running host forward.
+
+OpenClaw telemetry supports an enabled local OTLP/HTTP collector at
+`http://host.openshell.internal:4318`, a printable ASCII service name of 1–256 characters without
+edge spaces, and a sample rate from 0 to 1. Canonical disabled telemetry is omitted. Other disabled
+settings, Unicode service names, remote collectors, headers, and credentials remain unsupported.
+Export preserves the observed effective policy, including local collector rules, without adding
+permissions or claiming collector health.
