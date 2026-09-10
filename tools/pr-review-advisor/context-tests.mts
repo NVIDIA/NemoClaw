@@ -75,7 +75,7 @@ export function classifyTestDepth(
       verdict: "runtime_validation_recommended",
       rationale: `Runtime/sandbox/infrastructure paths need behavioral runtime validation: ${e2eSignals.slice(0, 8).join(", ")}.`,
       suggestedTests: [
-        "Runtime or integration validation candidate for the changed behavior; external E2E job results are outside this context.",
+        "Identify the existing runtime or integration evidence for the changed behavior. Prefer strengthening or replacing its coverage before adding a test. External E2E job results are outside this context.",
       ],
     };
   }
@@ -85,7 +85,7 @@ export function classifyTestDepth(
       verdict: "runtime_validation_recommended",
       rationale: `Changed runtime code adds a process or container boundary: ${runtimeBoundaryFiles.join(", ")}.`,
       suggestedTests: [
-        "Integration validation candidate for the changed process or container behavior.",
+        "Identify the existing integration evidence for the changed process or container behavior. Prefer strengthening or replacing its coverage before adding a test.",
       ],
     };
   }
@@ -97,14 +97,16 @@ export function classifyTestDepth(
       verdict: "mocks_recommended",
       rationale: `Changed code has I/O, state, credentials, provider, or config behavior that should be covered with behavioral mocks: ${mockSignals.slice(0, 8).join(", ")}.`,
       suggestedTests: [
-        "Behavioral validation candidate with mocked filesystem, network, or process boundaries.",
+        "Identify the existing behavioral evidence at the mocked filesystem, network, or process boundary. Prefer strengthening or replacing its coverage before adding a test.",
       ],
     };
   }
   return {
     verdict: "unit_sufficient",
     rationale: "Changed files look like deterministic logic that can be covered with unit tests.",
-    suggestedTests: ["Targeted unit validation candidate for the changed modules."],
+    suggestedTests: [
+      "Identify the targeted existing unit evidence for the changed modules before proposing additional coverage.",
+    ],
   };
 }
 

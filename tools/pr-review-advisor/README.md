@@ -184,3 +184,9 @@ remaining resource name or path. Remove that named resource before retrying.
 Each specialist returns a Markdown review grounded in repository evidence and shared trusted
 guidance. No component combines findings or makes merge decisions. Specialist reviews are advisory.
 They do not replace required human review or change repository merge gates.
+
+Each finding classifies regression coverage as `Existing`, `Strengthen`, `Replace`, `Add`, or
+`Not applicable`. `Strengthen` and `Replace` take priority over `Add`. A proposed change states its
+expected net change in test cases, assertions, and test files. It identifies coverage that becomes
+redundant. `Add` also explains why an existing test cannot detect the regression without losing
+another distinct contract.
