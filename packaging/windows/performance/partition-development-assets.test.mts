@@ -401,3 +401,206 @@ test("an expected source mismatch refuses the partition before creating diagnost
     await fs.rm(f.base, { recursive: true, force: true });
   }
 });
+
+test("a working file reader keeps its data while annotated maps move to diagnostics", async () => {
+  const f = await fixture();
+  try {
+    const prefix = "openclaw/node_modules/file-reader/";
+    await f.write(
+      prefix + "package.json",
+      JSON.stringify({ type: "module", main: "./index.js", types: "./index.d.ts" }),
+    );
+    await f.write(prefix + "data.json", JSON.stringify({ value: 42 }));
+    await f.write(prefix + "index.d.ts", "export declare const value: number;\n");
+    await f.write(
+      prefix + "index.js",
+      'import fs from "node:fs"; export const value=JSON.parse(fs.readFileSync(new URL("./data.json",import.meta.url),"utf8")).value;\n//# sourceMappingURL=index.js.map\n',
+    );
+    await f.write(prefix + "index.js.map", map);
+    const invocation = [
+      "--input-type=module",
+      "-e",
+      "const m=await import(process.argv[1]);console.log(m.value);",
+      pathToFileURL(path.join(f.payload, prefix, "index.js")).href,
+    ];
+    assert.equal((await exec(process.execPath, invocation)).stdout, "42\n");
+    const result = await partitionDevelopmentAssets(f.payload, f.diagnostics);
+    assert.equal((await exec(process.execPath, invocation)).stdout, "42\n");
+    assert.deepEqual(
+      result.moved.map((file) => file.path),
+      [prefix + "index.d.ts", prefix + "index.js.map"],
+    );
+    assert.equal(await fs.readFile(path.join(f.diagnostics, prefix, "index.js.map"), "utf8"), map);
+    assert.equal(
+      await fs.readFile(path.join(f.payload, prefix, "data.json"), "utf8"),
+      JSON.stringify({ value: 42 }),
+    );
+  } finally {
+    await fs.rm(f.base, { recursive: true, force: true });
+  }
+});
+
+test("a runtime declaration reader preserves its input without treating linked maps as compiler inputs", async () => {
+  const f = await fixture();
+  try {
+    const prefix = "pi/node_modules/compiler-host/";
+    await f.write(
+      prefix + "package.json",
+      JSON.stringify({ type: "module", types: "./schema.d.ts" }),
+    );
+    await f.write(prefix + "schema.d.ts", "runtime declaration\n");
+    await f.write(
+      prefix + "index.js",
+      'import fs from "node:fs"; const pkg=JSON.parse(fs.readFileSync(new URL("./package.json",import.meta.url),"utf8"));export const schema=fs.readFileSync(new URL(pkg.types,import.meta.url),"utf8");\n//# sourceMappingURL=index.js.map\n',
+    );
+    await f.write(prefix + "index.js.map", map);
+    const result = await partitionDevelopmentAssets(f.payload, f.diagnostics);
+    assert.deepEqual(
+      result.moved.map((file) => file.path),
+      [prefix + "index.js.map"],
+    );
+    const output = await exec(process.execPath, [
+      "--input-type=module",
+      "-e",
+      "const m=await import(process.argv[1]);process.stdout.write(m.schema);",
+      pathToFileURL(path.join(f.payload, prefix, "index.js")).href,
+    ]);
+    assert.equal(output.stdout, "runtime declaration\n");
+  } finally {
+    await fs.rm(f.base, { recursive: true, force: true });
+  }
+});
+
+test("a dynamically selected map remains a working runtime resource", async () => {
+  const f = await fixture();
+  try {
+    const prefix = "nemoclaw/node_modules/map-reader/";
+    await f.write(prefix + "package.json", JSON.stringify({ type: "module" }));
+    await f.write(
+      prefix + "index.js",
+      'import fs from "node:fs"; const extension=".map"; export const result=JSON.parse(fs.readFileSync(new URL("./index.js"+extension,import.meta.url),"utf8")).version;\n//# sourceMappingURL=index.js.map\n',
+    );
+    await f.write(prefix + "index.js.map", map);
+    const result = await partitionDevelopmentAssets(f.payload, f.diagnostics);
+    assert.deepEqual(result.moved, []);
+    const output = await exec(process.execPath, [
+      "--input-type=module",
+      "-e",
+      "const m=await import(process.argv[1]);console.log(m.result);",
+      pathToFileURL(path.join(f.payload, prefix, "index.js")).href,
+    ]);
+    assert.equal(output.stdout, "3\n");
+  } finally {
+    await fs.rm(f.base, { recursive: true, force: true });
+  }
+});
+
+test("package-wide catch-all exports do not keep diagnostic maps but targeted map exports remain usable", async () => {
+  const f = await fixture();
+  try {
+    const prefix = "nemoclaw/node_modules/export-fixture/";
+    await f.write(
+      prefix + "package.json",
+      JSON.stringify({
+        name: "export-fixture",
+        type: "module",
+        exports: {
+          "./*": "./*",
+          "./source-map": "./targeted.js.map",
+          "./maps/*": "./maps/*.js.map",
+        },
+      }),
+    );
+    await f.write(
+      prefix + "index.js",
+      "export const value=42;\n//# sourceMappingURL=index.js.map\n",
+    );
+    await f.write(prefix + "index.js.map", map);
+    await f.write(
+      prefix + "targeted.js",
+      "export const value=1;\n//# sourceMappingURL=targeted.js.map\n",
+    );
+    await f.write(prefix + "targeted.js.map", map);
+    await f.write(
+      prefix + "maps/value.js",
+      "export const value=2;\n//# sourceMappingURL=value.js.map\n",
+    );
+    await f.write(prefix + "maps/value.js.map", map);
+    await f.write(
+      prefix + "runtime.js.map",
+      JSON.stringify({ version: 1, meaning: "runtime data" }),
+    );
+    await f.write(prefix + "schema.d.ts", "runtime-readable declaration\n");
+    const result = await partitionDevelopmentAssets(f.payload, f.diagnostics);
+    assert.deepEqual(
+      result.moved.map((file) => file.path),
+      [prefix + "index.js.map"],
+    );
+    const output = await exec(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        'import fs from "node:fs"; const m=await import("export-fixture/index.js");const exact=JSON.parse(fs.readFileSync(new URL(import.meta.resolve("export-fixture/source-map")),"utf8"));const wildcard=JSON.parse(fs.readFileSync(new URL(import.meta.resolve("export-fixture/maps/value")),"utf8"));console.log(m.value,exact.version,wildcard.version);',
+      ],
+      { cwd: path.join(f.payload, "nemoclaw") },
+    );
+    assert.equal(output.stdout, "42 3 3\n");
+    assert.equal(
+      await fs.readFile(path.join(f.payload, prefix, "schema.d.ts"), "utf8"),
+      "runtime-readable declaration\n",
+    );
+    assert.equal(
+      await fs.readFile(path.join(f.payload, prefix, "runtime.js.map"), "utf8"),
+      JSON.stringify({ version: 1, meaning: "runtime data" }),
+    );
+  } finally {
+    await fs.rm(f.base, { recursive: true, force: true });
+  }
+});
+
+async function assertRuntimeMapProvenance(
+  metadata: Record<string, unknown>,
+  specifier: string,
+): Promise<void> {
+  const f = await fixture();
+  try {
+    const prefix = "nemoclaw/node_modules/provenance-fixture/";
+    await f.write(
+      prefix + "package.json",
+      JSON.stringify({ name: "provenance-fixture", type: "module", ...metadata }),
+    );
+    await f.write(
+      prefix + "index.js",
+      "export const value=42;\n//# sourceMappingURL=index.js.map\n",
+    );
+    await f.write(prefix + "index.js.map", map);
+    const args = [
+      "--input-type=module",
+      "-e",
+      'import fs from "node:fs";console.log(JSON.parse(fs.readFileSync(new URL(import.meta.resolve(process.argv[1])),"utf8")).version);',
+      specifier,
+    ];
+    const cwd = path.join(f.payload, prefix);
+    assert.equal((await exec(process.execPath, args, { cwd })).stdout, "3\n");
+    const result = await partitionDevelopmentAssets(f.payload, f.diagnostics);
+    assert.deepEqual(result.moved, []);
+    assert.equal((await exec(process.execPath, args, { cwd })).stdout, "3\n");
+  } finally {
+    await fs.rm(f.base, { recursive: true, force: true });
+  }
+}
+
+test("a targeted export key retains its map when the target is also a generic export", async () => {
+  await assertRuntimeMapProvenance(
+    { exports: { "./*": "./*", "./maps/*": "./*" } },
+    "provenance-fixture/maps/index.js.map",
+  );
+});
+
+test("an imports entry retains its map when the target is also a generic export", async () => {
+  await assertRuntimeMapProvenance(
+    { exports: { "./*": "./*" }, imports: { "#maps/*": "./*" } },
+    "#maps/index.js.map",
+  );
+});

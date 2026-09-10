@@ -10,9 +10,10 @@ import ts from "typescript";
 
 type FileIdentity = { path: string; bytes: number; sha256: string };
 type Asset = FileIdentity & { reason: string };
+type RuntimeTarget = { value: string; source: string; exportKey?: string };
 type Package = {
   directory: string;
-  runtimeTargets: string[];
+  runtimeTargets: RuntimeTarget[];
   typeTargets: string[];
   opaque?: string;
 };
@@ -167,13 +168,36 @@ function packageMetadata(file: Input): Package {
     const object: unknown = file.content && JSON.parse(file.content.toString("utf8"));
     if (!object || typeof object !== "object" || Array.isArray(object)) throw new Error();
     const value = object as Record<string, unknown>;
-    result.runtimeTargets = ["main", "module", "bin"].flatMap((key) => strings(value[key]));
-    result.runtimeTargets.push(...strings(value.browser));
-    if (value.browser && typeof value.browser === "object" && !Array.isArray(value.browser))
-      result.runtimeTargets.push(...Object.keys(value.browser));
+    result.runtimeTargets = ["main", "module", "bin"].flatMap((source) =>
+      strings(value[source]).map((target) => ({ value: target, source })),
+    );
     result.runtimeTargets.push(
-      ...conditionalTargets(value.exports, false),
-      ...conditionalTargets(value.imports, false),
+      ...strings(value.browser).map((target) => ({ value: target, source: "browser" })),
+    );
+    if (value.browser && typeof value.browser === "object" && !Array.isArray(value.browser))
+      result.runtimeTargets.push(
+        ...Object.keys(value.browser).map((target) => ({ value: target, source: "browser" })),
+      );
+    const exportEntries =
+      value.exports &&
+      typeof value.exports === "object" &&
+      !Array.isArray(value.exports) &&
+      Object.keys(value.exports).some((key) => key.startsWith("."))
+        ? Object.entries(value.exports)
+        : [[".", value.exports] as const];
+    for (const [exportKey, entry] of exportEntries)
+      result.runtimeTargets.push(
+        ...conditionalTargets(entry, false).map((target) => ({
+          value: target,
+          source: "exports",
+          exportKey,
+        })),
+      );
+    result.runtimeTargets.push(
+      ...conditionalTargets(value.imports, false).map((target) => ({
+        value: target,
+        source: "imports",
+      })),
     );
     result.typeTargets = [
       ...strings(value.types),
@@ -218,15 +242,24 @@ function sourceMap(bytes: Buffer | undefined): boolean {
 function resourceReferences(
   inputs: Input[],
   packages: Map<string, Package>,
-): { paths: Set<string>; uncertain: Set<string>; annotations: Set<string> } {
+): {
+  paths: Set<string>;
+  uncertain: Set<string>;
+  uncertainMaps: Set<string>;
+  annotations: Set<string>;
+} {
   const paths = new Set<string>();
   const uncertain = new Set<string>();
+  const uncertainMaps = new Set<string>();
   const annotations = new Set<string>();
   for (const file of inputs) {
     if (!audited(file.path) || !codeFile(file.path)) continue;
     const owners = ancestors(file.path, packages);
     if (!file.content) {
-      for (const owner of owners) uncertain.add(owner.directory);
+      for (const owner of owners) {
+        uncertain.add(owner.directory);
+        uncertainMaps.add(owner.directory);
+      }
       continue;
     }
     const code = file.content.toString("utf8");
@@ -234,7 +267,11 @@ function resourceReferences(
     const parseDiagnostics = (
       parsed as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] }
     ).parseDiagnostics;
-    if (parseDiagnostics?.length) for (const owner of owners) uncertain.add(owner.directory);
+    if (parseDiagnostics?.length)
+      for (const owner of owners) {
+        uncertain.add(owner.directory);
+        uncertainMaps.add(owner.directory);
+      }
     const literals: string[] = [];
     const comments = new Set<number>();
     const visit = (node: ts.Node): void => {
@@ -258,14 +295,20 @@ function resourceReferences(
       ts.forEachChild(node, visit);
     };
     visit(parsed);
-    const readsFiles = /\b(?:readFile(?:Sync)?|createReadStream|readFileAsText)\b/u.test(code);
+    // Mapping annotations describe diagnostics; they are not executable file reads.
+    const executable = ts.createPrinter({ removeComments: true }).printFile(parsed);
+    const readsFiles = /\b(?:readFile(?:Sync)?|createReadStream|readFileAsText)\b/u.test(
+      executable,
+    );
     if (
       readsFiles &&
-      (literals.some((text) => /^\.d\.[cm]?ts$/u.test(text) || text === ".map") ||
-        /\.d\.[cm]?ts|\.[cm]?[jt]s\.map/u.test(code) ||
-        /\.types\b|\[\s*["'](?:types|typings)["']\s*\]/u.test(code))
+      (literals.some((text) => /^\.d\.[cm]?ts$/u.test(text)) ||
+        /\.d\.[cm]?ts/u.test(executable) ||
+        /\.types\b|\[\s*["'](?:types|typings)["']\s*\]/u.test(executable))
     )
       for (const owner of owners) uncertain.add(owner.directory);
+    if (readsFiles && (literals.includes(".map") || /\.[cm]?[jt]s\.map/u.test(executable)))
+      for (const owner of owners) uncertainMaps.add(owner.directory);
     for (const value of literals) {
       if (!declaration(value) && !mapFile(value)) continue;
       for (const directory of [
@@ -285,7 +328,7 @@ function resourceReferences(
       }
     }
   }
-  return { paths, uncertain, annotations };
+  return { paths, uncertain, uncertainMaps, annotations };
 }
 export async function planDevelopmentPartition(
   payloadDirectory: string,
@@ -337,7 +380,7 @@ export async function planDevelopmentPartition(
   const resources = resourceReferences(inputs, packages);
   const explicitRuntime = new Set<string>();
   for (const owner of packages.values())
-    for (const target of owner.runtimeTargets) {
+    for (const { value: target } of owner.runtimeTargets) {
       if (!target.includes("*"))
         explicitRuntime.add(
           path.posix
@@ -349,7 +392,7 @@ export async function planDevelopmentPartition(
   const result: Partition = {
     sourceRevision: source.revision,
     analysis: {
-      policyVersion: 2,
+      policyVersion: 3,
       toolSha256: hash(await fs.readFile(fileURLToPath(import.meta.url))),
       nodeVersion: process.version,
       typescriptVersion: ts.version,
@@ -369,6 +412,7 @@ export async function planDevelopmentPartition(
     const owners = ancestors(file.path, packages);
     const typed = owners.some((owner) => references(file.path, owner, owner.typeTargets));
     const linkedMap = resources.annotations.has(file.path.toLowerCase());
+    const diagnosticMap = isMap && linkedMap && sourceMap(file.content);
     const retained = /(?:^|\/)(?:license|licenses|copying|notice|authors)(?:[./_-]|$)/iu.test(
       file.path,
     )
@@ -382,10 +426,27 @@ export async function planDevelopmentPartition(
             : (owners.find((owner) => owner.opaque)?.opaque ??
               (resources.paths.has(file.path.toLowerCase())
                 ? "literal runtime resource reference"
-                : owners.some((owner) => resources.uncertain.has(owner.directory))
+                : owners.some((owner) =>
+                      (isMap ? resources.uncertainMaps : resources.uncertain).has(owner.directory),
+                    )
                   ? "unbounded runtime resource access retained pending qualification"
                   : explicitRuntime.has(file.path.toLowerCase()) ||
-                      owners.some((owner) => references(file.path, owner, owner.runtimeTargets))
+                      owners.some((owner) =>
+                        references(
+                          file.path,
+                          owner,
+                          owner.runtimeTargets
+                            .filter(
+                              // Only the exports key itself establishes package-wide exposure.
+                              (target) =>
+                                !diagnosticMap ||
+                                target.source !== "exports" ||
+                                target.exportKey !== "./*" ||
+                                !/^(?:\.\/)?\*$/u.test(target.value),
+                            )
+                            .map((target) => target.value),
+                        ),
+                      )
                     ? "declared runtime export or entrypoint"
                     : isDeclaration && !typed
                       ? "declaration is not explicitly type-only metadata"
