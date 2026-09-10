@@ -1180,24 +1180,17 @@ describe("CLI dispatch", () => {
     // recorded binding instead of reporting it as missing.
     await withSiblingGatewayRegistry([{ port: 8245, name: "owner-a" }], async () => {
       await withDirectPublicDispatch(
-        async ({
-          dispatchCli,
-          recoverRegistryEntries,
-          runOclifArgv,
-          runOclifCommandById,
-          stderr,
-        }) => {
+        async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, stderr }) => {
           await dispatchCli(["owner-a", "exec", "--", "echo", "hi"]);
 
           const output = stderr.join("\n");
           expect(output).not.toContain("does not exist");
           expect(recoverRegistryEntries).not.toHaveBeenCalled();
-          const oclifCalls = [
-            ...runOclifCommandById.mock.calls.map((call) => call.slice(0, 2)),
-            ...runOclifArgv.mock.calls.map((call) => ["nativeArgv", call[0]]),
-          ];
-          expect(oclifCalls.length).toBeGreaterThan(0);
-          expect(JSON.stringify(oclifCalls)).toContain("owner-a");
+          expect(runOclifCommandById).toHaveBeenCalledWith(
+            "sandbox:exec",
+            ["owner-a", "--", "echo", "hi"],
+            expect.anything(),
+          );
         },
         { sandboxNames: ["owner-b"] },
       );
