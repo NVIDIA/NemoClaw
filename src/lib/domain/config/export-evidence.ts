@@ -4,11 +4,13 @@
 import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
 import {
   BoundedTextSchema,
+  NemoClawManagedVllmServingSchema,
   CredentialEnvironmentReferenceNameSchema,
   ImmutableImageReferenceSchema,
   InferenceEndpointSchema,
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
+  NemoClawBraveSearchConfigSchema,
   NemoClawAgentTypeSchema,
   NemoClawManagedProxyConfigSchema,
   RuntimeProviderSchema,
@@ -70,6 +72,7 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "provider",
   "sandboxGpuDevice",
   "sandboxGpuEnabled",
+  "servingProfileProvenance",
   "toolDisclosure",
   "webSearchEnabled",
   "webSearchProvider",
@@ -99,6 +102,13 @@ export interface ObservedExportEndpointEvidence {
     readonly name: string;
     readonly id: string;
     readonly resourceVersion: string;
+    readonly profileWorkspace?: string;
+    readonly managedProfile?: {
+      readonly id: "brave" | "openai";
+      readonly source: "builtin" | "user";
+      readonly scope: "" | "platform" | "workspace";
+      readonly resourceVersion: string;
+    };
   };
   readonly endpoint: string;
   readonly source:
@@ -107,6 +117,32 @@ export interface ObservedExportEndpointEvidence {
         readonly key: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
       }
     | { readonly kind: "builtin-profile"; readonly profileId: "nvidia" };
+}
+
+export interface ObservedExportWebSearchProvider {
+  readonly gatewayName: string;
+  readonly workspace: string;
+  readonly name: string;
+  readonly id: string;
+  readonly resourceVersion: string;
+  readonly type: string;
+  readonly credentialKeys: readonly string[];
+  readonly configKeys: readonly string[];
+  readonly profileWorkspace?: string;
+  readonly profile?: {
+    readonly id: string;
+    readonly source: string;
+    readonly scope: string;
+    readonly resourceVersion: string;
+  };
+}
+
+export interface ObservedManagedVllmRuntime {
+  readonly serving: import("../../config/model").NemoClawManagedVllmServing;
+  readonly containerId: string;
+  readonly imageId: string;
+  readonly networkId: string;
+  readonly startedAt: string;
 }
 
 export interface ObservedExportInference {
@@ -118,6 +154,7 @@ export interface ObservedExportInference {
   readonly endpoint: string;
   readonly endpointEvidence: ObservedExportEndpointEvidence | null;
   readonly credentialEnv: string | null;
+  readonly managedServing?: ObservedManagedVllmRuntime;
 }
 
 export interface ObservedExportPolicy {
@@ -143,6 +180,8 @@ export type ExportSnapshotReadStage =
   | "sandbox-identity"
   | "inference-route"
   | "provider-metadata"
+  | "web-search-provider"
+  | "managed-serving"
   | "effective-policy";
 
 /** One complete, untrusted read from all export evidence owners. */
@@ -159,6 +198,7 @@ export type RawExportSnapshot =
       sandbox: ObservedExportSandboxIdentity;
       gateway: ObservedExportGateway;
       inference: ObservedExportInference;
+      webSearchProvider?: ObservedExportWebSearchProvider;
       policy: ObservedExportPolicy;
       configuration: SandboxConfiguration;
     }>;
@@ -194,8 +234,11 @@ export interface ExportFinding {
 export type NonEmptyExportFindings = readonly [ExportFinding, ...ExportFinding[]];
 
 // Runtime refinements preserve semantic checks that are not part of JSON Schema.
-const ExportInferenceSchema = Type.Object({
-  provider: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
+const HostedExportInferenceSchema = Type.Object({
+  provider: Type.Refine(
+    BoundedTextSchema,
+    (value) => isValidNemoClawBoundedText(value) && value !== "vllm-local",
+  ),
   model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
   api: NemoClawInferenceApiSchema,
   endpoint: Type.Refine(InferenceEndpointSchema, isValidNemoClawInferenceEndpoint),
@@ -203,6 +246,19 @@ const ExportInferenceSchema = Type.Object({
     Type.Refine(CredentialEnvironmentReferenceNameSchema, isCredentialEnvironmentReferenceName),
   ),
 });
+
+const ExportInferenceSchema = Type.Union([
+  HostedExportInferenceSchema,
+  Type.Object(
+    {
+      provider: Type.Literal("vllm-local"),
+      model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
+      api: Type.Literal("openai-completions"),
+      serving: NemoClawManagedVllmServingSchema,
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 /** Representable values only; provenance and policy qualification remain separate. */
 export const ExportSourceValuesSchema = Type.Object({
@@ -215,6 +271,7 @@ export const ExportSourceValuesSchema = Type.Object({
   gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
   proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
+  webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
 });
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;

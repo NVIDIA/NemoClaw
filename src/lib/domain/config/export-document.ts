@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { EXPORTED_VLLM_CONTEXT_WINDOW } from "../../config/model";
 import type {
   NemoClawConfig,
   NemoClawConfigDocumentName,
@@ -21,6 +22,14 @@ function inferenceProvider(
   source: VerifiedExportSource,
   name: string,
 ): NemoClawInferenceProviderConfig {
+  if ("serving" in source.inference) {
+    return {
+      name,
+      provider: source.inference.provider,
+      api: source.inference.api,
+      serving: source.inference.serving,
+    };
+  }
   const provider = {
     name,
     provider: source.inference.provider,
@@ -42,7 +51,8 @@ export function buildExportConfig(
   source: VerifiedExportSource,
   identity: ExportConfigBuildIdentity,
 ): NemoClawConfig {
-  const providerName = providerLocalName(source.inference.provider);
+  const providerName =
+    "serving" in source.inference ? "managed-vllm" : providerLocalName(source.inference.provider);
   const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1",
     kind: "NemoClawConfig",
@@ -65,6 +75,9 @@ export function buildExportConfig(
             policy: { explicit: source.policy },
             ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
           },
+          ...(source.webSearch === undefined
+            ? {}
+            : { integrations: { webSearch: source.webSearch } }),
           agents: [
             {
               name: "primary",
@@ -74,7 +87,12 @@ export function buildExportConfig(
                   {
                     name: "primary",
                     providerRef: providerName,
-                    overrides: { model: source.inference.model },
+                    overrides: {
+                      model: source.inference.model,
+                      ...("serving" in source.inference
+                        ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
+                        : {}),
+                    },
                   },
                 ],
               },

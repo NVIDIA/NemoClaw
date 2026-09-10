@@ -5,6 +5,8 @@ import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import { renderCanonicalNemoClawConfig, validateNemoClawConfig } from "./index";
 import {
+  EXPORTED_VLLM_PROFILE_ID,
+  EXPORTED_VLLM_RECIPE_ID,
   isCredentialEnvironmentReferenceName,
   isImmutableImageReference,
   isValidNemoClawBoundedText,
@@ -81,6 +83,67 @@ function renderInput(value: unknown) {
 describe("NemoClawConfig v1", () => {
   it("validates one aggregate config with explicit effective policy (#10938)", () => {
     expect(validateNemoClawConfig(config())).toEqual(config());
+  });
+
+  it("round-trips Brave search bound to the primary agent (#10904)", () => {
+    const value = config();
+    const integration = {
+      webSearch: {
+        provider: "brave",
+        agentRefs: ["primary"],
+        credential: { env: "BRAVE_API_KEY" },
+      },
+    };
+    Object.assign(value.spec.sandboxes[0]!, { integrations: integration });
+    const rendered = renderInput(value);
+    expect(validateNemoClawConfig(YAML.parse(rendered.yaml))).toEqual(value);
+  });
+
+  it.each([
+    { provider: "tavily" },
+    { agentRefs: [] },
+    { agentRefs: ["primary", "primary"] },
+    { agentRefs: ["other"] },
+    { credential: { env: "NEMOCLAW_PROVIDER_KEY" } },
+    { credential: { env: "TAVILY_API_KEY" } },
+    { credential: { value: "secret-canary" } },
+    { unexpected: true },
+  ])("rejects unsupported Brave configuration %j (#10904)", (change) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!, {
+      integrations: {
+        webSearch: {
+          provider: "brave",
+          agentRefs: ["primary"],
+          credential: { env: "BRAVE_API_KEY" },
+          ...change,
+        },
+      },
+    });
+    expect(() => validateNemoClawConfig(value)).toThrow();
+    try {
+      validateNemoClawConfig(value);
+    } catch (error) {
+      expect(String(error)).not.toContain("secret-canary");
+    }
+  });
+
+  it.each([
+    { label: "missing primary", change: { name: "other" } },
+    { label: "wrong type", change: { type: "hermes" } },
+  ])("rejects a Brave binding with $label (#10904)", ({ change }) => {
+    const value = config();
+    Object.assign(value.spec.sandboxes[0]!, {
+      integrations: {
+        webSearch: {
+          provider: "brave",
+          agentRefs: ["primary"],
+          credential: { env: "BRAVE_API_KEY" },
+        },
+      },
+    });
+    Object.assign(value.spec.sandboxes[0]!.agents[0]!, change);
+    expect(() => validateNemoClawConfig(value)).toThrow();
   });
 
   it.each([
@@ -417,5 +480,113 @@ describe("NemoClawConfig v1", () => {
     expect(second.documentDigest).not.toBe(first.documentDigest);
     expect(second.specDigest).toBe(first.specDigest);
     expect(first.documentDigest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+  });
+});
+
+function managedServingConfig() {
+  const value = config();
+  const provider = {
+    name: "managed-vllm",
+    provider: "vllm-local",
+    api: "openai-completions",
+    serving: {
+      backend: "vllm",
+      catalogDigest: `sha256:${"b".repeat(64)}`,
+      profile: { id: EXPORTED_VLLM_PROFILE_ID, digest: `sha256:${"c".repeat(64)}` },
+      recipe: { id: EXPORTED_VLLM_RECIPE_ID, digest: `sha256:${"d".repeat(64)}` },
+      model: { id: "nvidia/model", revision: "e".repeat(40), servedName: "managed-model" },
+      runtime: { image: { ref: `nvcr.io/nvidia/vllm@sha256:${"f".repeat(64)}` } },
+      hostPort: 18000,
+    },
+  };
+  Object.assign(value.spec, { inferenceProviders: [provider] });
+  const route = {
+    name: "primary",
+    providerRef: "managed-vllm",
+    overrides: { model: "managed-model", contextWindow: 65536 },
+  };
+  value.spec.sandboxes[0]!.agents[0]!.inference.routes = [route];
+  return { value, provider, route };
+}
+
+describe("fixed managed serving public contract", () => {
+  it("round trips an immutable catalog reference and nondefault published port", () => {
+    const { value } = managedServingConfig();
+    expect(validateNemoClawConfig(YAML.parse(renderInput(value).yaml))).toEqual(value);
+  });
+
+  it("rejects vllm-local without its managed serving contract", () => {
+    const { value, provider } = managedServingConfig();
+    Reflect.deleteProperty(provider, "serving");
+    Object.assign(provider, { endpoint: "https://127.0.0.1:18000/v1" });
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
+  it.each([
+    [
+      "transport credential",
+      (f: ReturnType<typeof managedServingConfig>) =>
+        Object.assign(f.provider, { credential: { env: "NEMOCLAW_VLLM_LOCAL_TOKEN" } }),
+    ],
+    [
+      "arbitrary endpoint",
+      (f: ReturnType<typeof managedServingConfig>) =>
+        Object.assign(f.provider, { endpoint: "http://127.0.0.1:18000/v1" }),
+    ],
+    [
+      "arbitrary arguments",
+      (f: ReturnType<typeof managedServingConfig>) =>
+        Object.assign(f.provider.serving, { arguments: ["--trust-remote-code"] }),
+    ],
+    [
+      "other recipe",
+      (f: ReturnType<typeof managedServingConfig>) => {
+        Object.assign(f.provider.serving.recipe, { id: "other" });
+      },
+    ],
+    [
+      "mutable image",
+      (f: ReturnType<typeof managedServingConfig>) => {
+        f.provider.serving.runtime.image.ref = "vllm:latest";
+      },
+    ],
+    [
+      "unknown backend",
+      (f: ReturnType<typeof managedServingConfig>) => {
+        f.provider.serving.backend = "ollama";
+      },
+    ],
+    [
+      "unknown runtime property",
+      (f: ReturnType<typeof managedServingConfig>) =>
+        Object.assign(f.provider.serving.runtime, { env: { SECRET: "private" } }),
+    ],
+    [
+      "missing context",
+      (f: ReturnType<typeof managedServingConfig>) =>
+        Reflect.deleteProperty(f.route.overrides, "contextWindow"),
+    ],
+    [
+      "different context",
+      (f: ReturnType<typeof managedServingConfig>) => {
+        f.route.overrides.contextWindow = 32768;
+      },
+    ],
+    [
+      "different model",
+      (f: ReturnType<typeof managedServingConfig>) => {
+        f.route.overrides.model = "other";
+      },
+    ],
+    [
+      "different runtime",
+      (f: ReturnType<typeof managedServingConfig>) => {
+        f.value.spec.sandboxes[0]!.runtime.provider = "apple-container";
+      },
+    ],
+  ])("rejects %s instead of accepting an incomplete managed intent", (_name, change) => {
+    const f = managedServingConfig();
+    change(f);
+    expect(() => validateNemoClawConfig(f.value)).toThrow();
   });
 });

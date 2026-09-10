@@ -8,7 +8,7 @@ issue #10938 and PR #11065. They do not complete the capability migrations in th
 
 | Read | Owner | Transport and reason |
 | --- | --- | --- |
-| Provider endpoint and identity | `providers.ts` | SDK `raw.getProvider`, plus `raw.getProviderProfile` for native NVIDIA inference without overrides; the pinned SDK has no curated gateway-provider read. Reuses the metadata fields from `provider-adapter.ts` (#9806, #9825). |
+| Provider endpoint and identity | `providers.ts` | SDK `raw.getProvider`, plus `raw.getProviderProfile` for native NVIDIA inference without overrides and requested managed Brave/OpenAI contracts; the pinned SDK has no curated gateway-provider read. Reuses the metadata fields from `provider-adapter.ts` (#9806, #9825). |
 | Sandbox identity, image, and attachments | `sandboxes.ts` | SDK `raw.getSandbox`; curated `sandbox.get` omits workspace, image, and active policy version. |
 | Configuration identity and effective policy | `sandbox-config.ts` | SDK `raw.getSandboxConfig` by verified ID returns both in one response; curated `sandbox.getConfig` does a new name lookup and omits workspace. Policy reads for other consumers remain with #9805 and #9826. |
 | Inference route | `inference/live.ts` | Retains the CLI read with an explicit gateway. The separate generated inference client remains with #9809 and #9828. |
@@ -37,6 +37,21 @@ revision zero, inference capability, and its single `integrate.api.nvidia.com:44
 The pinned OpenShell native resolver uses `/v1` on that host. Export records the built-in profile
 as the endpoint evidence. Custom profiles, profile scope changes, and provider config overrides
 cannot use this derivation.
+
+Consumers can request `profileContract: "brave"` or `"openai"` to qualify a managed profile.
+The reader resolves `raw.getProviderProfile` at the provider's `profileWorkspace` through the
+same gateway. Normal onboarding imports the checked-in profile in the `default` workspace.
+User profiles must have a nonzero revision and a scope matching their binding; builtin profiles
+must have global binding, empty scope, and revision zero. Matching the profile name is insufficient.
+
+Qualification requires the checked-in credential declaration, endpoint rules, binary allowlist,
+and inference capability. Brave permits its single header credential and search endpoint;
+OpenAI requires the endpointless inference contract. Credential refresh, token grants, discovery,
+changed rewriting rules, and unknown protobuf fields in the profile's semantic messages fail.
+Provider credential values and handles remain opaque. The reader returns profile identity,
+source, scope, revision, and binding for inclusion in complete export observations. A changed
+binding or profile revision therefore prevents publication until observations agree. Hosted
+consumers that do not request this qualification retain their existing endpoint semantics.
 
 Provider reads retain the complete config-key inventory so export can reject unsupported configuration. Sandbox reads omit
 environment values. Configuration reads return revision metadata and a credential-free effective policy document, without settings values.
