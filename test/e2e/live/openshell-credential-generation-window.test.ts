@@ -255,18 +255,25 @@ async function waitForAcknowledgement(
 
 async function rotateCredential(
   host: HostCliClient,
+  sandbox: SandboxClient,
   fakeMcp: FakeMcpHttpsServer,
+  providerName: string,
   secret: string,
   generation: number,
   allSecrets: readonly string[],
 ): Promise<void> {
   fakeMcp.setSecret(secret);
+  await updateProviderCredential(
+    sandbox,
+    providerName,
+    secret,
+    0,
+    allSecrets,
+    `credential-window-update-${generation}`,
+  );
   const result = await host.nemoclaw([SANDBOX_NAME, "mcp", "restart", SERVER_NAME], {
     artifactName: `credential-window-rotate-${generation}`,
-    env: {
-      ...buildAvailabilityProbeEnv(),
-      [CREDENTIAL_WINDOW_ENV_NAME]: secret,
-    },
+    env: buildAvailabilityProbeEnv(),
     redactionValues: [...allSecrets],
     timeoutMs: 4 * 60_000,
   });
@@ -630,7 +637,7 @@ test(
       oldChildRevision = await waitForReadyRevision(sandbox);
       expect(oldChildRevision).toBe(restoredRevision);
       for (const [index, secret] of rotationSecrets.entries()) {
-        await rotateCredential(host, fakeMcp, secret, index + 1, allSecrets);
+        await rotateCredential(host, sandbox, fakeMcp, providerName, secret, index + 1, allSecrets);
         observedRevisions.push(
           await observeFreshRevision(sandbox, `credential-window-fresh-revision-${index + 1}`),
         );
@@ -774,6 +781,17 @@ test(
       ).toBe(false);
 
       progress.phase("re-add the bridge and keep the old process revoked");
+      // Replace the detached fixture-owned provider so the new identity revokes the old child.
+      const deleteRetainedProvider = await host.command(
+        host.openshellCommandPath,
+        ["provider", "delete", providerName],
+        {
+          artifactName: "credential-window-delete-retained-fixture-provider-before-readd",
+          env: openshellEnv(),
+          timeoutMs: 60_000,
+        },
+      );
+      expect(deleteRetainedProvider.exitCode, resultText(deleteRetainedProvider)).toBe(0);
       fakeMcp.setSecret(restartSecret);
       const readd = await host.nemoclaw(
         [
@@ -915,13 +933,12 @@ test(
       host.openshellCommandPath,
       ["provider", "get", providerName],
       {
-        artifactName: "credential-window-provider-absent-after-remove",
+        artifactName: "credential-window-provider-retained-after-remove",
         env: openshellEnv(),
         timeoutMs: 60_000,
       },
     );
-    expect(providerAfterRemove.exitCode).not.toBe(0);
-    expect(resultText(providerAfterRemove)).toMatch(/not found/iu);
+    expect(providerAfterRemove.exitCode).toBe(0);
     const upstreamRequestIds = fakeMcp.requests.map((request) => requestId(request.body));
     expect(upstreamRequestIds).not.toContain(
       credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry),

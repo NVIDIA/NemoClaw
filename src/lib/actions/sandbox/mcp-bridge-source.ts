@@ -85,7 +85,7 @@ function buildDeepAgentsSourceCommand(configDir: string): string {
     `if [ ! -e ${quoteMcpBridgeShellArg(nativePath)} ] && [ ! -L ${quoteMcpBridgeShellArg(nativePath)} ] && [ ! -e ${quoteMcpBridgeShellArg(legacyPath)} ] && [ ! -L ${quoteMcpBridgeShellArg(legacyPath)} ]; then printf '[]'; exit 0; fi`,
     "/opt/venv/bin/python3 -I - <<'PY'",
     ...commonPythonSourceReader(),
-    `paths = [('native', pathlib.Path(${sourcePayload(nativePath)})), ('legacy', pathlib.Path(${sourcePayload(legacyPath)}))]`,
+    `paths = [('native', pathlib.Path(${JSON.stringify(nativePath)})), ('legacy', pathlib.Path(${JSON.stringify(legacyPath)}))]`,
     "records = []",
     "for source, config_path in paths:",
     "    try: data = json.loads(read_regular(config_path))",
@@ -108,19 +108,9 @@ function buildHermesSourceCommand(configDir: string): string {
     "/usr/bin/python3.13 -I -S - <<'PY'",
     ...commonPythonSourceReader(),
     "import sys",
-    "sys.path.insert(0, '/opt/hermes/.venv/lib/python3.13/site-packages')",
-    "import yaml",
-    `config_path = pathlib.Path(${sourcePayload(configPath)})`,
-    "try: data = yaml.safe_load(read_regular(config_path))",
-    "except FileNotFoundError: data = {}",
-    "servers = data.get('mcp_servers', {}) if isinstance(data, dict) else {}",
-    "if not isinstance(servers, dict): raise ValueError('invalid Hermes MCP server map')",
-    "records = []",
-    "for name, value in servers.items():",
-    "    if not isinstance(name, str) or not isinstance(value, dict): continue",
-    "    url = value.get('url')",
-    "    if isinstance(url, str): records.append({'server': name, 'url': url, 'env': env_name(value.get('headers')), 'source': 'native'})",
-    "print(json.dumps(records, separators=(',', ':'))) ",
+    `config_path = pathlib.Path(${JSON.stringify(configPath)})`,
+    "try: sys.stdout.write(read_regular(config_path))",
+    "except FileNotFoundError: sys.stdout.write('{}')",
     "PY",
   ].join("\n");
 }
@@ -184,6 +174,61 @@ function parseSourceRecords(output: string): SourceRecord[] {
     }
     return [record as SourceRecord];
   });
+}
+
+function parseHermesSourceRecords(output: string): SourceRecord[] {
+  if (Buffer.byteLength(output, "utf8") > SOURCE_OUTPUT_MAX_BYTES) {
+    throw new McpBridgeError("Agent MCP source inspection returned oversized output.");
+  }
+  let data: unknown;
+  try {
+    // Historical sandbox policies can hide Hermes' Python packages. Parse the
+    // bounded config on the host without including its contents in diagnostics.
+    const document = YAML.parseDocument(output, {
+      version: "1.1",
+      merge: true,
+      prettyErrors: false,
+      logLevel: "error",
+    });
+    if (document.errors.length > 0 || document.warnings.length > 0) {
+      throw new Error("invalid YAML document");
+    }
+    data = document.toJS({ mapAsMap: true, maxAliasCount: 100 });
+  } catch {
+    throw new McpBridgeError("Hermes MCP source inspection returned invalid YAML.");
+  }
+  const servers = data instanceof Map ? data.get("mcp_servers") : undefined;
+  if (servers !== undefined && !(servers instanceof Map)) {
+    throw new McpBridgeError("Agent MCP source inspection returned an invalid server collection.");
+  }
+  const entries: [unknown, unknown][] = servers === undefined ? [] : Array.from(servers.entries());
+  const remoteEntries = entries.filter(
+    (entry): entry is [string, Map<unknown, unknown>] =>
+      typeof entry[0] === "string" &&
+      entry[1] instanceof Map &&
+      typeof entry[1].get("url") === "string",
+  );
+  const records = remoteEntries.map(([server, value]) => {
+    const headers = value.get("headers");
+    const authorization =
+      headers instanceof Map
+        ? Array.from(headers.entries()).find(
+            ([name]) => typeof name === "string" && name.toLowerCase() === "authorization",
+          )?.[1]
+        : undefined;
+    const placeholder =
+      typeof authorization === "string"
+        ? (/^Bearer openshell:resolve:env:(.*)$/u.exec(authorization)?.[1] ?? "")
+        : "";
+    const env = placeholder.replace(/^v[0-9]+_/u, "");
+    return {
+      server,
+      url: value.get("url"),
+      env: /^[A-Za-z_][A-Za-z0-9_]*$/u.test(env) ? env : null,
+      source: "native",
+    };
+  });
+  return parseSourceRecords(JSON.stringify(records));
 }
 
 function entryFromRecord(
@@ -260,7 +305,11 @@ function inspectAgentMcpSourcesForAgent(
   }
   const native: Record<string, McpSourceEntry> = {};
   const legacy: Record<string, McpSourceEntry> = {};
-  for (const record of parseSourceRecords(result.stdout)) {
+  const records =
+    adapter === "hermes-config"
+      ? parseHermesSourceRecords(result.stdout)
+      : parseSourceRecords(result.stdout);
+  for (const record of records) {
     const entry = entryFromRecord(record, agent.name, adapter);
     if (!entry) continue;
     (record.source === "native" ? native : legacy)[entry.server] = entry;

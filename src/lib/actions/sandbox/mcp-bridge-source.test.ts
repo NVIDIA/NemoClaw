@@ -1,12 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   executeSandboxCommand: vi.fn(),
   capturePolicy: vi.fn(),
   inspectProvider: vi.fn(),
+  configRoot: "/sandbox",
 }));
 
 vi.mock("../../agent/defs", () => ({
@@ -21,13 +27,13 @@ vi.mock("../../agent/defs", () => ({
       hermes: {
         name: "hermes",
         displayName: "Hermes",
-        configPaths: { dir: "/sandbox/.hermes" },
+        configPaths: { dir: `${mocks.configRoot}/.hermes` },
         mcpCapability: { support: "bridge", adapter: "hermes-config" },
       },
       "langchain-deepagents-code": {
         name: "langchain-deepagents-code",
         displayName: "Deep Agents Code",
-        configPaths: { dir: "/sandbox/.deepagents" },
+        configPaths: { dir: `${mocks.configRoot}/.deepagents` },
         mcpCapability: { support: "bridge", adapter: "deepagents-config" },
       },
     })[name],
@@ -43,6 +49,7 @@ vi.mock("./process-recovery", () => ({
 }));
 
 import {
+  inspectAgentMcpSources,
   inspectLegacyBridgeState,
   inspectPolicyOnlyMcpEntry,
   inspectSourceBridgeState,
@@ -83,6 +90,54 @@ network_policies:
       credentialKeys: ["GITHUB_TOKEN"],
     });
   });
+
+  it.each([
+    ["langchain-deepagents-code", ".deepagents", ".mcp.json", "mcpServers", "native"],
+    ["langchain-deepagents-code", ".deepagents", ".nemoclaw-mcp.json", "mcpServers", "legacy"],
+    ["hermes", ".hermes", "config.yaml", "mcp_servers", "native"],
+  ])(
+    "reads %s from literal paths without sandbox Python packages (%s/%s)",
+    (agent, directory, file, serverMap, source) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-source-"quoted"-'));
+      mocks.configRoot = root;
+      try {
+        fs.mkdirSync(path.join(root, directory));
+        fs.writeFileSync(
+          path.join(root, directory, file),
+          JSON.stringify({
+            [serverMap]: {
+              github: {
+                url: "https://api.githubcopilot.com/mcp/",
+                headers: { Authorization: "Bearer openshell:resolve:env:v42_GITHUB_TOKEN" },
+              },
+            },
+          }),
+          { mode: 0o600 },
+        );
+        mocks.executeSandboxCommand.mockImplementation((_name: string, command: string) => {
+          const program = command.split("<<'PY'\n")[1].split("\nPY")[0];
+          const result = spawnSync("python3", ["-I", "-S", "-"], {
+            cwd: root,
+            input: program,
+            encoding: "utf8",
+            timeout: 10_000,
+          });
+          return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+        });
+        const observed = inspectAgentMcpSources({ ...sandbox, agent }, runtimeSelection);
+        expect(observed[source as "native" | "legacy"].github).toMatchObject({
+          server: "github",
+          agent,
+          source,
+          url: "https://api.githubcopilot.com/mcp/",
+          env: ["GITHUB_TOKEN"],
+        });
+      } finally {
+        mocks.configRoot = "/sandbox";
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("joins native agent configuration with live policy and provider state", async () => {
     mocks.executeSandboxCommand.mockReturnValue({
@@ -164,14 +219,7 @@ network_policies:
     mocks.executeSandboxCommand.mockImplementation((_name: string, command: string) => ({
       status: 0,
       stdout: command.includes("/sandbox/.hermes/config.yaml")
-        ? JSON.stringify([
-            {
-              server: "github",
-              url: "https://api.githubcopilot.com/mcp/",
-              env: "GITHUB_TOKEN",
-              source: "native",
-            },
-          ])
+        ? "mcp_servers:\n  github:\n    url: https://api.githubcopilot.com/mcp/\n    headers:\n      Authorization: Bearer openshell:resolve:env:GITHUB_TOKEN\n"
         : "[]",
       stderr: "",
     }));
@@ -189,9 +237,6 @@ network_policies:
     );
     expect(commands.find((command) => command.includes("/sandbox/.hermes/config.yaml"))).toContain(
       "/usr/bin/python3.13 -I -S",
-    );
-    expect(commands.find((command) => command.includes("/sandbox/.hermes/config.yaml"))).toContain(
-      "sys.path.insert(0, '/opt/hermes/.venv/lib/python3.13/site-packages')",
     );
     expect(commands.find((command) => command.includes("openclaw.json"))).toContain(
       "before.uid !== 0 && before.uid !== process.getuid()",
