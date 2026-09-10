@@ -101,16 +101,14 @@ describe("Hermes rebuild cron ticker timestamp", () => {
     );
   });
 
-  it.each([
-    "",
-    "not-an-epoch\n",
-    "Infinity\n",
-    "-1\n",
-  ])("rejects malformed ticker evidence %j", (evidence) => {
-    expect(() => parseCronTickerTimestamp(evidence, "ticker timestamp")).toThrow(
-      "ticker timestamp is invalid",
-    );
-  });
+  it.each(["", "not-an-epoch\n", "Infinity\n", "-1\n"])(
+    "rejects malformed ticker evidence %j",
+    (evidence) => {
+      expect(() => parseCronTickerTimestamp(evidence, "ticker timestamp")).toThrow(
+        "ticker timestamp is invalid",
+      );
+    },
+  );
 });
 
 describe("Hermes rebuild gateway evidence", () => {

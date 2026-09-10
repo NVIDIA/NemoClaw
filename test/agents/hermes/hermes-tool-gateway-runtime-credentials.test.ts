@@ -8,9 +8,7 @@ import { describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 const { RuntimeRefreshCredentialStore } =
   require("../../../agents/hermes/host/runtime-refresh-credentials.ts") as {
-    RuntimeRefreshCredentialStore: new (
-      hashCredential: (value: string) => string,
-    ) => {
+    RuntimeRefreshCredentialStore: new (hashCredential: (value: string) => string) => {
       register(state: Record<string, unknown>, refreshToken: string): boolean;
       replace(state: Record<string, unknown>, refreshToken: string): (() => boolean) | null;
       resolve(state: Record<string, unknown>): string | null;

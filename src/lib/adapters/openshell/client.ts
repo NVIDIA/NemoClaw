@@ -416,12 +416,12 @@ export function captureOpenshellCommandAsyncResult(
     let stderrBytes = 0;
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
-    const outputLimitBytes =
-      opts.outputLimitBytes === undefined || opts.outputLimitBytes === Number.POSITIVE_INFINITY
-        ? Number.POSITIVE_INFINITY
-        : Number.isFinite(opts.outputLimitBytes)
-          ? Math.max(0, opts.outputLimitBytes)
-          : 0;
+    let outputLimitBytes = 0;
+    if (opts.outputLimitBytes === undefined || opts.outputLimitBytes === Number.POSITIVE_INFINITY) {
+      outputLimitBytes = Number.POSITIVE_INFINITY;
+    } else if (Number.isFinite(opts.outputLimitBytes)) {
+      outputLimitBytes = Math.max(0, opts.outputLimitBytes);
+    }
     const killGraceMs = opts.killGraceMs ?? 1000;
 
     const clearTimers = () => {

@@ -19,10 +19,7 @@ const EXACT_OPENAI_PROFILE = JSON.stringify({
   inference_capable: true,
 });
 
-function loadRotateTokenFixture(input: {
-  providerType: string;
-  captureResults: CaptureResult[];
-}) {
+function loadRotateTokenFixture(input: { providerType: string; captureResults: CaptureResult[] }) {
   const queuedCaptureResults = [...input.captureResults];
   const captureOpenshellCommand = vi.fn(
     (_binary: string, _args: string[], _options?: unknown): CaptureResult =>
@@ -89,17 +86,9 @@ describe("config rotate-token OpenAI provider profile", () => {
 
     await rotateSandboxToken("rotate-profile-test", {}, fixture.deps);
 
-    expect(
-      fixture.captureOpenshellCommand.mock.calls.map(([, args]) => args),
-    ).toEqual([
+    expect(fixture.captureOpenshellCommand.mock.calls.map(([, args]) => args)).toEqual([
       ["provider", "profile", "export", "openai", "--output", "json"],
-      [
-        "provider",
-        "profile",
-        "import",
-        "--file",
-        expect.stringMatching(/openai\.yaml$/u),
-      ],
+      ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/u)],
       ["provider", "profile", "export", "openai", "--output", "json"],
     ]);
     expect(fixture.captureOpenshellCommand.mock.calls[0]?.[2]).toMatchObject({
@@ -107,9 +96,9 @@ describe("config rotate-token OpenAI provider profile", () => {
       includeStreams: true,
       timeout: 30_000,
     });
-    expect(
-      fixture.captureOpenshellCommand.mock.invocationCallOrder[2],
-    ).toBeLessThan(fixture.saveCredential.mock.invocationCallOrder[0]!);
+    expect(fixture.captureOpenshellCommand.mock.invocationCallOrder[2]).toBeLessThan(
+      fixture.saveCredential.mock.invocationCallOrder[0]!,
+    );
     expect(fixture.saveCredential.mock.invocationCallOrder[0]).toBeLessThan(
       fixture.runOpenshellCommand.mock.invocationCallOrder[0]!,
     );
@@ -135,9 +124,7 @@ describe("config rotate-token OpenAI provider profile", () => {
       ],
     });
 
-    await expect(
-      rotateSandboxToken("rotate-profile-test", {}, fixture.deps),
-    ).rejects.toThrow(
+    await expect(rotateSandboxToken("rotate-profile-test", {}, fixture.deps)).rejects.toThrow(
       "does not match NemoClaw's endpointless inference contract",
     );
     expect(fixture.saveCredential).not.toHaveBeenCalled();
@@ -187,10 +174,7 @@ describe("config rotate-token OpenAI provider profile", () => {
     await rotateSandboxToken("rotate-profile-test", {}, fixture.deps);
 
     expect(fixture.captureOpenshellCommand).not.toHaveBeenCalled();
-    expect(fixture.saveCredential).toHaveBeenCalledWith(
-      "OPENAI_API_KEY",
-      "rotation-secret",
-    );
+    expect(fixture.saveCredential).toHaveBeenCalledWith("OPENAI_API_KEY", "rotation-secret");
     expect(fixture.runOpenshellCommand).toHaveBeenCalledOnce();
     expect(fixture.appendAuditEntry).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -199,8 +183,6 @@ describe("config rotate-token OpenAI provider profile", () => {
         reason: "rotate-token openclaw:OPENAI_API_KEY",
       }),
     );
-    expect(JSON.stringify(fixture.appendAuditEntry.mock.calls)).not.toContain(
-      "rotation-secret",
-    );
+    expect(JSON.stringify(fixture.appendAuditEntry.mock.calls)).not.toContain("rotation-secret");
   });
 });

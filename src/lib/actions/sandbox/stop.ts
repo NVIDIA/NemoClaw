@@ -117,9 +117,7 @@ export function discoverActiveOllamaSandboxNames(
         }`,
       };
     }
-    const phases = new Map(
-      parseEntries(result.output).map((entry) => [entry.name, entry.phase]),
-    );
+    const phases = new Map(parseEntries(result.output).map((entry) => [entry.name, entry.phase]));
     const activeSandboxes: string[] = [];
     for (const peerName of peerNames) {
       const phase = phases.get(peerName);
@@ -148,19 +146,20 @@ function releaseStoppedSandboxOllamaModel(
   if (!isLocalOllamaRouteOwner(sandbox)) return { ok: true };
 
   try {
-    const proxy = require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy");
+    const proxy =
+      require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy");
     const withOwnershipLock =
       deps.withOllamaModelOwnershipLock ?? proxy.withOllamaModelOwnershipLock;
-    const loadPersistedOllamaHost =
-      deps.loadPersistedOllamaHost ?? proxy.loadPersistedOllamaHost;
+    const loadPersistedOllamaHost = deps.loadPersistedOllamaHost ?? proxy.loadPersistedOllamaHost;
     return withOwnershipLock(() => {
       const selectedHost = loadPersistedOllamaHost();
       if (!isLocalOllamaRouteOwner(sandbox, selectedHost)) return { ok: true };
       const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
       const matchingPeers = matchingOllamaModelPeers(sandbox, sandboxes, selectedHost);
-      const discovery = (
-        deps.discoverActiveOllamaSandboxNames ?? discoverActiveOllamaSandboxNames
-      )(matchingPeers, deps.environment ?? process.env);
+      const discovery = (deps.discoverActiveOllamaSandboxNames ?? discoverActiveOllamaSandboxNames)(
+        matchingPeers,
+        deps.environment ?? process.env,
+      );
       if (!discovery.ok) {
         return {
           ok: false,

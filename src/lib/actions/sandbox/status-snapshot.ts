@@ -732,10 +732,10 @@ export async function collectSandboxStatusSnapshot(
   const llamaCpp =
     routeDriftPlan?.kind === "aligned"
       ? getLlamaCppRouteDetails(
-        sb,
-        opts.deps?.inspectManagedLlamaCppOwnership ?? inspectManagedLlamaCppOwnership,
-      )
-    : null;
+          sb,
+          opts.deps?.inspectManagedLlamaCppOwnership ?? inspectManagedLlamaCppOwnership,
+        )
+      : null;
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   const terminalRuntimeHealth =
     lookup.state === "present" && !suppressInferenceProbe && statusAgent.agentRuntime === "terminal"

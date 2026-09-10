@@ -368,53 +368,53 @@ describe("legacy snapshot compatibility gate", () => {
     expect(providerRestore.prepareSandboxRuntimeRestore).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "source",
-    "destination",
-  ] as const)("rejects cross-clone when the current %s is managed", async (managedSide) => {
-    const source = {
-      name: "alpha",
-      agent: "openclaw" as const,
-      openshellDriver: "docker",
-      imageTag: "legacy-source:test",
-      ...(managedSide === "source" ? { workload: managedWorkload() } : {}),
-    };
-    const destination =
-      managedSide === "destination"
-        ? {
-            name: "beta",
-            agent: "openclaw" as const,
-            openshellDriver: "docker",
-            imageTag: "managed-target@test",
-            workload: managedWorkload(),
-          }
-        : null;
-    fixture.getSandboxMock.mockImplementation((name) =>
-      name === "alpha" ? source : name === "beta" ? destination : null,
-    );
-    fixture.parseLiveSandboxNamesMock.mockReturnValue(
-      new Set(managedSide === "destination" ? ["alpha", "beta"] : ["alpha"]),
-    );
-    const { runSandboxSnapshot } = await import("./snapshot");
+  it.each(["source", "destination"] as const)(
+    "rejects cross-clone when the current %s is managed",
+    async (managedSide) => {
+      const source = {
+        name: "alpha",
+        agent: "openclaw" as const,
+        openshellDriver: "docker",
+        imageTag: "legacy-source:test",
+        ...(managedSide === "source" ? { workload: managedWorkload() } : {}),
+      };
+      const destination =
+        managedSide === "destination"
+          ? {
+              name: "beta",
+              agent: "openclaw" as const,
+              openshellDriver: "docker",
+              imageTag: "managed-target@test",
+              workload: managedWorkload(),
+            }
+          : null;
+      fixture.getSandboxMock.mockImplementation((name) =>
+        name === "alpha" ? source : name === "beta" ? destination : null,
+      );
+      fixture.parseLiveSandboxNamesMock.mockReturnValue(
+        new Set(managedSide === "destination" ? ["alpha", "beta"] : ["alpha"]),
+      );
+      const { runSandboxSnapshot } = await import("./snapshot");
 
-    await expect(
-      runSandboxSnapshot("alpha", {
-        kind: "restore",
-        to: "beta",
-        force: true,
-        yes: true,
-      }),
-    ).rejects.toMatchObject({ exitCode: 1 });
+      await expect(
+        runSandboxSnapshot("alpha", {
+          kind: "restore",
+          to: "beta",
+          force: true,
+          yes: true,
+        }),
+      ).rejects.toMatchObject({ exitCode: 1 });
 
-    expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining("legacy snapshot lacks managed workload"),
-    );
-    expect(
-      fixture.runOpenshellMock.mock.calls.some(
-        ([args]) => args[0] === "sandbox" && args[1] === "delete",
-      ),
-    ).toBe(false);
-    expect(fixture.streamSandboxCreateMock).not.toHaveBeenCalled();
-    expect(fixture.restoreSandboxStateMock).not.toHaveBeenCalled();
-  });
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining("legacy snapshot lacks managed workload"),
+      );
+      expect(
+        fixture.runOpenshellMock.mock.calls.some(
+          ([args]) => args[0] === "sandbox" && args[1] === "delete",
+        ),
+      ).toBe(false);
+      expect(fixture.streamSandboxCreateMock).not.toHaveBeenCalled();
+      expect(fixture.restoreSandboxStateMock).not.toHaveBeenCalled();
+    },
+  );
 });
