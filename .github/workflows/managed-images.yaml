@@ -523,7 +523,7 @@ jobs:
             --audit-config "$trusted_root/ci/reviewed-npm-audit.json" \
             --registry https://registry.yarnpkg.com \
             --threshold high \
-            --legacy-npmjs true \
+            --legacy-audit true \
             --result "$policy"
           test -f "$receipt"; test -f "$raw"; test -s "$policy"; test ! -L "$policy"
           printf 'receipt=%s\nraw=%s\npolicy=%s\nreceipt_sha256=%s\npolicy_sha256=%s\n' "$receipt" "$raw" "$policy" "$(sha256sum "$receipt" | cut -d' ' -f1)" "$(sha256sum "$policy" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"

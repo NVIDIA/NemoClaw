@@ -184,7 +184,11 @@ function completeAuditEvidence(auditDirectory: string): void {
 function completeValidAuditEvidence(auditDirectory: string): void {
   const auditConfig = JSON.parse(
     readFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
-  ) as { readonly npmVersion: string };
+  ) as {
+    readonly npmArchiveSha256: string;
+    readonly npmIntegrity: string;
+    readonly npmVersion: string;
+  };
   const exceptionFile = path.join(REPO_ROOT, "ci/npm-audit-exceptions.json");
   const rawReportFile = path.join(auditDirectory, "audit.json");
   mkdirSync(auditDirectory, { recursive: true });
@@ -201,11 +205,11 @@ function completeValidAuditEvidence(auditDirectory: string): void {
   emitAuditReceipt({
     artifactDirectory: auditDirectory,
     graphId: "mcporter-runtime",
-    npmVersion: auditConfig.npmVersion,
     packageJsonFile: path.join(REPO_ROOT, "agents/openclaw/mcporter-runtime/package.json"),
     packageLockFile: path.join(REPO_ROOT, "agents/openclaw/mcporter-runtime/package-lock.json"),
     rawReportFile,
     registryOrigin: "https://registry.yarnpkg.com",
+    reviewedNpmIdentity: auditConfig,
     result: {
       acceptedAdvisories: [],
       blockingThreshold: "high",
