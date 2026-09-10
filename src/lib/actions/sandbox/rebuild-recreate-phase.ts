@@ -164,6 +164,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       s,
       onboardSession.createSession({
         mode: "non-interactive",
+        servingProfileProvenance: sb.servingProfileProvenance,
         hermesAuthMethod: rebuildDurableConfig.hermesAuthMethod,
         webSearchConfig: rebuildDurableConfig.webSearchConfig,
         toolDisclosure: rebuildDurableConfig.toolDisclosure,
