@@ -56,42 +56,170 @@
         "inferenceProviders": {
           "type": "array",
           "items": {
-            "type": "object",
-            "required": ["name", "provider", "api", "endpoint"],
-            "properties": {
-              "name": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 63,
-                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-              },
-              "provider": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 512,
-                "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
-              },
-              "api": {
-                "enum": ["openai-completions", "openai-responses", "anthropic-messages"]
-              },
-              "endpoint": {
-                "type": "string",
-                "maxLength": 2048,
-                "pattern": "^https://[^\\s]+$"
-              },
-              "credential": {
+            "anyOf": [
+              {
                 "type": "object",
-                "required": ["env"],
+                "required": ["name", "provider", "api", "endpoint"],
                 "properties": {
-                  "env": {
+                  "name": {
                     "type": "string",
-                    "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+                    "minLength": 1,
+                    "maxLength": 63,
+                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                  },
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$",
+                    "not": {
+                      "const": "vllm-local"
+                    }
+                  },
+                  "api": {
+                    "enum": ["openai-completions", "openai-responses", "anthropic-messages"]
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "pattern": "^https://[^\\s]+$"
+                  },
+                  "credential": {
+                    "type": "object",
+                    "required": ["env"],
+                    "properties": {
+                      "env": {
+                        "type": "string",
+                        "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["name", "provider", "api", "serving"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 63,
+                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                  },
+                  "provider": {
+                    "type": "string",
+                    "const": "vllm-local"
+                  },
+                  "api": {
+                    "type": "string",
+                    "const": "openai-completions"
+                  },
+                  "serving": {
+                    "type": "object",
+                    "required": [
+                      "backend",
+                      "catalogDigest",
+                      "profile",
+                      "recipe",
+                      "model",
+                      "runtime",
+                      "hostPort"
+                    ],
+                    "properties": {
+                      "backend": {
+                        "type": "string",
+                        "const": "vllm"
+                      },
+                      "catalogDigest": {
+                        "type": "string",
+                        "pattern": "^sha256:[a-f0-9]{64}$"
+                      },
+                      "profile": {
+                        "type": "object",
+                        "required": ["id", "digest"],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "const": "vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4"
+                          },
+                          "digest": {
+                            "type": "string",
+                            "pattern": "^sha256:[a-f0-9]{64}$"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "recipe": {
+                        "type": "object",
+                        "required": ["id", "digest"],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "const": "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1"
+                          },
+                          "digest": {
+                            "type": "string",
+                            "pattern": "^sha256:[a-f0-9]{64}$"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "model": {
+                        "type": "object",
+                        "required": ["id", "revision", "servedName"],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                          },
+                          "revision": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{40}$"
+                          },
+                          "servedName": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "runtime": {
+                        "type": "object",
+                        "required": ["image"],
+                        "properties": {
+                          "image": {
+                            "type": "object",
+                            "required": ["ref"],
+                            "properties": {
+                              "ref": {
+                                "type": "string",
+                                "maxLength": 512,
+                                "pattern": "^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$"
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "hostPort": {
+                        "type": "integer",
+                        "minimum": 1024,
+                        "maximum": 65535
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false
               }
-            },
-            "additionalProperties": false
+            ]
           },
           "minItems": 1
         },
@@ -211,6 +339,11 @@
                                     "minLength": 1,
                                     "maxLength": 512,
                                     "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                  },
+                                  "contextWindow": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 4194304
                                   }
                                 },
                                 "additionalProperties": false
@@ -227,6 +360,44 @@
                   "additionalProperties": false
                 },
                 "minItems": 1
+              },
+              "integrations": {
+                "type": "object",
+                "required": ["webSearch"],
+                "properties": {
+                  "webSearch": {
+                    "type": "object",
+                    "required": ["provider", "agentRefs", "credential"],
+                    "properties": {
+                      "provider": {
+                        "type": "string",
+                        "const": "brave"
+                      },
+                      "agentRefs": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "const": "primary"
+                        },
+                        "minItems": 1,
+                        "maxItems": 1
+                      },
+                      "credential": {
+                        "type": "object",
+                        "required": ["env"],
+                        "properties": {
+                          "env": {
+                            "type": "string",
+                            "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "additionalProperties": false

@@ -16,6 +16,8 @@ import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
 import { sortCanonicalMappings } from "../../config/canonical-mapping";
 import {
   isCredentialEnvironmentReferenceName,
+  EXPORTED_VLLM_PROFILE_ID,
+  EXPORTED_VLLM_CONTEXT_WINDOW,
   isImmutableImageReference,
   isValidNemoClawBoundedText,
   isValidNemoClawInferenceEndpoint,
@@ -27,6 +29,7 @@ import {
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
+import { validateManagedServing } from "./verify-managed-serving";
 import type {
   CanonicalExportPolicy,
   ExportFinding,
@@ -85,7 +88,7 @@ const EXPORT_AGENT_PROFILE_PROJECTIONS: Record<
 
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
-  "agent" | "gateway" | "inference" | "policy" | "proxy" | "runtime" | "sandboxName"
+  "agent" | "gateway" | "inference" | "policy" | "proxy" | "runtime" | "sandboxName" | "webSearch"
 >;
 
 function verifiedExportSource(data: VerifiedExportSourceData): VerifiedExportSource {
@@ -116,6 +119,10 @@ function hasEntries(value: unknown): boolean {
   return Array.isArray(value)
     ? value.length > 0
     : value !== undefined && value !== null && value !== false;
+}
+
+function hasBraveSearch(entry: ObservedExportRegistry): boolean {
+  return entry.webSearchEnabled === true && entry.webSearchProvider === "brave";
 }
 
 function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
@@ -170,7 +177,7 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
     ["spec.sandboxes[].observability", entry.observabilityEnabled, "observability"],
     [
       "spec.sandboxes[].integrations.webSearch",
-      entry.webSearchEnabled || entry.webSearchProvider,
+      !hasBraveSearch(entry) && (entry.webSearchEnabled || entry.webSearchProvider),
       "web search",
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
@@ -340,7 +347,7 @@ export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFin
       finding(
         "spec.inferenceProviders",
         "unsupported",
-        "V1 export supports hosted external inference only.",
+        "This local inference topology is not represented by v1 export.",
       ),
     );
   return findings;
@@ -380,13 +387,16 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
       compatibility: projection.compatibility,
     },
     dashboard: projection.dashboard,
-    webSearch: null,
+    webSearch: hasBraveSearch(entry) ? { fetchEnabled: true, provider: "brave" } : null,
     toolDisclosure: "progressive",
     hermesToolGateways: [],
     messagingPlan: null,
     dcodeAutoApprovalMode: null,
     observabilityEnabled: null,
-    environment: {},
+    environment:
+      entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID
+        ? { NEMOCLAW_CONTEXT_WINDOW: String(EXPORTED_VLLM_CONTEXT_WINDOW) }
+        : {},
     corporateCa: null,
   }).profile;
 }
@@ -530,15 +540,91 @@ function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): Export
         "Registry and live sandbox images differ.",
       ),
     );
-  if (sandbox.providerNames.some((name) => name !== inference.provider))
+  const additionalProviders = sandbox.providerNames.filter((name) => name !== inference.provider);
+  const expectedAdditionalProviders = hasBraveSearch(entry) ? [`${entry.name}-brave-search`] : [];
+  if (
+    !isDeepStrictEqual(additionalProviders, expectedAdditionalProviders) ||
+    new Set(sandbox.providerNames).size !== sandbox.providerNames.length
+  )
     findings.push(
       finding(
         "source.sandbox.providers",
         "unsupported",
-        "V1 export does not support additional provider attachments.",
+        "The sandbox provider attachments do not match its supported configuration.",
       ),
     );
   return findings;
+}
+
+function validBraveProfile(
+  provider: NonNullable<QualifiedExportSnapshot["webSearchProvider"]>,
+): boolean {
+  const { profile, profileWorkspace } = provider;
+  if (!profile || profile.id !== "brave" || !isValidNemoClawBoundedText(profile.resourceVersion))
+    return false;
+  if (profile.source === "builtin") {
+    return isDeepStrictEqual(
+      [profileWorkspace, profile.scope, profile.resourceVersion],
+      ["", "", "0"],
+    );
+  }
+  return (
+    profile.source === "user" &&
+    /^[1-9][0-9]*$/u.test(profile.resourceVersion) &&
+    (isDeepStrictEqual([profileWorkspace, profile.scope], ["", "platform"]) ||
+      isDeepStrictEqual([profileWorkspace, profile.scope], [provider.workspace, "workspace"]))
+  );
+}
+
+function validateWebSearchProvider(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { registry, webSearchProvider: provider, sandbox, gateway } = snapshot;
+  if (!hasBraveSearch(registry)) {
+    return provider === undefined
+      ? []
+      : [finding("source.webSearch", "ambiguous", "Unexpected web-search provider evidence.")];
+  }
+  if (!provider) {
+    return [
+      finding(
+        "source.webSearch",
+        "missing-provenance",
+        "Live Brave provider evidence is required.",
+      ),
+    ];
+  }
+  if (
+    !validBraveProfile(provider) ||
+    !isValidNemoClawBoundedText(provider.id) ||
+    !isValidNemoClawBoundedText(provider.resourceVersion) ||
+    !/^[1-9][0-9]*$/u.test(provider.resourceVersion) ||
+    !isDeepStrictEqual(
+      [
+        provider.gatewayName,
+        provider.workspace,
+        provider.name,
+        provider.type,
+        provider.credentialKeys,
+        provider.configKeys,
+      ],
+      [
+        gateway.name,
+        sandbox.workspace,
+        `${registry.name}-brave-search`,
+        "brave",
+        ["BRAVE_API_KEY"],
+        [],
+      ],
+    )
+  ) {
+    return [
+      finding(
+        "source.webSearch",
+        "drifted",
+        "The live Brave provider does not match its managed binding.",
+      ),
+    ];
+  }
+  return [];
 }
 
 function validateGateway(snapshot: QualifiedExportSnapshot): ExportFinding[] {
@@ -569,15 +655,26 @@ function validateGateway(snapshot: QualifiedExportSnapshot): ExportFinding[] {
 function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { registry: entry, inference } = snapshot;
   const findings: ExportFinding[] = [];
-  if (inference.topology !== "hosted")
+  if (inference.topology !== "hosted" && inference.topology !== "managed")
     findings.push(
       finding(
         "spec.inferenceProviders",
         "unsupported",
-        "V1 export supports hosted external inference only.",
+        "This local inference topology is not represented by v1 export.",
       ),
     );
 
+  if (
+    inference.topology !== "managed" &&
+    (entry.servingProfileProvenance || inference.managedServing)
+  )
+    findings.push(
+      finding(
+        "spec.inferenceProviders[].serving",
+        "unsupported",
+        "Recorded managed serving requires complete live managed runtime evidence.",
+      ),
+    );
   const selected = normalizeInferenceSelection(entry);
   if (
     !isDeepStrictEqual(
@@ -609,6 +706,7 @@ function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFi
 
 function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
+  if (inference.topology === "managed") return validateManagedServing(snapshot);
   const findings: ExportFinding[] = [];
   if (
     [inference.provider, inference.model, inference.api, inference.endpoint].some((value) => !value)
@@ -658,7 +756,7 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
   }
   const findings: ExportFinding[] = [];
 
-  if (!isValidNemoClawInferenceEndpoint(evidence.endpoint))
+  if (inference.topology !== "managed" && !isValidNemoClawInferenceEndpoint(evidence.endpoint))
     findings.push(
       finding(
         "source.inference.endpoint",
@@ -695,6 +793,7 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
 
 function validateCredentialReference(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
+  if (inference.topology === "managed") return [];
   const findings: ExportFinding[] = [];
   if (
     inference.credentialEnv !== null &&
@@ -753,6 +852,7 @@ function validateAgreement(
     ...classifyExportRegistry(snapshot.registry),
     ...validateSandboxIdentity(requestedSandboxName, snapshot),
     ...validateSandboxConfiguration(snapshot),
+    ...validateWebSearchProvider(snapshot),
     ...validateGateway(snapshot),
     ...validateInferenceSelection(snapshot),
     ...validateInferenceRepresentation(snapshot),
@@ -794,18 +894,35 @@ function completeVerifiedSource(
   const values = {
     sandboxName: requestedSandboxName,
     agent: entry.agent,
+    ...(hasBraveSearch(entry)
+      ? {
+          webSearch: {
+            provider: "brave",
+            agentRefs: ["primary"],
+            credential: { env: "BRAVE_API_KEY" },
+          },
+        }
+      : {}),
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
     ...(proxy && !hasEqualJsonStructure(proxy, expectedManagedStartupProfile(entry).proxy)
       ? { proxy: { host: proxy.managedHost, port: proxy.managedPort } }
       : {}),
-    inference: {
-      provider: selected.provider,
-      model: selected.model,
-      api: selected.preferredInferenceApi,
-      endpoint: selected.endpointUrl,
-      ...(selected.credentialEnv === null ? {} : { credentialEnv: selected.credentialEnv }),
-    },
+    inference:
+      snapshot.inference.topology === "managed"
+        ? {
+            provider: selected.provider,
+            model: selected.model,
+            api: selected.preferredInferenceApi,
+            serving: snapshot.inference.managedServing?.serving,
+          }
+        : {
+            provider: selected.provider,
+            model: selected.model,
+            api: selected.preferredInferenceApi,
+            endpoint: selected.endpointUrl,
+            ...(selected.credentialEnv === null ? {} : { credentialEnv: selected.credentialEnv }),
+          },
   };
   if (!Check(ExportSourceValuesSchema, values)) {
     return {

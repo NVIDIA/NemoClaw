@@ -201,6 +201,33 @@ function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): ObservedExpo
   };
 }
 
+function braveSnapshot(): ObservedExportSnapshot {
+  const value = snapshot();
+  return {
+    ...value,
+    registry: entry({
+      webSearchEnabled: true,
+      webSearchProvider: "brave",
+      workload: managedWorkload(
+        profileInput({ webSearch: { fetchEnabled: true, provider: "brave" } }),
+      ),
+    }),
+    sandbox: { ...value.sandbox, providerNames: ["alpha-brave-search"] },
+    webSearchProvider: {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      name: "alpha-brave-search",
+      id: "brave-provider-id",
+      resourceVersion: "4",
+      type: "brave",
+      profileWorkspace: "default",
+      profile: { id: "brave", source: "user", scope: "workspace", resourceVersion: "4" },
+      credentialKeys: ["BRAVE_API_KEY"],
+      configKeys: [],
+    },
+  };
+}
+
 function hermesSnapshot(registryOverrides: Partial<SandboxEntry> = {}): ObservedExportSnapshot {
   const workload = managedWorkload(hermesProfileInput(), hermesImageRef);
   return snapshot({
@@ -270,6 +297,97 @@ function proxySnapshot(
 }
 
 describe("config export source verification (#10938)", () => {
+  it.each([false, true])(
+    "verifies Brave with optional inference attachment %s (#10904)",
+    (attached) => {
+      const value = braveSnapshot();
+      const providers = attached
+        ? [value.inference.provider, "alpha-brave-search"]
+        : ["alpha-brave-search"];
+      const result = verify({ ...value, sandbox: { ...value.sandbox, providerNames: providers } });
+      expect(verifiedSource(result).webSearch).toEqual({
+        provider: "brave",
+        agentRefs: ["primary"],
+        credential: { env: "BRAVE_API_KEY" },
+      });
+    },
+  );
+
+  it.each([
+    [],
+    ["foreign-brave-search"],
+    ["alpha-brave-search", "alpha-brave-search"],
+    ["alpha-brave-search", "extra"],
+    ["alpha-brave-search", "openai-api", "openai-api"],
+  ])("rejects missing or unexpected Brave attachments %j (#10904)", (...providerNames) => {
+    const value = braveSnapshot();
+    expect(
+      findings(verify({ ...value, sandbox: { ...value.sandbox, providerNames } })),
+    ).toContainEqual(
+      expect.objectContaining({ field: "source.sandbox.providers", category: "unsupported" }),
+    );
+  });
+
+  it.each([
+    { gatewayName: "foreign" },
+    { workspace: "foreign" },
+    { name: "foreign-brave-search" },
+    { id: "" },
+    { resourceVersion: "" },
+    { resourceVersion: "0" },
+    { type: "generic" },
+    { credentialKeys: ["TAVILY_API_KEY"] },
+    { credentialKeys: ["BRAVE_API_KEY", "OTHER_KEY"] },
+    { configKeys: ["BASE_URL"] },
+    { profileWorkspace: "foreign" },
+    { profileWorkspace: undefined },
+    { profile: undefined },
+    { profile: { id: "other", source: "builtin", scope: "", resourceVersion: "0" } },
+    { profile: { id: "brave", source: "user", scope: "platform", resourceVersion: "1" } },
+    { profile: { id: "brave", source: "builtin", scope: "workspace", resourceVersion: "0" } },
+    { profile: { id: "brave", source: "builtin", scope: "", resourceVersion: "1" } },
+  ])("rejects mismatched Brave metadata %j (#10904)", (change) => {
+    const value = braveSnapshot();
+    expect(
+      findings(verify({ ...value, webSearchProvider: { ...value.webSearchProvider!, ...change } })),
+    ).toContainEqual(expect.objectContaining({ field: "source.webSearch", category: "drifted" }));
+  });
+
+  it("requires Brave metadata and matching startup intent (#10904)", () => {
+    const value = braveSnapshot();
+    expect(findings(verify({ ...value, webSearchProvider: undefined }))).toContainEqual(
+      expect.objectContaining({ field: "source.webSearch", category: "missing-provenance" }),
+    );
+    expect(
+      findings(verify({ ...value, registry: { ...value.registry, workload: managedWorkload() } })),
+    ).toContainEqual(
+      expect.objectContaining({ field: "source.workload.startupProfile", category: "unsupported" }),
+    );
+    expect(
+      findings(verify({ ...value, registry: { ...value.registry, webSearchProvider: "tavily" } })),
+    ).toContainEqual(
+      expect.objectContaining({
+        field: "spec.sandboxes[].integrations.webSearch",
+        category: "unsupported",
+      }),
+    );
+  });
+
+  it("keeps unrelated startup settings unsupported with Brave enabled (#10904)", () => {
+    const value = braveSnapshot();
+    const workload = managedWorkload(
+      profileInput({
+        webSearch: { fetchEnabled: true, provider: "brave" },
+        environment: { NEMOCLAW_AGENT_TIMEOUT: "900" },
+      }),
+    );
+    expect(
+      findings(verify({ ...value, registry: { ...value.registry, workload } })),
+    ).toContainEqual(
+      expect.objectContaining({ field: "source.workload.startupProfile", category: "unsupported" }),
+    );
+  });
+
   it("qualifies and verifies two equal snapshots through the observer", async () => {
     const observed = snapshot();
     const result = await observeStableExportSource("alpha", {
@@ -442,6 +560,7 @@ describe("config export source verification (#10938)", () => {
     { runtime: { provider: "docker", imageRef: "registry/image:latest" } },
     { gateway: { name: "nemoclaw", port: 0 } },
     { inference: { provider: "e\u0301".repeat(257) } },
+    { inference: { provider: "vllm-local" } },
     { inference: { api: "openai-unknown" } },
     { inference: { endpoint: "https://user:secret@api.example.com/v1" } },
     { inference: { endpoint: "https://api.example.com/%0A%" } },
