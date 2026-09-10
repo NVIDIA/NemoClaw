@@ -268,7 +268,7 @@ export async function statusMcpBridge(
     try {
       credentialObservations.set(
         name,
-        observeMcpCredentialRevision(sandboxName, entry, providerRuntimeSelection),
+        await observeMcpCredentialRevision(sandboxName, entry, providerRuntimeSelection),
       );
     } catch {
       credentialObservations.set(name, null);
@@ -433,7 +433,7 @@ export async function statusMcpBridge(
                     detail:
                       "probe skipped: the managed agent adapter does not match the current credential revision",
                   }
-                : probeCredentialResolution(
+                : await probeCredentialResolution(
                     sandboxName,
                     entry,
                     support.adapter,
@@ -452,7 +452,7 @@ export async function statusMcpBridge(
             ? mcpToolDiscoveryPreconditionFailure(
                 `tool discovery skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
               )
-            : discoverMcpTools(
+            : await discoverMcpTools(
                 sandboxName,
                 entry,
                 support.adapter,

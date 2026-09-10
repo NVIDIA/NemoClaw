@@ -2262,7 +2262,15 @@ For QR-paired channels (today: WhatsApp), NemoClaw destructively clears the in-s
 - OpenClaw: `/sandbox/.openclaw/<channel>/` (for example `/sandbox/.openclaw/whatsapp/`).
 - Hermes: `/sandbox/.hermes/platforms/<channel>/` (for example `/sandbox/.hermes/platforms/whatsapp/`). For WhatsApp, NemoClaw also clears the current Dashboard profile at `/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session/` and the legacy migration source at `/sandbox/.hermes/dashboard-home/platforms/whatsapp/session/`.
 
-The cleanup tries `openshell sandbox exec` first and falls back to SSH if the exec wrapper does not return the success sentinel. If both transports fail (the sandbox is stopped, the gateway is down, or SSH cannot reach it) the command refuses to proceed to the rebuild and asks you to start the sandbox and re-run, so a half-removed state cannot leave stale Baileys auth files behind for the next rebuild to restore.
+NemoClaw runs the cleanup through `openshell sandbox exec` first.
+If OpenShell is unavailable or its outcome is inconclusive, NemoClaw retries the same cleanup through the sandbox's registered local runtime provider unless OpenShell reports cancellation.
+NemoClaw permits this retry only because removing the declared paths is idempotent and the success sentinel verifies completion.
+A runtime validation or identity refusal stops removal instead of falling through to SSH.
+If the sentinel remains absent after any permitted local retry, NemoClaw tries SSH.
+For OpenClaw WeChat only, if the sentinel remains absent after those attempts, NemoClaw asks the registered runtime provider to run its distinct stopped-state cleanup.
+If cleanup still fails, the command refuses to rebuild and prints recovery guidance for the reported condition.
+Fix that condition, then rerun the command.
+This failure prevents the next rebuild from restoring stale channel authentication files.
 
 ```bash
 $$nemoclaw my-assistant channels remove telegram
