@@ -171,6 +171,31 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
 describe("Hermes Portable schema-8 operation authority", () => {
+  it("uses durable successor authority for an explicitly trusted GFN operation", () => {
+    const durable = snapshot();
+    const captureSocketAuthority = vi.fn();
+    const captureOpenShellExecutableAuthority = vi.fn();
+    const capturePodmanExecutableAuthority = vi.fn();
+
+    const authority = qualifyHermesPortableOperatingAuthority(
+      durable,
+      {
+        env: environment(),
+        captureSocketAuthority,
+        captureOpenShellExecutableAuthority,
+        capturePodmanExecutableAuthority,
+      },
+      { trustDurableKnownEnvironmentAuthority: true },
+    );
+
+    expect(authority.receipt).toBe(durable.receipt);
+    expect(authority.assertCurrent).not.toThrow();
+    expect(authority.assertTransactionCurrent).not.toThrow();
+    expect(captureSocketAuthority).not.toHaveBeenCalled();
+    expect(captureOpenShellExecutableAuthority).not.toHaveBeenCalled();
+    expect(capturePodmanExecutableAuthority).not.toHaveBeenCalled();
+  });
+
   it("keeps schema-7 authority durable unless requalification is explicit (#10423)", () => {
     const durable = snapshot(false);
     const captureSocketAuthority = vi.fn(() => socket("99"));

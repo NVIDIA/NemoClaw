@@ -169,9 +169,19 @@ export function qualifyHermesPortableOperatingAuthority(
     readonly receipt: HermesPortableConfiguredReceipt;
   },
   deps: HermesPortableOperatingAuthorityDeps = {},
-  options: { readonly permitSchema5Requalification?: boolean } = {},
+  options: {
+    readonly permitSchema5Requalification?: boolean;
+    readonly trustDurableKnownEnvironmentAuthority?: boolean;
+  } = {},
 ): QualifiedHermesPortableOperatingAuthority {
   if (snapshot.receipt.phase !== "active") fail("requires active Hermes receipt authority");
+  if (options.trustDurableKnownEnvironmentAuthority) {
+    return {
+      receipt: snapshot.receipt,
+      assertTransactionCurrent: () => undefined,
+      assertCurrent: () => undefined,
+    };
+  }
   if (!snapshot.successor && options.permitSchema5Requalification !== true) {
     return {
       receipt: snapshot.receipt,
