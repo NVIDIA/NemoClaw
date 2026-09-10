@@ -404,6 +404,41 @@
                           "additionalProperties": false,
                           "minProperties": 1
                         },
+                        "interfaces": {
+                          "type": "object",
+                          "required": ["dashboard"],
+                          "properties": {
+                            "dashboard": {
+                              "type": "object",
+                              "properties": {
+                                "port": {
+                                  "type": "integer",
+                                  "minimum": 1024,
+                                  "maximum": 65535,
+                                  "not": {
+                                    "minimum": 8642,
+                                    "maximum": 8652
+                                  }
+                                },
+                                "bind": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "const": "127.0.0.1"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "0.0.0.0"
+                                    }
+                                  ]
+                                }
+                              },
+                              "additionalProperties": false,
+                              "minProperties": 1
+                            }
+                          },
+                          "additionalProperties": false
+                        },
                         "observability": {
                           "type": "object",
                           "required": ["otlp"],
