@@ -6,24 +6,34 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { capturePrivilegedSandboxCommand, resolveAgentConfig } = vi.hoisted(() => ({
+const {
+  capturePrivilegedSandboxCommand,
+  executePrivilegedSandboxCommand,
+  resolvePrivilegedSandboxTarget,
+  resolveAgentConfig,
+  withMcpLifecycleLockSync,
+} = vi.hoisted(() => ({
   capturePrivilegedSandboxCommand: vi.fn(),
+  executePrivilegedSandboxCommand: vi.fn(),
+  resolvePrivilegedSandboxTarget: vi.fn(),
   resolveAgentConfig: vi.fn(),
+  withMcpLifecycleLockSync: vi.fn((_name, action) => action()),
 }));
 
-vi.mock("./privileged-exec", () => ({ capturePrivilegedSandboxCommand }));
+vi.mock("./privileged-exec", () => ({
+  capturePrivilegedSandboxCommand,
+  executePrivilegedSandboxCommand,
+  resolvePrivilegedSandboxTarget,
+}));
 vi.mock("./agent-config", () => ({ resolveAgentConfig }));
+vi.mock("../state/mcp-lifecycle-lock-acquisition", () => ({ withMcpLifecycleLockSync }));
 
 import type { AgentConfigTarget } from "./agent-config";
 import {
-  dirSatisfiesMutableContract,
-  fileSatisfiesMutableContract,
-  inspectMutableConfigPermsForTarget,
-  parseStatModeOwner,
+  inspectMutableConfigPerms,
   repairMutableConfigPerms,
-  repairMutableConfigPermsForTarget,
   verifyMutableHermesConfigForTarget,
 } from "./mutable-config-perms";
 
@@ -43,112 +53,119 @@ const hermesTarget: AgentConfigTarget = {
   format: "yaml",
   sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
 };
+const intactGuard = JSON.stringify({
+  type: "result",
+  action: "preflight-restart",
+  status: "ok",
+  configDir: target.configDir,
+  files: ["openclaw.json", ".config-hash"],
+});
+function guardFailure(code: string) {
+  return [
+    { type: "issue", code, path: target.configDir, detail: code },
+    { type: "result", action: "preflight-restart", status: "failed" },
+  ]
+    .map((value) => JSON.stringify(value))
+    .join("\n");
+}
+function guardResult(stdout = intactGuard, status = 0) {
+  return { status, signal: null, stdout: Buffer.from(stdout), stderr: Buffer.alloc(0) };
+}
 
 describe("mutable OpenClaw config permissions", () => {
-  it("accepts only the exact directory and file modes", () => {
-    expect(dirSatisfiesMutableContract("2770")).toBe(true);
-    expect(dirSatisfiesMutableContract("770")).toBe(false);
-    expect(dirSatisfiesMutableContract("2777")).toBe(false);
-    expect(fileSatisfiesMutableContract("660")).toBe(true);
-    expect(fileSatisfiesMutableContract("600")).toBe(false);
-    expect(fileSatisfiesMutableContract("666")).toBe(false);
-  });
-
-  it("parses stat mode and owner with extra whitespace", () => {
-    expect(parseStatModeOwner("  2770   sandbox:sandbox\n")).toEqual({
-      mode: "2770",
-      owner: "sandbox:sandbox",
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resolveAgentConfig.mockReturnValue(target);
+    resolvePrivilegedSandboxTarget.mockReturnValue({
+      providerId: "podman",
+      resourceHandle: "pinned-container",
     });
+    executePrivilegedSandboxCommand.mockReset().mockReturnValue(guardResult());
+    capturePrivilegedSandboxCommand.mockReset();
   });
 
-  it("reports an intact mutable config tree", () => {
-    const stat = vi.fn((configPath: string) =>
-      configPath === target.configDir ? "2770 sandbox:sandbox" : "660 sandbox:sandbox",
-    );
-
-    expect(inspectMutableConfigPermsForTarget(target, stat)).toMatchObject({
+  it("uses the guard verdict without a second fixed-mode contract", () => {
+    expect(inspectMutableConfigPerms("alpha")).toEqual({
       applies: true,
       ok: true,
       issues: [],
     });
-  });
-
-  it("reports mode, owner, and sensitive-file drift", () => {
-    const stat = vi.fn((configPath: string) => {
-      switch (configPath) {
-        case target.configDir:
-          return "700 root:root";
-        case target.configPath:
-          return "600 sandbox:sandbox";
-        default:
-          return "640 root:root";
-      }
-    });
-
-    const inspection = inspectMutableConfigPermsForTarget(target, stat);
-    expect(inspection).toMatchObject({ applies: true, ok: false });
-    expect(inspection.applies && inspection.issues.join("\n")).toContain("mode 700");
-    expect(inspection.applies && inspection.issues.join("\n")).toContain("owner root:root");
-    expect(inspection.applies && inspection.issues.join("\n")).toContain(".config-hash mode 640");
-  });
-
-  it("does not apply to another agent", () => {
-    const stat = vi.fn();
-
-    expect(inspectMutableConfigPermsForTarget({ ...target, agentName: "hermes" }, stat)).toEqual({
-      applies: false,
-      skipReason: "agent",
-      reason: "agent hermes does not use the mutable OpenClaw config contract",
-    });
-    expect(stat).not.toHaveBeenCalled();
-  });
-
-  it("reports an unavailable config tree without weakening the result", () => {
-    const inspection = inspectMutableConfigPermsForTarget(target, () => {
-      throw new Error("container stopped");
-    });
-
-    expect(inspection).toEqual({
-      applies: false,
-      skipReason: "unavailable",
-      reason: "could not stat config (container stopped)",
-    });
-  });
-
-  it("tolerates an absent sensitive file after the main contract is verified", () => {
-    const stat = vi.fn((configPath: string) => {
-      switch (configPath) {
-        case target.configDir:
-          return "2770 sandbox:sandbox";
-        case target.configPath:
-          return "660 sandbox:sandbox";
-        default:
-          throw new Error("missing");
-      }
-    });
-
-    expect(inspectMutableConfigPermsForTarget(target, stat)).toMatchObject({
-      applies: true,
-      ok: true,
-    });
-  });
-
-  it("applies the mutable contract and reports a normalizer failure", () => {
-    const apply = vi.fn();
-    expect(repairMutableConfigPermsForTarget(target, apply)).toEqual({
+    expect(repairMutableConfigPerms("alpha")).toEqual({
       applied: true,
       verified: true,
       errors: [],
     });
+    expect(capturePrivilegedSandboxCommand).not.toHaveBeenCalled();
+    expect(executePrivilegedSandboxCommand).toHaveBeenCalledWith(
+      "alpha",
+      expect.arrayContaining(["preflight-restart", "--config-dir", target.configDir]),
+      expect.objectContaining({
+        sanitizeEnvironment: true,
+        expectedResourceHandle: "pinned-container",
+      }),
+    );
+  });
 
-    const failed = repairMutableConfigPermsForTarget(target, () => {
-      throw new Error("chmod failed");
+  it("does not apply to another agent", () => {
+    resolveAgentConfig.mockReturnValue(hermesTarget);
+    expect(inspectMutableConfigPerms("alpha")).toEqual({
+      applies: false,
+      skipReason: "agent",
+      reason: "agent hermes does not use the mutable OpenClaw config contract",
     });
-    expect(failed).toEqual({ applied: true, verified: false, errors: ["chmod failed"] });
+    expect(repairMutableConfigPerms("alpha")).toEqual({
+      applied: false,
+      skipReason: "agent",
+      reason: "agent hermes does not use the mutable OpenClaw config contract",
+    });
+    expect(resolvePrivilegedSandboxTarget).not.toHaveBeenCalled();
+  });
+
+  it("reports an unavailable config tree without weakening the result", () => {
+    executePrivilegedSandboxCommand.mockImplementationOnce(() => {
+      throw new Error("container stopped");
+    });
+
+    expect(inspectMutableConfigPerms("alpha")).toEqual({
+      applies: false,
+      skipReason: "unavailable",
+      reason: "could not verify config posture (container stopped)",
+    });
+  });
+
+  it("does not normalize a posture the guard refuses to repair", () => {
+    executePrivilegedSandboxCommand.mockReturnValue(
+      guardResult(guardFailure("unsupported-config-posture"), 1),
+    );
+    expect(inspectMutableConfigPerms("alpha")).toMatchObject({
+      applies: false,
+      skipReason: "unavailable",
+    });
+    expect(repairMutableConfigPerms("alpha")).toMatchObject({ applied: true, verified: false });
+    expect(capturePrivilegedSandboxCommand).not.toHaveBeenCalled();
+  });
+
+  it("reports a normalizer failure without claiming verification", () => {
+    executePrivilegedSandboxCommand.mockReturnValueOnce(
+      guardResult(guardFailure("invalid-restart-posture"), 1),
+    );
+    capturePrivilegedSandboxCommand
+      .mockReturnValueOnce(Buffer.from("1000\n"))
+      .mockReturnValueOnce(Buffer.from("1001\n"))
+      .mockImplementationOnce(() => {
+        throw new Error("chmod failed");
+      });
+    expect(repairMutableConfigPerms("alpha")).toEqual({
+      applied: true,
+      verified: false,
+      errors: ["chmod failed"],
+    });
   });
 
   it("routes mutable config repair through provider-neutral privileged commands", () => {
-    resolveAgentConfig.mockReset().mockReturnValue(target);
+    executePrivilegedSandboxCommand
+      .mockReturnValueOnce(guardResult(guardFailure("invalid-restart-posture"), 1))
+      .mockReturnValueOnce(guardResult());
     capturePrivilegedSandboxCommand
       .mockReset()
       .mockReturnValueOnce(Buffer.from("1000\n"))
@@ -164,13 +181,13 @@ describe("mutable OpenClaw config permissions", () => {
       1,
       "alpha",
       ["/usr/bin/id", "-u", "sandbox"],
-      { sanitizeEnvironment: true, timeout: 15_000 },
+      { sanitizeEnvironment: true, expectedResourceHandle: "pinned-container", timeout: 15_000 },
     );
     expect(capturePrivilegedSandboxCommand).toHaveBeenNthCalledWith(
       2,
       "alpha",
       ["/usr/bin/id", "-g", "sandbox"],
-      { sanitizeEnvironment: true, timeout: 15_000 },
+      { sanitizeEnvironment: true, expectedResourceHandle: "pinned-container", timeout: 15_000 },
     );
     expect(capturePrivilegedSandboxCommand).toHaveBeenNthCalledWith(
       3,
@@ -181,28 +198,23 @@ describe("mutable OpenClaw config permissions", () => {
         "1000",
         "1001",
       ]),
-      { sanitizeEnvironment: true, timeout: 25_000 },
+      { sanitizeEnvironment: true, expectedResourceHandle: "pinned-container", timeout: 25_000 },
     );
-
-    capturePrivilegedSandboxCommand.mockReset().mockImplementationOnce(() => {
-      throw new Error("provider command failed");
-    });
-    expect(repairMutableConfigPerms("alpha")).toEqual({
-      applied: true,
-      verified: false,
-      errors: ["provider command failed"],
-    });
+    expect(resolvePrivilegedSandboxTarget).toHaveBeenCalledOnce();
+    expect(withMcpLifecycleLockSync).toHaveBeenCalledOnce();
+    expect(executePrivilegedSandboxCommand).toHaveBeenCalledTimes(2);
   });
 
-  it("does not normalize another agent's config", () => {
-    const apply = vi.fn();
-
-    expect(repairMutableConfigPermsForTarget({ ...target, agentName: "hermes" }, apply)).toEqual({
-      applied: false,
-      skipReason: "agent",
-      reason: "agent hermes does not use the mutable OpenClaw config contract",
-    });
-    expect(apply).not.toHaveBeenCalled();
+  it("does not verify repair when the final guard rejects it", () => {
+    executePrivilegedSandboxCommand.mockReturnValue(
+      guardResult(guardFailure("config-not-mutable"), 1),
+    );
+    capturePrivilegedSandboxCommand
+      .mockReturnValueOnce(Buffer.from("1000\n"))
+      .mockReturnValueOnce(Buffer.from("1001\n"))
+      .mockReturnValueOnce(Buffer.alloc(0));
+    expect(repairMutableConfigPerms("alpha")).toMatchObject({ applied: true, verified: false });
+    expect(executePrivilegedSandboxCommand).toHaveBeenCalledTimes(2);
   });
 
   it("claims mutable Hermes posture only after the exact probe succeeds", () => {

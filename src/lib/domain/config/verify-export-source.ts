@@ -26,6 +26,9 @@ import {
   isValidNemoClawRuntimeProvider,
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
+  NemoClawOpenClawObservabilitySchema,
+  NemoClawInferenceTuningSchema,
+  NemoClawAgentExecutionSchema,
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
@@ -88,7 +91,16 @@ const EXPORT_AGENT_PROFILE_PROJECTIONS: Record<
 
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
-  "agent" | "gateway" | "inference" | "policy" | "proxy" | "runtime" | "sandboxName" | "webSearch"
+  | "agent"
+  | "execution"
+  | "gateway"
+  | "inference"
+  | "observability"
+  | "policy"
+  | "proxy"
+  | "runtime"
+  | "sandboxName"
+  | "webSearch"
 >;
 
 function verifiedExportSource(data: VerifiedExportSourceData): VerifiedExportSource {
@@ -195,11 +207,6 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
       "spec.sandboxes[].agents[0].dashboard",
       entry.dashboardRemoteBindPrepared,
       "remote dashboard exposure",
-    ],
-    [
-      "spec.inferenceProviders[].reasoning",
-      entry.compatibleEndpointReasoning || entry.compatibleEndpointReasoningEffort,
-      "compatible-endpoint reasoning overrides",
     ],
   ];
   const findings = excluded
@@ -400,6 +407,110 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
   }).profile;
 }
 
+function exportedObservability(
+  profile: ManagedStartupProfile,
+): VerifiedExportSource["observability"] {
+  if (profile.agentConfig.agent !== "openclaw" || !profile.agentConfig.otel.enabled)
+    return undefined;
+  const { enabled, endpointUrl, serviceName, sampleRate } = profile.agentConfig.otel;
+  const value = { otlp: { enabled, endpoint: endpointUrl, serviceName, sampleRate } };
+  return Check(NemoClawOpenClawObservabilitySchema, value) ? value : undefined;
+}
+
+function projectAgentSettings(profile: ManagedStartupProfile, defaults: ManagedStartupProfile) {
+  if (profile.agentConfig.agent !== "openclaw" || defaults.agentConfig.agent !== "openclaw") {
+    return {};
+  }
+  const overrides = Object.fromEntries(
+    Object.entries(profile.tuning).filter(
+      ([key, value]) => value !== defaults.tuning[key as keyof typeof defaults.tuning],
+    ),
+  );
+  const execution = {
+    ...(profile.agentConfig.agentTimeoutSeconds === defaults.agentConfig.agentTimeoutSeconds
+      ? {}
+      : { timeoutSeconds: profile.agentConfig.agentTimeoutSeconds }),
+    ...(profile.agentConfig.heartbeatEvery === defaults.agentConfig.heartbeatEvery
+      ? {}
+      : { heartbeatEvery: profile.agentConfig.heartbeatEvery }),
+  };
+  return {
+    ...(Object.keys(overrides).length === 0 ? {} : { overrides }),
+    ...(Object.keys(execution).length === 0 ? {} : { execution }),
+  };
+}
+
+function classifyReasoningAgreement(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile,
+): ExportFinding[] {
+  if (entry.agent !== "openclaw" || profile.agentConfig.agent !== "openclaw") return [];
+  const reasoning = entry.compatibleEndpointReasoning;
+  const effort = entry.compatibleEndpointReasoningEffort;
+  const hasOverrides = [reasoning, effort].some((value) => value !== undefined && value !== null);
+  if (entry.provider !== "compatible-endpoint" && !hasOverrides) return [];
+  if (
+    entry.provider === "compatible-endpoint" &&
+    isDeepStrictEqual(
+      [reasoning ?? "false", effort ?? "default"],
+      [String(profile.tuning.reasoning), profile.tuning.reasoningEffort],
+    )
+  )
+    return [];
+  return [
+    finding(
+      "spec.sandboxes[].agents[0].inference.routes[].overrides",
+      "drifted",
+      "Registered reasoning overrides and the managed startup profile differ.",
+    ),
+  ];
+}
+
+function supportedAgentSettingsProfile(
+  profile: ManagedStartupProfile,
+  expected: ManagedStartupProfile,
+): ManagedStartupProfile | null {
+  if (profile.agentConfig.agent === "hermes" && expected.agentConfig.agent === "hermes") {
+    return expected;
+  }
+  const settings = projectAgentSettings(profile, expected);
+  if (
+    !Check(NemoClawInferenceTuningSchema, profile.tuning) ||
+    (settings.execution !== undefined &&
+      !Check(NemoClawAgentExecutionSchema, settings.execution)) ||
+    profile.agentConfig.agent !== "openclaw" ||
+    expected.agentConfig.agent !== "openclaw"
+  )
+    return null;
+  return {
+    ...expected,
+    tuning: {
+      contextWindow: profile.tuning.contextWindow,
+      maxTokens: profile.tuning.maxTokens,
+      reasoning: profile.tuning.reasoning,
+      reasoningEffort: profile.tuning.reasoningEffort,
+    },
+    agentConfig: {
+      ...expected.agentConfig,
+      agentTimeoutSeconds: profile.agentConfig.agentTimeoutSeconds,
+      heartbeatEvery: profile.agentConfig.heartbeatEvery,
+    },
+  };
+}
+
+function supportedObservabilityProfile(
+  profile: ManagedStartupProfile,
+  expected: ManagedStartupProfile,
+): ManagedStartupProfile {
+  const observability = exportedObservability(profile);
+  if (!observability || expected.agentConfig.agent !== "openclaw") return expected;
+  const { endpoint: endpointUrl, ...telemetry } = observability.otlp;
+  return {
+    ...expected,
+    agentConfig: { ...expected.agentConfig, otel: { ...telemetry, endpointUrl } },
+  };
+}
+
 function classifyManagedStartupProfile(
   entry: ObservedExportRegistry,
   profile: ManagedStartupProfile,
@@ -424,7 +535,22 @@ function classifyManagedStartupProfile(
       ),
     ];
   }
-  const findings: ExportFinding[] = [];
+  expected = supportedObservabilityProfile(profile, expected);
+  const findings = classifyReasoningAgreement(entry, profile);
+  if (entry.servingProfileProvenance?.preset.id !== EXPORTED_VLLM_PROFILE_ID) {
+    const supported = supportedAgentSettingsProfile(profile, expected);
+    if (!supported) {
+      return [
+        ...findings,
+        finding(
+          "source.workload.startupProfile",
+          "unsupported",
+          "The managed agent settings cannot be represented by v1 export.",
+        ),
+      ];
+    }
+    expected = supported;
+  }
   if (!hasEqualJsonStructure(profile.inference, expected.inference)) {
     findings.push(
       finding(
@@ -881,6 +1007,36 @@ function inspectWorkload(entry: ObservedExportRegistry) {
   return { authority, findings };
 }
 
+function projectVerifiedInference(
+  snapshot: QualifiedExportSnapshot,
+  selected: ReturnType<typeof normalizeInferenceSelection>,
+  settings: ReturnType<typeof projectAgentSettings>,
+) {
+  const common = {
+    ...(settings.overrides ? { overrides: settings.overrides } : {}),
+    provider: selected.provider,
+    model: selected.model,
+    api: selected.preferredInferenceApi,
+  };
+  return snapshot.inference.topology === "managed"
+    ? { ...common, serving: snapshot.inference.managedServing?.serving }
+    : {
+        ...common,
+        endpoint: selected.endpointUrl,
+        ...(selected.credentialEnv === null ? {} : { credentialEnv: selected.credentialEnv }),
+      };
+}
+
+function projectVerifiedProxy(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile | undefined,
+) {
+  const proxy = profile?.proxy;
+  return proxy && !hasEqualJsonStructure(proxy, expectedManagedStartupProfile(entry).proxy)
+    ? { proxy: { host: proxy.managedHost, port: proxy.managedPort } }
+    : {};
+}
+
 function completeVerifiedSource(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
@@ -888,11 +1044,17 @@ function completeVerifiedSource(
   policy: CanonicalExportPolicy,
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
+  const observability = authority ? exportedObservability(authority.profile) : undefined;
   const selected = normalizeInferenceSelection(entry);
-  const proxy = authority?.profile.proxy;
+  const settings =
+    authority && snapshot.inference.topology !== "managed"
+      ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
+      : {};
   const values = {
+    ...(observability ? { observability } : {}),
     sandboxName: requestedSandboxName,
     agent: entry.agent,
+    ...(settings.execution ? { execution: settings.execution } : {}),
     ...(hasBraveSearch(entry)
       ? {
           webSearch: {
@@ -904,24 +1066,8 @@ function completeVerifiedSource(
       : {}),
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
-    ...(proxy && !hasEqualJsonStructure(proxy, expectedManagedStartupProfile(entry).proxy)
-      ? { proxy: { host: proxy.managedHost, port: proxy.managedPort } }
-      : {}),
-    inference:
-      snapshot.inference.topology === "managed"
-        ? {
-            provider: selected.provider,
-            model: selected.model,
-            api: selected.preferredInferenceApi,
-            serving: snapshot.inference.managedServing?.serving,
-          }
-        : {
-            provider: selected.provider,
-            model: selected.model,
-            api: selected.preferredInferenceApi,
-            endpoint: selected.endpointUrl,
-            ...(selected.credentialEnv === null ? {} : { credentialEnv: selected.credentialEnv }),
-          },
+    ...projectVerifiedProxy(entry, authority?.profile),
+    inference: projectVerifiedInference(snapshot, selected, settings),
   };
   if (!Check(ExportSourceValuesSchema, values)) {
     return {

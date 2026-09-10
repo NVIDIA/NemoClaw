@@ -10,8 +10,11 @@ import {
   InferenceEndpointSchema,
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
+  NemoClawInferenceTuningSchema,
+  NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
   NemoClawAgentTypeSchema,
+  NemoClawOpenClawObservabilitySchema,
   NemoClawManagedProxyConfigSchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
@@ -234,6 +237,7 @@ export type NonEmptyExportFindings = readonly [ExportFinding, ...ExportFinding[]
 
 // Runtime refinements preserve semantic checks that are not part of JSON Schema.
 const HostedExportInferenceSchema = Type.Object({
+  overrides: Type.Optional(NemoClawInferenceTuningSchema),
   provider: Type.Refine(
     BoundedTextSchema,
     (value) => isValidNemoClawBoundedText(value) && value !== "vllm-local",
@@ -262,6 +266,7 @@ const ExportInferenceSchema = Type.Union([
 /** Representable values only; provenance and policy qualification remain separate. */
 export const ExportSourceValuesSchema = Type.Object({
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
+  execution: Type.Optional(NemoClawAgentExecutionSchema),
   agent: NemoClawAgentTypeSchema,
   runtime: Type.Object({
     provider: RuntimeProviderSchema,
@@ -270,6 +275,7 @@ export const ExportSourceValuesSchema = Type.Object({
   gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
   proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
+  observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
   webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
 });
 

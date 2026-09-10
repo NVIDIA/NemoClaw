@@ -114,12 +114,15 @@ const CLOUDFLARED_ENV_NAMES = new Set([
   "LANG",
   "HTTP_PROXY",
   "HTTPS_PROXY",
+  "ALL_PROXY",
   "NO_PROXY",
   "http_proxy",
   "https_proxy",
+  "all_proxy",
   "no_proxy",
   "SSL_CERT_FILE",
   "SSL_CERT_DIR",
+  "CURL_CA_BUNDLE",
 ]);
 
 const EMPTY_TASK = {
@@ -245,7 +248,7 @@ function queueLegacyMcpResponse(
   return { ok: true, sequence };
 }
 
-function buildCloudflaredSubprocessEnv(): Record<string, string> {
+function buildPublicTunnelSubprocessEnv(): Record<string, string> {
   const env: Record<string, string> = {
     // Do not let quick-tunnel discovery consume a developer's named-tunnel
     // credentials or config. The CI runner temp directory is job-isolated.
@@ -257,6 +260,27 @@ function buildCloudflaredSubprocessEnv(): Record<string, string> {
     if (CLOUDFLARED_ENV_NAMES.has(name) || name.startsWith("LC_")) env[name] = value;
   }
   return env;
+}
+
+function buildPublicTunnelProbeArgs(url: string): string[] {
+  return [
+    "--disable",
+    "--silent",
+    "--show-error",
+    "--head",
+    "--proto",
+    "=https",
+    "--tlsv1.2",
+    "--connect-timeout",
+    "5",
+    "--max-time",
+    "5",
+    "--output",
+    "/dev/null",
+    "--write-out",
+    "%{http_code}",
+    url,
+  ];
 }
 
 function waitForExit(child: ChildProcess): Promise<void> {
@@ -313,35 +337,6 @@ export function buildCloudflaredQuickTunnelArgs(port: number): string[] {
   ];
 }
 
-async function probePublicTunnel(
-  origin: string,
-  readinessPath: string,
-  readinessStatus: number,
-): Promise<{
-  ready: boolean;
-  diagnostic: string;
-}> {
-  try {
-    const response = await fetch(`${origin}${readinessPath}`, {
-      method: "HEAD",
-      redirect: "manual",
-      signal: AbortSignal.timeout(5_000),
-    });
-    await response.body?.cancel();
-    return {
-      ready: response.status === readinessStatus,
-      diagnostic: `public HEAD ${readinessPath} returned HTTP ${response.status}`,
-    };
-  } catch (error) {
-    return {
-      ready: false,
-      // Avoid reflecting request URLs or child output here. The error class is
-      // enough to distinguish DNS/transport failure without risking headers.
-      diagnostic: `public HEAD ${readinessPath} failed (${error instanceof Error ? error.name : "unknown error"})`,
-    };
-  }
-}
-
 /**
  * Publishes a local HTTPS origin behind a real `trycloudflare.com` quick
  * tunnel: a genuinely public, DNS-resolvable, publicly-trusted-certificate
@@ -356,6 +351,7 @@ export async function startPublicMcpHttpsTunnel(options: {
   progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability;
   server: StartedHttpServer;
   cloudflaredBin?: string;
+  curlBin?: string;
   readinessPath?: string;
   readinessStatus?: number;
 }): Promise<StartedPublicMcpTunnel> {
@@ -389,7 +385,7 @@ export async function startPublicMcpHttpsTunnel(options: {
       progress: options.progress,
       spawn: {
         detached: true,
-        env: buildCloudflaredSubprocessEnv(),
+        env: buildPublicTunnelSubprocessEnv(),
         stdio: ["ignore", "pipe", "pipe"],
       },
     });
@@ -426,7 +422,61 @@ export async function startPublicMcpHttpsTunnel(options: {
         break;
       }
       if (origin) {
-        const probe = await probePublicTunnel(origin, readinessPath, readinessStatus);
+        let probeOutput = "";
+        let probeOutputExceededLimit = false;
+        let probeSpawnError = false;
+        const probeChild = spawnObservedChild(
+          options.curlBin ?? "curl",
+          buildPublicTunnelProbeArgs(`${origin}${readinessPath}`),
+          {
+            activityLabel: "command: public tunnel readiness probe",
+            progress: options.progress,
+            spawn: {
+              env: buildPublicTunnelSubprocessEnv(),
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          },
+        );
+        probeChild.stdout?.setEncoding("utf8");
+        probeChild.stdout?.on("data", (chunk: string) => {
+          if (probeOutputExceededLimit) return;
+          probeOutput += chunk;
+          if (probeOutput.length > 16) {
+            probeOutput = "";
+            probeOutputExceededLimit = true;
+          }
+        });
+        probeChild.once("error", () => {
+          probeSpawnError = true;
+        });
+        const probeExited = waitForExit(probeChild);
+        const probeCompleted = await Promise.race([
+          probeExited.then(() => true),
+          delay(6_000).then(() => false),
+        ]);
+        if (!probeCompleted) {
+          probeChild.kill("SIGKILL");
+          await probeExited;
+        }
+        const probeStatus = Number.parseInt(probeOutput, 10);
+        const probe =
+          !probeCompleted || probeSpawnError || probeChild.exitCode !== 0
+            ? {
+                ready: false,
+                // curl stderr can contain proxy details. Keep transport failures opaque.
+                diagnostic: `public HEAD ${readinessPath} failed (curl transport error)`,
+              }
+            : probeOutputExceededLimit ||
+                !/^\d{3}$/u.test(probeOutput) ||
+                !Number.isInteger(probeStatus)
+              ? {
+                  ready: false,
+                  diagnostic: `public HEAD ${readinessPath} returned an invalid status`,
+                }
+              : {
+                  ready: probeStatus === readinessStatus,
+                  diagnostic: `public HEAD ${readinessPath} returned HTTP ${probeStatus}`,
+                };
         if (probe.ready) {
           consecutiveReadyProbes += 1;
           if (consecutiveReadyProbes >= QUICK_TUNNEL_CONSECUTIVE_READY_PROBES) {
