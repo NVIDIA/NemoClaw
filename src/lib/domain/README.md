@@ -20,6 +20,9 @@ src/lib/actions/<area>/<verb>.ts
 src/lib/domain/<area>/<topic>.ts
 ```
 
+Configuration export represents retained startup intent from a validated managed-image receipt.
+Preserve image authority and full residual profile comparison when admitting a supported setting.
+
 Configuration export represents retained startup intent. Managed OpenClaw exports
 `agents[].tools.disclosure: direct` only when the registry selection agrees with
 the validated startup profile. Absent or explicit `progressive` selection keeps
@@ -38,7 +41,15 @@ admitting that leaf in the residual profile comparison; other agent settings sti
 need their own supported projection. Apply the new pair and route constraints only
 to documents using `tools.allow`, preserving existing v1 agent shapes.
 
-Config export projects supported settings from the validated managed startup receipt and keeps the full residual profile comparison.
-OpenClaw telemetry supports an enabled local OTLP/HTTP collector at `http://host.openshell.internal:4318`, a printable ASCII service name of 1–256 characters without edge spaces, and a sample rate from 0 to 1.
-Canonical disabled telemetry is omitted; other disabled settings, Unicode service names, remote collectors, headers and credentials remain unsupported.
-Export preserves the observed effective policy, including any local collector rules, without adding permissions or claiming collector health.
+Managed OpenClaw exports `agents[].interfaces.dashboard` when the retained port agrees with the
+registry and remote bind agrees with recorded preparation. Port 18789 and loopback bind are omitted.
+Legacy registry entries may omit the port only for the canonical loopback/default-port profile.
+Custom URLs, WSL exposure and device-auth changes remain unsupported. Export does not establish
+that a dashboard listener is currently running.
+
+OpenClaw telemetry supports an enabled local OTLP/HTTP collector at
+`http://host.openshell.internal:4318`, a printable ASCII service name of 1–256 characters without
+edge spaces, and a sample rate from 0 to 1. Canonical disabled telemetry is omitted. Other disabled
+settings, Unicode service names, remote collectors, headers, and credentials remain unsupported.
+Export preserves the observed effective policy, including local collector rules, without adding
+permissions or claiming collector health.

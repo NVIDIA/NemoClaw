@@ -57,42 +57,13 @@ import { observeStableExportSource } from "../../actions/config/observe-export-s
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import { fingerprintOpenShellSandboxId } from "../openshell/sandbox-identity";
 import { createLiveExportSnapshotReader } from "./live-export-source";
+import { startupInput, startup, configuration } from "./live-export-source-test-fixture";
 
 const sandboxId = "123e4567-e89b-42d3-a456-426614174000";
 const identityFingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
 const endpoint = "https://integrate.api.nvidia.com/v1";
 const readFailureCanary = "credential-canary-value";
 const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
-const startupInput = {
-  agent: "openclaw",
-  inference: {
-    routeProvider: "inference",
-    upstreamProvider: "nvidia-prod",
-    model: "model-a",
-    routedBaseUrl: "https://inference.local/v1",
-    upstreamEndpointUrl: null,
-    api: "openai-completions",
-    primaryModelRef: "inference/model-a",
-    compatibility: {},
-  },
-  dashboard: {
-    agent: "openclaw",
-    mode: "loopback",
-    url: "http://127.0.0.1:18789",
-    port: 18_789,
-    bindAddress: "127.0.0.1",
-    wslExposure: false,
-  },
-  webSearch: null,
-  toolDisclosure: "progressive",
-  hermesToolGateways: [],
-  messagingPlan: null,
-  dcodeAutoApprovalMode: null,
-  observabilityEnabled: null,
-  environment: {},
-  corporateCa: null,
-} satisfies ManagedStartupProfileBuilderInput;
-const startup = buildManagedStartupProfile(startupInput);
 
 const entry = {
   name: "alpha",
@@ -184,29 +155,6 @@ function provider() {
       credentials: { NVIDIA_INFERENCE_API_KEY: readFailureCanary },
       config: { OPENAI_BASE_URL: endpoint },
     },
-  };
-}
-function configuration(revision = 3) {
-  return {
-    policy: {
-      version: 1,
-      process: { run_as_user: "sandbox", run_as_group: "sandbox" },
-      filesystem_policy: { include_workdir: false, read_only: ["/usr"], read_write: ["/sandbox"] },
-      network_policies: {
-        api: {
-          name: "api",
-          endpoints: [{ host: "api.example.com", port: 443 }],
-          binaries: [{ path: "/usr/bin/curl" }],
-        },
-      },
-    },
-    workspace: "default",
-    version: revision,
-    policyHash: "a".repeat(64),
-    configRevision: 11n,
-    providerEnvRevision: 12n,
-    policySource: 1,
-    globalPolicyVersion: 0,
   };
 }
 
@@ -1461,5 +1409,83 @@ describe("managed vLLM export pipeline", () => {
       stage: "managed-serving",
     });
     expect(raw.getProvider).not.toHaveBeenCalled();
+  });
+});
+
+describe("dashboard export observation", () => {
+  it("projects registered dashboard authority through complete live observation (#10904)", async () => {
+    const workload = entry.workload as Extract<
+      NonNullable<SandboxEntry["workload"]>,
+      { kind: "managed-image" }
+    >;
+    expect(workload?.kind).toBe("managed-image");
+    const profile = {
+      ...startup.profile,
+      dashboard: {
+        agent: "openclaw" as const,
+        mode: "remote" as const,
+        url: "http://127.0.0.1:19000",
+        port: 19000,
+        bindAddress: "0.0.0.0" as const,
+        wslExposure: false,
+      },
+    };
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const sourceEntry = {
+      ...entry,
+      dashboardPort: 19000,
+      dashboardRemoteBindPrepared: true,
+      workload: {
+        ...workload,
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+      },
+    };
+    mockSupportedLiveSource(3, 3, sourceEntry);
+    const reader = createLiveExportSnapshotReader();
+    const observed = await reader.read("alpha");
+    expect(observed).toMatchObject({
+      kind: "observed",
+      registry: { dashboardPort: 19000, dashboardRemoteBindPrepared: true },
+    });
+    const writeStdout = vi.fn(async (_yaml: string) => {});
+    const result = await runConfigExport(
+      {
+        sandboxName: "alpha",
+        documentName: parseNemoClawConfigDocumentName("alpha"),
+        target: { kind: "stdout" },
+      },
+      {
+        observe: (name) => observeStableExportSource(name, reader),
+        createDocumentUid: () =>
+          parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
+        writeStdout,
+        publish: vi.fn(),
+      },
+    );
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
+    expect(yaml).not.toContain(readFailureCanary);
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.sandboxes[0]?.agents[0]).toMatchObject({
+      type: "openclaw",
+      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+    });
+  });
+
+  it("retains dashboard registry changes in both complete snapshots (#10904)", async () => {
+    mockSupportedLiveSource();
+    let reads = 0;
+    vi.mocked(loadRegistry).mockImplementation(() => ({
+      sandboxes: { alpha: { ...entry, dashboardPort: reads++ % 2 === 0 ? 18789 : 19000 } },
+      defaultSandbox: null,
+    }));
+    const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
+    expect(result).toMatchObject({
+      ok: false,
+      attempts: 2,
+      findings: [expect.objectContaining({ category: "unstable-source" })],
+    });
+    expect(loadRegistry).toHaveBeenCalledTimes(4);
   });
 });

@@ -91,6 +91,7 @@ function agentSettings(source: VerifiedExportSource) {
       ? {
           type: "openclaw" as const,
           ...(source.tools === undefined ? {} : { tools: source.tools }),
+          ...(source.interfaces ? { interfaces: source.interfaces } : {}),
           ...(source.observability ? { observability: source.observability } : {}),
         }
       : { type: "hermes" as const }),

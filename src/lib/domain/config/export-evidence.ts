@@ -12,6 +12,7 @@ import {
   NemoClawInferenceApiSchema,
   NemoClawAgentToolDisclosureSchema,
   NemoClawAdditionalAgentSchema,
+  NemoClawAgentInterfacesSchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
@@ -45,6 +46,7 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "compatibleEndpointReasoning",
   "compatibleEndpointReasoningEffort",
   "credentialEnv",
+  "dashboardPort",
   "dashboardRemoteBindPrepared",
   "endpointUrl",
   "fromDockerfile",
@@ -280,6 +282,7 @@ export const ExportSourceValuesSchema = Type.Refine(
     gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
     proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
     inference: ExportInferenceSchema,
+    interfaces: Type.Optional(NemoClawAgentInterfacesSchema),
     tools: Type.Optional(NemoClawAgentToolDisclosureSchema),
     additionalAgents: Type.Optional(
       Type.Array(NemoClawAdditionalAgentSchema, { minItems: 1, maxItems: 1 }),

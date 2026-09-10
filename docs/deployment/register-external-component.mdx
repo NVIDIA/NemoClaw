@@ -1,0 +1,242 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Register an External Component During Onboarding"
+sidebar-title: "Register an External Component"
+description: "Register one external host component for validated OpenShell interception and bounded activation during fresh Linux onboarding."
+description-agent: "Explains the experimental external component declaration, fixed OpenShell interceptor settings, activation protocol, security boundary, and incomplete-state behavior. Use when integrating a host component with fresh sandbox onboarding."
+keywords: ["nemoclaw external component", "openshell interceptor", "sandbox activation", "external component declaration"]
+content:
+  type: "how_to"
+skill:
+  priority: 20
+---
+
+NemoClaw can register one external host component during fresh sandbox onboarding.
+The experimental version 1 contract lets the component intercept selected OpenShell operations and activate resources for one verified sandbox.
+
+## Check the Version 1 Limits
+
+Use this contract only when all these conditions apply:
+
+- The host runs a supported Linux installation with the Docker driver.
+- NemoClaw is the OpenShell gateway lifecycle authority.
+- Onboarding creates a new sandbox with an explicit name.
+- The external component service and both Unix sockets are running before onboarding starts.
+
+NemoClaw does not start, stop, supervise, or recover the external component.
+The component owner must operate its service, sockets, credentials, resources, and diagnostics.
+
+Version 1 does not support these operations or configurations:
+
+- Resume, reuse, repair, rebuild, recreation, or migration.
+- Providerless Agent Policy Framework (APF) interceptor onboarding.
+- An externally supervised OpenShell gateway.
+- More than one registered component.
+- Generic shell commands, repository commands, vendor adapters, or a new OpenShell provider attachment API.
+
+Onboarding without the declaration uses the existing onboarding behavior.
+
+## Create the Declaration
+
+Create `~/.config/nemoclaw/external-component.json` before you start onboarding.
+Version 1 does not support another declaration path.
+The file must contain only these four fields:
+
+```json
+{
+  "schemaVersion": 1,
+  "componentId": "policy-governance",
+  "interceptorSocketPath": "/run/user/1000/policy-governance/interceptor.sock",
+  "activationSocketPath": "/run/user/1000/policy-governance/activation.sock"
+}
+```
+
+The fields have these requirements:
+
+| Field | Requirement |
+|---|---|
+| `schemaVersion` | Must be the number `1`. |
+| `componentId` | Must contain 1 through 64 ASCII letters, numbers, periods, underscores, or hyphens. The first character must be a letter or number. |
+| `interceptorSocketPath` | Must be a normalized absolute path of no more than 4,096 characters to the component's existing OpenShell interceptor Unix socket. |
+| `activationSocketPath` | Must be a different normalized absolute path of no more than 4,096 characters to the component's existing activation Unix socket. |
+
+Apply mode `0600` to the declaration:
+
+```bash
+chmod 0600 ~/.config/nemoclaw/external-component.json
+```
+
+NemoClaw applies these filesystem requirements before gateway effects:
+
+- The declaration must be a regular file with exactly one hard link that the current effective user owns.
+- The declaration must contain at most 16 KiB of valid UTF-8 and strict JSON.
+- The home directory and each declaration parent must belong to the current user.
+- Declaration parents must not permit group or other users to write.
+- Each endpoint must be a Unix socket that the current user owns.
+- Each socket must permit owner read and write access and no group or other access.
+- Socket parents must belong to the current user or `root` and must not permit group or other users to write.
+- Neither the declaration, its parents, the sockets, nor their parents can be symbolic links.
+
+NemoClaw rejects duplicate keys, missing or unknown fields, unsupported schema versions, and ambiguous filesystem state.
+It also rejects relative, non-normalized, empty, identical, or overlong socket paths.
+
+The current effective Linux user is the version 1 trust principal.
+Version 1 does not isolate the component from another malicious process running as that user.
+NemoClaw transfers no authentication secret through either socket.
+
+NemoClaw records each validated path's device, inode, owner, type, and mode.
+It rechecks that identity before gateway configuration and before activation.
+
+## Review the Generated Interceptor
+
+NemoClaw remains the only writer of its generated OpenShell gateway configuration.
+Do not edit the generated OpenShell files.
+
+NemoClaw renders one interceptor with these fixed settings:
+
+| Setting | NemoClaw value |
+|---|---|
+| `name` | The validated `componentId`. |
+| `grpc_endpoint` | `unix://` followed by the validated `interceptorSocketPath`. |
+| `order` | `10`. |
+| `failure_policy` | `fail_closed`. |
+| `binding_policy` | `exact`. |
+| `timeout` | `500ms`. |
+| `max_response_bytes` | `1048576`. |
+| `max_patches` | `32`. |
+| `openshell.v1.OpenShell/CreateSandbox` | `modify_operation` and `validate`. |
+| `openshell.v1.OpenShell/UpdateConfig` | `validate`. |
+
+The declaration cannot change limits, failure behavior, gateway ownership, or other OpenShell settings.
+Version 1 does not permit `post_commit`, network endpoints, TLS fields, provider profiles, credentials, or arbitrary TOML.
+
+## Start Fresh Onboarding
+
+Choose a name that has no sandbox registry entry and no live sandbox on the selected gateway.
+Start fresh onboarding with that explicit name:
+
+```bash
+$$nemoclaw onboard --fresh --name component-sandbox
+```
+
+For non-interactive onboarding, `NEMOCLAW_SANDBOX_NAME` can supply the explicit name.
+NemoClaw verifies the name before it changes the gateway configuration or lifecycle.
+
+After sandbox creation, NemoClaw verifies the durable OpenShell sandbox ID and effective sandbox policy.
+The policy must contain the NemoClaw policy requirements and have a valid hash and active version.
+The policy version must match the live sandbox observation.
+
+NemoClaw sends identity to the component only after these checks pass.
+
+## Implement the Activation Endpoint
+
+NemoClaw sends one HTTP/1.1 request over `activationSocketPath`.
+The request uses this start line and these headers:
+
+```http
+POST /v1/activate HTTP/1.1
+Host: localhost
+Content-Type: application/json
+Accept: application/json
+Content-Length: <body-byte-count>
+Connection: close
+```
+
+The request body uses strict JSON with this shape:
+
+```json
+{
+  "schemaVersion": 1,
+  "activationId": "<random-version-4-UUID>",
+  "componentId": "policy-governance",
+  "gateway": {
+    "name": "<selected-NemoClaw-gateway-name>"
+  },
+  "sandbox": {
+    "id": "<durable-OpenShell-sandbox-ID>",
+    "identityFingerprint": "sha256:<digest>",
+    "lifecycleGeneration": "<generation>"
+  },
+  "policy": {
+    "source": "sandbox",
+    "hash": "sha256:<digest>",
+    "activeVersion": 1
+  }
+}
+```
+
+For gateway port `8080`, `gateway.name` is `nemoclaw`.
+For a non-default port, the name is `nemoclaw-<port>`.
+Use the value in the request as the selected gateway identity.
+
+The component must return one HTTP/1.1 status `200` response.
+The response must include one valid `Content-Length` header and must not use `Transfer-Encoding`.
+The connection must end after the declared body.
+
+Return a strict JSON body with only these fields:
+
+```json
+{
+  "schemaVersion": 1,
+  "activationId": "<matching-version-4-UUID>",
+  "componentId": "policy-governance",
+  "sandboxId": "<matching-durable-OpenShell-sandbox-ID>",
+  "policyHash": "sha256:<matching-digest>",
+  "result": "activated"
+}
+```
+
+Set `result` to `activated` or `rejected`.
+Do not add a message or another field.
+The response body cannot exceed 1,048,576 bytes.
+
+The `activationId`, `componentId`, `sandboxId`, and `policyHash` must match the request.
+NemoClaw rejects duplicate keys, unknown fields, invalid values, extra response bytes, oversized bodies, and evidence mismatches.
+
+The activation deadline is 30 seconds.
+Version 1 has no command, environment variable, or declaration setting for either timeout.
+NemoClaw does not retry activation automatically.
+
+After an `activated` response, NemoClaw rechecks the declaration, sockets, sandbox identity, lifecycle generation, and policy evidence.
+Onboarding reports success only when the repeated evidence equals the pre-request evidence.
+
+## Handle an Incomplete Activation
+
+NemoClaw classifies the activation result as follows:
+
+| Result | Onboarding behavior |
+|---|---|
+| `activated` with matching evidence | Clears operation-local activation evidence and completes onboarding after the repeated identity and policy check. |
+| `rejected` | Records a `failed` activation and preserves the sandbox. |
+| Timeout, disconnect, malformed response, non-`200` status, oversized response, extra response data, or evidence mismatch | Records an `ambiguous` activation and preserves the sandbox. |
+
+For `failed` or `ambiguous`, onboarding does not report success.
+The selected state root keeps `onboard-session.json` with these secret-free activation fields:
+
+- `schemaVersion`.
+- `activationId`.
+- `componentId`.
+- `lifecycleGeneration`.
+- `sandboxIdentityFingerprint`.
+- `resultClass`.
+
+Version 1 has no supported recovery operation for this state.
+Preserve the onboarding session, sandbox registry, sandbox, and component diagnostics for an identity-verified recovery decision.
+Do not delete or recover the sandbox from its mutable name alone.
+NemoClaw does not store a policy copy or durable policy authority in the incomplete state.
+
+## Keep Credentials Outside the Contract
+
+Do not put component credentials in the declaration, activation request, activation response, command arguments, environment variables, events, logs, or artifacts.
+Keep component credentials in component-owned protected storage.
+NemoClaw does not read, persist, log, transfer, or remove those credentials.
+
+NemoClaw diagnostics report bounded reason classes.
+They do not include request bodies, response bodies, socket paths, or component-provided text.
+
+## Related Topics
+
+- [Declare the OpenShell Gateway Lifecycle Authority](gateway-lifecycle-authority) for NemoClaw-managed and externally supervised gateway modes.
+- [Host Files and State](../reference/host-files-and-state) before you change an onboarding session or sandbox registry file.
+- [NemoClaw CLI Commands Reference](../reference/commands) for onboarding flags and environment variables.

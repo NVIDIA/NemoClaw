@@ -7,17 +7,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  type ReviewedNpmIdentity,
   evaluateAuditPolicy,
+  parseReviewedNpmIdentity,
   parseAuditExceptionRegistry,
   parseAuditReport,
   NPM_AUDIT_ARGV,
+  parseReviewedNpmIdentityConfig,
 } from "./reviewed-npm-audit.mts";
 
 export const AUDIT_ARGV = NPM_AUDIT_ARGV;
-// Remove this PR-only compatibility after main produces Yarn-bound audit receipts.
+// Remove this bridge after main produces schema v2 receipts and retained legacy receipts expire.
 const LEGACY_NPM_AUDIT_REGISTRY = "https://registry.npmjs.org/";
 const LEGACY_NPM_AUDIT_ARGV = ["audit", "--omit=dev", "--json"] as const;
-export const LEGACY_NPM_AUDIT_RECEIPT_DEADLINE = Date.parse("2026-09-11T00:00:00.000Z");
+export const LEGACY_NPM_AUDIT_RECEIPT_DEADLINE = Date.parse("2026-09-18T00:00:00.000Z");
 export const RECEIPT_LIFETIME_MS = 12 * 60 * 60 * 1000 - 1;
 export const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const SEVERITIES = new Set(["info", "low", "moderate", "high", "critical"]);
@@ -29,6 +32,8 @@ const RECEIPT_KEYS = [
   "exceptionPolicySha256",
   "expiresAt",
   "graphId",
+  "npmArchiveSha256",
+  "npmIntegrity",
   "npmVersion",
   "packageJsonSha256",
   "packageLockSha256",
@@ -38,6 +43,9 @@ const RECEIPT_KEYS = [
   "schemaVersion",
   "severityThreshold",
 ];
+const LEGACY_RECEIPT_KEYS = RECEIPT_KEYS.filter(
+  (key) => key !== "npmArchiveSha256" && key !== "npmIntegrity",
+);
 
 export type AuditReceipt = Readonly<{
   acceptedAdvisoryIds: readonly string[];
@@ -47,15 +55,25 @@ export type AuditReceipt = Readonly<{
   exceptionPolicySha256: string;
   expiresAt: string;
   graphId: string;
+  npmArchiveSha256: string;
+  npmIntegrity: string;
   npmVersion: string;
   packageJsonSha256: string;
   packageLockSha256: string;
   rawResponseSha256: string;
   registryOrigin: string;
   result: "pass";
-  schemaVersion: 1;
+  schemaVersion: 2;
   severityThreshold: "info" | "low" | "moderate" | "high" | "critical";
 }>;
+
+type LegacyAuditReceipt = Readonly<
+  Omit<AuditReceipt, "npmArchiveSha256" | "npmIntegrity" | "schemaVersion"> & {
+    schemaVersion: 1;
+  }
+>;
+
+type VerifiedAuditReceipt = AuditReceipt | LegacyAuditReceipt;
 
 export function sha256(contents: string | Buffer): string {
   return createHash("sha256").update(contents).digest("hex");
@@ -101,7 +119,7 @@ export function createAuditReceipt(
     createdAt?: Date;
     exceptionPolicySha256: string;
     graphId: string;
-    npmVersion: string;
+    reviewedNpmIdentity: ReviewedNpmIdentity;
     packageJson: string | Buffer;
     packageLock: string | Buffer;
     rawResponse: string | Buffer;
@@ -112,6 +130,7 @@ export function createAuditReceipt(
   if (options.blockingAdvisoryIds.length > 0)
     throw new Error("cannot issue a passing receipt with blocking advisories");
   const created = options.createdAt ?? new Date();
+  const reviewedNpmIdentity = parseReviewedNpmIdentity(options.reviewedNpmIdentity);
   return {
     acceptedAdvisoryIds: [...new Set(options.acceptedAdvisoryIds)].sort(),
     argv: [...AUDIT_ARGV],
@@ -120,13 +139,13 @@ export function createAuditReceipt(
     exceptionPolicySha256: options.exceptionPolicySha256,
     expiresAt: new Date(created.getTime() + RECEIPT_LIFETIME_MS).toISOString(),
     graphId: options.graphId,
-    npmVersion: options.npmVersion,
+    ...reviewedNpmIdentity,
     packageJsonSha256: sha256(options.packageJson),
     packageLockSha256: sha256(options.packageLock),
     rawResponseSha256: sha256(options.rawResponse),
     registryOrigin: options.registryOrigin,
     result: "pass",
-    schemaVersion: 1,
+    schemaVersion: 2,
     severityThreshold: options.severityThreshold,
   };
 }
@@ -135,7 +154,7 @@ export function parseAndVerifyAuditReceipt(
   contents: string,
   expected: Readonly<{
     graphId: string;
-    npmVersion: string;
+    reviewedNpmIdentity: ReviewedNpmIdentity;
     exceptionPolicy: string | Buffer;
     severityThreshold: AuditReceipt["severityThreshold"];
     packageJson: string | Buffer;
@@ -143,9 +162,9 @@ export function parseAndVerifyAuditReceipt(
     rawResponse: string | Buffer;
     registryOrigin: string;
     now?: Date;
-    allowLegacyNpmjsReceipt?: boolean;
+    allowLegacyReceipt?: boolean;
   }>,
-): AuditReceipt {
+): VerifiedAuditReceipt {
   let parsed: unknown;
   try {
     parsed = JSON.parse(contents);
@@ -155,19 +174,34 @@ export function parseAndVerifyAuditReceipt(
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
     throw new Error("receipt must be an object");
   const value = parsed as Record<string, unknown>;
-  exactKeys(value, RECEIPT_KEYS, "receipt");
-  if (value.schemaVersion !== 1 || value.result !== "pass")
-    throw new Error("receipt is not a passing schema version 1 receipt");
-  if (value.graphId !== expected.graphId || value.npmVersion !== expected.npmVersion)
-    throw new Error("receipt identity does not match expected graph and npm");
   const now = (expected.now ?? new Date()).getTime();
+  const isLegacyReceipt = value.schemaVersion === 1;
+  exactKeys(value, isLegacyReceipt ? LEGACY_RECEIPT_KEYS : RECEIPT_KEYS, "receipt");
+  if (value.result !== "pass" || (!isLegacyReceipt && value.schemaVersion !== 2))
+    throw new Error("receipt is not a passing supported receipt");
+  if (
+    isLegacyReceipt &&
+    (expected.allowLegacyReceipt !== true || now >= LEGACY_NPM_AUDIT_RECEIPT_DEADLINE)
+  ) {
+    throw new Error("version-only receipt schema is outside the allowed legacy transition");
+  }
+  const reviewedNpmIdentity = parseReviewedNpmIdentity(expected.reviewedNpmIdentity);
+  if (
+    value.graphId !== expected.graphId ||
+    value.npmVersion !== reviewedNpmIdentity.npmVersion ||
+    (!isLegacyReceipt &&
+      (value.npmIntegrity !== reviewedNpmIdentity.npmIntegrity ||
+        value.npmArchiveSha256 !== reviewedNpmIdentity.npmArchiveSha256))
+  ) {
+    throw new Error("receipt identity does not match expected graph and reviewed npm");
+  }
   const currentContract =
     value.registryOrigin === expected.registryOrigin &&
     Array.isArray(value.argv) &&
     value.argv.length === AUDIT_ARGV.length &&
     value.argv.every((arg, index) => arg === AUDIT_ARGV[index]);
   const legacyContract =
-    expected.allowLegacyNpmjsReceipt === true &&
+    expected.allowLegacyReceipt === true &&
     now < LEGACY_NPM_AUDIT_RECEIPT_DEADLINE &&
     value.registryOrigin === LEGACY_NPM_AUDIT_REGISTRY &&
     Array.isArray(value.argv) &&
@@ -207,29 +241,8 @@ export function parseAndVerifyAuditReceipt(
   };
 }
 
-export function canonicalAuditReceipt(receipt: AuditReceipt): string {
+export function canonicalAuditReceipt(receipt: VerifiedAuditReceipt): string {
   return `${JSON.stringify(receipt, null, 2)}\n`;
-}
-
-export function reviewedNpmVersionFromConfig(contents: string): string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(contents);
-  } catch {
-    throw new Error("reviewed npm audit configuration is not valid JSON");
-  }
-  const npmVersion =
-    typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>).npmVersion
-      : undefined;
-  if (
-    typeof npmVersion !== "string" ||
-    !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(npmVersion) ||
-    /[\r\n]/.test(npmVersion)
-  ) {
-    throw new Error("reviewed npm audit configuration has an invalid npmVersion");
-  }
-  return npmVersion;
 }
 
 function cli(args: readonly string[]): void {
@@ -238,7 +251,7 @@ function cli(args: readonly string[]): void {
     const value = args[index + 1];
     if (!args[index]?.startsWith("--") || value === undefined)
       throw new Error(
-        "usage: npm-audit-receipt.mts --receipt FILE --package-json FILE --package-lock FILE --raw-report FILE --exceptions FILE --graph ID --audit-config FILE --registry ORIGIN --threshold SEVERITY [--legacy-npmjs true] [--result FILE]",
+        "usage: npm-audit-receipt.mts --receipt FILE --package-json FILE --package-lock FILE --raw-report FILE --exceptions FILE --graph ID --audit-config FILE --registry ORIGIN --threshold SEVERITY [--legacy-audit true] [--result FILE]",
       );
     values.set(args[index], value);
   }
@@ -253,10 +266,10 @@ function cli(args: readonly string[]): void {
     "--registry",
     "--threshold",
   ];
-  const allowed = [...required, "--result", "--legacy-npmjs"];
+  const allowed = [...required, "--result", "--legacy-audit"];
   exactKeys(
     Object.fromEntries(
-      [...values].filter(([key]) => key !== "--result" && key !== "--legacy-npmjs"),
+      [...values].filter(([key]) => key !== "--result" && key !== "--legacy-audit"),
     ),
     required,
     "verifier arguments",
@@ -267,19 +280,19 @@ function cli(args: readonly string[]): void {
   const packageLock = fs.readFileSync(values.get("--package-lock")!);
   const rawResponse = fs.readFileSync(values.get("--raw-report")!);
   const exceptionPolicy = fs.readFileSync(values.get("--exceptions")!);
-  const npmVersion = reviewedNpmVersionFromConfig(
+  const reviewedNpmIdentity = parseReviewedNpmIdentityConfig(
     fs.readFileSync(values.get("--audit-config")!, "utf8"),
   );
   parseAndVerifyAuditReceipt(fs.readFileSync(values.get("--receipt")!, "utf8"), {
     graphId: values.get("--graph")!,
-    npmVersion,
+    reviewedNpmIdentity,
     exceptionPolicy,
     severityThreshold: values.get("--threshold")! as AuditReceipt["severityThreshold"],
     packageJson,
     packageLock,
     rawResponse,
     registryOrigin: values.get("--registry")!,
-    allowLegacyNpmjsReceipt: values.get("--legacy-npmjs") === "true",
+    allowLegacyReceipt: values.get("--legacy-audit") === "true",
   });
   const policyResult = evaluateAuditPolicy({
     directory: path.dirname(values.get("--package-json")!),
@@ -295,7 +308,7 @@ function cli(args: readonly string[]): void {
     );
   if (values.has("--result"))
     fs.writeFileSync(values.get("--result")!, `${JSON.stringify(policyResult, null, 2)}\n`);
-  console.log("reviewed npm audit receipt and current policy verified");
+  console.log("npm audit receipt and current policy verified");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
