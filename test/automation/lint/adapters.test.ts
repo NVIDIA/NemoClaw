@@ -106,10 +106,13 @@ it.each([
     fs.symlinkSync(path.resolve("node_modules"), path.join(root, "node_modules"), "dir");
     fs.copyFileSync("oxlint.config.ts", path.join(root, "oxlint.config.ts"));
     fs.copyFileSync("oxc.ignore-patterns.ts", path.join(root, "oxc.ignore-patterns.ts"));
-    fs.copyFileSync("tsconfig.json", path.join(root, "tsconfig.json"));
     fs.copyFileSync("tsconfig.cli.json", path.join(root, "tsconfig.cli.json"));
     fs.copyFileSync(".pre-commit-config.yaml", path.join(root, ".pre-commit-config.yaml"));
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    fs.copyFileSync(
+      "src/lib/adapters/tsconfig.json",
+      path.join(root, "src/lib/adapters/tsconfig.json"),
+    );
     fs.writeFileSync(path.join(root, file), source);
     fs.writeFileSync(
       path.join(root, "src/lib/adapters/example/dependency.ts"),
