@@ -825,7 +825,7 @@ export function emitAuditReceipt(
   options: Readonly<{
     artifactDirectory: string;
     graphId: string;
-    npmVersion: string;
+    reviewedNpmIdentity: ReviewedNpmIdentity;
     packageJsonFile: string;
     packageLockFile: string;
     preserveInputs?: boolean;
@@ -857,7 +857,7 @@ export function emitAuditReceipt(
     ),
     exceptionPolicySha256: options.result.exceptionPolicySha256,
     graphId: options.graphId,
-    npmVersion: options.npmVersion,
+    reviewedNpmIdentity: options.reviewedNpmIdentity,
     packageJson: fs.readFileSync(options.packageJsonFile),
     packageLock: fs.readFileSync(options.packageLockFile),
     rawResponse: fs.readFileSync(options.rawReportFile),
@@ -892,8 +892,7 @@ export function assertReviewedAuditReportsPass(
       ({ label, result, threshold: reportThreshold }) =>
         `${label}: ${result.unacceptedBlockingAdvisories.length} unaccepted at or above ${reportThreshold ?? threshold}`,
     );
-  if (failures.length > 0)
-    throw new Error(`npm audit threshold failed\n${failures.join("\n")}`);
+  if (failures.length > 0) throw new Error(`npm audit threshold failed\n${failures.join("\n")}`);
 }
 
 function main(): void {
@@ -920,9 +919,7 @@ function main(): void {
   fs.mkdirSync(artifactDirectory, { recursive: true });
   const npmVersion = run("npm", ["--version"], TRUSTED_REPO_ROOT).stdout.trim();
   if (npmVersion !== config.npmVersion) {
-    throw new Error(
-      `npm audit requires npm ${config.npmVersion}; running npm ${npmVersion}`,
-    );
+    throw new Error(`npm audit requires npm ${config.npmVersion}; running npm ${npmVersion}`);
   }
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
@@ -966,7 +963,7 @@ function main(): void {
     emitAuditReceipt({
       artifactDirectory,
       graphId: SOURCE_GRAPH.id,
-      npmVersion,
+      reviewedNpmIdentity: config,
       packageJsonFile: targetRepositoryPath("package.json", "NemoClaw CLI package manifest"),
       packageLockFile: targetRepositoryPath("package-lock.json", "NemoClaw CLI lockfile"),
       rawReportFile: path.join(artifactDirectory, "source-graph.json"),
@@ -977,7 +974,7 @@ function main(): void {
     emitAuditReceipt({
       artifactDirectory,
       graphId: config.archiveGraphId,
-      npmVersion,
+      reviewedNpmIdentity: config,
       packageJsonFile: path.join(archiveDirectory, "package.json"),
       packageLockFile: path.join(archiveDirectory, "package-lock.json"),
       preserveInputs: true,
@@ -990,7 +987,7 @@ function main(): void {
       emitAuditReceipt({
         artifactDirectory,
         graphId: graph.id,
-        npmVersion,
+        reviewedNpmIdentity: config,
         packageJsonFile: targetRepositoryPath(
           path.join(graph.directory, "package.json"),
           `${graph.label} package manifest`,

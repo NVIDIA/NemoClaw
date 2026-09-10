@@ -411,7 +411,11 @@ describe("npm audit handoff", () => {
       const receiptFile = emitAuditReceipt({
         artifactDirectory: root,
         graphId: "temporary-graph",
-        npmVersion: "10.9.4",
+        reviewedNpmIdentity: {
+          npmArchiveSha256: "0".repeat(64),
+          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+          npmVersion: "10.9.4",
+        },
         packageJsonFile,
         packageLockFile,
         preserveInputs: true,
@@ -477,7 +481,9 @@ describe("npm audit handoff", () => {
       );
       const rejected = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
       expect(rejected.status).not.toBe(0);
-      expect(rejected.stderr).toContain("receipt identity does not match expected graph and npm");
+      expect(rejected.stderr).toContain(
+        "receipt identity does not match expected graph and reviewed npm",
+      );
       expect(fs.existsSync(resultFile)).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

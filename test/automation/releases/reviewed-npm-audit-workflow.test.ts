@@ -230,9 +230,7 @@ process.exit(0);
     );
     const result = spawnSync(
       process.execPath,
-      [
-        path.join(trustedRootAlias, "scripts/audit-reviewed-npm-graph.mts"),
-      ],
+      [path.join(trustedRootAlias, "scripts/audit-reviewed-npm-graph.mts")],
       {
         cwd: trustedRoot,
         encoding: "utf-8",
@@ -452,7 +450,11 @@ describe("trusted npm audit workflow (#5896)", () => {
       emitAuditReceipt({
         artifactDirectory: root,
         graphId: "temporary-graph",
-        npmVersion: "10.9.4",
+        reviewedNpmIdentity: {
+          npmArchiveSha256: "0".repeat(64),
+          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+          npmVersion: "10.9.4",
+        },
         packageJsonFile,
         packageLockFile,
         preserveInputs: true,

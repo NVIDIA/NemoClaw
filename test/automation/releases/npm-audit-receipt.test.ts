@@ -15,9 +15,14 @@ import {
 } from "../../../scripts/lib/npm-audit-receipt.mts";
 
 const NOW = new Date("2026-09-04T00:00:00.000Z");
+const reviewedNpmIdentity = {
+  npmArchiveSha256: "0".repeat(64),
+  npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+  npmVersion: "10.9.4",
+};
 const inputs = {
   graphId: "mcporter-runtime",
-  npmVersion: "10.9.4",
+  reviewedNpmIdentity,
   exceptionPolicy: '{"schemaVersion":1,"exceptions":[]}\n',
   severityThreshold: "high",
   packageJson: "package",
@@ -27,11 +32,6 @@ const inputs = {
   registryOrigin: "https://registry.yarnpkg.com",
   now: NOW,
 } as const;
-const reviewedNpmIdentity = {
-  npmArchiveSha256: "0".repeat(64),
-  npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
-  npmVersion: inputs.npmVersion,
-};
 function receipt(createdAt = NOW) {
   return createAuditReceipt({
     acceptedAdvisoryIds: ["GHSA-b", "GHSA-a"],
@@ -39,7 +39,7 @@ function receipt(createdAt = NOW) {
     createdAt,
     exceptionPolicySha256: sha256(inputs.exceptionPolicy),
     graphId: inputs.graphId,
-    npmVersion: inputs.npmVersion,
+    reviewedNpmIdentity,
     packageJson: inputs.packageJson,
     packageLock: inputs.packageLock,
     rawResponse:
@@ -59,6 +59,7 @@ describe("npm audit receipt", () => {
       "--omit=dev",
       "--json",
     ]);
+    expect(parsed).toMatchObject(reviewedNpmIdentity);
     expect(new Date(parsed.expiresAt).getTime() - NOW.getTime()).toBeLessThan(12 * 60 * 60 * 1000);
   });
 
@@ -74,16 +75,56 @@ describe("npm audit receipt", () => {
     expect(
       parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), {
         ...inputs,
-        allowLegacyNpmjsReceipt: true,
+        allowLegacyReceipt: true,
       }).registryOrigin,
     ).toBe("https://registry.npmjs.org/");
     expect(() =>
       parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), {
         ...inputs,
-        allowLegacyNpmjsReceipt: true,
+        allowLegacyReceipt: true,
         now: new Date(LEGACY_NPM_AUDIT_RECEIPT_DEADLINE),
       }),
     ).toThrow(/allowed contract/);
+  });
+
+  it("accepts a version-only schema only through the bounded legacy transition", () => {
+    const {
+      npmArchiveSha256: _npmArchiveSha256,
+      npmIntegrity: _npmIntegrity,
+      ...versionOnly
+    } = receipt();
+    const legacy = { ...versionOnly, schemaVersion: 1 } as const;
+    expect(() => parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), inputs)).toThrow(
+      /version-only receipt schema/,
+    );
+    expect(
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), {
+        ...inputs,
+        allowLegacyReceipt: true,
+      }).schemaVersion,
+    ).toBe(1);
+    expect(() =>
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(legacy), {
+        ...inputs,
+        allowLegacyReceipt: true,
+        now: new Date(LEGACY_NPM_AUDIT_RECEIPT_DEADLINE),
+      }),
+    ).toThrow(/version-only receipt schema/);
+  });
+
+  it.each([
+    [
+      "SHA-512 SRI",
+      { ...reviewedNpmIdentity, npmIntegrity: `sha512-${Buffer.alloc(64, 1).toString("base64")}` },
+    ],
+    ["archive SHA-256", { ...reviewedNpmIdentity, npmArchiveSha256: "1".repeat(64) }],
+  ] as const)("rejects a receipt when the expected npm %s changes", (_field, changedIdentity) => {
+    expect(() =>
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt()), {
+        ...inputs,
+        reviewedNpmIdentity: changedIdentity,
+      }),
+    ).toThrow(/receipt identity/);
   });
 
   it("rejects a receipt whose registry identity differs from its audit command", () => {
@@ -208,7 +249,7 @@ describe("npm audit receipt", () => {
           registry,
           "--threshold",
           inputs.severityThreshold,
-          ...(legacy ? ["--legacy-npmjs", "true"] : []),
+          ...(legacy ? ["--legacy-audit", "true"] : []),
         ];
         const result = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
         expect(result.status, result.stderr).toBe(0);
