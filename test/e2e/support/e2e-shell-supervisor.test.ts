@@ -20,7 +20,7 @@
 import { spawn } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
-import { superviseChild } from "../fixtures/shell/supervisor.ts";
+import { superviseChild } from "../../helpers/process-supervisor.ts";
 import { trustedShellCommand, validateShellToken } from "../fixtures/shell/trusted-command.ts";
 
 const NUL = String.fromCharCode(0);
@@ -68,7 +68,7 @@ describe("fixtures/shell/trusted-command", () => {
   });
 });
 
-describe("fixtures/shell/supervisor", () => {
+describe("helpers/process-supervisor", () => {
   it("returns exitCode 0 when the child exits cleanly", async () => {
     const child = spawn("bash", ["-c", "exit 0"], {
       detached: true,

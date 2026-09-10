@@ -8,11 +8,12 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { superviseChild } from "../../e2e/fixtures/shell/supervisor.ts";
+import { superviseChild } from "../../helpers/process-supervisor.ts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const CHECK_DOCS = path.join(REPO_ROOT, "test", "e2e", "e2e-cloud-experimental", "check-docs.sh");
+const PROCESS_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 
 // These three checks own separate fixtures; keep their overlap bounded.
 vi.setConfig({ maxConcurrency: 3 });
@@ -25,6 +26,21 @@ type AsyncProcessResult = {
   stdout: string;
 };
 
+function captureProcessOutput(
+  current: string,
+  chunk: string,
+  stream: "stderr" | "stdout",
+  command: string,
+  controller: AbortController,
+): string {
+  return Buffer.byteLength(current) + Buffer.byteLength(chunk) <= PROCESS_OUTPUT_LIMIT_BYTES
+    ? `${current}${chunk}`
+    : (controller.abort(
+        new Error(`${command} ${stream} exceeded ${PROCESS_OUTPUT_LIMIT_BYTES} bytes`),
+      ),
+      current);
+}
+
 function runProcessGroup(
   command: string,
   args: readonly string[],
@@ -35,6 +51,7 @@ function runProcessGroup(
     timeoutMs: number;
   },
 ): Promise<AsyncProcessResult> {
+  const outputAbort = new AbortController();
   let stderr = "";
   let stdout = "";
   const child = spawn(command, [...args], {
@@ -46,19 +63,21 @@ function runProcessGroup(
   return superviseChild(child, {
     killGraceMs: 0,
     onStderr: (chunk) => {
-      stderr += chunk;
+      stderr = captureProcessOutput(stderr, chunk, "stderr", command, outputAbort);
     },
     onStdout: (chunk) => {
-      stdout += chunk;
+      stdout = captureProcessOutput(stdout, chunk, "stdout", command, outputAbort);
     },
-    signal: options.signal,
+    signal: AbortSignal.any([options.signal, outputAbort.signal]),
     timeoutMs: options.timeoutMs,
   }).then((result) => ({
     error:
       result.spawnError ??
       (result.timedOut
         ? new Error(`${command} timed out after ${options.timeoutMs}ms`)
-        : undefined),
+        : outputAbort.signal.reason instanceof Error
+          ? outputAbort.signal.reason
+          : undefined),
     signal: result.signal,
     status: result.exitCode,
     stderr,
@@ -125,8 +144,12 @@ exec "$NEMOCLAW_TEST_NODE" "$_entrypoint" "$@"
   return { binDir, nodeInvocationLog, nodeShim, root };
 }
 
-function cliParityOptions(fixture: CliParityFixture, env: NodeJS.ProcessEnv = {}) {
-  return {
+function runCliParityAsync(
+  fixture: CliParityFixture,
+  signal: AbortSignal,
+  env: NodeJS.ProcessEnv = {},
+) {
+  return runProcessGroup("bash", [CHECK_DOCS, "--only-cli"], {
     cwd: REPO_ROOT,
     env: {
       ...process.env,
@@ -137,18 +160,9 @@ function cliParityOptions(fixture: CliParityFixture, env: NodeJS.ProcessEnv = {}
       NEMOCLAW_TEST_NODE: process.execPath,
       NODE: fixture.nodeShim,
       PATH: `${fixture.binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      TMPDIR: fixture.root,
       ...env,
     },
-  };
-}
-
-function runCliParityAsync(
-  fixture: CliParityFixture,
-  signal: AbortSignal,
-  env: NodeJS.ProcessEnv = {},
-) {
-  return runProcessGroup("bash", [CHECK_DOCS, "--only-cli"], {
-    ...cliParityOptions(fixture, env),
     signal,
     timeoutMs: 120_000,
   });
@@ -263,22 +277,29 @@ describe("public compiled CLI contracts", () => {
       timeout: 150_000,
     },
     async ({ expect, signal }) => {
-      const result = await runProcessGroup("bash", [CHECK_DOCS, "--only-links", "--local-only"], {
-        cwd: REPO_ROOT,
-        env: {
-          ...process.env,
-          CHECK_DOC_LINKS_REMOTE: "0",
-        },
-        signal,
-        timeoutMs: 120_000,
-      });
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docs-link-parity-"));
 
-      expect(result.error).toBeUndefined();
-      expect(result.signal).toBeNull();
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      expect(result.stdout).toContain("check-docs: running: [links]");
-      expect(result.stdout).toContain("remote: skipped (local paths only)");
-      expect(result.stdout).toContain("phase 2/2: skipped");
+      try {
+        const result = await runProcessGroup("bash", [CHECK_DOCS, "--only-links", "--local-only"], {
+          cwd: REPO_ROOT,
+          env: {
+            ...process.env,
+            CHECK_DOC_LINKS_REMOTE: "0",
+            TMPDIR: tempRoot,
+          },
+          signal,
+          timeoutMs: 120_000,
+        });
+
+        expect(result.error).toBeUndefined();
+        expect(result.signal).toBeNull();
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        expect(result.stdout).toContain("check-docs: running: [links]");
+        expect(result.stdout).toContain("remote: skipped (local paths only)");
+        expect(result.stdout).toContain("phase 2/2: skipped");
+      } finally {
+        fs.rmSync(tempRoot, { force: true, recursive: true });
+      }
     },
   );
 
