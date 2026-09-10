@@ -248,6 +248,8 @@ When a managed OpenClaw sandbox uses Brave Search, the export includes its `webS
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
 For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.
 It preserves nondefault agent timeout and heartbeat settings under `execution`.
+When OpenClaw conversation diagnostics are enabled, the export includes the fixed local OTLP endpoint, service name, and sample rate under agent observability.
+It never includes collector credentials.
 It omits settings that equal the managed defaults.
 Hermes export also requires the default API configuration, a disabled dashboard, no Hermes tool gateways, and no Hermes-specific authentication settings.
 Other profiles fail with a diagnostic instead of producing an incomplete document.
@@ -368,6 +370,40 @@ nemoclaw onboard --agent langchain-deepagents-code [options]
 </AgentOnly>
 
 `--agent` accepts the canonical manifest names from `$$nemoclaw agents list` plus common aliases. For example, `nemohermes` resolves to `hermes`, while `dcode`, `deepagents`, `deepagents-code`, and `langchain` resolve to `langchain-deepagents-code`.
+
+#### External Component Onboarding
+
+NemoClaw can register one external host component during fresh Linux onboarding with a NemoClaw-managed Docker-driver gateway.
+Create the declaration before onboarding at `~/.config/nemoclaw/external-component.json`.
+Its owner must be the current user, and its mode must be `0600`.
+The declaration and socket-parent directories must not be writable by group or other users.
+Both declared Unix sockets must already exist, belong to the current user, and allow access only to that user.
+
+```json
+{
+  "schemaVersion": 1,
+  "componentId": "policy-governance",
+  "interceptorSocketPath": "/run/user/1000/policy-governance/interceptor.sock",
+  "activationSocketPath": "/run/user/1000/policy-governance/activation.sock"
+}
+```
+
+`componentId` must contain 1 through 64 letters, numbers, periods, underscores, or hyphens and start with a letter or number.
+Both socket paths must be distinct absolute paths.
+NemoClaw rejects a declaration with another field, an unsupported schema version, an unsafe owner, mode, path, or socket.
+
+After it verifies the declaration, NemoClaw configures the component as a fail-closed OpenShell interceptor.
+The interceptor can modify or validate `CreateSandbox` operations and validate `UpdateConfig` operations.
+NemoClaw supports this lifecycle only for a new explicitly named sandbox.
+It rejects `--resume`, `--recreate-sandbox`, reuse, repair, providerless APF onboarding, and externally supervised gateways.
+
+After sandbox creation and policy verification, NemoClaw sends one HTTP/1.1 `POST /v1/activate` request to `activationSocketPath`.
+The JSON request identifies the component, gateway, sandbox immutable identity, lifecycle generation, and effective policy hash.
+The component must return one bounded `200` response with a JSON body that repeats `schemaVersion`, `activationId`, `componentId`, `sandboxId`, and `policyHash`, and sets `result` to `activated` or `rejected`.
+NemoClaw waits at most 30 seconds.
+
+If activation is rejected, incomplete, or ambiguous, NemoClaw preserves the sandbox and records the activation evidence.
+It does not report onboarding success or retry activation automatically.
 
 #### `--profile <name>`
 
