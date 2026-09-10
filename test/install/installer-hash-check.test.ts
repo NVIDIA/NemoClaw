@@ -693,10 +693,7 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
       : removeV00106OperationalTrust(withPinFunction);
   const releaseTemplate =
     openshellVersion === "0.0.116"
-      ? operationalTemplate.replace(
-          STABLE_GNU_SANDBOX_SELECTOR,
-          STABLE_MUSL_SANDBOX_SELECTOR,
-        )
+      ? operationalTemplate.replace(STABLE_GNU_SANDBOX_SELECTOR, STABLE_MUSL_SANDBOX_SELECTOR)
       : operationalTemplate;
   const sandboxFunctionStart = releaseTemplate.indexOf("pinned_sandbox_build_version() {");
   const sandboxFunctionEnd = releaseTemplate.indexOf(

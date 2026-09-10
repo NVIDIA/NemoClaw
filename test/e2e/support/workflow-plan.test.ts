@@ -626,6 +626,16 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it("selects Brave export qualification when its helper changes", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/e2e/live/brave-search-helpers.ts"] },
+    );
+    const rows = Object.values(plan.catalogueMatrices).flat();
+
+    expect(rows.map((row) => row.id)).toEqual(["brave-search"]);
+  });
+
   it("selects Hermes GPU startup when its output proof changes", () => {
     const plan = buildE2eWorkflowPlan(
       {},
@@ -693,6 +703,14 @@ describe("E2E workflow plan", () => {
   it("selects the Hermes live lifecycle owner when its skill helper changes", () => {
     expect(
       catalogueTargetsForChangedFiles(["test/e2e/live/hermes-skill-lifecycle.ts"]).map(
+        (target) => target.id,
+      ),
+    ).toContain("security-posture-hermes");
+  });
+
+  it("selects the Hermes export owner when atomic publication changes (#11286)", () => {
+    expect(
+      catalogueTargetsForChangedFiles(["src/lib/adapters/fs/config-export-file.ts"]).map(
         (target) => target.id,
       ),
     ).toContain("security-posture-hermes");

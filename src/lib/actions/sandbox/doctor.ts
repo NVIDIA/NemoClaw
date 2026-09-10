@@ -605,8 +605,7 @@ function globalGatewayGuidance(gatewayName: string): {
   try {
     return { checks: [], unavailableHint: gatewayDoctorStartHint(gatewayName) };
   } catch {
-    const hint =
-      "check the gateway-management declaration file permissions and JSON, then retry";
+    const hint = "check the gateway-management declaration file permissions and JSON, then retry";
     return {
       checks: [
         {

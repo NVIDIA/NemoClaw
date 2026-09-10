@@ -230,6 +230,11 @@ export abstract class NemoClawCommand extends Command {
     return parsed;
   }
 
+  protected override toErrorJson(error: unknown): unknown {
+    // Error.message is not enumerable, so retain it before JSON redaction.
+    return super.toErrorJson(error instanceof Error ? { ...error, message: error.message } : error);
+  }
+
   protected logJson(json: unknown): void {
     console.log(JSON.stringify(redactForLog(json), null, 2));
   }

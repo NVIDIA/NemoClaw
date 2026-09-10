@@ -88,10 +88,12 @@ beforeEach(() => {
   vi.spyOn(policies, "listPresets").mockReturnValue(POLICY_PRESETS);
   vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
   vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["pypi"]);
-  loadPresetForSandboxMock = vi.spyOn(policies, "loadPresetForSandbox").mockImplementation(
-    (_sandboxName: unknown, name: unknown) =>
-      `network_policies:\n  ${String(name)}:\n    host: ${String(name)}.example.com\n`,
-  );
+  loadPresetForSandboxMock = vi
+    .spyOn(policies, "loadPresetForSandbox")
+    .mockImplementation(
+      (_sandboxName: unknown, name: unknown) =>
+        `network_policies:\n  ${String(name)}:\n    host: ${String(name)}.example.com\n`,
+    );
   applyPresetMock = vi.spyOn(policies, "applyPreset").mockReturnValue(true);
   gatewayStateMock = vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("drift");
   npmCompatibilityStateMock = vi
@@ -182,9 +184,8 @@ describe("addSandboxPolicy drift-aware named re-add", () => {
         appliedPolicy = loadMessagingChannelPolicyPreset(String(presetName), {
           agent: "openclaw",
           sandboxName: "alpha",
-          messagingConfig: (
-            options as { messagingConfig?: Readonly<Record<string, string>> }
-          ).messagingConfig,
+          messagingConfig: (options as { messagingConfig?: Readonly<Record<string, string>> })
+            .messagingConfig,
         });
         return appliedPolicy !== null;
       },

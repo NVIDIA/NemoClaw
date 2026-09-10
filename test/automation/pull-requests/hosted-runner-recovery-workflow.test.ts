@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { readYaml, type WorkflowJob, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
+import {
+  readYaml,
+  type WorkflowJob,
+  type WorkflowStep,
+} from "../../helpers/e2e-workflow-contract.ts";
 
 const WORKFLOW_PATH = ".github/workflows/hosted-runner-recovery.yaml";
 const PLATFORM_WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
@@ -73,18 +77,16 @@ describe("hosted-runner recovery workflow boundary", () => {
     expect(Object.keys(value.jobs)).toEqual(["recover"]);
   });
 
-  it.each(
-    [
-        "github.run_attempt == 1",
-        "github.repository == 'NVIDIA/NemoClaw'",
-        "github.event.workflow_run.run_attempt == 1",
-        "github.event.workflow_run.status == 'completed'",
-        "github.event.workflow_run.conclusion == 'failure'",
-        "github.event.workflow_run.head_branch == 'main'",
-        "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
-        "github.event.workflow_run.path == '.github/workflows/platform-vitest-main.yaml'",
-      ],
-  )(
+  it.each([
+    "github.run_attempt == 1",
+    "github.repository == 'NVIDIA/NemoClaw'",
+    "github.event.workflow_run.run_attempt == 1",
+    "github.event.workflow_run.status == 'completed'",
+    "github.event.workflow_run.conclusion == 'failure'",
+    "github.event.workflow_run.head_branch == 'main'",
+    "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
+    "github.event.workflow_run.path == '.github/workflows/platform-vitest-main.yaml'",
+  ])(
     "fails closed on controller, source, repository, branch, event, and path [%s] (#7140)",
     (fragment) => {
       const guard = workflow().jobs.recover.if ?? "";
@@ -129,9 +131,7 @@ describe("hosted-runner recovery workflow boundary", () => {
       GITHUB_TOKEN: "${{ github.token }}",
       SOURCE_RUN_ID: "${{ github.event.workflow_run.id }}",
     });
-    expect(evaluate.run).toBe(
-      "node --no-warnings tools/e2e/hosted-runner-recovery.mts",
-    );
+    expect(evaluate.run).toBe("node --no-warnings tools/e2e/hosted-runner-recovery.mts");
   });
 
   it("writes only a static policy sentence to the job summary (#7140)", () => {

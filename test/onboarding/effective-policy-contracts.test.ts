@@ -470,9 +470,9 @@ describe("effective built-in policy contracts", () => {
         "/sandbox/.hermes/node/bin/agent-browser*",
       ]),
     );
-    expect(binaries(browser).filter((binary) => binary.startsWith("/sandbox/.hermes-data/"))).toEqual(
-      [],
-    );
+    expect(
+      binaries(browser).filter((binary) => binary.startsWith("/sandbox/.hermes-data/")),
+    ).toEqual([]);
   });
 
   it("keeps OpenClaw messaging credentials and WebSockets inside inspected endpoints", () => {
