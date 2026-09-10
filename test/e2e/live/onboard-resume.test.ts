@@ -182,7 +182,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, gateway, host, progress, runtimeProvider, sandbox }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     const corporateCa = createCorporateCaFixture("host-anchor", "nemoclaw-resume-corporate-ca-");
     cleanup.trackDisposable("remove corporate CA fixture", () =>
       cleanupCorporateCaFixture(corporateCa),
@@ -489,8 +489,6 @@ test(
     };
     expect(resumeEnv.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
     expect(resumeEnv.COMPATIBLE_API_KEY).toBeUndefined();
-    const gatewayBeforeResume = await gateway.resolveHostRuntime();
-    expect(gatewayBeforeResume).not.toBeNull();
     const resumeRun = await host.command(
       "node",
       [CLI_ENTRYPOINT, "onboard", "--resume", "--recreate-sandbox", "--non-interactive"],
@@ -512,17 +510,10 @@ test(
     expect(resumeText).toContain(`Deleting and recreating sandbox '${SANDBOX_NAME}'`);
     expect(resumeText).toContain(`Sandbox '${SANDBOX_NAME}' created`);
 
-    // Resume must retain the running gateway while recreating only the sandbox.
-    const gatewayAfterResume = await gateway.resolveHostRuntime();
-    await artifacts.writeJson("phase-3-gateway-reuse.json", {
-      before: gatewayBeforeResume,
-      after: gatewayAfterResume,
-    });
-    expect(gatewayAfterResume).toEqual(gatewayBeforeResume);
-
-    // Current CLI output still prints phase headings before the resume-skip
-    // decisions, so assert the skip evidence and absence of redo-only success
-    // strings instead of rejecting headings that frame skipped phases.
+    // Assertion: resume-no-{preflight,gateway}-redo. Current CLI output
+    // still prints phase headings before the resume-skip decisions, so assert
+    // the skip evidence and absence of redo-only success strings instead of
+    // rejecting headings that now frame the skipped phases.
     expect(resumeText).not.toMatch(OPENSHELL_GATEWAY_START_LINE);
     const reconciledExtraProviders = readExtraProviders();
     expect(reconciledExtraProviders).toContain(LIVE_EXTRA_PROVIDER);

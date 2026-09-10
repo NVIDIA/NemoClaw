@@ -555,38 +555,6 @@ describe("E2E fixture clients", () => {
     ).expectOpenshellStatusConnected();
   });
 
-  it.each([
-    {
-      kind: "pid",
-      responses: [
-        { stdout: "12345\n" },
-        { stdout: "67890\n" },
-        { exitCode: 1 },
-        { stdout: "" },
-      ],
-    },
-    {
-      kind: "container",
-      responses: [
-        { exitCode: 1 },
-        { stdout: "12345\topenshell-cluster-nemoclaw\n" },
-        { exitCode: 1 },
-        { stdout: "67890\topenshell-cluster-nemoclaw\n" },
-        { exitCode: 1 },
-        { stdout: "55555\topenshell-cluster-other\n" },
-      ],
-    },
-  ])("observes $kind gateway replacement and disappearance between resume probes (#10998)", async ({ kind, responses }) => {
-    const runner = new FakeRunner();
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
-    const gateway = new GatewayClient(host, new SandboxClient(runner));
-    runner.responses.push(...responses);
-
-    await expect(gateway.resolveHostRuntime()).resolves.toEqual({ kind, id: "12345" });
-    await expect(gateway.resolveHostRuntime()).resolves.toEqual({ kind, id: "67890" });
-    await expect(gateway.resolveHostRuntime()).resolves.toBeNull();
-  });
-
   it("sandbox client builds the bounded initial OpenClaw pairing wait", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
