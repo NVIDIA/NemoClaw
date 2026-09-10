@@ -535,14 +535,15 @@ describe("base-image publication evidence", () => {
   });
 
   it("prefers a successful push over a successful manual publication at the same commit", () => {
-    const pushRunId = RUN_ID + 1;
+    const manualRunId = RUN_ID + 1;
     const selection = selectPublicationRun(
       runsPayload([
-        workflowRun({ event: "workflow_dispatch" }),
         workflowRun({
-          id: pushRunId,
-          html_url: `${RUN_URL_ROOT}/${pushRunId}`,
+          id: manualRunId,
+          html_url: `${RUN_URL_ROOT}/${manualRunId}`,
+          event: "workflow_dispatch",
         }),
+        workflowRun(),
       ]),
       history(),
       WORKFLOW_ID,
@@ -551,7 +552,7 @@ describe("base-image publication evidence", () => {
 
     expect(selection).toMatchObject({
       state: "selected",
-      run: { id: pushRunId, event: "push", headSha: RELEVANT_SHA },
+      run: { id: RUN_ID, event: "push", headSha: RELEVANT_SHA },
     });
   });
 
