@@ -66,6 +66,7 @@ export function buildExportConfig(
             {
               name: "primary",
               type: "openclaw",
+              ...(source.interfaces ? { interfaces: source.interfaces } : {}),
               inference: {
                 routes: [
                   {

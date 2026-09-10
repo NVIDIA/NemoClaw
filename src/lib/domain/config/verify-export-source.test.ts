@@ -3,7 +3,16 @@
 
 import { Check } from "typebox/value";
 import { ExportSourceValuesSchema } from "./export-evidence";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
+import { createHash } from "node:crypto";
+import { runConfigExport } from "../../actions/config/export";
+import { buildChain } from "../../dashboard/contract";
+import { validateNemoClawConfig } from "../../config/schema";
+import {
+  parseNemoClawConfigDocumentName,
+  parseNemoClawConfigDocumentUid,
+} from "../../config/model";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import {
@@ -540,14 +549,19 @@ describe("config export source verification (#10938)", () => {
     },
   );
 
-  it("rejects any noncanonical managed startup profile", async () => {
+  it("rejects a custom dashboard URL that cannot be represented", async () => {
     const base = profileInput();
     const dashboard = base.dashboard as Extract<
       ManagedStartupProfileBuilderInput["dashboard"],
       { agent: "openclaw" }
     >;
     const configured = profileInput({
-      dashboard: { ...dashboard, url: "http://127.0.0.1:18888", port: 18_888 },
+      dashboard: {
+        ...dashboard,
+        mode: "remote",
+        url: "https://dashboard.example.com:18888",
+        port: 18_888,
+      },
     });
     const workload = managedWorkload(configured);
     const raw = snapshot({ registry: entry({ imageTag: workload.reference, workload }) });
@@ -590,5 +604,252 @@ describe("config export source verification (#10938)", () => {
       expect.objectContaining({ category: "policy-not-representable" }),
     );
     expect(JSON.stringify(result)).not.toContain(canary);
+  });
+});
+
+function dashboardSnapshot(port = 19000, bind: "127.0.0.1" | "0.0.0.0" = "0.0.0.0") {
+  const chain = buildChain({ port, bindOverride: bind });
+  const workload = managedWorkload(
+    profileInput({
+      dashboard: {
+        agent: "openclaw",
+        mode: chain.shouldDisableDeviceAuth ? "remote" : "loopback",
+        url: chain.accessUrl,
+        port: chain.port,
+        bindAddress: bind,
+        wslExposure: false,
+      },
+    }),
+  );
+  return snapshot({
+    registry: entry({
+      dashboardPort: port,
+      dashboardRemoteBindPrepared: bind === "0.0.0.0",
+      workload,
+    }),
+  });
+}
+
+function changeDashboardProfile(
+  observed: ObservedExportSnapshot,
+  change: (profile: Record<string, Record<string, unknown>>) => void,
+) {
+  const workload = observed.registry.workload as Extract<
+    SandboxWorkloadReceipt,
+    { kind: "managed-image" }
+  >;
+  expect(workload?.kind).toBe("managed-image");
+  const value = JSON.parse(Buffer.from(workload.encodedProfile, "base64url").toString("utf8"));
+  change(value);
+  const serialized = JSON.stringify(value);
+  const encodedProfile = Buffer.from(serialized).toString("base64url");
+  return {
+    ...observed,
+    registry: {
+      ...observed.registry,
+      workload: {
+        ...workload,
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+      },
+    },
+  };
+}
+
+async function exportDashboardSnapshots(observed: readonly ObservedExportSnapshot[]) {
+  const writeStdout = vi.fn(async (_yaml: string) => {});
+  const publish = vi.fn();
+  let index = 0;
+  const read = vi.fn(async () => observed[index++ % observed.length]!);
+  const result = await runConfigExport(
+    {
+      sandboxName: "alpha",
+      documentName: parseNemoClawConfigDocumentName("alpha"),
+      target: { kind: "stdout" },
+    },
+    {
+      observe: (name) => observeStableExportSource(name, { read }),
+      createDocumentUid: () =>
+        parseNemoClawConfigDocumentUid("11111111-1111-4111-8111-111111111111"),
+      writeStdout,
+      publish,
+    },
+  );
+  return { result, writeStdout, publish, read };
+}
+
+describe("dashboard settings export", () => {
+  it.each([
+    [19000, "0.0.0.0", { port: 19000, bind: "0.0.0.0" }],
+    [19000, "127.0.0.1", { port: 19000 }],
+    [18789, "0.0.0.0", { bind: "0.0.0.0" }],
+  ] as const)(
+    "exports prepared dashboard port %s and bind %s (#10904)",
+    async (port, bind, dashboard) => {
+      const observed = dashboardSnapshot(port, bind);
+      const outcome = await exportDashboardSnapshots([observed]);
+      expect(outcome.result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const raw = outcome.writeStdout.mock.calls[0]![0];
+      const document = validateNemoClawConfig(YAML.parse(raw));
+      expect(document.spec.sandboxes[0]!.agents[0]!.interfaces).toEqual({ dashboard });
+      expect(raw).not.toContain("deviceAuth");
+      expect(raw).not.toContain("http://127.0.0.1");
+      expect(outcome.read).toHaveBeenCalledTimes(2);
+      expect(outcome.publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps explicit and legacy canonical dashboard exports identical (#10904)", async () => {
+    const legacy = await exportDashboardSnapshots([snapshot()]);
+    const explicit = await exportDashboardSnapshots([dashboardSnapshot(18789, "127.0.0.1")]);
+    expect(explicit.result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(explicit.writeStdout.mock.calls).toEqual(legacy.writeStdout.mock.calls);
+    expect(explicit.writeStdout.mock.calls[0]![0]).not.toContain("interfaces:");
+  });
+
+  it.each([
+    ["missing port", { dashboardPort: undefined }],
+    ["null port", { dashboardPort: null }],
+    ["different port", { dashboardPort: 19001 }],
+    ["missing preparation", { dashboardRemoteBindPrepared: undefined }],
+    ["unprepared bind", { dashboardRemoteBindPrepared: false }],
+  ] as const)("rejects %s without output (#10904)", async (_label, registry) => {
+    const observed = dashboardSnapshot();
+    const outcome = await exportDashboardSnapshots([
+      { ...observed, registry: { ...observed.registry, ...registry } },
+    ]);
+    expect(outcome.result).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(outcome.writeStdout).not.toHaveBeenCalled();
+    expect(outcome.publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { dashboardPort: "19000" },
+    { dashboardPort: 19000.5 },
+    { dashboardRemoteBindPrepared: "true" },
+    { dashboardRemoteBindPrepared: null },
+  ])("rejects malformed registry dashboard evidence %j (#10904)", async (invalid) => {
+    const observed = dashboardSnapshot();
+    const changed = { ...observed, registry: { ...observed.registry } };
+    Object.assign(changed.registry, invalid);
+    const outcome = await exportDashboardSnapshots([changed]);
+    expect(outcome.result).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(outcome.writeStdout).not.toHaveBeenCalled();
+    expect(outcome.publish).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale preparation for a loopback dashboard (#10904)", async () => {
+    const observed = dashboardSnapshot(19000, "127.0.0.1");
+    const outcome = await exportDashboardSnapshots([
+      { ...observed, registry: { ...observed.registry, dashboardRemoteBindPrepared: true } },
+    ]);
+    expect(outcome.result).toMatchObject({
+      ok: false,
+      failure: {
+        findings: expect.arrayContaining([expect.objectContaining({ category: "drifted" })]),
+      },
+    });
+    expect(outcome.writeStdout).not.toHaveBeenCalled();
+    expect(outcome.publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "custom URL",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.dashboard!.url = "https://dashboard.example.com:19000";
+      },
+    ],
+    [
+      "URL credential",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.dashboard!.url = "https://user:dashboard-secret-canary@dashboard.example.com:19000";
+      },
+    ],
+    [
+      "URL path",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.dashboard!.url = "http://127.0.0.1:19000/custom";
+      },
+    ],
+    [
+      "WSL exposure",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.dashboard!.wslExposure = true;
+      },
+    ],
+    [
+      "malformed port",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.dashboard!.port = "dashboard-secret-canary";
+      },
+    ],
+    [
+      "device auth change",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.agentConfig!.deviceAuth = { disabled: true, optOutSource: "operator" };
+      },
+    ],
+    [
+      "unrepresented setting",
+      (p: Record<string, Record<string, unknown>>) => {
+        p.agentConfig!.minimalBootstrap = true;
+      },
+    ],
+  ] as const)(
+    "rejects retained %s without output or private values (#10904)",
+    async (label, change) => {
+      const outcome = await exportDashboardSnapshots([
+        changeDashboardProfile(dashboardSnapshot(), change),
+      ]);
+      const category = ["malformed port", "URL credential"].includes(label)
+        ? "missing-provenance"
+        : "unsupported";
+      expect(outcome.result).toMatchObject({
+        ok: false,
+        failure: {
+          kind: "observation",
+          findings: expect.arrayContaining([expect.objectContaining({ category })]),
+        },
+      });
+      expect(JSON.stringify(outcome.result)).not.toContain("dashboard-secret-canary");
+      expect(outcome.writeStdout).not.toHaveBeenCalled();
+      expect(outcome.publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects an invalid retained dashboard receipt hash (#10904)", async () => {
+    const observed = dashboardSnapshot();
+    const workload = observed.registry.workload as Extract<
+      SandboxWorkloadReceipt,
+      { kind: "managed-image" }
+    >;
+    expect(workload?.kind).toBe("managed-image");
+    const outcome = await exportDashboardSnapshots([
+      {
+        ...observed,
+        registry: {
+          ...observed.registry,
+          workload: { ...workload, startupProfileSha256: "f".repeat(64) },
+        },
+      },
+    ]);
+    expect(outcome.result).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(outcome.writeStdout).not.toHaveBeenCalled();
+    expect(outcome.publish).not.toHaveBeenCalled();
+  });
+
+  it("rejects dashboard changes across both observation pairs (#10904)", async () => {
+    const outcome = await exportDashboardSnapshots([dashboardSnapshot(), dashboardSnapshot(19001)]);
+    expect(outcome.result).toMatchObject({
+      ok: false,
+      failure: {
+        attempts: 2,
+        findings: [expect.objectContaining({ category: "unstable-source" })],
+      },
+    });
+    expect(outcome.read).toHaveBeenCalledTimes(4);
+    expect(outcome.writeStdout).not.toHaveBeenCalled();
+    expect(outcome.publish).not.toHaveBeenCalled();
   });
 });

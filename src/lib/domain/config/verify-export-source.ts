@@ -39,7 +39,7 @@ const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
-  "gateway" | "inference" | "policy" | "runtime" | "sandboxName"
+  "gateway" | "inference" | "interfaces" | "policy" | "runtime" | "sandboxName"
 >;
 
 function verifiedExportSource(data: VerifiedExportSourceData): VerifiedExportSource {
@@ -102,11 +102,6 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
       "spec.sandboxes[].agents[0].toolDisclosure",
       entry.toolDisclosure === "direct",
       "direct tool disclosure",
-    ],
-    [
-      "spec.sandboxes[].agents[0].dashboard",
-      entry.dashboardRemoteBindPrepared,
-      "remote dashboard exposure",
     ],
     [
       "spec.inferenceProviders[].reasoning",
@@ -288,6 +283,48 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
   }).profile;
 }
 
+function projectDashboard(profile: ManagedStartupProfile): VerifiedExportSource["interfaces"] {
+  if (profile.dashboard.agent !== "openclaw") return undefined;
+  const dashboard = {
+    ...(profile.dashboard.port === 18_789 ? {} : { port: profile.dashboard.port }),
+    ...(profile.dashboard.bindAddress === "127.0.0.1"
+      ? {}
+      : { bind: profile.dashboard.bindAddress }),
+  };
+  return Object.keys(dashboard).length === 0 ? undefined : { dashboard };
+}
+
+function classifyDashboard(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile,
+): ExportFinding[] {
+  const dashboard = profile.dashboard;
+  if (dashboard.agent !== "openclaw") return [];
+  const remote = dashboard.bindAddress === "0.0.0.0";
+  const legacyDefault = entry.dashboardPort === undefined && dashboard.port === 18_789 && !remote;
+  if (entry.dashboardPort !== dashboard.port && !legacyDefault) {
+    return [
+      finding(
+        "spec.sandboxes[].agents[].interfaces.dashboard.port",
+        entry.dashboardPort === undefined ? "missing-provenance" : "drifted",
+        "The persisted dashboard port must match the managed startup profile.",
+      ),
+    ];
+  }
+  const prepared = entry.dashboardRemoteBindPrepared;
+  const preparationMatches = remote ? prepared === true : [undefined, false].includes(prepared);
+  if (!preparationMatches) {
+    return [
+      finding(
+        "spec.sandboxes[].agents[].interfaces.dashboard.bind",
+        remote ? "missing-provenance" : "drifted",
+        "Dashboard remote-bind preparation must match the managed startup profile.",
+      ),
+    ];
+  }
+  return [];
+}
+
 function classifyManagedStartupProfile(
   entry: ObservedExportRegistry,
   profile: ManagedStartupProfile,
@@ -304,7 +341,21 @@ function classifyManagedStartupProfile(
       ),
     ];
   }
-  const findings: ExportFinding[] = [];
+  const findings = classifyDashboard(entry, profile);
+  if (profile.dashboard.agent === "openclaw") {
+    const { port, bindAddress } = profile.dashboard;
+    expected = {
+      ...expected,
+      dashboard: {
+        agent: "openclaw",
+        mode: bindAddress === "0.0.0.0" ? "remote" : "loopback",
+        url: `http://127.0.0.1:${port}`,
+        port,
+        bindAddress,
+        wslExposure: false,
+      },
+    };
+  }
   if (!hasEqualJsonStructure(profile.inference, expected.inference)) {
     findings.push(
       finding(
@@ -679,10 +730,12 @@ function completeVerifiedSource(
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
   const selected = normalizeInferenceSelection(entry);
+  const interfaces = authority ? projectDashboard(authority.profile) : undefined;
   const values = {
     sandboxName: requestedSandboxName,
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
+    ...(interfaces ? { interfaces } : {}),
     inference: {
       provider: selected.provider,
       model: selected.model,

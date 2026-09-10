@@ -9,6 +9,7 @@ import {
   InferenceEndpointSchema,
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
+  NemoClawAgentInterfacesSchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
   TcpPortSchema,
@@ -36,6 +37,7 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "compatibleEndpointReasoning",
   "compatibleEndpointReasoningEffort",
   "credentialEnv",
+  "dashboardPort",
   "dashboardRemoteBindPrepared",
   "endpointUrl",
   "fromDockerfile",
@@ -203,6 +205,7 @@ export const ExportSourceValuesSchema = Type.Object({
   }),
   gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
   inference: ExportInferenceSchema,
+  interfaces: Type.Optional(NemoClawAgentInterfacesSchema),
 });
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;
