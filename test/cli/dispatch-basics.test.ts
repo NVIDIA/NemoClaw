@@ -370,6 +370,94 @@ describe("CLI dispatch", () => {
 
   it.each([
     {
+      form: "space-separated",
+      argv: ["gw1-sb", "rebuild", "--retire-recovery", "11111111-1111-4111-8111-111111111111", "--yes"],
+      oclifArgs: ["gw1-sb", "--retire-recovery", "11111111-1111-4111-8111-111111111111", "--yes"],
+    },
+    {
+      form: "equals-joined",
+      argv: ["gw1-sb", "rebuild", "--retire-recovery=11111111-1111-4111-8111-111111111111", "--yes"],
+      oclifArgs: ["gw1-sb", "--retire-recovery=11111111-1111-4111-8111-111111111111", "--yes"],
+    },
+  ])(
+    "routes a $form rebuild recovery retirement for an unregistered sandbox to oclif (#11394)",
+    async (testCase) => {
+      // The rebuild guidance runs step 3 `destroy --yes` before step 5
+      // `rebuild --retire-recovery <id> --yes`, so the registry row is gone by
+      // design. Retirement binds to the backup record and its recorded
+      // gateway, so the registry-aware "does not exist" gate must not block it.
+      await withDirectPublicDispatch(
+        async ({ dispatchCli, exitSpy, recoverRegistryEntries, runOclifCommandById, stderr }) => {
+          await dispatchCli(testCase.argv);
+
+          expect(runOclifCommandById).toHaveBeenCalledWith(
+            "sandbox:rebuild",
+            testCase.oclifArgs,
+            expect.anything(),
+          );
+          expect(recoverRegistryEntries).not.toHaveBeenCalled();
+          expect(stderr.join("\n")).not.toContain("does not exist");
+          expect(exitSpy).not.toHaveBeenCalled();
+        },
+      );
+    },
+  );
+
+  it("keeps the missing-sandbox gate for a plain rebuild of an unregistered sandbox (#11394)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, recoverRegistryEntries, runOclifCommandById, stderr }) => {
+        await expect(dispatchCli(["gw1-sb", "rebuild", "--yes"])).rejects.toThrow("process.exit:1");
+
+        expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "gw1-sb" });
+        expect(stderr.join("\n")).toContain("Sandbox 'gw1-sb' does not exist");
+        expect(runOclifCommandById).not.toHaveBeenCalled();
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+    );
+  });
+
+  it(
+    "reports the retire-specific record error, not a missing sandbox, for an unregistered name through the real CLI (#11394)",
+    testTimeoutOptions(35_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-retire-recovery-"));
+      try {
+        const localBin = path.join(home, "bin");
+        fs.mkdirSync(localBin, { recursive: true });
+        // Every OpenShell invocation is logged so the test can prove that
+        // retirement never selected or started a gateway for the missing row.
+        const openshellLog = path.join(home, "openshell-calls.log");
+        fs.writeFileSync(
+          path.join(localBin, "openshell"),
+          [
+            "#!/usr/bin/env bash",
+            `printf "%s\\n" "$*" >> ${JSON.stringify(openshellLog)}`,
+            "exit 1",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+
+        const r = runWithEnv(
+          "gw1-sb rebuild --retire-recovery 11111111-1111-4111-8111-111111111111 --yes",
+          { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+        );
+
+        expect(r.code).toBe(1);
+        expect(fs.existsSync(openshellLog)).toBe(false);
+        expect(r.out).not.toContain("Starting OpenShell gateway");
+        expect(r.out).toContain(
+          "No exact rebuild recovery record exists for sandbox 'gw1-sb' and transaction '11111111-1111-4111-8111-111111111111'",
+        );
+        expect(r.out).not.toContain("Sandbox 'gw1-sb' does not exist");
+        expect(r.out).not.toContain("Run 'nemoclaw onboard' to create one");
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
+    {
       argv: ["term"],
       entered: "term",
       command: "Run: openshell term",

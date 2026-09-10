@@ -149,6 +149,25 @@ function hasPublicSandboxHelpFlag(action: string, args: readonly string[]): bool
   return hasHelpFlag(argsBeforeSeparator(args));
 }
 
+const REBUILD_RECOVERY_RETIREMENT_FLAG = "--retire-recovery";
+
+/**
+ * `rebuild --retire-recovery <transaction-id>` retires a recorded rebuild
+ * recovery. Its identity is the backup record on disk plus the gateway that
+ * record names, not the registry row: rebuild's own guidance runs it after
+ * `destroy --yes` has already removed that row (#11394).
+ */
+function isRebuildRecoveryRetirement(action: string, actionArgs: readonly string[]): boolean {
+  return (
+    action === "rebuild" &&
+    actionArgs.some(
+      (arg) =>
+        arg === REBUILD_RECOVERY_RETIREMENT_FLAG ||
+        arg.startsWith(`${REBUILD_RECOVERY_RETIREMENT_FLAG}=`),
+    )
+  );
+}
+
 function isMigrationRecoveryInvocation(argv: readonly string[]): boolean {
   if (argv[0] === "internal") {
     const isStatefulUninstall =
@@ -516,6 +535,24 @@ async function dispatchSandboxArgv(
   const openshellHint = getOpenShellCommandHint(argv);
   if (openshellHint && !registry().getSandbox(cmd)) {
     printOpenShellCommandHint(openshellHint);
+  }
+
+  // #11394 — recovery retirement is not gated on the registry row. The retire
+  // path resolves its record from the rebuild-backups directory by sandbox
+  // name and transaction id, then requires the recorded gateway to report the
+  // sandbox missing. The printed guidance runs it after `destroy --yes`
+  // removed the registry entry, so registry recovery here can only exit with
+  // "does not exist" or start a gateway the retirement never needs.
+  if (
+    isRebuildRecoveryRetirement(requestedSandboxAction, requestedSandboxActionArgs) &&
+    !registry().getSandbox(cmd)
+  ) {
+    validateName(cmd, "sandbox name");
+    await runPublicTranslationResult(
+      translatePublicSandboxArgv(cmd, requestedSandboxAction, requestedSandboxActionArgs),
+      { sandboxName: cmd },
+    );
+    return;
   }
 
   // If the registry doesn't know this name but the action is a sandbox-scoped
