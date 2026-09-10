@@ -22,6 +22,9 @@ const { createProbeTimingRecorder } = requireSource(
 const forwardService = requireSource(
   "../../src/lib/adapters/openshell/forward-service.ts",
 ) as typeof import("../../src/lib/adapters/openshell/forward-service.js");
+const openshellResolve = requireSource(
+  "../../src/lib/adapters/openshell/resolve.ts",
+) as typeof import("../../src/lib/adapters/openshell/resolve.js");
 
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -636,6 +639,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
     vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
     vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
     vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
+    vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: `SANDBOX  BIND  PORT  PID  STATUS\nhermes-box  127.0.0.1  18789  12345  running`,
@@ -688,6 +692,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
     vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
     vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
     vi.spyOn(forwardService, "isListenerProcessExecutable").mockReturnValue(true);
+    vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: `SANDBOX  BIND  PORT  PID  STATUS\nbeta  127.0.0.1  18789  12345  running`,
