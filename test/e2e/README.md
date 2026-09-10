@@ -37,11 +37,15 @@ before those targets run; local runners must provide it themselves.
 
 The `agent-turn-latency` target checks the configured host CLI with both text and
 JSON output, including explicit local mode and a requested timeout. Inline-message
-turns keep the parent stdin pipe open. File-message
-turns exercise an ordinary sandbox file, `/dev/stdin`, a sandbox symlink to stdin,
-and a relative symlink chain, and require the actual model answer from each input.
-The shared process fixture supplies finite input and EOF for stdin-backed files.
-An empty stdin-backed file must fail with the native empty-message error.
+turns keep the parent stdin pipe open. File-message turns exercise ordinary files,
+paths with spaces, symlinks and relative chains, with EOF or competing stdin.
+Each successful turn must return the model answer from the selected input.
+Direct OpenClaw and wrapped calls must preserve native rejection of empty files
+and inaccessible stdin paths. OpenShell 0.0.106 creates stdin pipes before dropping
+the child UID: the descriptor remains readable, but pathname reopening fails with
+EACCES. Real-child tests separately verify byte forwarding through readable stdin
+paths and their symlinks; the wrapper preserves that input without changing native
+file permissions.
 These cases are selectable for both Docker and Podman through the existing runtime
 matrix. Host stdin is preserved for nonempty message-file arguments because only
 the sandbox can resolve their paths.

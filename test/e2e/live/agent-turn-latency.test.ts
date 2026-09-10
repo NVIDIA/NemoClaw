@@ -154,11 +154,22 @@ runAgentTurnLatencyTest(
 
     progress.phase("run OpenClaw hosted inference turns");
     const messageFile = "/sandbox/e2e-turn-message.txt";
+    const spacedFile = "/sandbox/e2e turn message.txt";
+    const emptyFile = "/sandbox/e2e-turn-empty.txt";
+    const fileLink = "/sandbox/e2e-turn-file-link";
+    const fileChain = "/sandbox/e2e-turn-file-chain";
     const stdinLink = "/sandbox/e2e-turn-stdin";
     const stdinChain = "/sandbox/e2e-turn-stdin-chain";
     const filePrompt = "Reply with exactly FILE_MESSAGE_OK and no other text.";
     for (const setup of [
-      { name: "file", command: ["tee", messageFile], stdin: { text: filePrompt } },
+      { name: "file", command: ["tee", messageFile, spacedFile], stdin: { text: filePrompt } },
+      { name: "empty-file", command: ["tee", emptyFile], stdin: { text: "" } },
+      { name: "file-link", command: ["ln", "-s", messageFile, fileLink], stdin: undefined },
+      {
+        name: "file-chain",
+        command: ["ln", "-s", "e2e-turn-file-link", fileChain],
+        stdin: undefined,
+      },
       { name: "stdin-link", command: ["ln", "-s", "/dev/stdin", stdinLink], stdin: undefined },
       {
         name: "stdin-chain",
@@ -189,22 +200,22 @@ runAgentTurnLatencyTest(
       },
       { name: "regular-file", path: messageFile, stdin: undefined, expected: "FILE_MESSAGE_OK" },
       {
-        name: "stdin-file",
-        path: "/dev/stdin",
-        stdin: { text: "Reply with exactly STDIN_MESSAGE_OK and no other text." },
-        expected: "STDIN_MESSAGE_OK",
+        name: "file-with-spaces",
+        path: spacedFile,
+        stdin: undefined,
+        expected: "FILE_MESSAGE_OK",
       },
       {
-        name: "stdin-symlink",
-        path: stdinLink,
-        stdin: { text: "Reply with exactly SYMLINK_MESSAGE_OK and no other text." },
-        expected: "SYMLINK_MESSAGE_OK",
+        name: "file-symlink",
+        path: fileLink,
+        stdin: { text: "Reply with exactly WRONG_STDIN_SOURCE and no other text." },
+        expected: "FILE_MESSAGE_OK",
       },
       {
-        name: "stdin-chain",
-        path: stdinChain,
-        stdin: { text: "Reply with exactly CHAIN_MESSAGE_OK and no other text." },
-        expected: "CHAIN_MESSAGE_OK",
+        name: "file-chain",
+        path: fileChain,
+        stdin: { text: "Reply with exactly WRONG_STDIN_SOURCE and no other text." },
+        expected: "FILE_MESSAGE_OK",
       },
     ];
     const turns: Array<{
@@ -269,14 +280,41 @@ runAgentTurnLatencyTest(
       expect(completed.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
       turnTimes[turn.artifactName] = completed.elapsedMs;
     }
-    const emptyInput = await openclawTurn(host, inference, progress, {
-      artifactName: "openclaw-agent-empty-stdin-file",
-      args: ["--json", "--message-file", stdinLink],
-      stdin: { text: "" },
-    });
-    expect(emptyInput.result.exitCode, resultText(emptyInput.result)).not.toBe(0);
-    expect(resultText(emptyInput.result)).toContain("Message file is empty");
-    assertNoOpenClawTransportErrors(resultText(emptyInput.result));
+    // OpenShell 0.0.106 creates stdin as root before dropping the child UID.
+    // The descriptor remains readable, but reopening its path fails with EACCES.
+    // Compare native OpenClaw with the wrapper; input forwarding itself is also
+    // protected by the real-child stdin/symlink tests in test/cli/.
+    for (const input of [
+      { name: "empty-file", path: emptyFile, text: "", error: "Message file is empty" },
+      { name: "stdin-file", path: "/dev/stdin", text: filePrompt, error: "EACCES" },
+      { name: "stdin-link", path: stdinLink, text: filePrompt, error: "EACCES" },
+      { name: "stdin-chain", path: stdinChain, text: filePrompt, error: "EACCES" },
+    ]) {
+      for (const format of formats) {
+        const args = [...format.args, "--message-file", input.path];
+        const native = await sandbox.exec(
+          OPENCLAW_SANDBOX,
+          ["openclaw", "agent", "--agent", "main", ...args],
+          {
+            artifactName: `native-agent-${input.name}-${format.name}`,
+            env: env(OPENCLAW_SANDBOX, "openclaw", inference),
+            stdin: { text: input.text },
+            onOutput: progress.onOutput,
+            timeoutMs: 30_000,
+          },
+        );
+        const wrapped = await openclawTurn(host, inference, progress, {
+          artifactName: `openclaw-agent-rejected-${input.name}-${format.name}`,
+          args,
+          stdin: { text: input.text },
+        });
+        for (const result of [native, wrapped.result]) {
+          expect(result.exitCode, resultText(result)).toBe(1);
+          expect(resultText(result)).toContain(input.error);
+          assertNoOpenClawTransportErrors(resultText(result));
+        }
+      }
+    }
 
     results.openclaw = {
       firstTurnElapsedMs: turnTimes["openclaw-agent-turn"],
