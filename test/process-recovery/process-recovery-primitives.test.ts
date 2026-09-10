@@ -669,33 +669,34 @@ describe("executeSandboxExecCommand", () => {
 });
 
 describe("executeSandboxCommand", () => {
-  it("does not forward an MCP credential to the SSH child process", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
-    const childProcess = requireSource("node:child_process");
-    vi.spyOn(openshellRuntime, "captureSandboxSshConfig").mockReturnValue({
-      status: 0,
-      output: "Host openshell-alpha\n  HostName 127.0.0.1\n",
-    } as never);
-    const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 0,
-      stdout: "registered\n",
-      stderr: "",
-    } as never);
+  it("does not forward an MCP credential to the SSH child process", async () => {
+    const resolve = requireSource("../../src/lib/adapters/openshell/resolve.ts");
+    vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("openshell");
+    const commandCli = requireSource("../../src/lib/adapters/openshell/sandbox-command-cli.ts");
+    const run = vi
+      .spyOn(commandCli, "runCliOpenShellBufferedCommand")
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" } as never)
+      .mockResolvedValueOnce({
+        status: 0,
+        stdout: "Host openshell-alpha\n  HostName 127.0.0.1\n",
+        stderr: "",
+      } as never)
+      .mockResolvedValueOnce({ status: 0, stdout: "registered\n", stderr: "" } as never);
     const priorSecret = process.env.TEST_MCP_RAW_TOKEN;
     const priorGateway = process.env.OPENSHELL_GATEWAY;
     process.env.TEST_MCP_RAW_TOKEN = "must-reach-only-provider-mutation";
     process.env.OPENSHELL_GATEWAY = "nemoclaw-19080";
 
     try {
-      expect(executeSandboxCommand("alpha", "mcporter config get fake --json")).toEqual({
+      expect(await executeSandboxCommand("alpha", "mcporter config get fake --json")).toEqual({
         status: 0,
         stdout: "registered",
         stderr: "",
       });
-      const options = spawn.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
-      expect(options.env?.TEST_MCP_RAW_TOKEN).toBeUndefined();
-      expect(options.env?.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
-      expect(options.env?.PATH).toBe(process.env.PATH);
+      const options = run.mock.calls[2]?.[2] as { environment?: NodeJS.ProcessEnv };
+      expect(options.environment?.TEST_MCP_RAW_TOKEN).toBeUndefined();
+      expect(options.environment?.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
+      expect(options.environment?.PATH).toBe(process.env.PATH);
     } finally {
       priorSecret === undefined
         ? delete process.env.TEST_MCP_RAW_TOKEN
