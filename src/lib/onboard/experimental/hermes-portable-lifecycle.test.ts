@@ -917,9 +917,9 @@ describe("Hermes portable lifecycle", () => {
   });
 
   it.each([
-    [0, "managed startup did not pass authenticated health"],
+    [0, "final health-wait command did not return valid readiness evidence"],
     [64, "Hermes credential file was unavailable or invalid"],
-    [255, "Hermes credential file was unavailable or invalid"],
+    [255, "final health-wait command did not return valid readiness evidence; an earlier probe reported an unavailable or invalid Hermes credential file"],
   ])("rolls back unavailable health with waiter status %i and diagnostic %s (#9211)", (status, diagnostic) => {
     const receipt = activeReceipt();
     const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);

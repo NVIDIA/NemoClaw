@@ -1256,6 +1256,7 @@ function waitForHermesReadiness(
   const deadline = now() + STARTUP_TIMEOUT_MS;
   // Startup creates the credential asynchronously; retain its diagnosis until a valid probe receipt.
   let credentialFileUnavailable = false;
+  let lastWaiterCommandFailed = false;
   do {
     qualified = refreshLifecycleCurrentness(
       qualified.receipt.sandboxName,
@@ -1304,6 +1305,7 @@ function waitForHermesReadiness(
       assertLifecycleTransactionCurrent(qualified, timing, true, currentnessTiming),
     );
     if (accepted) credentialFileUnavailable = false;
+    lastWaiterCommandFailed = !accepted && (Boolean(result.error) || result.status !== 64);
     if (accepted && receipt.result === "ready") return qualified;
     if (now() >= deadline) break;
     timing.measure("healthPollSleep", () =>
@@ -1315,6 +1317,14 @@ function waitForHermesReadiness(
       ),
     );
   } while (now() < deadline);
+  if (lastWaiterCommandFailed) {
+    fail(
+      "managed startup did not pass authenticated health: final health-wait command did not return valid readiness evidence" +
+        (credentialFileUnavailable
+          ? "; an earlier probe reported an unavailable or invalid Hermes credential file"
+          : ""),
+    );
+  }
   if (credentialFileUnavailable) {
     fail("managed startup did not pass authenticated health: Hermes credential file was unavailable or invalid");
   }
