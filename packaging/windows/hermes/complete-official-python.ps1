@@ -82,6 +82,9 @@ if ($StageWorker) {
         . $runtimeBuildInstaller -NonInteractive -SkipSetup -SkipComputerUse `
             -Branch $runtimeBuildLock.upstream.tag -Commit $runtimeBuildLock.upstream.commit `
             -HermesHome $runtimeBuildRoot -InstallDir $runtimeBuildSource -Json
+        if (Get-Command winpty-agent -CommandType Application -ErrorAction SilentlyContinue) {
+            throw 'Legacy WinPTY is unexpectedly discoverable in the native ARM64 dependency build.'
+        }
         $runtimeBuildStage = Get-InstallStage -Name 'dependencies'
         Invoke-Stage -StageDef $runtimeBuildStage
     } finally { Set-StrictMode -Version Latest }
@@ -126,8 +129,11 @@ $runtimeBuildSystem32 = Join-Path $env:SystemRoot 'System32'
 $runtimeBuildPowerShell = Join-Path $runtimeBuildSystem32 'WindowsPowerShell\v1.0\powershell.exe'
 $runtimeBuildTaskkill = Join-Path $runtimeBuildSystem32 'taskkill.exe'
 $runtimeBuildSavedUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+# winpty-rs 0.4.1 auto-enables legacy WinPTY if winpty-agent is discoverable.
+# PortableGit's usr/bin contains x64 WinPTY; keep it out of this ARM64 build
+# process only. The complete runtime Git tree and Bash path are unchanged.
 $runtimeBuildOwnedPath = @((Join-Path $runtimeBuildRoot 'bin'), (Join-Path $runtimeBuildRoot 'git\cmd'),
-    (Join-Path $runtimeBuildRoot 'git\bin'), $BuildToolPath, (Join-Path $runtimeBuildRoot 'git\usr\bin'),
+    (Join-Path $runtimeBuildRoot 'git\bin'), $BuildToolPath,
     (Split-Path $runtimeBuildPython -Parent), $runtimeBuildSystem32, $env:SystemRoot,
     (Split-Path $runtimeBuildPowerShell -Parent)) -join ';'
 $runtimeBuildProcess = $null
@@ -139,6 +145,7 @@ $runtimeBuildReceipt = [ordered]@{
     schemaVersion = 1; classification = 'official-hermes-python-build-attempt'
     completeRuntime = $false; installedAcceptance = $false; status = 'failed'
     timeoutSeconds = 1200; cleanupStopped = $false; upstream = $runtimeBuildLock.upstream
+    dependencyBuildPath = $runtimeBuildOwnedPath
     buildRequirementsSha256 = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'official-python-build.requirements.txt') -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 try {
