@@ -148,7 +148,8 @@ export async function verifyHermesConfigExportLive(
   const nemohermesMismatchPath = path.join(exportDirectory, "nemohermes-mismatch.yaml");
   let nemoclawDriftExitCode: number | null = 0;
   let nemohermesDriftExitCode: number | null = 0;
-  let driftDiagnostics = "";
+  let nemoclawDriftDiagnostics = "";
+  let nemohermesDriftDiagnostics = "";
   try {
     save({
       ...registry,
@@ -179,12 +180,8 @@ export async function verifyHermesConfigExportLive(
     );
     nemoclawDriftExitCode = nemoclawDrift.exitCode;
     nemohermesDriftExitCode = nemohermesDrift.exitCode;
-    driftDiagnostics = [
-      nemoclawDrift.stdout,
-      nemoclawDrift.stderr,
-      nemohermesDrift.stdout,
-      nemohermesDrift.stderr,
-    ].join("\n");
+    nemoclawDriftDiagnostics = [nemoclawDrift.stdout, nemoclawDrift.stderr].join("\n");
+    nemohermesDriftDiagnostics = [nemohermesDrift.stdout, nemohermesDrift.stderr].join("\n");
   } finally {
     save(registry);
   }
@@ -203,7 +200,9 @@ export async function verifyHermesConfigExportLive(
       nemohermesDriftExitCode !== 0 &&
       !fs.existsSync(nemoclawMismatchPath) &&
       !fs.existsSync(nemohermesMismatchPath),
-    identityDriftReported: driftDiagnostics.includes("drifted"),
+    identityDriftReported:
+      nemoclawDriftDiagnostics.includes("drifted") &&
+      nemohermesDriftDiagnostics.includes("drifted"),
     immutableManagedImageMatches: sandbox.runtime.image.ref === expectedImage,
     inferenceEndpointMatches:
       nemoclawDocument.spec.inferenceProviders[0]?.endpoint === entry.endpointUrl,

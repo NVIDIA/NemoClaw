@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   load: vi.fn(),
   readSandboxPolicy: vi.fn(),
   save: vi.fn(),
+  validateNemoClawConfig: vi.fn(),
   writeJson: vi.fn(),
 }));
 
@@ -23,18 +24,49 @@ vi.mock("../../../src/lib/adapters/openshell/sandbox-policy-cli.ts", () => ({
   syncCliOpenShellSandboxPolicyReader: { readSandboxPolicy: mocks.readSandboxPolicy },
 }));
 
+vi.mock("../../../src/lib/config/schema.ts", () => ({
+  validateNemoClawConfig: mocks.validateNemoClawConfig,
+}));
+
 import {
   type HermesConfigExportLiveEvidence,
   passesHermesConfigExportLiveEvidence,
   verifyHermesConfigExportLive,
 } from "../fixtures/hermes-config-export-live.ts";
 
+const IMAGE_REF = "nvcr.io/nvidia/nemoclaw@sha256:" + "a".repeat(64);
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.load.mockReturnValue({
-    sandboxes: { hermes: { credentialEnv: "NVIDIA_API_KEY", gatewayName: "nemoclaw" } },
+    sandboxes: {
+      hermes: {
+        credentialEnv: "NVIDIA_API_KEY",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        gatewayName: "nemoclaw",
+        workload: { kind: "managed-image", reference: IMAGE_REF },
+      },
+    },
   });
   mocks.readSandboxPolicy.mockReturnValue({ ok: false });
+  mocks.validateNemoClawConfig.mockReturnValue({
+    spec: {
+      inferenceProviders: [
+        {
+          credential: { env: "NVIDIA_API_KEY" },
+          endpoint: "https://integrate.api.nvidia.com/v1",
+        },
+      ],
+      sandboxes: [
+        {
+          agents: [{ type: "hermes" }],
+          name: "hermes",
+          network: { policy: { explicit: null } },
+          runtime: { image: { ref: IMAGE_REF } },
+        },
+      ],
+    },
+  });
 });
 
 function passingEvidence(): HermesConfigExportLiveEvidence {
@@ -52,6 +84,27 @@ function passingEvidence(): HermesConfigExportLiveEvidence {
     policyMatches: true,
     sandboxNameMatches: true,
   };
+}
+
+async function runEnabledFixture(redactionValues: readonly string[] = []) {
+  let dispose: (() => void) | undefined;
+  try {
+    return await verifyHermesConfigExportLive({
+      artifacts: { writeJson: mocks.writeJson },
+      cleanup: {
+        trackDisposable: (_description: string, cleanup: () => void) => {
+          dispose = cleanup;
+        },
+      },
+      enabled: true,
+      env: {},
+      host: { command: mocks.command },
+      redactionValues,
+      sandboxName: "hermes",
+    } as unknown as Parameters<typeof verifyHermesConfigExportLive>[0]);
+  } finally {
+    dispose?.();
+  }
 }
 
 describe("Hermes config export live evidence", () => {
@@ -83,7 +136,6 @@ describe("Hermes config export live evidence", () => {
   });
 
   it("records failed evidence before parsing when a launcher fails", async () => {
-    let dispose: (() => void) | undefined;
     mocks.command
       .mockImplementationOnce(async (_command: string, args: string[]) => {
         const outputPath = args.at(args.indexOf("--output") + 1)!;
@@ -91,20 +143,7 @@ describe("Hermes config export live evidence", () => {
         return { exitCode: 0, stderr: "", stdout: "" };
       })
       .mockResolvedValueOnce({ exitCode: 1, stderr: "failed", stdout: "" });
-    const result = await verifyHermesConfigExportLive({
-      artifacts: { writeJson: mocks.writeJson },
-      cleanup: {
-        trackDisposable: (_description: string, cleanup: () => void) => {
-          dispose = cleanup;
-        },
-      },
-      enabled: true,
-      env: {},
-      host: { command: mocks.command },
-      redactionValues: ["secret-value"],
-      sandboxName: "hermes",
-    } as unknown as Parameters<typeof verifyHermesConfigExportLive>[0]);
-    dispose?.();
+    const result = await runEnabledFixture(["secret-value"]);
 
     expect(result).toEqual({ checked: true, passed: false });
     expect(mocks.writeJson).toHaveBeenCalledWith(
@@ -116,5 +155,30 @@ describe("Hermes config export live evidence", () => {
       }),
     );
     expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.validateNemoClawConfig).not.toHaveBeenCalled();
+  });
+
+  it("rejects drift evidence when only one launcher reports identity drift (#11286)", async () => {
+    const writeExport = async (_command: string, args: string[]) => {
+      const outputPath = args.at(args.indexOf("--output") + 1)!;
+      fs.writeFileSync(outputPath, "{}");
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
+    mocks.command
+      .mockImplementationOnce(writeExport)
+      .mockImplementationOnce(writeExport)
+      .mockResolvedValueOnce({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" })
+      .mockResolvedValueOnce({ exitCode: 1, stderr: "launcher failed", stdout: "" });
+
+    const result = await runEnabledFixture();
+
+    expect(result).toEqual({ checked: true, passed: false });
+    expect(mocks.writeJson).toHaveBeenCalledWith(
+      "hermes-config-export-live-evidence.json",
+      expect.objectContaining({
+        identityDriftPreventedPublication: true,
+        identityDriftReported: false,
+      }),
+    );
   });
 });
