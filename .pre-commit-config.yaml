@@ -162,7 +162,7 @@ repos:
     hooks:
       - id: oxlint-type-aware
         name: Oxlint type-aware rules
-        entry: npx oxlint --config oxlint.type-aware.config.ts --no-error-on-unmatched-pattern
+        entry: npx oxlint --type-aware --no-error-on-unmatched-pattern
         language: system
         files: ^nemoclaw/src/.*\.ts$
         pass_filenames: true
@@ -170,7 +170,7 @@ repos:
 
       - id: oxlint-adapters-type-aware
         name: Oxlint adapter type-aware rules
-        entry: npx oxlint --config oxlint.type-aware.config.ts --tsconfig tsconfig.cli.json --no-error-on-unmatched-pattern
+        entry: npx oxlint --type-aware --no-error-on-unmatched-pattern
         language: system
         files: ^src/lib/adapters/.*\.ts$
         pass_filenames: true
