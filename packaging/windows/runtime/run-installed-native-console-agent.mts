@@ -1,16 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { fileURLToPath as nativeEntryFile } from "node:url";
+declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
+import { nativeWorkerAssets } from "./native-assets.mts";
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import {
+  withNativeRuntimeSession,
+  bindNativeRuntimeGuard,
+  type NativeRuntimeSession,
+} from "./native-runtime.mts";
 import { hermesDashboardPythonSource } from "./native-hermes-dashboard.mts";
 import { openNativeUiFileOwner } from "./native-ui-file-owner.mts";
 import { startFileTcpRelay } from "./native-ui-relay.mts";
-import { copyNativeRuntime, openNativeWebSession } from "./native-web-session.mts";
+import { openNativeWebSession } from "./native-web-session.mts";
 import { waitForNativeMxcCompletion } from "./native-ui-lifecycle.mts";
 import {
   createNativeSessionDiagnostics,
@@ -140,7 +148,7 @@ function readConfiguration(agentId) {
     config?.classification !== "nemoclaw-native-windows-agent-configuration" ||
     config?.agent !== agentId ||
     !["nvidia", "openrouter", "compatible", "local"].includes(config?.inference) ||
-    typeof config?.endpoint !== "string" ||
+    (typeof config?.endpoint !== "string" && config.localModel === undefined) ||
     typeof config?.model !== "string" ||
     typeof config?.credentialStored !== "boolean"
   )
@@ -227,6 +235,7 @@ const node = required("NEMOCLAW_AGENT_NODE");
 const runtime = required("NEMOCLAW_AGENT_RUNTIME");
 const python = process.env.NEMOCLAW_AGENT_PYTHON;
 const sitePackages = process.env.NEMOCLAW_AGENT_SITE_PACKAGES;
+const hermesSource = process.env.NEMOCLAW_HERMES_SOURCE_ROOT;
 const dashboard = process.env.NEMOCLAW_AGENT_INTERFACE === "dashboard";
 let brokerTunnel;
 let bootstrapWritten = false;
@@ -328,7 +337,7 @@ if (agent === "pi") {
   args = [join(runtime, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js"), "--no-approve", "--provider", "openshell", "--model", model];
   extraEnvironment = { PI_CODING_AGENT_DIR: configDirectory };
 } else if (agent === "hermes") {
-  if (!python || !sitePackages) throw new Error("Hermes Python runtime is incomplete");
+  if (!python || !hermesSource) throw new Error("Hermes Python runtime is incomplete");
   const hermesHome = join(home, ".hermes");
   mkdirSync(hermesHome, { recursive: true });
   writeFileSync(join(hermesHome, "config.yaml"), [
@@ -344,7 +353,10 @@ if (agent === "pi") {
     "memory:",
     "  memory_enabled: true",
     "  user_profile_enabled: true",
+    "security:",
+    "  allow_lazy_installs: false",
     "updates:",
+    "  check: false",
     "  pre_update_backup: false",
     "  refresh_cua_driver: false",
     "",
@@ -385,7 +397,8 @@ if (agent === "pi") {
       "        json.dump(_console_evidence, output)",
       "_save_console_evidence()",
     ] : []),
-    "sys.path.insert(0, os.environ['NEMOCLAW_AGENT_SITE_PACKAGES'])",
+    "from hermes_cli import __version__ as _hermes_version",
+    "if _hermes_version != '0.21.1': raise RuntimeError('The official Hermes runtime version does not match its installation')",
     ...(dashboard ? ${JSON.stringify(hermesDashboardPythonSource())} : ["from hermes_cli.main import main"]),
     ...(consoleProbe ? [
       "try:",
@@ -398,12 +411,11 @@ if (agent === "pi") {
   ].join("\n"), "utf8");
   executable = python;
   args = dashboard ? [runner] : [runner, "--provider", "custom", "--model", model];
-  extraEnvironment = { HERMES_HOME: hermesHome, ...(dashboard ? {
+  extraEnvironment = { HERMES_HOME: hermesHome, HERMES_TUI_DIR: process.env.NEMOCLAW_HERMES_TUI_DIR, HERMES_NODE: node, HERMES_PYTHON: python, HERMES_SKIP_NODE_BOOTSTRAP: "1", HERMES_DISABLE_LAZY_INSTALLS: "1", ...(dashboard ? {
     // Hermes's optional atomic file publication conflicts with the held state
     // directory guard. Its normal stdout contract reports the live bound port.
     HERMES_DESKTOP_READY_FILE: "",
     HERMES_DASHBOARD_SESSION_TOKEN: process.env.NEMOCLAW_UI_SESSION_TOKEN,
-    HERMES_NODE: node, HERMES_PYTHON: python, HERMES_SKIP_NODE_BOOTSTRAP: "1",
   } : {}) };
 } else if (agent === "langchain-deepagents-code") {
   if (!python || !sitePackages) throw new Error("Deep Agents Code Python runtime is incomplete");
@@ -437,7 +449,6 @@ if (agent === "pi") {
     "import os",
     "import sys",
     ...deepAgentsTempfileShim,
-    "sys.path.insert(0, os.environ['NEMOCLAW_AGENT_SITE_PACKAGES'])",
     "from deepagents_code import cli_main",
     "cli_main()",
     "",
@@ -652,6 +663,7 @@ async function runNativeConsoleAgentInternal(
     webSession?: Awaited<ReturnType<typeof openNativeWebSession>>;
   },
   diagnostics: ReturnType<typeof createNativeSessionDiagnostics>,
+  runtimeLease: NativeRuntimeSession,
 ) {
   if (process.platform !== "win32" || process.arch !== "arm64")
     fail("native Windows ARM64 is required");
@@ -692,18 +704,20 @@ async function runNativeConsoleAgentInternal(
   diagnostics.stage("inference");
   const binRoot = requiredDirectory(path.join(installRoot, "bin"), "NemoClaw bin directory");
   const launcher = requiredFile(path.join(binRoot, "NemoClaw.exe"), "NemoClaw launcher");
-  const installedNode = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
+  const installedNode = requiredFile(runtimeLease.node, "sealed Node.js runtime");
   const openshell = requiredFile(path.join(binRoot, "openshell.exe"), "OpenShell CLI");
   const gatewayExecutable = requiredFile(
     path.join(binRoot, "openshell-gateway.exe"),
     "OpenShell gateway",
   );
   const installedRuntime = requiredDirectory(
-    path.join(installRoot, adapter.runtimeDirectory),
-    `${adapter.displayName} runtime`,
+    runtimeLease.agentRoot,
+    `${adapter.displayName} sealed runtime`,
   );
   const installedPython =
-    agentId === "pi" ? null : requiredDirectory(path.join(installRoot, "python"), "Python runtime");
+    runtimeLease.python === null
+      ? null
+      : requiredDirectory(path.dirname(runtimeLease.python), "sealed Python directory");
   requiredFile(path.join(installRoot, "config", "mxc-gateway.toml"), "MXC gateway configuration");
   requiredFile(path.join(installRoot, "mxc", "wxc-exec.exe"), "MXC executor");
   const { configuration: config, credential } = await resolveNativeConfiguredInference(
@@ -731,7 +745,10 @@ async function runNativeConsoleAgentInternal(
   diagnostics.stage("runtime");
   const brokerToken = randomBytes(32).toString("base64url");
   diagnostics.secret(brokerToken);
-  const stateSession = await acquireNativeStateSession(launcher, agentId);
+  const stateSession = bindNativeRuntimeGuard(
+    await acquireNativeStateSession(launcher, agentId),
+    runtimeLease,
+  );
   const agentRuntimeRoot = stateSession.stateRoot;
   let broker;
   let brokerRelay: Awaited<ReturnType<typeof startNativeBrokerRelay>> | undefined;
@@ -789,56 +806,12 @@ async function runNativeConsoleAgentInternal(
     fs.mkdirSync(runRoot);
     fs.mkdirSync(runtimeRoot);
     const gatewayConfig = writeNativeGatewayConfig(installRoot, runRoot);
-    const node = path.join(runtimeRoot, "node.exe");
-    const runtime = path.join(runtimeRoot, adapter.runtimeDirectory);
-    const pythonRoot = path.join(runtimeRoot, "python");
-    if (dashboard) {
-      await copyNativeRuntime(
-        [
-          { source: installedNode, destination: node },
-          { source: installedRuntime, destination: runtime },
-          ...(installedPython === null
-            ? []
-            : [{ source: installedPython, destination: pythonRoot }]),
-        ],
-        {
-          signal: webSession?.signal,
-          onTargetStart: (index) =>
-            diagnostics.stage(
-              index === 0
-                ? "runtime-copy-node"
-                : index === 1
-                  ? "runtime-copy-agent"
-                  : "runtime-copy-python",
-            ),
-          onProgress: (counts) => webSession?.progress("runtime", counts),
-        },
-      );
-    } else {
-      diagnostics.stage("runtime-copy-node");
-      fs.copyFileSync(installedNode, node);
-      diagnostics.stage("runtime-copy-agent");
-      fs.cpSync(installedRuntime, runtime, { recursive: true });
-      if (installedPython !== null) {
-        diagnostics.stage("runtime-copy-python");
-        fs.cpSync(installedPython, pythonRoot, { recursive: true });
-      }
-    }
+    runtimeLease.assertHeld();
+    const node = installedNode;
+    const runtime = installedRuntime;
     diagnostics.stage("runtime");
-    if (installedPython !== null) {
-      fs.writeFileSync(
-        path.join(pythonRoot, "python313._pth"),
-        [
-          "python313.zip",
-          ".",
-          path.relative(pythonRoot, path.join(runtime, "site-packages")),
-          "import site",
-          "",
-        ].join("\r\n"),
-        "ascii",
-      );
-    }
-    const workload = path.join(runtimeRoot, "run-native-agent.mjs");
+    const worker = nativeWorkerAssets(runtimeLease.runtimeRoot, "interactive");
+    const workload = requiredFile(worker.entry, "prebuilt interactive agent worker");
     statusRoot = path.join(agentRuntimeRoot, `session-status-${runId}`);
     statusFiles = await openNativeUiFileOwner(launcher, statusRoot);
     const statusSlot = `stream-${randomBytes(8).toString("hex")}`;
@@ -855,20 +828,6 @@ async function runNativeConsoleAgentInternal(
         fail("the native session status exceeded its limit");
       return bytes?.toString("utf8") ?? null;
     };
-    fs.writeFileSync(workload, interactiveWorkloadSource(), "utf8");
-    for (const file of ["native-broker-tunnel.mts", "native-broker-relay-protocol.mts"])
-      fs.copyFileSync(
-        requiredFile(path.join(installRoot, "qualification", file), "native broker transport"),
-        path.join(runtimeRoot, file),
-      );
-    if (dashboard)
-      fs.copyFileSync(
-        requiredFile(
-          path.join(installRoot, "qualification", "native-ui-tunnel.mts"),
-          "native UI tunnel",
-        ),
-        path.join(runtimeRoot, "native-ui-tunnel.mts"),
-      );
     webSession?.assertRunning();
     webSession?.progress("gateway");
     const policyPath = path.join(runRoot, "policy.yaml");
@@ -881,6 +840,7 @@ async function runNativeConsoleAgentInternal(
         "  include_workdir: false",
         "  read_only:",
         `    - ${quoteYamlPath(runtimeRoot)}`,
+        ...runtimeLease.readOnlyRoots.map((root) => `    - ${quoteYamlPath(root)}`),
         "  read_write:",
         `    - ${quoteYamlPath(agentRuntimeRoot)}`,
         `    - ${quoteYamlPath(statusRoot)}`,
@@ -950,6 +910,7 @@ async function runNativeConsoleAgentInternal(
         diagnostics,
       );
       const environment = {
+        ...worker.environment,
         HOME: agentRuntimeRoot,
         LOCALAPPDATA: agentRuntimeRoot,
         NEMOCLAW_AGENT_HOME: agentRuntimeRoot,
@@ -973,10 +934,13 @@ async function runNativeConsoleAgentInternal(
         NEMOCLAW_AGENT_MODEL: config.model,
         NEMOCLAW_AGENT_NODE: node,
         NEMOCLAW_AGENT_PROXY_PORT: String(broker.port),
-        NEMOCLAW_AGENT_PYTHON: installedPython === null ? "" : path.join(pythonRoot, "python.exe"),
+        NEMOCLAW_AGENT_PYTHON: runtimeLease.python ?? "",
         NEMOCLAW_AGENT_RUNTIME: runtime,
+        NEMOCLAW_HERMES_SOURCE_ROOT: agentId === "hermes" ? path.join(runtime, "hermes-agent") : "",
+        NEMOCLAW_HERMES_TUI_DIR:
+          agentId === "hermes" ? path.join(runtime, "hermes-agent", "ui-tui") : "",
         NEMOCLAW_AGENT_SITE_PACKAGES:
-          installedPython === null ? "" : path.join(runtime, "site-packages"),
+          agentId === "langchain-deepagents-code" ? path.join(runtime, "site-packages") : "",
         NODE_DISABLE_COMPILE_CACHE: "1",
         NUMBER_OF_PROCESSORS: process.env.NUMBER_OF_PROCESSORS ?? "1",
         OS: "Windows_NT",
@@ -1470,7 +1434,30 @@ export async function runNativeConsoleAgent(
   );
   let presentation;
   try {
-    await runNativeConsoleAgentInternal(options, diagnostics);
+    await withNativeRuntimeSession(
+      path.join(installRoot, "bin", "NemoClaw.exe"),
+      installRoot,
+      agent as NativeRuntimeSession["purpose"],
+      (runtimeLease) => {
+        const opened = options.webSession;
+        const guarded = opened
+          ? {
+              ...opened,
+              signal: AbortSignal.any([opened.signal, runtimeLease.signal]),
+              assertRunning() {
+                opened.assertRunning();
+                runtimeLease.assertHeld();
+              },
+            }
+          : undefined;
+        return runNativeConsoleAgentInternal(
+          { ...options, webSession: guarded },
+          diagnostics,
+          runtimeLease,
+        );
+      },
+      () => diagnostics.cleanupFailed("immutable runtime lease"),
+    );
   } catch (error) {
     diagnostics.fail(error);
     options.webSession?.progress("cleanup");
@@ -1524,8 +1511,8 @@ export async function runNativeConsoleAgent(
   if (!completed.diagnosticPath) console.error(completed.message);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
-  runNativeConsoleAgent().catch((error) => {
+export async function runNativeConsoleEntry() {
+  await runNativeConsoleAgent().catch((error) => {
     console.error(
       error instanceof Error ? error.message : "NemoClaw native terminal launch failed.",
     );
@@ -1534,3 +1521,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.stdin.once("data", () => process.stdin.pause());
     process.exitCode = 1;
   });
+}
+
+if (
+  typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" &&
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)
+) {
+  void runNativeConsoleEntry();
+}

@@ -3,12 +3,13 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-mod state_session;
+#[cfg(not(feature = "immutable-runtime"))]
 mod inference_job;
-mod runtime_lease;
-#[cfg(all(windows, test))]
-mod runtime_host;
 mod native_ui_file_owner;
+#[cfg(any(feature = "immutable-runtime", all(windows, test)))]
+mod runtime_host;
+mod runtime_lease;
+mod state_session;
 
 #[cfg(not(target_os = "windows"))]
 compile_error!("The NemoClaw launcher is Windows-only.");
@@ -101,7 +102,12 @@ fn credential_target(provider: &str, binding: Option<&str>) -> Option<String> {
         "slack-app" => "NVIDIA/NemoClaw/services/slack-app",
         _ => return None,
     };
-    if binding.is_none() && matches!(provider, "brave" | "tavily" | "telegram" | "discord" | "slack-bot" | "slack-app") {
+    if binding.is_none()
+        && matches!(
+            provider,
+            "brave" | "tavily" | "telegram" | "discord" | "slack-bot" | "slack-app"
+        )
+    {
         return None;
     }
     Some(match binding {
@@ -214,56 +220,258 @@ fn credential_delete(provider: &str, binding: Option<&str>) {
     }
 }
 
+#[cfg(feature = "immutable-runtime")]
+fn finish_runtime(code: i32, lease: runtime_lease::native::PackageLease) -> ! {
+    let validation = lease.validate();
+    drop(lease);
+    if let Err(message) = validation {
+        if code == 0 {
+            credential_error(message);
+        }
+        let _ = writeln!(
+            std::io::stderr(),
+            "Runtime ownership verification also failed: {message}"
+        );
+    }
+    exit(code)
+}
+
 fn main() {
+    #[cfg(not(feature = "immutable-runtime"))]
     let executable =
         env::current_exe().unwrap_or_else(|_| fail("The launcher path is unavailable."));
+    #[cfg(not(feature = "immutable-runtime"))]
     let bin = executable
         .parent()
         .map(PathBuf::from)
         .unwrap_or_else(|| fail("The NemoClaw bin directory is unavailable."));
+    #[cfg(not(feature = "immutable-runtime"))]
     let install = bin
         .parent()
         .map(PathBuf::from)
         .unwrap_or_else(|| fail("The NemoClaw installation directory is unavailable."));
+    #[cfg(feature = "immutable-runtime")]
+    let install = PathBuf::from(
+        runtime_lease::native::installed_path().unwrap_or_else(|message| credential_error(message)),
+    );
+    #[cfg(feature = "immutable-runtime")]
+    let bin = install.join("bin");
     let node = bin.join("node.exe");
     let mut forwarded = env::args_os().skip(1).collect::<Vec<_>>();
+    #[cfg(feature = "immutable-runtime")]
+    let runtime_guardian = if forwarded
+        .first()
+        .is_some_and(|value| value == "--runtime-guardian")
+    {
+        forwarded.remove(0);
+        true
+    } else {
+        false
+    };
+    #[cfg(feature = "immutable-runtime")]
+    let original_arguments = forwarded.clone();
+    if forwarded
+        .first()
+        .is_some_and(|value| value == "--runtime-capabilities")
+    {
+        if forwarded.len() != 1 {
+            credential_error("The runtime capability query takes no extra arguments.");
+        }
+        let enabled = cfg!(feature = "immutable-runtime");
+        println!(
+            "{{\"schemaVersion\":1,\"kind\":\"native-runtime-capabilities\",\"immutableRuntime\":{enabled},\"guardianEnabled\":{enabled}}}"
+        );
+        return;
+    }
     // Dormant helper API. Normal launch selection is not changed until the
     // installed read-only and MSI transaction qualifications have passed.
-    if forwarded.first().is_some_and(|value| value == "--runtime-current-descriptor") {
-        if forwarded.len() != 1 { credential_error("The runtime descriptor query takes no extra arguments."); }
-        if let Err(message) = runtime_lease::describe() { credential_error(&message); }
+    if forwarded
+        .first()
+        .is_some_and(|value| value == "--runtime-current-descriptor")
+    {
+        if forwarded.len() != 1 {
+            credential_error("The runtime descriptor query takes no extra arguments.");
+        }
+        if let Err(message) = runtime_lease::describe() {
+            credential_error(&message);
+        }
         return;
     }
-    if forwarded.first().is_some_and(|value| value == "--runtime-session") {
-        if forwarded.len() != 2 { credential_error("A single runtime purpose is required."); }
-        if let Err(message) = runtime_lease::run(forwarded[1].to_str().unwrap_or("")) { credential_error(&message); }
+    if forwarded
+        .first()
+        .is_some_and(|value| value == "--runtime-session")
+    {
+        if forwarded.len() != 2 {
+            credential_error("A single runtime purpose is required.");
+        }
+        if let Err(message) = runtime_lease::run(forwarded[1].to_str().unwrap_or("")) {
+            credential_error(&message);
+        }
         return;
     }
-    if forwarded.first().is_some_and(|value| value == "--runtime-retire" || value == "--runtime-restore") {
-        if forwarded.len() != 3 { credential_error("The immutable runtime identity is required."); }
+    if forwarded
+        .first()
+        .is_some_and(|value| value == "--runtime-retire" || value == "--runtime-restore")
+    {
+        if forwarded.len() != 3 {
+            credential_error("The immutable runtime identity is required.");
+        }
         if let Err(message) = runtime_lease::transition(
-            forwarded[1].to_str().unwrap_or(""), forwarded[2].to_str().unwrap_or(""), forwarded[0] == "--runtime-restore",
-        ) { credential_error(&message); }
+            forwarded[1].to_str().unwrap_or(""),
+            forwarded[2].to_str().unwrap_or(""),
+            forwarded[0] == "--runtime-restore",
+        ) {
+            credential_error(&message);
+        }
         return;
     }
-    if forwarded.first().is_some_and(|value| value == "--native-ui-file-owner") {
-        if forwarded.len() != 2 { credential_error("A single native UI relay root is required."); }
-        if let Err(message) = native_ui_file_owner::run(&forwarded[1]) { credential_error(&message); }
+    if forwarded
+        .first()
+        .is_some_and(|value| value == "--runtime-cli")
+    {
+        credential_error(
+            "Direct host agent commands are unavailable. Use the contained NemoClaw launch.",
+        );
+    }
+    #[cfg(feature = "immutable-runtime")]
+    if forwarded
+        .first()
+        .is_some_and(|value| value == "--runtime-host")
+    {
+        if forwarded.len() < 2 {
+            credential_error("The owned native runtime route is required.");
+        }
+        let route = forwarded
+            .get(1)
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        let agent = forwarded[2..]
+            .windows(2)
+            .find(|values| values[0] == "--agent")
+            .and_then(|values| values[1].to_str())
+            .unwrap_or("pi");
+        let (mode, purpose) = match route {
+            "describe" if forwarded.len() == 2 => ("--describe-runtime", "host"),
+            "turn" => ("turn", "openclaw"),
+            "web" => ("web", "openclaw"),
+            "nemocua" => ("nemocua", "nemocua"),
+            "hermes-dashboard" => ("hermes-dashboard", "hermes"),
+            "terminal-turn" if matches!(agent, "pi" | "hermes" | "langchain-deepagents-code") => {
+                ("terminal-turn", agent)
+            }
+            _ => credential_error("The owned native runtime route is invalid."),
+        };
+        let lease = runtime_lease::native::PackageLease::acquire(purpose)
+            .unwrap_or_else(|message| credential_error(message));
+        let mut command = Command::new(
+            PathBuf::from(lease.runtime_path())
+                .join("app")
+                .join("NemoClaw.Runtime.exe"),
+        );
+        command
+            .arg(mode)
+            .args(&forwarded[2..])
+            .current_dir(&install)
+            .env("NEMOCLAW_NATIVE_INSTALL_ROOT", &install)
+            .env("NEMOCLAW_NATIVE_RUNTIME_ROOT", lease.runtime_path());
+        let code = runtime_host::run_managed(
+            command,
+            CREATE_NO_WINDOW,
+            lease.inherited_handle(),
+            false,
+            Some(&install),
+            false,
+        )
+        .unwrap_or_else(|message| credential_error(message));
+        finish_runtime(code, lease);
+    }
+    if forwarded
+        .first()
+        .is_some_and(|value| value == "--native-ui-file-owner")
+    {
+        if forwarded.len() != 2 {
+            credential_error("A single native UI relay root is required.");
+        }
+        if let Err(message) = native_ui_file_owner::run(&forwarded[1]) {
+            credential_error(&message);
+        }
         return;
     }
-    if forwarded.first().is_some_and(|value| value == "--native-inference") {
-        let action = forwarded.get(1).and_then(|value| value.to_str()).unwrap_or("");
-        if forwarded.len() != 2 || !matches!(action, "catalog" | "install" | "ensure-ready" | "stop" | "serve") {
+    if forwarded
+        .first()
+        .is_some_and(|value| value == "--native-inference")
+    {
+        let action = forwarded
+            .get(1)
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        let provisional = cfg!(feature = "immutable-runtime")
+            && action == "serve"
+            && forwarded.len() == 3
+            && forwarded[2] == "--startup-owned";
+        if (forwarded.len() != 2 && !provisional)
+            || !matches!(
+                action,
+                "catalog" | "install" | "ensure-ready" | "stop" | "serve"
+            )
+        {
             credential_error("The native local inference action is invalid.");
         }
-        let entry = install.join("qualification").join("native-inference-cli.mts");
+        #[cfg(feature = "immutable-runtime")]
+        let lease = runtime_lease::native::PackageLease::acquire("inference")
+            .unwrap_or_else(|message| credential_error(message));
+        #[cfg(feature = "immutable-runtime")]
+        let entry = PathBuf::from(lease.runtime_path())
+            .join("app")
+            .join("NemoClaw.Runtime.exe");
+        #[cfg(not(feature = "immutable-runtime"))]
+        let entry = install
+            .join("qualification")
+            .join("native-inference-cli.mts");
         if !node.is_file() || !entry.is_file() {
-            credential_error("The installed local inference runtime is incomplete. Run Repair from Installed apps.");
+            credential_error(
+                "The installed local inference runtime is incomplete. Run Repair from Installed apps.",
+            );
         }
+        #[cfg(feature = "immutable-runtime")]
+        let mut command = Command::new(&entry);
+        #[cfg(not(feature = "immutable-runtime"))]
         let mut command = Command::new(&node);
-        command.args(["--experimental-strip-types", "--no-warnings"]).arg(entry).arg(action)
-            .current_dir(&install).env("NEMOCLAW_NATIVE_INSTALL_ROOT", &install)
+        #[cfg(feature = "immutable-runtime")]
+        command
+            .arg("inference")
+            .arg(action)
+            .env("NEMOCLAW_NATIVE_RUNTIME_ROOT", lease.runtime_path());
+        #[cfg(not(feature = "immutable-runtime"))]
+        command
+            .args(["--experimental-strip-types", "--no-warnings"])
+            .arg(entry)
+            .arg(action);
+        command
+            .current_dir(&install)
+            .env("NEMOCLAW_NATIVE_INSTALL_ROOT", &install)
             .creation_flags(CREATE_NO_WINDOW);
+        #[cfg(feature = "immutable-runtime")]
+        {
+            if action == "serve" {
+                command.arg("--owned-host");
+            }
+            let code = runtime_host::run_managed(
+                command,
+                CREATE_NO_WINDOW,
+                lease.inherited_handle(),
+                action == "serve",
+                if action == "serve" {
+                    None
+                } else {
+                    Some(&install)
+                },
+                provisional,
+            )
+            .unwrap_or_else(|message| credential_error(message));
+            finish_runtime(code, lease);
+        }
+        #[cfg(not(feature = "immutable-runtime"))]
         if action == "serve" {
             command.arg("--owned-host");
             match inference_job::run(command) {
@@ -271,8 +479,13 @@ fn main() {
                 Err(message) => credential_error(&message),
             }
         }
-        let status = command.status().unwrap_or_else(|_| credential_error("The native local inference operation could not start."));
-        exit(status.code().unwrap_or(1));
+        #[cfg(not(feature = "immutable-runtime"))]
+        {
+            let status = command.status().unwrap_or_else(|_| {
+                credential_error("The native local inference operation could not start.")
+            });
+            exit(status.code().unwrap_or(1));
+        }
     }
     if forwarded
         .first()
@@ -323,18 +536,27 @@ fn main() {
         }
         return;
     }
-    if forwarded.first().is_some_and(|value| value == "--state-remove") {
+    if forwarded
+        .first()
+        .is_some_and(|value| value == "--state-remove")
+    {
         let result = if forwarded.len() == 2 {
             state_session::remove(forwarded[1].to_str().unwrap_or(""))
-        } else { Err("A single native state agent is required.".into()) };
-        if let Err(message) = result { credential_error(&message); }
+        } else {
+            Err("A single native state agent is required.".into())
+        };
+        if let Err(message) = result {
+            credential_error(&message);
+        }
         return;
     }
     let explicit_console = forwarded.first().is_some_and(|value| value == "--console");
     if explicit_console {
         forwarded.remove(0);
     }
-    let configure_native = forwarded.first().is_some_and(|value| value == "--configure-native" || value == "--remove-native-data");
+    let configure_native = forwarded
+        .first()
+        .is_some_and(|value| value == "--configure-native" || value == "--remove-native-data");
     let native_turn = forwarded
         .first()
         .is_some_and(|value| value == "--native-turn");
@@ -342,27 +564,46 @@ fn main() {
         forwarded.remove(0);
     }
     let qualification = forwarded.iter().any(|value| value == "--qualification");
-    let force_onboarding = forwarded.iter().any(|value| value == "--onboard" || value == "--installer");
-    if !qualification && !native_turn && !configure_native && !force_onboarding
+    let force_onboarding = forwarded
+        .iter()
+        .any(|value| value == "--onboard" || value == "--installer");
+    if !qualification
+        && !native_turn
+        && !configure_native
+        && !force_onboarding
         && !forwarded.iter().any(|value| value == "--configured")
     {
         if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
-            let settings = PathBuf::from(local_app_data).join("NVIDIA").join("NemoClaw");
-            let explicit_agent = forwarded.windows(2)
+            let settings = PathBuf::from(local_app_data)
+                .join("NVIDIA")
+                .join("NemoClaw");
+            let explicit_agent = forwarded
+                .windows(2)
                 .find(|values| values[0] == "--agent")
-                .and_then(|values| values[1].to_str()).map(str::to_owned);
-            let remembered = std::fs::File::open(settings.join("active-agent.txt")).ok().and_then(|file| {
-                let mut text = String::new();
-                file.take(65).read_to_string(&mut text).ok()?;
-                (text.len() <= 64).then(|| text.trim().to_owned())
-            });
+                .and_then(|values| values[1].to_str())
+                .map(str::to_owned);
+            let remembered = std::fs::File::open(settings.join("active-agent.txt"))
+                .ok()
+                .and_then(|file| {
+                    let mut text = String::new();
+                    file.take(65).read_to_string(&mut text).ok()?;
+                    (text.len() <= 64).then(|| text.trim().to_owned())
+                });
             if let Some(agent) = explicit_agent.clone().or(remembered) {
-                if matches!(agent.as_str(), "openclaw" | "hermes" | "langchain-deepagents-code" | "pi" | "nemocua") {
+                if matches!(
+                    agent.as_str(),
+                    "openclaw" | "hermes" | "langchain-deepagents-code" | "pi" | "nemocua"
+                ) {
                     if explicit_agent.is_none() {
                         forwarded.push("--agent".into());
                         forwarded.push(agent.clone().into());
                     }
-                    if settings.join("agents").join(agent).join("native-windows.json").is_file() {
+                    if settings
+                        .join("agents")
+                        .join(agent)
+                        .join("native-windows.json")
+                        .is_file()
+                    {
                         forwarded.push("--configured".into());
                     }
                 }
@@ -377,21 +618,38 @@ fn main() {
         }
         let mut command = Command::new(native_ui);
         let installer = forwarded.iter().any(|value| value == "--installer");
-        command.arg(if installer { "--installer" } else { "--onboard" }).current_dir(&install);
+        command
+            .arg(if installer {
+                "--installer"
+            } else {
+                "--onboard"
+            })
+            .current_dir(&install);
         if let Some(selection) = forwarded.windows(2).find(|values| values[0] == "--agent") {
             let agent = selection[1].to_str().unwrap_or("");
-            if !matches!(agent, "openclaw" | "hermes" | "langchain-deepagents-code" | "pi" | "nemocua") {
+            if !matches!(
+                agent,
+                "openclaw" | "hermes" | "langchain-deepagents-code" | "pi" | "nemocua"
+            ) {
                 fail("The selected NemoClaw agent is invalid.");
             }
             command.arg("--agent").arg(agent);
         }
         let wait = forwarded.iter().any(|value| value == "--wait");
-        command.creation_flags(if wait { CREATE_NO_WINDOW } else { CREATE_NO_WINDOW | DETACHED_PROCESS });
+        command.creation_flags(if wait {
+            CREATE_NO_WINDOW
+        } else {
+            CREATE_NO_WINDOW | DETACHED_PROCESS
+        });
         if wait {
-            let status = command.status().unwrap_or_else(|_| fail("The native NemoClaw interface could not start."));
+            let status = command
+                .status()
+                .unwrap_or_else(|_| fail("The native NemoClaw interface could not start."));
             exit(status.code().unwrap_or(1));
         }
-        command.spawn().unwrap_or_else(|_| fail("The native NemoClaw interface could not start."));
+        command
+            .spawn()
+            .unwrap_or_else(|_| fail("The native NemoClaw interface could not start."));
         return;
     }
     let configured_nemocua = configured
@@ -402,14 +660,49 @@ fn main() {
         && forwarded
             .windows(2)
             .any(|values| values[0] == "--agent" && values[1] == "openclaw");
-    let configured_hermes_ui = configured && !explicit_console
-        && forwarded.windows(2).any(|values| values[0] == "--agent" && values[1] == "hermes");
+    let configured_hermes_ui = configured
+        && !explicit_console
+        && forwarded
+            .windows(2)
+            .any(|values| values[0] == "--agent" && values[1] == "hermes");
     let configured_terminal = configured
         && forwarded.windows(2).any(|values| {
             values[0] == "--agent"
-                && matches!(values[1].to_str(), Some("pi" | "hermes" | "langchain-deepagents-code"))
+                && matches!(
+                    values[1].to_str(),
+                    Some("pi" | "hermes" | "langchain-deepagents-code")
+                )
         });
-    let new_console = explicit_console || (configured_terminal && !configured_hermes_ui) || configured_nemocua;
+    let new_console =
+        explicit_console || (configured_terminal && !configured_hermes_ui) || configured_nemocua;
+    #[cfg(feature = "immutable-runtime")]
+    let mode = if native_turn {
+        "turn"
+    } else if configured_nemocua {
+        "nemocua"
+    } else if configured_hermes_ui {
+        "hermes-dashboard"
+    } else if configured_openclaw {
+        "web"
+    } else if new_console {
+        "console"
+    } else {
+        "web"
+    };
+    #[cfg(feature = "immutable-runtime")]
+    let purpose = forwarded
+        .windows(2)
+        .find(|values| values[0] == "--agent")
+        .and_then(|values| values[1].to_str())
+        .unwrap_or("host");
+    #[cfg(feature = "immutable-runtime")]
+    let lease = runtime_lease::native::PackageLease::acquire(purpose)
+        .unwrap_or_else(|message| fail(message));
+    #[cfg(feature = "immutable-runtime")]
+    let entry = PathBuf::from(lease.runtime_path())
+        .join("app")
+        .join("NemoClaw.Runtime.exe");
+    #[cfg(not(feature = "immutable-runtime"))]
     let entry = install.join("qualification").join(if native_turn {
         "run-installed-native-turn.mts"
     } else if configured_nemocua {
@@ -431,12 +724,21 @@ fn main() {
     let explicit_wait = forwarded.iter().any(|value| value == "--wait");
     forwarded.retain(|value| value != "--wait");
     let wait = explicit_wait || configure_native || (configured && !new_console);
+    #[cfg(feature = "immutable-runtime")]
+    let mut command = Command::new(&entry);
+    #[cfg(not(feature = "immutable-runtime"))]
     let mut command = Command::new(node);
+    #[cfg(feature = "immutable-runtime")]
+    command
+        .arg(mode)
+        .env("NEMOCLAW_NATIVE_RUNTIME_ROOT", lease.runtime_path());
+    #[cfg(not(feature = "immutable-runtime"))]
     command
         .arg("--experimental-strip-types")
         .arg("--no-warnings")
-        .arg(entry)
-        .args(forwarded)
+        .arg(entry);
+    command
+        .args(&forwarded)
         .current_dir(&install)
         .env("NEMOCLAW_NATIVE_INSTALL_ROOT", &install);
     command.creation_flags(if new_console {
@@ -447,15 +749,48 @@ fn main() {
         CREATE_NO_WINDOW | DETACHED_PROCESS
     });
 
+    #[cfg(feature = "immutable-runtime")]
+    {
+        if !wait && !runtime_guardian {
+            let mut guardian = Command::new(bin.join("NemoClaw.exe"));
+            guardian
+                .arg("--runtime-guardian")
+                .args(&original_arguments)
+                .current_dir(&install)
+                .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+            guardian
+                .spawn()
+                .unwrap_or_else(|_| fail("The private runtime guardian could not start."));
+            return;
+        }
+        let code = runtime_host::run_managed(
+            command,
+            if new_console {
+                CREATE_NEW_CONSOLE
+            } else {
+                CREATE_NO_WINDOW
+            },
+            lease.inherited_handle(),
+            false,
+            Some(&install),
+            false,
+        )
+        .unwrap_or_else(|message| fail(message));
+        finish_runtime(code, lease);
+    }
+    #[cfg(not(feature = "immutable-runtime"))]
     if wait {
         let status = command
             .status()
             .unwrap_or_else(|_| fail("The installed NemoClaw runtime could not be started."));
         if configured && !new_console && !status.success() {
-            fail("The agent could not open or finish cleanly. Open NemoClaw Setup to check its settings, or close an existing session and try again.");
+            fail(
+                "The agent could not open or finish cleanly. Open NemoClaw Setup to check its settings, or close an existing session and try again.",
+            );
         }
         exit(status.code().unwrap_or(1));
     }
+    #[cfg(not(feature = "immutable-runtime"))]
     command
         .spawn()
         .unwrap_or_else(|_| fail("The installed NemoClaw runtime could not be started."));

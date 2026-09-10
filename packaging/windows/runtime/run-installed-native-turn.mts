@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { fileURLToPath as nativeEntryFile } from "node:url";
+declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
+import { nativeWorkerAssets } from "./native-assets.mts";
+import { withNativeRuntimeSession, type NativeRuntimeSession } from "./native-runtime.mts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -382,7 +386,7 @@ process.exit(version.exitCode === 0 && normalizedVersion === "2026.7.1" && chat.
 `;
 }
 
-async function main() {
+async function main(runtimeLease: NativeRuntimeSession) {
   if (process.platform !== "win32" || process.arch !== "arm64") {
     fail("native Windows ARM64 is required");
   }
@@ -391,20 +395,17 @@ async function main() {
     "NemoClaw installation root",
   );
   const binRoot = requiredDirectory(path.join(installRoot, "bin"), "NemoClaw bin directory");
-  const installedNode = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
+  const installedNode = requiredFile(runtimeLease.node, "sealed Node.js runtime");
   const openshell = requiredFile(path.join(binRoot, "openshell.exe"), "OpenShell CLI");
   const gatewayExecutable = requiredFile(
     path.join(binRoot, "openshell-gateway.exe"),
     "OpenShell gateway",
   );
   const installedOpenClawRoot = requiredDirectory(
-    path.join(installRoot, "openclaw"),
-    "OpenClaw runtime",
+    runtimeLease.agentRoot,
+    "sealed OpenClaw runtime",
   );
-  requiredFile(
-    path.join(installedOpenClawRoot, "node_modules", "openclaw", "openclaw.mjs"),
-    "OpenClaw entrypoint",
-  );
+  requiredFile(path.join(installedOpenClawRoot, "openclaw-app.cjs"), "OpenClaw entrypoint");
   requiredFile(path.join(installRoot, "config", "mxc-gateway.toml"), "MXC gateway configuration");
   requiredFile(path.join(installRoot, "mxc", "wxc-exec.exe"), "MXC executor");
 
@@ -425,14 +426,13 @@ async function main() {
   fs.mkdirSync(shareRoot);
   fs.mkdirSync(runtimeRoot);
   const gatewayConfig = writeNativeGatewayConfig(installRoot, runRoot);
-  console.log("NEMOCLAW> Staging exact installed Node/OpenClaw bytes at the shallow MXC root");
-  const node = path.join(runtimeRoot, "node.exe");
-  const openClawRoot = path.join(runtimeRoot, "openclaw");
-  fs.copyFileSync(installedNode, node);
-  fs.cpSync(installedOpenClawRoot, openClawRoot, { recursive: true });
+  runtimeLease.assertHeld();
+  console.log("NEMOCLAW> Selecting the sealed installed Node/OpenClaw runtime without copying");
+  const node = installedNode;
+  const openClawRoot = installedOpenClawRoot;
   const openClawEntry = requiredFile(
-    path.join(openClawRoot, "node_modules", "openclaw", "openclaw.mjs"),
-    "Staged OpenClaw entrypoint",
+    path.join(openClawRoot, "openclaw-app.cjs"),
+    "sealed OpenClaw entrypoint",
   );
   const artifactArgument = argumentValue("--artifact-directory");
   const evidenceRoot = path.resolve(
@@ -451,10 +451,10 @@ async function main() {
   const temp = path.join(shareRoot, "temp");
   for (const directory of [stateRoot, configRoot, home, temp])
     fs.mkdirSync(directory, { recursive: true });
-  const probePath = path.join(shareRoot, "probe.mjs");
+  const worker = nativeWorkerAssets(runtimeLease.runtimeRoot, "openclaw-turn");
+  const probePath = requiredFile(worker.entry, "prebuilt OpenClaw worker");
   const resultPath = path.join(shareRoot, "result.json");
   const policyPath = path.join(runRoot, "policy.yaml");
-  fs.writeFileSync(probePath, probeSource(), "utf8");
   fs.writeFileSync(
     policyPath,
     [
@@ -464,6 +464,7 @@ async function main() {
       "  include_workdir: false",
       "  read_only:",
       `    - ${quoteYamlPath(runtimeRoot)}`,
+      ...runtimeLease.readOnlyRoots.map((root) => `    - ${quoteYamlPath(root)}`),
       "  read_write:",
       `    - ${quoteYamlPath(shareRoot)}`,
       "",
@@ -523,10 +524,12 @@ async function main() {
       "Selecting qualification gateway",
     );
     const sandboxEnvironment = {
+      ...worker.environment,
       COMSPEC: comSpec,
       LOCALAPPDATA: home,
       NUMBER_OF_PROCESSORS: process.env.NUMBER_OF_PROCESSORS ?? "1",
       NEMOCLAW_MXC_OPENCLAW_ENTRY: openClawEntry,
+      OPENCLAW_COMPILED_ASSET_ROOT: openClawRoot,
       NEMOCLAW_MXC_HOME: home,
       NEMOCLAW_MXC_RESULT: resultPath,
       NEMOCLAW_MXC_MOCK_PORT: String(mockPort),
@@ -565,7 +568,11 @@ async function main() {
       createFailure.error = error;
     });
     console.log("NEMOCLAW> Waiting for the installed OpenClaw agent turn");
-    await waitForNativeTurnResult(resultPath, create, gateway, createFailure);
+    await Promise.race([
+      waitForNativeTurnResult(resultPath, create, gateway, createFailure),
+      runtimeLease.failure,
+    ]);
+    runtimeLease.assertHeld();
     createWatcherDetached = create.exitCode === null;
     if (!(await stopChild(create))) fail("OpenShell sandbox request watcher did not stop");
     result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
@@ -619,7 +626,7 @@ async function main() {
     }
     fs.writeFileSync(
       receiptPath,
-      `${JSON.stringify({ schemaVersion: 1, classification: "installed-nemoclaw-native-windows-turn", architecture: "arm64", backend: "process_container", openClawExecutionMode: result.executionMode, openShellCreateWatcherDetached: createWatcherDetached, createWatcherStopped: true, workloadStopped: true, gatewayStopped: true, artifactStagedAtDriveRoot: true, openClawVersion: result.version, exactReply: result.reply, sandboxDeleted: true, sandboxRegistryAbsent: true, qualificationRootsRemoved: true, verdict: "pass" }, null, 2)}\n`,
+      `${JSON.stringify({ schemaVersion: 1, classification: "installed-nemoclaw-native-windows-turn", architecture: "arm64", backend: "process_container", openClawExecutionMode: result.executionMode, openShellCreateWatcherDetached: createWatcherDetached, createWatcherStopped: true, workloadStopped: true, gatewayStopped: true, artifactStagedAtDriveRoot: false, runtimeBytesCopied: 0, runtimeId: runtimeLease.runtimeId, manifestSha256: runtimeLease.manifestSha256, openClawVersion: result.version, exactReply: result.reply, sandboxDeleted: true, sandboxRegistryAbsent: true, qualificationRootsRemoved: true, verdict: "pass" }, null, 2)}\n`,
       "utf8",
     );
     passed = true;
@@ -665,11 +672,28 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  main().catch((error) => {
+async function runLeasedNativeTurn() {
+  const installRoot = requiredDirectory(
+    process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
+    "NemoClaw installation root",
+  );
+  const launcher = requiredFile(path.join(installRoot, "bin", "NemoClaw.exe"), "NemoClaw launcher");
+  return await withNativeRuntimeSession(launcher, installRoot, "openclaw", main);
+}
+
+export async function runNativeTurnEntry() {
+  await runLeasedNativeTurn().catch((error) => {
     console.error(
       error instanceof Error ? error.message : "Native Windows turn qualification failed.",
     );
     process.exitCode = 1;
   });
+}
+
+if (
+  typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" &&
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)
+) {
+  void runNativeTurnEntry();
 }

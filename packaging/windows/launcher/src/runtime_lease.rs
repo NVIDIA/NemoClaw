@@ -85,7 +85,13 @@ fn node_version(value: &str) -> bool {
 fn valid_agent(agent: &str) -> bool {
     matches!(
         agent,
-        "openclaw" | "hermes" | "pi" | "langchain-deepagents-code" | "nemocua" | "inference"
+        "openclaw"
+            | "hermes"
+            | "pi"
+            | "langchain-deepagents-code"
+            | "nemocua"
+            | "inference"
+            | "host"
     )
 }
 
@@ -634,37 +640,78 @@ pub(crate) mod native {
         }
     }
 
+    pub(crate) struct PackageLease {
+        _control: ControlDirectory,
+        package: Handle,
+        runtime: Runtime,
+        version: Handle,
+        _bin: Handle,
+        node: Handle,
+        selected: Descriptor,
+    }
+    impl PackageLease {
+        pub(crate) fn runtime_path(&self) -> &str {
+            &self.runtime.path
+        }
+        pub(crate) fn inherited_handle(&self) -> *mut c_void {
+            self.package.0
+        }
+        pub(crate) fn acquire(agent: &str) -> Result<Self, &'static str> {
+            Self::acquire_at(&installed_path()?, agent)
+        }
+        fn acquire_at(installation: &str, agent: &str) -> Result<Self, &'static str> {
+            if !valid_agent(agent) {
+                return Err("runtime-agent");
+            }
+            let control = ControlDirectory::at(installation)?;
+            if control.read(ControlFile::Maintenance)?.is_some() {
+                return Err("runtime-maintenance");
+            }
+            let package_lease = open(
+                control.handles.last(),
+                "runtime-current",
+                false,
+                READ_ACCESS,
+                1,
+            )?;
+            let selected = descriptor(&package_lease)?;
+            let runtime = Runtime::open(installation, &selected.runtime_id)?;
+            let lease = runtime.marker("runtime.ready", READ_ACCESS, 1)?;
+            if descriptor(&lease)? != selected {
+                return Err("runtime-identity");
+            }
+            let bin = open(control.handles.last(), "bin", true, DIR_ACCESS, 3)?;
+            verify_security(&bin)?;
+            let node = open(Some(&bin), "node.exe", false, READ_ACCESS, 1)?;
+            verify_security(&node)?;
+            if control.read(ControlFile::Maintenance)?.is_some() {
+                return Err("runtime-maintenance");
+            }
+            Ok(Self {
+                _control: control,
+                package: package_lease,
+                runtime,
+                version: lease,
+                _bin: bin,
+                node,
+                selected,
+            })
+        }
+        pub(crate) fn validate(&self) -> Result<(), &'static str> {
+            verify_security(&self.package)?;
+            verify_security(&self.version)?;
+            verify_security(&self.node)?;
+            for parent in &self.runtime.handles[1..] {
+                verify_security(parent)?;
+            }
+            verify_security(&self._bin)?;
+            Ok(())
+        }
+    }
     pub fn run(agent: &str) -> Result<(), &'static str> {
-        if !valid_agent(agent) {
-            return Err("runtime-agent");
-        }
-        let installation = installed_path()?;
-        let control = ControlDirectory::open()?;
-        if control.read(ControlFile::Maintenance)?.is_some() {
-            return Err("runtime-maintenance");
-        }
-        let package_lease = open(
-            control.handles.last(),
-            "runtime-current",
-            false,
-            READ_ACCESS,
-            1,
-        )?;
-        let selected = descriptor(&package_lease)?;
-        let runtime = Runtime::open(&installation, &selected.runtime_id)?;
-        let lease = runtime.marker("runtime.ready", READ_ACCESS, 1)?;
-        if descriptor(&lease)? != selected {
-            return Err("runtime-identity");
-        }
-        let bin = open(control.handles.last(), "bin", true, DIR_ACCESS, 3)?;
-        verify_security(&bin)?;
-        let node = open(Some(&bin), "node.exe", false, READ_ACCESS, 1)?;
-        verify_security(&node)?;
-        if control.read(ControlFile::Maintenance)?.is_some() {
-            return Err("runtime-maintenance");
-        }
+        let lease = PackageLease::acquire(agent)?;
         std::io::stdout()
-            .write_all(readiness(agent, &runtime.path, &selected)?.as_bytes())
+            .write_all(readiness(agent, &lease.runtime.path, &lease.selected)?.as_bytes())
             .and_then(|_| std::io::stdout().flush())
             .map_err(|_| "runtime-channel")?;
         let mut release = Vec::new();
@@ -675,11 +722,7 @@ pub(crate) mod native {
         if release != b"release\n" {
             return Err("runtime-interrupted");
         }
-        // Recheck the same pinned object's security before acknowledging release.
-        verify_security(&lease)?;
-        verify_security(&package_lease)?;
-        verify_security(&node)?;
-        Ok(())
+        lease.validate()
     }
 
     fn transition_at(

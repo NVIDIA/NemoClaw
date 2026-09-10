@@ -9,7 +9,7 @@ using System.Text.Json;
 
 namespace Nvidia.NemoClaw.Bootstrapper;
 
-internal sealed record NativeSetupConfiguration(string Agent, string Inference, string Endpoint, string Model, bool CredentialStored)
+internal sealed record NativeSetupConfiguration(string Agent, string Inference, string? Endpoint, string Model, bool CredentialStored)
 {
     internal NativeSetupOptions Options { get; init; } = new();
     internal string? LocalModel { get; init; }
@@ -24,16 +24,16 @@ internal sealed record NativeSetupConfiguration(string Agent, string Inference, 
             ["profile"] = "personal",
             ["agent"] = this.Agent,
             ["inference"] = this.Inference,
-            ["endpoint"] = this.Endpoint,
             ["model"] = this.Model,
             ["credentialStored"] = this.CredentialStored,
             ["options"] = this.Options.ToWireValue(),
         };
         if (this.LocalModel is not null)
         {
-            if (this.LocalModel != NativeExpressSetup.Id || this.Inference != "local") throw new InvalidOperationException("The local model selection is invalid.");
+            if (this.LocalModel != NativeExpressSetup.Id || this.Inference != "local" || this.Endpoint is not null || this.CredentialStored || this.Model != NativeExpressSetup.Model) throw new InvalidOperationException("The local model selection is invalid.");
             value["localModel"] = this.LocalModel;
         }
+        else value["endpoint"] = this.Endpoint ?? throw new InvalidOperationException("The inference endpoint is missing.");
         return JsonSerializer.Serialize(value);
     }
 

@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { fileURLToPath as nativeEntryFile } from "node:url";
+declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNativeWebSession } from "./native-web-session.mts";
+import { runNativeConsoleAgent } from "./run-installed-native-console-agent.mts";
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { runNativeConsoleAgent } = await import("./run-installed-native-console-agent.mts");
+export async function runNativeHermesUiEntry() {
   let session;
   let passed = false;
   try {
@@ -31,4 +33,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         process.exitCode = 1;
       });
   }
+}
+
+if (
+  typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" &&
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)
+) {
+  void runNativeHermesUiEntry();
 }

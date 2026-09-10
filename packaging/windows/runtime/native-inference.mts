@@ -4,9 +4,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   hardwareCatalog,
+  captureNative,
   hostCredential,
   installLayout,
   nativeHostEnvironment,
@@ -19,10 +21,16 @@ import {
   equalProof,
   type NativeOwnerRecord,
 } from "./native-inference-host.mts";
-import { prepareNativeFiles } from "./native-inference-install.mts";
+import { startNativeRuntimeInferenceSupervisor } from "./native-runtime-inference.mts";
+import {
+  readPrebuiltNativeModel,
+  inspectPrebuiltNativeModel,
+} from "./native-prebuilt-inference.mts";
+import { withNativeRuntimeSession, type NativeRuntimeSession } from "./native-runtime.mts";
 import {
   NATIVE_EXPRESS,
   nativeServerArguments,
+  cudaDeviceFromListing,
   requireFullCudaOffload,
   type ProgressSink,
 } from "./native-inference-manifest.mts";
@@ -138,33 +146,10 @@ export async function nativeInferenceCatalog(options: NativeInferenceOptions) {
 }
 
 export async function installNativeInference(options: NativeInferenceOptions) {
-  const signal = AbortSignal.any([
-    options.signal ?? new AbortController().signal,
-    AbortSignal.timeout(4 * 60 * 60 * 1000),
-  ]);
+  options.signal?.throwIfAborted();
   const layout = installLayout(options.installRoot);
-  const onProgress = options.onProgress ?? quiet;
-  const existing = await existingOwner(options.installRoot, signal).catch(() => null);
-  if (existing?.record.status === "ready")
-    return { schemaVersion: 1, event: "installed", localModel: NATIVE_EXPRESS.id, reused: true };
-  const state = await acquireNativeStateSession(layout.launcher, "inference");
-  let prepared: Awaited<ReturnType<typeof prepareNativeFiles>> | undefined;
-  let failure: Error | undefined;
-  try {
-    prepared = await prepareNativeFiles(options.installRoot, state.stateRoot, signal, onProgress);
-    state.assertHeld();
-  } catch (error) {
-    failure = error instanceof Error ? error : new Error("Native model preparation failed.");
-  } finally {
-    failure = await finishNativeInferencePreparation(failure, {
-      async removeRuntime() {
-        if (prepared) await fs.promises.rm(prepared.runtimeRoot, { recursive: true, force: true });
-      },
-      releaseState: () => state.release(),
-    });
-  }
-  if (failure) throw failure;
-  return { schemaVersion: 1, event: "installed", localModel: NATIVE_EXPRESS.id, reused: false };
+  const prebuilt = await inspectPrebuiltNativeModel(options.installRoot, layout.launcher);
+  return { schemaVersion: 1, event: "available", localModel: NATIVE_EXPRESS.id, prebuilt };
 }
 
 export async function ensureNativeInference(
@@ -176,7 +161,7 @@ export async function ensureNativeInference(
   ]);
   const layout = installLayout(options.installRoot);
   const progress = options.onProgress ?? quiet;
-  let supervisor: ChildProcess | undefined;
+  let supervisor: Awaited<ReturnType<typeof startNativeRuntimeInferenceSupervisor>> | undefined;
   let supervisorEnded = false;
   let ownerInstance: string | undefined;
   let ownedInstance: string | undefined;
@@ -191,26 +176,23 @@ export async function ensureNativeInference(
           ownedInstance = existing.record.instance;
         if (existing.record.progress) progress(existing.record.progress);
         if (existing.record.status === "ready") {
+          // Only a newly started service has provisional guardian ownership.
+          // A reused authenticated service never receives this start/commit path.
+          if (supervisor) {
+            if (supervisor.pid === existing.record.launcherPid) await supervisor.commit();
+            else await supervisor.cancel(); // A different authenticated owner won startup; preserve it.
+          }
           ready = true;
           return connection(existing);
         }
         if (existing.record.status === "error")
           throw new Error(existing.record.failure ?? "The local model could not start.");
       } else if (!supervisor && !ownerInstance) {
-        // The installed launcher assigns Node and all future descendants to a
-        // kill-on-close Windows job before sending the start handshake.
-        supervisor = spawn(layout.launcher, ["--native-inference", "serve"], {
-          detached: true,
-          stdio: "ignore",
-          windowsHide: true,
-          env: nativeHostEnvironment({ NEMOCLAW_NATIVE_INSTALL_ROOT: layout.root }),
-        });
-        supervisor.once("error", () => {
-          supervisorEnded = true;
-        });
-        supervisor.once("close", () => {
-          supervisorEnded = true;
-        });
+        supervisor = await startNativeRuntimeInferenceSupervisor(signal);
+      }
+      if (supervisor) {
+        await supervisor.refresh();
+        supervisorEnded = supervisor.ended;
       }
       if (!existing && (supervisorEnded || (!supervisor && ownerInstance))) {
         let detail = "The native model supervisor stopped before readiness.";
@@ -231,15 +213,18 @@ export async function ensureNativeInference(
       await sleep(500, undefined, { signal });
     }
   } finally {
-    if (ready) supervisor?.unref();
-    else if (supervisor && !supervisorEnded) {
+    if (!ready && supervisor) {
       // Only cancel the supervisor started by this call, never a ready shared
       // server that another agent already owned when the operation began.
-      if (ownedInstance)
+      if (ownedInstance && !supervisorEnded)
         await stopNativeInference({ ...options, signal: undefined }, ownedInstance).catch(
           () => undefined,
         );
-      if (!supervisorEnded) supervisor.kill(); // Native job closes the whole owned tree.
+      try {
+        await supervisor.cancel();
+      } catch {
+        console.error("The newly started native inference owner did not confirm cancellation.");
+      }
     }
   }
 }
@@ -352,6 +337,19 @@ export async function waitForNativeInferenceShutdown(
 }
 
 export async function serveNativeInference(options: NativeInferenceOptions): Promise<void> {
+  const layout = installLayout(options.installRoot);
+  return await withNativeRuntimeSession(
+    layout.launcher,
+    options.installRoot,
+    "inference",
+    (lease) => servePrebuiltNativeInference(options, lease),
+  );
+}
+
+async function servePrebuiltNativeInference(
+  options: NativeInferenceOptions,
+  runtimeLease: NativeRuntimeSession,
+): Promise<void> {
   options.signal?.throwIfAborted();
   const layout = installLayout(options.installRoot);
   const state = await acquireNativeStateSession(layout.launcher, "inference");
@@ -372,7 +370,12 @@ export async function serveNativeInference(options: NativeInferenceOptions): Pro
     launcherPid: process.ppid,
     status: "starting",
   };
-  let prepared: Awaited<ReturnType<typeof prepareNativeFiles>> | undefined;
+  let prepared:
+    | (ReturnType<typeof readPrebuiltNativeModel> & {
+        environment: NodeJS.ProcessEnv;
+        device: string;
+      })
+    | undefined;
   let serverProcess: ChildProcess | undefined;
   let serverClosed: Promise<void> | undefined;
   let upstreamPort = 0;
@@ -402,7 +405,21 @@ export async function serveNativeInference(options: NativeInferenceOptions): Pro
     });
     record.port = (guard.address() as { port: number }).port;
     writeOwnerRecord(record, credential);
-    prepared = await prepareNativeFiles(options.installRoot, state.stateRoot, signal, onProgress);
+    const pack = readPrebuiltNativeModel(runtimeLease);
+    const catalog = await hardwareCatalog(options.installRoot, signal, { prebuilt: true });
+    if (!catalog.eligible) throw new Error(catalog.reasons.join(" "));
+    const environment = nativeHostEnvironment({
+      PATH: `${pack.runtimeRoot};${path.join(layout.systemRoot, "System32")};${layout.systemRoot}`,
+    });
+    const device = cudaDeviceFromListing(
+      await captureNative(pack.executable, ["--list-devices"], {
+        signal,
+        timeoutMs: 60_000,
+        environment,
+        cwd: pack.runtimeRoot,
+      }),
+    );
+    prepared = { ...pack, environment, device };
     upstreamPort = await nativeFreePort();
     onProgress({
       schemaVersion: 1,
@@ -580,7 +597,8 @@ export async function serveNativeInference(options: NativeInferenceOptions): Pro
       serverStopped: () =>
         !serverProcess || serverProcess.exitCode !== null || serverProcess.signalCode !== null,
       async removeRuntime() {
-        if (prepared) await fs.promises.rm(prepared.runtimeRoot, { recursive: true, force: true });
+        // Prebuilt runtime bytes belong to the distribution, never this session.
+        runtimeLease.assertHeld();
       },
       async removeRecord() {
         try {

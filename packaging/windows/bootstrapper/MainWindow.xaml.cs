@@ -28,6 +28,7 @@ public partial class MainWindow : Window
         ["nemocua"] = "NemoCUA",
     };
     private readonly NativeProgressPresentation progress = new();
+    private readonly NativeRuntimeAvailability runtimeAvailability = NativeRuntimeAvailability.Load();
     private double? displayedPercentage;
     private readonly DispatcherTimer elapsedTimer;
     private bool busy;
@@ -41,6 +42,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         this.InitializeComponent();
+        this.ApplyRuntimeAvailability();
         this.elapsedTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100), DispatcherPriority.Background, this.UpdateElapsed, this.Dispatcher);
         this.elapsedTimer.Stop();
         this.ProviderChoice.SelectedIndex = 0;
@@ -61,6 +63,8 @@ public partial class MainWindow : Window
             try
             {
                 var eligibility = await NativeExpressSetup.CheckPreliminaryEligibilityAsync();
+                if (this.runtimeAvailability.IsSelectedRuntimeBuild && !this.runtimeAvailability.PrebuiltLocalModelAvailable)
+                    eligibility = eligibility with { Eligible = false, Message = "The prebuilt on-device model is not included in this distribution. Choose a hosted provider or an existing local server." };
                 if (!this.IsLoaded || !eligibility.IsDevice) return;
                 this.ExpressOffer.Visibility = Visibility.Visible;
                 this.ExpressStatus.Text = eligibility.Message;
@@ -104,7 +108,7 @@ public partial class MainWindow : Window
     {
         this.OpenLogButton.Visibility = Visibility.Collapsed;
         this.ConfigureAnotherClicked(this, new RoutedEventArgs());
-        var choice = initialAgent switch
+        var choice = (initialAgent ?? this.SelectedAgent) switch
         {
             "hermes" => this.HermesChoice,
             "langchain-deepagents-code" => this.DeepAgentsChoice,
@@ -113,6 +117,13 @@ public partial class MainWindow : Window
             _ => this.OpenClawChoice,
         };
         choice.IsChecked = true;
+        if (!choice.IsEnabled)
+        {
+            this.AgentAvailabilityDetail.Text = this.runtimeAvailability.UnavailableText;
+            this.AgentAvailabilityDetail.Visibility = Visibility.Visible;
+            this.ContinueAgentButton.IsEnabled = false;
+            return;
+        }
         choice.BringIntoView();
     }
 
@@ -358,18 +369,41 @@ public partial class MainWindow : Window
         if (sender is RadioButton { Tag: string agent } choice && AgentNames.ContainsKey(agent))
         {
             this.SelectedAgent = agent;
+            if (this.ContinueAgentButton is not null)
+                this.ContinueAgentButton.IsEnabled = this.runtimeAvailability.CanSelect(agent);
             choice.BringIntoView();
         }
     }
 
     private void ConfigureClicked(object sender, RoutedEventArgs args)
     {
+        if (!this.runtimeAvailability.CanSelect(this.SelectedAgent)) return;
         this.ServiceOptions.SetAgent(this.SelectedAgent);
         this.HidePanels();
         this.SetJourneyStage(2);
         this.ConfigurationPanel.Visibility = Visibility.Visible;
         this.ConfigurationDetail.Text = $"Connect {AgentNames[this.SelectedAgent]} to a provider or an existing local model server.";
         this.ProviderChoice.Focus();
+    }
+
+    private void ApplyRuntimeAvailability()
+    {
+        if (!this.runtimeAvailability.IsSelectedRuntimeBuild) return;
+        var choices = new[] { this.OpenClawChoice, this.HermesChoice, this.DeepAgentsChoice, this.PiChoice, this.NemoCuaChoice };
+        var details = new[] { this.OpenClawAvailability, this.HermesAvailability, this.DeepAgentsAvailability, this.PiAvailability, this.NemoCuaAvailability };
+        for (var index = 0; index < choices.Length; index++)
+        {
+            var enabled = this.runtimeAvailability.CanSelect((string)choices[index].Tag);
+            choices[index].IsEnabled = enabled;
+            var preview = this.runtimeAvailability.IsUnqualified((string)choices[index].Tag);
+            details[index].Text = !enabled ? this.runtimeAvailability.UnavailableText : preview ? this.runtimeAvailability.PreviewText : "";
+            details[index].Visibility = !enabled || preview ? Visibility.Visible : Visibility.Collapsed;
+        }
+        var first = choices.FirstOrDefault(choice => choice.IsEnabled);
+        if (first is not null) first.IsChecked = true;
+        this.ContinueAgentButton.IsEnabled = first is not null;
+        this.AgentAvailabilityDetail.Text = "Included preview profiles can be tried while runtime qualification continues.";
+        this.AgentAvailabilityDetail.Visibility = Visibility.Visible;
     }
 
     private void BackClicked(object sender, RoutedEventArgs args) => this.ShowReady(false);
@@ -394,13 +428,13 @@ public partial class MainWindow : Window
         this.CredentialLabel.Visibility = this.CredentialBox.Visibility = provider == "n1x" ? Visibility.Collapsed : Visibility.Visible;
         this.ModelBox.IsReadOnly = provider == "n1x";
         this.ModelDownloadNotice.Visibility = provider == "n1x" ? Visibility.Visible : Visibility.Collapsed;
-        this.ModelDownloadNotice.Text = NativeExpressSetup.DownloadDescription + ". Setup downloads and checks the text-and-tools model, then waits for a successful local response.";
+        this.ModelDownloadNotice.Text = "Uses the prebuilt on-device model in this distribution. Saving only records your choice; its service starts when you launch the agent.";
         this.EndpointBox.Text = provider switch
         {
             "nvidia" => "https://integrate.api.nvidia.com/v1",
             "openrouter" => "https://openrouter.ai/api/v1",
             "local" => "http://127.0.0.1:8000/v1",
-            "n1x" => "http://127.0.0.1:8000/v1",
+            "n1x" => string.Empty,
             _ => "https://",
         };
         this.ModelBox.Text = provider == "n1x" ? NativeExpressSetup.Model : provider is "nvidia" or "openrouter" ? "nvidia/nemotron-3-super-120b-a12b" : string.Empty;
@@ -422,14 +456,15 @@ public partial class MainWindow : Window
             if (this.ProviderChoice.SelectedItem is not ComboBoxItem { Tag: string provider }) throw new InvalidOperationException("Choose an inference provider.");
             var express = provider == "n1x";
             if (express) provider = "local";
-            if (!Uri.TryCreate(this.EndpointBox.Text.Trim(), UriKind.Absolute, out var endpoint) ||
-                endpoint.UserInfo.Length != 0 || endpoint.Query.Length != 0 || endpoint.Fragment.Length != 0)
+            Uri? endpoint = null;
+            if (!express && (!Uri.TryCreate(this.EndpointBox.Text.Trim(), UriKind.Absolute, out endpoint) ||
+                endpoint.UserInfo.Length != 0 || endpoint.Query.Length != 0 || endpoint.Fragment.Length != 0))
             {
                 throw new InvalidOperationException("Enter a complete API endpoint without credentials, query parameters, or a fragment.");
             }
-            var loopback = endpoint.Host is "127.0.0.1" or "[::1]" or "::1";
-            if ((provider == "local" && (!loopback || endpoint.Scheme is not ("http" or "https"))) ||
-                (provider != "local" && endpoint.Scheme != "https"))
+            var loopback = endpoint?.Host is "127.0.0.1" or "[::1]" or "::1";
+            if (!express && ((provider == "local" && (!loopback || endpoint!.Scheme is not ("http" or "https"))) ||
+                (provider != "local" && endpoint!.Scheme != "https")))
             {
                 throw new InvalidOperationException("Use HTTPS for hosted inference or a loopback address for local inference.");
             }
@@ -443,7 +478,7 @@ public partial class MainWindow : Window
                 var serviceBytes = NativeSetupConfiguration.ReadServiceCredential(service, key);
                 CryptographicOperations.ZeroMemory(serviceBytes);
             }
-            var configuration = new NativeSetupConfiguration(this.SelectedAgent, provider, endpoint.AbsoluteUri.TrimEnd('/'), model, password.Length != 0) { Options = options, LocalModel = express ? NativeExpressSetup.Id : null };
+            var configuration = new NativeSetupConfiguration(this.SelectedAgent, provider, express ? null : endpoint!.AbsoluteUri.TrimEnd('/'), model, password.Length != 0) { Options = options, LocalModel = express ? NativeExpressSetup.Id : null };
             var bytes = configuration.ReadCredential(password);
             CryptographicOperations.ZeroMemory(bytes);
             this.Configuration = configuration;

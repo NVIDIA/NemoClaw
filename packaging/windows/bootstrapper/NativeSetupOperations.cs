@@ -6,6 +6,7 @@ using System.IO;
 using System.Security;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace Nvidia.NemoClaw.Bootstrapper;
 
@@ -16,12 +17,7 @@ internal static class NativeSetupOperations
         var launcher = InstalledLauncher();
         if (!NativeMaintenance.SupportsDataRemoval())
             throw new InvalidOperationException("Install this preview before configuring its native agent settings.");
-        if (configuration.LocalModel is not null)
-        {
-            configuration = await NativeExpressSetup.PrepareAsync(configuration, launcher, progress, cancellation);
-            cancellation.ThrowIfCancellationRequested();
-            progress?.Invoke(new("configuration", "The local model is ready. Saving agent settings.", null, null));
-        }
+        cancellation.ThrowIfCancellationRequested();
         var configurationBytes = Encoding.UTF8.GetBytes(configuration.Serialize());
         var requiredServices = configuration.Options.RequiredServices();
         var suppliedServices = serviceCredentials?.Keys.ToArray() ?? Array.Empty<string>();
@@ -35,11 +31,12 @@ internal static class NativeSetupOperations
             foreach (var service in requiredServices)
                 serviceBytes[service] = NativeSetupConfiguration.ReadServiceCredential(service, serviceCredentials![service]);
             // Validate the complete metadata and every binding before replacing any credential.
-            var binding = await RunSetupHelperAsync(launcher, new[] { "--configure-native", "--prepare" }, configurationBytes, expectsBinding: true);
-            var serviceBindings = new Dictionary<string, string>();
-            foreach (var service in requiredServices)
-                serviceBindings[service] = await RunSetupHelperAsync(launcher, new[] { "--configure-native", "--prepare-service", service }, configurationBytes, expectsBinding: true);
-            await RunSetupHelperAsync(launcher, new[] { credential.Length == 0 ? "--credential-delete" : "--credential-write", configuration.Inference, "--binding", binding }, credential);
+            var preparation = await RunSetupHelperAsync(launcher, new[] { "--configure-native", "--prepare-all" }, configurationBytes, captureOutput: true);
+            var bindings = ReadBindings(preparation, requiredServices, configuration.LocalModel);
+            var binding = bindings.Inference;
+            var serviceBindings = bindings.Services;
+            if (binding is not null)
+                await RunSetupHelperAsync(launcher, new[] { credential.Length == 0 ? "--credential-delete" : "--credential-write", configuration.Inference, "--binding", binding }, credential);
             foreach (var service in requiredServices)
                 await RunSetupHelperAsync(launcher, new[] { "--credential-write", service, "--binding", serviceBindings[service] }, serviceBytes[service]);
             await RunSetupHelperAsync(launcher, new[] { "--configure-native" }, configurationBytes);
@@ -65,7 +62,7 @@ internal static class NativeSetupOperations
         })?.Dispose();
     }
 
-    private static async Task<string> RunSetupHelperAsync(string launcher, string[] arguments, byte[] input, bool expectsBinding = false)
+    private static async Task<string> RunSetupHelperAsync(string launcher, string[] arguments, byte[] input, bool captureOutput = false)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -84,20 +81,14 @@ internal static class NativeSetupOperations
         if (!process.Start()) throw new InvalidOperationException("The native setup helper could not start.");
         try
         {
-            var stdout = ReadBoundedOutputAsync(process.StandardOutput, timeout.Token, expectsBinding);
+            var stdout = ReadBoundedOutputAsync(process.StandardOutput, timeout.Token, captureOutput);
             var stderr = ReadBoundedOutputAsync(process.StandardError, timeout.Token);
             await Task.WhenAll(WriteHelperInputAsync(process.StandardInput, input, timeout.Token), process.WaitForExitAsync(timeout.Token), stdout, stderr);
-            if (process.ExitCode != 0 || (!expectsBinding && stdout.Result.Count != 0))
+            if (process.ExitCode != 0 || (!captureOutput && stdout.Result.Count != 0))
             {
                 throw new InvalidOperationException("The native setup helper rejected the configuration.");
             }
-            if (!expectsBinding) return string.Empty;
-            var binding = stdout.Result.Value.Trim();
-            if (binding.Length != 64 || binding.Any(value => value is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
-            {
-                throw new InvalidOperationException("The native setup helper returned an invalid credential binding.");
-            }
-            return binding;
+            return captureOutput ? stdout.Result.Value : string.Empty;
         }
         finally
         {
@@ -108,6 +99,40 @@ internal static class NativeSetupOperations
                 await process.WaitForExitAsync(cleanup.Token);
             }
         }
+    }
+
+    internal static (string? Inference, Dictionary<string, string> Services) ReadBindings(string value, IReadOnlyCollection<string> requiredServices, string? localModel = null)
+    {
+        using var document = JsonDocument.Parse(value);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != (localModel is null ? 3 : 4) ||
+            !root.TryGetProperty("schemaVersion", out var schema) || schema.ValueKind != JsonValueKind.Number || schema.GetInt32() != 1 ||
+            !root.TryGetProperty("inference", out var inference) ||
+            !root.TryGetProperty("services", out var services) || services.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException("The native setup helper returned invalid credential bindings.");
+        var bindings = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var entry in services.EnumerateObject())
+        {
+            if (!requiredServices.Contains(entry.Name, StringComparer.Ordinal) || !bindings.TryAdd(entry.Name, ReadBinding(entry.Value)))
+                throw new InvalidOperationException("The native setup helper returned unexpected integration bindings.");
+        }
+        if (bindings.Count != requiredServices.Count)
+            throw new InvalidOperationException("The native setup helper omitted integration bindings.");
+        if (localModel is not null)
+        {
+            if (inference.ValueKind != JsonValueKind.Null) throw new InvalidOperationException("The local model must not request an external credential binding.");
+            NativeExpressSetup.ValidatePrebuiltSelection(root, localModel);
+            return (null, bindings);
+        }
+        return (ReadBinding(inference), bindings);
+    }
+
+    private static string ReadBinding(JsonElement value)
+    {
+        var binding = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        if (binding is null || binding.Length != 64 || binding.Any(character => character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
+            throw new InvalidOperationException("The native setup helper returned an invalid credential binding.");
+        return binding;
     }
 
     private static async Task WriteHelperInputAsync(StreamWriter writer, byte[] input, CancellationToken cancellation)

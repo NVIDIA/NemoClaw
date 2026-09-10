@@ -5,7 +5,8 @@ import { ensureNativeInference } from "./native-inference.mts";
 import type { ProgressSink } from "./native-inference-manifest.mts";
 import { readWindowsCredential, type NativeCredentialIdentity } from "./native-security.mts";
 
-type Configuration = NativeCredentialIdentity & {
+type Configuration = Omit<NativeCredentialIdentity, "endpoint"> & {
+  endpoint?: string;
   model: string;
   credentialStored: boolean;
   profile?: string;
@@ -42,8 +43,11 @@ export async function resolveNativeConfiguredInference(
       credential: owned.credential,
     };
   }
+  if (typeof config.endpoint !== "string")
+    throw new Error("The configured inference endpoint is missing.");
+  const resolved = { ...config, endpoint: config.endpoint };
   return {
-    configuration: config,
-    credential: await readWindowsCredential(launcher, config, config.credentialStored),
+    configuration: resolved,
+    credential: await readWindowsCredential(launcher, resolved, config.credentialStored),
   };
 }

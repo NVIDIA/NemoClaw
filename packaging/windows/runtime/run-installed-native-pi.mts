@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { fileURLToPath as nativeEntryFile } from "node:url";
+declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
+import { nativeWorkerAssets } from "./native-assets.mts";
+import { withNativeRuntimeSession, type NativeRuntimeSession } from "./native-runtime.mts";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -386,7 +390,6 @@ const required = (name) => {
 const home = required("NEMOCLAW_HERMES_HOME_ROOT");
 const hermesHome = join(home, ".hermes");
 const python = required("NEMOCLAW_HERMES_PYTHON");
-const sitePackages = required("NEMOCLAW_HERMES_SITE_PACKAGES");
 const modelPort = Number(required("NEMOCLAW_HERMES_MODEL_PORT"));
 const resultPath = required("NEMOCLAW_HERMES_RESULT");
 const turnProofs = [
@@ -459,7 +462,10 @@ writeFileSync(join(hermesHome, "config.yaml"), [
   "display:",
   "  compact: true",
   "  show_reasoning: false",
+  "security:",
+  "  allow_lazy_installs: false",
   "updates:",
+  "  check: false",
   "  pre_update_backup: false",
   "  refresh_cua_driver: false",
   "",
@@ -469,7 +475,6 @@ const runner = join(home, "run-hermes.py");
 writeFileSync(runner, [
   "import os",
   "import sys",
-  "sys.path.insert(0, os.environ['NEMOCLAW_HERMES_SITE_PACKAGES'])",
   "from io import BytesIO",
   "from PIL import Image, ImageShow",
   "from python_multipart.multipart import parse_form, parse_options_header",
@@ -491,6 +496,8 @@ writeFileSync(runner, [
   "header = b'form-data; name=plain; name*=utf-8' + bytes([39, 39]) + b'other'",
   "if parse_options_header(header)[1] != {b'name': b'plain'}:",
   "    raise RuntimeError('Multipart accepted an extended parameter override')",
+  "from hermes_cli import __version__ as _hermes_version",
+  "if _hermes_version != '0.21.1': raise RuntimeError('The official Hermes runtime version does not match its installation')",
   "from hermes_cli.main import main",
   "main()",
   "",
@@ -507,6 +514,10 @@ const execute = (prompt) => new Promise((resolve, reject) => {
     env: {
       ...process.env,
       HERMES_HOME: hermesHome,
+      HERMES_DISABLE_LAZY_INSTALLS: "1",
+      HERMES_NODE: process.execPath,
+      HERMES_PYTHON: python,
+      HERMES_SKIP_NODE_BOOTSTRAP: "1",
       HOME: home,
       PYTHONDONTWRITEBYTECODE: "1",
       PYTHONNOUSERSITE: "1",
@@ -544,7 +555,7 @@ try {
   writeFileSync(resultPath, JSON.stringify({
     schemaVersion: 1,
     classification: "native-windows-hermes-agent-result",
-    hermesVersion: "0.19.0",
+    hermesVersion: "0.21.1",
     nativePythonSecurityChecksPassed: true,
     turnCount: turns.length,
     turns,
@@ -740,7 +751,7 @@ try {
 `;
 }
 
-async function main() {
+async function mainInternal(runtimeLease: NativeRuntimeSession) {
   if (process.platform !== "win32" || process.arch !== "arm64")
     fail("native Windows ARM64 is required");
   if (!process.argv.includes("--qualification"))
@@ -752,7 +763,7 @@ async function main() {
   const isDeepAgents = agentId === "langchain-deepagents-code";
   const agentLabel = isHermes ? "Hermes" : isDeepAgents ? "Deep Agents Code" : "Pi";
   const sandboxPrefix = isHermes ? "nc-h" : isDeepAgents ? "nc-d" : "nc-pi";
-  const agentVersion = isHermes ? "0.19.0" : isDeepAgents ? "0.1.55" : "0.84.1";
+  const agentVersion = isHermes ? "0.21.1" : isDeepAgents ? "0.1.55" : "0.84.1";
   const turnProofs = isHermes
     ? HERMES_TURN_PROOFS
     : isDeepAgents
@@ -765,23 +776,20 @@ async function main() {
     "NemoClaw installation root",
   );
   const binRoot = requiredDirectory(path.join(installRoot, "bin"), "NemoClaw bin directory");
-  const installedNode = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
+  const installedNode = requiredFile(runtimeLease.node, "sealed Node.js runtime");
   const openshell = requiredFile(path.join(binRoot, "openshell.exe"), "OpenShell CLI");
   const gatewayExecutable = requiredFile(
     path.join(binRoot, "openshell-gateway.exe"),
     "OpenShell gateway",
   );
-  const installedAgentRoot = requiredDirectory(
-    path.join(installRoot, isHermes ? "hermes" : isDeepAgents ? "deepagents" : "pi"),
-    `${agentLabel} runtime`,
-  );
+  const installedAgentRoot = requiredDirectory(runtimeLease.agentRoot, `${agentLabel} runtime`);
   const installedPythonRoot =
     isHermes || isDeepAgents
-      ? requiredDirectory(path.join(installRoot, "python"), "Python runtime")
+      ? requiredDirectory(path.dirname(runtimeLease.python!), "sealed Python directory")
       : null;
   const installedAgentEntrypoint = requiredFile(
     isHermes
-      ? path.join(installedAgentRoot, "site-packages", "hermes_cli", "main.py")
+      ? path.join(installedAgentRoot, "hermes-agent", "hermes_cli", "main.py")
       : isDeepAgents
         ? path.join(installedAgentRoot, "site-packages", "deepagents_code", "main.py")
         : path.join(
@@ -819,26 +827,12 @@ async function main() {
       path.join(process.env.LOCALAPPDATA ?? runRoot, "NVIDIA", "NemoClaw", "evidence", agentId),
   );
   fs.mkdirSync(evidenceRoot, { recursive: true });
-  const node = path.join(runtimeRoot, "node.exe");
-  fs.copyFileSync(installedNode, node);
-  const stagedAgentRoot = path.join(runtimeRoot, isDeepAgents ? "deepagents" : agentId);
-  fs.cpSync(installedAgentRoot, stagedAgentRoot, { recursive: true });
+  runtimeLease.assertHeld();
+  const node = installedNode;
+  const stagedAgentRoot = installedAgentRoot;
   let agentEnvironment;
-  let workloadText;
   if (isHermes || isDeepAgents) {
-    const stagedPythonRoot = path.join(runtimeRoot, "python");
-    fs.cpSync(installedPythonRoot, stagedPythonRoot, { recursive: true });
-    fs.writeFileSync(
-      path.join(stagedPythonRoot, "python313._pth"),
-      [
-        "python313.zip",
-        ".",
-        path.relative(stagedPythonRoot, path.join(stagedAgentRoot, "site-packages")),
-        "import site",
-        "",
-      ].join("\r\n"),
-      "ascii",
-    );
+    const stagedPythonRoot = installedPythonRoot;
     if (isDeepAgents) {
       agentEnvironment = {
         DEEPAGENTS_CODE_DEBUG: "1",
@@ -846,32 +840,20 @@ async function main() {
         DEEPAGENTS_CODE_RIPGREP_INSTALLER: "system",
         NEMOCLAW_DEEP_AGENTS_HOME_ROOT: path.join(shareRoot, "home"),
         NEMOCLAW_DEEP_AGENTS_MODEL_PORT: "",
-        NEMOCLAW_DEEP_AGENTS_PYTHON: requiredFile(
-          path.join(stagedPythonRoot, "python.exe"),
-          "staged Python runtime",
-        ),
+        NEMOCLAW_DEEP_AGENTS_PYTHON: requiredFile(runtimeLease.python, "staged Python runtime"),
         NEMOCLAW_DEEP_AGENTS_RESULT: path.join(shareRoot, "deep-agents-result.json"),
         NEMOCLAW_DEEP_AGENTS_SITE_PACKAGES: requiredDirectory(
           path.join(stagedAgentRoot, "site-packages"),
           "staged Deep Agents Code site-packages",
         ),
       };
-      workloadText = deepAgentsWorkloadSource();
     } else {
       agentEnvironment = {
         NEMOCLAW_HERMES_HOME_ROOT: path.join(shareRoot, "home"),
         NEMOCLAW_HERMES_MODEL_PORT: "",
-        NEMOCLAW_HERMES_PYTHON: requiredFile(
-          path.join(stagedPythonRoot, "python.exe"),
-          "staged Python runtime",
-        ),
+        NEMOCLAW_HERMES_PYTHON: requiredFile(runtimeLease.python, "staged Python runtime"),
         NEMOCLAW_HERMES_RESULT: path.join(shareRoot, "hermes-result.json"),
-        NEMOCLAW_HERMES_SITE_PACKAGES: requiredDirectory(
-          path.join(stagedAgentRoot, "site-packages"),
-          "staged Hermes site-packages",
-        ),
       };
-      workloadText = hermesWorkloadSource();
     }
   } else {
     agentEnvironment = {
@@ -890,10 +872,12 @@ async function main() {
       NEMOCLAW_PI_MODEL_PORT: "",
       NEMOCLAW_PI_RESULT: path.join(shareRoot, "pi-result.json"),
     };
-    workloadText = piWorkloadSource();
   }
-  const workload = path.join(shareRoot, `${agentId}-native-qualification.mjs`);
-  fs.writeFileSync(workload, workloadText, "utf8");
+  const worker = nativeWorkerAssets(
+    runtimeLease.runtimeRoot,
+    isHermes ? "hermes-turn" : isDeepAgents ? "deepagents-turn" : "pi-turn",
+  );
+  const workload = requiredFile(worker.entry, "prebuilt terminal qualification worker");
   const resultPath = isHermes
     ? agentEnvironment.NEMOCLAW_HERMES_RESULT
     : isDeepAgents
@@ -909,6 +893,7 @@ async function main() {
       "  include_workdir: false",
       "  read_only:",
       `    - ${quoteYamlPath(runtimeRoot)}`,
+      ...runtimeLease.readOnlyRoots.map((root) => `    - ${quoteYamlPath(root)}`),
       "  read_write:",
       `    - ${quoteYamlPath(shareRoot)}`,
       "",
@@ -981,6 +966,7 @@ async function main() {
       `Selecting the native ${agentLabel} gateway`,
     );
     const sandboxEnvironment = {
+      ...worker.environment,
       HOME: home,
       LOCALAPPDATA: home,
       ...agentEnvironment,
@@ -1032,14 +1018,18 @@ async function main() {
     create.once("error", (error) => {
       createFailure.error = error;
     });
-    const agentResultText = await waitForTerminalAgentResult(
-      resultPath,
-      finalToken,
-      create,
-      gateway,
-      createFailure,
-      agentLabel,
-    );
+    const agentResultText = await Promise.race([
+      waitForTerminalAgentResult(
+        resultPath,
+        finalToken,
+        create,
+        gateway,
+        createFailure,
+        agentLabel,
+      ),
+      runtimeLease.failure,
+    ]);
+    runtimeLease.assertHeld();
     const agentResult = JSON.parse(agentResultText);
     const reportedVersion = isHermes
       ? agentResult.hermesVersion
@@ -1172,9 +1162,38 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(
-    error instanceof Error ? error.message : "Native Windows terminal-agent qualification failed.",
+async function main() {
+  const installRoot = requiredDirectory(
+    process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
+    "NemoClaw installation root",
   );
-  process.exitCode = 1;
-});
+  const launcher = requiredFile(path.join(installRoot, "bin", "NemoClaw.exe"), "NemoClaw launcher");
+  const purpose = argumentValue("--agent") ?? "pi";
+  if (!["openclaw", "hermes", "pi", "langchain-deepagents-code", "nemocua"].includes(purpose))
+    fail("unsupported native runtime purpose");
+  return await withNativeRuntimeSession(
+    launcher,
+    installRoot,
+    purpose as NativeRuntimeSession["purpose"],
+    mainInternal,
+  );
+}
+
+export async function runNativeTerminalTurnEntry() {
+  await main().catch((error) => {
+    console.error(
+      error instanceof Error
+        ? error.message
+        : "Native Windows terminal-agent qualification failed.",
+    );
+    process.exitCode = 1;
+  });
+}
+
+if (
+  typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" &&
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)
+) {
+  void runNativeTerminalTurnEntry();
+}

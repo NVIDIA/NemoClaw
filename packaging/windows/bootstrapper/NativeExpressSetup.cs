@@ -69,9 +69,6 @@ internal static class NativeExpressSetup
         var minimumMemory = (ulong)Manifest.GetProperty("memoryBytes").GetInt64();
         if (!GlobalMemoryStatusEx(ref memory) || memory.TotalPhysical < minimumMemory || memory.AvailablePhysical < minimumMemory)
             return new(true, false, $"Free at least {minimumMemory / 1_000_000_000d:0.0} GB of memory to use N1X Express.");
-        var drive = new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory)!);
-        if (drive.AvailableFreeSpace < Manifest.GetProperty("storageBytes").GetInt64())
-            return new(true, false, $"N1X Express needs {Manifest.GetProperty("storageBytes").GetInt64() / 1_000_000_000d:0.0} GB of free system-drive space.");
         var candidates = new[]
         {
             Path.Combine(Environment.SystemDirectory, "nvidia-smi.exe"),
@@ -102,122 +99,29 @@ internal static class NativeExpressSetup
             await Task.WhenAll(process.WaitForExitAsync(timeout.Token), stdout, stderr);
             if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout.Result) || stdout.Result.Length > 4096 || stderr.Result.Length > 4096)
                 return new(true, false, "The NVIDIA driver needs attention before local inference.");
-            return new(true, true, DownloadDescription + ". Text and tool use; final device checks run after installation.");
+            return new(true, true, "Use the prebuilt on-device model. Its service starts when you launch the agent.");
         }
         catch (Exception) { return new(true, false, "The NVIDIA driver check did not complete. You can use hosted inference."); }
         finally { if (started && !process.HasExited) process.Kill(entireProcessTree: true); }
     }
 
-    internal static async Task<NativeSetupConfiguration> PrepareAsync(NativeSetupConfiguration configuration, string launcher, Action<NativeExpressProgress>? progress, CancellationToken cancellation)
+    internal static void ValidatePrebuiltSelection(JsonElement preparation, string selected)
     {
-        if (configuration.LocalModel != Id) throw new NativeModelSetupException("The selected local model does not match the bundled catalog.");
-        progress?.Invoke(new("hardware", "Checking this device for N1X Express.", null, null));
-        var catalog = await RunAsync(launcher, "catalog", progress, cancellation);
-        if (!catalog.TryGetProperty("eligible", out var eligible) || !eligible.GetBoolean())
+        if (selected != Id || !preparation.TryGetProperty("localModel", out var pack) || pack.ValueKind != JsonValueKind.Object)
+            throw new NativeModelSetupException("The selected prebuilt model is not available in this distribution.");
+        var fields = new[] { "schemaVersion", "id", "model", "modelRevision", "weightsSha256", "weightsBytes", "packSha256", "runtimeId", "runtimeManifestSha256", "sourceRevision", "availability", "modelBytesRead" };
+        var names = pack.EnumerateObject().Select(value => value.Name).ToArray();
+        if (names.Length != fields.Length || names.Distinct(StringComparer.Ordinal).Count() != fields.Length || names.Any(name => !fields.Contains(name, StringComparer.Ordinal)) ||
+            pack.GetProperty("schemaVersion").GetInt32() != 1 || pack.GetProperty("id").GetString() != Id ||
+            pack.GetProperty("model").GetString() != Model || pack.GetProperty("modelRevision").GetString() != Manifest.GetProperty("modelRevision").GetString() ||
+            pack.GetProperty("weightsSha256").GetString() != Manifest.GetProperty("weights").GetProperty("sha256").GetString() ||
+            pack.GetProperty("weightsBytes").GetInt64() != ModelBytes || pack.GetProperty("availability").GetString() != "prebuilt" || pack.GetProperty("modelBytesRead").GetInt64() != 0)
+            throw new NativeModelSetupException("The prebuilt model does not match this distribution's catalog.");
+        foreach (var name in new[] { "packSha256", "runtimeId", "runtimeManifestSha256", "sourceRevision" })
         {
-            var reasons = catalog.TryGetProperty("reasons", out var list) ? string.Join(" ", list.EnumerateArray().Select(value => value.GetString())) : "This device did not pass local inference checks.";
-            throw new NativeModelSetupException(reasons);
+            var value = pack.GetProperty(name).GetString();
+            if (value is null || value.Length != (name == "sourceRevision" ? 40 : 64) || value.Any(character => character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
+                throw new NativeModelSetupException("The prebuilt model is not bound to its installed runtime.");
         }
-        if (!catalog.GetProperty("models").EnumerateArray().Any(model => model.GetProperty("id").GetString() == Id && model.GetProperty("downloadBytes").GetInt64() == DownloadBytes))
-            throw new NativeModelSetupException("The installed local model catalog changed. Run Repair before continuing.");
-        await RunAsync(launcher, "install", progress, cancellation);
-        var ready = await RunAsync(launcher, "ensure-ready", progress, cancellation);
-        if (ready.GetProperty("event").GetString() != "ready" || ready.GetProperty("localModel").GetString() != Id || ready.GetProperty("model").GetString() != Model ||
-            !Uri.TryCreate(ready.GetProperty("endpoint").GetString(), UriKind.Absolute, out var endpoint) || !endpoint.IsLoopback || endpoint.Scheme != "http" || ready.TryGetProperty("credential", out _))
-            throw new NativeModelSetupException("The local model did not return the expected ready endpoint and model identity.");
-        return configuration with { Endpoint = endpoint.AbsoluteUri.TrimEnd('/'), Model = Model, CredentialStored = false };
-    }
-
-    private static async Task<JsonElement> RunAsync(string launcher, string operation, Action<NativeExpressProgress>? progress, CancellationToken cancellation)
-    {
-        using var process = new Process { StartInfo = new ProcessStartInfo { FileName = launcher, UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true } };
-        process.StartInfo.ArgumentList.Add("--native-inference"); process.StartInfo.ArgumentList.Add(operation);
-        if (!process.Start()) throw new NativeModelSetupException("The native model helper could not start.");
-        using var timeout = new CancellationTokenSource(operation == "install" ? TimeSpan.FromHours(4) : TimeSpan.FromMilliseconds(Manifest.GetProperty("readinessTimeoutMs").GetInt64() + 60000));
-        using var cancel = cancellation.Register(() =>
-        {
-            try { process.StandardInput.WriteLine("cancel"); process.StandardInput.Flush(); }
-            catch (Exception) { }
-            timeout.CancelAfter(TimeSpan.FromSeconds(30));
-        });
-        JsonElement result = default;
-        string? error = null;
-        string? diagnostic = null;
-        var diagnosticCharacters = 0;
-        async Task ReadLines(StreamReader reader, bool isError)
-        {
-            try
-            {
-                while (await ReadBoundedLineAsync(reader, timeout.Token) is string line)
-                {
-                    if (isError)
-                    {
-                        diagnosticCharacters += line.Length;
-                        if (diagnosticCharacters > 65536) throw new NativeModelSetupException("Native model diagnostics exceeded their limit.");
-                        if (string.IsNullOrWhiteSpace(line)) continue;
-                        var structured = StructuredHelperError(line);
-                        if (structured is not null) error = structured;
-                        else diagnostic = string.Concat((diagnostic is null ? line : diagnostic + "\n" + line).TakeLast(4096));
-                        continue;
-                    }
-                    using var document = JsonDocument.Parse(line);
-                    var value = document.RootElement;
-                    if (value.GetProperty("schemaVersion").GetInt32() != 1) throw new NativeModelSetupException("Native model progress has an unsupported version.");
-                    var kind = value.GetProperty("event").GetString();
-                    if (kind == "error") { error = value.GetProperty("message").GetString(); continue; }
-                    if (kind == "progress")
-                    {
-                        progress?.Invoke(new(value.GetProperty("phase").GetString()!, value.GetProperty("message").GetString()!, value.TryGetProperty("completedBytes", out var completed) ? completed.GetInt64() : null, value.TryGetProperty("totalBytes", out var total) ? total.GetInt64() : null));
-                    }
-                    else result = value.Clone();
-                }
-            }
-            catch { timeout.Cancel(); throw; }
-        }
-        try
-        {
-            await Task.WhenAll(ReadLines(process.StandardOutput, false), ReadLines(process.StandardError, true), process.WaitForExitAsync(timeout.Token));
-            cancellation.ThrowIfCancellationRequested();
-            if (process.ExitCode != 0 || error is not null || result.ValueKind != JsonValueKind.Object)
-                throw new NativeModelSetupException(error ?? diagnostic ?? "Native model setup did not complete.");
-            return result;
-        }
-        finally
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-                using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                await process.WaitForExitAsync(stop.Token);
-            }
-        }
-    }
-
-    private static string? StructuredHelperError(string line)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(line);
-            var value = document.RootElement;
-            if (value.ValueKind == JsonValueKind.Object && value.TryGetProperty("schemaVersion", out var version) && version.ValueKind == JsonValueKind.Number && version.TryGetInt32(out var number) && number == 1 &&
-                value.TryGetProperty("event", out var kind) && kind.ValueKind == JsonValueKind.String && kind.GetString() == "error" &&
-                value.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String)
-                return message.GetString();
-        }
-        catch (JsonException) { }
-        return null;
-    }
-
-    private static async Task<string?> ReadBoundedLineAsync(StreamReader reader, CancellationToken cancellation)
-    {
-        var line = new StringBuilder();
-        var character = new char[1];
-        while (line.Length <= 65536)
-        {
-            if (await reader.ReadAsync(character.AsMemory(), cancellation) == 0) return line.Length == 0 ? null : line.ToString();
-            if (character[0] == '\n') return line.ToString().TrimEnd('\r');
-            line.Append(character[0]);
-        }
-        throw new NativeModelSetupException("Native model progress exceeded its limit.");
     }
 }

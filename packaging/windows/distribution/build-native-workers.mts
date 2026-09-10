@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { build, version as esbuildVersion } from "esbuild";
 import ts from "typescript";
 import { prepareRuntimeSource } from "./prepare-runtime-source.mts";
@@ -194,6 +195,7 @@ export async function buildNativeWorkers(
   runtimeSource: string,
   output: string,
   openClawBundle?: string,
+  finished?: { sourceRevision: string; onboardingSource: string },
 ) {
   if (fs.existsSync(output)) throw new Error("The prebuilt runtime output must be fresh.");
   fs.mkdirSync(output, { recursive: true });
@@ -275,7 +277,7 @@ export async function buildNativeWorkers(
     'import { dispatchNativeEntry, nativeEntryModes } from "./native-dispatch.mts";\nimport { isSea } from "node:sea";\n' +
     guestMain.slice(0, guestMain.indexOf("const mode =")) +
     'if (process.argv[2] === "--describe-runtime" && process.argv.length === 3) { process.stdout.write(JSON.stringify({schemaVersion:1,kind:"prebuilt-native-runtime",sea:isSea(),node:process.version,hostModes:nativeEntryModes,guestModes:Object.keys(modes)})+"\\n"); }\n' +
-    'else { const guestMode = process.env.NEMOCLAW_WORKER_MODE; const action = guestMode === undefined ? () => dispatchNativeEntry(process.argv[2], process.argv.slice(3)) : modes[guestMode]; if (!action) throw new Error("The prebuilt runtime mode is invalid"); Promise.resolve(action()).catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }); }\n';
+    'else { const guestMode = isSea() ? undefined : process.env.NEMOCLAW_WORKER_MODE; const action = guestMode === undefined ? () => dispatchNativeEntry(process.argv[2], process.argv.slice(3)) : modes[guestMode]; if (!action) throw new Error("The prebuilt runtime mode is invalid"); Promise.resolve(action()).catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }); }\n';
   const combined = await build({
     ...common,
     format: "cjs",
@@ -304,9 +306,59 @@ export async function buildNativeWorkers(
         sha256: createHash("sha256").update(data).digest("hex"),
       };
     });
+  const onboarding: { file: string; bytes: number; sha256: string }[] = [];
+  if (finished) {
+    if (!/^[a-f0-9]{40}$/u.test(finished.sourceRevision))
+      throw new Error("The finished application source revision is invalid.");
+    const destination = path.join(output, "onboarding");
+    fs.mkdirSync(destination);
+    await build({
+      entryPoints: [path.join(finished.onboardingSource, "app.ts")],
+      outfile: path.join(destination, "app.js"),
+      bundle: true,
+      platform: "browser",
+      format: "esm",
+      target: "es2022",
+      sourcemap: false,
+      minify: true,
+    });
+    const html = fs.readFileSync(path.join(finished.onboardingSource, "index.html"), "utf8");
+    if ((html.match(/app\.ts/gu) ?? []).length !== 1)
+      throw new Error("The native onboarding script entry changed.");
+    fs.writeFileSync(path.join(destination, "index.html"), html.replace("app.ts", "app.js"), {
+      flag: "wx",
+    });
+    fs.copyFileSync(
+      path.join(finished.onboardingSource, "styles.css"),
+      path.join(destination, "styles.css"),
+    );
+    fs.cpSync(path.join(finished.onboardingSource, "assets"), path.join(destination, "assets"), {
+      recursive: true,
+    });
+    const visit = (directory: string) => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const file = path.join(directory, entry.name);
+        if (entry.isSymbolicLink())
+          throw new Error("The compiled frontend contains a redirected asset.");
+        if (entry.isDirectory()) visit(file);
+        else if (entry.isFile()) {
+          const bytes = fs.readFileSync(file);
+          onboarding.push({
+            file: path.relative(destination, file).split(path.sep).join("/"),
+            bytes: bytes.length,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+          });
+        } else throw new Error("The compiled frontend contains an unsupported asset.");
+      }
+    };
+    visit(destination);
+  }
   const report = {
     schemaVersion: 1,
     classification: "prebuilt-windows-runtime-bundles",
+    deliveryContract: finished ? "finished-native-app-v1" : null,
+    sourceRevision: finished?.sourceRevision ?? null,
+    onboarding,
     esbuildVersion,
     typescriptVersion: ts.version,
     modes: [...generated.keys()],
@@ -330,12 +382,19 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const output = process.argv[2];
   if (!output) throw new Error("The CI runtime output directory is required.");
   const source = fileURLToPath(new URL("../runtime", import.meta.url));
-  const staged = prepareRuntimeSource(
-    source,
-    fileURLToPath(new URL("./prebuilt-runtime.patch", import.meta.url)),
-  );
+  const repository = fileURLToPath(new URL("../../../", import.meta.url));
+  const sourceRevision = execFileSync("git", ["-C", repository, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+  }).trim();
+  execFileSync("git", ["-C", repository, "diff", "--quiet", "HEAD", "--", "packaging/windows"], {
+    stdio: "pipe",
+  });
+  const staged = prepareRuntimeSource(source);
   try {
-    await buildNativeWorkers(staged.runtime, path.resolve(output), process.argv[3]);
+    await buildNativeWorkers(staged.runtime, path.resolve(output), process.argv[3], {
+      sourceRevision,
+      onboardingSource: fileURLToPath(new URL("../onboarding", import.meta.url)),
+    });
     fs.writeFileSync(
       path.join(output, "source-adaptation.json"),
       JSON.stringify(staged.receipt, null, 2) + "\n",

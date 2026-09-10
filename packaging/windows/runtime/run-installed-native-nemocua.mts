@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { fileURLToPath as nativeEntryFile } from "node:url";
+declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
+import { nativeWorkerAssets } from "./native-assets.mts";
+import { withNativeRuntimeSession, type NativeRuntimeSession } from "./native-runtime.mts";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -64,7 +68,7 @@ function readNativeConfiguration() {
     config?.classification !== "nemoclaw-native-windows-agent-configuration" ||
     config?.agent !== "nemocua" ||
     !["nvidia", "openrouter", "compatible", "local"].includes(config?.inference) ||
-    typeof config?.endpoint !== "string" ||
+    (typeof config?.endpoint !== "string" && config.localModel === undefined) ||
     typeof config?.model !== "string" ||
     typeof config?.credentialStored !== "boolean"
   )
@@ -203,10 +207,10 @@ async function startBrowserBridge(
   bridgeToken,
 ) {
   const playwrightRoot = requiredDirectory(
-    path.join(openClawRoot, "node_modules", "openclaw", "node_modules", "playwright-core"),
+    path.join(openClawRoot, "node_modules", "playwright-core"),
     "installed Playwright browser driver",
   );
-  const require = createRequire(import.meta.url);
+  const require = createRequire(path.join(openClawRoot, "package.json"));
   const { chromium } = require(playwrightRoot);
   const browser = await chromium.launch({
     executablePath: resolveEdge(),
@@ -409,7 +413,7 @@ async function waitForGuardedResult(
   fail("NemoCUA did not publish its bounded result receipt before the deadline");
 }
 
-async function main() {
+async function mainInternal(runtimeLease: NativeRuntimeSession) {
   if (process.platform !== "win32" || process.arch !== "arm64")
     fail("native Windows ARM64 is required");
   const qualification = process.argv.includes("--qualification");
@@ -422,20 +426,20 @@ async function main() {
   );
   const binRoot = requiredDirectory(path.join(installRoot, "bin"), "NemoClaw bin directory");
   const launcher = requiredFile(path.join(binRoot, "NemoClaw.exe"), "NemoClaw launcher");
-  const installedNode = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
+  const installedNode = requiredFile(runtimeLease.node, "sealed Node.js runtime");
   const openshell = requiredFile(path.join(binRoot, "openshell.exe"), "OpenShell CLI");
   const gatewayExecutable = requiredFile(
     path.join(binRoot, "openshell-gateway.exe"),
     "OpenShell gateway",
   );
-  const installedPythonRoot = requiredDirectory(path.join(installRoot, "python"), "Python runtime");
-  const installedNemoCuaRoot = requiredDirectory(
-    path.join(installRoot, "nemocua"),
-    "NemoCUA runtime",
+  const installedPythonRoot = requiredDirectory(
+    path.dirname(runtimeLease.python!),
+    "sealed Python directory",
   );
+  const installedNemoCuaRoot = requiredDirectory(runtimeLease.agentRoot, "sealed NemoCUA runtime");
   const installedOpenClawRoot = requiredDirectory(
-    path.join(installRoot, "openclaw"),
-    "OpenClaw browser-driver runtime",
+    path.join(installedNemoCuaRoot, "browser-driver"),
+    "sealed NemoCUA browser-driver runtime",
   );
   requiredFile(path.join(installRoot, "config", "mxc-gateway.toml"), "MXC gateway configuration");
   requiredFile(path.join(installRoot, "mxc", "wxc-exec.exe"), "MXC executor");
@@ -485,16 +489,13 @@ async function main() {
     }
     const gatewayConfig = writeNativeGatewayConfig(installRoot, runRoot);
     fs.mkdirSync(evidenceRoot, { recursive: true });
-    const pythonRoot = path.join(runtimeRoot, "python");
-    const nemocuaRoot = path.join(runtimeRoot, "nemocua");
-    const node = path.join(runtimeRoot, "node.exe");
-    fs.copyFileSync(installedNode, node);
-    fs.cpSync(installedPythonRoot, pythonRoot, { recursive: true });
-    fs.cpSync(installedNemoCuaRoot, nemocuaRoot, { recursive: true });
-    const python = requiredFile(path.join(pythonRoot, "python.exe"), "staged Python runtime");
+    runtimeLease.assertHeld();
+    const nemocuaRoot = installedNemoCuaRoot;
+    const node = installedNode;
+    const python = requiredFile(runtimeLease.python, "sealed NemoCUA Python runtime");
     const harness = requiredFile(
-      path.join(nemocuaRoot, "run_with_harness.py"),
-      "staged NemoCUA harness",
+      path.join(nemocuaRoot, "run_with_harness.pyc"),
+      "precompiled NemoCUA harness",
     );
     const policyPath = path.join(runRoot, "policy.yaml");
     fs.writeFileSync(
@@ -506,6 +507,7 @@ async function main() {
         "  include_workdir: false",
         "  read_only:",
         `    - ${quoteYamlPath(runtimeRoot)}`,
+        ...runtimeLease.readOnlyRoots.map((root) => `    - ${quoteYamlPath(root)}`),
         "  read_write:",
         `    - ${quoteYamlPath(shareRoot)}`,
         `    - ${quoteYamlPath(relayRoot)}`,
@@ -528,8 +530,8 @@ async function main() {
     );
     browserRelay = await startFileTcpTargetRelay(relayRoot, relayToken, bridge.port, launcher);
     const resultPath = browserRelay.resultPath;
-    const relayWorkload = path.join(runtimeRoot, "nemocua-native-relay.mjs");
-    fs.writeFileSync(relayWorkload, relayWorkloadSource(), "utf8");
+    const worker = nativeWorkerAssets(runtimeLease.runtimeRoot, "nemocua");
+    const relayWorkload = requiredFile(worker.entry, "prebuilt NemoCUA worker");
     const openShellPort = await freePort();
     gatewayLog = fs.openSync(gatewayLogPath, "w");
     gatewayError = fs.openSync(gatewayErrorPath, "w");
@@ -572,6 +574,7 @@ async function main() {
       "Selecting the native NemoCUA gateway",
     );
     const sandboxEnvironment = {
+      ...worker.environment,
       HOME: shareRoot,
       LOCALAPPDATA: shareRoot,
       NEMOCLAW_NEMOCUA_BRIDGE_TOKEN: bridgeToken,
@@ -640,15 +643,18 @@ async function main() {
       create,
       gateway,
       createFailure,
-      resultMonitoring.signal,
+      AbortSignal.any([resultMonitoring.signal, runtimeLease.signal]),
     );
     let agentResult;
     try {
-      agentResult = JSON.parse(await Promise.race([resultWait, browserRelay.failure]));
+      agentResult = JSON.parse(
+        await Promise.race([resultWait, browserRelay.failure, runtimeLease.failure]),
+      );
     } finally {
       resultMonitoring.abort();
       await resultWait.catch(() => {});
     }
+    runtimeLease.assertHeld();
     const finalState = await bridge.page.evaluate(() => ({
       inputValue: document.querySelector("#task-input")?.value ?? null,
       completed: document.body.dataset.completed === "true",
@@ -705,13 +711,27 @@ async function main() {
       browserBridgeTransport: "authenticated-guarded-file-tcp-relay",
       guardedRelay: true,
       relayStreamLimit: browserRelay.streamLimit,
-      runtimeEntrypointSha256: createHash("sha256")
-        .update(fs.readFileSync(path.join(installedNemoCuaRoot, "run_with_harness.py")))
-        .digest("hex"),
-      pythonSha256: createHash("sha256")
-        .update(fs.readFileSync(path.join(installedPythonRoot, "python.exe")))
-        .digest("hex"),
-      openShellSha256: createHash("sha256").update(fs.readFileSync(openshell)).digest("hex"),
+      runtimeEntrypointSha256: qualification
+        ? createHash("sha256")
+            .update(fs.readFileSync(path.join(installedNemoCuaRoot, "run_with_harness.py")))
+            .digest("hex")
+        : null,
+      pythonSha256: qualification
+        ? createHash("sha256")
+            .update(fs.readFileSync(path.join(installedPythonRoot, "python.exe")))
+            .digest("hex")
+        : null,
+      openShellSha256: qualification
+        ? createHash("sha256").update(fs.readFileSync(openshell)).digest("hex")
+        : null,
+      runtimeIdentity: {
+        runtimeId: runtimeLease.runtimeId,
+        manifestSha256: runtimeLease.manifestSha256,
+        sourceRevision: runtimeLease.sourceRevision,
+        integrity: runtimeLease.integrity,
+      },
+      runtimeFilesHashed: qualification ? 3 : 0,
+      runtimeBytesCopied: 0,
       deterministicLocalModel: qualification,
       inferenceProvider: configuredIdentity?.config.inference ?? "qualification",
       model: configuredIdentity?.config.model ?? "nemocua-native-preview",
@@ -812,12 +832,41 @@ async function main() {
   console.log("NEMOCUA> PASS three real model-driven browser actions inside native MXC");
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : "NemoClaw native Windows NemoCUA failed.");
-  if (process.argv.includes("--configured")) {
-    console.error("Press Enter to close.");
-    process.stdin.resume();
-    process.stdin.once("data", () => process.stdin.pause());
-  }
-  process.exitCode = 1;
-});
+async function main() {
+  const installRoot = requiredDirectory(
+    process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
+    "NemoClaw installation root",
+  );
+  const launcher = requiredFile(path.join(installRoot, "bin", "NemoClaw.exe"), "NemoClaw launcher");
+  const purpose = "nemocua";
+  if (!["openclaw", "hermes", "pi", "langchain-deepagents-code", "nemocua"].includes(purpose))
+    fail("unsupported native runtime purpose");
+  return await withNativeRuntimeSession(
+    launcher,
+    installRoot,
+    purpose as NativeRuntimeSession["purpose"],
+    mainInternal,
+  );
+}
+
+export async function runNativeNemoCuaEntry() {
+  await main().catch((error) => {
+    console.error(
+      error instanceof Error ? error.message : "NemoClaw native Windows NemoCUA failed.",
+    );
+    if (process.argv.includes("--configured")) {
+      console.error("Press Enter to close.");
+      process.stdin.resume();
+      process.stdin.once("data", () => process.stdin.pause());
+    }
+    process.exitCode = 1;
+  });
+}
+
+if (
+  typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" &&
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)
+) {
+  void runNativeNemoCuaEntry();
+}

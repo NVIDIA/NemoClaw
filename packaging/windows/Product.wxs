@@ -1,6 +1,9 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <?ifndef ImmutableRuntimePackage ?>
+  <?define ImmutableRuntimePackage = "false" ?>
+  <?endif ?>
   <Package
     Name="NemoClaw Runtime"
     Manufacturer="NVIDIA Corporation"
@@ -14,9 +17,10 @@
     <SummaryInformation
       Description="NemoClaw native Windows ARM64 preview"
       Manufacturer="NVIDIA Corporation" />
-    <?if $(var.NativeRuntimeMsiPrototype) = "true" ?>
+    <?if $(var.NativeRuntimeMsiPrototype) = "true" OR $(var.ImmutableRuntimePackage) = "true" ?>
     <!-- Preserve active owners so the lease boundary can refuse maintenance. -->
     <Property Id="MSIRESTARTMANAGERCONTROL" Value="DisableShutdown" />
+    <Launch Condition="MSIRESTARTMANAGERCONTROL = &quot;DisableShutdown&quot;" Message="Close NemoClaw sessions before maintenance. Windows Installer must not stop an active runtime automatically." />
     <!-- The early InstallExecute in the generated transaction authoring runs
          retirement before the old MSI can remove shared application files. -->
     <MajorUpgrade

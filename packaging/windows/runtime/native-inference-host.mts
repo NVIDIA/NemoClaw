@@ -243,7 +243,11 @@ export function readOwnerRecord(credential: string): NativeOwnerRecord | null {
   return record;
 }
 
-export async function hardwareCatalog(installRoot: string, signal?: AbortSignal) {
+export async function hardwareCatalog(
+  installRoot: string,
+  signal?: AbortSignal,
+  options: { prebuilt?: boolean } = {},
+) {
   const hardware: NativeHardware = {
     platform: process.platform,
     arch: process.arch,
@@ -282,7 +286,7 @@ export async function hardwareCatalog(installRoot: string, signal?: AbortSignal)
     }
   }
   signal?.throwIfAborted();
-  const reasons = nativeEligibility(hardware);
+  const reasons = nativeEligibility(hardware, options);
   return {
     schemaVersion: 1,
     event: "catalog",

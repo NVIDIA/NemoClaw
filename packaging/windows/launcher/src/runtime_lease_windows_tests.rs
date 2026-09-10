@@ -173,6 +173,45 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn package_lease_pins_shared_node_and_version_until_owned_close() {
+    let fixture = Fixture::new(false);
+    directory(&fixture.root.join("bin"), false);
+    file(&fixture.root.join("bin/node.exe"), b"not-executed-fixture");
+    let lease = PackageLease::acquire_at(fixture.root.to_str().unwrap(), "openclaw").unwrap();
+    assert!(
+        lease
+            .runtime_path()
+            .ends_with(&fixture.descriptor.runtime_id)
+    );
+    assert!(!lease.inherited_handle().is_null());
+    assert_eq!(fixture.transition(false), Err("runtime-busy"));
+    assert!(std::fs::write(fixture.root.join("bin/node.exe"), b"changed").is_err());
+    lease.validate().unwrap();
+    drop(lease);
+    std::fs::write(fixture.root.join("bin/node.exe"), b"closed-fixture").unwrap();
+    fixture.transition(false).unwrap();
+}
+
+#[test]
+fn prepared_maintenance_blocks_new_admission_without_invalidating_active_lease() {
+    let fixture = Fixture::new(false);
+    directory(&fixture.root.join("bin"), false);
+    file(&fixture.root.join("bin/node.exe"), b"not-executed-fixture");
+    let lease = PackageLease::acquire_at(fixture.root.to_str().unwrap(), "inference").unwrap();
+    file(
+        &fixture.root.join("runtime-maintenance"),
+        b"owned-transaction-fixture",
+    );
+    assert!(matches!(
+        PackageLease::acquire_at(fixture.root.to_str().unwrap(), "openclaw"),
+        Err("runtime-maintenance")
+    ));
+    assert_eq!(fixture.transition(false), Err("runtime-busy"));
+    lease.validate().unwrap();
+    drop(lease);
+}
+
+#[test]
 fn concurrent_readers_block_retirement_until_every_lease_closes() {
     let fixture = Fixture::new(false);
     let control = ControlDirectory::at(fixture.root.to_str().unwrap()).unwrap();

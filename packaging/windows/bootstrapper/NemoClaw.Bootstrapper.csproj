@@ -14,7 +14,7 @@
     <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <PublishTrimmed>false</PublishTrimmed>
-    <PublishReadyToRun>false</PublishReadyToRun>
+    <PublishReadyToRun>true</PublishReadyToRun>
     <DebugType>none</DebugType>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -27,6 +27,7 @@
     <FileVersion>$(ProductVersion).0</FileVersion>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="$(ImmutableRuntimeAvailabilityFile)" LogicalName="Nvidia.NemoClaw.NativeRuntimeAvailability.json" Condition="'$(ImmutableRuntimeAvailabilityFile)' != ''" />
     <PackageReference Include="WixToolset.BootstrapperApplicationApi" Version="5.0.2" />
   </ItemGroup>
   <ItemGroup>
@@ -37,4 +38,7 @@
     <Resource Include="..\onboarding\assets\deepagents.png" Link="Assets\deepagents.png" />
     <Resource Include="..\onboarding\assets\nemocua.png" Link="Assets\nemocua.png" />
   </ItemGroup>
+  <Target Name="ValidateImmutableRuntimePresentation" BeforeTargets="BeforeBuild">
+    <Error Condition="'$(ImmutableRuntimePackage)' == 'true' and !Exists('$(ImmutableRuntimeAvailabilityFile)')" Text="A finished runtime package requires its exact bounded availability input." />
+  </Target>
 </Project>

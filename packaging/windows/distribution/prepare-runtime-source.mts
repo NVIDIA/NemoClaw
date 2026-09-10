@@ -47,19 +47,29 @@ const PREIMAGES: Readonly<Record<string, string | null>> = {
     "678394d69a416190540ae099219c8e5944dd39a752a8434bb41c951ea64458c5",
 };
 
-export function prepareRuntimeSource(source: string, patch: string) {
-  const patchBytes = fs.readFileSync(patch);
-  const changes = [...patchBytes.toString("utf8").matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gmu)];
+export function prepareRuntimeSource(source: string, patch?: string) {
+  const patchBytes = patch ? fs.readFileSync(patch) : Buffer.alloc(0);
+  const changes = patch
+    ? [...patchBytes.toString("utf8").matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gmu)]
+    : fs
+        .readdirSync(source)
+        .filter((file) => file.endsWith(".mts"))
+        .map((file) => [
+          "",
+          "packaging/windows/runtime/" + file,
+          "packaging/windows/runtime/" + file,
+        ]);
   if (
-    changes.length !== Object.keys(PREIMAGES).length ||
-    new Set(changes.map((match) => match[1])).size !== changes.length ||
-    changes.some(
-      (match) =>
-        match[1] !== match[2] ||
-        !Object.hasOwn(PREIMAGES, match[1]) ||
-        !/^packaging\/windows\/runtime\/[A-Za-z0-9._/-]+$/u.test(match[1]) ||
-        match[1].split("/").includes(".."),
-    )
+    patch &&
+    (changes.length !== Object.keys(PREIMAGES).length ||
+      new Set(changes.map((match) => match[1])).size !== changes.length ||
+      changes.some(
+        (match) =>
+          match[1] !== match[2] ||
+          !Object.hasOwn(PREIMAGES, match[1]) ||
+          !/^packaging\/windows\/runtime\/[A-Za-z0-9._/-]+$/u.test(match[1]) ||
+          match[1].split("/").includes(".."),
+      ))
   )
     throw new Error("The static-runtime adapter contains an unexpected source path.");
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "native-runtime-build-"));
@@ -80,14 +90,15 @@ export function prepareRuntimeSource(source: string, patch: string) {
   try {
     visit(source);
     fs.cpSync(source, runtime, { recursive: true });
-    for (const [file, expected] of Object.entries(PREIMAGES)) {
-      const target = path.join(work, file);
-      if (expected === null) {
-        if (fs.existsSync(target)) throw new Error("A new static-runtime source already exists.");
-      } else if (!fs.existsSync(target) || hash(fs.readFileSync(target)) !== expected) {
-        throw new Error("The static-runtime source does not match its reviewed preimage.");
+    if (patch)
+      for (const [file, expected] of Object.entries(PREIMAGES)) {
+        const target = path.join(work, file);
+        if (expected === null) {
+          if (fs.existsSync(target)) throw new Error("A new static-runtime source already exists.");
+        } else if (!fs.existsSync(target) || hash(fs.readFileSync(target)) !== expected) {
+          throw new Error("The static-runtime source does not match its reviewed preimage.");
+        }
       }
-    }
     const gitConfig = path.join(work, "empty.gitconfig");
     fs.writeFileSync(gitConfig, "", { flag: "wx", mode: 0o600 });
     const env = {
@@ -95,13 +106,15 @@ export function prepareRuntimeSource(source: string, patch: string) {
       GIT_CONFIG_GLOBAL: gitConfig,
       GIT_CONFIG_NOSYSTEM: "1",
     };
-    execFileSync("git", ["init", "--quiet", work], { env, stdio: "pipe" });
-    execFileSync("git", ["apply", "--check", "--unidiff-zero", patch], {
-      cwd: work,
-      env,
-      stdio: "pipe",
-    });
-    execFileSync("git", ["apply", "--unidiff-zero", patch], { cwd: work, env, stdio: "pipe" });
+    if (patch) {
+      execFileSync("git", ["init", "--quiet", work], { env, stdio: "pipe" });
+      execFileSync("git", ["apply", "--check", "--unidiff-zero", patch], {
+        cwd: work,
+        env,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["apply", "--unidiff-zero", patch], { cwd: work, env, stdio: "pipe" });
+    }
     const removedDiagnosticGuards: string[] = [];
     for (const [file] of new Map(changes.map((match) => [match[1], true]))) {
       if (!file.endsWith(".mts")) continue;
@@ -133,9 +146,9 @@ export function prepareRuntimeSource(source: string, patch: string) {
       receipt: {
         schemaVersion: 1,
         classification: "ci-only-static-runtime-adaptation",
-        adapterSha256: hash(patchBytes),
+        adapterSha256: patch ? hash(patchBytes) : null,
         patchContextLines: 0,
-        preimagesVerified: Object.keys(PREIMAGES).length,
+        preimagesVerified: patch ? Object.keys(PREIMAGES).length : 0,
         inputs,
         removedDiagnosticGuards,
       },

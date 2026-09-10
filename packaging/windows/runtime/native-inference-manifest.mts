@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readOpenedRegularFile } from "./native-security.mts";
-import { fileURLToPath } from "node:url";
+import manifestJson from "./native-inference-manifest.json" with { type: "json" };
 
 type NativeExpressManifest = {
   schemaVersion: 1;
@@ -30,12 +29,7 @@ type NativeExpressManifest = {
 
 // Shared with the embedded WPF catalog. The packaged, immutable JSON is the
 // single source for native downloads, capacity thresholds, and model settings.
-const manifestText = readOpenedRegularFile(
-  fileURLToPath(new URL("./native-inference-manifest.json", import.meta.url)),
-  { encoding: "utf8", maxBytes: 64 * 1024 },
-);
-if (manifestText === null) throw new Error("The installed native inference manifest is missing.");
-const manifest = JSON.parse(manifestText) as NativeExpressManifest;
+const manifest = manifestJson as NativeExpressManifest;
 if (manifest.schemaVersion !== 1)
   throw new Error("The installed native inference manifest version is invalid.");
 export const NATIVE_EXPRESS = Object.freeze({
@@ -68,7 +62,10 @@ export type NativeHardware = {
   gpuCount: number;
 };
 
-export function nativeEligibility(hardware: NativeHardware): string[] {
+export function nativeEligibility(
+  hardware: NativeHardware,
+  options: { prebuilt?: boolean } = {},
+): string[] {
   const reasons: string[] = [];
   if (hardware.platform !== "win32" || hardware.arch !== "arm64")
     reasons.push("On-device Express requires native Windows ARM64.");
@@ -85,8 +82,9 @@ export function nativeEligibility(hardware: NativeHardware): string[] {
   )
     reasons.push("Close other GPU and memory-intensive applications; 50.3 GB must be available.");
   if (
-    !Number.isFinite(hardware.availableStorageBytes) ||
-    hardware.availableStorageBytes < NATIVE_EXPRESS.storageBytes
+    !options.prebuilt &&
+    (!Number.isFinite(hardware.availableStorageBytes) ||
+      hardware.availableStorageBytes < NATIVE_EXPRESS.storageBytes)
   )
     reasons.push("At least 40 GiB of free system-drive storage is required.");
   const version = /^(\d+)\.(\d+)$/u.exec(hardware.cudaVersion);

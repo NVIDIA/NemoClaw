@@ -6,6 +6,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
+using System.Security.Cryptography;
 
 namespace Nvidia.NemoClaw.Bootstrapper;
 
@@ -36,7 +38,34 @@ internal static class NativeMaintenance
     {
         var launcher = NativeSetupOperations.InstalledLauncher();
         var root = Directory.GetParent(Path.GetDirectoryName(launcher)!)!.FullName;
-        return File.Exists(launcher) && File.Exists(Path.Combine(root, "qualification", "native-remove-data.mts"));
+        return File.Exists(launcher) && (SupportsFinishedRuntime(root, launcher) || File.Exists(Path.Combine(root, "qualification", "native-remove-data.mts")));
+    }
+
+    private static bool SupportsFinishedRuntime(string root, string launcher)
+    {
+        var receipt = Path.Combine(root, "immutable-package-inputs.json");
+        if (!File.Exists(receipt)) return false;
+        // This only selects an installed command contract. The native command
+        // still owns lease admission and credential/private-state authorization.
+        if ((File.GetAttributes(receipt) & FileAttributes.ReparsePoint) != 0 ||
+            (File.GetAttributes(launcher) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("The installed runtime contract is redirected.");
+        using var input = new FileStream(receipt, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (input.Length is < 1 or > 65536) throw new InvalidDataException("The installed runtime contract exceeds its bound.");
+        using var document = JsonDocument.Parse(input, new JsonDocumentOptions { MaxDepth = 8 });
+        var value = document.RootElement;
+        if (value.GetProperty("schemaVersion").GetInt32() != 1 || value.GetProperty("classification").GetString() != "immutable-package-inputs")
+            throw new InvalidDataException("The installed runtime contract is invalid.");
+        var native = value.GetProperty("launcher");
+        var capabilities = native.GetProperty("capabilities");
+        if (capabilities.GetProperty("schemaVersion").GetInt32() != 1 || capabilities.GetProperty("kind").GetString() != "native-runtime-capabilities" ||
+            !capabilities.GetProperty("immutableRuntime").GetBoolean() || !capabilities.GetProperty("guardianEnabled").GetBoolean())
+            throw new InvalidDataException("The installed runtime does not provide its guarded command contract.");
+        using var executable = new FileStream(launcher, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (executable.Length is < 1 or > 32 * 1024 * 1024 ||
+            Convert.ToHexString(SHA256.HashData(executable)).ToLowerInvariant() != native.GetProperty("launcherSha256").GetString())
+            throw new InvalidDataException("The installed launcher differs from its command contract.");
+        return true;
     }
 
     internal static int RunInstalledInstaller()
@@ -112,7 +141,7 @@ internal static class NativeMaintenance
         var root = Directory.GetParent(Path.GetDirectoryName(launcher)!)!.FullName;
         // Earlier preview launchers interpret unknown options as application
         // launch. Never send them a native inference maintenance command.
-        if (!File.Exists(launcher) || !File.Exists(Path.Combine(root, "qualification", "native-inference-cli.mts"))) return;
+        if (!File.Exists(launcher) || (!SupportsFinishedRuntime(root, launcher) && !File.Exists(Path.Combine(root, "qualification", "native-inference-cli.mts")))) return;
         reportProgress?.Invoke();
         await RunOwnedHelperAsync(launcher, new[] { "--native-inference", "stop" },
             "The shared local model could not stop safely. Close its active sessions before continuing maintenance.");

@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { fileURLToPath as nativeEntryFile } from "node:url";
+declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
+import { nativeWorkerAssets, nativeDistributionAsset } from "./native-assets.mts";
 import { execFile, spawn } from "node:child_process";
 import {
   watchNativeUiSandbox,
@@ -15,15 +18,15 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import {
-  NATIVE_SERVICES,
-  nativeServiceBinding,
-  normalizeNativeOptions,
-  readNativeServiceEnvironment,
-  selectedNativeServices,
-} from "./native-options.mts";
+import { readNativeServiceEnvironment } from "./native-options.mts";
 
-import { copyNativeRuntime, openNativeWebSession } from "./native-web-session.mts";
+import {
+  configureNativeFromStdin,
+  normalizeOnboardingConfiguration,
+  writeNativeAgentConfiguration,
+} from "./native-setup-configuration.mts";
+
+import { openNativeWebSession } from "./native-web-session.mts";
 import {
   createNativeSessionDiagnostics,
   NativeSessionFailure,
@@ -33,14 +36,18 @@ import { startNativeInferenceBroker } from "./native-inference-broker.mts";
 import { startNativeBrokerRelay } from "./native-broker-relay.mts";
 import { startFileTcpRelay } from "./native-ui-relay.mts";
 import { acquireNativeStateSession } from "./native-state.mts";
+import {
+  withNativeRuntimeSession,
+  usingNativeRuntimeSession,
+  bindNativeRuntimeGuard,
+  type NativeRuntimeSession,
+} from "./native-runtime.mts";
 import { resolveNativeConfiguredInference } from "./native-configured-inference.mts";
 import type { NativeInferenceProgress } from "./native-inference-manifest.mts";
 
 import {
-  deleteCredentialByBinding,
   nativeCredentialBinding,
   readOpenedRegularFile,
-  readWindowsCredential,
   writeNativeGatewayConfig,
 } from "./native-security.mts";
 
@@ -91,88 +98,6 @@ async function withTimeout(promise, timeout, label) {
   }
 }
 
-const PROVIDER_CONFIGURATION = {
-  nvidia: {
-    endpoint: "https://integrate.api.nvidia.com/v1",
-    credentialRequired: true,
-    credentialPrefix: "nvapi-",
-  },
-  openrouter: {
-    endpoint: "https://openrouter.ai/api/v1",
-    credentialRequired: true,
-    credentialPrefix: "sk-or-",
-  },
-  compatible: { endpoint: null, credentialRequired: false, credentialPrefix: null },
-  local: { endpoint: null, credentialRequired: false, credentialPrefix: null },
-};
-
-function normalizeProviderCredential(inference, value) {
-  const provider = PROVIDER_CONFIGURATION[inference];
-  const credential = typeof value === "string" ? value.trim() : "";
-  if (Buffer.byteLength(credential, "utf8") > 2048 || /[\u0000\r\n]/u.test(credential))
-    throw new Error("The provider credential is invalid.");
-  if (provider.credentialRequired && !credential)
-    throw new Error("The selected provider requires an API key.");
-  if (provider.credentialPrefix && !credential.startsWith(provider.credentialPrefix))
-    throw new Error(`The ${inference} API key has an unexpected format.`);
-  return credential;
-}
-
-function normalizeOnboardingConfiguration(submitted, qualification, metadataOnly = false) {
-  const agents = new Set(["openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua"]);
-  if (!agents.has(submitted?.agent)) throw new Error("Select a valid agent runtime.");
-  if (qualification) {
-    if (submitted?.inference !== "qualification")
-      throw new Error("Qualification must use its deterministic local inference endpoint.");
-    return {
-      agent: submitted.agent,
-      inference: "qualification",
-      endpoint: "http://127.0.0.1/qualification",
-      model: "native-preview",
-      credential: "",
-      options: submitted.options ?? {},
-    };
-  }
-  if (!Object.hasOwn(PROVIDER_CONFIGURATION, submitted?.inference))
-    throw new Error("Select a valid inference provider.");
-  const provider = PROVIDER_CONFIGURATION[submitted.inference];
-  const options = submitted?.options;
-  if (options === null || typeof options !== "object" || Array.isArray(options))
-    throw new Error("Onboarding options are invalid.");
-  const submittedEndpoint = typeof options.endpoint === "string" ? options.endpoint.trim() : "";
-  const endpoint = provider.endpoint ?? submittedEndpoint;
-  let endpointUrl;
-  try {
-    endpointUrl = new URL(endpoint);
-  } catch {
-    throw new Error("Enter a complete inference endpoint URL.");
-  }
-  const endpointIsAllowed =
-    submitted.inference === "local"
-      ? endpointUrl.protocol === "http:" || endpointUrl.protocol === "https:"
-      : endpointUrl.protocol === "https:";
-  if (!endpointIsAllowed) throw new Error("The selected inference endpoint protocol is unsafe.");
-  if (
-    submitted.inference === "local" &&
-    !["127.0.0.1", "localhost", "[::1]"].includes(endpointUrl.hostname)
-  )
-    throw new Error("Local inference must use a loopback endpoint.");
-  const model = typeof options.model === "string" ? options.model.trim() : "";
-  if (!model || model.length > 256 || /[\u0000-\u001f\u007f]/u.test(model))
-    throw new Error("Enter a valid model ID.");
-  const credential = metadataOnly
-    ? ""
-    : normalizeProviderCredential(submitted.inference, options.credential);
-  return {
-    agent: submitted.agent,
-    inference: submitted.inference,
-    endpoint: endpointUrl.toString().replace(/\/$/u, ""),
-    model,
-    credential,
-    options,
-  };
-}
-
 async function updateWindowsCredential(launcher, configuration) {
   const { inference: provider, credential } = configuration;
   const binding = nativeCredentialBinding(configuration);
@@ -202,139 +127,6 @@ async function updateWindowsCredential(launcher, configuration) {
     );
 }
 
-function writeNativeAgentConfiguration(configuration) {
-  const localAppData = requiredDirectory(
-    process.env.LOCALAPPDATA ?? "",
-    "Windows local application-data directory",
-  );
-  const stateRoot = path.join(localAppData, "NVIDIA", "NemoClaw", "agents", configuration.agent);
-  fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
-  const configPath = path.join(stateRoot, "native-windows.json");
-  const temporaryPath = `${configPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  const persisted = {
-    schemaVersion: 1,
-    classification: "nemoclaw-native-windows-agent-configuration",
-    agent: configuration.agent,
-    inference: configuration.inference,
-    endpoint: configuration.endpoint,
-    model: configuration.model,
-    credentialStored: Boolean(configuration.credential),
-    profile: "personal",
-    ...(configuration.localModel ? { localModel: configuration.localModel } : {}),
-    options: Object.fromEntries(
-      Object.entries(configuration.options).filter(
-        ([name]) => !["credential", "endpoint", "model"].includes(name),
-      ),
-    ),
-  };
-  fs.writeFileSync(temporaryPath, `${JSON.stringify(persisted, null, 2)}\n`, {
-    encoding: "utf8",
-    flag: "wx",
-    mode: 0o600,
-  });
-  fs.renameSync(temporaryPath, configPath);
-  const activePath = path.join(localAppData, "NVIDIA", "NemoClaw", "active-agent.txt");
-  const activeTemporaryPath = `${activePath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  fs.writeFileSync(activeTemporaryPath, `${configuration.agent}\n`, {
-    encoding: "utf8",
-    flag: "wx",
-    mode: 0o600,
-  });
-  fs.renameSync(activeTemporaryPath, activePath);
-  return configPath;
-}
-
-async function configureNativeFromStdin(launcher) {
-  const chunks = [];
-  let bytes = 0;
-  for await (const chunk of process.stdin) {
-    bytes += chunk.length;
-    if (bytes > 16 * 1024) fail("native setup configuration exceeds its size limit");
-    chunks.push(chunk);
-  }
-  const submitted = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  if (
-    submitted?.schemaVersion !== 1 ||
-    submitted?.classification !== "nemoclaw-native-windows-agent-configuration" ||
-    typeof submitted?.credentialStored !== "boolean" ||
-    typeof submitted?.endpoint !== "string" ||
-    typeof submitted?.model !== "string" ||
-    !Object.hasOwn(PROVIDER_CONFIGURATION, submitted?.inference) ||
-    submitted?.options === null ||
-    typeof submitted?.options !== "object" ||
-    Array.isArray(submitted.options) ||
-    (submitted.profile !== undefined && submitted.profile !== "personal") ||
-    (submitted.localModel !== undefined &&
-      (submitted.localModel !== "n1x-qwen3.6-35b-a3b" ||
-        submitted.inference !== "local" ||
-        submitted.credentialStored))
-  )
-    fail("native setup configuration is invalid");
-  const normalized = normalizeOnboardingConfiguration(
-    {
-      agent: submitted.agent,
-      inference: submitted.inference,
-      options: { endpoint: submitted.endpoint, model: submitted.model },
-    },
-    false,
-    true,
-  );
-  normalized.options = normalizeNativeOptions(submitted.agent, submitted.options);
-  if (submitted.localModel) normalized.localModel = submitted.localModel;
-  const servicePosition = process.argv.indexOf("--prepare-service");
-  if (servicePosition !== -1) {
-    const service = process.argv[servicePosition + 1];
-    if (!selectedNativeServices(normalized.options).includes(service))
-      fail("the service is not selected for this agent");
-    process.stdout.write(nativeServiceBinding(submitted.agent, service ?? ""));
-    return;
-  }
-  if (
-    PROVIDER_CONFIGURATION[normalized.inference].credentialRequired &&
-    !submitted.credentialStored
-  )
-    fail("the selected provider requires a credential");
-  const binding = nativeCredentialBinding(normalized);
-  if (process.argv.includes("--prepare")) {
-    process.stdout.write(binding);
-    return;
-  }
-  const credential = await readWindowsCredential(launcher, normalized, submitted.credentialStored);
-  normalized.credential = normalizeProviderCredential(normalized.inference, credential);
-  await readNativeServiceEnvironment(launcher, normalized.agent, normalized.options);
-  const previousPath = path.join(
-    process.env.LOCALAPPDATA,
-    "NVIDIA",
-    "NemoClaw",
-    "agents",
-    normalized.agent,
-    "native-windows.json",
-  );
-  const previousText = readOpenedRegularFile(previousPath, {
-    encoding: "utf8",
-    maxBytes: 16 * 1024,
-  });
-  const previous = previousText === null ? null : JSON.parse(previousText);
-  const previousBinding =
-    previous?.schemaVersion === 1 &&
-    previous?.agent === normalized.agent &&
-    previous?.credentialStored === true
-      ? nativeCredentialBinding(previous)
-      : null;
-  writeNativeAgentConfiguration(normalized);
-  if (previousBinding && previousBinding !== binding)
-    await deleteCredentialByBinding(launcher, previous.inference, previousBinding);
-  const selectedServices = selectedNativeServices(normalized.options);
-  for (const service of Object.keys(NATIVE_SERVICES)) {
-    if (!selectedServices.includes(service))
-      await deleteCredentialByBinding(
-        launcher,
-        service,
-        nativeServiceBinding(normalized.agent, service),
-      );
-  }
-}
-
 function readNativeAgentConfiguration(agent) {
   const localAppData = requiredDirectory(
     process.env.LOCALAPPDATA ?? "",
@@ -353,7 +145,7 @@ function readNativeAgentConfiguration(agent) {
     config?.classification !== "nemoclaw-native-windows-agent-configuration" ||
     config?.agent !== agent ||
     !["nvidia", "openrouter", "compatible", "local"].includes(config?.inference) ||
-    typeof config?.endpoint !== "string" ||
+    (typeof config?.endpoint !== "string" && config.localModel === undefined) ||
     typeof config?.model !== "string" ||
     typeof config?.credentialStored !== "boolean"
   )
@@ -572,11 +364,12 @@ if (configured) {
 }
 writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
   ...serviceConfiguration,
+  update: { checkOnStart: false, auto: { enabled: false } },
   gateway: {
     mode: "local",
     bind: "loopback",
     auth: { mode: "none" },
-    controlUi: { allowedOrigins: ["http://127.0.0.1:" + uiPort, "http://localhost:" + uiPort] },
+    controlUi: { root: join(process.env.OPENCLAW_COMPILED_ASSET_ROOT, "dist", "control-ui"), allowedOrigins: ["http://127.0.0.1:" + uiPort, "http://localhost:" + uiPort] },
   },
   models: { mode: "merge", providers: { nemoclawNative: {
     baseUrl: "http://127.0.0.1:" + modelPort + "/v1",
@@ -592,8 +385,16 @@ Object.assign(process.env, {
   NODE_DISABLE_COMPILE_CACHE: "1",
   OPENCLAW_HOME: home,
   OPENCLAW_NO_RESPAWN: "1",
+  OPENCLAW_NO_AUTO_UPDATE: "1",
   USERPROFILE: home,
 });
+// The official --link command records the already built path in its supported
+// install registry. It changes only agent configuration/state; no npm or runtime
+// copy is allowed or needed for this sealed prebuilt package.
+if (serviceConfiguration.plugins?.entries?.brave?.enabled) {
+  process.argv = [process.execPath, launcher, "plugins", "install", "--link", required("NEMOCLAW_NATIVE_BRAVE_PLUGIN")];
+  await runPackagedOpenClaw(process.argv);
+}
 process.argv = [process.execPath, launcher, "gateway", "run", "--allow-unconfigured", "--port", String(uiPort), "--bind", "loopback", "--auth", "none"];
 const fileTunnelTask = startNativeUiTunnel({ relayRoot, relayToken, uiPort });
 void fileTunnelTask.catch(() => {});
@@ -642,14 +443,14 @@ async function startOnboardingServer(
   launcher,
 ) {
   const onboardingRoot = requiredDirectory(
-    path.join(installRoot, "onboarding"),
+    nativeDistributionAsset("onboarding"),
     "NemoClaw graphical onboarder",
   );
   const files = new Map([
     ["/", ["index.html", "text/html; charset=utf-8"]],
     ["/index.html", ["index.html", "text/html; charset=utf-8"]],
     ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
-    ["/app.ts", ["app.ts", "text/javascript; charset=utf-8"]],
+    ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
     ["/assets/nvidia.svg", ["assets/nvidia.svg", "image/svg+xml"]],
     ["/assets/openclaw.png", ["assets/openclaw.png", "image/png"]],
     ["/assets/hermes.png", ["assets/hermes.png", "image/png"]],
@@ -799,10 +600,10 @@ async function driveBrowser(
   skipOnboarding = false,
 ) {
   const playwrightRoot = requiredDirectory(
-    path.join(openClawRoot, "node_modules", "openclaw", "node_modules", "playwright-core"),
+    path.join(openClawRoot, "node_modules", "playwright-core"),
     "installed Playwright browser driver",
   );
-  const require = createRequire(import.meta.url);
+  const require = createRequire(path.join(openClawRoot, "package.json"));
   const { chromium } = require(playwrightRoot);
   const browser = await chromium.launch({
     executablePath: resolveEdge(),
@@ -1041,17 +842,11 @@ async function runSelectedNonOpenClaw(
   fs.mkdirSync(runtimeEvidence, { recursive: true });
   const isNemoCua = targetAgent === "nemocua";
   const runner = requiredFile(
-    path.join(
-      installRoot,
-      "qualification",
-      isNemoCua ? "run-installed-native-nemocua.mts" : "run-installed-native-pi.mts",
-    ),
-    `${agentNamesForLaunch[targetAgent]} native adapter`,
+    nativeDistributionAsset("NemoClaw.Runtime.exe"),
+    "prebuilt native adapter",
   );
   const arguments_ = [
-    "--experimental-strip-types",
-    "--no-warnings",
-    runner,
+    isNemoCua ? "nemocua" : "terminal-turn",
     "--qualification",
     "--artifact-directory",
     runtimeEvidence,
@@ -1059,12 +854,13 @@ async function runSelectedNonOpenClaw(
   if (!isNemoCua) arguments_.push("--agent", targetAgent);
   const environment = allowlistedWindowsEnvironment({
     NEMOCLAW_NATIVE_INSTALL_ROOT: installRoot,
+    NEMOCLAW_NATIVE_RUNTIME_ROOT: path.dirname(path.dirname(runner)),
   });
   console.log(
     `WEB UI> Handing off to the authentic ${agentNamesForLaunch[targetAgent]} native surface`,
   );
   const exitCode = await new Promise((resolve, reject) => {
-    const child = spawn(installedNode, arguments_, {
+    const child = spawn(runner, arguments_, {
       cwd: installRoot,
       env: environment,
       stdio: "inherit",
@@ -1122,7 +918,7 @@ async function runSelectedNonOpenClaw(
   );
 }
 
-async function main() {
+async function mainInternal(runtimeLease: NativeRuntimeSession) {
   if (process.platform !== "win32" || process.arch !== "arm64")
     fail("native Windows ARM64 is required");
   const qualification = process.argv.includes("--qualification");
@@ -1150,19 +946,23 @@ async function main() {
     await configureNativeFromStdin(launcher);
     return;
   }
-  const installedNode = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
+  const installedNode = requiredFile(runtimeLease.node, "sealed Node.js runtime");
   const openshell = requiredFile(path.join(binRoot, "openshell.exe"), "OpenShell CLI");
   const gatewayExecutable = requiredFile(
     path.join(binRoot, "openshell-gateway.exe"),
     "OpenShell gateway",
   );
   const installedOpenClawRoot = requiredDirectory(
-    path.join(installRoot, "openclaw"),
-    "OpenClaw runtime",
+    runtimeLease.agentRoot,
+    "sealed OpenClaw runtime",
   );
   const installedOpenClawEntry = requiredFile(
-    path.join(installedOpenClawRoot, "node_modules", "openclaw", "openclaw.mjs"),
+    path.join(installedOpenClawRoot, "openclaw-app.cjs"),
     "OpenClaw entrypoint",
+  );
+  requiredFile(
+    path.join(installedOpenClawRoot, "dist", "control-ui", "index.html"),
+    "sealed OpenClaw control UI",
   );
   requiredFile(path.join(installRoot, "config", "mxc-gateway.toml"), "MXC gateway configuration");
   requiredFile(path.join(installRoot, "mxc", "wxc-exec.exe"), "MXC executor");
@@ -1213,11 +1013,19 @@ async function main() {
   );
   diagnostics.secret(installRoot);
   let webSession: Awaited<ReturnType<typeof openNativeWebSession>> | null = null;
-  let presentation;
-  try {
+  let presentation: Awaited<ReturnType<typeof diagnostics.persist>> | undefined;
+  async function runOpenedSession() {
     if (configured) {
       diagnostics.stage("control-open");
-      webSession = await openNativeWebSession(installRoot, "openclaw");
+      const opened = await openNativeWebSession(installRoot, "openclaw");
+      webSession = {
+        ...opened,
+        signal: AbortSignal.any([opened.signal, runtimeLease.signal]),
+        assertRunning() {
+          opened.assertRunning();
+          runtimeLease.assertHeld();
+        },
+      };
     }
     diagnostics.stage("inference");
     webSession?.progress("inference");
@@ -1257,7 +1065,10 @@ async function main() {
     webSession?.assertRunning();
     webSession?.progress("runtime");
     const stateSession = configuredIdentity
-      ? await acquireNativeStateSession(launcherPath, "openclaw")
+      ? bindNativeRuntimeGuard(
+          await acquireNativeStateSession(launcherPath, "openclaw"),
+          runtimeLease,
+        )
       : null;
     const ownedRoots = [];
     const ownedLogs = [];
@@ -1495,46 +1306,14 @@ async function main() {
       diagnostics.secret(relayToken);
       const relayRoot = path.join(shareRoot, "ui-relay");
       uiRelay = await startFileTcpRelay(relayRoot, relayToken, launcherPath);
-      const node = path.join(runtimeRoot, "node.exe");
-      const openClawRoot = path.join(runtimeRoot, "openclaw");
-      console.log("WEB UI> Staging the exact installed OpenClaw runtime for MXC");
-      if (webSession) {
-        await copyNativeRuntime(
-          [
-            { source: installedNode, destination: node },
-            { source: installedOpenClawRoot, destination: openClawRoot },
-          ],
-          {
-            signal: webSession.signal,
-            onTargetStart: (index) =>
-              diagnostics.stage(index === 0 ? "runtime-copy-node" : "runtime-copy-agent"),
-            onProgress: (counts) => webSession?.progress("runtime", counts),
-          },
-        );
-      } else {
-        diagnostics.stage("runtime-copy-node");
-        fs.copyFileSync(installedNode, node);
-        diagnostics.stage("runtime-copy-agent");
-        fs.cpSync(installedOpenClawRoot, openClawRoot, { recursive: true });
-      }
+      runtimeLease.assertHeld();
+      const node = installedNode;
+      const openClawRoot = installedOpenClawRoot;
+      const openClawEntry = installedOpenClawEntry;
+      console.log("WEB UI> Opening the installed OpenClaw runtime");
       diagnostics.stage("runtime");
-      const openClawEntry = requiredFile(
-        path.join(openClawRoot, "node_modules", "openclaw", "openclaw.mjs"),
-        "staged OpenClaw entrypoint",
-      );
-      if (!fs.readFileSync(openClawEntry).equals(fs.readFileSync(installedOpenClawEntry)))
-        fail("staged OpenClaw entrypoint does not match the installed payload");
-      const gatewayScript = path.join(runtimeRoot, "openclaw-native-ui.mjs");
-      fs.writeFileSync(gatewayScript, gatewaySource(), "utf8");
-      fs.copyFileSync(
-        path.join(installRoot, "qualification", "native-ui-tunnel.mts"),
-        path.join(runtimeRoot, "native-ui-tunnel.mts"),
-      );
-      for (const file of ["native-broker-tunnel.mts", "native-broker-relay-protocol.mts"])
-        fs.copyFileSync(
-          path.join(installRoot, "qualification", file),
-          path.join(runtimeRoot, file),
-        );
+      const worker = nativeWorkerAssets(runtimeLease.runtimeRoot, "openclaw-web");
+      const gatewayScript = requiredFile(worker.entry, "prebuilt OpenClaw UI worker");
       const home =
         configuredIdentity === null ? path.join(shareRoot, "home") : stateSession.stateRoot;
       stateSession?.assertHeld();
@@ -1549,6 +1328,7 @@ async function main() {
           "  include_workdir: false",
           "  read_only:",
           `    - ${quoteYamlPath(runtimeRoot)}`,
+          ...runtimeLease.readOnlyRoots.map((root) => `    - ${quoteYamlPath(root)}`),
           "  read_write:",
           `    - ${quoteYamlPath(shareRoot)}`,
           `    - ${quoteYamlPath(relayRoot)}`,
@@ -1632,6 +1412,7 @@ async function main() {
         diagnostics,
       );
       const sandboxEnvironment = {
+        ...worker.environment,
         LOCALAPPDATA: home,
         NEMOCLAW_MXC_HOME: home,
         NEMOCLAW_MXC_MODEL_ID: modelId,
@@ -1643,12 +1424,13 @@ async function main() {
             }),
         NEMOCLAW_MXC_MODEL_TOKEN: modelToken,
         NEMOCLAW_MXC_OPENCLAW_ENTRY: openClawEntry,
+        OPENCLAW_COMPILED_ASSET_ROOT: openClawRoot,
         NEMOCLAW_MXC_QUALIFICATION: qualification ? "1" : "0",
         NEMOCLAW_MXC_RELAY_ROOT: relayRoot,
         NEMOCLAW_MXC_RELAY_TOKEN: relayToken,
         NEMOCLAW_MXC_UI_PORT: String(uiPort),
         NEMOCLAW_NATIVE_SERVICES: configuredIdentity === null ? "0" : "1",
-        NEMOCLAW_NATIVE_BRAVE_PLUGIN: path.join(openClawRoot, "extensions", "brave"),
+        NEMOCLAW_NATIVE_BRAVE_PLUGIN: path.join(openClawRoot, "plugins", "brave"),
         NODE_DISABLE_COMPILE_CACHE: "1",
         NUMBER_OF_PROCESSORS: process.env.NUMBER_OF_PROCESSORS ?? "1",
         OS: "Windows_NT",
@@ -1795,10 +1577,18 @@ async function main() {
         backend: "process_container",
         browser: qualification ? "Microsoft Edge" : "Windows default browser",
         browserVersion: browserProof.browserVersion,
-        openClawEntrypointSha256: sha256(installedOpenClawEntry),
-        nodeSha256: sha256(installedNode),
-        openShellSha256: sha256(openshell),
-        openShellGatewaySha256: sha256(gatewayExecutable),
+        openClawEntrypointSha256: qualification ? sha256(installedOpenClawEntry) : null,
+        nodeSha256: qualification ? sha256(installedNode) : runtimeLease.nodeSha256,
+        openShellSha256: qualification ? sha256(openshell) : null,
+        openShellGatewaySha256: qualification ? sha256(gatewayExecutable) : null,
+        runtimeIdentity: {
+          runtimeId: runtimeLease.runtimeId,
+          manifestSha256: runtimeLease.manifestSha256,
+          sourceRevision: runtimeLease.sourceRevision,
+          integrity: runtimeLease.integrity,
+        },
+        runtimeFilesHashed: qualification ? 4 : 0,
+        runtimeBytesCopied: 0,
         deterministicLocalModel: qualification && configuredIdentity === null,
         inferenceTransport: brokerRelay?.transport ?? "contained-deterministic-model",
         onboardingSkipped: skipOnboarding,
@@ -1837,14 +1627,22 @@ async function main() {
         else throw new Error(`Native OpenClaw cleanup failed: ${cleanupFailures.join(", ")}.`);
       }
     }
+  }
+  try {
+    await usingNativeRuntimeSession(runtimeLease, runOpenedSession, () =>
+      diagnostics.cleanupFailed("immutable runtime lease"),
+    );
   } catch (error) {
     diagnostics.fail(error);
     presentation = await diagnostics.persist(diagnostics.primaryError());
   }
-  try {
+  async function completeWebSession() {
     if (webSession) diagnostics.stage("control-close");
     webSession?.progress("cleanup");
     await webSession?.complete(!diagnostics.hasFailure(), presentation);
+  }
+  try {
+    await completeWebSession();
   } catch (error) {
     diagnostics.fail(error);
     presentation ??= await diagnostics.persist(diagnostics.primaryError());
@@ -1855,10 +1653,28 @@ async function main() {
   if (!completed.diagnosticPath) console.error(completed.message);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
-  main().catch((error) => {
+async function main() {
+  const installRoot = requiredDirectory(
+    process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
+    "NemoClaw installation root",
+  );
+  const launcher = requiredFile(path.join(installRoot, "bin", "NemoClaw.exe"), "NemoClaw launcher");
+  return await withNativeRuntimeSession(launcher, installRoot, "openclaw", mainInternal);
+}
+
+export async function runNativeWebEntry() {
+  await main().catch((error) => {
     console.error(
       error instanceof Error ? error.message : "NemoClaw native Windows launch failed.",
     );
     process.exitCode = 1;
   });
+}
+
+if (
+  typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" &&
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)
+) {
+  void runNativeWebEntry();
+}

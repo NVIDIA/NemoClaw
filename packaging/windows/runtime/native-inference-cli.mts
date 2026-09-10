@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { fileURLToPath as nativeEntryFile } from "node:url";
+declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -105,15 +107,20 @@ async function main() {
   }
 }
 
-if (
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
-) {
-  main().catch((error) => {
+export async function runNativeInferenceEntry() {
+  await main().catch((error) => {
     const message =
       error instanceof Error ? error.message.slice(0, 1024) : "Native inference failed.";
     process.stderr.write(JSON.stringify({ schemaVersion: 1, event: "error", message }) + "\n", () =>
       process.exit(1),
     );
   });
+}
+
+if (
+  typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" &&
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)
+) {
+  void runNativeInferenceEntry();
 }
