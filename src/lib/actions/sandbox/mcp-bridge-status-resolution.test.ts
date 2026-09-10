@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
@@ -212,7 +213,7 @@ ${body}
   return { status: result.status, stdout: result.stdout };
 }
 
-describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
+describe("MCP status wire-level credential-resolution probe", testTimeoutOptions(15_000), () => {
   it("inspects the attachment inventory once for a multi-server status read (#9806)", () => {
     const home = createTempHome("nemoclaw-mcp-status-attachments-");
     const { stdout } = runHarness(

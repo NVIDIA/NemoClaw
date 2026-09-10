@@ -103,6 +103,7 @@ describe("platform evidence workflow", () => {
     expect(install).toContain("'podman'");
     expect(install).toContain("'iproute2'");
     expect(install).toContain("'zip'");
+    expect(install).toContain("'gnu-coreutils'");
     expect(install).not.toContain("service docker start");
     expect(runtime).not.toContain("Install-WslUbuntuDependencies");
     expect(runtime).toContain("service docker start");
@@ -156,6 +157,14 @@ describe("platform evidence workflow", () => {
       });
       expect(install.run).toContain(".github/actions/ci-install-dependencies.sh");
       expect(install.run).toContain("npm ci --ignore-scripts");
+      const artifact = step(jobName, "Download reviewed SDK for branch validation");
+      expect(artifact.if).toBe("${{ github.ref != 'refs/heads/main' }}");
+      expect(artifact.with).toMatchObject({
+        name: "openshell-sdk-package",
+        "run-id": "${{ inputs.sdk-artifact-run-id }}",
+      });
+      expect(install.run).toContain("NEMOCLAW_CI_NPM_PACKAGE_MODE=artifact");
+      expect(install.run).toContain("node scripts/checks/prepare-ci-npm-install.mts");
     },
   );
 });

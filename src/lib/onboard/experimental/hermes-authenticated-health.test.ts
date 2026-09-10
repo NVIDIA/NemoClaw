@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import { execTimeout } from "../../../../test/helpers/timeouts";
 import { hermesPortableContainerInternals } from "./hermes-portable-container";
 import { hermesPortableLifecycleInternals } from "./hermes-portable-lifecycle";
 
@@ -70,9 +71,9 @@ function runProbe(
   const result = spawnSync("python3", ["-I", "-c", HARNESS], {
     input: JSON.stringify({ program, env, status, redirect, successStatus }),
     encoding: "utf8",
-    timeout: 5_000,
+    timeout: execTimeout(5_000),
   });
-  expect(result.error).toBeUndefined();
+  expect(result.error, result.stderr).toBeUndefined();
   expect(result.status, result.stderr).toBe(0);
   const output = JSON.parse(result.stdout) as {
     code: number;

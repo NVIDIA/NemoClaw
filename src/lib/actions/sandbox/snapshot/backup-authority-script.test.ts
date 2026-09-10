@@ -164,7 +164,8 @@ describe("Hermes privileged state capture scripts", () => {
     expect(unsafe.stdout).toEqual(Buffer.alloc(0));
   });
 
-  it("uses SQLite backup with a valid database", () => {
+  // The shipped sandbox probe opens SQLite through Linux /proc/self/fd.
+  it.skipIf(process.platform !== "linux")("uses SQLite backup with a valid database", () => {
     const directory = fixtureDirectory();
     const database = path.join(directory, "state.db");
     expect(
@@ -227,37 +228,41 @@ describe("Hermes privileged state capture scripts", () => {
     expect(captured.stdout).toEqual(Buffer.alloc(0));
   });
 
-  it("rejects a SQLite file replaced during capture without returning bytes", () => {
-    const directory = fixtureDirectory();
-    const database = path.join(directory, "state.db");
-    const outside = path.join(path.dirname(directory), "outside.db");
-    expect(
-      spawnSync("/usr/bin/python3", [
-        "-c",
-        `import sqlite3; db = sqlite3.connect(${JSON.stringify(database)}); db.execute('create table state (value text)'); db.execute("insert into state values ('saved')"); db.commit()`,
-      ]).status,
-    ).toBe(0);
-    expect(
-      spawnSync("/usr/bin/python3", [
-        "-c",
-        `import sqlite3; db = sqlite3.connect(${JSON.stringify(outside)}); db.execute('create table state (value text)'); db.execute("insert into state values ('saved')"); db.commit()`,
-      ]).status,
-    ).toBe(0);
-    const script = hermesSqliteMutationHarness(
-      `        original = os.path.join(base, relative)\n` +
-        `        os.rename(original, original + ".old")\n` +
-        `        os.symlink(${JSON.stringify(outside)}, original)`,
-    );
+  // The shipped sandbox probe opens SQLite through Linux /proc/self/fd.
+  it.skipIf(process.platform !== "linux")(
+    "rejects a SQLite file replaced during capture without returning bytes",
+    () => {
+      const directory = fixtureDirectory();
+      const database = path.join(directory, "state.db");
+      const outside = path.join(path.dirname(directory), "outside.db");
+      expect(
+        spawnSync("/usr/bin/python3", [
+          "-c",
+          `import sqlite3; db = sqlite3.connect(${JSON.stringify(database)}); db.execute('create table state (value text)'); db.execute("insert into state values ('saved')"); db.commit()`,
+        ]).status,
+      ).toBe(0);
+      expect(
+        spawnSync("/usr/bin/python3", [
+          "-c",
+          `import sqlite3; db = sqlite3.connect(${JSON.stringify(outside)}); db.execute('create table state (value text)'); db.execute("insert into state values ('saved')"); db.commit()`,
+        ]).status,
+      ).toBe(0);
+      const script = hermesSqliteMutationHarness(
+        `        original = os.path.join(base, relative)\n` +
+          `        os.rename(original, original + ".old")\n` +
+          `        os.symlink(${JSON.stringify(outside)}, original)`,
+      );
 
-    const captured = spawnSync(
-      "/usr/bin/python3",
-      ["-I", "-S", "-c", script, directory, "state.db", "sqlite_backup"],
-      { encoding: null },
-    );
+      const captured = spawnSync(
+        "/usr/bin/python3",
+        ["-I", "-S", "-c", script, directory, "state.db", "sqlite_backup"],
+        { encoding: null },
+      );
 
-    expect(captured.status).toBe(13);
-    expect(captured.stdout).toEqual(Buffer.alloc(0));
-  });
+      expect(captured.status).toBe(13);
+      expect(captured.stdout).toEqual(Buffer.alloc(0));
+    },
+  );
 
   it("rejects an intermediate directory replaced during capture", () => {
     const directory = fixtureDirectory();

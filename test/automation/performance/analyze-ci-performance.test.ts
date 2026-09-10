@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -30,6 +31,12 @@ async function fixtureDirectory(): Promise<string> {
 async function installMockGh(directory: string, source: string): Promise<string> {
   const bin = path.join(directory, "bin");
   await execFileAsync("mkdir", ["-p", bin]);
+  const gnuTools = ["dd", "stat", "base64", "wc"]
+    .map((name) => ({ name, executable: `/usr/bin/gnu${name}` }))
+    .filter(({ executable }) => existsSync(executable));
+  for (const { name, executable } of gnuTools) {
+    await symlink(executable, path.join(bin, name));
+  }
   const gh = path.join(bin, "gh");
   await writeFile(gh, "#!/usr/bin/env node\n" + source);
   await chmod(gh, 0o700);
