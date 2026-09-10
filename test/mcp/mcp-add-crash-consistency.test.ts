@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, it, vi, type ExpectStatic } from "vitest";
 
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 
@@ -447,7 +447,7 @@ function runScript(home: string, script: string): Promise<ScriptProcessResult> {
   });
 }
 
-async function initializeSandboxRegistry(home: string): Promise<void> {
+async function initializeSandboxRegistry(home: string, expect: ExpectStatic): Promise<void> {
   const result = await runScript(
     home,
     `process.env.HOME = ${JSON.stringify(home)}; const registry = require("./src/lib/state/registry.js"); registry.registerSandbox({ name: "crash-test", agent: "openclaw", gatewayName: "nemoclaw" });`,
@@ -499,7 +499,7 @@ function collectProcess(child: ChildProcessWithoutNullStreams): Promise<{
   });
 }
 
-async function waitForMarker(home: string, name: string): Promise<void> {
+async function waitForMarker(home: string, name: string, expect: ExpectStatic): Promise<void> {
   const marker = path.join(home, `${name}.marker`);
   await vi.waitFor(
     () => expect(fs.existsSync(marker), `Timed out waiting for ${name}`).toBe(true),
@@ -758,12 +758,14 @@ function readFixtureArtifacts(directory: string): string {
 }
 
 describe.concurrent("MCP add crash consistency", () => {
-  it("commits one bridge at the stable credential revision and rejects one duplicate (#9764)", async () => {
+  it("commits one bridge at the stable credential revision and rejects one duplicate (#9764)", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-concurrent-projection-"));
     try {
       // Create the fixture before either process loads the registry. The
       // behavior under test starts at the lifecycle lock, after fixture creation.
-      await initializeSandboxRegistry(home);
+      await initializeSandboxRegistry(home, expect);
       const script = buildAddProcessScript(home, "credential-projection-coalesced", true, false);
       const first = spawnScript(home, script);
       const second = spawnScript(home, script);
@@ -821,7 +823,9 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("times out without committing an adapter while credential revisions remain unstable (#9764)", async () => {
+  it("times out without committing an adapter while credential revisions remain unstable (#9764)", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-unstable-revision-"));
     try {
       const result = await runAddProcess(home, "credential-projection-unstable");
@@ -849,7 +853,9 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("uses one credential-free refresh when hostless recovery observes absence (#9764)", async () => {
+  it("uses one credential-free refresh when hostless recovery observes absence (#9764)", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-hostless-projection-"));
     try {
       const interrupted = await runAddProcess(home, "adapter");
@@ -875,7 +881,7 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("rejects a missing host credential before creating durable MCP state", async () => {
+  it("rejects a missing host credential before creating durable MCP state", async ({ expect }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-missing-secret-"));
     try {
       const result = await runAddProcess(home, "", false, true);
@@ -894,7 +900,9 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("creates a fresh provider without an update-only prior revision observation", async () => {
+  it("creates a fresh provider without an update-only prior revision observation", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-no-prior-observation-"));
     try {
       const result = await runAddProcess(home, "preupdate-observation-forbidden");
@@ -911,7 +919,9 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("resumes an exact provider without a host credential or prior revision observation", async () => {
+  it("resumes an exact provider without a host credential or prior revision observation", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-reuse-no-observation-"));
     try {
       const interrupted = await runAddProcess(home, "adapter");
@@ -927,7 +937,9 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("does not reapply policy when a resumed provider is missing its host credential", async () => {
+  it("does not reapply policy when a resumed provider is missing its host credential", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-resume-no-secret-"));
     try {
       const interrupted = await runAddProcess(home, "adapter");
@@ -949,7 +961,9 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("requires a host credential before retrying a prepared provider create", async () => {
+  it("requires a host credential before retrying a prepared provider create", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-prepared-no-secret-"));
     try {
       const providerMarker = path.join(home, "provider.marker");
@@ -970,7 +984,9 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("rejects and rolls back an adapter definition that differs after a successful add", async () => {
+  it("rejects and rolls back an adapter definition that differs after a successful add", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-mismatch-"));
     try {
       const result = await runAddProcess(home, "adapter-mismatch");
@@ -989,7 +1005,9 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("fails closed after process death between provider create and provider-ID persistence", async () => {
+  it("fails closed after process death between provider create and provider-ID persistence", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-provider-"));
     try {
       const crashed = await runAddProcess(home, "provider");
@@ -1019,7 +1037,9 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("does not create a credential provider unless the generated policy is effective", async () => {
+  it("does not create a credential provider unless the generated policy is effective", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-policy-drift-"));
     try {
       const rejected = await runAddProcess(home, "policy-drift");
@@ -1043,7 +1063,9 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("releases a generated-policy reservation when policy activation definitely fails", async () => {
+  it("releases a generated-policy reservation when policy activation definitely fails", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-policy-failure-"));
     try {
       const rejected = await runAddProcess(home, "policy-failure");
@@ -1066,7 +1088,9 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("rejects an attached credential-key collision before activating the MCP policy", async () => {
+  it("rejects an attached credential-key collision before activating the MCP policy", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-key-collision-"));
     try {
       const rejected = await runAddProcess(home, "credential-collision");
@@ -1082,7 +1106,9 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("rejects a registered credential-key collision before recording MCP state (#9388)", async () => {
+  it("rejects a registered credential-key collision before recording MCP state (#9388)", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-registered-collision-"));
     try {
       const rejected = await runAddProcess(home, "registered-credential-collision");
@@ -1102,18 +1128,20 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("serializes credential registration with a fresh MCP reservation (#9388)", async () => {
+  it("serializes credential registration with a fresh MCP reservation (#9388)", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-credential-race-"));
     let credentialChild: ChildProcessWithoutNullStreams | undefined;
     let mcpChild: ChildProcessWithoutNullStreams | undefined;
     try {
       credentialChild = spawnScript(home, buildCredentialAddRaceScript(home));
       const credentialResult = collectProcess(credentialChild);
-      await waitForMarker(home, "credential-provider-create-entered");
+      await waitForMarker(home, "credential-provider-create-entered", expect);
 
       mcpChild = spawnScript(home, buildAddProcessScript(home, "credential-command-race"));
       const mcpResult = collectProcess(mcpChild);
-      await waitForMarker(home, "mcp-ownership-lock-attempt");
+      await waitForMarker(home, "mcp-ownership-lock-attempt", expect);
 
       const beforeRelease = JSON.parse(
         fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
@@ -1145,7 +1173,9 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("records managed MCP state before rejecting a late registered collision (#9388)", async () => {
+  it("records managed MCP state before rejecting a late registered collision (#9388)", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-late-collision-"));
     try {
       const rejected = await runAddProcess(home, "registered-late-collision");
@@ -1166,12 +1196,15 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it.each([
+  it.for([
     ["policy", undefined, false, false],
     ["adapter", "11111111-2222-4333-8444-555555555555", true, true],
   ] as const)(
     "resumes exact resources after process death at the %s boundary",
-    async (boundary, expectedProviderId, expectedProviderMarker, expectedObservationMarker) => {
+    async (
+      [boundary, expectedProviderId, expectedProviderMarker, expectedObservationMarker],
+      { expect },
+    ) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-mcp-add-${boundary}-`));
       try {
         const crashed = await runAddProcess(home, boundary);
@@ -1206,7 +1239,9 @@ describe.concurrent("MCP add crash consistency", () => {
     },
   );
 
-  it("rejects a same-name provider created after preflight and before the first mutation", async () => {
+  it("rejects a same-name provider created after preflight and before the first mutation", async ({
+    expect,
+  }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-race-"));
     try {
       const raced = await runAddProcess(home, "race");
@@ -1221,7 +1256,7 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("rechecks absence immediately before provider create", async () => {
+  it("rechecks absence immediately before provider create", async ({ expect }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-late-race-"));
     try {
       const raced = await runAddProcess(home, "late-race");
@@ -1236,7 +1271,7 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("rechecks stable identity immediately before provider attach", async () => {
+  it("rechecks stable identity immediately before provider attach", async ({ expect }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-attach-race-"));
     try {
       const raced = await runAddProcess(home, "attach-race");
@@ -1254,7 +1289,7 @@ describe.concurrent("MCP add crash consistency", () => {
     }
   });
 
-  it("does not claim or delete a same-name resource found before preflight", async () => {
+  it("does not claim or delete a same-name resource found before preflight", async ({ expect }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-foreign-provider-"));
     try {
       const providerMarker = path.join(home, "provider.marker");
@@ -1301,7 +1336,7 @@ bridge.removeMcpBridge("crash-test", "fake", { force: true }).then(
 });
 
 describe.concurrent("MCP remove crash consistency", () => {
-  it("converges when the process dies after provider deletion", async () => {
+  it("converges when the process dies after provider deletion", async ({ expect }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-remove-provider-"));
     try {
       const added = await runAddProcess(home, "");
