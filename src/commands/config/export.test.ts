@@ -126,6 +126,26 @@ describe("config export command", () => {
     expect(mocks.buildExportConfig).not.toHaveBeenCalled();
   });
 
+  it("reports observation failures in JSON without publishing a document", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    mocks.observeStableExportSource.mockResolvedValue({
+      ok: false,
+      findings: [{ field: "source.registry", category: "not-found", diagnostic: "Sandbox missing." }],
+      attempts: 1,
+    });
+    process.exitCode = undefined;
+
+    await ConfigExportCommand.run(["alpha", "--output", "/tmp/alpha.yaml", "--json"], process.cwd());
+
+    expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({
+      error: { message: "Config export failed (not-found).\nSandbox missing." },
+    });
+    expect(process.exitCode).not.toBe(0);
+    expect(mocks.buildExportConfig).not.toHaveBeenCalled();
+    expect(mocks.publishExportFile).not.toHaveBeenCalled();
+  });
+
   it("provides short and long command help without reading source state (#10938)", async () => {
     await expect(ConfigExportCommand.run(["alpha", "--help"], process.cwd())).rejects.toMatchObject(
       {
