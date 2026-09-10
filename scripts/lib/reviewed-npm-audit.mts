@@ -990,11 +990,15 @@ export function runReviewedNpmAudit(
   return policyResult;
 }
 
-function parseCliArgs(args: readonly string[]): {
+export function parseReviewedNpmAuditCliArgs(
+  args: readonly string[],
+  environment: NodeJS.ProcessEnv = process.env,
+): {
   cacheFile?: string;
   directory: string;
   exceptionFile: string;
   graph: string;
+  reviewedNpmIdentity?: ReviewedNpmIdentity;
   reportFile?: string;
   resultFile?: string;
   threshold: Severity;
@@ -1009,6 +1013,7 @@ function parseCliArgs(args: readonly string[]): {
     values.set(key, value);
   }
   const allowed = new Set([
+    "--audit-config",
     "--cache",
     "--directory",
     "--exceptions",
@@ -1018,24 +1023,30 @@ function parseCliArgs(args: readonly string[]): {
     "--threshold",
   ]);
   const unknown = [...values.keys()].filter((key) => !allowed.has(key));
-  if (unknown.length > 0)
-    throw new Error(`unknown npm audit arguments: ${unknown.join(", ")}`);
+  if (unknown.length > 0) throw new Error(`unknown npm audit arguments: ${unknown.join(", ")}`);
   const directory = values.get("--directory");
   const exceptionFile = values.get("--exceptions");
   const graph = values.get("--graph");
   const threshold = values.get("--threshold");
   if (!directory || !exceptionFile || !graph || !threshold) {
-    throw new Error(
-      "npm audit requires --directory, --exceptions, --graph, and --threshold",
-    );
+    throw new Error("npm audit requires --directory, --exceptions, --graph, and --threshold");
   }
   if (!SEVERITIES.includes(threshold as Severity))
     throw new Error("npm audit threshold is invalid");
+  const cacheFile = values.get("--cache") ?? environment.NEMOCLAW_NPM_AUDIT_CACHE_FILE;
+  const auditConfigFile = values.get("--audit-config");
+  if (cacheFile && !auditConfigFile) {
+    throw new Error("npm audit cache requires --audit-config");
+  }
+  const reviewedNpmIdentity = auditConfigFile
+    ? parseReviewedNpmIdentityConfig(fs.readFileSync(auditConfigFile, "utf8"))
+    : undefined;
   return {
-    ...(values.has("--cache") ? { cacheFile: values.get("--cache") } : {}),
+    ...(cacheFile ? { cacheFile } : {}),
     directory,
     exceptionFile,
     graph,
+    ...(reviewedNpmIdentity ? { reviewedNpmIdentity } : {}),
     threshold: threshold as Severity,
     ...(values.has("--report") ? { reportFile: values.get("--report") } : {}),
     ...(values.has("--result") ? { resultFile: values.get("--result") } : {}),
@@ -1050,7 +1061,7 @@ function isMainModule(): boolean {
 
 if (isMainModule()) {
   try {
-    runReviewedNpmAudit(parseCliArgs(process.argv.slice(2)));
+    runReviewedNpmAudit(parseReviewedNpmAuditCliArgs(process.argv.slice(2)));
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);

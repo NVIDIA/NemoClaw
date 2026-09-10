@@ -200,13 +200,19 @@ describe("reviewed npm bootstrap", () => {
   });
 
   it.each([
-    ["matching", "12.0.2", true, false],
-    ["mismatched", "12.0.3", false, false],
-    ["missing", undefined, false, true],
-    ["invalid", null, false, true],
+    ["matching", "12.0.2", true, false, false],
+    ["mismatched", "12.0.3", false, false, true],
+    ["missing", undefined, false, true, false],
+    ["invalid", null, false, true, false],
   ] as const)(
     "%s real tar package metadata reaches installation only for the reviewed version (#8253)",
-    (_condition, archiveVersion, expectedInstall, expectedMetadataError) => {
+    (
+      _condition,
+      archiveVersion,
+      expectedInstall,
+      expectedMetadataError,
+      expectedVersionMismatch,
+    ) => {
       const archiveFixture = createRealArchive(archiveVersion);
       const fixture = runBootstrapFixture({ archive: archiveFixture.archive, realTar: true });
       try {
@@ -218,6 +224,11 @@ describe("reviewed npm bootstrap", () => {
             "npm@12.0.2 archive package/package.json is missing or invalid",
           ),
         ).toBe(expectedMetadataError);
+        expect(
+          fixture.result.stderr.includes(
+            "npm archive version 12.0.3 does not match reviewed npm@12.0.2",
+          ),
+        ).toBe(expectedVersionMismatch);
       } finally {
         fixture.cleanup();
         archiveFixture.cleanup();

@@ -21,6 +21,7 @@ import {
   extractAdvisoryIds,
   parseAuditExceptionRegistry,
   npmAuditProcessOptions,
+  parseReviewedNpmAuditCliArgs,
   parseAuditReport,
   provenanceSidecarPath,
   readAuditCache,
@@ -262,9 +263,7 @@ describe("npm audit gate", () => {
       NPM_AUDIT_ATTEMPT_TIMEOUT_MS * (NPM_AUDIT_RETRY_DELAYS_MS.length + 1) +
       NPM_AUDIT_RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0);
     const minimumJobTimeoutMinutes = Math.ceil(retryBudgetMs / 60_000) + 4;
-    const callers = reviewedNpmAuditWorkflowDeadlines(
-      path.join(REPO_ROOT, ".github", "workflows"),
-    );
+    const callers = reviewedNpmAuditWorkflowDeadlines(path.join(REPO_ROOT, ".github", "workflows"));
 
     expect(callers).toHaveLength(5);
     expect(callers.map(({ timeoutMinutes }) => timeoutMinutes)).toEqual([25, 25, 25, 25, 25]);
@@ -481,6 +480,60 @@ describe("npm audit raw cache", () => {
     fs.writeFileSync(path.join(directory, "package-lock.json"), '{"lockfileVersion":3}\n');
     return directory;
   }
+
+  it.each([
+    ["flag", ["--cache", "cache.json"], {}],
+    ["environment", [], { NEMOCLAW_NPM_AUDIT_CACHE_FILE: "cache.json" }],
+  ] as const)(
+    "loads the reviewed npm identity for a CLI cache configured by %s",
+    (_source, cacheArgs, environment) => {
+      const directory = fixture();
+      const auditConfigFile = path.join(directory, "reviewed-npm-audit.json");
+      try {
+        fs.writeFileSync(auditConfigFile, `${JSON.stringify(npmIdentity)}\n`);
+        expect(
+          parseReviewedNpmAuditCliArgs(
+            [
+              "--directory",
+              directory,
+              "--exceptions",
+              "exceptions.json",
+              "--graph",
+              "fixture",
+              "--threshold",
+              "high",
+              "--audit-config",
+              auditConfigFile,
+              ...cacheArgs,
+            ],
+            environment,
+          ),
+        ).toMatchObject({ cacheFile: "cache.json", reviewedNpmIdentity: npmIdentity });
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("rejects a CLI cache without the reviewed npm configuration", () => {
+    expect(() =>
+      parseReviewedNpmAuditCliArgs(
+        [
+          "--directory",
+          ".",
+          "--exceptions",
+          "exceptions.json",
+          "--graph",
+          "fixture",
+          "--threshold",
+          "high",
+          "--cache",
+          "cache.json",
+        ],
+        {},
+      ),
+    ).toThrow("npm audit cache requires --audit-config");
+  });
 
   it("fails closed when a cache caller omits the reviewed npm identity", () => {
     const directory = fixture();
