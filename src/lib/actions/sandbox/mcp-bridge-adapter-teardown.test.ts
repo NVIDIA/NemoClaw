@@ -149,14 +149,14 @@ describe("MCP adapter teardown rollback", () => {
       type: "nemoclaw-mcp-v1",
     });
     mocks.inspectMcpProvider.mockReset().mockReturnValue({ exists: false });
-    mocks.observeMcpCredentialRevision.mockReset().mockReturnValue("v12");
+    mocks.observeMcpCredentialRevision.mockReset().mockResolvedValue("v12");
     mocks.preflightMcpEntryTargets
       .mockReset()
       .mockResolvedValue(new Map([[entry.server, { addresses: ["8.8.8.8"] }]]));
     mocks.removeGeneratedPolicy.mockReset().mockImplementation(() => {
       throw new Error("forced lifecycle failure after adapter scrub");
     });
-    mocks.registerAgentAdapterAtCurrentCredentialRevision.mockReset();
+    mocks.registerAgentAdapterAtCurrentCredentialRevision.mockReset().mockResolvedValue("v12");
     mocks.restoreExistingMcpBridgeRuntime.mockReset();
     mocks.setBridgeState.mockReset();
     mocks.unregisterAgentAdapter.mockReset().mockReturnValue("removed");
@@ -170,9 +170,9 @@ describe("MCP adapter teardown rollback", () => {
     async (_lifecycle, prepare) => {
       mocks.observeMcpCredentialRevision
         .mockReset()
-        .mockReturnValueOnce("v12")
-        .mockReturnValueOnce("v13")
-        .mockReturnValue("v13");
+        .mockResolvedValueOnce("v12")
+        .mockResolvedValueOnce("v13")
+        .mockResolvedValue("v13");
 
       await expect(prepare("alpha")).rejects.toThrow(
         "forced lifecycle failure after adapter scrub",
@@ -194,8 +194,8 @@ describe("MCP adapter teardown rollback", () => {
     },
   );
 
-  it("does not derive a Hermes credential revision from an exact provider resource version", () => {
-    mocks.observeMcpCredentialRevision.mockReturnValue("absent");
+  it("does not derive a Hermes credential revision from an exact provider resource version", async () => {
+    mocks.observeMcpCredentialRevision.mockResolvedValue("absent");
     mocks.inspectMcpProvider.mockReturnValue({
       credentialKeys: ["GITHUB_TOKEN"],
       exists: true,
@@ -204,7 +204,9 @@ describe("MCP adapter teardown rollback", () => {
       type: "nemoclaw-mcp-v1",
     });
 
-    expect(() => scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry, runtimeSelection)).toThrow(
+    await expect(
+      scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry, runtimeSelection),
+    ).rejects.toThrow(
       "Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server 'github'.",
     );
     expect(mocks.inspectMcpProvider).not.toHaveBeenCalled();
@@ -317,16 +319,19 @@ describe("MCP adapter teardown rollback", () => {
       { ...entry, allowedIps: undefined },
       /legacy public registration without recorded address pins.*mcp restart github/,
     ],
-  ] as const)("rejects exec-unavailable rebuild for %s (#11115)", async (_case, candidate, error) => {
-    mocks.bridgeState.mockReturnValue({ github: candidate });
-    mocks.getSandboxAgent.mockReturnValue({ name: "hermes" });
-    mocks.getBridgeAdapter.mockReturnValue("hermes-config");
+  ] as const)(
+    "rejects exec-unavailable rebuild for %s (#11115)",
+    async (_case, candidate, error) => {
+      mocks.bridgeState.mockReturnValue({ github: candidate });
+      mocks.getSandboxAgent.mockReturnValue({ name: "hermes" });
+      mocks.getBridgeAdapter.mockReturnValue("hermes-config");
 
-    await expect(prepareMcpBridgesForExecUnavailableRebuild("alpha")).rejects.toThrow(error);
+      await expect(prepareMcpBridgesForExecUnavailableRebuild("alpha")).rejects.toThrow(error);
 
-    expect(mocks.ensureSandboxGatewaySelected).not.toHaveBeenCalled();
-    expect(mocks.preflightMcpEntryTargets).not.toHaveBeenCalled();
-  });
+      expect(mocks.ensureSandboxGatewaySelected).not.toHaveBeenCalled();
+      expect(mocks.preflightMcpEntryTargets).not.toHaveBeenCalled();
+    },
+  );
 
   const expectLegacyPublicPinsPersisted = async (
     prepare: (sandboxName: string) => Promise<{ entries: McpBridgeEntry[] }>,
