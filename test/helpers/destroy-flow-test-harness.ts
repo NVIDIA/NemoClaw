@@ -661,7 +661,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     ...(options.mcpAdapterScrubSkipped ? { adapterScrubSkipped: true as const } : {}),
   };
   const gatewayPinsAtMcpPrepare: Array<string | undefined> = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { McpBridgeError } = mcpBridge as any;
   const prepareMcpBridgesForDestroySpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForDestroy")

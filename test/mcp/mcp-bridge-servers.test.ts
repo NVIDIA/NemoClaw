@@ -151,9 +151,9 @@ describe("authenticated MCP live fixtures", () => {
       auth: `Bearer ${secret}`,
       body: "",
     });
-    expect(
-      shouldRetryMcpDiscoveryAfterRestart(server.observations.slice(observationOffset)),
-    ).toBe(false);
+    expect(shouldRetryMcpDiscoveryAfterRestart(server.observations.slice(observationOffset))).toBe(
+      false,
+    );
 
     slowRequest.end(body.slice(1));
     expect(await observedStatus).toEqual({ ok: true, status: 200 });
@@ -194,6 +194,8 @@ describe("authenticated MCP live fixtures", () => {
   it("requires three consecutive public readiness probes and resets after a failure", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-fixture-"));
     const cloudflared = path.join(directory, "cloudflared");
+    const curl = path.join(directory, "curl");
+    const curlCount = path.join(directory, "curl-count");
     const priorAmbientSecret = process.env.MCP_TUNNEL_MUST_NOT_LEAK;
     const priorOpenShellSecret = process.env.OPENSHELL_OIDC_CLIENT_SECRET;
     process.env.MCP_TUNNEL_MUST_NOT_LEAK = "ambient-ci-secret";
@@ -211,12 +213,36 @@ describe("authenticated MCP live fixtures", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce({ body: null, status: 502 } as Response)
-      .mockResolvedValueOnce({ body: null, status: 405 } as Response)
-      .mockResolvedValueOnce({ body: null, status: 502 } as Response)
-      .mockResolvedValue({ body: null, status: 405 } as Response);
+    fs.writeFileSync(
+      curl,
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        "const args = process.argv.slice(2);",
+        "const has = (value) => args.includes(value);",
+        "const hasPair = (option, value) =>",
+        "  args.some((arg, index) => arg === option && args[index + 1] === value);",
+        "const validProbe =",
+        '  has("--disable") &&',
+        '  has("--silent") &&',
+        '  has("--show-error") &&',
+        '  has("--head") &&',
+        '  has("--tlsv1.2") &&',
+        '  hasPair("--proto", "=https") &&',
+        '  hasPair("--connect-timeout", "5") &&',
+        '  hasPair("--max-time", "5") &&',
+        '  hasPair("--output", "/dev/null") &&',
+        '  hasPair("--write-out", "%{http_code}") &&',
+        '  args.at(-1) === "https://fixture-cleanup-123.trycloudflare.com/mcp";',
+        "if (!validProbe) process.exit(11);",
+        `const countFile = ${JSON.stringify(curlCount)};`,
+        'const count = fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, "utf8")) : 0;',
+        "fs.writeFileSync(countFile, String(count + 1));",
+        "process.stdout.write(String([502, 405, 502, 405, 405, 405][count] ?? 405));",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
     let cleanupName = "";
     let cleanupProcess: (() => Promise<void>) | undefined;
     const observation = progressProbe();
@@ -225,6 +251,7 @@ describe("authenticated MCP live fixtures", () => {
     try {
       const tunnel = await startPublicMcpHttpsTunnel({
         cloudflaredBin: cloudflared,
+        curlBin: curl,
         cleanup: {
           add: (name, run) => {
             cleanupName = name;
@@ -244,7 +271,7 @@ describe("authenticated MCP live fixtures", () => {
       });
       // 502, 405, 502 resets the streak; only the following three 405s admit
       // the tunnel. The count is the observable consecutive-readiness contract.
-      expect(fetchMock).toHaveBeenCalledTimes(6);
+      expect(fs.readFileSync(curlCount, "utf8")).toBe("6");
       expect(cleanupName).toBe("stop unit MCP fixture cloudflared quick tunnel");
       expect(cleanupProcess).toBeTypeOf("function");
       expect(observation.lines).toEqual(
@@ -259,13 +286,78 @@ describe("authenticated MCP live fixtures", () => {
       );
     } finally {
       await cleanupProcess?.();
-      fetchMock.mockRestore();
       priorAmbientSecret === undefined
         ? delete process.env.MCP_TUNNEL_MUST_NOT_LEAK
         : (process.env.MCP_TUNNEL_MUST_NOT_LEAK = priorAmbientSecret);
       priorOpenShellSecret === undefined
         ? delete process.env.OPENSHELL_OIDC_CLIENT_SECRET
         : (process.env.OPENSHELL_OIDC_CLIENT_SECRET = priorOpenShellSecret);
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("uses the proxy-aware HTTPS probe when Node fetch cannot reach the public tunnel", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-probe-"));
+    const cloudflared = path.join(directory, "cloudflared");
+    const curl = path.join(directory, "curl");
+    const priorHttpsProxy = process.env.HTTPS_PROXY;
+    const priorAmbientSecret = process.env.MCP_TUNNEL_MUST_NOT_LEAK;
+    fs.writeFileSync(
+      cloudflared,
+      [
+        "#!/bin/sh",
+        "printf '%s\\n' 'https://fixture-cleanup-123.trycloudflare.com' >&2",
+        "trap 'exit 0' TERM INT",
+        "sleep 2",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      curl,
+      [
+        "#!/bin/sh",
+        '[ "${HTTPS_PROXY:-}" = "http://proxy.example.test:8080" ] || exit 9',
+        '[ -z "${MCP_TUNNEL_MUST_NOT_LEAK:-}" ] || exit 10',
+        "printf '%s' '405'",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    process.env.HTTPS_PROXY = "http://proxy.example.test:8080";
+    process.env.MCP_TUNNEL_MUST_NOT_LEAK = "ambient-ci-secret";
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new TypeError("fetch failed"));
+    let cleanupProcess: (() => Promise<void>) | undefined;
+
+    try {
+      const tunnel = await startPublicMcpHttpsTunnel({
+        cloudflaredBin: cloudflared,
+        curlBin: curl,
+        cleanup: {
+          add: (_name, run) => {
+            cleanupProcess = async () => {
+              await run();
+            };
+          },
+        },
+        label: "proxy-aware fixture",
+        progress: progressProbe().progress,
+        server: { port: 43123, close: async () => {} },
+      });
+
+      expect(tunnel.origin).toBe("https://fixture-cleanup-123.trycloudflare.com");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      await cleanupProcess?.();
+      fetchMock.mockRestore();
+      priorHttpsProxy === undefined
+        ? delete process.env.HTTPS_PROXY
+        : (process.env.HTTPS_PROXY = priorHttpsProxy);
+      priorAmbientSecret === undefined
+        ? delete process.env.MCP_TUNNEL_MUST_NOT_LEAK
+        : (process.env.MCP_TUNNEL_MUST_NOT_LEAK = priorAmbientSecret);
       fs.rmSync(directory, { force: true, recursive: true });
     }
   });
@@ -567,13 +659,8 @@ describe("authenticated MCP live fixtures", () => {
       ).status,
     ).toBe(404);
     expect(
-      (
-        await request(
-          "POST",
-          { jsonrpc: "2.0", id: 9, method: "tools/list" },
-          legacy.endpoint,
-        )
-      ).status,
+      (await request("POST", { jsonrpc: "2.0", id: 9, method: "tools/list" }, legacy.endpoint))
+        .status,
     ).toBe(409);
     expect(
       (
@@ -654,46 +741,30 @@ describe("authenticated MCP live fixtures", () => {
       ).status,
     ).toBe(202);
     expect(
+      (await request("POST", { jsonrpc: "2.0", id: 11, method: "tools/list" }, legacy.endpoint))
+        .status,
+    ).toBe(400);
+    expect(
       (
-        await request(
-          "POST",
-          { jsonrpc: "2.0", id: 11, method: "tools/list" },
-          legacy.endpoint,
-        )
+        await request("POST", { jsonrpc: "2.0", id: 11, method: "tools/list" }, legacy.endpoint, {
+          "mcp-protocol-version": "2025-03-26",
+        })
       ).status,
     ).toBe(400);
     expect(
       (
-        await request(
-          "POST",
-          { jsonrpc: "2.0", id: 11, method: "tools/list" },
-          legacy.endpoint,
-          { "mcp-protocol-version": "2025-03-26" },
-        )
-      ).status,
-    ).toBe(400);
-    expect(
-      (
-        await request(
-          "POST",
-          { jsonrpc: "2.0", id: 11, method: "tools/list" },
-          legacy.endpoint,
-          {
-            "mcp-protocol-version": "2025-06-18",
-            "mcp-session-id": "fake-session-cross-route",
-          },
-        )
+        await request("POST", { jsonrpc: "2.0", id: 11, method: "tools/list" }, legacy.endpoint, {
+          "mcp-protocol-version": "2025-06-18",
+          "mcp-session-id": "fake-session-cross-route",
+        })
       ).status,
     ).toBe(400);
     const legacyListEvent = legacy.reader.next();
     expect(
       (
-        await request(
-          "POST",
-          { jsonrpc: "2.0", id: 11, method: "tools/list" },
-          legacy.endpoint,
-          { "mcp-protocol-version": "2025-06-18" },
-        )
+        await request("POST", { jsonrpc: "2.0", id: 11, method: "tools/list" }, legacy.endpoint, {
+          "mcp-protocol-version": "2025-06-18",
+        })
       ).status,
     ).toBe(202);
     expect(JSON.parse((await legacyListEvent).value ?? "")).toMatchObject({
@@ -732,22 +803,18 @@ describe("authenticated MCP live fixtures", () => {
     const requestOffset = server.requests.length;
     const orderedEvents = [legacy.reader.next(), legacy.reader.next()];
     const concurrentResponses = await Promise.all([
-      request(
-        "POST",
-        { jsonrpc: "2.0", id: 30, method: "tools/list" },
-        legacy.endpoint,
-        { "mcp-protocol-version": "2025-06-18" },
-      ),
-      request(
-        "POST",
-        { jsonrpc: "2.0", id: 31, method: "tools/list" },
-        legacy.endpoint,
-        { "mcp-protocol-version": "2025-06-18" },
-      ),
+      request("POST", { jsonrpc: "2.0", id: 30, method: "tools/list" }, legacy.endpoint, {
+        "mcp-protocol-version": "2025-06-18",
+      }),
+      request("POST", { jsonrpc: "2.0", id: 31, method: "tools/list" }, legacy.endpoint, {
+        "mcp-protocol-version": "2025-06-18",
+      }),
     ]);
     expect(concurrentResponses.map((response) => response.status)).toEqual([202, 202]);
     const wireIds = await Promise.all(
-      orderedEvents.map(async (event) => (JSON.parse((await event).value ?? "") as { id: number }).id),
+      orderedEvents.map(
+        async (event) => (JSON.parse((await event).value ?? "") as { id: number }).id,
+      ),
     );
     const recordedResponses = server.requests
       .slice(requestOffset)
@@ -764,12 +831,9 @@ describe("authenticated MCP live fixtures", () => {
     await expect.poll(() => server.activeLegacySessionCount()).toBe(1);
     expect(
       (
-        await request(
-          "POST",
-          { jsonrpc: "2.0", id: 40, method: "tools/list" },
-          legacy.endpoint,
-          { "mcp-protocol-version": "2025-06-18" },
-        )
+        await request("POST", { jsonrpc: "2.0", id: 40, method: "tools/list" }, legacy.endpoint, {
+          "mcp-protocol-version": "2025-06-18",
+        })
       ).status,
     ).toBe(404);
     secondLegacy.channel.destroy();

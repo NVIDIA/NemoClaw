@@ -146,5 +146,4 @@ describe("messaging compatible endpoint helper coverage", () => {
       args: ["gateway", "destroy", "-g", "nemoclaw"],
     });
   });
-
 });

@@ -6,3 +6,6 @@
 await (process.env.E2E_TARGET_ID === "bootstrap-install-smoke"
   ? import("./launchable-smoke.test.ts")
   : Promise.resolve());
+
+// Keep top-level await unambiguous for tools that infer the module kind.
+export {};

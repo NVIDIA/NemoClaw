@@ -182,7 +182,8 @@ export class OnboardDeferredExitError extends Error {
 
 export function isOnboardDeferredExitError(error: unknown): error is OnboardDeferredExitError {
   const candidate = error as
-    (Error & { code?: unknown; [ONBOARD_DEFERRED_EXIT_ERROR]?: unknown }) | null;
+    | (Error & { code?: unknown; [ONBOARD_DEFERRED_EXIT_ERROR]?: unknown })
+    | null;
   return (
     candidate instanceof Error &&
     candidate[ONBOARD_DEFERRED_EXIT_ERROR] === true &&

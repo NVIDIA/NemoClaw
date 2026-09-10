@@ -46,14 +46,14 @@ function fixture() {
   );
   writeExecutable(
     path.join(bin, "nemoclaw"),
-    "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$CLI_LOG\"\nexit \"${CLI_STATUS:-0}\"\n",
+    '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$CLI_LOG"\nexit "${CLI_STATUS:-0}"\n',
   );
   fs.symlinkSync(path.join(bin, "nemoclaw"), path.join(bin, "nemohermes"));
   writeExecutable(
     path.join(bin, "openshell"),
-    "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$OPENSHELL_LOG\"\nexit 0\n",
+    '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$OPENSHELL_LOG"\nexit 0\n',
   );
-  writeExecutable(path.join(bin, "curl"), "#!/usr/bin/env bash\nexit \"${CURL_STATUS:-0}\"\n");
+  writeExecutable(path.join(bin, "curl"), '#!/usr/bin/env bash\nexit "${CURL_STATUS:-0}"\n');
   const env = {
     HOME: root,
     PATH: `${bin}:${TEST_SYSTEM_PATH}`,
