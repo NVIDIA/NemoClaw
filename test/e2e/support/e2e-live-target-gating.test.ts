@@ -214,10 +214,10 @@ describe("live E2E target gating", () => {
         .sort();
       const collected = enabled.lines.map((line) => line.replace(/^\[e2e-live\]\s+/, "")).sort();
 
-      expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
-      expect(disabled.lines).toEqual([]);
-      expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
-      expect(collected).toEqual(discovered);
+      context.expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
+      context.expect(disabled.lines).toEqual([]);
+      context.expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
+      context.expect(collected).toEqual(discovered);
     },
   );
 
