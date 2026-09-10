@@ -338,7 +338,10 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
     expect(laneLog).toContain("[REDACTED PRIVATE KEY]");
     expect(laneLog).toContain("[REDACTED LONG LINE]");
     expect(laneLog).toContain("Full E2E failure diagnostic gateway lifecycle: status 0; output:");
-    expect(laneLog).toContain("Full E2E failure diagnostic port 8080 listener: status 0; output:");
+    expect(laneLog).toContain(
+      "Full E2E failure diagnostic declared gateway listener: status 0; output:",
+    );
+    expect(laneLog).toContain("declared gateway port: 18080");
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands.indexOf("ssh full-e2e diagnostic platform state")).toBeLessThan(
       commands.indexOf("ssh full-e2e diagnostic gateway lifecycle"),
@@ -434,7 +437,7 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
       ["listener presence: present", "listener owner: unavailable"],
     ],
   ])(
-    "classifies port 8080 listener evidence with %s (#6409)",
+    "classifies declared gateway listener evidence with %s (#6409)",
     (_name, listenerOutput, expectedEvidence) => {
       const { env, workDir } = fixture({
         e2eFails: true,
@@ -501,7 +504,7 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
       "Full E2E failure diagnostic platform state: not run; output: diagnostic budget exhausted",
     );
     expect(laneLog).toContain(
-      "Full E2E failure diagnostic port 8080 listener: not run; output: diagnostic budget exhausted",
+      "Full E2E failure diagnostic declared gateway listener: not run; output: diagnostic budget exhausted",
     );
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands).not.toContain("ssh full-e2e diagnostic platform state");
