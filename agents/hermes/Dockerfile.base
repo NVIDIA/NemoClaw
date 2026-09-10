@@ -451,9 +451,9 @@ RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
     && [ "$uv_version_tail" != "$uv_version_output" ] \
     && [ "$uv_command" = "uv" ] \
     && [ "$uv_version" = "$UV_VERSION" ]
-# Upstream tests are not part of the production runtime and can contain
-# intentionally hostile security-test fixtures. Remove them in the extraction
-# RUN so their bytes never enter a published image layer.
+# Upstream tests and the documentation website are not runtime dependencies.
+# They can contain hostile test fixtures and live documentation-search keys.
+# Remove them in the extraction RUN so their bytes never enter an image layer.
 COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
 COPY agents/hermes/agent-browser-runtime/package.json \
     agents/hermes/agent-browser-runtime/package-lock.json \
@@ -468,7 +468,7 @@ RUN mkdir -p /opt/hermes \
     && printf '%s  /tmp/hermes.tar.gz\n' "${HERMES_TARBALL_SHA256}" > /tmp/hermes.tar.gz.sha256 \
     && sha256sum -c /tmp/hermes.tar.gz.sha256 \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
-    && rm -rf /opt/hermes/tests \
+    && rm -rf /opt/hermes/tests /opt/hermes/website \
     && printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /tmp/hermes-runtime-boundaries.patch \
         "$NEMOCLAW_HERMES_SECURE_DIR_PATCH_SHA256" /tmp/hermes-secure-dir-skip-chmod.patch \
@@ -719,7 +719,7 @@ RUN test -r /opt/hermes/.venv/pyvenv.cfg \
 
 # Reject build-only paths before the base image can be published.
 RUN set -eu; \
-    for build_only_path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; do \
+    for build_only_path in /opt/hermes/tests /opt/hermes/website /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; do \
         if [ -e "$build_only_path" ] || [ -L "$build_only_path" ]; then \
             echo "ERROR: build-only Hermes path leaked into the base image: $build_only_path" >&2; \
             exit 1; \
