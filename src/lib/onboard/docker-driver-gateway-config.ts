@@ -359,6 +359,7 @@ function crossDriverGatewayConflict(
       `or supervised state; resolve that state through its lifecycle authority instead. To run both drivers ` +
       `concurrently, select an unused port with NEMOCLAW_GATEWAY_PORT=<port> and a separate state ` +
       `directory with NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=<path>. State directory: ${stateDir}`,
+    { hasRecoveryGuidance: true },
   );
 }
 

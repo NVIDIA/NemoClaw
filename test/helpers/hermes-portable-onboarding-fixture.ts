@@ -3,15 +3,32 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { expect, vi } from "vitest";
+import { expect, onTestFinished, vi } from "vitest";
 
 import type {
+  PodmanExecutableAuthorityDeps,
+  PodmanExecutableStat,
   PodmanSocketAuthority,
   PodmanSocketAuthorityDeps,
 } from "../../src/lib/adapters/podman";
+import type {
+  ContainerEngineCommandCapture,
+  ContainerEngineCommandResult,
+} from "../../src/lib/adapters/container-engine";
+import type { CheckpointPortableRuntimeAuthority } from "../../src/lib/state/onboard-checkpoint-types";
+import { createPortableOnboardEnvironmentScope } from "../../src/lib/onboard/session-bootstrap";
+import { createHermesPortableOllamaInferenceResolver } from "../../src/lib/onboard/experimental/hermes-portable-ollama-inference";
+import { PORTABLE_PROBE_IMAGE } from "../../src/lib/onboard/experimental/hermes-portable-ollama-authority";
+import { createPodmanHostLocalInferenceTestHarness } from "./podman-host-local-inference-test-harness";
+import {
+  createPortableGatewayProviderHarness,
+  createPortablePodmanCapture,
+  type PortablePodmanAuthorityState,
+} from "./hermes-portable-ollama-test-harness";
 import type { HermesPortableOpenShellExecutableAuthority } from "../../src/lib/adapters/openshell/resolve-shared";
 import { loadAgent } from "../../src/lib/agent/defs";
 import { withMcpLifecycleLock } from "../../src/lib/state/mcp-lifecycle-lock-acquisition";
@@ -516,6 +533,163 @@ export function createHermesPortableTransactionFixture(
       registryEntry = { ...registryEntry, ...updates };
       events.push("registry-update");
       return true;
+    },
+  };
+}
+
+export const PORTABLE_INFERENCE_PODMAN_PATH = "/usr/bin/podman";
+const PODMAN_BYTES = Buffer.from("portable-podman-5.7.0", "utf8");
+export const PORTABLE_INFERENCE_NETWORK_ID = "6".repeat(64);
+export const PORTABLE_INFERENCE_GPU_DEVICE =
+  "nvidia.com/gpu=GPU-12345678-1234-1234-1234-123456789abc";
+
+export const FRESH_PORTABLE_INFERENCE_INPUT = {
+  application: "hermes" as const,
+  sandboxName: "portable-hermes",
+  provider: "ollama-local",
+  model: "qwen3-vl:4b",
+  acceleration: "nvidia-gpu" as const,
+  requireToolCalling: true,
+  allowPublishedResume: false,
+  recover: false,
+};
+
+function runtimeAuthority(homeDir: string): CheckpointPortableRuntimeAuthority {
+  const uid = process.getuid!();
+  return {
+    schemaVersion: 1,
+    kind: "podman",
+    ownership: "current-user",
+    uid,
+    homeDir,
+    configHome: path.join(homeDir, ".config"),
+    runtimeDir: `/run/user/${String(uid)}`,
+    socketPath: `/run/user/${String(uid)}/podman/podman.sock`,
+  };
+}
+
+function socketAuthority(runtime: CheckpointPortableRuntimeAuthority): PodmanSocketAuthority {
+  return {
+    device: "1",
+    inode: "2",
+    mode: String(0o140600),
+    ownerUid: String(runtime.uid),
+    socketPath: runtime.socketPath,
+    directoryChain: [],
+  };
+}
+
+function executableAuthorityDeps(): PodmanExecutableAuthorityDeps {
+  const executable = (): PodmanExecutableStat => ({
+    dev: 1n,
+    ino: 10n,
+    mode: 0o100755n,
+    uid: 0n,
+    size: BigInt(PODMAN_BYTES.byteLength),
+    mtimeNs: 10n,
+    ctimeNs: 11n,
+    isDirectory: () => false,
+    isFile: () => true,
+    isSymbolicLink: () => false,
+  });
+  return {
+    uid: process.getuid!(),
+    lstat: (filePath) =>
+      filePath === PORTABLE_INFERENCE_PODMAN_PATH
+        ? executable()
+        : {
+            ...executable(),
+            ino: filePath === "/usr/bin" ? 20n : 30n,
+            mode: 0o40755n,
+            size: 0n,
+            isDirectory: () => true,
+            isFile: () => false,
+          },
+    readFile: () => PODMAN_BYTES,
+    realpath: (filePath) => filePath,
+  };
+}
+
+export function createHermesPortableInferenceFixture(
+  pullFailure?: { readonly image: string; readonly result: ContainerEngineCommandResult },
+  gatewayName = "nemoclaw",
+) {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-inference-"));
+  onTestFinished(() => fs.rmSync(homeDir, { recursive: true, force: true }));
+  const runtime = runtimeAuthority(homeDir);
+  vi.stubEnv("HOME", homeDir);
+  vi.stubEnv("PATH", "/usr/bin");
+  const environmentScope = createPortableOnboardEnvironmentScope(process.env, null);
+  onTestFinished(() => environmentScope.restore());
+  environmentScope.installRuntime({
+    containersConf: path.join(runtime.configHome, "nemoclaw", "portable", "containers.conf"),
+    socketPath: runtime.socketPath,
+  });
+  const events: string[] = [];
+  const authorityState: PortablePodmanAuthorityState = {
+    networkId: PORTABLE_INFERENCE_NETWORK_ID,
+    images: new Set<string>(),
+    failPull: pullFailure?.image ?? null,
+  };
+  const gatewayProvider = createPortableGatewayProviderHarness(events);
+  const runGatewayOpenshell = vi.fn(gatewayProvider.run);
+  const assertSocketAuthority = vi.fn();
+  const harness = createPodmanHostLocalInferenceTestHarness({
+    probeImageRef: PORTABLE_PROBE_IMAGE,
+  });
+  harness.state.networkId = PORTABLE_INFERENCE_NETWORK_ID;
+  harness.state.networkName = "openshell-docker";
+  harness.state.networkGatewayIp = "10.87.0.1";
+  harness.state.ollamaPsModels = [
+    {
+      name: "qwen3-vl:4b",
+      model: "qwen3-vl:4b",
+      size: 8 * 1024 ** 3,
+      size_vram: 8 * 1024 ** 3,
+      digest: "8".repeat(64),
+    },
+  ];
+  let cdiDevices = ["nvidia.com/gpu=all", PORTABLE_INFERENCE_GPU_DEVICE];
+  const capture = createPortablePodmanCapture(events, authorityState, harness.engine.capture);
+  const injectedCapture: ContainerEngineCommandCapture = pullFailure
+    ? (executable, args, timeoutMs, input, environment) => {
+        const result = capture(executable, args, timeoutMs, input, environment);
+        return args[2] === "pull" && args[3] === pullFailure.image ? pullFailure.result : result;
+      }
+    : capture;
+  const resolverOptions = {
+    runtimeContext: { authority: runtime, environmentScope },
+    gatewayName,
+    credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+    getReservationSessionId: () => "portable-session",
+    runGatewayOpenshell,
+    stateDir: path.join(homeDir, "state"),
+    captureSocketAuthority: () => socketAuthority(runtime),
+    captureGpuDevices: () => [PORTABLE_INFERENCE_GPU_DEVICE],
+    captureCdiDevices: () => cdiDevices,
+    podmanAuthorityDeps: {
+      capture: injectedCapture,
+      executableAuthorityDeps: executableAuthorityDeps(),
+      assertSocketAuthority,
+      resolveExecutablePath: () => PORTABLE_INFERENCE_PODMAN_PATH,
+      platform: "linux",
+      architecture: "x64",
+      uid: runtime.uid,
+    },
+  } as const;
+  return {
+    assertSocketAuthority,
+    authorityState,
+    events,
+    gatewayProvider,
+    harness,
+    homeDir,
+    resolverOptions,
+    runtime,
+    resolve: (input = FRESH_PORTABLE_INFERENCE_INPUT) =>
+      createHermesPortableOllamaInferenceResolver(resolverOptions)(input),
+    setCdiDevices: (devices: string[]) => {
+      cdiDevices = devices;
     },
   };
 }

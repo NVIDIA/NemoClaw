@@ -345,6 +345,7 @@ describe("docker-driver-gateway config TOML", () => {
         error = cause;
       }
       expect(error).toBeInstanceOf(GatewayStateConflictError);
+      expect((error as GatewayStateConflictError).hasRecoveryGuidance).toBe(false);
       expect((error as Error).message).toContain("ENOENT");
       expect(fs.existsSync(configPath)).toBe(false);
       expect(configBefore).toContain('network_name = "openshell-docker"');
@@ -412,6 +413,7 @@ describe("docker-driver-gateway config TOML", () => {
           error = cause;
         }
         expect(error).toBeInstanceOf(GatewayStateConflictError);
+        expect((error as GatewayStateConflictError).hasRecoveryGuidance).toBe(true);
         const message = (error as Error).message;
         expect(message).toContain(
           "already configures a '" + configuredDriver + "'-driver OpenShell gateway",

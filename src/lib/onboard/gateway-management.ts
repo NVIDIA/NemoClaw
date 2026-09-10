@@ -90,13 +90,16 @@ export type GatewayManagementParseResult =
 export class GatewayManagementDeclarationError extends Error {}
 
 export class GatewayStateConflictError extends Error {
-  constructor(message: string) {
+  readonly hasRecoveryGuidance: boolean;
+
+  constructor(message: string, options: { hasRecoveryGuidance?: boolean } = {}) {
     super(message);
     this.name = "GatewayStateConflictError";
+    this.hasRecoveryGuidance = options.hasRecoveryGuidance === true;
   }
 
   markReported(): void {
-    noteOnboardResumeHintShown();
+    if (this.hasRecoveryGuidance) noteOnboardResumeHintShown();
   }
 }
 

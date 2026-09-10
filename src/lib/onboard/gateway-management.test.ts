@@ -14,34 +14,48 @@ import {
 
 afterEach(resetOnboardResumeHintForTests);
 
-it("prints a clean CLI error for an onboarding state conflict", async () => {
-  const errors: string[] = [];
-  await expect(
-    runOnboardCommand({
-      flags: { "experimental-profile": "portable" },
-      env: {},
-      runOnboard: async () => {
-        throw new GatewayStateConflictError(
-          "Portable gateway state conflicts with this run.\nOPENAI_API_KEY=state-secret",
-        );
-      },
-      error: (message = "") => errors.push(message),
-      exit: (code) => {
-        throw new Error(`exit:${String(code)}`);
-      },
-    }),
-  ).rejects.toThrow("exit:1");
+it.each([
+  { kind: "generic", options: undefined, recovery: "", expectedHints: true },
+  {
+    kind: "tailored",
+    options: { hasRecoveryGuidance: true },
+    recovery: " Use a different sandbox name, gateway port, and gateway state directory.",
+    expectedHints: false,
+  },
+])(
+  "reports $kind state conflicts with the appropriate recovery handoff",
+  async ({ options, recovery, expectedHints }) => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: { "experimental-profile": "portable" },
+        env: {},
+        runOnboard: async () => {
+          throw new GatewayStateConflictError(
+            `Gateway state conflicts with this run.${recovery}\nOPENAI_API_KEY=state-secret`,
+            options,
+          );
+        },
+        error: (message = "") => errors.push(message),
+        exit: (code) => {
+          throw new Error(`exit:${String(code)}`);
+        },
+      }),
+    ).rejects.toThrow("exit:1");
 
-  const output = errors.join("\n");
-  expect(output).toContain("Portable gateway state conflicts with this run");
-  expect(output).toContain("OPENAI_API_KEY=<REDACTED>");
-  expect(output).not.toContain("state-secret");
-  expect(output).not.toContain(".js:");
-  expect(output).not.toContain("    at ");
-  printOnboardResumeHint(true, (message) => errors.push(message));
-  expect(errors.join("\n")).not.toContain("onboard --resume");
-  expect(errors.join("\n")).not.toContain("onboard --experimental-profile portable --fresh");
-});
+    const output = errors.join("\n");
+    expect(output).toContain("Gateway state conflicts with this run");
+    expect(output).toContain("OPENAI_API_KEY=<REDACTED>");
+    expect(output).not.toContain("state-secret");
+    expect(output).not.toContain(".js:");
+    expect(output).not.toContain("    at ");
+    printOnboardResumeHint(true, (message) => errors.push(message));
+    expect(errors.join("\n").includes("onboard --resume")).toBe(expectedHints);
+    expect(errors.join("\n").includes("onboard --experimental-profile portable --fresh")).toBe(
+      expectedHints,
+    );
+  },
+);
 
 function externalDeclaration(overrides: Record<string, unknown> = {}) {
   return {

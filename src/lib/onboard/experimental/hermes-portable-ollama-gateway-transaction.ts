@@ -33,7 +33,9 @@ const PORTABLE_GATEWAY_STATE_RECOVERY =
   "Existing state was preserved. To retry separately, choose a different sandbox name, an unused NEMOCLAW_GATEWAY_PORT, and a separate NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR. Retire preserved state only through its recorded lifecycle authority.";
 
 function portableGatewayStateConflict(message: string): GatewayStateConflictError {
-  return new GatewayStateConflictError(`${message} ${PORTABLE_GATEWAY_STATE_RECOVERY}`);
+  return new GatewayStateConflictError(`${message} ${PORTABLE_GATEWAY_STATE_RECOVERY}`, {
+    hasRecoveryGuidance: true,
+  });
 }
 
 function readPortableGatewayState<T>(read: () => T): T {
