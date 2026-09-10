@@ -700,8 +700,8 @@ function formatError(error: unknown): string {
 function usage(): string {
   return [
     "Usage:",
-    "  node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts plan <openclaw|hermes>",
-    "  node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify <image> <openclaw|hermes>",
+    "  node scripts/check-messaging-plan-image-boundary.mts plan <openclaw|hermes>",
+    "  node scripts/check-messaging-plan-image-boundary.mts verify <image> <openclaw|hermes>",
   ].join("\n");
 }
 

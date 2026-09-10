@@ -95,14 +95,14 @@ function spawnResultForCommand(
       : { status: 1, stdout: "", stderr: "" };
 }
 
-function withFakeOpenshellBinary<T>(fn: () => T): T {
+async function withFakeOpenshellBinary<T>(fn: () => Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
   const bin = path.join(dir, "openshell");
   const previous = process.env.NEMOCLAW_OPENSHELL_BIN;
   fs.writeFileSync(bin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   process.env.NEMOCLAW_OPENSHELL_BIN = bin;
   try {
-    return fn();
+    return await fn();
   } finally {
     restoreEnvValue("NEMOCLAW_OPENSHELL_BIN", previous);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -110,7 +110,7 @@ function withFakeOpenshellBinary<T>(fn: () => T): T {
 }
 
 describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
-  it("retains SSH health-probe compatibility for an explicitly loaded custom gateway agent", () => {
+  it("retains SSH health-probe compatibility for an explicitly loaded custom gateway agent", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
     const registry = requireSource("../../src/lib/state/registry.ts");
@@ -153,9 +153,9 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
       output: "SANDBOX  BIND  PORT  PID  STATUS",
     });
 
-    expect(
+    await expect(
       withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("custom-box", { quiet: true })),
-    ).toEqual({
+    ).resolves.toEqual({
       checked: true,
       wasRunning: true,
       recovered: false,
@@ -166,7 +166,7 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
     expect(sshCommands[0]).not.toContain("gateway run");
   });
 
-  it("recovers a stopped custom gateway agent over SSH fallback", () => {
+  it("recovers a stopped custom gateway agent over SSH fallback", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
     const registry = requireSource("../../src/lib/state/registry.ts");
@@ -192,8 +192,7 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
       vi.spyOn(childProcess, "spawnSync").mockImplementation(
         (command: unknown, rawArgs: unknown) => {
           healthProbeCalls += Number(
-            String(command).endsWith("openshell") &&
-              getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl"),
+            command === "ssh" && getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl"),
           );
           const setRecovered = (value: boolean): void => {
             recovered = value;
@@ -228,11 +227,11 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
       });
       vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
 
-      expect(
+      await expect(
         withFakeOpenshellBinary(() =>
           checkAndRecoverSandboxProcesses("custom-box", { quiet: true }),
         ),
-      ).toEqual({
+      ).resolves.toEqual({
         checked: true,
         wasRunning: false,
         recovered: true,
@@ -250,7 +249,7 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
     }
   });
 
-  it("fails closed when a persisted non-OpenClaw manifest cannot be loaded", () => {
+  it("fails closed when a persisted non-OpenClaw manifest cannot be loaded", async () => {
     const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
     const registry = requireSource("../../src/lib/state/registry.ts");
     const childProcess = requireSource("node:child_process");
@@ -273,11 +272,14 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
       dashboardPort: 19000,
     });
 
-    expect(
+    await expect(
       withFakeOpenshellBinary(() =>
-        checkAndRecoverSandboxProcesses("custom-box", { quiet: false }),
+        checkAndRecoverSandboxProcesses("custom-box", {
+          quiet: false,
+          isSandboxGatewayRunningImpl: async () => false,
+        }),
       ),
-    ).toEqual({
+    ).resolves.toEqual({
       checked: true,
       wasRunning: false,
       recovered: false,

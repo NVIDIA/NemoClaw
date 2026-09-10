@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { lockedArchives } from "../../../scripts/checks/materialize-locked-npm-cache-seed.mts";
 import { parseAuditExceptionRegistry } from "../../../scripts/lib/reviewed-npm-audit.mts";
 import { createBuiltInChannelManifestRegistry } from "../../../src/lib/messaging";
 import { reviewedOpenClawPluginIntegrityByPackageSpec } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
@@ -701,6 +702,13 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             resolved: PINNED_NEMOCLAW_TAR_TARBALL,
           }),
         );
+        expect(
+          lockedArchives(packageLockSource.toString("utf-8"), {
+            cpu: "x64",
+            libc: "glibc",
+            os: "linux",
+          }).some(({ archive }) => archive.includes("linux-x64-musl")),
+        ).toBe(false);
       });
 
       it("keeps the Teams OpenClaw plugin manifest pinned to the reviewed 2026.9.1 integrity", () => {

@@ -30,13 +30,13 @@ export function resolveManagedMcpAdapter(
 }
 
 /** Scrub one registry-owned adapter entry, failing closed when ownership is unproved. */
-export function scrubManagedMcpAdapterOrThrow(
+export async function scrubManagedMcpAdapterOrThrow(
   sandboxName: string,
   sandbox: SandboxEntry,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): McpScrubbedAdapterEntry {
-  const observation = observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
+): Promise<McpScrubbedAdapterEntry> {
+  const observation = await observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
   if (observation === "absent" || observation === "canonical") {
     throw new McpBridgeError(
       `Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server '${entry.server}'.`,
@@ -60,17 +60,17 @@ export function scrubManagedMcpAdapterOrThrow(
 }
 
 /** Restore scrubbed adapter entries without hiding failures from provider rollback. */
-export function rollbackScrubbedMcpAdapters(
+export async function rollbackScrubbedMcpAdapters(
   sandboxName: string,
   sandbox: SandboxEntry,
   entries: readonly McpScrubbedAdapterEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): string[] {
+): Promise<string[]> {
   const failures: string[] = [];
   for (const entry of entries) {
     let credentialRevision: McpAttachedCredentialRevision | undefined;
     try {
-      const current = observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
+      const current = await observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
       if (current !== "absent" && current !== "canonical") credentialRevision = current;
     } catch (error) {
       failures.push(error instanceof Error ? error.message : String(error));
@@ -83,7 +83,7 @@ export function rollbackScrubbedMcpAdapters(
       continue;
     }
     try {
-      registerAgentAdapterAtCurrentCredentialRevision(
+      await registerAgentAdapterAtCurrentCredentialRevision(
         sandboxName,
         resolveManagedMcpAdapter(sandbox, entry),
         entry,

@@ -347,17 +347,15 @@ describe("OpenClaw gateway daemon self-dialback patch", () => {
       fs.writeFileSync(path.join(tmp, "connection-details.js"), CONNECTION_DETAILS_SOURCE);
       fs.writeFileSync(path.join(tmp, "gateway-tools.js"), TOOL_TARGET_SOURCE);
 
-      const apply = spawnSync(process.execPath, ["--experimental-strip-types", PATCH_SCRIPT, tmp], {
+      const apply = spawnSync(process.execPath, [PATCH_SCRIPT, tmp], {
         encoding: "utf8",
       });
       expect(apply.status, apply.stderr).toBe(0);
       expect(apply.stdout).toContain("patched OpenClaw gateway daemon self-dialback (3 files)");
 
-      const audit = spawnSync(
-        process.execPath,
-        ["--experimental-strip-types", PATCH_SCRIPT, "--audit", tmp],
-        { encoding: "utf8" },
-      );
+      const audit = spawnSync(process.execPath, [PATCH_SCRIPT, "--audit", tmp], {
+        encoding: "utf8",
+      });
       expect(audit.status, audit.stderr).toBe(0);
       expect(audit.stdout).toContain("audited OpenClaw gateway daemon self-dialback (3 files)");
     } finally {

@@ -97,6 +97,7 @@ const OPAQUE_INPUTS = [
   ".github/workflows/platform-vitest-main.yaml",
   "tools/wsl/ci-helper.ps1",
   "ci/platform-vitest-macos-requirements.lock",
+  "tools/e2e/full-e2e-timeout-contract.mts",
   ".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md",
   ".agents/skills/nemoclaw-maintainer-evening/SKILL.md",
   ".agents/skills/nemoclaw-maintainer-release-notes/SKILL.md",
@@ -314,9 +315,13 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/e2e-manifests.test.ts",
     ]);
     expect(triggeredBy("test/e2e/manifests/openclaw-nvidia.yml")).toEqual([]);
-    expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
+    expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual([
+      ...E2E_WORKFLOW_CONTRACTS,
+      "test/e2e/support/openshell-sdk-install.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/e2e-standard-profile.yaml")).toEqual([
       "test/e2e/support/standard-profile-workflow-boundary.test.ts",
+      "test/e2e/support/openshell-sdk-install.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/portable-profile-e2e.yaml")).toEqual([
       "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
@@ -365,6 +370,12 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("ci/platform-vitest-macos-requirements.lock")).toEqual([
       "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+    ]);
+    expect(triggeredBy("tools/e2e/full-e2e-timeout-contract.mts")).toEqual([
+      "test/automation/e2e/e2e-recommendations.test.ts",
+      "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test/e2e/support/security-posture-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md")).toEqual([
       "test/automation/releases/release-post-tag-follow-through.test.ts",

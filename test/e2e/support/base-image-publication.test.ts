@@ -1199,12 +1199,7 @@ describe("base-image publication evidence", () => {
     expect(() =>
       execFileSync(
         process.execPath,
-        [
-          "--experimental-strip-types",
-          "--no-warnings",
-          "--eval",
-          `import(${JSON.stringify(modulePath)})`,
-        ],
+        ["--no-warnings", "--eval", `import(${JSON.stringify(modulePath)})`],
         { encoding: "utf8" },
       ),
     ).not.toThrow();

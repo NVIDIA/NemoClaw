@@ -43,8 +43,16 @@ import {
 export type StartGatewayForRecoveryOptions = {
   gatewayName?: string;
   gatewayPort?: number;
+  output?: GatewayRecoveryOutput;
   runtimeSelection?: OpenShellRuntimeSelection;
 };
+
+export type GatewayRecoveryOutput = Readonly<{
+  error(message: string): void;
+  log(message: string): void;
+  step(current: number, total: number, label: string): void;
+  warn(message: string): void;
+}>;
 
 type RunOpenshellOptions = {
   ignoreError?: boolean;
@@ -79,6 +87,7 @@ export type GatewayRecoveryDeps = {
     gpu: never,
     options: {
       exitOnFailure: false;
+      output?: GatewayRecoveryOutput;
       runtimeSelection?: OpenShellRuntimeSelection;
     },
   ): Promise<void>;
@@ -177,10 +186,15 @@ async function startTargetGatewayForRecovery(
   { gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number },
   deps: GatewayRecoveryDeps,
   runtimeSelection?: OpenShellRuntimeSelection,
+  output?: GatewayRecoveryOutput,
 ): Promise<void> {
   const runtimeOptions = withSelectedOpenShellCommandOptions({}, runtimeSelection);
-  deps.runOpenshell(["gateway", "select", gatewayName], {
+  const runOptions = {
     ...runtimeOptions,
+    ...(output ? { suppressOutput: true } : {}),
+  };
+  deps.runOpenshell(["gateway", "select", gatewayName], {
+    ...runOptions,
     ignoreError: true,
   });
 
@@ -282,6 +296,7 @@ export async function startGatewayForRecovery(
     if (target.gatewayName === resolveDefaultGatewayName() || linuxDockerDriverEnabled) {
       return deps.startGatewayWithOptions(undefined as never, {
         exitOnFailure: false,
+        ...(options.output ? { output: options.output } : {}),
         ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
       });
     }
@@ -299,5 +314,5 @@ export async function startGatewayForRecovery(
         `Re-run with NEMOCLAW_GATEWAY_PORT=${target.gatewayPort} so the docker-driver setup can restamp the runtime marker, registration, and sandbox bridge.`,
     );
   }
-  return startTargetGatewayForRecovery(target, deps, options.runtimeSelection);
+  return startTargetGatewayForRecovery(target, deps, options.runtimeSelection, options.output);
 }

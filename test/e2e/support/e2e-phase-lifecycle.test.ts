@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   type CommandRunner,
@@ -136,6 +137,82 @@ function restoreEnv(name: string, value: string | undefined): void {
   Reflect.deleteProperty(process.env, name);
   Object.assign(process.env, value === undefined ? {} : { [name]: value });
 }
+
+describe("LifecyclePhaseFixture.trackInstallerGatewayUserService", () => {
+  let root: string, config: string, unit: string;
+  let previousConfig: string | undefined, previousPath: string | undefined;
+  let runner: FakeRunner, cleanup: FakeCleanup;
+  const marker = "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n";
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-service-cleanup-"));
+    config = path.join(root, "config");
+    unit = path.join(config, "systemd", "user", "nemoclaw-openshell-gateway.service");
+    previousConfig = process.env.XDG_CONFIG_HOME;
+    previousPath = process.env.PATH;
+    process.env.XDG_CONFIG_HOME = config;
+    process.env.PATH = `${root}:${previousPath ?? ""}`;
+    fs.mkdirSync(path.dirname(unit), { recursive: true });
+    fs.writeFileSync(path.join(root, "systemctl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    runner = new FakeRunner();
+    cleanup = new FakeCleanup();
+    runner.run = async (command, options) => {
+      runner.calls.push({ command: command.command, args: [...command.args], options });
+      const result = spawnSync(command.command, ["-c", command.args[1]!], {
+        env: options?.env,
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      return shellResult(result.status ?? 1, `${result.stdout ?? ""}${result.stderr ?? ""}`);
+    };
+  });
+
+  afterEach(() => {
+    restoreEnv("XDG_CONFIG_HOME", previousConfig);
+    restoreEnv("PATH", previousPath);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("removes a newly installed service last using the captured environment", async () => {
+    fixture(runner, cleanup).trackInstallerGatewayUserService();
+    expect(runner.calls).toHaveLength(0);
+    expect(cleanup.calls).toHaveLength(1);
+    fs.writeFileSync(unit, marker);
+    process.env.XDG_CONFIG_HOME = path.join(root, "changed-config");
+    cleanup.add("sandbox", () => {
+      expect(fs.existsSync(unit)).toBe(true);
+    });
+    await cleanup.calls[1]!.run();
+    await cleanup.calls[0]!.run();
+    expect(fs.existsSync(unit)).toBe(false);
+    expect(runner.calls[0]?.options?.env?.XDG_CONFIG_HOME).toBe(config);
+  });
+
+  it.each([
+    ["file", () => fs.writeFileSync(unit, marker)],
+    ["directory", () => fs.mkdirSync(unit)],
+    ["dangling symlink", () => fs.symlinkSync("missing", unit)],
+  ] as const)("preserves a preexisting %s", (_kind, create) => {
+    create();
+    fixture(runner, cleanup).trackInstallerGatewayUserService();
+    expect(cleanup.calls).toHaveLength(0);
+    expect(fs.lstatSync(unit)).toBeTruthy();
+  });
+
+  it("refuses a foreign replacement during deferred cleanup", async () => {
+    fixture(runner, cleanup).trackInstallerGatewayUserService();
+    fs.writeFileSync(unit, "foreign");
+    await expect(cleanup.calls[0]!.run()).rejects.toThrow(/Refusing to remove foreign/);
+    expect(fs.readFileSync(unit, "utf8")).toBe("foreign");
+  });
+
+  it("propagates inspection errors other than absence", () => {
+    fs.rmSync(config, { recursive: true });
+    fs.writeFileSync(config, "foreign");
+    expect(() => fixture(runner, cleanup).trackInstallerGatewayUserService()).toThrow(/ENOTDIR/);
+    expect(cleanup.calls).toHaveLength(0);
+  });
+});
 
 describe("LifecyclePhaseFixture.preparePostReboot", () => {
   it("installs OpenShell and stages the gateway user service when openshell-gateway is unavailable", async () => {
@@ -585,76 +662,76 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
   ] as const)(
     "proves 2xx→401→rejected rebuild without mutation through %s, then restores 2xx",
     async (_displayName, runtimeEnvironment, runtimeCommand, runtimeArgsPrefix) => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-lifecycle-home-"));
-    const previousHome = process.env.HOME;
-    process.env.HOME = home;
-    try {
-      const runner = new FakeRunner();
-      enqueuePreamble(runner);
-      runner.enqueue(shellResult(0)); // install invalid provider credential
-      runner.enqueue(shellResult(0, "401"));
-      runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
-      runner.enqueue(
-        shellResult(
-          1,
-          "Rebuild preflight failed: recorded inference credentials or route were rejected.\n" +
-            "existing sandbox inference probe returned HTTP 401\n" +
-            "Sandbox is untouched — no data was lost.\n",
-        ),
-      );
-      runner.enqueue(shellResult(0, "container-b\ncontainer-a\n"));
-      runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_INVALID_CREDENTIAL_REBUILD_MARKER"));
-      runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
-      runner.enqueue(shellResult(0)); // restore valid provider credential
-      runner.enqueue(shellResult(0, "200"));
-      const cleanup = new FakeCleanup();
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-lifecycle-home-"));
+      const previousHome = process.env.HOME;
+      process.env.HOME = home;
+      try {
+        const runner = new FakeRunner();
+        enqueuePreamble(runner);
+        runner.enqueue(shellResult(0)); // install invalid provider credential
+        runner.enqueue(shellResult(0, "401"));
+        runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
+        runner.enqueue(
+          shellResult(
+            1,
+            "Rebuild preflight failed: recorded inference credentials or route were rejected.\n" +
+              "existing sandbox inference probe returned HTTP 401\n" +
+              "Sandbox is untouched — no data was lost.\n",
+          ),
+        );
+        runner.enqueue(shellResult(0, "container-b\ncontainer-a\n"));
+        runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_INVALID_CREDENTIAL_REBUILD_MARKER"));
+        runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
+        runner.enqueue(shellResult(0)); // restore valid provider credential
+        runner.enqueue(shellResult(0, "200"));
+        const cleanup = new FakeCleanup();
 
-      const result = await fixture(runner, cleanup, runtimeEnvironment).simulate(
-        "dcode-rebuild-invalid-credential",
-        dcodeInstance(),
-        options,
-      );
+        const result = await fixture(runner, cleanup, runtimeEnvironment).simulate(
+          "dcode-rebuild-invalid-credential",
+          dcodeInstance(),
+          options,
+        );
 
-      expect(result.profile).toBe("dcode-rebuild-invalid-credential");
-      expect(result.steps.map((step) => step.id)).toEqual(
-        expect.arrayContaining([
-          "inference-route:baseline",
-          "inference-route:invalid",
-          "nemoclaw-rebuild:invalid-credential",
-          "container-ids:after",
-          "marker-read:after",
-          "sandbox-ready:after",
-          "inference-route:restored",
-        ]),
-      );
-      const providerUpdates = runner.calls.filter(
-        (call) =>
-          call.command === "openshell" && call.args.slice(0, 2).join(" ") === "provider update",
-      );
-      expect(providerUpdates).toHaveLength(2);
-      const invalidCredential = providerUpdates[0].options?.env?.COMPATIBLE_API_KEY;
-      expect(invalidCredential).toMatch(/^nvapi-e2e-invalid-/);
-      expect(providerUpdates[0].args).not.toContain(invalidCredential);
-      expect(providerUpdates[0].options?.redactionValues).toContain(invalidCredential);
-      expect(providerUpdates[1].options?.env?.COMPATIBLE_API_KEY).toBe(validCredential);
-      const rebuild = runner.calls.find(
-        (call) => call.command === "nemoclaw" && call.args.includes("rebuild"),
-      );
-      expect(rebuild?.options?.env).not.toHaveProperty("COMPATIBLE_API_KEY");
-      const containerIds = runner.calls.find(
-        (call) => call.options?.artifactName === "lifecycle-dcode-container-ids-before",
-      );
-      expect(containerIds?.command).toBe(runtimeCommand);
-      expect(containerIds?.args.slice(0, runtimeArgsPrefix.length)).toEqual(runtimeArgsPrefix);
-      expect(cleanup.calls).toHaveLength(1);
+        expect(result.profile).toBe("dcode-rebuild-invalid-credential");
+        expect(result.steps.map((step) => step.id)).toEqual(
+          expect.arrayContaining([
+            "inference-route:baseline",
+            "inference-route:invalid",
+            "nemoclaw-rebuild:invalid-credential",
+            "container-ids:after",
+            "marker-read:after",
+            "sandbox-ready:after",
+            "inference-route:restored",
+          ]),
+        );
+        const providerUpdates = runner.calls.filter(
+          (call) =>
+            call.command === "openshell" && call.args.slice(0, 2).join(" ") === "provider update",
+        );
+        expect(providerUpdates).toHaveLength(2);
+        const invalidCredential = providerUpdates[0].options?.env?.COMPATIBLE_API_KEY;
+        expect(invalidCredential).toMatch(/^nvapi-e2e-invalid-/);
+        expect(providerUpdates[0].args).not.toContain(invalidCredential);
+        expect(providerUpdates[0].options?.redactionValues).toContain(invalidCredential);
+        expect(providerUpdates[1].options?.env?.COMPATIBLE_API_KEY).toBe(validCredential);
+        const rebuild = runner.calls.find(
+          (call) => call.command === "nemoclaw" && call.args.includes("rebuild"),
+        );
+        expect(rebuild?.options?.env).not.toHaveProperty("COMPATIBLE_API_KEY");
+        const containerIds = runner.calls.find(
+          (call) => call.options?.artifactName === "lifecycle-dcode-container-ids-before",
+        );
+        expect(containerIds?.command).toBe(runtimeCommand);
+        expect(containerIds?.args.slice(0, runtimeArgsPrefix.length)).toEqual(runtimeArgsPrefix);
+        expect(cleanup.calls).toHaveLength(1);
 
-      const callCount = runner.calls.length;
-      await cleanup.calls[0].run();
-      expect(runner.calls).toHaveLength(callCount);
-    } finally {
-      restoreEnv("HOME", previousHome);
-      fs.rmSync(home, { force: true, recursive: true });
-    }
+        const callCount = runner.calls.length;
+        await cleanup.calls[0].run();
+        expect(runner.calls).toHaveLength(callCount);
+      } finally {
+        restoreEnv("HOME", previousHome);
+        fs.rmSync(home, { force: true, recursive: true });
+      }
     },
   );
 

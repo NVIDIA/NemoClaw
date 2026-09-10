@@ -120,11 +120,9 @@ function providerNameFromNotFoundText(text: string): string | null {
   const quoted = readQuotedValue(text, providerPrefix.length);
   if (!quoted) return null;
   const suffix = normalizedNotFoundSuffix(text.slice(quoted.end));
-  return suffix === "" && hasNotFoundStatusPrefix
+  return (suffix === "" && hasNotFoundStatusPrefix) || NOT_FOUND_SUFFIXES.has(suffix)
     ? quoted.value
-    : NOT_FOUND_SUFFIXES.has(suffix)
-      ? quoted.value
-      : null;
+    : null;
 }
 
 function providerNameFromMessage(line: string): string | null {

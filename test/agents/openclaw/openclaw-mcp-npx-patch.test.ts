@@ -18,7 +18,12 @@ import {
   redactMcpArgs,
 } from "../../../scripts/patch-openclaw-mcp-npx.mts";
 
-const PATCH_SCRIPT = path.join(import.meta.dirname, "../../..", "scripts", "patch-openclaw-mcp-npx.mts");
+const PATCH_SCRIPT = path.join(
+  import.meta.dirname,
+  "../../..",
+  "scripts",
+  "patch-openclaw-mcp-npx.mts",
+);
 
 function writeMcpFixture(dist: string): string {
   const fixture = path.join(dist, "bundle-mcp.fixture.js");
@@ -65,7 +70,7 @@ function writeMcpTransportOnlyFixture(dist: string): string {
 }
 
 function runPatch(dist: string) {
-  return spawnSync(process.execPath, ["--experimental-strip-types", PATCH_SCRIPT, dist], {
+  return spawnSync(process.execPath, [PATCH_SCRIPT, dist], {
     encoding: "utf-8",
     timeout: 10_000,
   });

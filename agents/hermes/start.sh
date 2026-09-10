@@ -2383,7 +2383,7 @@ TUIENVEOF
 # nemoclaw-configure-guard begin
 hermes() {
   case "$1" in
-    setup|doctor)
+    setup)
       echo "Error: 'hermes $1' cannot modify config inside the sandbox." >&2
       echo "NemoClaw manages sandbox config from the host for integrity checks." >&2
       echo "" >&2
@@ -2400,10 +2400,6 @@ GUARDENVEOF
 }
 
 write_runtime_shell_env
-# SECURITY FIX: Lock .bashrc/.profile after all static shims are in place.
-# Hermes connect sessions source the dynamic guard from /tmp/nemoclaw-proxy-env.sh
-# so startup never needs to rewrite files directly under /sandbox after caps drop.
-lock_rc_files "$_SANDBOX_HOME"
 
 # ── Legacy layout migration ──────────────────────────────────────
 path_has_immutable_bit() {

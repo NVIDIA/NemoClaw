@@ -536,8 +536,7 @@ print(json.dumps(proof))
     const anchor = path.join(hermesDir, ".config-hash");
     const strict = path.join(root, "hermes.config-hash");
     const beforeConfig = "model: test\nmcp_servers: {}\n";
-    const afterConfig =
-      "model: test\nmcp_servers:\n  alpha:\n    url: https://alpha.example/mcp\n";
+    const afterConfig = "model: test\nmcp_servers:\n  alpha:\n    url: https://alpha.example/mcp\n";
     const env = "SAFE=1\n";
     const digest = (value: string) => createHash("sha256").update(value).digest("hex");
     const beforeMcp = digest("{}");

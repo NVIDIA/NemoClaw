@@ -296,11 +296,13 @@ describe("listMessagingBridgeProfiles", () => {
 
       const checkedIn = fs.readFileSync(profile!.profilePath, "utf8");
       const canonicalExport = YAML.parse(checkedIn) as {
-        credentials: Array<Record<string, unknown> & {
-          refresh?: {
-            material?: Array<Record<string, unknown> & { required?: boolean; secret?: boolean }>;
-          };
-        }>;
+        credentials: Array<
+          Record<string, unknown> & {
+            refresh?: {
+              material?: Array<Record<string, unknown> & { required?: boolean; secret?: boolean }>;
+            };
+          }
+        >;
       };
       canonicalExport.credentials = canonicalExport.credentials.map((credential) => ({
         ...credential,

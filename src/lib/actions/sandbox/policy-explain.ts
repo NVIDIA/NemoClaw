@@ -95,13 +95,11 @@ type ExecutorLoad =
 function loadExecutor(): ExecutorLoad {
   if (process.env.VITEST === "true") return { kind: "vitest" };
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const resolve = require("../../adapters/openshell/resolve") as {
       resolveOpenshell?: () => string | null;
     };
     const resolved = resolve.resolveOpenshell ? resolve.resolveOpenshell() : null;
     if (!resolved) return { kind: "no-runtime" };
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const recovery = require("./process-recovery") as {
       executeSandboxCommand: SandboxExec;
     };

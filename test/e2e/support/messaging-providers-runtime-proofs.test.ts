@@ -1422,7 +1422,7 @@ describe("messaging provider installed-runtime proofs", () => {
     const portFile = path.join(dir, "port");
     const captureFile = path.join(dir, "capture.jsonl");
     const token = "test-secret-wechat-ilink-token";
-    const child = spawn(process.execPath, ["--experimental-strip-types", FAKE_WECHAT_API], {
+    const child = spawn(process.execPath, [FAKE_WECHAT_API], {
       env: {
         ...process.env,
         FAKE_WECHAT_API_HOST: "127.0.0.1",

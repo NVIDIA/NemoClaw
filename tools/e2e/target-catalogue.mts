@@ -18,10 +18,12 @@ import {
   runtimeCoverageVariant,
   runtimeExecutionId,
 } from "./gateway-runtime.mts";
+import { FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES } from "./full-e2e-timeout-contract.mts";
 import {
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
+import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "./openshell-gateway-upgrade-fixture.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
@@ -483,6 +485,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: ["test/e2e/live/brave-search-helpers.ts"],
     environment: {
       ...hostedInference,
       ...nonInteractive,
@@ -738,7 +741,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
-    timeoutMinutes: 75,
+    timeoutMinutes: FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
@@ -746,6 +749,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "test/e2e/live/launch-agent-turn.ts",
       "test/e2e/live/pr-base-comparison.ts",
       "src/lib/tunnel/gateway-stop-script.ts",
+      "tools/e2e/full-e2e-timeout-contract.mts",
     ],
     environment: {
       ...hostedInference,
@@ -968,6 +972,18 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: [
       "test/e2e/live/network-policy-transient-provider.ts",
       "test/e2e/live/restricted-onboard-helpers.ts",
+      "src/commands/config/",
+      "src/lib/actions/config/",
+      "src/lib/adapters/config/",
+      "src/lib/adapters/fs/config-export-file.ts",
+      "src/lib/config/",
+      "src/lib/domain/config/",
+      "src/lib/adapters/openshell/providers.ts",
+      "src/lib/adapters/openshell/sandboxes.ts",
+      "src/lib/adapters/openshell/sandbox-config.ts",
+      "src/lib/adapters/openshell/sdk-read.ts",
+      "src/lib/adapters/openshell/sdk-read-schema.ts",
+      "src/lib/adapters/openshell/sdk.ts",
     ],
     environment: {
       ...hostedInference,
@@ -1021,7 +1037,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "credential-free",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
+    owningPaths: [
+      "test/helpers/openshell-gateway-start-output.ts",
+      "tools/e2e/onboard-timeout-contract.mts",
+    ],
     environment: { ...nonInteractive, NEMOCLAW_SANDBOX_NAME: "e2e-resume" },
   }),
   managedRuntimeTarget("openclaw-discord-pairing", {
@@ -1213,7 +1232,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
-    owningPaths: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
+    owningPaths: [...HERMES_ACP_E2E_OWNING_PATHS, "test/e2e/live/rebuild-hermes-cron-restore.ts"],
     timeoutMinutes: 90,
     installMode: "credential-free",
     installNonInteractive: true,
@@ -1310,13 +1329,14 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     testFile: "test/e2e/live/full-e2e.test.ts",
-    timeoutMinutes: 75,
+    timeoutMinutes: FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
     installMode: "credential-free",
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
     shard: "openclaw",
     artifactLayout: "flat-shard",
+    owningPaths: ["tools/e2e/full-e2e-timeout-contract.mts"],
     environment: {
       ...hostedInference,
       ...nonInteractive,
@@ -1351,6 +1371,14 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: [
       ...SKILL_LIFECYCLE_OWNING_PATHS,
       "agents/hermes/manifest.yaml",
+      "schemas/nemoclaw-config-v1.schema.json",
+      "src/commands/config/export.ts",
+      "src/lib/actions/config/",
+      "src/lib/adapters/config/",
+      "src/lib/adapters/fs/config-export-file.ts",
+      "src/lib/config/",
+      "src/lib/domain/config/",
+      "test/e2e/fixtures/hermes-config-export-live.ts",
       "test/e2e/live/hermes-skill-lifecycle.ts",
     ],
     environment: {
@@ -1784,7 +1812,7 @@ export async function runCatalogueTarget(id: string, testFile: string): Promise<
   const runPressureCommand = (command: string): void => {
     const result = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", "--no-warnings", "tools/e2e/runner-pressure.mts", command],
+      ["--no-warnings", "tools/e2e/runner-pressure.mts", command],
       { env: process.env, stdio: "inherit", timeout: 60_000 },
     );
     if (result.error) throw result.error;

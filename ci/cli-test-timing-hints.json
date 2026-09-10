@@ -177,7 +177,6 @@
     "test/onboarding/onboard-terminal-dashboard.test.ts": 11927,
     "test/onboarding/onboard.test.ts": 7899,
     "test/repository/layer-import-boundaries.test.ts": 5292,
-    "test/repository/plugin-vitest-project.test.ts": 7766,
     "test/repository/source-architecture.test.ts": 5535,
     "test/repository/source-require-loader.test.ts": 5155,
     "test/runtime/gateway/gateway-drift-preflight.test.ts": 7324,

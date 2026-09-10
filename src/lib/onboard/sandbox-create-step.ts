@@ -51,6 +51,7 @@ export type SandboxCreateStepDeps = {
   addTraceEvent: NonNullable<StreamSandboxCreateOptions["traceEvent"]>;
   runOpenshell: GpuPatchDeps["runOpenshell"];
   runCaptureOpenshell: NonNullable<GpuPatchDeps["runCaptureOpenshell"]>;
+  commandExecutor: NonNullable<GpuPatchDeps["commandExecutor"]>;
   sleepSeconds: GpuPatchDeps["sleep"];
 };
 
@@ -113,6 +114,7 @@ export async function runSandboxCreateStep(
     deps: {
       runOpenshell: deps.runOpenshell,
       runCaptureOpenshell: deps.runCaptureOpenshell,
+      commandExecutor: deps.commandExecutor,
       sleep: deps.sleepSeconds,
     },
   });
