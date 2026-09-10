@@ -171,6 +171,7 @@ For `channels add` only, `--force` overrides conflict and incomplete-check abort
 For Microsoft Teams, an unrelated host listener causes `channels add` to abort before it changes the channel unless you use `--force`.
 A direct OpenShell forward can keep the selected port only when NemoClaw verifies its listener belongs to the current sandbox and gateway.
 A stale forward record alone is not accepted.
+A port probe that cannot verify availability also aborts.
 Free an unrelated listener, or set `MSTEAMS_PORT` or `TEAMS_PORT` to a free port.
 
 Before a rebuild, NemoClaw checks the messaging plan before backup and checks it again after MCP preparation, before deletion.

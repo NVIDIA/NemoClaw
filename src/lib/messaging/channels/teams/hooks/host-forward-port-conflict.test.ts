@@ -159,6 +159,38 @@ describe("teams.hostForwardPortConflict hook", () => {
     );
   });
 
+  it("aborts when the host port probe cannot verify availability", async () => {
+    const isCurrentSandboxForward = vi.fn(() => true);
+    const registry = new MessagingHookRegistry([
+      createTeamsHostForwardPortConflictHookRegistration({
+        currentSandbox: "bob",
+        registryEntries: [],
+        checkPortAvailable: async () => ({
+          ok: true,
+          warning: "port probe skipped: listen EACCES: permission denied 127.0.0.1:443",
+        }),
+        isCurrentSandboxForward,
+      }),
+    ]);
+
+    await expect(
+      runMessagingHook(HOOK, registry, {
+        channelId: "teams",
+        inputs: {
+          currentGatewayName: "nemoclaw",
+          webhookPort: "443",
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: MESSAGING_HOOK_CONFLICT_CODE,
+      message:
+        "Microsoft Teams webhook port 443 could not be verified as free: " +
+        "port probe skipped: listen EACCES: permission denied 127.0.0.1:443. " +
+        "Resolve the probe failure or set MSTEAMS_PORT to a different free port before enabling Teams.",
+    });
+    expect(isCurrentSandboxForward).not.toHaveBeenCalled();
+  });
+
   it("allows the current sandbox's live host forward during rebuild", async () => {
     const isCurrentSandboxForward = vi.fn(() => true);
     const registry = new MessagingHookRegistry([

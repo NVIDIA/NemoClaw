@@ -57,6 +57,7 @@ export interface TeamsHostForwardPortConflictHookOptions {
 
 export interface TeamsHostPortAvailabilityResult {
   readonly ok: boolean;
+  readonly warning?: string;
   readonly process?: string;
   readonly pid?: number | null;
   readonly reason?: string;
@@ -95,7 +96,12 @@ export function createTeamsHostForwardPortConflictHook(
 
     if (!options.checkPortAvailable) return {};
     const availability = await options.checkPortAvailable(port);
-    if (availability.ok) return {};
+    if (availability.ok) {
+      if (!availability.warning) return {};
+      throw new MessagingHookConflictError(
+        formatTeamsHostPortUnverifiedConflict(port, availability.warning),
+      );
+    }
 
     const currentGatewayName = resolveCurrentGatewayName(context, options);
     if (
@@ -230,6 +236,13 @@ export function formatTeamsHostPortAvailabilityConflict(
   return (
     `Microsoft Teams webhook port ${port} is already in use by ${blocker}. ` +
     "Free the port or set MSTEAMS_PORT to a different free port before enabling Teams."
+  );
+}
+
+export function formatTeamsHostPortUnverifiedConflict(port: number, warning: string): string {
+  return (
+    `Microsoft Teams webhook port ${port} could not be verified as free: ${warning}. ` +
+    "Resolve the probe failure or set MSTEAMS_PORT to a different free port before enabling Teams."
   );
 }
 
