@@ -336,6 +336,14 @@ export const NemoClawAgentToolsConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const NemoClawAgentAuthConfigSchema = Type.Object(
+  {
+    method: Type.Literal("api-key"),
+    providerRef: LocalResourceNameSchema,
+  },
+  { additionalProperties: false },
+);
+
 /** First supported OTLP profile: local HTTP collector, without credentials or headers. */
 export const NemoClawOpenClawObservabilitySchema = Type.Object(
   {
@@ -359,6 +367,7 @@ export const NemoClawOpenClawObservabilitySchema = Type.Object(
 
 const nemoClawAgentFields = {
   name: LocalResourceNameSchema,
+  auth: Type.Optional(NemoClawAgentAuthConfigSchema),
   inference: Type.Object(
     { routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }) },
     { additionalProperties: false },
@@ -493,6 +502,9 @@ export type NemoClawRouteOverrides = DeepReadonly<
 >;
 export type NemoClawInferenceRouteConfig = DeepReadonly<
   TypeBoxModule.Type.Static<typeof NemoClawInferenceRouteConfigSchema>
+>;
+export type NemoClawAgentAuthConfig = DeepReadonly<
+  TypeBoxModule.Type.Static<typeof NemoClawAgentAuthConfigSchema>
 >;
 export type NemoClawAgentConfig = DeepReadonly<
   TypeBoxModule.Type.Static<typeof NemoClawAgentConfigSchema>

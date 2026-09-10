@@ -32,6 +32,7 @@ import {
   NemoClawAgentExecutionSchema,
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
+import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
 import { validateManagedServing } from "./verify-managed-serving";
 import type {
@@ -47,6 +48,7 @@ import type {
 
 const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 const DEFAULT_DASHBOARD_URL = "http://127.0.0.1:18789";
+const HERMES_API_KEY_ENDPOINT = "https://inference-api.nousresearch.com/v1";
 // V1 intentionally recognizes only the accepted single-sandbox Hermes binding.
 // A future onboarding-default change must make a new export fidelity decision.
 const DEFAULT_HERMES_API_PORT = 8642;
@@ -94,6 +96,7 @@ type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
   | "agent"
   | "execution"
+  | "auth"
   | "gateway"
   | "inference"
   | "observability"
@@ -157,15 +160,11 @@ function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): Expo
       ].some(hasEntries),
       "a non-default Hermes dashboard",
     ],
-    [
-      "spec.sandboxes[].agents[0].authentication",
-      entry.hermesAuthMethod || entry.hermesInferenceProvider,
-      "Hermes-specific authentication",
-    ],
+    ["spec.sandboxes[].agents[0].auth", entry.hermesInferenceProvider, "Hermes clone inference"],
   ];
   const present = excluded.filter(([, value]) => hasEntries(value));
   if (entry.agent !== "hermes") {
-    return present.length > 0
+    return present.length > 0 || hasEntries(entry.hermesAuthMethod)
       ? [
           finding(
             "source.registry",
@@ -175,9 +174,64 @@ function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): Expo
         ]
       : [];
   }
-  return present.map(([field, , capability]) =>
+  const findings = present.map(([field, , capability]) =>
     finding(field, "unsupported", "V1 export does not support " + capability + "."),
   );
+  if (entry.hermesAuthMethod === "oauth")
+    findings.push(
+      finding(
+        "spec.sandboxes[].agents[0].auth",
+        "unsupported",
+        "V1 export does not support Hermes OAuth authentication.",
+      ),
+    );
+  return findings;
+}
+
+function validateHermesAuthentication(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { registry, inference } = snapshot;
+  if (registry.agent !== "hermes") return [];
+  const hasNousBinding =
+    inference.provider === HERMES_PROVIDER_NAME || inference.credentialEnv === "NOUS_API_KEY";
+  if (!registry.hermesAuthMethod) {
+    return hasNousBinding
+      ? [
+          finding(
+            "spec.sandboxes[].agents[0].auth",
+            "missing-provenance",
+            "Explicit retained Hermes API-key authentication provenance is required.",
+          ),
+        ]
+      : [];
+  }
+  if (registry.hermesAuthMethod !== "api_key") return [];
+  if (
+    !isDeepStrictEqual(
+      [
+        inference.topology,
+        inference.provider,
+        inference.api,
+        inference.endpoint,
+        inference.credentialEnv,
+      ],
+      [
+        "hosted",
+        HERMES_PROVIDER_NAME,
+        "openai-completions",
+        HERMES_API_KEY_ENDPOINT,
+        "NOUS_API_KEY",
+      ],
+    )
+  ) {
+    return [
+      finding(
+        "spec.sandboxes[].agents[0].auth",
+        "drifted",
+        "Retained Hermes authentication and the verified live inference binding differ.",
+      ),
+    ];
+  }
+  return [];
 }
 
 function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
@@ -1032,6 +1086,7 @@ function validateAgreement(
     ...validateInferenceRepresentation(snapshot),
     ...validateEndpointEvidence(snapshot),
     ...validateCredentialReference(snapshot),
+    ...validateHermesAuthentication(snapshot),
     ...validatePolicyIdentity(snapshot),
   ];
 }
@@ -1099,6 +1154,12 @@ function projectVerifiedTools(
   return { tools: { disclosure: authority.profile.tools.disclosure } };
 }
 
+function verifiedHermesAuth(entry: ObservedExportRegistry) {
+  return entry.agent === "hermes" && entry.hermesAuthMethod === "api_key"
+    ? { auth: { method: "api-key" as const } }
+    : {};
+}
+
 function projectVerifiedProxy(
   entry: ObservedExportRegistry,
   proxy: ManagedStartupProfile["proxy"] | undefined,
@@ -1126,6 +1187,7 @@ function completeVerifiedSource(
     agent: entry.agent,
     ...projectVerifiedExecution(settings),
     ...projectVerifiedWebSearch(entry),
+    ...verifiedHermesAuth(entry),
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
     ...projectVerifiedTools(entry, authority),

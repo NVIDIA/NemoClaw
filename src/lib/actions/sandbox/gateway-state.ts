@@ -927,6 +927,7 @@ export async function getReconciledSandboxGatewayState(
     return lookup;
   }
   if (lookup.state === "missing") {
+    if (gatewayRecovery === "observe") return lookup;
     return reconcileMissingAgainstNamedGateway(sandboxName, lookup, targetGatewayName);
   }
 

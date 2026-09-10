@@ -271,6 +271,7 @@ export const ExportSourceValuesSchema = Type.Refine(
     sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
     execution: Type.Optional(NemoClawAgentExecutionSchema),
     agent: NemoClawAgentTypeSchema,
+    auth: Type.Optional(Type.Object({ method: Type.Literal("api-key") })),
     runtime: Type.Object({
       provider: RuntimeProviderSchema,
       imageRef: ImmutableImageReferenceSchema,
