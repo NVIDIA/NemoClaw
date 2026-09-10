@@ -414,6 +414,23 @@ moduleRuntime._resolveFilename = function resolveSourceFilename(request, parent,
   } catch (error) {
     const parentFilename = parent?.filename ? path.resolve(parent.filename) : "";
     const sourceRoot = path.join(repoRoot, "src") + path.sep;
+    const sharedSourceRoot = path.join(repoRoot, "nemoclaw/src/shared");
+    const requestedPath = path.resolve(path.dirname(parentFilename), request);
+    // Runtime require calls bypass Vitest aliases. Resolve unbuilt shared
+    // modules only for typed source callers; packaged callers must use dist.
+    if (
+      /\.c?ts$/.test(parentFilename) &&
+      request.startsWith(".") &&
+      request.endsWith(".cjs") &&
+      [path.join(repoRoot, "nemoclaw/dist/shared"), sharedSourceRoot].includes(
+        path.dirname(requestedPath),
+      )
+    ) {
+      const sourceCandidate = path.join(sharedSourceRoot, `${path.basename(request, ".cjs")}.cts`);
+      if (fs.existsSync(sourceCandidate)) {
+        return resolveFilename.call(this, sourceCandidate, parent, isMain, options);
+      }
+    }
     if (request.startsWith(".") && request.endsWith(".js") && parentFilename) {
       const sourceRequest = `${request.slice(0, -3)}.ts`;
       const sourceCandidate = path.resolve(path.dirname(parentFilename), sourceRequest);
@@ -434,3 +451,5 @@ moduleRuntime._extensions[".ts"] = (module, filename) => {
   stats.compileMs += nowMs() - compileStart;
   module._compile(outputText, filename);
 };
+
+moduleRuntime._extensions[".cts"] = moduleRuntime._extensions[".ts"];
