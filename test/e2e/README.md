@@ -36,7 +36,8 @@ before those targets run; local runners must provide it themselves.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
 The `agent-turn-latency` target checks the configured host CLI with both text and
-JSON output. Inline-message turns keep the parent stdin pipe open. File-message
+JSON output, including explicit local mode and a requested timeout. Inline-message
+turns keep the parent stdin pipe open. File-message
 turns exercise an ordinary sandbox file, `/dev/stdin`, a sandbox symlink to stdin,
 and a relative symlink chain, and require the actual model answer from each input.
 The shared process fixture supplies finite input and EOF for stdin-backed files.

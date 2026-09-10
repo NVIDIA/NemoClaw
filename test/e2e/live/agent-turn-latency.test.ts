@@ -228,11 +228,22 @@ runAgentTurnLatencyTest(
       {
         artifactName: "openclaw-agent-follow-up-turn",
         args: [
+          "--verbose",
+          "off",
+          "--timeout",
+          "60",
           "-m",
           "What is seven multiplied by eight? Reply with only the integer, no extra words.",
         ],
         stdin: "open-pipe",
         expected: "56",
+        readText: (raw: string) => raw,
+      },
+      {
+        artifactName: "openclaw-agent-explicit-local-turn",
+        args: ["--local", "-m", "Reply with exactly LOCAL_MODE_OK and no other text."],
+        stdin: "open-pipe",
+        expected: "LOCAL_MODE_OK",
         readText: (raw: string) => raw,
       },
       ...fileInputs.flatMap((input) =>
