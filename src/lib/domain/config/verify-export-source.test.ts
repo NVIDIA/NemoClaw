@@ -481,7 +481,13 @@ describe("config export source verification (#10938)", () => {
     expect(config.spec.inferenceProviders[0]).toEqual(
       expect.objectContaining({ credential: { env: "OPENAI_API_KEY" } }),
     );
-    expect(Object.isFrozen(verifiedSource(verify(observed)).inference.overrides)).toBe(true);
+    const verifiedInference = verifiedSource(verify(observed)).inference;
+    expect("overrides" in verifiedInference).toBe(true);
+    const hostedInference = verifiedInference as Extract<
+      typeof verifiedInference,
+      { readonly endpoint: string }
+    >;
+    expect(Object.isFrozen(hostedInference.overrides)).toBe(true);
     expect(result.publish).not.toHaveBeenCalled();
   });
 

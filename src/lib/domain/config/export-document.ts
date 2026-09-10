@@ -93,7 +93,7 @@ export function buildExportConfig(
                       ...("serving" in source.inference
                         ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
                         : {}),
-                      ...source.inference.overrides,
+                      ...("overrides" in source.inference ? source.inference.overrides : {}),
                     },
                   },
                 ],

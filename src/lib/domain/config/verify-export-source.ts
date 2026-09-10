@@ -512,18 +512,20 @@ function classifyManagedStartupProfile(
     ];
   }
   const findings = classifyReasoningAgreement(entry, profile);
-  const supported = supportedAgentSettingsProfile(profile, expected);
-  if (!supported) {
-    return [
-      ...findings,
-      finding(
-        "source.workload.startupProfile",
-        "unsupported",
-        "The managed agent settings cannot be represented by v1 export.",
-      ),
-    ];
+  if (entry.servingProfileProvenance?.preset.id !== EXPORTED_VLLM_PROFILE_ID) {
+    const supported = supportedAgentSettingsProfile(profile, expected);
+    if (!supported) {
+      return [
+        ...findings,
+        finding(
+          "source.workload.startupProfile",
+          "unsupported",
+          "The managed agent settings cannot be represented by v1 export.",
+        ),
+      ];
+    }
+    expected = supported;
   }
-  expected = supported;
   if (!hasEqualJsonStructure(profile.inference, expected.inference)) {
     findings.push(
       finding(
@@ -1008,9 +1010,10 @@ function completeVerifiedSource(
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
   const selected = normalizeInferenceSelection(entry);
-  const settings = authority
-    ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
-    : {};
+  const settings =
+    authority && snapshot.inference.topology !== "managed"
+      ? projectAgentSettings(authority.profile, expectedManagedStartupProfile(entry))
+      : {};
   const proxy = authority?.profile.proxy;
   const values = {
     sandboxName: requestedSandboxName,

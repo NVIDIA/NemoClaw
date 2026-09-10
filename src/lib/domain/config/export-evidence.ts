@@ -254,7 +254,6 @@ const ExportInferenceSchema = Type.Union([
   HostedExportInferenceSchema,
   Type.Object(
     {
-      overrides: Type.Optional(NemoClawInferenceTuningSchema),
       provider: Type.Literal("vllm-local"),
       model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
       api: Type.Literal("openai-completions"),
