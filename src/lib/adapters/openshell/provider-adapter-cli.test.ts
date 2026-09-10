@@ -1373,7 +1373,7 @@ describe("CLI OpenShell provider adapter", () => {
     });
   });
 
-  it.each(["provider search-prod NotFound", "provider search-prod not found"])(
+  it.each(["provider 'search-prod' NotFound", "provider 'search-prod' not found"])(
     "does not report a missing provider as detached: %s (#9806)",
     async (diagnostic) => {
       const adapter = createCliOpenShellProviderAdapter({

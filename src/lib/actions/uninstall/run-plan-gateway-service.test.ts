@@ -118,14 +118,14 @@ function writeGatewayState(test: Fixture): string {
   return configPath;
 }
 
-function uninstall(
+async function uninstall(
   test: Fixture,
   keepOpenShell: boolean,
   deps: Partial<UninstallRunDeps> = {},
   gateways: { name: string }[] = [{ name: "nemoclaw" }],
 ) {
   const { commandExists = () => false, run = () => ok(), ...overrides } = deps;
-  return runUninstallPlanProduction(
+  return await runUninstallPlanProduction(
     { assumeYes: true, deleteModels: false, keepOpenShell },
     withProvenManagedGatewayProcess({
       backupAllBeforeUninstall: async () => undefined,
