@@ -865,6 +865,7 @@ jobs:
         shell: powershell
         run: |
           & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-python.ps1"
+          & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-python-process.ps1"
 
       - name: Set up pinned native Rust for canonical Hermes Python
         if: ${{ inputs.official_hermes_phase == 'python' }}
@@ -895,12 +896,13 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or -not $vsDevCmd) { throw 'The runner does not contain the required Visual Studio ARM64 tools.' }
           $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           $script = "$env:GITHUB_WORKSPACE\packaging\windows\hermes\prepare-official-python.ps1"
+          $phaseLock = "$env:GITHUB_WORKSPACE\packaging\windows\hermes\official-python.lock.json"
           $evidence = "$env:RUNNER_TEMP\official-hermes-python"
           $components = "$env:RUNNER_TEMP\official-hermes-components"
-          foreach ($value in @($vsDevCmd, $powershell, $script, $evidence, $components, $rustc, $cargo, $env:HERMES_COMPONENT_ROOT)) {
+          foreach ($value in @($vsDevCmd, $powershell, $script, $phaseLock, $evidence, $components, $rustc, $cargo, $env:HERMES_COMPONENT_ROOT)) {
             if ($value -match '["\r\n%!]') { throw 'A build-prerequisite path cannot be represented safely.' }
           }
-          $command = 'call "' + $vsDevCmd + '" -arch=arm64 -host_arch=arm64 && "' + $powershell + '" -NoProfile -ExecutionPolicy Bypass -File "' + $script + '" -RuntimeRoot "' + $env:HERMES_COMPONENT_ROOT + '" -ArtifactDirectory "' + $evidence + '" -ComponentEvidenceDirectory "' + $components + '" -RustcPath "' + $rustc + '" -CargoPath "' + $cargo + '"'
+          $command = 'call "' + $vsDevCmd + '" -arch=arm64 -host_arch=arm64 && "' + $powershell + '" -NoProfile -ExecutionPolicy Bypass -File "' + $script + '" -LockPath "' + $phaseLock + '" -RuntimeRoot "' + $env:HERMES_COMPONENT_ROOT + '" -ArtifactDirectory "' + $evidence + '" -ComponentEvidenceDirectory "' + $components + '" -RustcPath "' + $rustc + '" -CargoPath "' + $cargo + '"'
           & "$env:SystemRoot\System32\cmd.exe" /d /c $command
           if ($LASTEXITCODE -ne 0) { throw 'The canonical Hermes Python phase failed; baseline setup will not run.' }
 

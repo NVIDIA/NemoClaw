@@ -13,13 +13,25 @@
 param(
     [Parameter(Mandatory)][string]$RuntimeRoot,
     [Parameter(Mandatory)][string]$ArtifactDirectory,
-    [string]$LockPath = (Join-Path $PSScriptRoot 'official-components.lock.json'),
+    [string]$LockPath = '',
     [string]$BuildToolPath = '',
-    [switch]$StageWorker
+    [switch]$StageWorker,
+    [switch]$ResolveInputPathsOnly
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell5.1 does not populate script automatic variables while
+# binding default script parameters through -File (PowerShell issue4688).
+if ([string]::IsNullOrEmpty($LockPath)) {
+    $LockPath = Join-Path ([IO.Path]::GetDirectoryName($PSCommandPath)) 'official-components.lock.json'
+}
+if ($ResolveInputPathsOnly) {
+    [pscustomobject]@{ classification = 'python-input-path-control'; scriptPath = $PSCommandPath;
+        lockPath = [IO.Path]::GetFullPath($LockPath); exists = [IO.File]::Exists($LockPath) } |
+        ConvertTo-Json -Compress | Write-Output
+    return
+}
 $runtimeBuildRoot = [IO.Path]::GetFullPath($RuntimeRoot)
 $runtimeBuildEvidence = [IO.Path]::GetFullPath($ArtifactDirectory)
 $runtimeBuildLock = Get-Content -LiteralPath $LockPath -Raw | ConvertFrom-Json

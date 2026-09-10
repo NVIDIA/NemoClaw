@@ -16,11 +16,23 @@ param(
     [Parameter(Mandatory)][string]$ComponentEvidenceDirectory,
     [Parameter(Mandatory)][string]$RustcPath,
     [Parameter(Mandatory)][string]$CargoPath,
-    [string]$LockPath = (Join-Path $PSScriptRoot 'official-python.lock.json')
+    [string]$LockPath = '',
+    [switch]$ResolveInputPathsOnly
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell5.1 does not populate script automatic variables while
+# binding default script parameters through -File (PowerShell issue4688).
+if ([string]::IsNullOrEmpty($LockPath)) {
+    $LockPath = Join-Path ([IO.Path]::GetDirectoryName($PSCommandPath)) 'official-python.lock.json'
+}
+if ($ResolveInputPathsOnly) {
+    [pscustomobject]@{ classification = 'python-input-path-control'; scriptPath = $PSCommandPath;
+        lockPath = [IO.Path]::GetFullPath($LockPath); exists = [IO.File]::Exists($LockPath) } |
+        ConvertTo-Json -Compress | Write-Output
+    return
+}
 $ProgressPreference = 'SilentlyContinue'
 
 function Write-PythonPhaseJson {
@@ -172,7 +184,8 @@ try {
     $env:UV_FIND_LINKS = $downloads
     $env:CARGO_HOME = Join-Path $phaseEvidence 'cargo-home'
     & (Join-Path $PSScriptRoot 'complete-official-python.ps1') -RuntimeRoot $phaseRoot `
-        -ArtifactDirectory (Join-Path $phaseEvidence 'dependency-stage') -BuildToolPath ($buildPaths -join ';')
+        -ArtifactDirectory (Join-Path $phaseEvidence 'dependency-stage') `
+        -LockPath (Join-Path $PSScriptRoot 'official-components.lock.json') -BuildToolPath ($buildPaths -join ';')
     $resultPath = Join-Path $phaseEvidence 'dependency-stage\official-python.json'
     $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
     Assert-PythonPhaseResult -Result $result
