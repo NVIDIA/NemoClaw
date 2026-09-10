@@ -616,9 +616,10 @@ describe("connectSandbox flow", () => {
     expect(output).toMatch(/Probe timing: .*lifecycleAction=skipped .*result=ready/);
   });
 
-  it("probe-only accepts healthy launch evidence without duplicate recovery or publication (#8942)", async () => {
+  it("probe-only accepts healthy Portable OpenClaw evidence without recovery or publication (#8942)", async () => {
     const sb = { name: "alpha", agent: "openclaw", provider: null, model: null, policies: [] };
     const harness = createConnectHarness({
+      portableReceiptDisposition: { kind: "openclaw" },
       readinessDecision: {
         kind: "accepted",
         category: "accepted",
@@ -630,14 +631,21 @@ describe("connectSandbox flow", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.requalifyPortableAgentAuthoritySpy).not.toHaveBeenCalled();
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
-    const output = harness.logSpy.mock.calls.flat().join("\n");
-    expect(output).toContain("Probe complete: launch readiness is healthy for 'alpha'.");
-    expect(output).toMatch(
+    const output = harness.logSpy.mock.calls.flat().map(String);
+    expect(output.join("\n")).toContain("Probe complete: launch readiness is healthy for 'alpha'.");
+    expect(output.join("\n")).toMatch(
       /Probe timing: .*lifecycleAction=reused forwardAction=skipped result=ready/,
     );
+    expect(output.filter((line) => line.startsWith("  Portable lifecycle timing:"))).toHaveLength(
+      1,
+    );
+    expect(
+      output.filter((line) => line.startsWith("  Portable OpenClaw gateway startup timing:")),
+    ).toHaveLength(1);
   });
 
   it("probe-only skips every mutation when a newer accepted lease replaces its epoch (#8942)", async () => {

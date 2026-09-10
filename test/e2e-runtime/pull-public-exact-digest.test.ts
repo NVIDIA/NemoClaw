@@ -112,11 +112,12 @@ echo "pulled $EXPECTED_REFERENCE"
       [
         "-c",
         `set -euo pipefail
-SECONDS=0
+# Use a nonzero origin so deadline simulation must measure elapsed time.
+SECONDS=5
 sleep() {
   printf '%s\\n' "$1" >>"$SLEEP_LOG"
   if [ "$SCENARIO" = "deadline-exhausted" ]; then
-    SECONDS=1800
+    SECONDS=$((started_at + 1800))
   elif [ "$SCENARIO" = "late-success" ]; then
     SECONDS=$((SECONDS + $1))
   else

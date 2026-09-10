@@ -512,7 +512,7 @@ test(
 
     // Assertion: resume-no-{preflight,gateway}-redo. Current CLI output
     // still prints phase headings before the resume-skip decisions, so assert
-    // the skip evidence and absence of redo-only success strings instead of
+    // the skip evidence and absence of the redo-only launch marker instead of
     // rejecting headings that now frame the skipped phases.
     expect(resumeText).not.toMatch(OPENSHELL_GATEWAY_START_LINE);
     const reconciledExtraProviders = readExtraProviders();
