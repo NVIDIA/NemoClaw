@@ -685,6 +685,7 @@ async function replaceBridgeCredentialConservatively(
         ? "hermes"
         : "langchain-deepagents-code";
   const providerName = `${sandboxName}-mcp-${SERVER_NAME}`;
+  const bridge = { sandboxName, mcpUrl, artifactPrefix };
   const restart = await host.nemoclaw([sandboxName, "mcp", "restart", SERVER_NAME], {
     artifactName: `${artifactPrefix}-mcp-restart-with-replacement-credential`,
     env: { ...buildAvailabilityProbeEnv(), FAKE_MCP_SECRET: ROTATED_HOST_SECRET },
@@ -701,19 +702,15 @@ async function replaceBridgeCredentialConservatively(
     artifactName: `${artifactPrefix}-real-mcp-tool-call-after-nonrotating-restart`,
   });
   await removeBridgeAndAssertEmpty(host, sandbox, {
+    ...bridge,
     agent,
     adapter,
-    sandboxName,
-    artifactPrefix,
     providerName,
-    mcpUrl,
   });
   fakeMcp.setSecret(ROTATED_HOST_SECRET);
   await addBridgeAndReadStatus(host, sandbox, {
-    sandboxName,
-    mcpUrl,
+    ...bridge,
     expectedAdapter: adapter,
-    artifactPrefix,
     credential: ROTATED_HOST_SECRET,
     applyHostPolicyEdit: false,
   });
@@ -1233,6 +1230,19 @@ mcpBridgeShardTest("hermes")(
     await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     await assertHermesToolCall("hermes-real-mcp-tool-call-after-rediscovery-restart");
     await assertAuthenticatedMcpRediscovery(survivingMcp, survivingDiscoveryOffset);
+    cleanup.add("capture Hermes MCP runtime evidence", async () => {
+      await sandbox.execShell(
+        HERMES_SANDBOX_NAME,
+        trustedSandboxShellScript(buildHermesMcpRuntimeDiagnosticsScript()),
+        {
+          artifactName: "hermes-mcp-runtime-diagnostics",
+          captureLimitBytes: 32_768,
+          env: buildAvailabilityProbeEnv(),
+          redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET, COMPATIBLE_KEY, TOOL_CHALLENGE],
+          timeoutMs: 60_000,
+        },
+      );
+    });
     await replaceBridgeCredentialConservatively(
       host,
       sandbox,
@@ -1268,17 +1278,6 @@ mcpBridgeShardTest("hermes")(
           responseStatus: request.responseStatus,
           rpcMethod: request.rpcMethod,
         })),
-      );
-      await sandbox.execShell(
-        HERMES_SANDBOX_NAME,
-        trustedSandboxShellScript(buildHermesMcpRuntimeDiagnosticsScript()),
-        {
-          artifactName: "hermes-post-rebuild-runtime-diagnostics",
-          captureLimitBytes: 32_768,
-          env: buildAvailabilityProbeEnv(),
-          redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET, COMPATIBLE_KEY, TOOL_CHALLENGE],
-          timeoutMs: 60_000,
-        },
       );
     });
     await assertAuthenticatedMcpDiscovery(fakeMcp, {
