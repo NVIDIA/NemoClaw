@@ -37,6 +37,7 @@ import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
 import { validateManagedServing } from "./verify-managed-serving";
+import { validateOllamaServing } from "./verify-ollama-serving";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
 import type {
   CanonicalExportPolicy,
@@ -939,7 +940,11 @@ function validateGateway(snapshot: QualifiedExportSnapshot): ExportFinding[] {
 function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { registry: entry, inference } = snapshot;
   const findings: ExportFinding[] = [];
-  if (inference.topology !== "hosted" && inference.topology !== "managed")
+  if (
+    inference.topology !== "hosted" &&
+    inference.topology !== "managed" &&
+    !(inference.topology === "local" && inference.provider === "ollama-local")
+  )
     findings.push(
       finding(
         "spec.inferenceProviders",
@@ -990,6 +995,8 @@ function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFi
 
 function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
+  if (inference.provider === "ollama-local" || inference.ollamaServing)
+    return validateOllamaServing(snapshot);
   if (inference.topology === "managed") return validateManagedServing(snapshot);
   const findings: ExportFinding[] = [];
   if (
@@ -1040,7 +1047,11 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
   }
   const findings: ExportFinding[] = [];
 
-  if (inference.topology !== "managed" && !isValidNemoClawInferenceEndpoint(evidence.endpoint))
+  if (
+    inference.topology !== "managed" &&
+    inference.provider !== "ollama-local" &&
+    !isValidNemoClawInferenceEndpoint(evidence.endpoint)
+  )
     findings.push(
       finding(
         "source.inference.endpoint",
@@ -1077,7 +1088,7 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
 
 function validateCredentialReference(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
-  if (inference.topology === "managed") return [];
+  if (inference.topology === "managed" || inference.provider === "ollama-local") return [];
   const findings: ExportFinding[] = [];
   if (
     inference.credentialEnv !== null &&
@@ -1193,6 +1204,9 @@ function projectVerifiedInference(
     model: selected.model,
     api: selected.preferredInferenceApi,
   };
+  if (snapshot.inference.provider === "ollama-local") {
+    return { ...common, serving: snapshot.inference.ollamaServing?.serving };
+  }
   return snapshot.inference.topology === "managed"
     ? { ...common, serving: snapshot.inference.managedServing?.serving }
     : {

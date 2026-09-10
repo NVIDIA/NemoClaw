@@ -218,6 +218,85 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["name", "provider", "api", "serving"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 63,
+                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                  },
+                  "provider": {
+                    "type": "string",
+                    "const": "ollama-local"
+                  },
+                  "api": {
+                    "type": "string",
+                    "const": "openai-completions"
+                  },
+                  "serving": {
+                    "type": "object",
+                    "required": ["backend", "daemon", "proxy", "model"],
+                    "properties": {
+                      "backend": {
+                        "type": "string",
+                        "const": "ollama"
+                      },
+                      "daemon": {
+                        "type": "object",
+                        "required": ["management", "hostPort"],
+                        "properties": {
+                          "management": {
+                            "type": "string",
+                            "const": "external"
+                          },
+                          "hostPort": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 65535
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "proxy": {
+                        "type": "object",
+                        "required": ["management", "hostPort"],
+                        "properties": {
+                          "management": {
+                            "type": "string",
+                            "const": "nemoclaw"
+                          },
+                          "hostPort": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 65535
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "model": {
+                        "type": "object",
+                        "required": ["servedName", "digest"],
+                        "properties": {
+                          "servedName": {
+                            "type": "string",
+                            "const": "qwen3.5:9b"
+                          },
+                          "digest": {
+                            "type": "string",
+                            "pattern": "^sha256:[a-f0-9]{64}$"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
               }
             ]
           },
