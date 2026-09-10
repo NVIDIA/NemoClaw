@@ -943,7 +943,7 @@ exit 1`,
     }
   });
 
-  it("downloads and verifies every Linux arm64 release asset during reinstall", () => {
+  it("bounds stalled Linux arm64 release downloads and verifies every asset (#11281)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-linux-arm64-assets-"));
     try {
       const fakeBin = path.join(tmp, "bin");
@@ -1053,7 +1053,7 @@ chmod 755 "$dest"`,
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const downloads = fs.readFileSync(downloadLog, "utf8");
-      expect(downloads).toContain("openshell-aarch64-unknown-linux-musl.tar.gz");
+      expect(downloads.match(/^(?!.*--(?:max-time|retry-all-errors)\b).*--connect-timeout 10 --retry 3 --retry-delay 2 --speed-limit 1024 --speed-time 60 /gm)).toHaveLength(6);
       expect(downloads).toContain("openshell-gateway-aarch64-unknown-linux-gnu.tar.gz");
       expect(downloads).toContain("openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz");
       expect(fs.readFileSync(checksumLog, "utf8").trim().split("\n")).toEqual([
