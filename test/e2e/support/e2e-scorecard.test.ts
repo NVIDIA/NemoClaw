@@ -738,7 +738,6 @@ describe("E2E scorecard", () => {
     }
   });
 
-
   it("bounds trace input count and file size before parsing", () => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-bounds-"));
     const source = join(directory, "raw");

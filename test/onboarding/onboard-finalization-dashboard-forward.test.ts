@@ -15,9 +15,12 @@ function harness(options: {
   launch?: (target: ForwardServiceTarget) => void;
 }) {
   const startedPorts = new Set<number>();
-  const launch = vi.fn(options.launch ?? ((target: ForwardServiceTarget) => {
-    startedPorts.add(target.localPort);
-  }));
+  const launch = vi.fn(
+    options.launch ??
+      ((target: ForwardServiceTarget) => {
+        startedPorts.add(target.localPort);
+      }),
+  );
   const owns = vi.fn(options.ownsForward ?? ((target) => startedPorts.has(target.localPort)));
 
   const helpers = createOnboardDashboardHelpers({
@@ -179,29 +182,30 @@ describe("finalization dashboard ForwardTcp launch", () => {
     { state: "sibling", launches: 0 },
     { state: "launch-failure", launches: 1 },
     { state: "ownership-changed", launches: 1 },
-  ])(
-    "rejects a Hermes API forward with $state state (#11425)",
-    async ({ state, launches }) => {
-      vi.stubEnv("CHAT_UI_URL", undefined);
-      const { helpers, launch } = harness({
-        listSandboxes: () => ({
-          sandboxes: [
-            { name: "reonboard-test", dashboardPort: 18790, hermesApiPort: 8643 },
-            ...(state === "sibling" ? [{ name: "sibling", hermesApiPort: 8643 }] : []),
-          ],
-        }),
-        isPortBound: (port) => port === 18790 || state === "foreign" || state === "sibling",
-        ownsForward: (target) => target.localPort === 18790 || state === "sibling",
-        ...(state === "launch-failure"
-          ? { launch: () => { throw new Error("forward startup failed"); } }
-          : {}),
-      });
-      await expect(
-        helpers.ensureFinalizationAgentDashboardForward("reonboard-test", loadAgent("hermes")),
-      ).rejects.toThrow(/occupied|not available|startup failed|ownership/u);
-      expect(launch).toHaveBeenCalledTimes(launches);
-    },
-  );
+  ])("rejects a Hermes API forward with $state state (#11425)", async ({ state, launches }) => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const { helpers, launch } = harness({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "reonboard-test", dashboardPort: 18790, hermesApiPort: 8643 },
+          ...(state === "sibling" ? [{ name: "sibling", hermesApiPort: 8643 }] : []),
+        ],
+      }),
+      isPortBound: (port) => port === 18790 || state === "foreign" || state === "sibling",
+      ownsForward: (target) => target.localPort === 18790 || state === "sibling",
+      ...(state === "launch-failure"
+        ? {
+            launch: () => {
+              throw new Error("forward startup failed");
+            },
+          }
+        : {}),
+    });
+    await expect(
+      helpers.ensureFinalizationAgentDashboardForward("reonboard-test", loadAgent("hermes")),
+    ).rejects.toThrow(/occupied|not available|startup failed|ownership/u);
+    expect(launch).toHaveBeenCalledTimes(launches);
+  });
 
   it("honors an explicit dashboard URL", () => {
     vi.stubEnv("CHAT_UI_URL", "http://127.0.0.1:19001");

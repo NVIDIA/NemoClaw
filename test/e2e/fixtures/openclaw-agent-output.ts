@@ -40,10 +40,7 @@ function responseContainsToolCallStructure(
   return containsToolCallStructure(wrapperFields);
 }
 
-function isCompletedToolReplay(
-  document: unknown,
-  response: Record<string, unknown>,
-): boolean {
+function isCompletedToolReplay(document: unknown, response: Record<string, unknown>): boolean {
   if (!document || typeof document !== "object" || Array.isArray(document)) return false;
   const wrapper = document as Record<string, unknown>;
   const meta = response.meta;

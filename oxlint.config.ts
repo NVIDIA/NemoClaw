@@ -165,14 +165,6 @@ export default defineConfig({
         "sonarjs/cognitive-complexity": ["error", 11],
       },
     },
-    // Oxlint parses this import-only E2E shim as a script and reports await as a global.
-
-    {
-      files: ["test/e2e/live/bootstrap-install-smoke.test.ts"],
-      rules: {
-        "no-undef": "off",
-      },
-    },
     {
       files: ["nemoclaw/src/**/*.ts"],
       rules: {

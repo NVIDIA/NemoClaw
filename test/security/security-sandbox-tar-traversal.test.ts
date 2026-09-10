@@ -476,30 +476,33 @@ describe("Fix: safeTarExtract blocks malicious archives and extracts safe ones",
     ["weather", "/usr/local/lib/node_modules/openclaw"],
     ["slack", "/usr/local/lib/node_modules/openclaw"],
     ["whatsapp", "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw"],
-  ])("allows the %s OpenClaw extension peer link with an exact image package target", async (extensionName, packageTarget) => {
-    const { safeTarExtract } = await loadSandboxState();
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-extract-"));
-    try {
-      const targetDir = path.join(workDir, "backup");
-      fs.mkdirSync(targetDir, { recursive: true });
+  ])(
+    "allows the %s OpenClaw extension peer link with an exact image package target",
+    async (extensionName, packageTarget) => {
+      const { safeTarExtract } = await loadSandboxState();
+      const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-extract-"));
+      try {
+        const targetDir = path.join(workDir, "backup");
+        fs.mkdirSync(targetDir, { recursive: true });
 
-      // Archive-installed plugins symlink their OpenClaw peer dependency to a
-      // trusted image package location. The exact target escapes both the
-      // archive and /sandbox/, so it requires the narrow peer-link exception.
-      const tar = buildTar([
-        {
-          path: `extensions/${extensionName}/node_modules/openclaw`,
-          type: "2",
-          linkTarget: packageTarget,
-        },
-      ]);
+        // Archive-installed plugins symlink their OpenClaw peer dependency to a
+        // trusted image package location. The exact target escapes both the
+        // archive and /sandbox/, so it requires the narrow peer-link exception.
+        const tar = buildTar([
+          {
+            path: `extensions/${extensionName}/node_modules/openclaw`,
+            type: "2",
+            linkTarget: packageTarget,
+          },
+        ]);
 
-      const result = safeTarExtract(tar, targetDir);
-      expect(result.success).toBe(true);
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
+        const result = safeTarExtract(tar, targetDir);
+        expect(result.success).toBe(true);
+      } finally {
+        fs.rmSync(workDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     ["a tampered weather target", "extensions/weather/node_modules/openclaw", "/etc/passwd"],

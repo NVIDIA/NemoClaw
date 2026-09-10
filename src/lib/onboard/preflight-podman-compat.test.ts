@@ -74,19 +74,22 @@ describe("assessHost Podman docker-compat detection (#7320)", () => {
   it.each([
     ["an empty JSON object", "{}"],
     ["unexpected plain text", "unexpected version output"],
-  ])("rejects a Podman-compatible runtime when version output is %s (#7320)", (_case, versionOutput) => {
-    const result = assessHost({
-      platform: "darwin",
-      env: {},
-      dockerInfoOutput: PODMAN_COMPAT_DOCKER_INFO,
-      dockerVersionOutput: versionOutput,
-      commandExistsImpl: (name: string) => name === "docker",
-    });
+  ])(
+    "rejects a Podman-compatible runtime when version output is %s (#7320)",
+    (_case, versionOutput) => {
+      const result = assessHost({
+        platform: "darwin",
+        env: {},
+        dockerInfoOutput: PODMAN_COMPAT_DOCKER_INFO,
+        dockerVersionOutput: versionOutput,
+        commandExistsImpl: (name: string) => name === "docker",
+      });
 
-    expect(result.dockerReachable).toBe(true);
-    expect(result.runtime).toBe("podman");
-    expect(result.isUnsupportedRuntime).toBe(true);
-  });
+      expect(result.dockerReachable).toBe(true);
+      expect(result.runtime).toBe("podman");
+      expect(result.isUnsupportedRuntime).toBe(true);
+    },
+  );
 
   it("keeps Docker Engine supported when ProductLicense reports Apache-2.0", () => {
     const realDockerInfo = JSON.stringify({

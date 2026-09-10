@@ -17,23 +17,19 @@ function read(value: string | undefined): number {
 }
 
 describe("envInt override parsing", () => {
-  it.each([
-    "-1",
-    "-30",
-    "-0.4",
-    "-1e3",
-  ])("falls back instead of collapsing a negative override (%s) to zero", (value) => {
-    expect(read(value)).toBe(FALLBACK);
-  });
+  it.each(["-1", "-30", "-0.4", "-1e3"])(
+    "falls back instead of collapsing a negative override (%s) to zero",
+    (value) => {
+      expect(read(value)).toBe(FALLBACK);
+    },
+  );
 
-  it.each([
-    "abc",
-    "NaN",
-    "Infinity",
-    "-Infinity",
-  ])("keeps falling back for a non-finite override (%s)", (value) => {
-    expect(read(value)).toBe(FALLBACK);
-  });
+  it.each(["abc", "NaN", "Infinity", "-Infinity"])(
+    "keeps falling back for a non-finite override (%s)",
+    (value) => {
+      expect(read(value)).toBe(FALLBACK);
+    },
+  );
 
   it.each([
     ["unset", undefined],

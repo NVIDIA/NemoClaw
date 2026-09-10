@@ -76,7 +76,7 @@ Package-specific guides:
 | Run the broad repo-wide pre-commit and coverage baseline | `npm run check` |
 | Type-check CLI | `npm run typecheck:cli` |
 | Type-check plugin and plugin tests | `npm --prefix nemoclaw run typecheck` |
-| Auto-format added JavaScript and TypeScript files that Oxfmt does not exclude | `npm run format` |
+| Format maintained JavaScript and TypeScript files | `npm run format` |
 | Build docs | `npm run docs` |
 | Serve docs locally | `npm run docs:live` |
 
@@ -145,7 +145,7 @@ Every source file needs the repository SPDX header; the pre-commit hook inserts 
   Adapter checks also reject misused promises, invalid awaits, and incomplete switches.
 - Adapter sources and tests require type-only imports and exports, strict equality, and no unused variables or explicit `any`.
   Production adapters also reject non-null assertions and nested ternaries.
-- Oxfmt covers all `src/lib/adapters` files. The formatting hook also formats changes to existing adapters.
+- Oxfmt covers all maintained JavaScript and TypeScript files. The formatting hook formats every changed source file.
 
 - Use `eslint-plugin-sonarjs` only for the `oxlint.config.ts` cognitive-complexity rules documented in [`tools/lint/DEPENDENCY-REVIEW.md`](tools/lint/DEPENDENCY-REVIEW.md).
 - Keep function complexity low; existing complexity hotspots are tracked separately
@@ -153,7 +153,7 @@ Every source file needs the repository SPDX header; the pre-commit hook inserts 
 
 ### TypeScript
 
-- Oxlint lints plugin code in `nemoclaw/src/`. Oxfmt formats added plugin files that it does not exclude.
+- Oxlint lints plugin code in `nemoclaw/src/`. Oxfmt formats all maintained plugin source and test files.
 - CLI type-checking via `tsconfig.cli.json`
 - Plugin production and test type-checking via `npm --prefix nemoclaw run typecheck`, using
   `nemoclaw/tsconfig.json` and `nemoclaw/tsconfig.test.json`

@@ -999,9 +999,13 @@ main "$@"
       const output = `${result.stdout}${result.stderr}`;
 
       expect(result.status, output).toBe(0);
-      expect(output.match(/Run validation-only Station checks with these settings\?/g)).toHaveLength(1);
+      expect(
+        output.match(/Run validation-only Station checks with these settings\?/g),
+      ).toHaveLength(1);
       expect(output).toMatch(/Using validation-only Station checks/);
-      expect(output).toMatch(/factory-runtime validation completed[\s\S]*Station Express remains blocked/);
+      expect(output).toMatch(
+        /factory-runtime validation completed[\s\S]*Station Express remains blocked/,
+      );
       expect(output).not.toMatch(/PROVIDER=install-vllm/);
     },
   );
@@ -1383,40 +1387,37 @@ detect_express_platform
     "Unsupported DGX Station OS",
     "Unsupported DGX Station generation",
     "Conflicting NVIDIA firmware identity",
-  ])(
-    "rejects %s before the express prompt",
-    (platform) => {
-      const result = spawnSync(
-        "bash",
-        [
-          "--noprofile",
-          "--norc",
-          "-c",
-          `
+  ])("rejects %s before the express prompt", (platform) => {
+    const result = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        `
 source "$INSTALLER_UNDER_TEST" >/dev/null
 validate_express_platform_boundary "$EXPRESS_PLATFORM"
 printf 'PROMPT_REACHED\n'
 `,
-        ],
-        {
-          cwd: path.join(import.meta.dirname, "../.."),
-          encoding: "utf-8",
-          env: {
-            HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-reject-")),
-            PATH: TEST_SYSTEM_PATH,
-            INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-            EXPRESS_PLATFORM: platform,
-          },
+      ],
+      {
+        cwd: path.join(import.meta.dirname, "../.."),
+        encoding: "utf-8",
+        env: {
+          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-reject-")),
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          EXPRESS_PLATFORM: platform,
         },
-      );
-      const output = `${result.stdout}${result.stderr}`;
-      expect(result.status, output).not.toBe(0);
-      expect(output).toMatch(
-        /outside the .* boundary|platform identity conflicts across firmware fields/,
-      );
-      expect(output).not.toContain("PROMPT_REACHED");
-    },
-  );
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(
+      /outside the .* boundary|platform identity conflicts across firmware fields/,
+    );
+    expect(output).not.toContain("PROMPT_REACHED");
+  });
 
   it("explains the supported boundary for an unrecognized DGX OS before Station preparation", () => {
     const result = spawnSync(

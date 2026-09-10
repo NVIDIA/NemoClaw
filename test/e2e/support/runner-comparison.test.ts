@@ -1045,43 +1045,40 @@ describe("runner comparison summary", () => {
     );
   });
 
-  it.each([
-    "vmRssKb",
-    "rssAnonKb",
-    "rssFileKb",
-    "rssShmemKb",
-    "vmSwapKb",
-  ] as const)("rejects a negative %s in an enriched summary", (field) => {
-    const summary = expectCurrentSummary(
-      summarizeRunnerComparison([
-        currentSample(),
-        currentSample({
-          sequence: 1,
-          kind: "phase",
-          phase: "export",
-          at: "2026-07-22T10:01:00.000Z",
-          largestProcess: {
-            class: "docker-buildkit",
-            rssKb: 1100,
-            breakdown: processBreakdown(),
-          },
-        }),
-        currentSample({
-          sequence: 2,
-          kind: "finalize",
-          at: "2026-07-22T10:02:00.000Z",
-          cpu: { logicalCpuCount: 4, idleTicks: 80, totalTicks: 200 },
-        }),
-      ]),
-    );
-    const poisoned = structuredClone(summary);
-    expect(poisoned.largestProcess.breakdown).not.toBeNull();
-    poisoned.largestProcess.breakdown![field] = -1;
+  it.each(["vmRssKb", "rssAnonKb", "rssFileKb", "rssShmemKb", "vmSwapKb"] as const)(
+    "rejects a negative %s in an enriched summary",
+    (field) => {
+      const summary = expectCurrentSummary(
+        summarizeRunnerComparison([
+          currentSample(),
+          currentSample({
+            sequence: 1,
+            kind: "phase",
+            phase: "export",
+            at: "2026-07-22T10:01:00.000Z",
+            largestProcess: {
+              class: "docker-buildkit",
+              rssKb: 1100,
+              breakdown: processBreakdown(),
+            },
+          }),
+          currentSample({
+            sequence: 2,
+            kind: "finalize",
+            at: "2026-07-22T10:02:00.000Z",
+            cpu: { logicalCpuCount: 4, idleTicks: 80, totalTicks: 200 },
+          }),
+        ]),
+      );
+      const poisoned = structuredClone(summary);
+      expect(poisoned.largestProcess.breakdown).not.toBeNull();
+      poisoned.largestProcess.breakdown![field] = -1;
 
-    expect(() => parseRunnerComparisonSummary(`${JSON.stringify(poisoned, null, 2)}\n`)).toThrow(
-      "non-negative safe integer",
-    );
-  });
+      expect(() => parseRunnerComparisonSummary(`${JSON.stringify(poisoned, null, 2)}\n`)).toThrow(
+        "non-negative safe integer",
+      );
+    },
+  );
 
   it("preserves a null breakdown when procfs details were unavailable", () => {
     const summary = expectCurrentSummary(
