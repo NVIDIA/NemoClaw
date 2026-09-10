@@ -35,6 +35,7 @@ export function createCliOpenShellSandboxSshExecutor(
   deps: {
     resolveBinary?: () => string | null;
     runBuffered?: OpenShellBufferedCommandRunner;
+    commandTransport?: boolean;
   } = {},
 ): OpenShellSandboxSshExecutor {
   const run = deps.runBuffered ?? runCliOpenShellBufferedCommand;
@@ -74,10 +75,14 @@ export function createCliOpenShellSandboxSshExecutor(
         const configFailure = failure(config);
         if (configFailure) return configFailure;
         if (config.status !== 0) return { kind: "failed", reason: "transport" };
-        if (resolveOpenshellSandboxSshHost(request.sandboxName, config.stdout) === null) {
+        const declaredHost = resolveOpenshellSandboxSshHost(request.sandboxName, config.stdout);
+        if (declaredHost === null) {
           return { kind: "failed", reason: "configuration" };
         }
-        const temporary = createTempSshConfig(config.stdout, "nemoclaw-ver-");
+        const temporary = createTempSshConfig(
+          config.stdout,
+          deps.commandTransport ? "nemoclaw-ssh-" : "nemoclaw-ver-",
+        );
         try {
           const result = await run(
             "ssh",
@@ -92,7 +97,7 @@ export function createCliOpenShellSandboxSshExecutor(
               "ConnectTimeout=5",
               "-o",
               "LogLevel=ERROR",
-              openshellSandboxSshHost(request.sandboxName),
+              deps.commandTransport ? declaredHost : openshellSandboxSshHost(request.sandboxName),
               request.command,
             ],
             {
@@ -100,11 +105,24 @@ export function createCliOpenShellSandboxSshExecutor(
               timeoutMilliseconds: request.timeoutMilliseconds ?? 15000,
             },
           );
-          const commandFailure = failure(result);
-          if (commandFailure) return commandFailure;
-          // OpenSSH reserves 255 for connection errors; it cannot distinguish a
-          // remote command that also exits 255. Neither outcome permits a retry.
-          if (result.status === 255) return { kind: "failed", reason: "transport" };
+          // OpenSSH cannot distinguish a transport failure from remote exit 255.
+          const commandFailure =
+            failure(result) ??
+            (result.status === 255
+              ? { kind: "failed" as const, reason: "transport" as const }
+              : null);
+          if (commandFailure) {
+            return deps.commandTransport
+              ? {
+                  ...commandFailure,
+                  command: {
+                    exitCode: result.status ?? 1,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                  },
+                }
+              : commandFailure;
+          }
           return {
             kind: "completed",
             exitCode: result.status ?? 1,
@@ -119,4 +137,11 @@ export function createCliOpenShellSandboxSshExecutor(
       }
     },
   };
+}
+
+/** Retain legacy host aliases and command diagnostics needed during recovery. */
+export function createCliOpenShellSandboxSshCommandExecutor(
+  deps: Parameters<typeof createCliOpenShellSandboxSshExecutor>[0] = {},
+): OpenShellSandboxSshExecutor {
+  return createCliOpenShellSandboxSshExecutor({ ...deps, commandTransport: true });
 }

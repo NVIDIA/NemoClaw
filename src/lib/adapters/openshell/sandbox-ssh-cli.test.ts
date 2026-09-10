@@ -8,7 +8,10 @@ import type {
   OpenShellBufferedCommandRunner,
   OpenShellBufferedCommandRunResult,
 } from "./sandbox-command-cli";
-import { createCliOpenShellSandboxSshExecutor } from "./sandbox-ssh-cli";
+import {
+  createCliOpenShellSandboxSshExecutor,
+  createCliOpenShellSandboxSshCommandExecutor,
+} from "./sandbox-ssh-cli";
 import { namedOpenShellGateway } from "./sandbox-observer";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
@@ -218,6 +221,27 @@ describe("CLI sandbox SSH execution", () => {
     ).toEqual({ kind: "failed", reason: "configuration" });
     expect(run).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { status: 255, reason: "transport", timedOut: false },
+    { status: null, reason: "timeout", timedOut: true },
+  ])(
+    "retains command diagnostics after $reason failure without retrying",
+    async ({ status, reason, timedOut }) => {
+      const { run } = fixture({ status, timedOut, stdout: "partial output", stderr: "diagnostic" });
+      const executor = createCliOpenShellSandboxSshCommandExecutor({
+        resolveBinary: () => "/bin/openshell",
+        runBuffered: run,
+      });
+      expect(await executor.run(request)).toEqual({
+        kind: "failed",
+        reason,
+        command: { exitCode: status ?? 1, stdout: "partial output", stderr: "diagnostic" },
+      });
+      expect(run).toHaveBeenCalledTimes(3);
+      expect(existsSync(dirname(run.mock.calls[2][1][1]))).toBe(false);
+    },
+  );
 
   it("does not spawn when the executable is unavailable", async () => {
     const run = vi.fn<OpenShellBufferedCommandRunner>();

@@ -178,14 +178,14 @@ describe.each(adapterCases)("$name MCP adapter registration", (adapterCase) => {
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
   });
 
-  it("re-reads the persisted definition before registration succeeds", () => {
+  it("re-reads the persisted definition before registration succeeds", async () => {
     adapterCase.arrangeInspection(registered);
 
-    expect(() =>
+    await expect(
       registerAgentAdapter("alpha", adapterCase.adapter, adapterCase.entry, runtimeSelection, {
         GITHUB_TOKEN: "host-only-secret",
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
 
     expect(mocks.executeSandboxCommand).toHaveBeenLastCalledWith(
       "alpha",
@@ -197,14 +197,16 @@ describe.each(adapterCases)("$name MCP adapter registration", (adapterCase) => {
     );
   });
 
-  it("rejects a persisted definition that differs from the requested entry", () => {
+  it("rejects a persisted definition that differs from the requested entry", async () => {
     adapterCase.arrangeInspection(mismatch);
 
-    expect(() =>
+    await expect(
       registerAgentAdapter("alpha", adapterCase.adapter, adapterCase.entry, runtimeSelection, {
         GITHUB_TOKEN: "host-only-secret",
       }),
-    ).toThrow(`${adapterCase.adapter} config verification failed after adding 'github': mismatch.`);
+    ).rejects.toThrow(
+      `${adapterCase.adapter} config verification failed after adding 'github': mismatch.`,
+    );
   });
 });
 
@@ -214,7 +216,7 @@ describe("OpenClaw MCP adapter registration", () => {
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
   });
 
-  it("rejects a v11 post-write observation after registering the readiness-proven v12", () => {
+  it("rejects a v11 post-write observation after registering the readiness-proven v12", async () => {
     const entry: McpBridgeEntry = {
       ...baseEntry,
       agent: "openclaw",
@@ -231,7 +233,7 @@ describe("OpenClaw MCP adapter registration", () => {
       .mockReturnValueOnce(commandSuccess)
       .mockReturnValueOnce(verification);
 
-    expect(() =>
+    await expect(
       registerOpenClawAdapter(
         "alpha",
         entry,
@@ -240,7 +242,7 @@ describe("OpenClaw MCP adapter registration", () => {
         false,
         "v12",
       ),
-    ).toThrow("mcporter config verification failed after adding 'github': mismatch");
+    ).rejects.toThrow("mcporter config verification failed after adding 'github': mismatch");
 
     expect(mocks.executeSandboxCommand.mock.calls[1]?.[1]).toContain(
       "Authorization=Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
@@ -260,7 +262,7 @@ describe("Deep Agents MCP adapter credential revision", () => {
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
   });
 
-  it("writes and verifies the readiness-proven revision", () => {
+  it("writes and verifies the readiness-proven revision", async () => {
     const entry: McpBridgeEntry = {
       ...baseEntry,
       agent: "langchain-deepagents-code",
@@ -268,7 +270,7 @@ describe("Deep Agents MCP adapter credential revision", () => {
     };
     mocks.executeSandboxCommand.mockReturnValueOnce(commandSuccess).mockReturnValueOnce(registered);
 
-    expect(() =>
+    await expect(
       registerAgentAdapter(
         "alpha",
         "deepagents-config",
@@ -277,7 +279,7 @@ describe("Deep Agents MCP adapter credential revision", () => {
         { GITHUB_TOKEN: "host-only-secret" },
         { credentialRevision: "v12" },
       ),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
 
     expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
       "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
@@ -299,7 +301,7 @@ describe("Hermes MCP adapter credential revision", () => {
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
   });
 
-  it("writes and verifies the readiness-proven revision", () => {
+  it("writes and verifies the readiness-proven revision", async () => {
     mocks.runOpenshellProviderCommand.mockReturnValue(lifecycleSuccess);
     mocks.executeSandboxCommand.mockReturnValue(registered);
     mocks.executeSandboxExecCommand.mockReturnValue({
@@ -308,7 +310,7 @@ describe("Hermes MCP adapter credential revision", () => {
       stderr: "",
     });
 
-    expect(() =>
+    await expect(
       registerAgentAdapter(
         "alpha",
         "hermes-config",
@@ -317,7 +319,7 @@ describe("Hermes MCP adapter credential revision", () => {
         { GITHUB_TOKEN: "host-only-secret" },
         { credentialRevision: "v12" },
       ),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
 
     expect(JSON.stringify(mocks.runOpenshellProviderCommand.mock.calls[0]?.[0])).toContain(
       "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
