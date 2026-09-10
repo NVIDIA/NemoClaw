@@ -3,7 +3,6 @@
 
 import {
   buildSelectedOpenShellSubprocessEnv,
-  captureOpenshell,
   type OpenShellRuntimeSelection,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
@@ -14,33 +13,13 @@ import type {
   MessagingOpenShellRunner,
 } from "../../messaging/applier/types";
 import type { MessagingHookOutputMap } from "../../messaging/hooks";
-import { retirePendingRemovalMessagingPlanChannels } from "../../messaging/compiler/workflow-planner";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
-import { createMessagingHostForwardPreEnableHookRegistry } from "../../onboard/messaging-host-forward";
+import { retirePendingRemovalMessagingPlanChannels } from "../../messaging/compiler/workflow-planner";
 import type { SandboxEntry } from "../../state/registry";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-stage";
 
 export { stageMessagingManifestPlanForRebuild };
-
-export function createRebuildMessagingPreEnableHookRegistry(
-  runtimeSelection?: OpenShellRuntimeSelection,
-) {
-  return createMessagingHostForwardPreEnableHookRegistry({
-    captureForwardList: (gatewayName) => {
-      const args = ["forward", "list"];
-      if (gatewayName) args.push("--gateway", gatewayName);
-      const result = captureOpenshell(args, {
-        env: runtimeSelection
-          ? buildSelectedOpenShellSubprocessEnv(runtimeSelection)
-          : undefined,
-        replaceEnv: runtimeSelection ? true : undefined,
-        ignoreError: true,
-      });
-      return result.status === 0 ? result.output : null;
-    },
-  });
-}
 
 /** Stage the manifest plan while preserving rebuild's fail-before-delete boundary. */
 export async function stageRebuildMessagingPlanOrBail(

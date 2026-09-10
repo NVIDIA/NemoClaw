@@ -50,6 +50,7 @@ import {
   readVersionScheme,
 } from "./manifest-readers";
 import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
+import { type AgentSkillIntegration, readAgentSkillIntegration } from "./skill-integration";
 import { readStateDirectories, stateDirectoryPaths, stateDirectoryPrefixes } from "./state-directory-contract";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
 
@@ -79,6 +80,7 @@ export type {
   StateFileUserKey,
   StateFileUserKeyType,
 } from "./definition-types";
+export type { AgentSkillIntegration } from "./skill-integration";
 export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
 export { getAgentRuntimeKind, isTerminalAgent } from "./runtime-manifest";
 export type { AgentWebAuth, AgentWebAuthMethod } from "./web-auth";
@@ -172,6 +174,7 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
   const config = readObject(raw, "config");
   const inference = readInference(raw);
   const mcp = readMcpCapability(raw);
+  const skillIntegration = readAgentSkillIntegration(raw);
   if (raw.runtime_auth_state_dirs !== undefined) {
     throw new Error(
       "Agent manifest field 'runtime_auth_state_dirs' was replaced by state_dirs entries with backup: false",
@@ -265,6 +268,10 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
 
     get mcpCapability(): AgentMcpCapability {
       return mcp;
+    },
+
+    get skillIntegration(): AgentSkillIntegration | null {
+      return skillIntegration;
     },
 
     get stateDirectories(): AgentStateDirectory[] {

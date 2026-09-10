@@ -55,7 +55,7 @@ export interface SandboxMessagingDeps<Agent> {
     resume: boolean,
     session: Session | null,
     sandboxName: string | null,
-  ): string[] | null;
+  ): string[] | null | Promise<string[] | null>;
   setupMessagingChannels(
     agent: Agent,
     existingChannels: string[] | null,
@@ -70,8 +70,12 @@ export interface SandboxMessagingDeps<Agent> {
     name: string,
     type: string,
     credentialEnv: string,
-  ): GatewayCredentialOnlyProviderInspection;
-  providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
+  ): GatewayCredentialOnlyProviderInspection | Promise<GatewayCredentialOnlyProviderInspection>;
+  providerMatchesGatewayCredential(
+    name: string,
+    type: string,
+    credentialEnv: string,
+  ): boolean | Promise<boolean>;
 }
 
 export interface SandboxMessagingSelection {
@@ -261,21 +265,27 @@ function selectionFromReusablePlan<Agent>(
  * - Durable record: `channels remove` deletes the provider, a rebuild does not.
  * - Same match the create intent uses to reuse a provider without its secret.
  */
-function channelCredentialLivesAtGateway<Agent>(
+async function channelCredentialLivesAtGateway<Agent>(
   plan: SandboxMessagingPlan,
   channelId: string,
   deps: Pick<SandboxMessagingDeps<Agent>, "inspectGatewayCredential">,
-): boolean {
+): Promise<boolean> {
   const providerBindings = requiredMessagingProviderBindings(
     plan.sandboxName,
     plan,
     new Set([channelId]),
   );
   if (providerBindings.length === 0) return false;
-  const inspections = providerBindings.map((binding) => ({
-    binding,
-    inspection: deps.inspectGatewayCredential(binding.name, binding.type, binding.credentialEnv),
-  }));
+  const inspections = await Promise.all(
+    providerBindings.map(async (binding) => ({
+      binding,
+      inspection: await deps.inspectGatewayCredential(
+        binding.name,
+        binding.type,
+        binding.credentialEnv,
+      ),
+    })),
+  );
   const unresolved = inspections.find(
     ({ inspection }) => inspection.kind === "collision" || inspection.kind === "indeterminate",
   );
@@ -293,13 +303,13 @@ function channelCredentialLivesAtGateway<Agent>(
   return inspections.every(({ inspection }) => inspection.kind === "exact");
 }
 
-function reconcileGatewayCredentialChannels<Agent>(
+async function reconcileGatewayCredentialChannels<Agent>(
   plan: SandboxMessagingPlan,
   channelIds: readonly string[],
   missingChannels: Set<string>,
   deps: Pick<SandboxMessagingDeps<Agent>, "inspectGatewayCredential">,
   addMissingChannels: boolean,
-): void {
+): Promise<void> {
   for (const channelId of channelIds) {
     const providerBindings = requiredMessagingProviderBindings(
       plan.sandboxName,
@@ -307,7 +317,7 @@ function reconcileGatewayCredentialChannels<Agent>(
       new Set([channelId]),
     );
     if (providerBindings.length === 0) continue;
-    if (channelCredentialLivesAtGateway(plan, channelId, deps)) {
+    if (await channelCredentialLivesAtGateway(plan, channelId, deps)) {
       missingChannels.delete(channelId);
     } else if (addMissingChannels) {
       missingChannels.add(channelId);
@@ -323,7 +333,7 @@ function persistMessagingPlan<Agent>(
   else deps.clearPlanEnv();
 }
 
-function filterUnconfiguredHostChannelsFromSelection<Agent>(
+async function filterUnconfiguredHostChannelsFromSelection<Agent>(
   selection: SandboxMessagingSelection,
   agent: Agent,
   deps: Pick<
@@ -332,7 +342,7 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
   >,
   persist = true,
   missingAction: "disable" | "reject-ready-reuse" = "disable",
-): SandboxMessagingSelection {
+): Promise<SandboxMessagingSelection> {
   // A registry plan records the previous selection, not the current host
   // input. Rebuild the host-backed selection so policy reconciliation can
   // disable a removed channel. The detector keeps in-sandbox QR-paired
@@ -353,7 +363,7 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
     const channelsToInspect = inspectAllActiveCredentialChannels
       ? selection.selectedChannels
       : [...unconfiguredChannels];
-    reconcileGatewayCredentialChannels(
+    await reconcileGatewayCredentialChannels(
       planForGatewayCheck,
       channelsToInspect,
       unconfiguredChannels,
@@ -502,7 +512,7 @@ async function selectionFromMessagingSetup<Agent>(
 }
 
 /** Probe gateway state before persisting a reusable plan. */
-function selectionFromReconciledReusablePlan<Agent>(
+async function selectionFromReconciledReusablePlan<Agent>(
   plan: SandboxMessagingPlan,
   agent: Agent,
   writeToEnv: boolean,
@@ -511,10 +521,15 @@ function selectionFromReconciledReusablePlan<Agent>(
     SandboxMessagingDeps<Agent>,
     "clearPlanEnv" | "inspectGatewayCredential" | "note" | "writePlanToEnv"
   >,
-): SandboxMessagingSelection {
+): Promise<SandboxMessagingSelection> {
   const prepared = prepareReusablePlan(plan, agent, env);
   const reusable = { plan: prepared.plan, selectedChannels: prepared.selectedChannels };
-  const reconciled = filterUnconfiguredHostChannelsFromSelection(reusable, agent, deps, false);
+  const reconciled = await filterUnconfiguredHostChannelsFromSelection(
+    reusable,
+    agent,
+    deps,
+    false,
+  );
   if (writeToEnv || prepared.changed || reconciled.plan !== prepared.plan) {
     persistMessagingPlan(reconciled.plan, deps);
   }
@@ -522,18 +537,18 @@ function selectionFromReconciledReusablePlan<Agent>(
 }
 
 /** Reconcile checkpoint channels against current host inputs before reuse. */
-function selectionFromRecordedChannels<Agent>(
+async function selectionFromRecordedChannels<Agent>(
   recordedChannels: string[],
   envPlan: SandboxMessagingPlan | null,
   registryPlan: SandboxMessagingPlan | null,
   options: ReconcileSandboxMessagingOptions<Agent>,
-): SandboxMessagingSelection {
+): Promise<SandboxMessagingSelection> {
   let selection: SandboxMessagingSelection = {
     plan: null,
     selectedChannels: filterChannelNamesForCurrentAgent(recordedChannels, options.agent),
   };
   if (registryPlan && !envPlan) {
-    selection = selectionFromReconciledReusablePlan(
+    selection = await selectionFromReconciledReusablePlan(
       registryPlan,
       options.agent,
       true,
@@ -542,7 +557,7 @@ function selectionFromRecordedChannels<Agent>(
     );
   } else {
     if (envPlan) {
-      selection = selectionFromReconciledReusablePlan(
+      selection = await selectionFromReconciledReusablePlan(
         envPlan,
         options.agent,
         false,
@@ -550,7 +565,7 @@ function selectionFromRecordedChannels<Agent>(
         options.deps,
       );
     } else {
-      selection = filterUnconfiguredHostChannelsFromSelection(
+      selection = await filterUnconfiguredHostChannelsFromSelection(
         selection,
         options.agent,
         options.deps,
@@ -618,7 +633,7 @@ async function selectionFromRegistryPlan<Agent>(
   );
 }
 
-export function reconcileReusedSandboxMessaging<Agent>(
+export async function reconcileReusedSandboxMessaging<Agent>(
   plan: SandboxMessagingPlan | null,
   agent: Agent,
   deps: Pick<
@@ -626,9 +641,9 @@ export function reconcileReusedSandboxMessaging<Agent>(
     "clearPlanEnv" | "inspectGatewayCredential" | "note" | "writePlanToEnv"
   >,
   recordedPlan: SandboxMessagingPlan | null = plan,
-): SandboxMessagingSelection & { readonly changed: boolean } {
+): Promise<SandboxMessagingSelection & { readonly changed: boolean }> {
   const filtered = plan ? filterMessagingPlanForCurrentAgent(plan, agent) : null;
-  const selection = filterUnconfiguredHostChannelsFromSelection(
+  const selection = await filterUnconfiguredHostChannelsFromSelection(
     { plan: filtered, selectedChannels: getActiveChannelsFromPlan(filtered) },
     agent,
     deps,
@@ -673,15 +688,15 @@ async function selectionFromDivergedMessagingCheckpoint<Agent>(
   return selectionFromMessagingSetup([...checkpointedChannels], options, true);
 }
 
-function missingCredentialNeedsValidation(
+async function missingCredentialNeedsValidation(
   binding: SandboxMessagingPlan["credentialBindings"][number],
   agent: SandboxMessagingPlan["agent"],
   validateMissingCredentials: boolean,
   stagedProviderNames: ReadonlySet<string>,
   deps: Pick<SandboxMessagingDeps<unknown>, "providerMatchesGatewayCredential">,
-): boolean {
+): Promise<boolean> {
   if (validateMissingCredentials && !stagedProviderNames.has(binding.providerName)) return true;
-  const providerMatches = deps.providerMatchesGatewayCredential(
+  const providerMatches = await deps.providerMatchesGatewayCredential(
     binding.providerName,
     staticMessagingProviderTypeForChannel(binding.channelId, agent) ??
       MESSAGING_CREDENTIAL_PROVIDER_TYPE,
@@ -690,13 +705,13 @@ function missingCredentialNeedsValidation(
   return validateMissingCredentials && !providerMatches;
 }
 
-function channelsNeedingCredentialValidation(
+async function channelsNeedingCredentialValidation(
   plan: SandboxMessagingPlan,
   selectedChannels: readonly string[],
   validateMissingCredentials: boolean,
   stagedProviderNames: ReadonlySet<string>,
   deps: Pick<SandboxMessagingDeps<unknown>, "providerMatchesGatewayCredential">,
-): string[] {
+): Promise<string[]> {
   const activeChannels = new Set(selectedChannels);
   const channels = new Set<string>();
   for (const binding of plan.credentialBindings) {
@@ -708,13 +723,13 @@ function channelsNeedingCredentialValidation(
     }
     if (
       !credentialHash &&
-      missingCredentialNeedsValidation(
+      (await missingCredentialNeedsValidation(
         binding,
         plan.agent,
         validateMissingCredentials,
         stagedProviderNames,
         deps,
-      )
+      ))
     ) {
       channels.add(binding.channelId);
     }
@@ -772,7 +787,7 @@ async function selectionFromCompletedMessagingCheckpoint<Agent>(
     return selection;
   }
 
-  const credentialValidationChannels = channelsNeedingCredentialValidation(
+  const credentialValidationChannels = await channelsNeedingCredentialValidation(
     filteredPlan,
     selectedChannels,
     validateMissingCredentials,
@@ -811,7 +826,7 @@ async function selectionFromCompletedRegistryCheckpoint<Agent>(
   const filteredPlan = registryPlan
     ? filterMessagingPlanForCurrentAgent(registryPlan, options.agent)
     : null;
-  const reconciled = filterUnconfiguredHostChannelsFromSelection(
+  const reconciled = await filterUnconfiguredHostChannelsFromSelection(
     { plan: filteredPlan, selectedChannels: getActiveChannelsFromPlan(filteredPlan) },
     options.agent,
     options.deps,
@@ -958,7 +973,7 @@ export async function reconcileSandboxMessaging<Agent>(
     resolvedOptions,
   );
   if (completedSelection) return completedSelection;
-  const recordedChannels = resolvedOptions.deps.getRecordedMessagingChannelsForResume(
+  const recordedChannels = await resolvedOptions.deps.getRecordedMessagingChannelsForResume(
     resolvedOptions.resume,
     resolvedOptions.session,
     resolvedOptions.sandboxName,

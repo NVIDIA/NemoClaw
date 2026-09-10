@@ -1,0 +1,227 @@
+{
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "nemoclaw.nvidia.com/v1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "NemoClawConfig"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name", "uid"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 63,
+          "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+        },
+        "uid": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "spec": {
+      "type": "object",
+      "required": ["gateway", "inferenceProviders", "sandboxes"],
+      "properties": {
+        "gateway": {
+          "type": "object",
+          "required": ["management", "name", "port"],
+          "properties": {
+            "management": {
+              "type": "string",
+              "const": "nemoclaw"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 63,
+              "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          },
+          "additionalProperties": false
+        },
+        "inferenceProviders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "provider", "api", "endpoint"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63,
+                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+              },
+              "api": {
+                "enum": ["openai-completions", "openai-responses", "anthropic-messages"]
+              },
+              "endpoint": {
+                "type": "string",
+                "maxLength": 2048,
+                "pattern": "^https://[^\\s]+$"
+              },
+              "credential": {
+                "type": "object",
+                "required": ["env"],
+                "properties": {
+                  "env": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "sandboxes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "runtime", "network", "agents"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 19,
+                "pattern": "^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$"
+              },
+              "runtime": {
+                "type": "object",
+                "required": ["provider", "image"],
+                "properties": {
+                  "provider": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                  },
+                  "image": {
+                    "type": "object",
+                    "required": ["ref"],
+                    "properties": {
+                      "ref": {
+                        "type": "string",
+                        "maxLength": 512,
+                        "pattern": "^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "network": {
+                "type": "object",
+                "required": ["policy"],
+                "properties": {
+                  "policy": {
+                    "type": "object",
+                    "required": ["explicit"],
+                    "properties": {
+                      "explicit": {
+                        "$ref": "https://github.com/NVIDIA/NemoClaw/schemas/sandbox-policy.schema.json"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "agents": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["name", "type", "inference"],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 63,
+                      "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "openclaw"
+                    },
+                    "inference": {
+                      "type": "object",
+                      "required": ["routes"],
+                      "properties": {
+                        "routes": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": ["name", "providerRef", "overrides"],
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 63,
+                                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                              },
+                              "providerRef": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 63,
+                                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                              },
+                              "overrides": {
+                                "type": "object",
+                                "required": ["model"],
+                                "properties": {
+                                  "model": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 512,
+                                    "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "minItems": 1
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "minItems": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/schemas/nemoclaw-config-v1.schema.json",
+  "title": "NemoClawConfig v1"
+}

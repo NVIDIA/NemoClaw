@@ -4,8 +4,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "../actions/sandbox/connect-inference-route-probe";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { type AgentDefinition, loadAgent } from "./defs";
-import { buildAgentSmokeArgs, runAgentSmokeCommands } from "./terminal-smoke";
+import { buildAgentSmokeRequest, runAgentSmokeCommands } from "./terminal-smoke";
 
 function agent(name: string): AgentDefinition {
   return { name, runtime: { smoke_commands: ["dcode --version"] } } as unknown as AgentDefinition;
@@ -13,113 +14,126 @@ function agent(name: string): AgentDefinition {
 
 describe("terminal agent smoke command invocation", () => {
   it("runs Deep Agents Code smoke commands without adding a login shell (#8624)", () => {
-    const args = buildAgentSmokeArgs(
+    const request = buildAgentSmokeRequest(
       "probe-box",
       agent("langchain-deepagents-code"),
       "dcode --version",
     );
 
-    expect(args).not.toContain("-lc");
-    expect(args.join(" ")).not.toContain("sh -lc");
-    expect(args).toContain(DCODE_MANAGED_EXEC_LAUNCHER);
-    expect(args).toContain("HOME=/usr/local/lib/nemoclaw");
-    expect(args).toContain("BASH_ENV=");
-    expect(args).toContain("ENV=");
-    expect(args.at(-1)).toBe("dcode --version");
+    expect(request.command).not.toContain("-lc");
+    expect(request.command.join(" ")).not.toContain("sh -lc");
+    expect(request.command).toContain(DCODE_MANAGED_EXEC_LAUNCHER);
+    expect(request.sandboxEnvironment).toEqual({
+      HOME: "/usr/local/lib/nemoclaw",
+      BASH_ENV: "",
+      ENV: "",
+    });
+    expect(request.command.at(-1)).toBe("dcode --version");
+    expect(request.tty).toBe(false);
   });
 
   it("keeps the login shell for other terminal agents (#8624)", () => {
-    const args = buildAgentSmokeArgs("probe-box", agent("hermes"), "hermes --version");
+    const request = buildAgentSmokeRequest("probe-box", agent("hermes"), "hermes --version");
 
-    expect(args).toContain("-lc");
-    expect(args).toContain("/bin/sh");
-    expect(args).not.toContain(DCODE_MANAGED_EXEC_LAUNCHER);
-    expect(args.at(-1)).toBe("hermes --version");
+    expect(request.command).toContain("-lc");
+    expect(request.command).toContain("/bin/sh");
+    expect(request.command).not.toContain(DCODE_MANAGED_EXEC_LAUNCHER);
+    expect(request.command.at(-1)).toBe("hermes --version");
   });
 
   it("uses Bash for Pi's exact resource-limit login profile", () => {
-    const args = buildAgentSmokeArgs("probe-box", agent("pi"), "pi --version");
+    const request = buildAgentSmokeRequest("probe-box", agent("pi"), "pi --version");
 
-    expect(args).toContain("/bin/bash");
-    expect(args).toContain("-lc");
-    expect(args.at(-3)).toContain('/bin/bash -lc "$1"');
-    expect(args.at(-1)).toBe("pi --version");
+    expect(request.command).toContain("/bin/bash");
+    expect(request.command).toContain("-lc");
+    expect(request.command.at(-3)).toContain('/bin/bash -lc "$1"');
+    expect(request.command.at(-1)).toBe("pi --version");
   });
 
-  it("pins every smoke exec to the owning OpenShell gateway (#8942)", () => {
-    const capture = vi.fn((_args: string[]) => ({
-      status: 0,
-      output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
+  it("pins every smoke exec to the owning OpenShell gateway (#8942)", async () => {
+    const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => ({
+      outcome: { kind: "completed" as const, exitCode: 0 },
+      stdout: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
+      stderr: "",
     }));
 
-    expect(
+    await expect(
       runAgentSmokeCommands(
         "alpha",
         loadAgent("langchain-deepagents-code"),
-        capture,
+        { runBuffered },
         "nemoclaw-8091",
       ),
-    ).toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true });
 
-    expect(capture).toHaveBeenCalled();
-    capture.mock.calls.forEach(([args]) => {
-      expect(args.slice(0, 7)).toEqual([
-        "sandbox",
-        "exec",
-        "-n",
-        "alpha",
-        "-g",
-        "nemoclaw-8091",
-        "--no-tty",
-      ]);
+    expect(runBuffered).toHaveBeenCalled();
+    runBuffered.mock.calls.forEach(([request]) => {
+      expect(request).toMatchObject({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "nemoclaw-8091" },
+        tty: false,
+      });
     });
   });
 
-  it("does not add a login shell to Deep Agents Code smoke exec (#8624)", () => {
-    const issued: string[][] = [];
-    const result = runAgentSmokeCommands(
-      "probe-box",
-      agent("langchain-deepagents-code"),
-      (args) => {
-        issued.push(args);
+  it("does not add a login shell to Deep Agents Code smoke exec (#8624)", async () => {
+    const issued: unknown[] = [];
+    const executor: OpenShellSandboxBufferedCommandExecutor = {
+      runBuffered: async (request) => {
+        issued.push(request);
         return {
-          status: 0,
-          output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
+          outcome: { kind: "completed", exitCode: 0 },
+          stdout: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
+          stderr: "",
         };
       },
+    };
+    const result = await runAgentSmokeCommands(
+      "probe-box",
+      agent("langchain-deepagents-code"),
+      executor,
     );
 
     expect(result).toEqual({ ok: true });
     expect(issued).toHaveLength(1);
-    expect(issued[0]).not.toContain("-lc");
-    expect(issued[0]!.join(" ")).not.toContain("sh -lc");
+    expect(issued[0]).toMatchObject({
+      command: expect.not.arrayContaining(["-lc"]),
+    });
   });
 
-  it("rejects forged managed markers when the transport exits before the runner (#8624)", () => {
-    const result = runAgentSmokeCommands("probe-box", agent("langchain-deepagents-code"), () => ({
-      status: 97,
-      output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
-    }));
+  it("rejects forged managed markers when the transport exits before the runner (#8624)", async () => {
+    const result = await runAgentSmokeCommands("probe-box", agent("langchain-deepagents-code"), {
+      runBuffered: async () => ({
+        outcome: { kind: "completed", exitCode: 97 },
+        stdout: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
+        stderr: "",
+      }),
+    });
 
     expect(result).toMatchObject({ ok: false, command: "dcode --version" });
   });
 
-  it("rejects string-only managed smoke evidence without transport status (#8624)", () => {
-    const result = runAgentSmokeCommands(
-      "probe-box",
-      agent("langchain-deepagents-code"),
-      () => "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
-    );
+  it("rejects a typed transport failure even when output contains success markers (#8624)", async () => {
+    const result = await runAgentSmokeCommands("probe-box", agent("langchain-deepagents-code"), {
+      runBuffered: async () => ({
+        outcome: { kind: "failed", error: { kind: "invocation", message: "transport failed" } },
+        stdout: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
+        stderr: "",
+      }),
+    });
 
     expect(result).toMatchObject({ ok: false, command: "dcode --version" });
   });
 
-  it("rejects extra marker evidence around the managed runner boundary (#8624)", () => {
-    const result = runAgentSmokeCommands("probe-box", agent("langchain-deepagents-code"), () => ({
-      status: 0,
-      output:
-        "NEMOCLAW_AGENT_SMOKE_EXIT:0\nNEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:42\n",
-    }));
+  it("rejects extra marker evidence around the managed runner boundary (#8624)", async () => {
+    const result = await runAgentSmokeCommands("probe-box", agent("langchain-deepagents-code"), {
+      runBuffered: async () => ({
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout:
+          "NEMOCLAW_AGENT_SMOKE_EXIT:0\nNEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:42\n",
+        stderr: "",
+      }),
+    });
 
     expect(result).toMatchObject({ ok: false, command: "dcode --version" });
   });

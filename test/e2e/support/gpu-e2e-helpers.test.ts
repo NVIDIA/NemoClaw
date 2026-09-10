@@ -588,7 +588,7 @@ describe("GPU E2E helpers", () => {
     expect(hasExactReadyPhase(output)).toBe(false);
   });
 
-  it("accepts successful execution proof when the model suppresses visible text", () => {
+  it("accepts recovery proof from successful execution metadata (#10973)", () => {
     expect(() =>
       assertAgentExecutionSucceeded(agentOutput(), "inference", GPU_MODEL),
     ).not.toThrow();

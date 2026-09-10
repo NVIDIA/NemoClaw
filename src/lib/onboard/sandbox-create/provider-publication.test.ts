@@ -40,7 +40,14 @@ function typedProviderAdapter(
       value: { credentialKeys: [] },
     })),
     deleteProvider: vi.fn(async () => ({ ok: true as const })),
-    detachProvider: vi.fn(async () => ({ ok: true as const })),
+    detachProvider: vi.fn(async () => ({ ok: true as const, value: { changed: true } })),
+    attachProvider: vi.fn(async () => ({ ok: true as const })),
+    listProviderAttachments: vi.fn(async () => ({ ok: true as const, value: { names: [] } })),
+    configureProviderRefresh: vi.fn(async () => ({ ok: true as const })),
+    getProviderRefreshStatus: vi.fn(async () => ({
+      ok: true as const,
+      value: { status: "refreshed" },
+    })),
   };
   return { ...adapter, ...overrides };
 }
@@ -386,10 +393,7 @@ describe("sandbox provider preparation", () => {
     const cleanupCreateSources = vi.fn(() => {
       throw cleanupFailure;
     });
-    const harness = createHarness(
-      typedProviderAdapter({ updateProvider }),
-      cleanupCreateSources,
-    );
+    const harness = createHarness(typedProviderAdapter({ updateProvider }), cleanupCreateSources);
 
     const failure = await publishAttachedProvidersBeforeDockerSandboxCreation(
       publicationInput({

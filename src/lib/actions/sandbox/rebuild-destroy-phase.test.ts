@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   reattachMcpAfterDeleteFailure: vi.fn(),
   removeSandboxRegistryEntryWithReceipt: vi.fn(() => null),
   waitUntil: vi.fn(),
+  waitUntilAsync: vi.fn(),
   warnUnpreservedUserManagedFiles: vi.fn(),
   runOpenshell: vi.fn(
     (
@@ -48,6 +49,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 
 vi.mock("../../core/wait", () => ({
   waitUntil: mocks.waitUntil,
+  waitUntilAsync: mocks.waitUntilAsync,
 }));
 
 vi.mock("../../inference/nim", () => ({
@@ -143,6 +145,34 @@ describe("rebuild destroy phase", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+
+  it("rechecks messaging conflicts after MCP preparation and preserves the sandbox on drift", async () => {
+    const recheck = vi.fn().mockRejectedValue(new Error("Teams webhook port became occupied"));
+    const recreateJournal = stubRecreateJournal();
+    const onDeleted = vi.fn();
+    const input = {
+      sandboxName: "alpha",
+      sandboxEntry: { name: "alpha", agent: "openclaw" },
+      recheckMessagingConflicts: recheck,
+      staleRecovery: false,
+      recreateJournal,
+      backupManifest: null,
+      log: vi.fn(),
+      bail: (message: string): never => {
+        throw new Error(message);
+      },
+      onDeleted,
+    };
+
+    await expect(runRebuildDestroyPhase(input)).rejects.toThrow(
+      "Teams webhook port became occupied",
+    );
+    expect(recheck).toHaveBeenCalledWith(undefined, expect.any(Function));
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
+    expect(recreateJournal.beginDelete).not.toHaveBeenCalled();
+    expectNoSandboxDelete(mocks.runOpenshell);
+    expect(onDeleted).not.toHaveBeenCalled();
   });
 
   it("retains unexpected delete-edge diagnostics without logging credentials (#6195)", async () => {
@@ -476,19 +506,12 @@ describe("rebuild destroy phase", () => {
         bail,
         onDeleted: vi.fn(),
       }),
-    ).rejects.toThrow(
-      "Failed to revalidate MCP recovery before sandbox deletion: live policy drifted",
-    );
+    ).rejects.toThrow("Failed to revalidate rebuild before sandbox deletion: live policy drifted");
 
     expect(revalidateBeforeDelete).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
-      "alpha",
-      [],
-      [],
-      undefined,
-    );
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], [], undefined);
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
   });
@@ -528,12 +551,7 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.runOpenshell.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
-      "alpha",
-      [],
-      [],
-      undefined,
-    );
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], [], undefined);
     expect(mocks.teardownSandboxDashboardForward).not.toHaveBeenCalled();
     expect(mocks.restoreSandboxLaunchForwards).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();

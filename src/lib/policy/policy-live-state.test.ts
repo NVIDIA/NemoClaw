@@ -108,7 +108,11 @@ describe("live OpenShell policy mutations", () => {
   });
 
   it("pins recorded policy reads to the supplied operation target (#10514)", () => {
-    const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" } as const;
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    } as const;
 
     expect(
       captureRecordedSandboxBasePolicy(
@@ -120,11 +124,13 @@ describe("live OpenShell policy mutations", () => {
     expect(mocks.inspectSandboxPolicy).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "nemoclaw" },
       sandboxName,
+      runtimeSelection,
     });
     expect(mocks.readSandboxPolicy).toHaveBeenCalledWith(
       expect.objectContaining({
         target: { kind: "named", gatewayName: "nemoclaw" },
         sandboxName,
+        runtimeSelection,
         scope: "base",
       }),
     );

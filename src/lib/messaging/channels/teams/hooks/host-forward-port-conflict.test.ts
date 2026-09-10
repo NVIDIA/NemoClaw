@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { makePlan, planEntry } from "../../../../../../test/helpers/messaging-conflict-fixtures";
 import {
@@ -160,13 +160,13 @@ describe("teams.hostForwardPortConflict hook", () => {
   });
 
   it("allows the current sandbox's live host forward during rebuild", async () => {
+    const isCurrentSandboxForward = vi.fn(() => true);
     const registry = new MessagingHookRegistry([
       createTeamsHostForwardPortConflictHookRegistration({
         currentSandbox: "bob",
         registryEntries: [],
-        checkPortAvailable: async () => ({ ok: false, process: "ssh", pid: 1234 }),
-        isCurrentSandboxForward: (sandboxName, gatewayName, port) =>
-          sandboxName === "bob" && gatewayName === "nemoclaw" && port === 3978,
+        checkPortAvailable: async () => ({ ok: false, process: "openshell", pid: 1234 }),
+        isCurrentSandboxForward,
       }),
     ]);
 
@@ -179,6 +179,7 @@ describe("teams.hostForwardPortConflict hook", () => {
         },
       }),
     ).resolves.toMatchObject({ outputs: {} });
+    expect(isCurrentSandboxForward).toHaveBeenCalledWith("bob", "nemoclaw", 3978, 1234);
   });
 
   it("accepts serialized applier inputs for registry-scoped checks", async () => {

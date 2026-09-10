@@ -39,6 +39,7 @@ interface AdvisorRunOptions {
   headBranch?: string;
   headRepository?: string;
   pullRequests?: unknown[];
+  displayTitle?: string;
   status?: string;
   conclusion?: string | null;
   jobStatus?: string;
@@ -66,7 +67,8 @@ function advisorRun(jobId: number, options: AdvisorRunOptions = {}) {
     headRepository: "NVIDIA/NemoClaw",
     pullRequestHeadSha: HEAD_SHA,
     baseSha: BASE_SHA,
-    event: "pull_request_target",
+    event: "workflow_run",
+    displayTitle: `Advisor after CI PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate true`,
     path: ADVISOR_WORKFLOW_PATH,
     status: "completed",
     conclusion: "failure",
@@ -125,6 +127,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       conclusion: "FAILURE",
       runStatus: "completed",
       runConclusion: "failure",
+      event: "workflow_run",
     },
     {
       state: "pending",
@@ -134,6 +137,17 @@ describe("maintainer merge-gate contributor compliance", () => {
       conclusion: undefined,
       runStatus: "in_progress",
       runConclusion: null,
+      event: "pull_request_target",
+    },
+    {
+      state: "green gate",
+      name: "Require green PR checks",
+      runId: 9006,
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      runStatus: "completed",
+      runConclusion: "success",
+      event: "workflow_run",
     },
   ])("keeps an authenticated $state PR Review Advisor lane advisory", ({
     name,
@@ -142,6 +156,7 @@ describe("maintainer merge-gate contributor compliance", () => {
     conclusion,
     runStatus,
     runConclusion,
+    event,
   }) => {
     const jobId = runId + 100;
     const result = runGate({
@@ -158,6 +173,7 @@ describe("maintainer merge-gate contributor compliance", () => {
           conclusion: runConclusion,
           jobStatus: runStatus,
           jobConclusion: runConclusion,
+          event,
         }),
       },
     });
@@ -168,7 +184,34 @@ describe("maintainer merge-gate contributor compliance", () => {
     });
   });
 
-  it("keeps a current fork Advisor lane advisory without a REST PR association", () => {
+  it.each([
+    {
+      state: "failed",
+      status: "COMPLETED",
+      conclusion: "FAILURE",
+      runStatus: "completed",
+      runConclusion: "failure",
+    },
+    {
+      state: "pending",
+      status: "IN_PROGRESS",
+      conclusion: undefined,
+      runStatus: "in_progress",
+      runConclusion: null,
+    },
+    {
+      state: "successful",
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      runStatus: "completed",
+      runConclusion: "success",
+    },
+  ])("keeps a current fork $state Advisor lane advisory without a REST PR association", ({
+    status,
+    conclusion,
+    runStatus,
+    runConclusion,
+  }) => {
     const runId = 9003;
     const jobId = 9103;
     const forkRepository = "contributor/NemoClaw";
@@ -176,15 +219,20 @@ describe("maintainer merge-gate contributor compliance", () => {
       body: "Signed-off-by: Example User <user@example.com>",
       verified: true,
       headRepository: forkRepository,
-      statusChecks: [...successfulRequiredChecks(), advisorCheck(runId, jobId)],
+      statusChecks: [
+        ...successfulRequiredChecks(),
+        advisorCheck(runId, jobId, { status, conclusion }),
+      ],
       actionRunAttempts: {
         [String(runId)]: advisorRun(jobId, {
           headSha: HEAD_SHA,
           headBranch: "feature-branch",
           headRepository: forkRepository,
           pullRequests: [],
-          status: "completed",
-          conclusion: "failure",
+          status: runStatus,
+          conclusion: runConclusion,
+          jobStatus: runStatus,
+          jobConclusion: runConclusion,
         }),
       },
     });
@@ -219,6 +267,7 @@ describe("maintainer merge-gate contributor compliance", () => {
           headBranch: "feature-branch",
           headRepository: forkRepository,
           pullRequests: [],
+          event: "pull_request_target",
           ...run,
         }),
       },
@@ -252,6 +301,7 @@ describe("maintainer merge-gate contributor compliance", () => {
           headBranch: "feature-branch",
           headRepository: forkRepository,
           pullRequests: [],
+          event: "pull_request_target",
           ...run,
         }),
       },
@@ -291,7 +341,16 @@ describe("maintainer merge-gate contributor compliance", () => {
     { evidence: "the workflow path differs", run: { path: ".github/workflows/other.yaml" } },
     { evidence: "the workflow path is missing", run: { path: undefined } },
     { evidence: "the workflow event differs", run: { event: "workflow_dispatch" } },
-    { evidence: "the PR association is missing", run: { pullRequests: [] } },
+    {
+      evidence: "the legacy PR association is missing",
+      run: { pullRequests: [], event: "pull_request_target" },
+    },
+    {
+      evidence: "the workflow-run source identity differs",
+      run: {
+        displayTitle: `Advisor after CI PR #42 head ${BASE_SHA} base ${BASE_SHA} gate true`,
+      },
+    },
     { evidence: "the workflow name is missing", check: { workflowName: undefined } },
     { evidence: "the workflow name differs", check: { workflowName: "Automation / PR Review Advisor 2" } },
     {

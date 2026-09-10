@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellGatewayTarget, OpenShellSandboxResult } from "./sandbox-observer";
+import type { OpenShellRuntimeSelection } from "./runtime-selection";
 import type {
   OpenShellPolicyInspection,
   OpenShellSandboxPolicyRead,
-  OpenShellSandboxPolicySetOutcome,
   OpenShellSandboxPolicySetSubmission,
 } from "./policy-boundary";
 
@@ -20,6 +20,7 @@ export type OpenShellSandboxPolicyScope = "base" | "effective";
 type OpenShellSandboxPolicyRequest = Readonly<{
   target: OpenShellGatewayTarget;
   sandboxName: string;
+  runtimeSelection?: OpenShellRuntimeSelection;
   timeoutMs?: number;
 }>;
 

@@ -40,6 +40,10 @@ export interface RebuildDestroyPhaseInput {
   staleRecovery: boolean;
   recreateJournal: RebuildRecreateJournal;
   backupManifest: RebuildBackupManifest;
+  recheckMessagingConflicts?: (
+    runtimeSelection: OpenShellRuntimeSelection | undefined,
+    onConflict: RebuildBail,
+  ) => Promise<void>;
   log: RebuildLog;
   bail: RebuildBail;
   force?: boolean;
@@ -376,8 +380,15 @@ export async function runRebuildDestroyPhase(
   // final synchronous check covers registry state only and minimizes that
   // window. Durable MCP intent remains preserved, and restoration rechecks the
   // external state and fails closed if later control-plane drift is observed.
-  if (mcpPreparation.revalidateBeforeDelete || mcpPreparation.assertDeleteEdgeUnchanged) {
+  if (
+    input.recheckMessagingConflicts ||
+    mcpPreparation.revalidateBeforeDelete ||
+    mcpPreparation.assertDeleteEdgeUnchanged
+  ) {
     try {
+      await input.recheckMessagingConflicts?.(rebuildMcpRuntimeSelection, (message) => {
+        throw new Error(message);
+      });
       await mcpPreparation.revalidateBeforeDelete?.();
       mcpPreparation.assertDeleteEdgeUnchanged?.();
     } catch (error) {
@@ -390,8 +401,8 @@ export async function runRebuildDestroyPhase(
       const detail = error instanceof Error ? error.message : String(error);
       bail(
         mcpRecoveryFailure
-          ? `Failed to revalidate MCP recovery before sandbox deletion: ${redactFull(detail)} MCP provider recovery also failed: ${mcpRecoveryFailure}`
-          : `Failed to revalidate MCP recovery before sandbox deletion: ${redactFull(detail)}`,
+          ? `Failed to revalidate rebuild before sandbox deletion: ${redactFull(detail)} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          : `Failed to revalidate rebuild before sandbox deletion: ${redactFull(detail)}`,
       );
       return null;
     }
@@ -516,9 +527,7 @@ export async function runRebuildDestroyPhase(
       }
       bail(
         mcpRecoveryFailure
-          ? `Failed to delete sandbox; recovery also failed: ${[
-              mcpRecoveryFailure,
-            ]
+          ? `Failed to delete sandbox; recovery also failed: ${[mcpRecoveryFailure]
               .filter(Boolean)
               .join("; ")}`
           : "Failed to delete sandbox.",

@@ -68,9 +68,9 @@ export interface CreateSetupMessagingChannelsDeps {
   readonly googlechatTunnelRuntime?: Omit<GooglechatTunnelRuntimeDeps, "prompt" | "sandboxName">;
 }
 
-export function withPort(
+export function withHostPortPreflight(
   registry: ConflictRegistry,
-  runCaptureOpenshell: (args: string[], options: { readonly ignoreError: true }) => string | null,
+  resolveExecutable: () => string,
   checkPortAvailable: NonNullable<
     MessagingHostForwardPortConflictOptionsDeps["checkPortAvailable"]
   >,
@@ -78,11 +78,7 @@ export function withPort(
   return {
     listSandboxes: registry.listSandboxes,
     preEnableHookRegistry: createMessagingHostForwardPreEnableHookRegistry({
-      captureForwardList: (gatewayName) => {
-        const args = ["forward", "list"];
-        if (gatewayName) args.push("--gateway", gatewayName);
-        return runCaptureOpenshell(args, { ignoreError: true });
-      },
+      resolveExecutable,
       checkPortAvailable,
     }),
   };

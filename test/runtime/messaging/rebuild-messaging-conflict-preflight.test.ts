@@ -194,7 +194,7 @@ function createConflictFixture() {
 const a = process.argv.slice(2);
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("my-assistant\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="delete")     { process.stderr.write("openshell delete must not run before the conflict preflight\\n"); process.exit(17); }
 if (a[0]==="status")                         { process.stdout.write("Status: Connected\\nGateway: nemoclaw\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway: nemoclaw\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
@@ -202,7 +202,7 @@ if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider"
 if (a[0]==="inference")                      { process.exit(0); }
 if (a[0]==="provider" && a[1]==="get")       { process.exit(0); }
 if (a[0]==="provider")                       { process.exit(0); }
-if (a[0]==="forward")                        { process.exit(0); }
+if (a[0]==="forward" && a[1]==="list")     { process.stdout.write("SANDBOX BIND PORT PID STATUS\\nmy-assistant 127.0.0.1 3978 9876 active\\n"); process.exit(0); }
 process.exit(0);
 `,
     { mode: 0o755 },

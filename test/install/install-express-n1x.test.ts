@@ -30,29 +30,27 @@ describe("installer N1x Express preview", () => {
     );
   });
 
-  it("stops before onboarding when the Deferred preview is declined (#8574)", () => {
+  it("continues with ordinary onboarding when the Deferred preview is declined (#11041)", () => {
     // Model curl | bash: stdin is the script pipe, while the reply reaches the controlling /dev/tty.
     const result = runExpressPromptWithTty("n\n", "pipe", "N1x");
     const output = `${result.stdout}${result.stderr}`;
 
-    expect(result.status, output).toBe(1);
-    expect(output).toMatch(/N1x onboarding currently requires the Deferred managed-vLLM preview/);
-    expect(output).toMatch(/accept the preview, or set NEMOCLAW_PROVIDER=install-vllm/);
-    expect(output).not.toMatch(/Continuing with interactive flow/);
-    expect(output).not.toMatch(/RESULT /);
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Skipping express install\. Continuing with interactive flow/);
+    expect(output).toMatch(/RESULT .*NO_EXPRESS=1/);
   });
 
-  it("rejects NEMOCLAW_NO_EXPRESS without explicit managed-vLLM intent (#8574)", () => {
-    const result = runExpressPromptWithTty("", "pipe", "N1x", {
-      NEMOCLAW_NO_EXPRESS: "1",
-    });
+  it.each([
+    ["NEMOCLAW_NO_EXPRESS", { NEMOCLAW_NO_EXPRESS: "1" }, ""],
+    ["an explicit provider", { NEMOCLAW_PROVIDER: "ollama" }, "ollama"],
+  ])("continues with ordinary onboarding for %s (#11041)", (_scenario, env, provider) => {
+    const result = runExpressPromptWithTty("", "pipe", "N1x", env);
     const output = `${result.stdout}${result.stderr}`;
 
-    expect(result.status, output).toBe(1);
-    expect(output).toMatch(/explicit Deferred managed-vLLM preview intent/);
-    expect(output).toMatch(/Remove NEMOCLAW_NO_EXPRESS=1 and accept the preview/);
-    expect(output).toMatch(/set NEMOCLAW_PROVIDER=install-vllm/);
-    expect(output).not.toMatch(/RESULT /);
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Skipping express prompt/);
+    expect(output).toMatch(/RESULT .*NO_EXPRESS=1/);
+    expect(output).toContain(`PROVIDER=${provider} `);
   });
 
   it("allows the N1x prompt bypass with explicit managed-vLLM intent (#8574)", () => {
@@ -96,16 +94,37 @@ detect_express_platform
   });
 
   it.each([
-    ["exact marker", 'NAME="DGX SPARK FASTOS"\nVERSION="1.23.0"\n', "81a4:0:0:644:64:1:2", "file", "DGX Spark"],
+    [
+      "exact marker",
+      'NAME="DGX SPARK FASTOS"\nVERSION="1.23.0"\n',
+      "81a4:0:0:644:64:1:2",
+      "file",
+      "DGX Spark",
+    ],
     ["unquoted marker", "NAME=DGX SPARK FASTOS\n", "81a4:0:0:644:64:1:2", "file", ""],
-    ["duplicate marker", 'NAME="DGX SPARK FASTOS"\nNAME="DGX SPARK FASTOS"\n', "81a4:0:0:644:64:1:2", "file", ""],
+    [
+      "duplicate marker",
+      'NAME="DGX SPARK FASTOS"\nNAME="DGX SPARK FASTOS"\n',
+      "81a4:0:0:644:64:1:2",
+      "file",
+      "",
+    ],
     ["unknown marker", 'NAME="OTHER FASTOS"\n', "81a4:0:0:644:64:1:2", "file", ""],
     ["non-root-owned marker", 'NAME="DGX SPARK FASTOS"\n', "81a4:1000:0:644:64:1:2", "file", ""],
     ["writable marker", 'NAME="DGX SPARK FASTOS"\n', "81a4:0:0:666:64:1:2", "file", ""],
-    ["oversized marker", 'NAME="DGX SPARK FASTOS"\n'.padEnd(4097, "x"), "81a4:0:0:644:4097:1:2", "file", ""],
+    [
+      "oversized marker",
+      'NAME="DGX SPARK FASTOS"\n'.padEnd(4097, "x"),
+      "81a4:0:0:644:4097:1:2",
+      "file",
+      "",
+    ],
     ["linked marker", 'NAME="DGX SPARK FASTOS"\n', "81a4:0:0:644:64:1:2", "link", ""],
-  ] as const)("routes an OEM FastOS marker only when trusted: %s (#10717)", (_scenario, contents, metadata, markerKind, expected) => {
-    const result = runInstallerSourced(`
+  ] as const)(
+    "routes an OEM FastOS marker only when trusted: %s (#10717)",
+    (_scenario, contents, metadata, markerKind, expected) => {
+      const result = runInstallerSourced(
+        `
 test_marker="$HOME/fastos-release"
 test_target="$HOME/fastos-release-target"
 printf '%s' "$MARKER_CONTENT" >"$test_target"
@@ -131,10 +150,13 @@ stat() { printf '%s' "$MARKER_METADATA"; }
 is_wsl_host() { return 1; }
 n1x_fastos_release_path() { printf '%s' "$test_marker"; }
 detect_express_platform
-`, { MARKER_CONTENT: contents, MARKER_KIND: markerKind, MARKER_METADATA: metadata });
+`,
+        { MARKER_CONTENT: contents, MARKER_KIND: markerKind, MARKER_METADATA: metadata },
+      );
 
-    expect(result.result.stdout).toBe(expected);
-  });
+      expect(result.result.stdout).toBe(expected);
+    },
+  );
 
   it("preserves harness-owned environment paths", () => {
     const result = runInstallerSourced(

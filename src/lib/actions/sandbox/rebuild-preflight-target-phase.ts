@@ -47,10 +47,7 @@ import {
   mcpRebuildRequiresRuntimeSelection,
 } from "./rebuild-mcp-phase";
 import { preflightRebuildMessagingConflicts } from "./rebuild-messaging-conflict-preflight";
-import {
-  createRebuildMessagingPreEnableHookRegistry,
-  stageRebuildMessagingPlanOrBail,
-} from "./rebuild-messaging-phase";
+import { stageRebuildMessagingPlanOrBail } from "./rebuild-messaging-phase";
 import {
   checkRebuildGatewaySchemaPreflight,
   commitRebuildRoutePreflight,
@@ -58,6 +55,7 @@ import {
 } from "./rebuild-preflight-guards";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
+  hasValidDeferredN1xManagedVllmReplacementAuthority,
   hydrateMessagingConfigForRebuild,
   preflightAuthoritativeOnboardRuntime,
   preflightRebuildTargetRuntime,
@@ -65,7 +63,7 @@ import {
   prepareRebuildTargetConfig,
   type RebuildTargetConfig,
   stageRebuildHermesDashboardConfig,
-  stageRecordedManagedVllmIntent,
+  stageRecordedDeferredN1xIntent,
 } from "./rebuild-target-preflight";
 
 /** Upper bound on how long a minted provider-recovery receipt stays valid. */
@@ -97,6 +95,10 @@ export interface RebuildPreparedTarget {
   targetConfig: RebuildTargetConfig;
   recreateOptions: RebuildRecreateOnboardOpts;
   messagingPlan: SandboxMessagingPlan | null;
+  recheckMessagingConflicts(
+    runtimeSelection?: OpenShellRuntimeSelection,
+    onConflict?: RebuildBail,
+  ): Promise<void>;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   preparedImage: PreparedRebuildImage | null;
   routePreflightReceipt: RebuildRoutePreflightReceipt;
@@ -233,6 +235,9 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   );
   if (!recreateOptions) return null;
+  if (registry.hasLegacyDgxStationQualificationAuthority(sandboxEntry)) {
+    recreateOptions.allowLegacyDgxStationQualification = true;
+  }
   if (mcpRuntimeSelection) recreateOptions.runtimeSelection = mcpRuntimeSelection;
   let managedWorkloadRebuildCatalog: Awaited<
     ReturnType<typeof prepareManagedWorkloadRebuildHandoff>
@@ -270,7 +275,12 @@ export async function prepareRebuildTargetPreflights(args: {
   recreateOptions.observabilityEnabled =
     requestedObservabilityEnabled ?? recreateOptions.observabilityEnabled;
   recreateOptions.observabilityRequestedExplicitly = requestedObservabilityEnabled !== undefined;
-  stageRecordedManagedVllmIntent(recreateOptions, sandboxEntry, resumeConfig);
+  stageRecordedDeferredN1xIntent(recreateOptions, sandboxEntry, resumeConfig);
+  if (
+    !hasValidDeferredN1xManagedVllmReplacementAuthority(recreateOptions, sandboxEntry, resumeConfig)
+  ) {
+    return bail("Deferred N1x managed-vLLM replacement authority is invalid.");
+  }
   if (
     !stageRebuildHermesDashboardConfig(
       rebuildAgent,
@@ -304,16 +314,19 @@ export async function prepareRebuildTargetPreflights(args: {
   }
   // Detect cross-sandbox credential conflicts immediately after staging the
   // exact rebuild plan, before host/runtime probes and every destructive phase.
-  await preflightRebuildMessagingConflicts(messagingPlan, {
-    sandboxName,
-    gatewayName: getSandboxTargetGatewayName(sandboxName),
-    registry,
-    cliName: () => CLI_NAME,
-    log: (message) => console.log(message),
-    error: (message) => console.error(message),
-    preEnableHookRegistry: createRebuildMessagingPreEnableHookRegistry(mcpRuntimeSelection),
-    bail,
-  });
+  const messagingGatewayName = getSandboxTargetGatewayName(sandboxName);
+  const recheckMessagingConflicts = (runtimeSelection = mcpRuntimeSelection, onConflict = bail) =>
+    preflightRebuildMessagingConflicts(messagingPlan, {
+      sandboxName,
+      gatewayName: messagingGatewayName,
+      registry,
+      cliName: () => CLI_NAME,
+      log: (message) => console.log(message),
+      error: (message) => console.error(message),
+      runtimeSelection,
+      bail: onConflict,
+    });
+  await recheckMessagingConflicts();
   const gatewayRecovered = await runRebuildGatewayRecoveryAfterReadiness({
     assertReadiness: () =>
       preflightAuthoritativeOnboardRuntime(
@@ -427,6 +440,7 @@ export async function prepareRebuildTargetPreflights(args: {
         targetConfig,
         recreateOptions,
         messagingPlan,
+        recheckMessagingConflicts,
         baseImagePreflight,
         preparedImage,
         routePreflightReceipt: routePreflight.receipt,

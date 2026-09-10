@@ -2328,19 +2328,21 @@ describe("provider placeholder refresh (#4251)", () => {
     config: unknown,
     env: Record<string, string> = {},
     rootMode = false,
+    runtimePlan: unknown = { credentialBindings: [] },
   ): { config: any; handoffEnv: string; hash: string; result: ReturnType<typeof spawnSync> } {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-placeholders-"));
     const openclawDir = path.join(tmpDir, ".openclaw");
     const configPath = path.join(openclawDir, "openclaw.json");
     const hashPath = path.join(openclawDir, ".config-hash");
     const handoffEnvPath = path.join(tmpDir, "handoff-env");
+    const runtimePlanPath = path.join(tmpDir, "messaging-runtime-plan.json");
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.mkdirSync(openclawDir, { recursive: true });
     fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-    const fn = extractShellFunctionFromSource(
-      src,
-      "refresh_openclaw_provider_placeholders",
-    ).replaceAll("/sandbox/.openclaw", openclawDir);
+    fs.writeFileSync(runtimePlanPath, JSON.stringify(runtimePlan));
+    const fn = extractShellFunctionFromSource(src, "refresh_openclaw_provider_placeholders")
+      .replaceAll("/sandbox/.openclaw", openclawDir)
+      .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath);
     fs.writeFileSync(
       scriptPath,
       [
@@ -2606,27 +2608,19 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("emits the deterministic accepted-extras breadcrumb so e2e harnesses can prove env-arg propagation", () => {
+  it("emits the accepted-extras signal from canonical keys in the default runtime plan (#10967)", () => {
     const run = runRefresh(
+      {},
       {
-        channels: {
-          telegram: {
-            accounts: {
-              default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
-            },
-          },
-        },
+        NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: "",
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "TELEGRAM_BOT_TOKEN_AGENT_A",
       },
-      {
-        NEMOCLAW_MESSAGING_PLAN_B64: placeholderPlan(["TELEGRAM_BOT_TOKEN", "SLACK_BOT_TOKEN"]),
-        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B",
-      },
+      false,
+      { credentialBindings: [{ providerEnvKey: "TELEGRAM_BOT_TOKEN" }] },
     );
 
     expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.result.stderr).toMatch(
-      /\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted 2 entry\(ies\): TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B/,
-    );
+    expect(run.result.stderr).toMatch(/accepted 1 entry\(ies\): TELEGRAM_BOT_TOKEN_AGENT_A/u);
   });
 
   it("does not emit the accepted-extras breadcrumb when NEMOCLAW_EXTRA_PLACEHOLDER_KEYS is unset", () => {
@@ -3047,8 +3041,6 @@ describe("Telegram diagnostics (#2766)", () => {
         "export_gateway_token() { :; }",
         "write_messaging_runtime_setup_plan() { :; }",
         "write_runtime_shell_env() { :; }",
-        "ensure_runtime_shell_env_shim() { :; }",
-        "lock_rc_files() { :; }",
         "apply_messaging_runtime_env_aliases() { :; }",
         'configure_messaging_channels() { echo "ORDER:configure"; }',
         `install_messaging_runtime_preloads() { : > ${JSON.stringify(preloadPath)}; chmod 444 ${JSON.stringify(preloadPath)}; }`,
@@ -4243,10 +4235,8 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
   it("runs the helper chain end-to-end against a simulated root entrypoint", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-root-"));
     const configDir = path.join(tmpDir, "openclaw");
-    const sandboxHome = path.join(tmpDir, "sandbox");
     const proxyEnvFile = path.join(tmpDir, "nemoclaw-proxy-env.sh");
     fs.mkdirSync(configDir, { recursive: true });
-    fs.mkdirSync(sandboxHome, { recursive: true });
 
     const configPath = path.join(configDir, "openclaw.json");
     const hashPath = path.join(configDir, ".config-hash");
@@ -4256,11 +4246,6 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
     );
     fs.writeFileSync(hashPath, "placeholder\n");
     fs.chmodSync(hashPath, 0o444);
-
-    const bashrcPath = path.join(sandboxHome, ".bashrc");
-    const profilePath = path.join(sandboxHome, ".profile");
-    fs.writeFileSync(bashrcPath, "# stub bashrc\n");
-    fs.writeFileSync(profilePath, "# stub profile\n");
 
     const scriptPath = path.join(tmpDir, "run.sh");
     const ensureHash = extractShellFunctionFromSource(src, "ensure_mutable_openclaw_config_hash")
@@ -4288,7 +4273,7 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
     );
     const exportToken = extractShellFunctionFromSource(src, "export_gateway_token");
     const writeRuntimeStart = src.indexOf("write_runtime_shell_env() {");
-    const writeRuntimeEnd = src.indexOf("\nensure_runtime_shell_env_shim() {", writeRuntimeStart);
+    const writeRuntimeEnd = src.indexOf("# cleanup_on_signal", writeRuntimeStart);
     if (writeRuntimeStart === -1 || writeRuntimeEnd === -1) {
       throw new Error("expected write_runtime_shell_env in scripts/nemoclaw-start.sh");
     }
@@ -4311,11 +4296,6 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         '_PROXY_URL=""',
         '_NO_PROXY_VAL=""',
         `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'chmod 0660 ${JSON.stringify(hashPath)} 2>/dev/null; exec "$@"' sandbox-step-down)`,
-        "lock_rc_files() {",
-        '  for rc in "${1}/.bashrc" "${1}/.profile"; do',
-        '    [ -f "$rc" ] && chmod 0444 "$rc"',
-        "  done",
-        "}",
         'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
         "write_auth_profile() { :; }",
         "harden_auth_profiles() { :; }",
@@ -4342,7 +4322,6 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         "prepare_gateway_token_for_current_command",
         "export_gateway_token",
         "write_runtime_shell_env",
-        `lock_rc_files ${JSON.stringify(sandboxHome)}`,
         "setup_auth_profile_as_sandbox",
         'echo "CONTINUATION_REACHED"',
       ].join("\n"),
@@ -4369,9 +4348,6 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
       const proxyEnv = fs.readFileSync(proxyEnvFile, "utf-8");
       expect(proxyEnv).toMatch(/OPENCLAW_GATEWAY_TOKEN='[A-Za-z0-9_-]{20,}'/);
       expect(proxyEnv).toContain("export OPENCLAW_GATEWAY_TOKEN");
-
-      expect((fs.statSync(bashrcPath).mode & 0o777).toString(8)).toBe("444");
-      expect((fs.statSync(profilePath).mode & 0o777).toString(8)).toBe("444");
 
       const updatedConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
       expect(updatedConfig.gateway?.auth?.token).toMatch(/^[A-Za-z0-9_-]{20,}$/);

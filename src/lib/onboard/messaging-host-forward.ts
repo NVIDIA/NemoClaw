@@ -13,7 +13,12 @@ import { hydrateDerivedSandboxMessagingPlanFields } from "../messaging/hydration
 import type { SandboxMessagingHostForwardPlan } from "../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import * as registry from "../state/registry";
-import { parseForwardList } from "../state/sandbox-session";
+import {
+  createForwardServiceTarget,
+  isForwardServiceListenerOwner,
+} from "../adapters/openshell/forward-service";
+import { resolveOpenshellBinaryOrNull } from "../adapters/openshell/resolve-shared";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { retireProductionLegacySandboxForwards } from "./forward-service-migration";
 import { checkPortAvailable, type PortProbeResult } from "./preflight";
 
@@ -55,34 +60,49 @@ export interface MessagingHostForwardRollbackOptions {
 }
 
 export interface MessagingHostForwardPortConflictOptionsDeps {
-  readonly captureForwardList: (gatewayName: string | null) => string | null;
   readonly checkPortAvailable?: (port: number) => Promise<PortProbeResult>;
+  readonly resolveExecutable?: () => string | null;
+  readonly isListenerOwner?: typeof isForwardServiceListenerOwner;
+  readonly runtimeSelection?: OpenShellRuntimeSelection;
 }
 
 export function createMessagingHostForwardPortConflictHookOptions(
-  deps: MessagingHostForwardPortConflictOptionsDeps,
+  deps: MessagingHostForwardPortConflictOptionsDeps = {},
 ): TeamsHostForwardPortConflictHookOptions {
   return {
     checkPortAvailable: deps.checkPortAvailable ?? checkPortAvailable,
-    isCurrentSandboxForward: (sandboxName, gatewayName, port) => {
-      let output: string | null;
+    isCurrentSandboxForward: (sandboxName, gatewayName, port, listenerPid) => {
+      if (
+        !gatewayName ||
+        (deps.runtimeSelection && deps.runtimeSelection.gatewayName !== gatewayName)
+      ) {
+        return false;
+      }
       try {
-        output = deps.captureForwardList(gatewayName);
+        const executable = (deps.resolveExecutable ?? resolveOpenshellBinaryOrNull)();
+        if (!executable) return false;
+        return (deps.isListenerOwner ?? isForwardServiceListenerOwner)(
+          createForwardServiceTarget(
+            {
+              executable,
+              gatewayName,
+              workspace: deps.runtimeSelection?.workspace ?? "default",
+              sandboxName,
+              localHost: "127.0.0.1",
+            },
+            port,
+          ),
+          { expectedPid: listenerPid },
+        );
       } catch {
         return false;
       }
-      return parseForwardList(output).some(
-        (entry) =>
-          entry.sandboxName === sandboxName &&
-          entry.port === String(port) &&
-          (entry.status === "running" || entry.status === "active"),
-      );
     },
   };
 }
 
 export function createMessagingHostForwardPreEnableHookRegistry(
-  deps: MessagingHostForwardPortConflictOptionsDeps,
+  deps: MessagingHostForwardPortConflictOptionsDeps = {},
 ): MessagingHookRegistry {
   return createBuiltInMessagingHookRegistry({
     teams: {
