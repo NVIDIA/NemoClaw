@@ -192,7 +192,7 @@ describe("installer npm resolution", () => {
     expect(result.stdout.trim().split("\n").at(-1)).toBe(initialPath);
   });
 
-  it.each(["nemoclaw", "nemohermes", "nemo-deepagents"])(
+  it.each(["nemoclaw", "nemoclaw-acp", "nemohermes", "nemo-deepagents"])(
     "creates user-local shims for every packaged CLI alias during the default install path [%s]",
     (cliBin) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-package-shims-"));
@@ -219,7 +219,7 @@ fi
 exit 99
 `,
       );
-      ["nemoclaw", "nemohermes", "nemo-deepagents"].forEach((cliBin) => {
+      ["nemoclaw", "nemoclaw-acp", "nemohermes", "nemo-deepagents"].forEach((cliBin) => {
         writeExecutable(
           path.join(prefixBin, cliBin),
           `#!/usr/bin/env bash
@@ -229,7 +229,7 @@ echo "${cliBin} v0.1.0"
       });
 
       const result = runInstallerFunction(
-        '_CLI_BIN=nemoclaw; ensure_nemoclaw_shim; for name in nemoclaw nemohermes nemo-deepagents; do test -x "$NEMOCLAW_SHIM_DIR/$name"; done',
+        '_CLI_BIN=nemoclaw; ensure_nemoclaw_shim; for name in nemoclaw nemoclaw-acp nemohermes nemo-deepagents; do test -x "$NEMOCLAW_SHIM_DIR/$name"; done',
         fakeBin,
         {
           ACTIVE_NPM_PREFIX: prefix,
