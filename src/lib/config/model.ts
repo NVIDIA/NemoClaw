@@ -332,7 +332,7 @@ const NemoClawInferenceRouteConfigSchema = Type.Object(
 );
 
 /** Retained OpenClaw dashboard settings; absent leaves keep the managed defaults. */
-export const NemoClawDashboardConfigSchema = Type.Object(
+export const NemoClawOpenClawDashboardConfigSchema = Type.Object(
   {
     port: Type.Optional(
       Type.Integer({
@@ -347,14 +347,54 @@ export const NemoClawDashboardConfigSchema = Type.Object(
   { additionalProperties: false, minProperties: 1 },
 );
 
-export const NemoClawAgentInterfacesSchema = Type.Object(
-  { dashboard: NemoClawDashboardConfigSchema },
+export const NemoClawOpenClawInterfacesSchema = Type.Object(
+  { dashboard: NemoClawOpenClawDashboardConfigSchema },
   { additionalProperties: false },
+);
+
+/** V1 omission semantics follow managed onboarding, not the standalone WebUI defaults. */
+export const HERMES_INTERFACE_DEFAULTS = {
+  dashboardPort: 18_789,
+  dashboardInternalPort: 19_119,
+  apiPort: 8642,
+} as const;
+
+const HermesDashboardPortSchema = Type.Integer({
+  minimum: 1024,
+  maximum: 65_535,
+  not: { anyOf: [{ minimum: 8642, maximum: 8652 }, { const: 18_642 }] },
+});
+
+const NemoClawHermesDashboardSchema = Type.Union([
+  Type.Object({ enabled: Type.Literal(false) }, { additionalProperties: false }),
+  Type.Object(
+    {
+      enabled: Type.Literal(true),
+      port: Type.Optional(HermesDashboardPortSchema),
+      internalPort: Type.Optional(HermesDashboardPortSchema),
+      tui: Type.Optional(Type.Object({ enabled: Type.Boolean() }, { additionalProperties: false })),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+export const NemoClawHermesInterfacesSchema = Type.Object(
+  {
+    dashboard: Type.Optional(NemoClawHermesDashboardSchema),
+    api: Type.Optional(
+      Type.Object(
+        { port: Type.Integer({ minimum: 8642, maximum: 8652 }) },
+        {
+          additionalProperties: false,
+        },
+      ),
+    ),
+  },
+  { additionalProperties: false, minProperties: 1 },
 );
 
 const nemoClawAgentFields = {
   name: LocalResourceNameSchema,
-  execution: Type.Optional(NemoClawAgentExecutionSchema),
   inference: Type.Object(
     { routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }) },
     { additionalProperties: false },
@@ -366,12 +406,17 @@ const NemoClawAgentConfigSchema = Type.Union([
     {
       ...nemoClawAgentFields,
       type: Type.Literal("openclaw"),
-      interfaces: Type.Optional(NemoClawAgentInterfacesSchema),
+      execution: Type.Optional(NemoClawAgentExecutionSchema),
+      interfaces: Type.Optional(NemoClawOpenClawInterfacesSchema),
     },
     { additionalProperties: false },
   ),
   Type.Object(
-    { ...nemoClawAgentFields, type: Type.Literal("hermes") },
+    {
+      ...nemoClawAgentFields,
+      type: Type.Literal("hermes"),
+      interfaces: Type.Optional(NemoClawHermesInterfacesSchema),
+    },
     { additionalProperties: false },
   ),
 ]);

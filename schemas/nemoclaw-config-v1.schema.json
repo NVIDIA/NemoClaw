@@ -307,23 +307,6 @@
                           "maxLength": 63,
                           "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
                         },
-                        "execution": {
-                          "type": "object",
-                          "properties": {
-                            "timeoutSeconds": {
-                              "type": "integer",
-                              "minimum": 1,
-                              "maximum": 1000000000
-                            },
-                            "heartbeatEvery": {
-                              "type": "string",
-                              "maxLength": 256,
-                              "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
-                            }
-                          },
-                          "additionalProperties": false,
-                          "minProperties": 1
-                        },
                         "inference": {
                           "type": "object",
                           "required": ["routes"],
@@ -387,6 +370,23 @@
                           "type": "string",
                           "const": "openclaw"
                         },
+                        "execution": {
+                          "type": "object",
+                          "properties": {
+                            "timeoutSeconds": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1000000000
+                            },
+                            "heartbeatEvery": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "minProperties": 1
+                        },
                         "interfaces": {
                           "type": "object",
                           "required": ["dashboard"],
@@ -434,23 +434,6 @@
                           "minLength": 1,
                           "maxLength": 63,
                           "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                        },
-                        "execution": {
-                          "type": "object",
-                          "properties": {
-                            "timeoutSeconds": {
-                              "type": "integer",
-                              "minimum": 1,
-                              "maximum": 1000000000
-                            },
-                            "heartbeatEvery": {
-                              "type": "string",
-                              "maxLength": 256,
-                              "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
-                            }
-                          },
-                          "additionalProperties": false,
-                          "minProperties": 1
                         },
                         "inference": {
                           "type": "object",
@@ -514,6 +497,93 @@
                         "type": {
                           "type": "string",
                           "const": "hermes"
+                        },
+                        "interfaces": {
+                          "type": "object",
+                          "properties": {
+                            "dashboard": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "required": ["enabled"],
+                                  "properties": {
+                                    "enabled": {
+                                      "type": "boolean",
+                                      "const": false
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "required": ["enabled"],
+                                  "properties": {
+                                    "enabled": {
+                                      "type": "boolean",
+                                      "const": true
+                                    },
+                                    "port": {
+                                      "type": "integer",
+                                      "minimum": 1024,
+                                      "maximum": 65535,
+                                      "not": {
+                                        "anyOf": [
+                                          {
+                                            "minimum": 8642,
+                                            "maximum": 8652
+                                          },
+                                          {
+                                            "const": 18642
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "internalPort": {
+                                      "type": "integer",
+                                      "minimum": 1024,
+                                      "maximum": 65535,
+                                      "not": {
+                                        "anyOf": [
+                                          {
+                                            "minimum": 8642,
+                                            "maximum": 8652
+                                          },
+                                          {
+                                            "const": 18642
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "tui": {
+                                      "type": "object",
+                                      "required": ["enabled"],
+                                      "properties": {
+                                        "enabled": {
+                                          "type": "boolean"
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                }
+                              ]
+                            },
+                            "api": {
+                              "type": "object",
+                              "required": ["port"],
+                              "properties": {
+                                "port": {
+                                  "type": "integer",
+                                  "minimum": 8642,
+                                  "maximum": 8652
+                                }
+                              },
+                              "additionalProperties": false
+                            }
+                          },
+                          "additionalProperties": false,
+                          "minProperties": 1
                         }
                       },
                       "additionalProperties": false

@@ -7,6 +7,7 @@ import { Check } from "typebox/value";
 import { ExportSourceValuesSchema } from "./export-evidence";
 import { describe, expect, it, vi } from "vitest";
 import { runConfigExport } from "../../actions/config/export";
+import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import { buildChain } from "../../dashboard/contract";
 import { validateNemoClawConfig } from "../../config/schema";
 import {
@@ -17,7 +18,7 @@ import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/rou
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
-import type { ObservedExportSnapshot, QualifiedExportSnapshot } from "./export-evidence";
+import type { ObservedExportSnapshot } from "./export-evidence";
 import { classifyExportRegistry, verifyExportSource } from "./verify-export-source";
 import {
   sandboxId,
@@ -30,6 +31,9 @@ import {
   managedWorkload,
   entry,
   snapshot,
+  hermesSnapshot,
+  verify,
+  changeRetainedProfile,
 } from "./export-source-test-fixture";
 
 function braveSnapshot(): ObservedExportSnapshot {
@@ -59,20 +63,6 @@ function braveSnapshot(): ObservedExportSnapshot {
   };
 }
 
-function hermesSnapshot(registryOverrides: Partial<SandboxEntry> = {}): ObservedExportSnapshot {
-  const workload = managedWorkload(hermesProfileInput(), hermesImageRef);
-  return snapshot({
-    registry: entry({
-      agent: "hermes",
-      imageTag: hermesImageRef,
-      workload,
-      hermesApiPort: 8642,
-      ...registryOverrides,
-    }),
-    sandbox: { ...snapshot().sandbox, imageRef: hermesImageRef },
-  });
-}
-
 function findings(result: ReturnType<typeof verifyExportSource>) {
   return result.kind === "verified" ? [] : result.findings;
 }
@@ -80,42 +70,6 @@ function findings(result: ReturnType<typeof verifyExportSource>) {
 function verifiedSource(result: ReturnType<typeof verifyExportSource>) {
   expect(result.kind).toBe("verified");
   return (result as Extract<typeof result, { kind: "verified" }>).source;
-}
-
-function verify(
-  value: ObservedExportSnapshot,
-  requestedSandboxName = "alpha",
-  policyRepresentable = true,
-) {
-  const identity = { sandboxId: value.policy.sandboxId, revision: value.policy.revision };
-  const qualified = {
-    ...value,
-    policy: policyRepresentable
-      ? { ...identity, kind: "verified", canonical: canonicalPolicy }
-      : { ...identity, kind: "not-representable" },
-  } as QualifiedExportSnapshot;
-  return verifyExportSource(requestedSandboxName, qualified);
-}
-
-async function exportSnapshots(sequence: readonly ObservedExportSnapshot[]) {
-  let index = 0;
-  const read = vi.fn(async () => sequence[Math.min(index++, sequence.length - 1)]!);
-  const writeStdout = vi.fn(async (_contents: string) => undefined);
-  const publish = vi.fn(() => ({ ok: true, outputPath: "/tmp/alpha.yaml" }) as const);
-  const outcome = await runConfigExport(
-    {
-      sandboxName: "alpha",
-      documentName: parseNemoClawConfigDocumentName("alpha"),
-      target: { kind: "stdout" },
-    },
-    {
-      observe: (name) => observeStableExportSource(name, { read }),
-      createDocumentUid: () => parseNemoClawConfigDocumentUid(sandboxId),
-      writeStdout,
-      publish,
-    },
-  );
-  return { outcome, read, writeStdout, publish };
 }
 
 const tunedEnvironment = {
@@ -306,7 +260,7 @@ describe("config export source verification (#10938)", () => {
       reasoning: true,
       reasoningEffort: "high",
     });
-    expect(agent.execution).toEqual({ timeoutSeconds: 900, heartbeatEvery: "30m" });
+    expect(agent).toHaveProperty("execution", { timeoutSeconds: 900, heartbeatEvery: "30m" });
     expect(config.spec.sandboxes[0]!.network.policy.explicit).toEqual(canonicalPolicy);
     expect(config.spec.inferenceProviders[0]).toEqual(
       expect.objectContaining({ credential: { env: "OPENAI_API_KEY" } }),
@@ -345,7 +299,9 @@ describe("config export source verification (#10938)", () => {
     const result = await exportSnapshots([tunedSnapshot({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" })]);
     expect(result.outcome.ok).toBe(true);
     const config = validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
-    expect(config.spec.sandboxes[0]!.agents[0]!.execution).toEqual({ heartbeatEvery: "0m" });
+    expect(config.spec.sandboxes[0]!.agents[0]).toHaveProperty("execution", {
+      heartbeatEvery: "0m",
+    });
   });
 
   it.each(Object.entries(tunedEnvironment))(
@@ -370,8 +326,8 @@ describe("config export source verification (#10938)", () => {
     expect(result.read).toHaveBeenCalledTimes(4);
     expect(
       validateNemoClawConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])).spec.sandboxes[0]!
-        .agents[0]!.execution?.timeoutSeconds,
-    ).toBe(900);
+        .agents[0],
+    ).toHaveProperty("execution.timeoutSeconds", 900);
   });
 
   it.each([
@@ -714,16 +670,6 @@ describe("config export source verification (#10938)", () => {
       "spec.sandboxes[].agents[0].tools",
     ],
     [
-      "Hermes dashboard",
-      { hermesDashboardEnabled: true, hermesDashboardPort: 18_790 },
-      "spec.sandboxes[].agents[0].dashboard",
-    ],
-    [
-      "invalid Hermes dashboard port evidence",
-      { hermesDashboardPort: 0 },
-      "spec.sandboxes[].agents[0].dashboard",
-    ],
-    [
       "Hermes authentication",
       { hermesAuthMethod: "api_key" as const },
       "spec.sandboxes[].agents[0].authentication",
@@ -733,7 +679,6 @@ describe("config export source verification (#10938)", () => {
       { hermesInferenceProvider: "hermes-provider" },
       "spec.sandboxes[].agents[0].authentication",
     ],
-    ["non-default Hermes API port", { hermesApiPort: 8643 }, "spec.sandboxes[].agents[0].api"],
   ])("rejects excluded %s state (#11286)", (_case, registryOverrides, field) => {
     expect(findings(verify(hermesSnapshot(registryOverrides)))).toContainEqual(
       expect.objectContaining({ category: "unsupported", field }),
@@ -769,7 +714,7 @@ describe("config export source verification (#10938)", () => {
           agent: "hermes",
           mode: "loopback-forwarded",
           url: "http://127.0.0.1:19189",
-          browserUrl: "http://127.0.0.1:19189",
+          browserUrl: "https://dashboard.example.com",
           publicPort: 19_189,
           internalPort: 29_189,
           tuiEnabled: false,
@@ -1136,32 +1081,6 @@ function dashboardSnapshot(
   });
 }
 
-function changeDashboardProfile(
-  observed: ObservedExportSnapshot,
-  change: (profile: Record<string, Record<string, unknown>>) => void,
-) {
-  const workload = observed.registry.workload as Extract<
-    SandboxWorkloadReceipt,
-    { kind: "managed-image" }
-  >;
-  expect(workload?.kind).toBe("managed-image");
-  const value = JSON.parse(Buffer.from(workload.encodedProfile, "base64url").toString("utf8"));
-  change(value);
-  const serialized = JSON.stringify(value);
-  const encodedProfile = Buffer.from(serialized).toString("base64url");
-  return {
-    ...observed,
-    registry: {
-      ...observed.registry,
-      workload: {
-        ...workload,
-        encodedProfile,
-        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
-      },
-    },
-  };
-}
-
 async function exportDashboardSnapshots(observed: readonly ObservedExportSnapshot[]) {
   const writeStdout = vi.fn(async (_yaml: string) => {});
   const publish = vi.fn();
@@ -1200,26 +1119,26 @@ describe("dashboard settings export", () => {
     });
   });
 
-  it.each([
-    { hermesDashboardEnabled: true, hermesDashboardPort: 19000 },
-    { dashboardRemoteBindPrepared: true },
-  ])("does not publish unsupported Hermes dashboard state %j (#10904)", async (registry) => {
-    const exported = await exportSnapshots([hermesSnapshot(registry)]);
-    expect(exported.outcome).toMatchObject({
-      ok: false,
-      failure: {
-        kind: "observation",
-        findings: expect.arrayContaining([
-          expect.objectContaining({
-            category: "unsupported",
-            field: "spec.sandboxes[].agents[0].dashboard",
-          }),
-        ]),
-      },
-    });
-    expect(exported.writeStdout).not.toHaveBeenCalled();
-    expect(exported.publish).not.toHaveBeenCalled();
-  });
+  it.each([{ dashboardRemoteBindPrepared: true }])(
+    "does not publish unsupported Hermes dashboard state %j (#10904)",
+    async (registry) => {
+      const exported = await exportSnapshots([hermesSnapshot(registry)]);
+      expect(exported.outcome).toMatchObject({
+        ok: false,
+        failure: {
+          kind: "observation",
+          findings: expect.arrayContaining([
+            expect.objectContaining({
+              category: "unsupported",
+              field: "spec.sandboxes[].agents[0].dashboard",
+            }),
+          ]),
+        },
+      });
+      expect(exported.writeStdout).not.toHaveBeenCalled();
+      expect(exported.publish).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     [19000, "0.0.0.0", { port: 19000, bind: "0.0.0.0" }],
@@ -1380,7 +1299,7 @@ describe("dashboard settings export", () => {
     "rejects retained %s without output or private values (#10904)",
     async (label, change) => {
       const outcome = await exportDashboardSnapshots([
-        changeDashboardProfile(dashboardSnapshot(), change),
+        changeRetainedProfile(dashboardSnapshot(), change),
       ]);
       const category = ["malformed port", "URL credential"].includes(label)
         ? "missing-provenance"

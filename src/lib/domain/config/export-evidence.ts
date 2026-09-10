@@ -10,11 +10,11 @@ import {
   InferenceEndpointSchema,
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
-  NemoClawAgentInterfacesSchema,
+  NemoClawOpenClawInterfacesSchema,
+  NemoClawHermesInterfacesSchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
-  NemoClawAgentTypeSchema,
   NemoClawManagedProxyConfigSchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
@@ -266,10 +266,9 @@ const ExportInferenceSchema = Type.Union([
 ]);
 
 /** Representable values only; provenance and policy qualification remain separate. */
-export const ExportSourceValuesSchema = Type.Object({
+const exportSourceFields = {
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
   execution: Type.Optional(NemoClawAgentExecutionSchema),
-  agent: NemoClawAgentTypeSchema,
   runtime: Type.Object({
     provider: RuntimeProviderSchema,
     imageRef: ImmutableImageReferenceSchema,
@@ -277,9 +276,21 @@ export const ExportSourceValuesSchema = Type.Object({
   gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
   proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
-  interfaces: Type.Optional(NemoClawAgentInterfacesSchema),
   webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
-});
+};
+
+export const ExportSourceValuesSchema = Type.Union([
+  Type.Object({
+    ...exportSourceFields,
+    agent: Type.Literal("openclaw"),
+    interfaces: Type.Optional(NemoClawOpenClawInterfacesSchema),
+  }),
+  Type.Object({
+    ...exportSourceFields,
+    agent: Type.Literal("hermes"),
+    interfaces: Type.Optional(NemoClawHermesInterfacesSchema),
+  }),
+]);
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;
 export type VerifiedExportGateway = ExportSourceValues["gateway"];

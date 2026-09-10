@@ -1247,3 +1247,39 @@ describe("dashboard export observation", () => {
     expect(loadRegistry).toHaveBeenCalledTimes(4);
   });
 });
+
+describe("Hermes interface export observation", () => {
+  it("reads only retained interface fields and includes allocation changes in stability (#11433)", async () => {
+    mockSupportedLiveSource();
+    const first = {
+      ...entry,
+      hermesApiPort: 8643,
+      hermesDashboardEnabled: true,
+      hermesDashboardPort: 19000,
+      hermesDashboardInternalPort: 19120,
+      hermesDashboardTui: true,
+    };
+    vi.mocked(loadRegistry).mockReturnValue({ sandboxes: { alpha: first }, defaultSandbox: null });
+    const reader = createLiveExportSnapshotReader();
+    expect(await reader.read("alpha")).toMatchObject({
+      kind: "observed",
+      registry: {
+        hermesApiPort: 8643,
+        hermesDashboardEnabled: true,
+        hermesDashboardPort: 19000,
+        hermesDashboardInternalPort: 19120,
+        hermesDashboardTui: true,
+      },
+    });
+    let reads = 0;
+    vi.mocked(loadRegistry).mockImplementation(() => ({
+      sandboxes: { alpha: { ...first, hermesApiPort: reads++ % 2 === 0 ? 8643 : 8644 } },
+      defaultSandbox: null,
+    }));
+    expect(await observeStableExportSource("alpha", reader)).toMatchObject({
+      ok: false,
+      findings: [expect.objectContaining({ category: "unstable-source" })],
+    });
+    expect(reads).toBe(4);
+  });
+});

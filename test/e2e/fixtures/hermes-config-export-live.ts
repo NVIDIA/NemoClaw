@@ -18,6 +18,7 @@ import { validateNemoClawConfig } from "../../../src/lib/config/schema.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
 import type { ArtifactSink } from "./artifacts.ts";
 import type { HostCliClient } from "./clients/host.ts";
+import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
 
@@ -25,6 +26,8 @@ interface HermesConfigExportLiveInput {
   readonly artifacts: ArtifactSink;
   readonly cleanup: CleanupRegistry;
   readonly enabled: boolean;
+  readonly dashboardEnabled?: boolean;
+  readonly sandbox?: SandboxClient;
   readonly env: NodeJS.ProcessEnv;
   readonly host: HostCliClient;
   readonly redactionValues: readonly string[];
@@ -45,6 +48,8 @@ export interface HermesConfigExportLiveEvidence {
   readonly identityDriftPreventedPublication: boolean;
   readonly identityDriftReported: boolean;
   readonly immutableManagedImageMatches: boolean;
+  readonly interfacesMatch: boolean;
+  readonly dashboardRuntimeMatches: boolean;
   readonly inferenceEndpointMatches: boolean;
   readonly launchersSucceeded: boolean;
   readonly policyMatches: boolean;
@@ -63,6 +68,8 @@ export function passesHermesConfigExportLiveEvidence(
     evidence.identityDriftPreventedPublication &&
     evidence.identityDriftReported &&
     evidence.immutableManagedImageMatches &&
+    evidence.interfacesMatch &&
+    evidence.dashboardRuntimeMatches &&
     evidence.inferenceEndpointMatches &&
     evidence.launchersSucceeded &&
     evidence.policyMatches &&
@@ -70,7 +77,75 @@ export function passesHermesConfigExportLiveEvidence(
   );
 }
 
-/** Exercise both public CLI names against one live, canonical Hermes source. */
+function expectedHermesInterfaces(input: HermesConfigExportLiveInput) {
+  if (!input.dashboardEnabled) return undefined;
+  const port = Number(input.env.NEMOCLAW_DASHBOARD_PORT ?? "18789");
+  const internalPort = Number(input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ?? "19119");
+  const apiPort = Number(input.env.NEMOCLAW_HERMES_API_PORT ?? "8642");
+  const tui = ["1", "true", "yes", "on"].includes(input.env.NEMOCLAW_HERMES_DASHBOARD_TUI ?? "0");
+  return {
+    dashboard: {
+      enabled: true,
+      ...(port === 18789 ? {} : { port }),
+      ...(internalPort === 19119 ? {} : { internalPort }),
+      ...(tui ? { tui: { enabled: true } } : {}),
+    },
+    ...(apiPort === 8642 ? {} : { api: { port: apiPort } }),
+  };
+}
+
+async function dashboardRuntimeMatches(input: HermesConfigExportLiveInput): Promise<boolean> {
+  if (!input.dashboardEnabled) return true;
+  if (!input.sandbox) return false;
+  const process = await input.sandbox.execShell(
+    input.sandboxName,
+    trustedSandboxShellScript(
+      `ps -eo comm=,args= | awk '
+      $1 ~ /^(python[0-9.]*|hermes|hermes.real)$/ && $0 ~ / dashboard / {
+        port = ""; tui = "false";
+        for (i = 2; i <= NF; i++) {
+          if ($i == "--port" && $(i+1) ~ /^[0-9]+$/) port = $(i+1);
+          if ($i == "--tui") tui = "true";
+        }
+        if (port != "") print port " " tui;
+      }'`,
+    ),
+    {
+      artifactName: "phase-6-hermes-dashboard-interface-process",
+      env: input.env,
+      timeoutMs: 30_000,
+      redactionValues: [...input.redactionValues],
+    },
+  );
+  const port = input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ?? "19119";
+  const expectedTui = ["1", "true", "yes", "on"].includes(
+    input.env.NEMOCLAW_HERMES_DASHBOARD_TUI ?? "0",
+  );
+  if (process.exitCode !== 0 || process.stdout.trim() !== `${port} ${String(expectedTui)}`)
+    return false;
+  const listener = await input.sandbox.exec(
+    input.sandboxName,
+    [
+      "curl",
+      "-sS",
+      "--max-time",
+      "10",
+      "-o",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      `http://127.0.0.1:${port}/`,
+    ],
+    {
+      artifactName: "phase-6-hermes-dashboard-internal-listener",
+      env: input.env,
+      timeoutMs: 30_000,
+    },
+  );
+  return listener.exitCode === 0 && /^(200|301|302|307|308)$/.test(listener.stdout.trim());
+}
+
+/** Exercise both public CLI names against the configured managed Hermes source. */
 export async function verifyHermesConfigExportLive(
   input: HermesConfigExportLiveInput,
 ): Promise<HermesConfigExportLiveResult> {
@@ -129,6 +204,8 @@ export async function verifyHermesConfigExportLive(
       identityDriftPreventedPublication: false,
       identityDriftReported: false,
       immutableManagedImageMatches: false,
+      interfacesMatch: false,
+      dashboardRuntimeMatches: false,
       inferenceEndpointMatches: false,
       launchersSucceeded,
       policyMatches: false,
@@ -205,6 +282,11 @@ export async function verifyHermesConfigExportLive(
       nemoclawDriftDiagnostics.includes("drifted") &&
       nemohermesDriftDiagnostics.includes("drifted"),
     immutableManagedImageMatches: sandbox.runtime.image.ref === expectedImage,
+    interfacesMatch: isDeepStrictEqual(
+      sandbox.agents[0]?.interfaces,
+      expectedHermesInterfaces(input),
+    ),
+    dashboardRuntimeMatches: await dashboardRuntimeMatches(input),
     inferenceEndpointMatches: hostedProvider?.endpoint === entry.endpointUrl,
     launchersSucceeded,
     policyMatches: isDeepStrictEqual(sandbox.network.policy.explicit, expectedPolicy),

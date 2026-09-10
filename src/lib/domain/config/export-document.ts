@@ -50,7 +50,10 @@ function exportAgent(source: VerifiedExportSource, providerName: string): NemoCl
           type: "openclaw" as const,
           ...(source.interfaces ? { interfaces: source.interfaces } : {}),
         }
-      : { type: "hermes" as const }),
+      : {
+          type: "hermes" as const,
+          ...(source.interfaces ? { interfaces: source.interfaces } : {}),
+        }),
     ...(source.execution ? { execution: source.execution } : {}),
     inference: {
       routes: [

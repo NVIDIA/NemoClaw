@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   load: vi.fn(),
   readSandboxPolicy: vi.fn(),
   save: vi.fn(),
+  exec: vi.fn(),
+  execShell: vi.fn(),
   validateNemoClawConfig: vi.fn(),
   writeJson: vi.fn(),
 }));
@@ -79,6 +81,8 @@ function passingEvidence(): HermesConfigExportLiveEvidence {
     identityDriftPreventedPublication: true,
     identityDriftReported: true,
     immutableManagedImageMatches: true,
+    interfacesMatch: true,
+    dashboardRuntimeMatches: true,
     inferenceEndpointMatches: true,
     launchersSucceeded: true,
     policyMatches: true,
@@ -86,7 +90,10 @@ function passingEvidence(): HermesConfigExportLiveEvidence {
   };
 }
 
-async function runEnabledFixture(redactionValues: readonly string[] = []) {
+async function runEnabledFixture(
+  redactionValues: readonly string[] = [],
+  dashboardEnabled = false,
+) {
   let dispose: (() => void) | undefined;
   try {
     return await verifyHermesConfigExportLive({
@@ -97,7 +104,16 @@ async function runEnabledFixture(redactionValues: readonly string[] = []) {
         },
       },
       enabled: true,
-      env: {},
+      dashboardEnabled,
+      sandbox: { exec: mocks.exec, execShell: mocks.execShell },
+      env: dashboardEnabled
+        ? {
+            NEMOCLAW_DASHBOARD_PORT: "19000",
+            NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "19120",
+            NEMOCLAW_HERMES_DASHBOARD_TUI: "1",
+            NEMOCLAW_HERMES_API_PORT: "8643",
+          }
+        : {},
       host: { command: mocks.command },
       redactionValues,
       sandboxName: "hermes",
@@ -119,6 +135,8 @@ describe("Hermes config export live evidence", () => {
     "identityDriftPreventedPublication",
     "identityDriftReported",
     "immutableManagedImageMatches",
+    "interfacesMatch",
+    "dashboardRuntimeMatches",
     "inferenceEndpointMatches",
     "launchersSucceeded",
     "policyMatches",
@@ -181,4 +199,40 @@ describe("Hermes config export live evidence", () => {
       }),
     );
   });
+});
+
+describe("Hermes interface runtime evidence", () => {
+  it.each([
+    ["19120 true\n", "200", true],
+    ["19120 false\n", "200", false],
+    ["19119 true\n", "200", false],
+    ["19120 true\n19120 true\n", "200", false],
+    ["19120 true\n", "500", false],
+  ])(
+    "requires the expected dashboard process and internal listener %s %s (#11433)",
+    async (processOutput, status, expected) => {
+      const document = mocks.validateNemoClawConfig.getMockImplementation()!();
+      document.spec.sandboxes[0].agents[0].interfaces = {
+        dashboard: { enabled: true, port: 19000, internalPort: 19120, tui: { enabled: true } },
+        api: { port: 8643 },
+      };
+      mocks.validateNemoClawConfig.mockReturnValue(document);
+      const writeExport = async (_command: string, args: string[]) => {
+        fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
+        return { exitCode: 0, stderr: "", stdout: "" };
+      };
+      mocks.command
+        .mockImplementationOnce(writeExport)
+        .mockImplementationOnce(writeExport)
+        .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
+      mocks.execShell.mockResolvedValue({ exitCode: 0, stdout: processOutput, stderr: "" });
+      mocks.exec.mockResolvedValue({ exitCode: 0, stdout: status, stderr: "" });
+      const result = await runEnabledFixture([], true);
+      expect(result).toEqual({ checked: true, passed: expected });
+      expect(mocks.writeJson).toHaveBeenCalledWith(
+        "hermes-config-export-live-evidence.json",
+        expect.objectContaining({ interfacesMatch: true, dashboardRuntimeMatches: expected }),
+      );
+    },
+  );
 });
