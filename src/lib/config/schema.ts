@@ -15,8 +15,10 @@ import { cloneAndDeepFreeze } from "../core/immutable";
 import { isSandboxPolicyCredentialFree } from "../policy/sandbox-policy-validation";
 import {
   isCredentialEnvironmentReferenceName,
+  EXPORTED_VLLM_CONTEXT_WINDOW,
   NemoClawConfigSchema,
   type NemoClawConfig,
+  type NemoClawInferenceProviderConfig,
   type NemoClawSandboxConfig,
   type ValidatedNemoClawConfig,
 } from "./model";
@@ -119,6 +121,30 @@ function webSearchProblems(sandbox: NemoClawSandboxConfig, sandboxIndex: number)
   return problems;
 }
 
+function managedProviderProblems(
+  config: NemoClawConfig,
+  provider: Extract<NemoClawInferenceProviderConfig, { serving: unknown }>,
+  providerIndex: number,
+): string[] {
+  const matches = config.spec.sandboxes.every((sandbox) =>
+    sandbox.agents.every((agent) =>
+      agent.inference.routes.every(
+        (route) =>
+          route.providerRef !== provider.name ||
+          isDeepStrictEqual(
+            [sandbox.runtime.provider, route.overrides.model, route.overrides.contextWindow],
+            ["docker", provider.serving.model.servedName, EXPORTED_VLLM_CONTEXT_WINDOW],
+          ),
+      ),
+    ),
+  );
+  return matches
+    ? []
+    : [
+        `/spec/inferenceProviders/${providerIndex}/serving does not match the sandbox runtime or route model`,
+      ];
+}
+
 function semanticProblems(config: NemoClawConfig): string[] {
   const problems = [
     ...duplicateProblems(
@@ -132,6 +158,10 @@ function semanticProblems(config: NemoClawConfig): string[] {
   ];
   const providers = new Set(config.spec.inferenceProviders.map(({ name }) => name));
   for (const [providerIndex, provider] of config.spec.inferenceProviders.entries()) {
+    if ("serving" in provider) {
+      problems.push(...managedProviderProblems(config, provider, providerIndex));
+      continue;
+    }
     const endpointViolation = unsafeEndpointUrlViolation(provider.endpoint);
     if (endpointViolation)
       problems.push(

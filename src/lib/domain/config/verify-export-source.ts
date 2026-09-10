@@ -13,6 +13,8 @@ import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
 import { sortCanonicalMappings } from "../../config/canonical-mapping";
 import {
   isCredentialEnvironmentReferenceName,
+  EXPORTED_VLLM_PROFILE_ID,
+  EXPORTED_VLLM_CONTEXT_WINDOW,
   isImmutableImageReference,
   isValidNemoClawBoundedText,
   isValidNemoClawInferenceEndpoint,
@@ -24,6 +26,7 @@ import {
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
+import { validateManagedServing } from "./verify-managed-serving";
 import type {
   CanonicalExportPolicy,
   ExportFinding,
@@ -239,7 +242,7 @@ export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFin
       finding(
         "spec.inferenceProviders",
         "unsupported",
-        "V1 export supports hosted external inference only.",
+        "This local inference topology is not represented by v1 export.",
       ),
     );
   return findings;
@@ -287,7 +290,10 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     messagingPlan: null,
     dcodeAutoApprovalMode: null,
     observabilityEnabled: null,
-    environment: {},
+    environment:
+      entry.servingProfileProvenance?.preset.id === EXPORTED_VLLM_PROFILE_ID
+        ? { NEMOCLAW_CONTEXT_WINDOW: String(EXPORTED_VLLM_CONTEXT_WINDOW) }
+        : {},
     corporateCa: null,
   }).profile;
 }
@@ -538,15 +544,26 @@ function validateGateway(snapshot: QualifiedExportSnapshot): ExportFinding[] {
 function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { registry: entry, inference } = snapshot;
   const findings: ExportFinding[] = [];
-  if (inference.topology !== "hosted")
+  if (inference.topology !== "hosted" && inference.topology !== "managed")
     findings.push(
       finding(
         "spec.inferenceProviders",
         "unsupported",
-        "V1 export supports hosted external inference only.",
+        "This local inference topology is not represented by v1 export.",
       ),
     );
 
+  if (
+    inference.topology !== "managed" &&
+    (entry.servingProfileProvenance || inference.managedServing)
+  )
+    findings.push(
+      finding(
+        "spec.inferenceProviders[].serving",
+        "unsupported",
+        "Recorded managed serving requires complete live managed runtime evidence.",
+      ),
+    );
   const selected = normalizeInferenceSelection(entry);
   if (
     !isDeepStrictEqual(
@@ -578,6 +595,7 @@ function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFi
 
 function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
+  if (inference.topology === "managed") return validateManagedServing(snapshot);
   const findings: ExportFinding[] = [];
   if (
     [inference.provider, inference.model, inference.api, inference.endpoint].some((value) => !value)
@@ -627,7 +645,7 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
   }
   const findings: ExportFinding[] = [];
 
-  if (!isValidNemoClawInferenceEndpoint(evidence.endpoint))
+  if (inference.topology !== "managed" && !isValidNemoClawInferenceEndpoint(evidence.endpoint))
     findings.push(
       finding(
         "source.inference.endpoint",
@@ -664,6 +682,7 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
 
 function validateCredentialReference(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
+  if (inference.topology === "managed") return [];
   const findings: ExportFinding[] = [];
   if (
     inference.credentialEnv !== null &&
@@ -773,13 +792,21 @@ function completeVerifiedSource(
       : {}),
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
-    inference: {
-      provider: selected.provider,
-      model: selected.model,
-      api: selected.preferredInferenceApi,
-      endpoint: selected.endpointUrl,
-      ...(selected.credentialEnv === null ? {} : { credentialEnv: selected.credentialEnv }),
-    },
+    inference:
+      snapshot.inference.topology === "managed"
+        ? {
+            provider: selected.provider,
+            model: selected.model,
+            api: selected.preferredInferenceApi,
+            serving: snapshot.inference.managedServing?.serving,
+          }
+        : {
+            provider: selected.provider,
+            model: selected.model,
+            api: selected.preferredInferenceApi,
+            endpoint: selected.endpointUrl,
+            ...(selected.credentialEnv === null ? {} : { credentialEnv: selected.credentialEnv }),
+          },
   };
   if (!Check(ExportSourceValuesSchema, values)) {
     return {
