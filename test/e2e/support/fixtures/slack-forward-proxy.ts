@@ -26,7 +26,7 @@ export function createSlackSocketClient(proxyPort: number, targetPort: number) {
       env: {
         FAKE_SLACK_WEBSOCKET_PORT: String(targetPort),
         HTTP_PROXY: "http://10.200.0.1:3128",
-        SLACK_APP_TOKEN: `openshell:resolve:env:s${"a".repeat(64)}_SLACK_APP_TOKEN`,
+        SLACK_APP_TOKEN: "openshell:resolve:env:v42_SLACK_APP_TOKEN",
         http_proxy: "",
       },
     },

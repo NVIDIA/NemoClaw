@@ -9,8 +9,8 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 import {
-  type HermesStableCredentialChannel,
-  hermesStableCredentialLinePattern,
+  type HermesRevisionScopedCredentialChannel,
+  hermesRevisionScopedCredentialLinePattern,
 } from "../fixtures/hermes-channel-credential-state.ts";
 import {
   type OpenClawChannelConfigState,
@@ -181,21 +181,19 @@ describe("channels stop/start OpenClaw configuration state", () => {
 });
 
 describe("channels stop/start Hermes configuration state", () => {
-  it.each<[channel: HermesStableCredentialChannel, targetEnvKey: string, credentialEnvKey: string]>(
-    [
-      ["wechat", "WEIXIN_TOKEN", "WECHAT_BOT_TOKEN"],
-      ["teams", "TEAMS_CLIENT_SECRET", "MSTEAMS_APP_PASSWORD"],
-    ],
-  )(
-    "accepts only a stable-handle %s credential placeholder (#10079)",
+  it.each<
+    [channel: HermesRevisionScopedCredentialChannel, targetEnvKey: string, credentialEnvKey: string]
+  >([
+    ["wechat", "WEIXIN_TOKEN", "WECHAT_BOT_TOKEN"],
+    ["teams", "TEAMS_CLIENT_SECRET", "MSTEAMS_APP_PASSWORD"],
+  ])(
+    "accepts only a revision-scoped %s credential placeholder (#10079)",
     (channel, targetEnvKey, credentialEnvKey) => {
-      const pattern = new RegExp(hermesStableCredentialLinePattern(channel));
+      const pattern = new RegExp(hermesRevisionScopedCredentialLinePattern(channel));
 
-      expect(
-        pattern.test(
-          `${targetEnvKey}=openshell:resolve:env:s${"a".repeat(64)}_${credentialEnvKey}`,
-        ),
-      ).toBe(true);
+      expect(pattern.test(`${targetEnvKey}=openshell:resolve:env:v17_${credentialEnvKey}`)).toBe(
+        true,
+      );
       expect(pattern.test(`${targetEnvKey}=openshell:resolve:env:${credentialEnvKey}`)).toBe(false);
       expect(pattern.test(`${targetEnvKey}=raw-secret`)).toBe(false);
     },

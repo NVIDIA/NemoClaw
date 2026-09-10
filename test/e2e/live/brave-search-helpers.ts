@@ -21,7 +21,7 @@ export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-brave-sear
 validateSandboxName(SANDBOX_NAME);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
 const ONBOARD_TIMEOUT_MS = execTimeout(20 * 60_000);
-const PLACEHOLDER_PATTERN = /^openshell:resolve:env:s[a-f0-9]{64}_BRAVE_API_KEY$/;
+const PLACEHOLDER_PATTERN = /^openshell:resolve:env:(?:v[0-9]+_)?BRAVE_API_KEY$/;
 
 export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {

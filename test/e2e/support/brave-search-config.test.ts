@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 
 import { assertBraveConfig, assertBraveExport } from "../live/brave-search-helpers.ts";
 
-const STABLE_PLACEHOLDER = `openshell:resolve:env:s${"a".repeat(64)}_BRAVE_API_KEY`;
+const VERSIONED_PLACEHOLDER = "openshell:resolve:env:v12590243949725316565_BRAVE_API_KEY";
 const UNVERSIONED_PLACEHOLDER = "openshell:resolve:env:BRAVE_API_KEY";
 
 function openClawConfig(apiKey?: unknown, retiredApiKey?: unknown): string {
@@ -27,15 +27,16 @@ function openClawConfig(apiKey?: unknown, retiredApiKey?: unknown): string {
 }
 
 describe("Brave Search E2E configuration assertion", () => {
-  it("returns a stable-handle credential placeholder from the Brave plugin configuration", () => {
-    expect(assertBraveConfig(openClawConfig(STABLE_PLACEHOLDER))).toBe(STABLE_PLACEHOLDER);
+  it.each([
+    ["versioned", VERSIONED_PLACEHOLDER],
+    ["unversioned", UNVERSIONED_PLACEHOLDER],
+  ])("returns a %s credential placeholder from the Brave plugin configuration", (_case, value) => {
+    expect(assertBraveConfig(openClawConfig(value))).toBe(value);
   });
 
   it.each([
     ["missing", undefined],
     ["raw", "test-raw-brave-key"],
-    ["unversioned", UNVERSIONED_PLACEHOLDER],
-    ["legacy-versioned", "openshell:resolve:env:v12590243949725316565_BRAVE_API_KEY"],
     ["wrong-provider", "openshell:resolve:env:TAVILY_API_KEY"],
     ["noncanonical-prefix", "openshell:resolve:env:OTHER_BRAVE_API_KEY"],
     ["malformed-version-prefix", "openshell:resolve:env:vABC_BRAVE_API_KEY"],
@@ -45,7 +46,7 @@ describe("Brave Search E2E configuration assertion", () => {
 
   it("rejects a credential from the retired inline search configuration", () => {
     expect(() =>
-      assertBraveConfig(openClawConfig(STABLE_PLACEHOLDER, "test-raw-brave-key")),
+      assertBraveConfig(openClawConfig(VERSIONED_PLACEHOLDER, "test-raw-brave-key")),
     ).toThrow();
   });
 });

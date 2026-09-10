@@ -150,8 +150,8 @@ except Exception as exc:
 
 def read_env_token():
     token = os.environ.get("DISCORD_BOT_TOKEN", "")
-    if not re.fullmatch(r"openshell:resolve:env:s[a-f0-9]{64}_DISCORD_BOT_TOKEN", token):
-        raise RuntimeError("DISCORD_BOT_TOKEN is not the stable-handle process placeholder")
+    if not re.fullmatch(r"openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN", token):
+        raise RuntimeError("DISCORD_BOT_TOKEN is not the revision-scoped process placeholder")
     return token
 
 
@@ -337,7 +337,7 @@ const http = require("node:http");
 const token = process.env.DISCORD_BOT_TOKEN ?? "";
 console.log(
   "TOKEN_PLACEHOLDER " +
-    /^openshell:resolve:env:s[a-f0-9]{64}_DISCORD_BOT_TOKEN$/.test(token),
+    /^openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN$/.test(token),
 );
 const request = http.request({
   host: "${FAKE_DISCORD_HOST}",
@@ -731,7 +731,7 @@ import re
 import urllib.request
 
 token = os.environ.get("DISCORD_BOT_TOKEN", "")
-if not re.fullmatch(r"openshell:resolve:env:s[a-f0-9]{64}_DISCORD_BOT_TOKEN", token):
+if not re.fullmatch(r"openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN", token):
     raise SystemExit("invalid Discord token placeholder")
 request = urllib.request.Request(
     f"http://${FAKE_DISCORD_HOST}:{os.environ['FAKE_DISCORD_REST_PORT']}/api/v10/users/@me",

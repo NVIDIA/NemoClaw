@@ -30,8 +30,7 @@ import {
 import { sandboxNode } from "../live/phase6-messaging-helpers.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const STABLE_CREDENTIAL_ID = "a".repeat(64);
-const STABLE_DISCORD_PLACEHOLDER = `openshell:resolve:env:s${STABLE_CREDENTIAL_ID}_DISCORD_BOT_TOKEN`;
+const REVISIONED_DISCORD_PLACEHOLDER = "openshell:resolve:env:v2_DISCORD_BOT_TOKEN";
 const GATEWAY_ASSERTION_SENTINEL = "test-sentinel-discord-token";
 
 let child: ChildProcess | undefined;
@@ -47,10 +46,7 @@ function encodeClientText(payload: string): Buffer {
   const masked = Buffer.alloc(body.length);
   for (let i = 0; i < body.length; i += 1) masked[i] = body[i] ^ mask[i % 4];
   const header = [
-    {
-      max: 125,
-      encode: (length: number) => Buffer.from([0x81, 0x80 | length]),
-    },
+    { max: 125, encode: (length: number) => Buffer.from([0x81, 0x80 | length]) },
     {
       max: 0xffff,
       encode: (length: number) => {
@@ -123,11 +119,7 @@ async function sendDiscordIdentify(port: number, token: string): Promise<void> {
                   d: {
                     token,
                     intents: 0,
-                    properties: {
-                      os: "linux",
-                      browser: "nemoclaw-e2e",
-                      device: "nemoclaw-e2e",
-                    },
+                    properties: { os: "linux", browser: "nemoclaw-e2e", device: "nemoclaw-e2e" },
                   },
                 }),
               ),
@@ -177,7 +169,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       );
       expect(JSON.parse(proxy.websocketMessages()[0] ?? "{}")).toEqual({
         type: "socket_mode_client_hello",
-        token: `openshell:resolve:env:s${STABLE_CREDENTIAL_ID}_SLACK_APP_TOKEN`,
+        token: "openshell:resolve:env:v42_SLACK_APP_TOKEN",
       });
     } finally {
       await closeServer(proxy.server);
@@ -302,38 +294,22 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     },
     {
       name: "malformed proxy",
-      env: {
-        FAKE_SLACK_API_PORT: "12345",
-        HTTP_PROXY: "http://[",
-        http_proxy: "",
-      },
+      env: { FAKE_SLACK_API_PORT: "12345", HTTP_PROXY: "http://[", http_proxy: "" },
       error: "HTTP proxy for Slack pairing probe is malformed",
     },
     {
       name: "non-HTTP proxy",
-      env: {
-        FAKE_SLACK_API_PORT: "12345",
-        HTTP_PROXY: "socks5://127.0.0.1:1080",
-        http_proxy: "",
-      },
+      env: { FAKE_SLACK_API_PORT: "12345", HTTP_PROXY: "socks5://127.0.0.1:1080", http_proxy: "" },
       error: "Slack pairing probe only supports HTTP proxies",
     },
     {
       name: "invalid proxy port",
-      env: {
-        FAKE_SLACK_API_PORT: "12345",
-        HTTP_PROXY: "http://127.0.0.1:70000",
-        http_proxy: "",
-      },
+      env: { FAKE_SLACK_API_PORT: "12345", HTTP_PROXY: "http://127.0.0.1:70000", http_proxy: "" },
       error: "HTTP proxy for Slack pairing probe is malformed",
     },
     {
       name: "unexpected valid proxy host",
-      env: {
-        FAKE_SLACK_API_PORT: "12345",
-        HTTP_PROXY: "http://127.0.0.1:3128",
-        http_proxy: "",
-      },
+      env: { FAKE_SLACK_API_PORT: "12345", HTTP_PROXY: "http://127.0.0.1:3128", http_proxy: "" },
       error: "unexpected HTTP proxy for Slack pairing probe",
     },
   ])("fails closed on invalid Slack probe input before network access: $name", ({ env, error }) => {
@@ -349,15 +325,12 @@ describe("OpenClaw Discord pairing helper contracts", () => {
   });
 
   it.each(["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"])(
-    "accepts the stable-handle OpenShell credential reference for %s",
+    "accepts the revision-scoped OpenShell credential reference for %s",
     (name) => {
       const result = spawnSync(process.execPath, ["--input-type=module"], {
         input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nparseManagedCredentialReference(${JSON.stringify(name)}); console.log("VALID");\n`,
         encoding: "utf8",
-        env: {
-          ...process.env,
-          [name]: `openshell:resolve:env:s${STABLE_CREDENTIAL_ID}_${name}`,
-        },
+        env: { ...process.env, [name]: `openshell:resolve:env:v42_${name}` },
       });
 
       expect(result.status, result.stderr).toBe(0);
@@ -369,29 +342,14 @@ describe("OpenClaw Discord pairing helper contracts", () => {
   it.each([
     { name: "missing", value: "" },
     { name: "raw secret", value: "xapp-raw-secret" },
-    {
-      name: "identityless canonical reference",
-      value: "openshell:resolve:env:SLACK_APP_TOKEN",
-    },
+    { name: "identityless canonical reference", value: "openshell:resolve:env:SLACK_APP_TOKEN" },
     {
       name: "identityless provider alias",
       value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
     },
     {
       name: "wrong credential key",
-      value: `openshell:resolve:env:s${STABLE_CREDENTIAL_ID}_SLACK_BOT_TOKEN`,
-    },
-    {
-      name: "legacy revision",
-      value: "openshell:resolve:env:v42_SLACK_APP_TOKEN",
-    },
-    {
-      name: "short stable handle",
-      value: `openshell:resolve:env:s${"a".repeat(63)}_SLACK_APP_TOKEN`,
-    },
-    {
-      name: "uppercase stable handle",
-      value: `openshell:resolve:env:s${"A".repeat(64)}_SLACK_APP_TOKEN`,
+      value: "openshell:resolve:env:v42_SLACK_BOT_TOKEN",
     },
   ])(
     "rejects an invalid Slack app credential reference before network access: $name",
@@ -404,7 +362,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain(
-        "SLACK_APP_TOKEN must be the OpenShell credential-handle reference issued to the sandbox",
+        "SLACK_APP_TOKEN must be the revision-scoped OpenShell credential reference issued to the sandbox",
       );
       expect(result.stderr).toContain("NETWORK_ATTEMPTED=false");
       expect(result.stderr).not.toContain(value || "xapp-raw-secret");
@@ -432,7 +390,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(SLACK_PAIRING_SCRIPT).toContain('parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT")');
   });
 
-  it("uses the stable-handle Slack credential references issued to the sandbox", () => {
+  it("uses the revision-scoped Slack credential references issued to the sandbox", () => {
     expect(SLACK_PAIRING_SCRIPT).toContain('parseManagedCredentialReference("SLACK_APP_TOKEN")');
     expect(SLACK_PAIRING_SCRIPT).toContain('parseManagedCredentialReference("SLACK_BOT_TOKEN")');
     expect(SLACK_PAIRING_SCRIPT).not.toContain("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
@@ -442,18 +400,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
   it.each([
     { name: "missing", value: "" },
     { name: "unscoped", value: "openshell:resolve:env:SLACK_APP_TOKEN" },
-    {
-      name: "legacy revision",
-      value: "openshell:resolve:env:v2_SLACK_APP_TOKEN",
-    },
-    {
-      name: "wrong credential",
-      value: `openshell:resolve:env:s${STABLE_CREDENTIAL_ID}_SLACK_BOT_TOKEN`,
-    },
-    {
-      name: "long stable handle",
-      value: `openshell:resolve:env:s${"a".repeat(65)}_SLACK_APP_TOKEN`,
-    },
+    { name: "wrong credential", value: "openshell:resolve:env:v2_SLACK_BOT_TOKEN" },
     { name: "raw token", value: "xapp-raw-slack-token" },
   ])("rejects a $name Slack app credential before network access", ({ value }) => {
     const result = spawnSync(process.execPath, ["--input-type=module"], {
@@ -464,14 +411,14 @@ describe("OpenClaw Discord pairing helper contracts", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(
-      "SLACK_APP_TOKEN must be the OpenShell credential-handle reference",
+      "SLACK_APP_TOKEN must be the revision-scoped OpenShell credential reference",
     );
     expect(result.stderr).toContain("NETWORK_ATTEMPTED=false");
-    expect(result.stderr).not.toContain(value || "xapp-raw-slack-token");
+    expect(result.stderr).not.toContain("xapp-raw-slack-token");
   });
 
-  it("sends the stable-handle Discord placeholder through the shared gateway client (#10155)", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "discord-gateway-proof-stable-"));
+  it("sends the revision-scoped Discord placeholder through the shared gateway client (#10155)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "discord-gateway-proof-revision-"));
     const captureFile = path.join(tmp, "capture.jsonl");
     const portFile = path.join(tmp, "port");
     try {
@@ -485,7 +432,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
             FAKE_DISCORD_GATEWAY_PORT: "0",
             FAKE_DISCORD_GATEWAY_PORT_FILE: portFile,
             FAKE_DISCORD_GATEWAY_CAPTURE_FILE: captureFile,
-            FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: STABLE_DISCORD_PLACEHOLDER,
+            FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: REVISIONED_DISCORD_PLACEHOLDER,
           },
           stdio: "ignore",
         },
@@ -496,8 +443,8 @@ describe("OpenClaw Discord pairing helper contracts", () => {
         encoding: "utf8",
         env: {
           ...process.env,
-          DISCORD_BOT_TOKEN: STABLE_DISCORD_PLACEHOLDER,
-          FAKE_DISCORD_IDENTIFY_MODE: "openshell-discord-env",
+          DISCORD_BOT_TOKEN: REVISIONED_DISCORD_PLACEHOLDER,
+          FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env",
           FAKE_DISCORD_GATEWAY_PORT: String(port),
           HTTP_PROXY: "",
           http_proxy: "",
@@ -528,18 +475,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
   it.each([
     { name: "missing", value: "" },
     { name: "canonical", value: "openshell:resolve:env:DISCORD_BOT_TOKEN" },
-    {
-      name: "legacy revision",
-      value: "openshell:resolve:env:v2_DISCORD_BOT_TOKEN",
-    },
-    {
-      name: "wrong credential",
-      value: `openshell:resolve:env:s${STABLE_CREDENTIAL_ID}_SLACK_BOT_TOKEN`,
-    },
-    {
-      name: "short stable handle",
-      value: `openshell:resolve:env:s${"a".repeat(63)}_DISCORD_BOT_TOKEN`,
-    },
+    { name: "wrong credential", value: "openshell:resolve:env:v2_SLACK_BOT_TOKEN" },
     { name: "raw token", value: "raw-discord-token" },
   ])("rejects a $name Discord proof credential before network access (#10155)", ({ value }) => {
     const result = spawnSync(process.execPath, ["--input-type=module"], {
@@ -548,7 +484,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       env: {
         ...process.env,
         DISCORD_BOT_TOKEN: value,
-        FAKE_DISCORD_IDENTIFY_MODE: "openshell-discord-env",
+        FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env",
         FAKE_DISCORD_GATEWAY_PORT: "12345",
         HTTP_PROXY: "",
         http_proxy: "",
@@ -557,10 +493,10 @@ describe("OpenClaw Discord pairing helper contracts", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(
-      "Discord Gateway proof requires the stable-handle DISCORD_BOT_TOKEN placeholder",
+      "Discord Gateway proof requires the revision-scoped DISCORD_BOT_TOKEN placeholder",
     );
     expect(result.stderr).not.toContain("ECONNREFUSED");
-    expect(result.stderr).not.toContain(value || "raw-discord-token");
+    expect(result.stderr).not.toContain("raw-discord-token");
   });
 
   it.each([
@@ -592,8 +528,8 @@ describe("OpenClaw Discord pairing helper contracts", () => {
         encoding: "utf8",
         env: {
           ...process.env,
-          DISCORD_BOT_TOKEN: STABLE_DISCORD_PLACEHOLDER,
-          FAKE_DISCORD_IDENTIFY_MODE: "openshell-discord-env",
+          DISCORD_BOT_TOKEN: REVISIONED_DISCORD_PLACEHOLDER,
+          FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env",
           FAKE_DISCORD_GATEWAY_PORT: "12345",
           ...env,
         },
@@ -684,11 +620,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       caseName: "another capture row includes the raw token",
       expectedMessage: "persisted raw token",
       rows: [
-        {
-          event: "identify",
-          tokenMatchesExpected: true,
-          tokenLooksPlaceholder: false,
-        },
+        { event: "identify", tokenMatchesExpected: true, tokenLooksPlaceholder: false },
         { event: "diagnostic", value: GATEWAY_ASSERTION_SENTINEL },
       ],
     },
