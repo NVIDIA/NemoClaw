@@ -142,9 +142,12 @@ describe("runLlamaCppPrivateBridgeProbe", () => {
     expect(attempt).toHaveBeenCalledOnce();
   });
 
-  it("probes a real loopback server through the default HTTP attempt", async () => {
+  it.each([
+    ["completes", (response: http.ServerResponse) => response.writeHead(200).end("ok")],
+    ["never ends", (response: http.ServerResponse) => response.writeHead(200).write("ok")],
+  ])("probes a real loopback server whose healthy response %s", async (_kind, respond) => {
     const server = http.createServer((_request, response) => {
-      response.writeHead(200).end("ok");
+      respond(response);
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
@@ -155,7 +158,7 @@ describe("runLlamaCppPrivateBridgeProbe", () => {
     try {
       const exit = await runLlamaCppPrivateBridgeProbe({
         url: `http://127.0.0.1:${String(port)}/health`,
-        timeoutSeconds: 5,
+        timeoutSeconds: 2,
       });
       expect(exit).toBe(0);
     } finally {

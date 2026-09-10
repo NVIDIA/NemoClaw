@@ -75,8 +75,9 @@ function attemptLlamaCppPrivateBridgeHealth(
   return new Promise((resolve) => {
     const expired = new Error("private bridge probe attempt timed out");
     const request = http.get(url, (response) => {
-      response.resume();
-      response.once("end", () => resolve({ kind: "response", status: response.statusCode ?? 0 }));
+      const status = response.statusCode ?? 0;
+      response.destroy();
+      resolve({ kind: "response", status });
     });
     request.setTimeout(timeoutMilliseconds, () => request.destroy(expired));
     request.once("error", (error: NodeJS.ErrnoException) => {
@@ -87,7 +88,7 @@ function attemptLlamaCppPrivateBridgeHealth(
 }
 
 // Probe the unauthenticated private bridge /health route from this host
-// process. Container `--network host` probes cannot reach a WSL2 distro's
+// process. Container `--network host` probes cannot reach a WSL distro's
 // loopback listener under Docker Desktop, so the loopback proof runs where
 // the bridge actually binds. Exit codes mirror the curl vocabulary the
 // enclosing lifecycle diagnostics report: 7 connect failure, 22 HTTP failure,

@@ -905,20 +905,6 @@ function requireOwnedContainer(
   return container;
 }
 
-function captureExecution(
-  options: DockerLlamaCppManagedLifecycleOptions,
-  lease: HostLocalCreateJournalExecutionLease,
-  execution: MutationExecutionState,
-  execute: () => ContainerEngineCommandResult,
-): ContainerEngineCommandResult {
-  options.journalStore.assertExecution(lease);
-  execution.unknown = true;
-  const result = execute();
-  if (!result.error) execution.unknown = false;
-  options.journalStore.assertExecution(lease);
-  return result;
-}
-
 function captureMutation(
   options: DockerLlamaCppManagedLifecycleOptions,
   lease: HostLocalCreateJournalExecutionLease,
@@ -926,7 +912,23 @@ function captureMutation(
   args: readonly string[],
   timeoutMs: number,
 ): ContainerEngineCommandResult {
-  return captureExecution(options, lease, execution, () => options.engine.capture(args, timeoutMs));
+  options.journalStore.assertExecution(lease);
+  execution.unknown = true;
+  const result = options.engine.capture(args, timeoutMs);
+  if (!result.error) execution.unknown = false;
+  options.journalStore.assertExecution(lease);
+  return result;
+}
+
+function captureHostProbe(
+  options: DockerLlamaCppManagedLifecycleOptions,
+  lease: HostLocalCreateJournalExecutionLease,
+  execute: () => ContainerEngineCommandResult,
+): ContainerEngineCommandResult {
+  options.journalStore.assertExecution(lease);
+  const result = execute();
+  options.journalStore.assertExecution(lease);
+  return result;
 }
 
 function probeReady(
@@ -1051,9 +1053,7 @@ function probePrivateBridge(
   requireSuccess(
     "private loopback bridge probe",
     options.loopbackProbe === "host-process"
-      ? captureExecution(options, lease, execution, () =>
-          hostLoopbackProbe(loopbackUrl, timeoutSeconds),
-        )
+      ? captureHostProbe(options, lease, () => hostLoopbackProbe(loopbackUrl, timeoutSeconds))
       : captureMutation(
           options,
           lease,

@@ -14,7 +14,10 @@ import {
   LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
   LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
 } from "../../inference/llama-cpp/host-local-runtime";
-import type { DockerLlamaCppManagedLifecycleOptions } from "./docker-llama-cpp-managed-lifecycle";
+import type {
+  DockerLlamaCppManagedLifecycleDependencies,
+  DockerLlamaCppManagedLifecycleOptions,
+} from "./docker-llama-cpp-managed-lifecycle";
 import {
   contract,
   digest,
@@ -329,6 +332,29 @@ function controller(fixture: DockerFixture, store = journalStore(), now: () => n
   });
 }
 
+type HostLoopbackProbe = NonNullable<
+  DockerLlamaCppManagedLifecycleDependencies["hostLoopbackProbe"]
+>;
+
+function hostProbeLifecycle(
+  probe: HostLoopbackProbe = () => ({ status: 0, stdout: "", stderr: "" }),
+  store = journalStore(),
+) {
+  const fixture = dockerFixture();
+  const hostLoopbackProbe = vi.fn<HostLoopbackProbe>(probe);
+  const lifecycle = createLifecycle(
+    { ...options(fixture, store), loopbackProbe: "host-process" },
+    { hostLoopbackProbe },
+  );
+  return { fixture, hostLoopbackProbe, lifecycle, store };
+}
+
+function hostNetworkRuns(fixture: DockerFixture): readonly (readonly string[])[] {
+  return fixture.capture.mock.calls
+    .map(([argv]) => argv as readonly string[])
+    .filter((argv) => argv[0] === "run" && argv[argv.indexOf("--network") + 1] === "host");
+}
+
 function preparedJournal(): HostLocalCreateJournalRecord {
   return {
     schemaVersion: 1,
@@ -542,21 +568,13 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   });
 
   it("probes the private loopback bridge from the host process when the lifecycle selects it", () => {
-    const fixture = dockerFixture();
-    const hostLoopbackProbe = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
-    createLifecycle(
-      { ...options(fixture), loopbackProbe: "host-process" },
-      { hostLoopbackProbe },
-    ).start(receiptWriter());
+    const { fixture, hostLoopbackProbe, lifecycle } = hostProbeLifecycle();
+
+    lifecycle.start(receiptWriter());
 
     expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:8081/health", 30);
-    const commands = fixture.capture.mock.calls.map(([argv]) => argv as readonly string[]);
-    expect(
-      commands.filter(
-        (argv) => argv[0] === "run" && argv[argv.indexOf("--network") + 1] === "host",
-      ),
-    ).toEqual([]);
-    expect(commands).toContainEqual(
+    expect(hostNetworkRuns(fixture)).toEqual([]);
+    expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
       expect.arrayContaining([
         "--network",
         "openshell-docker",
@@ -566,9 +584,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   });
 
   it("fails onboarding when the host-process private loopback bridge probe is refused", () => {
-    const fixture = dockerFixture();
-    const store = journalStore();
-    const hostLoopbackProbe = vi.fn(() => ({
+    const { fixture, lifecycle, store } = hostProbeLifecycle(() => ({
       status: 7,
       stdout: "",
       stderr: "connection refused",
@@ -576,10 +592,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
 
     let failure: Error | undefined;
     try {
-      createLifecycle(
-        { ...options(fixture, store), loopbackProbe: "host-process" },
-        { hostLoopbackProbe },
-      ).start(receiptWriter());
+      lifecycle.start(receiptWriter());
     } catch (error) {
       failure = error instanceof Error ? error : new Error(String(error));
     }
@@ -590,6 +603,98 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(failure?.message).not.toContain("test-only-secret");
     expect(store.list()).toEqual([]);
     expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
+  });
+
+  it.each([
+    [
+      "reports a spawn error",
+      () => ({ status: 1, stdout: "", stderr: "", error: new Error("spawnSync ETIMEDOUT") }),
+      "Docker llama.cpp private loopback bridge probe failed (exit 1).",
+    ],
+    [
+      "throws",
+      () => {
+        throw new Error("probe process unavailable");
+      },
+      "probe process unavailable",
+    ],
+  ] as const)(
+    "rolls back and releases execution when the host-process loopback probe %s",
+    (_kind, probe, message) => {
+      const { fixture, lifecycle, store } = hostProbeLifecycle(probe);
+
+      expect(() => lifecycle.start(receiptWriter())).toThrow(message);
+      expect(store.list()).toEqual([]);
+      expect(store.hasExecution()).toBe(false);
+      expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
+      expect(dockerCommandPrefixes(fixture)).toContainEqual(["network", "rm"]);
+    },
+  );
+
+  it.each(["resume", "preserveForRebuild"] as const)(
+    "re-proves the private loopback bridge from the host process during %s",
+    (entry) => {
+      const { fixture, hostLoopbackProbe, lifecycle } = hostProbeLifecycle();
+      const receipt = lifecycle.start(receiptWriter());
+      const run = {
+        resume: () => {
+          lifecycle.runtime.stopManaged(receipt);
+          return lifecycle.resume(receipt);
+        },
+        preserveForRebuild: () => lifecycle.runtime.preserveForRebuild(receipt),
+      }[entry];
+      fixture.capture.mockClear();
+      hostLoopbackProbe.mockClear();
+
+      expect(run()).toEqual(receipt);
+      expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:8081/health", 30);
+      expect(hostNetworkRuns(fixture)).toEqual([]);
+      expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
+        expect.arrayContaining(["--network", "openshell-docker"]),
+      );
+    },
+  );
+
+  it.each(["resume", "preserveForRebuild"] as const)(
+    "preserves receipt-bound resources when the host-process loopback probe is refused during %s",
+    (entry) => {
+      const { fixture, hostLoopbackProbe, lifecycle, store } = hostProbeLifecycle();
+      const receipt = lifecycle.start(receiptWriter());
+      const run = {
+        resume: () => lifecycle.resume(receipt),
+        preserveForRebuild: () => lifecycle.runtime.preserveForRebuild(receipt),
+      }[entry];
+      fixture.capture.mockClear();
+      hostLoopbackProbe.mockReturnValue({ status: 7, stdout: "", stderr: "connection refused" });
+
+      expect(run).toThrow("Docker llama.cpp private loopback bridge probe failed (exit 7).");
+      expect(store.load(TRANSACTION_ID)).toMatchObject({
+        phase: "finalized",
+        runtimeId: RUNTIME_ID,
+      });
+      expect(store.hasExecution()).toBe(false);
+      expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["rm", "--force"]);
+      expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["network", "rm"]);
+    },
+  );
+
+  it("re-proves the private loopback bridge from the host process when replaying a prepared receipt", () => {
+    const { fixture, hostLoopbackProbe, lifecycle, store } = hostProbeLifecycle();
+    const unavailableWriter = receiptWriter(() => {
+      throw new Error("writer unavailable");
+    });
+    expect(() => lifecycle.start(unavailableWriter)).toThrow("writer unavailable");
+    fixture.capture.mockClear();
+    hostLoopbackProbe.mockClear();
+    const replayWriter = receiptWriter();
+
+    const recovery = lifecycle.recoverUnfinished(replayWriter);
+
+    expect(recovery).toEqual({ recovered: [TRANSACTION_ID], failures: [] });
+    expect(replayWriter.writeExact).toHaveBeenCalledOnce();
+    expect(store.load(TRANSACTION_ID)?.phase).toBe("finalized");
+    expect(hostLoopbackProbe).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:8081/health", 30);
+    expect(hostNetworkRuns(fixture)).toEqual([]);
   });
 
   it("resumes an already-running receipt without creating or starting resources (#8144)", () => {

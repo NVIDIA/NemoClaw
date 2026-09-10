@@ -106,9 +106,10 @@ export function createDockerLlamaCppHostLocalOperation(
     // host-network probe container.
     createLlamaCppLifecycle: (input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0]) =>
       createLifecycle({
-        loopbackProbe:
-          detectWslDockerDesktopStatus() === "docker-desktop" ? "host-process" : undefined,
         ...input,
+        loopbackProbe:
+          input.loopbackProbe ??
+          (detectWslDockerDesktopStatus() === "docker-desktop" ? "host-process" : undefined),
       }),
   });
 }

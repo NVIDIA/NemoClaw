@@ -516,4 +516,22 @@ describe("managed llama.cpp operation probe strategy", () => {
       expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({ ...input, loopbackProbe });
     },
   );
+
+  it("keeps a caller-selected host-process probe outside Docker Desktop WSL", () => {
+    vi.mocked(detectWslDockerDesktopStatus).mockReturnValue("not-docker-desktop");
+    const createLifecycle = vi.fn(() => ({}) as never);
+    const operation = createDockerLlamaCppHostLocalOperation(
+      env,
+      contextCapture("ssh://nvidia@spark.example.test"),
+      undefined,
+      createLifecycle,
+    );
+
+    operation.createLlamaCppLifecycle({ ...input, loopbackProbe: "host-process" });
+
+    expect(createLifecycle).toHaveBeenCalledExactlyOnceWith({
+      ...input,
+      loopbackProbe: "host-process",
+    });
+  });
 });
