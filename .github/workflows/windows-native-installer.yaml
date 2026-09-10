@@ -96,6 +96,43 @@ jobs:
             --app-root "$env:RUNNER_TEMP\compiled-windows-app\build\app" `
             --output "$env:RUNNER_TEMP\compiled-windows-app\controls"
           if ($LASTEXITCODE -ne 0) { throw 'The compiled Windows application controls failed.' }
+      - name: Prepare the pinned executable resource injector
+        shell: pwsh
+        run: |
+          python packaging/windows/distribution/prepare-executable-tools.py `
+            --output "$env:RUNNER_TEMP\compiled-windows-app\executable-tools" `
+            --cache "$env:RUNNER_TEMP\compiled-windows-app\downloads"
+          if ($LASTEXITCODE -ne 0) { throw 'Executable build tools failed verification.' }
+      - name: Compile the native application dispatcher and static workers
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\compiled-windows-app"
+          New-Item -ItemType Junction -Path "$work\inputs\tools\node_modules\typescript" `
+            -Target "$work\inputs\openclaw\node_modules\typescript" | Out-Null
+          New-Item -ItemType Junction -Path "$env:GITHUB_WORKSPACE\node_modules" `
+            -Target "$work\inputs\tools\node_modules" | Out-Null
+          & "$work\node\node.exe" --experimental-strip-types `
+            packaging/windows/distribution/build-native-workers.mts "$work\workers"
+          if ($LASTEXITCODE -ne 0) { throw 'Static application worker compilation failed.' }
+      - name: Build and execute the Windows application EXE
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\compiled-windows-app"
+          & "$work\node\node.exe" --experimental-strip-types `
+            packaging/windows/distribution/prepare-native-executable.mts `
+            "$work\workers\native-runtime.cjs" `
+            "$work\executable-tools\postject\dist\api.js" "$work\executable"
+          if ($LASTEXITCODE -ne 0) { throw 'The Windows application EXE build or execution failed.' }
+      - name: Preserve the Windows executable proof
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-windows-runtime-executable-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/compiled-windows-app/executable/NemoClaw.Runtime.exe
+            ${{ runner.temp }}/compiled-windows-app/executable/build.json
+            ${{ runner.temp }}/compiled-windows-app/executable/execution.json
+            ${{ runner.temp }}/compiled-windows-app/workers/
+          if-no-files-found: error
       - name: Preserve compiled application units
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -114,6 +151,11 @@ jobs:
           name: compiled-windows-application-diagnostics-${{ github.sha }}
           path: |
             ${{ runner.temp }}/compiled-windows-app/controls/
+            ${{ runner.temp }}/compiled-windows-app/workers/build.json
+            ${{ runner.temp }}/compiled-windows-app/workers/source-adaptation.json
+            ${{ runner.temp }}/compiled-windows-app/executable/*.json
+            ${{ runner.temp }}/compiled-windows-app/executable/*.log
+            ${{ runner.temp }}/compiled-windows-app/executable-tools/tools-input.json
             ${{ runner.temp }}/compiled-windows-app/build/diagnostics/
             ${{ runner.temp }}/compiled-windows-app/build/build-receipt.json
             ${{ runner.temp }}/compiled-windows-app/build/build-failure.json
