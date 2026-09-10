@@ -10,7 +10,7 @@ import {
   type OpenShellBufferedCommandRunner,
   type OpenShellBufferedCommandRunResult,
 } from "./sandbox-command-cli";
-import { openshellSandboxSshHost, resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
+import { resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
 import type { OpenShellSandboxSshExecutor, OpenShellSandboxSshResult } from "./sandbox-ssh";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
@@ -74,7 +74,8 @@ export function createCliOpenShellSandboxSshExecutor(
         const configFailure = failure(config);
         if (configFailure) return configFailure;
         if (config.status !== 0) return { kind: "failed", reason: "transport" };
-        if (resolveOpenshellSandboxSshHost(request.sandboxName, config.stdout) === null) {
+        const sshHost = resolveOpenshellSandboxSshHost(request.sandboxName, config.stdout);
+        if (sshHost === null) {
           return { kind: "failed", reason: "configuration" };
         }
         const temporary = createTempSshConfig(config.stdout, "nemoclaw-ver-");
@@ -92,7 +93,7 @@ export function createCliOpenShellSandboxSshExecutor(
               "ConnectTimeout=5",
               "-o",
               "LogLevel=ERROR",
-              openshellSandboxSshHost(request.sandboxName),
+              sshHost,
               request.command,
             ],
             {
