@@ -536,9 +536,9 @@ describe("npm audit raw cache", () => {
   });
 
   it("rejects a truncated reviewed npm SHA-512 integrity", () => {
-    expect(() =>
-      parseReviewedNpmIdentity({ ...npmIdentity, npmIntegrity: "sha512-A" }),
-    ).toThrow("npm audit configuration has an invalid npmIntegrity");
+    expect(() => parseReviewedNpmIdentity({ ...npmIdentity, npmIntegrity: "sha512-A" })).toThrow(
+      "npm audit configuration has an invalid npmIntegrity",
+    );
   });
 
   it("fails closed when a cache caller omits the reviewed npm identity", () => {
