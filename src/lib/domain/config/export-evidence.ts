@@ -15,6 +15,7 @@ import {
   NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
   NemoClawAgentTypeSchema,
+  NemoClawOpenClawObservabilitySchema,
   NemoClawManagedProxyConfigSchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
@@ -278,6 +279,7 @@ export const ExportSourceValuesSchema = Type.Refine(
     proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
     inference: ExportInferenceSchema,
     tools: Type.Optional(NemoClawAgentToolsConfigSchema),
+    observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
     webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
   }),
   (value) =>

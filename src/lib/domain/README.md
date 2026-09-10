@@ -28,3 +28,8 @@ behavior. Preserve managed-image authority and full residual profile equality;
 admitting disclosure must not admit extra tool gateways or minimal-bootstrap settings.
 Hermes keeps its canonical export without `tools`; a retained direct selection or
 profile is unsupported even when those two sources agree.
+
+Config export projects supported settings from the validated managed startup receipt and keeps the full residual profile comparison.
+OpenClaw telemetry supports an enabled local OTLP/HTTP collector at `http://host.openshell.internal:4318`, a printable ASCII service name of 1–256 characters without edge spaces, and a sample rate from 0 to 1.
+Canonical disabled telemetry is omitted; other disabled settings, Unicode service names, remote collectors, headers and credentials remain unsupported.
+Export preserves the observed effective policy, including any local collector rules, without adding permissions or claiming collector health.

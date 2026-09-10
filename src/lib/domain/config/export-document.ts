@@ -46,6 +46,19 @@ export interface ExportConfigBuildIdentity {
   readonly documentUid: NemoClawConfigDocumentUid;
 }
 
+function agentSettings(source: VerifiedExportSource) {
+  return {
+    ...(source.agent === "openclaw"
+      ? {
+          type: "openclaw" as const,
+          ...(source.tools === undefined ? {} : { tools: source.tools }),
+          ...(source.observability ? { observability: source.observability } : {}),
+        }
+      : { type: "hermes" as const }),
+    ...(source.execution ? { execution: source.execution } : {}),
+  };
+}
+
 /** Map one verified export source to an unbound aggregate document. */
 export function buildExportConfig(
   source: VerifiedExportSource,
@@ -75,15 +88,11 @@ export function buildExportConfig(
             policy: { explicit: source.policy },
             ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
           },
-          ...(source.webSearch && { integrations: { webSearch: source.webSearch } }),
+          ...(source.webSearch ? { integrations: { webSearch: source.webSearch } } : {}),
           agents: [
             {
               name: "primary",
-              type: source.agent,
-              ...(source.execution ? { execution: source.execution } : {}),
-              ...(source.agent === "openclaw" && source.tools !== undefined
-                ? { tools: source.tools }
-                : {}),
+              ...agentSettings(source),
               inference: {
                 routes: [
                   {

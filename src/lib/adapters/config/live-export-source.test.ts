@@ -126,6 +126,31 @@ const entry = {
   },
 } satisfies SandboxEntry;
 
+function telemetryEntry(
+  telemetry: Readonly<Record<string, unknown>> = {},
+  agentSettings: Readonly<Record<string, unknown>> = {},
+) {
+  const profile = JSON.parse(Buffer.from(startup.encodedProfile, "base64url").toString("utf8")) as {
+    agentConfig: { otel: Record<string, unknown> };
+  };
+  Object.assign(profile.agentConfig.otel, {
+    enabled: true,
+    serviceName: "research-assistant",
+    sampleRate: 0.5,
+    ...telemetry,
+  });
+  Object.assign(profile.agentConfig, agentSettings);
+  const encodedProfile = Buffer.from(JSON.stringify(profile)).toString("base64url");
+  return {
+    ...entry,
+    workload: {
+      ...entry.workload,
+      encodedProfile,
+      startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+    },
+  };
+}
+
 const raw = {
   getProvider: vi.fn(),
   getProviderProfile: vi.fn(),
@@ -779,6 +804,175 @@ describe("live export snapshot reader", () => {
     expect(raw.getProviderProfile).toHaveBeenCalledTimes(4);
   });
 
+  it.each([
+    { sampleRate: 0, serviceName: "s", collectorAllowed: true },
+    { sampleRate: 0.5, serviceName: "research-assistant", collectorAllowed: true },
+    { sampleRate: 1, serviceName: "s".repeat(256), collectorAllowed: true },
+    { sampleRate: 0.5, serviceName: "research assistant", collectorAllowed: false },
+  ])(
+    "exports retained OTLP settings at sample $sampleRate without changing policy",
+    async ({ sampleRate, serviceName, collectorAllowed }) => {
+      vi.stubEnv("NEMOCLAW_OPENCLAW_OTEL", "0");
+      vi.stubEnv(
+        "NEMOCLAW_OPENCLAW_OTEL_ENDPOINT",
+        "https://ignored.example/credential-canary-value",
+      );
+      vi.stubEnv("NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME", "ignored-service");
+      vi.stubEnv("NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE", "0.9");
+      mockSupportedLiveSource(3, 3, telemetryEntry({ sampleRate, serviceName }));
+      const effective = configuration();
+      const policy = {
+        ...effective.policy,
+        network_policies: {
+          ...effective.policy.network_policies,
+          ...(collectorAllowed
+            ? {
+                collector: {
+                  name: "collector",
+                  endpoints: [
+                    {
+                      host: "host.openshell.internal",
+                      port: 4318,
+                      protocol: "rest",
+                      enforcement: "enforce",
+                      allowed_ips: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+                      rules: [{ allow: { method: "POST", path: "/v1/traces" } }],
+                    },
+                  ],
+                  binaries: [{ path: "/usr/local/bin/node" }],
+                },
+              }
+            : {}),
+        },
+      };
+      raw.getSandboxConfig.mockResolvedValue({ ...effective, policy });
+      const writeStdout = vi.fn(async (_yaml: string) => {});
+      const publish = vi.fn();
+
+      const result = await runConfigExport(
+        {
+          sandboxName: "alpha",
+          documentName: parseNemoClawConfigDocumentName("alpha"),
+          target: { kind: "stdout" },
+        },
+        {
+          observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+          createDocumentUid: () =>
+            parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
+          writeStdout,
+          publish,
+        },
+      );
+
+      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
+      const document = validateNemoClawConfig(YAML.parse(yaml));
+      expect(document.spec.sandboxes[0]?.agents[0]).toMatchObject({
+        type: "openclaw",
+        observability: {
+          otlp: {
+            enabled: true,
+            endpoint: "http://host.openshell.internal:4318",
+            serviceName,
+            sampleRate,
+          },
+        },
+      });
+      expect(document.spec.sandboxes[0]?.network.policy.explicit).toEqual(policy);
+      expect(yaml).not.toContain(readFailureCanary);
+      expect(yaml).not.toContain("NEMOCLAW_OPENCLAW_OTEL");
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      label: "credential-bearing endpoint",
+      telemetry: {
+        endpointUrl: "http://user:credential-canary-value@host.openshell.internal:4318",
+      },
+    },
+    {
+      label: "collector query",
+      telemetry: {
+        endpointUrl: "http://host.openshell.internal:4318?token=credential-canary-value",
+      },
+    },
+    {
+      label: "remote collector",
+      telemetry: { endpointUrl: "https://collector.example/v1/traces" },
+    },
+    { label: "invalid service", telemetry: { serviceName: "service\n" } },
+    { label: "Unicode service", telemetry: { serviceName: "équipe" } },
+    { label: "oversized service", telemetry: { serviceName: "s".repeat(257) } },
+    { label: "out-of-range sample", telemetry: { sampleRate: 1.1 } },
+    { label: "disabled nondefault settings", telemetry: { enabled: false } },
+    { label: "invalid agent timeout", settings: { agentTimeoutSeconds: 1000000001 } },
+    { label: "conflicting agent", registry: { agent: "hermes" } },
+    { label: "DCode observability marker", registry: { observabilityEnabled: true } },
+    {
+      label: "stale workload",
+      registry: {
+        workload: { ...telemetryEntry().workload, startupProfileSha256: "c".repeat(64) },
+      },
+    },
+    { label: "missing workload", registry: { workload: undefined } },
+  ])("rejects telemetry $label before any output", async ({ telemetry, settings, registry }) => {
+    mockSupportedLiveSource(3, 3, { ...telemetryEntry(telemetry, settings), ...registry });
+    const writeStdout = vi.fn();
+    const publish = vi.fn();
+
+    const result = await runConfigExport(
+      {
+        sandboxName: "alpha",
+        documentName: parseNemoClawConfigDocumentName("alpha"),
+        target: { kind: "file", outputPath: "/tmp/alpha.yaml", force: false },
+      },
+      {
+        observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+        createDocumentUid: vi.fn(),
+        writeStdout,
+        publish,
+      },
+    );
+
+    expect(result).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+  });
+
+  it("does not publish telemetry that changes during both observation pairs", async () => {
+    mockSupportedLiveSource();
+    let reads = 0;
+    vi.mocked(loadRegistry).mockImplementation(() => ({
+      sandboxes: { alpha: telemetryEntry({ sampleRate: reads++ % 2 === 0 ? 0.5 : 1 }) },
+      defaultSandbox: null,
+    }));
+    const writeStdout = vi.fn();
+    const publish = vi.fn();
+    const result = await runConfigExport(
+      {
+        sandboxName: "alpha",
+        documentName: parseNemoClawConfigDocumentName("alpha"),
+        target: { kind: "stdout" },
+      },
+      {
+        observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+        createDocumentUid: vi.fn(),
+        writeStdout,
+        publish,
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { kind: "observation", attempts: 2, findings: [{ category: "unstable-source" }] },
+    });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it("exports a stable SDK endpoint with verified policy and workload evidence", async () => {
     mockSupportedLiveSource();
     const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
@@ -1057,8 +1251,17 @@ describe("managed vLLM export pipeline", () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
-  it("exports direct tools with managed vLLM and Brave after qualifying both profiles", async () => {
-    const f = mockManagedVllmSource({}, { fetchEnabled: true, provider: "brave" }, "direct");
+  it("exports direct tools, managed vLLM, Brave and retained OTLP with qualified profile bindings", async () => {
+    const f = mockManagedVllmSource(
+      {
+        NEMOCLAW_OPENCLAW_OTEL: "1",
+        NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
+        NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: "research-assistant",
+        NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: "0.5",
+      },
+      { fetchEnabled: true, provider: "brave" },
+      "direct",
+    );
     const search = braveProvider();
     const readManagedProvider = raw.getProvider.getMockImplementation()!;
     const readManagedProfile = raw.getProviderProfile.getMockImplementation()!;
@@ -1078,7 +1281,7 @@ describe("managed vLLM export pipeline", () => {
     const yaml = writeStdout.mock.calls[0]![0];
     expect(yaml).not.toContain(readFailureCanary);
     expect(yaml).not.toContain("NEMOCLAW_VLLM_LOCAL_TOKEN");
-    expect(yaml).not.toContain("host.openshell.internal");
+    expect(yaml).not.toContain("host.openshell.internal:18000");
     const document = validateNemoClawConfig(YAML.parse(yaml));
     expect(document.spec.inferenceProviders).toEqual([
       {
@@ -1093,6 +1296,14 @@ describe("managed vLLM export pipeline", () => {
         name: "primary",
         type: "openclaw",
         tools: { disclosure: "direct" },
+        observability: {
+          otlp: {
+            enabled: true,
+            endpoint: "http://host.openshell.internal:4318",
+            serviceName: "research-assistant",
+            sampleRate: 0.5,
+          },
+        },
         inference: {
           routes: [
             {
