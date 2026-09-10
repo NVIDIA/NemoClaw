@@ -96,6 +96,7 @@ vi.mock("./mcp-bridge-state", () => ({
 
 import {
   migrateMcpBridges,
+  readCommittedLegacyRegistryEntries,
   validateMcpMigrationRebuildIntent,
   type McpMigrationRebuildIntent,
 } from "./mcp-bridge-migration";
@@ -186,6 +187,50 @@ describe("explicit MCP migration", () => {
     expect(mocks.register).not.toHaveBeenCalled();
     expect(mocks.removeLegacy).not.toHaveBeenCalled();
     expect(mocks.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["null document", null],
+    ["array document", []],
+    ["scalar document", "private-legacy-marker"],
+    ["array sandbox map", { sandboxes: [] }],
+    ["null sandbox map", { sandboxes: null }],
+    ["array sandbox row", { sandboxes: { alpha: [] } }],
+    ["null sandbox row", { sandboxes: { alpha: null } }],
+    ["array MCP state", { sandboxes: { alpha: { mcp: [] } } }],
+    ["null MCP state", { sandboxes: { alpha: { mcp: null } } }],
+    ["scalar MCP state", { sandboxes: { alpha: { mcp: "private-legacy-marker" } } }],
+    ["missing bridge map", { sandboxes: { alpha: { mcp: {} } } }],
+    ["array bridge map", { sandboxes: { alpha: { mcp: { bridges: [] } } } }],
+    ["null bridge map", { sandboxes: { alpha: { mcp: { bridges: null } } } }],
+  ])("refuses malformed legacy registry %s before changing sources", async (_label, document) => {
+    mocks.readConfig.mockReturnValue(document);
+    const before = structuredClone(document);
+
+    await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toMatchObject({
+      message: "Legacy MCP registry structure for 'alpha' is invalid. No source was changed.",
+      exitCode: 2,
+    });
+
+    expect(document).toEqual(before);
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    expect(mocks.reloadOpenClaw).not.toHaveBeenCalled();
+    expect(mocks.discoverTools).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["absent registry", {}],
+    ["absent sandbox", { sandboxes: {} }],
+    ["absent MCP state", { sandboxes: { alpha: {} } }],
+    ["empty bridge map", { sandboxes: { alpha: { mcp: { bridges: {} } } } }],
+  ])("keeps an %s migration inventory empty", (_label, document) => {
+    mocks.readConfig.mockReturnValue(document);
+    const before = structuredClone(document);
+
+    expect(readCommittedLegacyRegistryEntries("alpha", "openclaw", "openclaw-config")).toEqual({});
+    expect(document).toEqual(before);
   });
 
   it("materializes native config, verifies it, then retires legacy state", async () => {
@@ -518,7 +563,7 @@ describe("explicit MCP migration", () => {
       bridges: {},
       sources: { native: {}, legacy: {} },
     });
-    mocks.readConfig.mockReturnValue({
+    const document = {
       sandboxes: {
         alpha: {
           mcp: {
@@ -532,12 +577,15 @@ describe("explicit MCP migration", () => {
           },
         },
       },
-    });
+    };
+    const before = structuredClone(document);
+    mocks.readConfig.mockReturnValue(document);
     await expect(migrateMcpBridges("alpha")).resolves.toMatchObject({
       applied: false,
       items: [{ server: "github", source: "legacy-registry", action: "migrate" }],
     });
     expect(mocks.register).not.toHaveBeenCalled();
+    expect(document).toEqual(before);
   });
 
   it("rejects stale registry denied tools when live policy is authoritative (#11115)", async () => {

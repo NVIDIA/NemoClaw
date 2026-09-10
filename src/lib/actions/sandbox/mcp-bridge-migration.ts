@@ -148,18 +148,21 @@ export function readCommittedLegacyRegistryEntries(
   currentAgent: string,
   currentAdapter: McpSourceEntry["adapter"],
 ): Record<string, McpSourceEntry> {
-  const document = readConfigFile<unknown>(REGISTRY_FILE, {});
-  if (!isObjectRecord(document) || !isObjectRecord(document.sandboxes)) return {};
-  const rawSandbox = document.sandboxes[sandboxName];
-  if (!isObjectRecord(rawSandbox) || !isObjectRecord(rawSandbox.mcp)) return {};
-  const rawState = rawSandbox.mcp;
+  const invalidStructure = `Legacy MCP registry structure for '${sandboxName}' is invalid. No source was changed.`;
+  let rawState: unknown = readConfigFile<unknown>(REGISTRY_FILE, {});
+  for (const key of ["sandboxes", sandboxName, "mcp"]) {
+    if (!isObjectRecord(rawState)) throw new McpBridgeError(invalidStructure, 2);
+    if (!Object.hasOwn(rawState, key)) return {};
+    rawState = rawState[key];
+  }
+  if (!isObjectRecord(rawState)) throw new McpBridgeError(invalidStructure, 2);
   if (rawState.destroyPreparedAt || rawState.destroyPendingAt) {
     throw new McpBridgeError(
       `Legacy MCP registry state for '${sandboxName}' contains an incomplete destroy transaction. No source was changed.`,
       2,
     );
   }
-  if (!isObjectRecord(rawState.bridges)) return {};
+  if (!isObjectRecord(rawState.bridges)) throw new McpBridgeError(invalidStructure, 2);
   const entries: Record<string, McpSourceEntry> = {};
   for (const [server, raw] of Object.entries(rawState.bridges)) {
     if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(server) || !isObjectRecord(raw)) {

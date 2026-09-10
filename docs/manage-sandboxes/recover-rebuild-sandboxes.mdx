@@ -363,7 +363,7 @@ If gate reacquisition fails, `recover` exits nonzero and leaves the recovery rec
 Do not manually remove the cron restore marker or release recovery record because removal bypasses restored cron validation.
 </Warning>
 
-If managed MCP restoration failed, correct the reported cause and run `$$nemoclaw <sandbox-name> mcp restart` first.
+If managed MCP restoration failed, correct the reported cause and run `$$nemoclaw <sandbox-name> rebuild --yes` first.
 Then run `$$nemoclaw <sandbox-name> recover` to repair the gateway, validate the restored cron tree, and clear NemoClaw-owned recovery state.
 
 When NemoClaw is ready to reopen dispatch and no operator drain remains, its root-owned controller reschedules only enabled one-shot jobs that became due at or after the NemoClaw gate was acquired, have never run, and carry no dispatch or fire claim. It persists that update before removing the gate. If the update fails, rebuild or recovery exits nonzero and leaves the gate active.

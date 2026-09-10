@@ -51,6 +51,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     native: Record<string, McpSourceEntry>;
     legacy: Record<string, McpSourceEntry>;
     registry?: unknown;
+    expectedError?: string;
   }>([
     { name: "legacy-only", native: {}, legacy: { legacy: legacySourceEntry } },
     {
@@ -64,9 +65,35 @@ describe("rebuildSandbox flow: lifecycle", () => {
       legacy: {},
       registry: { sandboxes: { alpha: { mcp: { bridges: { legacy: legacySourceEntry } } } } },
     },
+    {
+      name: "malformed registry sandbox map",
+      native: {},
+      legacy: {},
+      registry: { sandboxes: [] },
+      expectedError: "Legacy MCP registry structure for 'alpha' is invalid",
+    },
+    {
+      name: "malformed registry MCP state",
+      native: {},
+      legacy: {},
+      registry: { sandboxes: { alpha: { mcp: [] } } },
+      expectedError: "Legacy MCP registry structure for 'alpha' is invalid",
+    },
+    {
+      name: "malformed registry bridge map",
+      native: {},
+      legacy: {},
+      registry: { sandboxes: { alpha: { mcp: { bridges: [] } } } },
+      expectedError: "Legacy MCP registry structure for 'alpha' is invalid",
+    },
   ])(
     "refuses an ordinary Deep Agents rebuild with $name sources before backup or deletion",
-    async ({ native, legacy, registry }) => {
+    async ({
+      native,
+      legacy,
+      registry,
+      expectedError = "Legacy MCP configuration must be migrated",
+    }) => {
       const harness = createRebuildFlowHarness({
         agentName: "langchain-deepagents-code",
         sandboxEntry: { agent: "langchain-deepagents-code" },
@@ -76,7 +103,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
-      ).rejects.toThrow("Legacy MCP configuration must be migrated");
+      ).rejects.toThrow(expectedError);
 
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
