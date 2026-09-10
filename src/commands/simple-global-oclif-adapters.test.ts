@@ -225,7 +225,10 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     await DebugCliCommand.run(["--quick"], rootDir);
 
     const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
-    await expect(deps.getDefaultSandbox()).resolves.toEqual({ name: "alpha", gatewayName: "nemoclaw" });
+    await expect(deps.getDefaultSandbox()).resolves.toEqual({
+      name: "alpha",
+      gatewayName: "nemoclaw",
+    });
   });
 
   it("rejects an explicit sandbox when OpenShell authentication fails", async () => {
@@ -271,8 +274,14 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     await DebugCliCommand.run(["--quick"], rootDir);
 
     const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
-    await expect(deps.getDefaultSandbox()).resolves.toEqual({ name: "alpha", gatewayName: "nemoclaw" });
-    await expect(deps.getSandboxAvailability("alpha")).resolves.toEqual({ state: "available", gatewayName: "nemoclaw" });
+    await expect(deps.getDefaultSandbox()).resolves.toEqual({
+      name: "alpha",
+      gatewayName: "nemoclaw",
+    });
+    await expect(deps.getSandboxAvailability("alpha")).resolves.toEqual({
+      state: "available",
+      gatewayName: "nemoclaw",
+    });
   });
 
   it("maps gateway-token flags to the gateway token action", async () => {

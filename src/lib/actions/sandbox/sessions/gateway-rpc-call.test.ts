@@ -298,22 +298,22 @@ describe("callOpenclawGateway", () => {
     expect(captureMock).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    undefined,
-    null,
-  ])("dispatches for an existing legacy registry entry whose agent is %s", (agent) => {
-    getSandboxMock.mockReturnValue({ name: "alpha", agent });
-    captureMock.mockReturnValue(captureResult(0, '{"ok":true,"key":"agent:main:main"}'));
+  it.each([undefined, null])(
+    "dispatches for an existing legacy registry entry whose agent is %s",
+    (agent) => {
+      getSandboxMock.mockReturnValue({ name: "alpha", agent });
+      captureMock.mockReturnValue(captureResult(0, '{"ok":true,"key":"agent:main:main"}'));
 
-    const result = callOpenclawGateway({
-      sandboxName: "alpha",
-      method: "sessions.reset",
-      params: { key: "agent:main:main", reason: "reset" },
-    });
+      const result = callOpenclawGateway({
+        sandboxName: "alpha",
+        method: "sessions.reset",
+        params: { key: "agent:main:main", reason: "reset" },
+      });
 
-    expect(result.payload).toMatchObject({ ok: true });
-    expect(captureMock).toHaveBeenCalledTimes(1);
-  });
+      expect(result.payload).toMatchObject({ ok: true });
+      expect(captureMock).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("refuses when the registry has no sandbox entry", () => {
     getSandboxMock.mockReturnValue(null);

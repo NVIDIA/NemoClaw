@@ -40,9 +40,7 @@ const STARTUP_ARGV = [
   "/usr/local/bin/nemoclaw-start",
 ];
 const temporaryDirectories: string[] = [];
-const invalidDestroyContexts: Array<
-  readonly [string, PortableDemoDestroyContext | null]
-> = [
+const invalidDestroyContexts: Array<readonly [string, PortableDemoDestroyContext | null]> = [
   ["a missing registry record", null],
   [
     "a non-OpenClaw registry record",
@@ -208,18 +206,15 @@ describe("portable demo lifecycle authority", () => {
     expect(() => authority?.revalidate()).not.toThrow();
   });
 
-  it.each(invalidDestroyContexts)(
-    "refuses %s during Portable destroy",
-    (_description, context) => {
-      const stateDir = temporaryStateDir();
-      const runtime = createPodman();
-      installReceipt(stateDir, runtime);
+  it.each(invalidDestroyContexts)("refuses %s during Portable destroy", (_description, context) => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime);
 
-      expect(() => prepareDestroyAuthority(stateDir, runtime, () => context)).toThrow(
-        "does not match the OpenClaw sandbox registry",
-      );
-    },
-  );
+    expect(() => prepareDestroyAuthority(stateDir, runtime, () => context)).toThrow(
+      "does not match the OpenClaw sandbox registry",
+    );
+  });
 
   it("revalidates schema-4 Portable destroy authority without removing its Podman container (#9189)", () => {
     const stateDir = temporaryStateDir();

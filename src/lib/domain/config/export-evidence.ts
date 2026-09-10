@@ -10,6 +10,7 @@ import {
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
   NemoClawOpenClawObservabilitySchema,
+  NemoClawManagedProxyConfigSchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
   TcpPortSchema,
@@ -203,6 +204,7 @@ export const ExportSourceValuesSchema = Type.Object({
     imageRef: ImmutableImageReferenceSchema,
   }),
   gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
+  proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
   observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
 });
