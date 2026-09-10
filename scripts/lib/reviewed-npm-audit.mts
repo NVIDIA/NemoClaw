@@ -169,7 +169,7 @@ export function npmAuditProcessOptions(directory: string) {
   };
 }
 const NPM_AUDIT_CACHE_MAX_BYTES = 64 * 1024 * 1024;
-const NPM_AUDIT_CACHE_SCHEMA_VERSION = 1;
+const NPM_AUDIT_CACHE_SCHEMA_VERSION = 2;
 const NPM_AUDIT_PARSER_IDENTITY = "reviewed-npm-audit-report-v1";
 
 type NpmAuditCommandResult = Readonly<{
@@ -531,20 +531,10 @@ export function provenanceSidecarPath(reportPath: string): string {
   return `${reportPath.replace(/\.json$/, "")}.provenance.json`;
 }
 
-function npmVersion(directory: string): string {
-  const result = spawnSync("npm", ["--version"], {
-    cwd: directory,
-    encoding: "utf-8",
-    env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error || result.status !== 0)
-    throw new Error("npm version could not be determined for audit cache identity");
-  return result.stdout.trim();
-}
-
 type AuditCacheInput = Readonly<{
   argv: readonly string[];
+  npmArchiveSha256: string;
+  npmIntegrity: string;
   npmVersion: string;
   packageJsonSha256: string;
   packageLockSha256: string;
@@ -553,7 +543,7 @@ type AuditCacheInput = Readonly<{
 }>;
 
 type AuditCacheRecord = Readonly<{
-  schemaVersion: 1;
+  schemaVersion: 2;
   createdAt: string;
   input: AuditCacheInput;
   result: Readonly<{ stdout: string; exitCode: number }>;
@@ -575,14 +565,15 @@ function canonicalRegistryOrigin(registry: string): string | null {
 
 export function buildAuditCacheInput(
   directory: string,
-  npmVersion: string,
+  npmIdentity: ReviewedNpmIdentity,
   registry: string,
 ): AuditCacheInput {
   const registryOrigin = canonicalRegistryOrigin(registry);
   if (!registryOrigin) throw new Error("npm audit cache requires a valid HTTP(S) registry");
+  const reviewedNpmIdentity = parseReviewedNpmIdentity(npmIdentity);
   return {
     argv: NPM_AUDIT_ARGV,
-    npmVersion,
+    ...reviewedNpmIdentity,
     packageJsonSha256: sha256(fs.readFileSync(path.join(directory, "package.json"))),
     packageLockSha256: sha256(fs.readFileSync(path.join(directory, "package-lock.json"))),
     parserIdentity: NPM_AUDIT_PARSER_IDENTITY,
@@ -608,6 +599,8 @@ function parseAuditCacheRecord(source: string): AuditCacheRecord {
     input,
     new Set([
       "argv",
+      "npmArchiveSha256",
+      "npmIntegrity",
       "npmVersion",
       "packageJsonSha256",
       "packageLockSha256",
@@ -621,6 +614,8 @@ function parseAuditCacheRecord(source: string): AuditCacheRecord {
   if (!Array.isArray(input.argv) || JSON.stringify(input.argv) !== JSON.stringify(NPM_AUDIT_ARGV))
     throw new Error("npm audit cache input.argv is invalid");
   for (const key of [
+    "npmArchiveSha256",
+    "npmIntegrity",
     "npmVersion",
     "packageJsonSha256",
     "packageLockSha256",
@@ -628,6 +623,7 @@ function parseAuditCacheRecord(source: string): AuditCacheRecord {
     "registryOrigin",
   ] as const)
     nonEmptyString(input[key], `npm audit cache input.${key}`);
+  parseReviewedNpmIdentity(input);
   if (
     typeof result.stdout !== "string" ||
     Buffer.byteLength(result.stdout) > NPM_AUDIT_CACHE_MAX_BYTES ||
@@ -696,7 +692,7 @@ function writeAuditCache(
 ): void {
   if (!Number.isSafeInteger(result.status)) return;
   const record: AuditCacheRecord = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     createdAt,
     input,
     result: { stdout: result.stdout, exitCode: result.status as number },
@@ -898,6 +894,7 @@ export function runReviewedNpmAudit(
     exceptionFile: string;
     graph: string;
     provenance?: AuditProvenanceContext;
+    reviewedNpmIdentity?: ReviewedNpmIdentity;
     reportFile?: string;
     resultFile?: string;
     threshold: Severity;
@@ -913,12 +910,11 @@ export function runReviewedNpmAudit(
   const registry = NPM_AUDIT_REGISTRY;
   let cacheInput: AuditCacheInput | undefined;
   if (cacheFile) {
+    if (!options.reviewedNpmIdentity) {
+      throw new Error("npm audit cache requires the reviewed npm identity");
+    }
     try {
-      cacheInput = buildAuditCacheInput(
-        options.directory,
-        options.provenance?.npmVersion ?? npmVersion(options.directory),
-        registry,
-      );
+      cacheInput = buildAuditCacheInput(options.directory, options.reviewedNpmIdentity, registry);
     } catch (error) {
       if (
         !(error instanceof Error) ||

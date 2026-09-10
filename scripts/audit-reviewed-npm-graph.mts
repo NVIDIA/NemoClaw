@@ -19,6 +19,7 @@ import {
 } from "./lib/reviewed-npm-archive.mts";
 import {
   type AuditPolicyResult,
+  type ReviewedNpmIdentity,
   NPM_AUDIT_REGISTRY,
   assertExceptionGraphs,
   parseReviewedNpmIdentity,
@@ -713,7 +714,6 @@ function auditLockedGraph(
   tempRoot: string,
   exceptionFile: string,
   artifactDirectory: string,
-  npmVersion: string,
 ) {
   const directory = materializeLockedGraph(graph, tempRoot, config.registryOrigin);
   const result = runReviewedNpmAudit({
@@ -724,9 +724,10 @@ function auditLockedGraph(
     provenance: {
       label: graph.label,
       nodeVersion: process.version,
-      npmVersion,
+      npmVersion: config.npmVersion,
       packageSpecs: [graph.packageSpec],
     },
+    reviewedNpmIdentity: config,
     reportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
     resultFile: path.join(artifactDirectory, `locked-graph-${index + 1}-policy.json`),
     threshold: graph.severityThreshold ?? config.severityThreshold,
@@ -754,7 +755,6 @@ function auditSourceGraph(
   tempRoot: string,
   exceptionFile: string,
   artifactDirectory: string,
-  npmVersion: string,
 ) {
   const sourcePackage = targetRepositoryPath("package.json", "NemoClaw CLI package manifest");
   const sourceLock = targetRepositoryPath("package-lock.json", "NemoClaw CLI lockfile");
@@ -777,7 +777,7 @@ function auditSourceGraph(
     directory,
     exceptionFile,
     artifactDirectory,
-    npmVersion,
+    reviewedNpmIdentity: config,
     packageSpec: `${sourceManifest.name}@${sourceManifest.version}`,
     threshold: config.severityThreshold,
   });
@@ -788,8 +788,8 @@ export function auditMaterializedSourceGraph(
     artifactDirectory: string;
     directory: string;
     exceptionFile: string;
-    npmVersion: string;
     packageSpec: string;
+    reviewedNpmIdentity: ReviewedNpmIdentity;
     threshold: Severity;
   }>,
   dependencies: Readonly<{
@@ -805,9 +805,10 @@ export function auditMaterializedSourceGraph(
     provenance: {
       label: SOURCE_GRAPH.label,
       nodeVersion: process.version,
-      npmVersion: options.npmVersion,
+      npmVersion: options.reviewedNpmIdentity.npmVersion,
       packageSpecs: [options.packageSpec],
     },
+    reviewedNpmIdentity: options.reviewedNpmIdentity,
     reportFile: path.join(options.artifactDirectory, "source-graph.json"),
     resultFile: path.join(options.artifactDirectory, "source-graph-policy.json"),
     threshold: options.threshold,
@@ -925,13 +926,7 @@ function main(): void {
   }
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
-    const sourceResult = auditSourceGraph(
-      config,
-      tempRoot,
-      exceptionFile,
-      artifactDirectory,
-      npmVersion,
-    );
+    const sourceResult = auditSourceGraph(config, tempRoot, exceptionFile, artifactDirectory);
     const archiveDirectory = materializeArchiveGraph(
       config.archivePackages,
       tempRoot,
@@ -948,21 +943,14 @@ function main(): void {
         npmVersion,
         packageSpecs: config.archivePackages.map((reviewed) => reviewed.packageSpec),
       },
+      reviewedNpmIdentity: config,
       reportFile: path.join(artifactDirectory, "reviewed-archive-graph.json"),
       resultFile: path.join(artifactDirectory, "reviewed-archive-graph-policy.json"),
       threshold: config.severityThreshold,
       throwOnBlock: false,
     });
     const lockedResults = config.lockedGraphs.map((graph, index) =>
-      auditLockedGraph(
-        graph,
-        index,
-        config,
-        tempRoot,
-        exceptionFile,
-        artifactDirectory,
-        npmVersion,
-      ),
+      auditLockedGraph(graph, index, config, tempRoot, exceptionFile, artifactDirectory),
     );
     const reports = [
       { label: SOURCE_GRAPH.label, result: sourceResult },

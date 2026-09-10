@@ -1254,8 +1254,12 @@ describe("trusted npm audit workflow (#5896)", () => {
         artifactDirectory: "/artifacts",
         directory: "/materialized",
         exceptionFile: "/exceptions.json",
-        npmVersion: "10.9.4",
         packageSpec: "nemoclaw@0.0.0",
+        reviewedNpmIdentity: {
+          npmArchiveSha256: "a".repeat(64),
+          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+          npmVersion: "10.9.4",
+        },
         threshold: "high",
       },
       {
@@ -1269,6 +1273,11 @@ describe("trusted npm audit workflow (#5896)", () => {
               label: "NemoClaw CLI locked production graph",
               npmVersion: "10.9.4",
               packageSpecs: ["nemoclaw@0.0.0"],
+            },
+            reviewedNpmIdentity: {
+              npmArchiveSha256: "a".repeat(64),
+              npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+              npmVersion: "10.9.4",
             },
             reportFile: path.join("/artifacts", "source-graph.json"),
             resultFile: path.join("/artifacts", "source-graph-policy.json"),

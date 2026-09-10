@@ -104,21 +104,24 @@ function stageSparseCheckout(root: string, sparseCheckout: string): void {
 function runTrustedBootstrapHandoff(
   sparseCheckout: string,
   mutateCheckout: (root: string) => void = () => {},
-  installUpdatesVersion = true,
+  activateInstalledNpm = true,
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-audit-bootstrap-handoff-"));
   const bin = path.join(root, "bin");
+  const installedBin = path.join(root, "installed-bin");
+  const activeNpm = path.join(bin, "npm");
+  const bootstrapNpm = path.join(root, "bootstrap-npm");
+  const installedNpm = path.join(installedBin, "npm");
   const archive = Buffer.from("verified archive\n");
   const archiveFile = path.join(root, "fixture.tgz");
   const installMarker = path.join(root, "install-called");
   const npmLog = path.join(root, "npm.log");
-  const npmVersionState = path.join(root, "npm-version");
   const reportDirectory = path.join(root, "artifacts", "reviewed-npm-audit");
   stageSparseCheckout(root, sparseCheckout);
   mutateCheckout(root);
   fs.mkdirSync(bin);
+  fs.mkdirSync(installedBin);
   fs.writeFileSync(archiveFile, archive);
-  fs.writeFileSync(npmVersionState, "9.9.9\n");
   fs.writeFileSync(
     path.join(root, "package.json"),
     `${JSON.stringify({ name: "reviewed-npm-handoff-fixture", version: "1.0.0" })}\n`,
@@ -161,13 +164,13 @@ function runTrustedBootstrapHandoff(
     })}\n`,
   );
   fs.writeFileSync(
-    path.join(bin, "npm"),
+    activeNpm,
     `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\\n' "$*" >> "$NEMOCLAW_TEST_NPM_LOG"
+printf 'bootstrap:%s\\n' "$*" >> "$NEMOCLAW_TEST_NPM_LOG"
 case "$1" in
   --version)
-    cat "$NEMOCLAW_TEST_NPM_VERSION_STATE"
+    printf '9.9.9\\n'
     ;;
   pack)
     shift
@@ -183,14 +186,31 @@ case "$1" in
     cp "$NEMOCLAW_TEST_ARCHIVE_FILE" "$download_dir/npm-12.0.2.tgz"
     ;;
   install)
-    if [ "\${2:-}" = "--global" ]; then
-      : > "$NEMOCLAW_TEST_INSTALL_MARKER"
-      if [ "$NEMOCLAW_TEST_INSTALL_UPDATES_VERSION" = "true" ]; then
-        printf '12.0.2\\n' > "$NEMOCLAW_TEST_NPM_VERSION_STATE"
-      fi
-    else
-      printf '%s\\n' '{"name":"nemoclaw-reviewed-production-graph","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"nemoclaw-reviewed-production-graph","version":"1.0.0"}}}' > package-lock.json
+    [ "\${2:-}" = "--global" ]
+    : > "$NEMOCLAW_TEST_INSTALL_MARKER"
+    if [ "$NEMOCLAW_TEST_ACTIVATE_INSTALLED_NPM" = "true" ]; then
+      mv "$NEMOCLAW_TEST_ACTIVE_NPM" "$NEMOCLAW_TEST_BOOTSTRAP_NPM"
+      ln -s "$NEMOCLAW_TEST_INSTALLED_NPM" "$NEMOCLAW_TEST_ACTIVE_NPM"
     fi
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    installedNpm,
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf 'installed:%s\\n' "$*" >> "$NEMOCLAW_TEST_NPM_LOG"
+case "$1" in
+  --version)
+    printf '12.0.2\\n'
+    ;;
+  install)
+    printf '%s\\n' '{"name":"nemoclaw-reviewed-production-graph","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"nemoclaw-reviewed-production-graph","version":"1.0.0"}}}' > package-lock.json
     ;;
   ci)
     ;;
@@ -221,11 +241,13 @@ printf '{"version":"12.0.2"}\\n'
     GITHUB_ACTION_PATH: path.join(root, ".github", "actions", "ci-reviewed-npm-audit"),
     NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: path.relative(root, reportDirectory),
     NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: root,
+    NEMOCLAW_TEST_ACTIVE_NPM: activeNpm,
+    NEMOCLAW_TEST_ACTIVATE_INSTALLED_NPM: String(activateInstalledNpm),
     NEMOCLAW_TEST_ARCHIVE_FILE: archiveFile,
+    NEMOCLAW_TEST_BOOTSTRAP_NPM: bootstrapNpm,
+    NEMOCLAW_TEST_INSTALLED_NPM: installedNpm,
     NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
-    NEMOCLAW_TEST_INSTALL_UPDATES_VERSION: String(installUpdatesVersion),
     NEMOCLAW_TEST_NPM_LOG: npmLog,
-    NEMOCLAW_TEST_NPM_VERSION_STATE: npmVersionState,
     NPM_CONFIG_REGISTRY: "https://registry.npmjs.org/",
     NPM_CONFIG_USERCONFIG: "/dev/null",
     PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -290,9 +312,18 @@ describe("npm audit handoff", () => {
         expect(fixture.bootstrapResult.status, fixture.bootstrapResult.stderr).toBe(0);
         expect(fixture.auditResult?.status, fixture.auditResult?.stderr).toBe(0);
         expect(fixture.installCalled).toBe(true);
-        expect(fixture.npmInvocations[0]).toMatch(/^pack npm@12\.0\.2 /u);
-        expect(fixture.npmInvocations[1]).toMatch(/install --global .* --offline$/u);
-        expect(fixture.npmInvocations[2]).toBe("--version");
+        expect(fixture.npmInvocations[0]).toMatch(/^bootstrap:pack npm@12\.0\.2 /u);
+        expect(fixture.npmInvocations[1]).toMatch(/^bootstrap:install --global .* --offline$/u);
+        expect(
+          fixture.npmInvocations.slice(2).every((entry) => entry.startsWith("installed:")),
+        ).toBe(true);
+        expect(fixture.npmInvocations).toContain("installed:--version");
+        expect(
+          fixture.npmInvocations.some((entry) => /^installed:audit .*--json$/u.test(entry)),
+        ).toBe(true);
+        expect(
+          fixture.npmInvocations.some((entry) => /^installed:audit signatures /u.test(entry)),
+        ).toBe(true);
         expect(fixture.reportFiles).toContain("nemoclaw-cli.receipt.json");
         expect(fixture.reportFiles).toContain("reviewed-archive-graph.receipt.json");
       } finally {
@@ -338,6 +369,8 @@ describe("npm audit handoff", () => {
       expect(fixture.auditResult?.stderr).toContain(
         "npm audit requires npm 12.0.2; running npm 9.9.9",
       );
+      expect(fixture.npmInvocations).toContain("bootstrap:--version");
+      expect(fixture.npmInvocations.some((entry) => entry.startsWith("installed:"))).toBe(false);
       expect(fixture.reportFiles).not.toContain("nemoclaw-cli.receipt.json");
       expect(fixture.reportFiles).not.toContain("source-graph-policy.json");
     } finally {
