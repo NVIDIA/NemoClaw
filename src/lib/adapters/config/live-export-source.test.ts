@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import { runConfigExport } from "../../actions/config/export";
@@ -77,7 +78,7 @@ const startup = buildManagedStartupProfile({
   corporateCa: null,
 });
 
-const entry: SandboxEntry = {
+const entry = {
   name: "alpha",
   createdAt: "not-export-evidence",
   agent: "openclaw",
@@ -107,7 +108,32 @@ const entry: SandboxEntry = {
     credentialProxyReplayRequired: false,
     shared: true,
   },
-};
+} satisfies SandboxEntry;
+
+function telemetryEntry(
+  telemetry: Readonly<Record<string, unknown>> = {},
+  agentSettings: Readonly<Record<string, unknown>> = {},
+) {
+  const profile = JSON.parse(Buffer.from(startup.encodedProfile, "base64url").toString("utf8")) as {
+    agentConfig: { otel: Record<string, unknown> };
+  };
+  Object.assign(profile.agentConfig.otel, {
+    enabled: true,
+    serviceName: "research-assistant",
+    sampleRate: 0.5,
+    ...telemetry,
+  });
+  Object.assign(profile.agentConfig, agentSettings);
+  const encodedProfile = Buffer.from(JSON.stringify(profile)).toString("base64url");
+  return {
+    ...entry,
+    workload: {
+      ...entry.workload,
+      encodedProfile,
+      startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+    },
+  };
+}
 
 const raw = {
   getProvider: vi.fn(),
@@ -530,6 +556,172 @@ describe("live export snapshot reader", () => {
       findings: [expect.objectContaining({ category: "unstable-source" })],
     });
     expect(raw.getProviderProfile).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    { sampleRate: 0, serviceName: "s", collectorAllowed: true },
+    { sampleRate: 0.5, serviceName: "research-assistant", collectorAllowed: true },
+    { sampleRate: 1, serviceName: "s".repeat(256), collectorAllowed: true },
+    { sampleRate: 0.5, serviceName: "research assistant", collectorAllowed: false },
+  ])(
+    "exports retained OTLP settings at sample $sampleRate without changing policy",
+    async ({ sampleRate, serviceName, collectorAllowed }) => {
+      vi.stubEnv("NEMOCLAW_OPENCLAW_OTEL", "0");
+      vi.stubEnv(
+        "NEMOCLAW_OPENCLAW_OTEL_ENDPOINT",
+        "https://ignored.example/credential-canary-value",
+      );
+      vi.stubEnv("NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME", "ignored-service");
+      vi.stubEnv("NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE", "0.9");
+      mockSupportedLiveSource(3, 3, telemetryEntry({ sampleRate, serviceName }));
+      const effective = configuration();
+      const policy = {
+        ...effective.policy,
+        network_policies: {
+          ...effective.policy.network_policies,
+          ...(collectorAllowed
+            ? {
+                collector: {
+                  name: "collector",
+                  endpoints: [
+                    {
+                      host: "host.openshell.internal",
+                      port: 4318,
+                      protocol: "rest",
+                      enforcement: "enforce",
+                      allowed_ips: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+                      rules: [{ allow: { method: "POST", path: "/v1/traces" } }],
+                    },
+                  ],
+                  binaries: [{ path: "/usr/local/bin/node" }],
+                },
+              }
+            : {}),
+        },
+      };
+      raw.getSandboxConfig.mockResolvedValue({ ...effective, policy });
+      const writeStdout = vi.fn(async (_yaml: string) => {});
+      const publish = vi.fn();
+
+      const result = await runConfigExport(
+        {
+          sandboxName: "alpha",
+          documentName: parseNemoClawConfigDocumentName("alpha"),
+          target: { kind: "stdout" },
+        },
+        {
+          observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+          createDocumentUid: () =>
+            parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
+          writeStdout,
+          publish,
+        },
+      );
+
+      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
+      const document = validateNemoClawConfig(YAML.parse(yaml));
+      expect(document.spec.sandboxes[0]?.agents[0]?.observability).toEqual({
+        otlp: {
+          enabled: true,
+          endpoint: "http://host.openshell.internal:4318",
+          serviceName,
+          sampleRate,
+        },
+      });
+      expect(document.spec.sandboxes[0]?.network.policy.explicit).toEqual(policy);
+      expect(yaml).not.toContain(readFailureCanary);
+      expect(yaml).not.toContain("NEMOCLAW_OPENCLAW_OTEL");
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      label: "credential-bearing endpoint",
+      telemetry: {
+        endpointUrl: "http://user:credential-canary-value@host.openshell.internal:4318",
+      },
+    },
+    {
+      label: "collector query",
+      telemetry: {
+        endpointUrl: "http://host.openshell.internal:4318?token=credential-canary-value",
+      },
+    },
+    {
+      label: "remote collector",
+      telemetry: { endpointUrl: "https://collector.example/v1/traces" },
+    },
+    { label: "invalid service", telemetry: { serviceName: "service\n" } },
+    { label: "Unicode service", telemetry: { serviceName: "équipe" } },
+    { label: "oversized service", telemetry: { serviceName: "s".repeat(257) } },
+    { label: "out-of-range sample", telemetry: { sampleRate: 1.1 } },
+    { label: "disabled nondefault settings", telemetry: { enabled: false } },
+    { label: "unimplemented agent setting", settings: { agentTimeoutSeconds: 900 } },
+    { label: "conflicting agent", registry: { agent: "hermes" } },
+    { label: "DCode observability marker", registry: { observabilityEnabled: true } },
+    {
+      label: "stale workload",
+      registry: {
+        workload: { ...telemetryEntry().workload, startupProfileSha256: "c".repeat(64) },
+      },
+    },
+    { label: "missing workload", registry: { workload: undefined } },
+  ])("rejects telemetry $label before any output", async ({ telemetry, settings, registry }) => {
+    mockSupportedLiveSource(3, 3, { ...telemetryEntry(telemetry, settings), ...registry });
+    const writeStdout = vi.fn();
+    const publish = vi.fn();
+
+    const result = await runConfigExport(
+      {
+        sandboxName: "alpha",
+        documentName: parseNemoClawConfigDocumentName("alpha"),
+        target: { kind: "file", outputPath: "/tmp/alpha.yaml", force: false },
+      },
+      {
+        observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+        createDocumentUid: vi.fn(),
+        writeStdout,
+        publish,
+      },
+    );
+
+    expect(result).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+  });
+
+  it("does not publish telemetry that changes during both observation pairs", async () => {
+    mockSupportedLiveSource();
+    let reads = 0;
+    vi.mocked(loadRegistry).mockImplementation(() => ({
+      sandboxes: { alpha: telemetryEntry({ sampleRate: reads++ % 2 === 0 ? 0.5 : 1 }) },
+      defaultSandbox: null,
+    }));
+    const writeStdout = vi.fn();
+    const publish = vi.fn();
+    const result = await runConfigExport(
+      {
+        sandboxName: "alpha",
+        documentName: parseNemoClawConfigDocumentName("alpha"),
+        target: { kind: "stdout" },
+      },
+      {
+        observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+        createDocumentUid: vi.fn(),
+        writeStdout,
+        publish,
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { kind: "observation", attempts: 2, findings: [{ category: "unstable-source" }] },
+    });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
   });
 
   it("exports a stable SDK endpoint with verified policy and workload evidence", async () => {

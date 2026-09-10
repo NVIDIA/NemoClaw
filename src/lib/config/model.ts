@@ -235,10 +235,32 @@ const NemoClawInferenceRouteConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** First supported OTLP profile: local HTTP collector, without credentials or headers. */
+export const NemoClawOpenClawObservabilitySchema = Type.Object(
+  {
+    otlp: Type.Object(
+      {
+        enabled: Type.Literal(true),
+        endpoint: Type.Literal("http://host.openshell.internal:4318"),
+        // ASCII keeps the public character bound equal to the receipt's UTF-8 byte bound.
+        serviceName: Type.String({
+          minLength: 1,
+          maxLength: 256,
+          pattern: "^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])",
+        }),
+        sampleRate: Type.Number({ minimum: 0, maximum: 1 }),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+
 const NemoClawAgentConfigSchema = Type.Object(
   {
     name: LocalResourceNameSchema,
     type: Type.Literal("openclaw"),
+    observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
     inference: Type.Object(
       {
         routes: Type.Array(NemoClawInferenceRouteConfigSchema, { minItems: 1 }),

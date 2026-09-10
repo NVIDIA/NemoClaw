@@ -21,6 +21,7 @@ import {
   isValidNemoClawRuntimeProvider,
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
+  NemoClawOpenClawObservabilitySchema,
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
@@ -39,7 +40,7 @@ const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
 
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
-  "gateway" | "inference" | "policy" | "runtime" | "sandboxName"
+  "gateway" | "inference" | "observability" | "policy" | "runtime" | "sandboxName"
 >;
 
 function verifiedExportSource(data: VerifiedExportSourceData): VerifiedExportSource {
@@ -288,6 +289,16 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
   }).profile;
 }
 
+function exportedObservability(
+  profile: ManagedStartupProfile,
+): VerifiedExportSource["observability"] {
+  if (profile.agentConfig.agent !== "openclaw" || !profile.agentConfig.otel.enabled)
+    return undefined;
+  const { enabled, endpointUrl, serviceName, sampleRate } = profile.agentConfig.otel;
+  const value = { otlp: { enabled, endpoint: endpointUrl, serviceName, sampleRate } };
+  return Check(NemoClawOpenClawObservabilitySchema, value) ? value : undefined;
+}
+
 function classifyManagedStartupProfile(
   entry: ObservedExportRegistry,
   profile: ManagedStartupProfile,
@@ -303,6 +314,14 @@ function classifyManagedStartupProfile(
         "The managed startup profile cannot be matched to the registered inference selection.",
       ),
     ];
+  }
+  const observability = exportedObservability(profile);
+  if (observability && expected.agentConfig.agent === "openclaw") {
+    const { endpoint: endpointUrl, ...telemetry } = observability.otlp;
+    expected = {
+      ...expected,
+      agentConfig: { ...expected.agentConfig, otel: { ...telemetry, endpointUrl } },
+    };
   }
   const findings: ExportFinding[] = [];
   if (!hasEqualJsonStructure(profile.inference, expected.inference)) {
@@ -679,7 +698,9 @@ function completeVerifiedSource(
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
   const selected = normalizeInferenceSelection(entry);
+  const observability = authority ? exportedObservability(authority.profile) : undefined;
   const values = {
+    ...(observability ? { observability } : {}),
     sandboxName: requestedSandboxName,
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },

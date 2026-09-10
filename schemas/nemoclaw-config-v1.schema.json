@@ -163,6 +163,39 @@
                       "type": "string",
                       "const": "openclaw"
                     },
+                    "observability": {
+                      "type": "object",
+                      "required": ["otlp"],
+                      "properties": {
+                        "otlp": {
+                          "type": "object",
+                          "required": ["enabled", "endpoint", "serviceName", "sampleRate"],
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean",
+                              "const": true
+                            },
+                            "endpoint": {
+                              "type": "string",
+                              "const": "http://host.openshell.internal:4318"
+                            },
+                            "serviceName": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "pattern": "^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])"
+                            },
+                            "sampleRate": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 1
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "additionalProperties": false
+                    },
                     "inference": {
                       "type": "object",
                       "required": ["routes"],

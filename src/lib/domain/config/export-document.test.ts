@@ -54,6 +54,7 @@ describe("export config builder", () => {
       documentUid: firstUid,
     });
 
+    expect(result.spec.sandboxes[0]?.agents[0]).not.toHaveProperty("observability");
     expect(result).toMatchObject({
       apiVersion: "nemoclaw.nvidia.com/v1",
       kind: "NemoClawConfig",

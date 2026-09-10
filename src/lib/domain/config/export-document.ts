@@ -66,6 +66,7 @@ export function buildExportConfig(
             {
               name: "primary",
               type: "openclaw",
+              ...(source.observability ? { observability: source.observability } : {}),
               inference: {
                 routes: [
                   {

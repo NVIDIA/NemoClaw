@@ -9,6 +9,7 @@ import {
   InferenceEndpointSchema,
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
+  NemoClawOpenClawObservabilitySchema,
   RuntimeProviderSchema,
   SandboxNameSchema,
   TcpPortSchema,
@@ -203,6 +204,7 @@ export const ExportSourceValuesSchema = Type.Object({
   }),
   gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
   inference: ExportInferenceSchema,
+  observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
 });
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;

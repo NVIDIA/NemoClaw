@@ -196,6 +196,34 @@ function verify(
 }
 
 describe("config export source verification (#10938)", () => {
+  it("exports retained OpenClaw telemetry with a local collector", () => {
+    const value = snapshot({
+      registry: entry({
+        workload: managedWorkload(
+          profileInput({
+            environment: {
+              NEMOCLAW_OPENCLAW_OTEL: "1",
+              NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
+              NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: "research-assistant",
+              NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: "0.5",
+            },
+          }),
+        ),
+      }),
+    });
+
+    expect(verifiedSource(verify(value))).toMatchObject({
+      observability: {
+        otlp: {
+          enabled: true,
+          endpoint: "http://host.openshell.internal:4318",
+          serviceName: "research-assistant",
+          sampleRate: 0.5,
+        },
+      },
+    });
+  });
+
   it("qualifies and verifies two equal snapshots through the observer", async () => {
     const observed = snapshot();
     const result = await observeStableExportSource("alpha", {
