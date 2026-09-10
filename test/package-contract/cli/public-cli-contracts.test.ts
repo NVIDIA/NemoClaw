@@ -1,16 +1,46 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFile, type ExecFileOptionsWithStringEncoding, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const CHECK_DOCS = path.join(REPO_ROOT, "test", "e2e", "e2e-cloud-experimental", "check-docs.sh");
+
+// These three checks own separate fixtures; keep their overlap bounded.
+vi.setConfig({ maxConcurrency: 3 });
+
+type AsyncProcessResult = {
+  error: Error | undefined;
+  signal: NodeJS.Signals | null;
+  status: number | null;
+  stderr: string;
+  stdout: string;
+};
+
+function execFileResult(
+  command: string,
+  args: readonly string[],
+  options: ExecFileOptionsWithStringEncoding,
+): Promise<AsyncProcessResult> {
+  return new Promise((resolve) => {
+    const child = execFile(command, [...args], options, (error, stdout, stderr) => {
+      const numericExitCode = error && typeof error.code === "number" ? error.code : undefined;
+      resolve({
+        error: error && numericExitCode === undefined ? error : undefined,
+        signal: child.signalCode,
+        status: error ? (numericExitCode ?? child.exitCode) : 0,
+        stderr,
+        stdout,
+      });
+    });
+  });
+}
 
 type CliParityFixture = {
   binDir: string;
@@ -67,8 +97,11 @@ exec "$NEMOCLAW_TEST_NODE" "$_entrypoint" "$@"
   return { binDir, nodeInvocationLog, nodeShim, root };
 }
 
-function runCliParity(fixture: CliParityFixture, env: NodeJS.ProcessEnv = {}) {
-  return spawnSync("bash", [CHECK_DOCS, "--only-cli"], {
+function cliParityOptions(
+  fixture: CliParityFixture,
+  env: NodeJS.ProcessEnv = {},
+): ExecFileOptionsWithStringEncoding {
+  return {
     cwd: REPO_ROOT,
     encoding: "utf-8",
     env: {
@@ -84,6 +117,21 @@ function runCliParity(fixture: CliParityFixture, env: NodeJS.ProcessEnv = {}) {
     },
     killSignal: "SIGKILL",
     timeout: 120_000,
+  };
+}
+
+function runCliParity(fixture: CliParityFixture, env: NodeJS.ProcessEnv = {}) {
+  return spawnSync("bash", [CHECK_DOCS, "--only-cli"], cliParityOptions(fixture, env));
+}
+
+function runCliParityAsync(
+  fixture: CliParityFixture,
+  signal: AbortSignal,
+  env: NodeJS.ProcessEnv = {},
+) {
+  return execFileResult("bash", [CHECK_DOCS, "--only-cli"], {
+    ...cliParityOptions(fixture, env),
+    signal,
   });
 }
 
@@ -121,70 +169,113 @@ function readCliInvocations(fixture: CliParityFixture): string[] {
 }
 
 describe("public compiled CLI contracts", () => {
-  it("prints the public NemoClaw version prefix (#7616)", {
-    timeout: 35_000,
-  }, () => {
-    const result = spawnSync(process.execPath, [CLI_ENTRYPOINT, "--version"], {
-      cwd: REPO_ROOT,
-      encoding: "utf-8",
-      // Version output is independent of persisted automatic gateway-port discovery.
-      env: { ...process.env, NEMOCLAW_GATEWAY_PORT: "8080" },
-      timeout: 30_000,
-    });
+  it(
+    "prints the public NemoClaw version prefix (#7616)",
+    {
+      timeout: 35_000,
+    },
+    () => {
+      const result = spawnSync(process.execPath, [CLI_ENTRYPOINT, "--version"], {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+        // Version output is independent of persisted automatic gateway-port discovery.
+        env: { ...process.env, NEMOCLAW_GATEWAY_PORT: "8080" },
+        timeout: 30_000,
+      });
 
-    expect(result.error).toBeUndefined();
-    expect(result.signal).toBeNull();
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/^nemoclaw v/);
-  });
+      expect(result.error).toBeUndefined();
+      expect(result.signal).toBeNull();
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toMatch(/^nemoclaw v/);
+    },
+  );
 
-  it("keeps compiled CLI commands aligned with their documentation headings (#7616)", {
-    timeout: 150_000,
-  }, () => {
-    // `npm run test:package` builds the CLI before this project. Empty one
-    // custom-help metadata row to prove its code-owned classification still
-    // selects rendered help without returning to one start per command.
-    const fixture = createCliParityFixture();
+  it.concurrent(
+    "keeps compiled CLI commands aligned with their documentation headings (#7616)",
+    {
+      timeout: 150_000,
+    },
+    async ({ signal }) => {
+      // `npm run test:package` builds the CLI before this project. Empty one
+      // custom-help metadata row to prove its code-owned classification still
+      // selects rendered help without returning to one start per command.
+      const fixture = createCliParityFixture();
 
-    try {
-      const result = runCliParity(fixture, { NEMOCLAW_TEST_EMPTY_AGENT_METADATA: "1" });
+      try {
+        const result = await runCliParityAsync(fixture, signal, {
+          NEMOCLAW_TEST_EMPTY_AGENT_METADATA: "1",
+        });
+
+        expect(result.error).toBeUndefined();
+        expect(result.signal).toBeNull();
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        expect(result.stdout).toContain("check-docs: running: [cli]");
+        expect(result.stdout).toContain("command-level parity OK");
+        expect(result.stdout).toContain("flag-level parity OK");
+        const invocations = readCliInvocations(fixture);
+        expect(invocations.filter((invocation) => invocation === "dump-commands")).toHaveLength(1);
+        expect(
+          invocations.filter((invocation) => invocation === "dump-command-flags"),
+        ).toHaveLength(1);
+        expect(invocations).toContain("custom-help");
+        expect(invocations.length).toBeLessThanOrEqual(20);
+      } finally {
+        fs.rmSync(fixture.root, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.concurrent(
+    "validates every repository-local documentation link (#7616)",
+    {
+      timeout: 150_000,
+    },
+    async ({ signal }) => {
+      const result = await execFileResult("bash", [CHECK_DOCS, "--only-links", "--local-only"], {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          CHECK_DOC_LINKS_REMOTE: "0",
+        },
+        killSignal: "SIGKILL",
+        signal,
+        timeout: 120_000,
+      });
 
       expect(result.error).toBeUndefined();
       expect(result.signal).toBeNull();
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      expect(result.stdout).toContain("check-docs: running: [cli]");
-      expect(result.stdout).toContain("command-level parity OK");
-      expect(result.stdout).toContain("flag-level parity OK");
-      const invocations = readCliInvocations(fixture);
-      expect(invocations.filter((invocation) => invocation === "dump-commands")).toHaveLength(1);
-      expect(invocations.filter((invocation) => invocation === "dump-command-flags")).toHaveLength(
-        1,
-      );
-      expect(invocations).toContain("custom-help");
-      expect(invocations.length).toBeLessThanOrEqual(20);
-    } finally {
-      fs.rmSync(fixture.root, { force: true, recursive: true });
-    }
-  });
+      expect(result.stdout).toContain("check-docs: running: [links]");
+      expect(result.stdout).toContain("remote: skipped (local paths only)");
+      expect(result.stdout).toContain("phase 2/2: skipped");
+    },
+  );
 
-  it("rejects an undocumented flag from custom rendered help (#7616)", {
-    timeout: 150_000,
-  }, () => {
-    const fixture = createCliParityFixture();
+  it.concurrent(
+    "rejects an undocumented flag from custom rendered help (#7616)",
+    {
+      timeout: 150_000,
+    },
+    async ({ signal }) => {
+      const fixture = createCliParityFixture();
 
-    try {
-      const result = runCliParity(fixture, { NEMOCLAW_TEST_ADD_AGENT_HELP_FLAG: "1" });
+      try {
+        const result = await runCliParityAsync(fixture, signal, {
+          NEMOCLAW_TEST_ADD_AGENT_HELP_FLAG: "1",
+        });
 
-      expect(result.error).toBeUndefined();
-      expect(result.signal).toBeNull();
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("flag --synthetic-undocumented");
-      expect(result.stderr).toContain("not in 'nemoclaw <name> agent' section");
-      expect(readCliInvocations(fixture)).toContain("custom-help");
-    } finally {
-      fs.rmSync(fixture.root, { force: true, recursive: true });
-    }
-  });
+        expect(result.error).toBeUndefined();
+        expect(result.signal).toBeNull();
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("flag --synthetic-undocumented");
+        expect(result.stderr).toContain("not in 'nemoclaw <name> agent' section");
+        expect(readCliInvocations(fixture)).toContain("custom-help");
+      } finally {
+        fs.rmSync(fixture.root, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("keeps installer provider help aligned with its shared owner (#11041)", () => {
     const fixture = createInstallParityFixture();
@@ -217,27 +308,5 @@ describe("public compiled CLI contracts", () => {
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });
     }
-  });
-
-  it("validates every repository-local documentation link (#7616)", {
-    timeout: 150_000,
-  }, () => {
-    const result = spawnSync("bash", [CHECK_DOCS, "--only-links", "--local-only"], {
-      cwd: REPO_ROOT,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        CHECK_DOC_LINKS_REMOTE: "0",
-      },
-      killSignal: "SIGKILL",
-      timeout: 120_000,
-    });
-
-    expect(result.error).toBeUndefined();
-    expect(result.signal).toBeNull();
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(result.stdout).toContain("check-docs: running: [links]");
-    expect(result.stdout).toContain("remote: skipped (local paths only)");
-    expect(result.stdout).toContain("phase 2/2: skipped");
   });
 });
