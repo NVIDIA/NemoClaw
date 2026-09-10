@@ -99,6 +99,21 @@ export function normalizeWindowsNativePluginRequire(relative: string, text: stri
     'return withNativeRequireAliases(aliasMap, () => nodeRequire(process.platform === "win32" && typeof modulePath === "string" && modulePath.startsWith("file:") ? fileURLToPath(modulePath) : modulePath));',
   );
 }
+export function guardWindowsInstallerUpdate(relative: string, text: string) {
+  if (relative !== "dist/update-B0wRhzt_.js") return text;
+  if (sha256(text) !== "d9ab62237a9405a6ce9057d6193f42a6c833c6738be0771e992b8d3e39f734aa")
+    throw new Error("The reviewed gateway update handler changed.");
+  const validation =
+    'if (!assertValidParams(params, validateUpdateRunParams, "update.run", respond)) return;';
+  if (text.split(validation).length !== 2)
+    throw new Error("The gateway update admission seam changed.");
+  const refusal =
+    'if (process.platform === "win32") { respond(false, void 0, __nemoUpdateErrorShape(__nemoUpdateErrorCodes.UNAVAILABLE, "This Windows application is managed by the NemoClaw installer. Use the NemoClaw installer to update or repair it.")); return; }';
+  return (
+    'import { Gn as __nemoUpdateErrorShape, Wn as __nemoUpdateErrorCodes } from "./schema-BuOFpc7K.js";\n' +
+    text.replace(validation, validation + "\n" + refusal)
+  );
+}
 export function compiledPluginPlan(source: string, syntax: Syntax, compiler: Transformer) {
   const entryFiles = filesBelow(path.join(source, "dist", "extensions")).filter(
     (file) =>
@@ -142,9 +157,10 @@ Object.defineProperty(globalThis,Symbol.for("nemoclaw.compiled-openclaw.plugins.
     setup(build) {
       build.onLoad({ filter: /\.[cm]?js$/ }, async (args) => {
         if (!args.path.startsWith(source + path.sep)) return;
-        const text = normalizeWindowsNativePluginRequire(
-          portablePath(path.relative(source, args.path)),
-          fs.readFileSync(args.path, "utf8"),
+        const sourceRelative = portablePath(path.relative(source, args.path));
+        const text = guardWindowsInstallerUpdate(
+          sourceRelative,
+          normalizeWindowsNativePluginRequire(sourceRelative, fs.readFileSync(args.path, "utf8")),
         );
         if (
           !text.includes("import.meta") &&

@@ -86,6 +86,10 @@ jobs:
             --experimental-strip-types packaging/windows/app/test-windows-plugin-file-url.mts `
             --source-root "$env:RUNNER_TEMP\compiled-windows-app\inputs\openclaw"
           if ($LASTEXITCODE -ne 0) { throw 'Windows native plugin loading controls failed.' }
+          & "$env:RUNNER_TEMP\compiled-windows-app\node\node.exe" `
+            --experimental-strip-types packaging/windows/app/test-windows-update-owner.mts `
+            --source-root "$env:RUNNER_TEMP\compiled-windows-app\inputs\openclaw"
+          if ($LASTEXITCODE -ne 0) { throw 'Installer-owned update controls failed.' }
       - name: Compile the OpenClaw application unit
         shell: pwsh
         run: |

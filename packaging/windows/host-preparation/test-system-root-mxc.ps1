@@ -118,7 +118,7 @@ console.log('NEMOCLAW_SYSTEM_METADATA_MXC_OK');
 '@,[Text.UTF8Encoding]::new($false))
     $policy=Join-Path $output 'policy.json'
     $request=[ordered]@{version='0.6.0-alpha';containerId=$container;containment='processcontainer'
-        process=@{commandLine='"'+$NodePath+'" "'+$worker+'" "'+$result+'" "'+$denied+'"';cwd=$work;timeout=30000;env=@('NODE_DISABLE_COMPILE_CACHE=1')}
+        process=@{commandLine='"'+$NodePath+'" "'+$worker+'" "'+$result+'" "'+$denied+'"';cwd=$work;timeout=30000;env=@('NODE_DISABLE_COMPILE_CACHE=1', ('SystemRoot=' + [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)), ('WINDIR=' + [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)))}
         processContainer=@{leastPrivilege=$true;capabilities=@()};filesystem=@{readonlyPaths=@($NodePath);readwritePaths=@($work)}
         lifecycle=@{destroyOnExit=$false;preservePolicy=$false}}
     [IO.File]::WriteAllText($policy,($request|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
@@ -127,7 +127,8 @@ console.log('NEMOCLAW_SYSTEM_METADATA_MXC_OK');
     $mxcStopped=$commands[$commands.Count-1].stopped
     $guest=Get-Content -LiteralPath $result -Raw|ConvertFrom-Json
     if($guest.marker  -cne  'NEMOCLAW_SYSTEM_METADATA_MXC_OK'  -or  $guest.allowedRead  -ne  $true  -or  $guest.deniedRead  -ne  $true  -or  $guest.ownedWrite  -ne  $true){throw 'The actual MXC file-access controls failed.'}
-    if((Get-Content -LiteralPath (Join-Path $output 'mxc-native.log') -Raw)  -notmatch  'selected isolation tier: appcontainer-dacl'){throw 'The system-root-dependent AppContainer DACL tier was not exercised.'}
+    $mxcLog = [regex]::Replace((Get-Content -LiteralPath (Join-Path $output 'mxc-native.log') -Raw), '\[\d+\]\s*', '')
+    if($mxcLog -notmatch '(?m)^selected isolation tier:\s*appcontainer-dacl\s*$'){throw 'The system-root-dependent AppContainer DACL tier was not exercised.'}
     $receipt.guest=$guest
     $receipt.nodeSddlAfter=(Get-Acl -LiteralPath $NodePath).Sddl
     $receipt.nodeAclRestored=$receipt.nodeSddlAfter  -ceq  $nodeAcl

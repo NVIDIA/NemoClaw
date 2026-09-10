@@ -105,6 +105,49 @@ function Compare-RecreatedFixtureFiles {
     return $changes.ToArray()
 }
 
+function Compare-RolledBackFixtureLeaf {
+    param([Parameter(Mandatory)][string]$Before, [Parameter(Mandatory)][string]$After,
+        [Parameter(Mandatory)][string]$RuntimeId)
+    if ($RuntimeId -cnotmatch '^[a-f0-9]{64}$') { throw 'Rollback requires the exact prior fixture runtime identity.' }
+    $leaf = '/runtimes/' + $RuntimeId + '/empty'
+    $previous = @($Before -split "`n"); $current = @($After -split "`n")
+    if ($previous.Count -ne $current.Count) { throw 'Rollback changed the exact fixture inventory.' }
+    $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $changes = [Collections.Generic.List[object]]::new()
+    $foundLeaf = $false
+    for ($index = 0; $index -lt $previous.Count; $index++) {
+        $left = @($previous[$index] -split '\|'); $right = @($current[$index] -split '\|')
+        if ($left.Count -lt 3 -or $right.Count -ne $left.Count -or $left[0] -cne $right[0] -or
+            $left[1] -cne $right[1] -or -not $paths.Add($left[1])) {
+            throw 'Rollback changed a fixture path, kind or inventory identity.'
+        }
+        # The exact fixture leaf must have no descendants in either complete
+        # snapshot. Every corresponding path is checked above, case-sensitively.
+        if ($left[1].StartsWith($leaf + '/', [StringComparison]::OrdinalIgnoreCase) -or
+            $right[1].StartsWith($leaf + '/', [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'The rollback metadata exception requires an empty fixture leaf.'
+        }
+        if ($left[1] -cne $leaf) {
+            if ($previous[$index] -cne $current[$index]) { throw 'Rollback changed a protected fixture entry.' }
+            continue
+        }
+        if ($left.Count -ne 3 -or $left[0] -cne 'D') { throw 'The known rollback leaf is not a directory.' }
+        $foundLeaf = $true
+        if ($previous[$index] -ceq $current[$index]) { continue }
+        # MSI FolderCreate may clear AI when reconstructing this owned empty
+        # directory. Preserve every other SDDL byte: owner/group, protection,
+        # ACE order, flags and masks. No production ACL is changed or normalized.
+        $metadata = [regex]::Match($left[2], '\A(?<prefix>[^()]*D:)AI(?<body>\(.*)\z')
+        if (-not $metadata.Success -or ($metadata.Groups['prefix'].Value + $metadata.Groups['body'].Value) -cne $right[2]) {
+            throw 'Rollback changed leaf access, ownership, protection or inheritance flags.'
+        }
+        $changes.Add([pscustomobject]@{ path = $leaf; control = 'SE_DACL_AUTO_INHERITED';
+            before = 'set'; after = 'clear'; emptyBefore = $true; emptyAfter = $true })
+    }
+    if (-not $foundLeaf) { throw 'The known rollback fixture leaf is missing.' }
+    return $changes.ToArray()
+}
+
 function Get-FixtureSnapshot {
     param([string]$Label = '')
     $records = [Collections.Generic.List[string]]::new()
@@ -260,6 +303,7 @@ try {
             -ReceiptPath (Join-Path $ArtifactDirectory ($fixture.label + '.compiled-msi.json'))
     }
     & (Join-Path $PSScriptRoot 'test-runtime-msi-repair-snapshot.ps1') -SourcePath $PSCommandPath
+    & (Join-Path $PSScriptRoot 'test-runtime-msi-rollback-snapshot.ps1') -SourcePath $PSCommandPath
     $first = $fixtures[0]; $upgrade = $fixtures[1]
     $installed = Invoke-FixtureMsi '/i' $first.msi 'first-install'; $results.Add($installed)
     if ($installed.exitCode -ne 0) { throw 'The first MSI fixture did not install successfully.' }
@@ -290,19 +334,25 @@ try {
     $repairedSnapshot = Get-FixtureSnapshot -Label 'released-direct-repair'
     if ($repair.exitCode -ne 0) { throw 'Repair after lease release failed.' }
     $receipt['recreatedFileMetadataChanges'] = @(Compare-RecreatedFixtureFiles -Before $snapshot -After $repairedSnapshot)
-    # Later failed transactions must restore this exact post-repair baseline.
-    # Their comparison remains strict; no metadata normalization occurs there.
+    # Preserve the raw post-repair baseline for subsequent transaction checks.
     $snapshot = $repairedSnapshot
     Assert-FixtureCurrent $first
     foreach ($fixture in @($fixtures[2],$fixtures[3])) {
         $failed = Invoke-FixtureMsi '/i' $fixture.msi $fixture.label; $results.Add($failed)
-        if ($failed.exitCode -ne 1603 -or (Get-FixtureSnapshot -Label $fixture.label) -cne $snapshot) {
-            throw 'Actual MSI rollback did not restore the prior files and descriptor after the controlled failure.'
+        $rolledBackSnapshot = Get-FixtureSnapshot -Label $fixture.label
+        if ($failed.exitCode -ne 1603) { throw 'The controlled MSI failure did not return 1603.' }
+        if ($fixture.label -ceq 'deferred-failure' -and
+            (Get-Content -LiteralPath $failed.log -Raw) -notmatch 'FixtureDeferredFailure returned actual error code 42') {
+            throw 'The intended deferred failure was not observed.'
         }
         if ($fixture.label -ceq 'commit-failure' -and
             (Get-Content -LiteralPath $failed.log -Raw) -notmatch 'NativeRuntimeCommitInstall returned actual error code 47') {
             throw 'The intended commit failure before admission was not observed.'
         }
+        $receipt['rollbackLeafMetadataChanges-' + $fixture.label] = @(Compare-RolledBackFixtureLeaf `
+            -Before $snapshot -After $rolledBackSnapshot -RuntimeId $first.identity.runtimeId)
+        # Keep the actual post-rollback bytes as the next exact baseline.
+        $snapshot = $rolledBackSnapshot
         Assert-FixtureCurrent $first
         $probeLease = Start-FixtureLease $helper; Stop-FixtureLease $probeLease
     }

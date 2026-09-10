@@ -458,7 +458,6 @@ def clean_environment(runtime, evidence, build_paths):
         npm_config_cache=str(evidence / "npm-cache"),
         npm_config_logs_dir=str(evidence / "npm-cache" / "diagnostic-logs"),
         npm_config_logs_max="64",
-        npm_config_timing="true",
         NODE_DEPS_TIMEOUT=str(NODE_DEPS_COMMAND_TIMEOUT_SECONDS),
         npm_config_userconfig=str(evidence / "npm-user.npmrc"),
         npm_config_globalconfig=str(evidence / "npm-global.npmrc"),

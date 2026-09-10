@@ -16,6 +16,8 @@ import urllib.request
 import zipfile
 import sys
 import types
+import shutil
+import subprocess
 
 
 def load(name, filename):
@@ -216,6 +218,72 @@ class BuildControls(unittest.TestCase):
                 urllib.request.urlopen(endpoint + "/../artifact.zip")
             self.assertEqual(captured.exception.code, 404)
             captured.exception.close()
+
+    def test_npm_version_probe_retains_default_output_and_diagnostics(self):
+        node = shutil.which("node.exe" if os.name == "nt" else "node")
+        self.assertIsNotNone(
+            node, "The owning CI lane requires its prepared Node tool."
+        )
+        node_path = Path(node).resolve()
+        candidates = [
+            node_path.parent / "node_modules/npm/bin/npm-cli.js",
+            node_path.parent.parent / "lib/node_modules/npm/bin/npm-cli.js",
+        ]
+        npm = next((candidate for candidate in candidates if candidate.is_file()), None)
+        self.assertIsNotNone(npm, "The actual Node distribution must contain npm.")
+        expected = json.loads(npm.parent.parent.joinpath("package.json").read_text())[
+            "version"
+        ]
+        with mock.patch.dict(
+            os.environ,
+            {
+                "SystemRoot": os.environ.get("SystemRoot", str(self.root)),
+                "npm_config_timing": "true",
+            },
+            clear=True,
+        ):
+            environment = builder.clean_environment(
+                self.root / "runtime", self.root, []
+            )
+        self.assertFalse(any(key.lower() == "npm_config_timing" for key in environment))
+        before = subprocess.run(
+            [str(node_path), str(npm), "--version"],
+            env={**environment, "npm_config_timing": "true"},
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        after = subprocess.run(
+            [str(node_path), str(npm), "--version"],
+            env=environment,
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(before.returncode, 0)
+        self.assertEqual(before.stdout.strip(), expected)
+        self.assertIn("npm timing", before.stderr)
+        self.assertEqual(after.returncode, 0)
+        self.assertEqual(after.stdout.strip(), expected)
+        self.assertEqual(after.stderr, "")
+        # --version is an early-exit command; a read-only config command proves
+        # normal default debug logging remains enabled without timing chatter.
+        diagnostic = subprocess.run(
+            [str(node_path), str(npm), "config", "get", "cache"],
+            env=environment,
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(diagnostic.returncode, 0)
+        self.assertEqual(diagnostic.stdout.strip(), environment["npm_config_cache"])
+        self.assertEqual(diagnostic.stderr, "")
+        self.assertTrue(
+            list((self.root / "npm-cache/diagnostic-logs").glob("*-debug-*.log"))
+        )
 
     def test_node_stage_keeps_real_failed_child_logs_outside_excluded_cache(self):
         with mock.patch.dict(
