@@ -776,6 +776,19 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
   });
 }
 
+/** Persist intentional-stop state while containing registry write failures. */
+export function recordSandboxStopIntent(
+  name: string,
+  stopped: boolean,
+  update: typeof updateSandbox,
+): boolean {
+  try {
+    return update(name, { stopped });
+  } catch {
+    return false;
+  }
+}
+
 /** Publish a missing gateway port only while the complete qualified row remains current. */
 export function compareAndSetSandboxGatewayPort(
   name: string,
