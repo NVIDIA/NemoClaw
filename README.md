@@ -7,9 +7,9 @@ from the previous NemoClaw implementation. See [DESIGN.md](DESIGN.md) for scope.
 The supported prototype commands are:
 
 ```sh
-nemoclaw config plan < deployment.yaml
-nemoclaw config apply < deployment.yaml
-nemoclaw config export > exported.yaml
+nemoclaw plan < deployment.yaml
+nemoclaw apply < deployment.yaml
+nemoclaw export > exported.yaml
 ```
 
 Each command accepts `--state-dir DIR`, which defaults to `.nemoclaw` in the
@@ -76,9 +76,9 @@ The inference endpoint must be reachable from OpenShell's inference execution
 environment, which can differ from the CLI's host.
 
 ```sh
-dist/linux_arm64/bin/nemoclaw config plan --file deployment.yaml
-dist/linux_arm64/bin/nemoclaw config apply --file deployment.yaml
-dist/linux_arm64/bin/nemoclaw config export > exported.yaml
+dist/linux_arm64/bin/nemoclaw plan --file deployment.yaml
+dist/linux_arm64/bin/nemoclaw apply --file deployment.yaml
+dist/linux_arm64/bin/nemoclaw export > exported.yaml
 ```
 
 Change `overrides.model` and apply again to update the inference route. The

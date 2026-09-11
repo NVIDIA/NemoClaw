@@ -17,9 +17,9 @@ This prototype is a subset, not implementation of the entire accepted epic.
 
 ## Slice
 
-The user supplies YAML to `nemoclaw config apply` and retrieves it with
-`nemoclaw config export`. Planning uses OpenTofu and is exposed through
-`nemoclaw config plan`. Execution location is an operational option.
+The user supplies YAML to `nemoclaw apply` and retrieves it with
+`nemoclaw export`. Planning uses OpenTofu and is exposed through
+`nemoclaw plan`. Execution location is an operational option.
 
 The first deployment attaches to an explicitly selected OpenShell gateway and
 manages a deployment workspace, inference registrations/routes, and an OpenClaw

@@ -71,7 +71,7 @@ deployments after success. It prints the location of retained evidence. On
 failure, it leaves the affected state and resources available for inspection.
 
 For interactive experimentation, use the bundle's `bin/nemoclaw` with
-`config apply --state-dir .local/deployment --file .local/deployment.yaml`.
+`apply --state-dir .local/deployment --file .local/deployment.yaml`.
 Use the same state directory for export and subsequent applies.
 
 After a successful test, remove the Ollama test container with
@@ -147,10 +147,10 @@ Use a fresh deployment UUID when creating a separate experiment. The gateway por
 and subnet must be unused. For the checked-in experiment:
 
 ```sh
-dist/linux_arm64/bin/nemoclaw config plan --state-dir .local/spark-deployment < examples/spark.yaml
-dist/linux_arm64/bin/nemoclaw config apply --state-dir .local/spark-deployment < examples/spark.yaml
-dist/linux_arm64/bin/nemoclaw config export --state-dir .local/spark-deployment > .local/spark-export.yaml
-dist/linux_arm64/bin/nemoclaw config apply --state-dir .local/spark-deployment < .local/spark-export.yaml
+dist/linux_arm64/bin/nemoclaw plan --state-dir .local/spark-deployment < examples/spark.yaml
+dist/linux_arm64/bin/nemoclaw apply --state-dir .local/spark-deployment < examples/spark.yaml
+dist/linux_arm64/bin/nemoclaw export --state-dir .local/spark-deployment > .local/spark-export.yaml
+dist/linux_arm64/bin/nemoclaw apply --state-dir .local/spark-deployment < .local/spark-export.yaml
 ```
 
 The snapshot is about 99 GiB and the packed PLE table about 27 GiB. Downloads use

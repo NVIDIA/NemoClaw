@@ -126,9 +126,9 @@ implementation, subject to qualification.
 The proposed command surface is:
 
 ```sh
-nemoclaw config plan < deployment.yaml
-nemoclaw config apply < deployment.yaml
-nemoclaw config export > deployment.yaml
+nemoclaw plan < deployment.yaml
+nemoclaw apply < deployment.yaml
+nemoclaw export > deployment.yaml
 ```
 
 `plan` previews changes. A later `apply` creates a fresh internal plan and executes
@@ -154,7 +154,7 @@ sequenceDiagram
     participant Provider as Go provider
     participant Runtime as Runtime APIs and configuration
 
-    Operator->>CLI: config plan with desired YAML
+    Operator->>CLI: plan with desired YAML
     CLI->>CLI: Validate input and target<br/>Acquire deployment lock
     CLI->>Engine: Generate plan from compiled configuration
     Engine->>Provider: Read resource configuration
@@ -204,7 +204,7 @@ sequenceDiagram
     participant Engine as OpenTofu
     participant Provider as Go provider and resource readers
 
-    Operator->>CLI: config apply with desired YAML
+    Operator->>CLI: apply with desired YAML
     CLI->>CLI: Validate input and target<br/>Acquire deployment lock
     CLI->>Engine: Build a fresh plan using resource observations
     Engine-->>CLI: Internal plan
@@ -288,7 +288,7 @@ sequenceDiagram
     participant State as Bindings and retained metadata
     participant Readers as Resource readers
 
-    Operator->>CLI: config export for a selected deployment
+    Operator->>CLI: export for a selected deployment
     CLI->>CLI: Resolve deployment and target<br/>Acquire deployment lock
     CLI->>State: Read bindings, references, and pending-write evidence
     State-->>CLI: Resource identities and non-secret metadata

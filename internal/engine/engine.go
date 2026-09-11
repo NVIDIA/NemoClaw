@@ -47,7 +47,7 @@ type Plan struct {
 
 func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) error {
 	if operation != "apply" && operation != "plan" && operation != "export" {
-		return errors.New("expected config apply, config plan, or config export")
+		return errors.New("expected apply, plan, or export")
 	}
 	var d config.Document
 	var err error
