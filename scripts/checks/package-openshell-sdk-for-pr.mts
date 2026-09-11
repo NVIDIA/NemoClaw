@@ -13,7 +13,7 @@ const TRUSTED_REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)),
 
 export function packageReviewedOpenShellSdk(
   outputDirectory: string,
-  includeReplacement = false,
+  replacementMode: "exclude" | "require" | "if-present" = "exclude",
   dependencies: Readonly<{
     pack?: typeof packReviewedNpmArchive;
     readAuditConfig?: () => string;
@@ -27,11 +27,11 @@ export function packageReviewedOpenShellSdk(
     dependencies.readAuditConfig?.() ??
       readFileSync(join(TRUSTED_REPOSITORY_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
   );
-  if (includeReplacement && !config.sourceRegistryPackageReplacement) {
+  if (replacementMode === "require" && !config.sourceRegistryPackageReplacement) {
     throw new Error("reviewed OpenShell SDK replacement metadata is required");
   }
   const reviewedPackages =
-    includeReplacement && config.sourceRegistryPackageReplacement
+    replacementMode !== "exclude" && config.sourceRegistryPackageReplacement
       ? [config.sourceRegistryPackage, config.sourceRegistryPackageReplacement]
       : [config.sourceRegistryPackage];
   const archives: ReturnType<typeof packReviewedNpmArchive>[] = [];
@@ -65,14 +65,28 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     process.exit(1);
   }
   const includeReplacementValue = process.env.NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT;
+  const includeAvailableReplacementValue =
+    process.env.NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT;
   if (includeReplacementValue !== undefined && includeReplacementValue !== "1") {
     console.error("NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT must be 1 when set");
     process.exit(1);
   }
+  if (includeAvailableReplacementValue !== undefined && includeAvailableReplacementValue !== "1") {
+    console.error("NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT must be 1 when set");
+    process.exit(1);
+  }
+  if (includeReplacementValue !== undefined && includeAvailableReplacementValue !== undefined) {
+    console.error("OpenShell SDK replacement modes are mutually exclusive");
+    process.exit(1);
+  }
   try {
-    process.stdout.write(
-      `${packageReviewedOpenShellSdk(outputDirectory, includeReplacementValue === "1")}\n`,
-    );
+    const replacementMode =
+      includeReplacementValue === "1"
+        ? "require"
+        : includeAvailableReplacementValue === "1"
+          ? "if-present"
+          : "exclude";
+    process.stdout.write(`${packageReviewedOpenShellSdk(outputDirectory, replacementMode)}\n`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);

@@ -5,6 +5,7 @@ import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import"
 import {
   BoundedTextSchema,
   NemoClawManagedVllmServingSchema,
+  NemoClawOllamaServingSchema,
   CredentialEnvironmentReferenceNameSchema,
   ImmutableImageReferenceSchema,
   InferenceEndpointSchema,
@@ -28,6 +29,7 @@ import {
 } from "../../config/model";
 import type { SandboxConfiguration } from "../sandbox/configuration";
 import type { SandboxEntry } from "../../state/registry/types";
+import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
 
@@ -161,6 +163,7 @@ export interface ObservedExportInference {
   readonly endpointEvidence: ObservedExportEndpointEvidence | null;
   readonly credentialEnv: string | null;
   readonly managedServing?: ObservedManagedVllmRuntime;
+  readonly ollamaServing?: ObservedOllamaProxy;
 }
 
 export interface ObservedExportPolicy {
@@ -188,6 +191,7 @@ export type ExportSnapshotReadStage =
   | "provider-metadata"
   | "web-search-provider"
   | "managed-serving"
+  | "ollama-serving"
   | "effective-policy";
 
 /** One complete, untrusted read from all export evidence owners. */
@@ -256,6 +260,16 @@ const HostedExportInferenceSchema = Type.Object({
 
 const ExportInferenceSchema = Type.Union([
   HostedExportInferenceSchema,
+  Type.Object(
+    {
+      provider: Type.Literal("ollama-local"),
+      model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
+      api: Type.Literal("openai-completions"),
+      serving: NemoClawOllamaServingSchema,
+      overrides: Type.Optional(NemoClawInferenceTuningSchema),
+    },
+    { additionalProperties: false },
+  ),
   Type.Object(
     {
       provider: Type.Literal("vllm-local"),
