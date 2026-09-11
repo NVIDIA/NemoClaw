@@ -87,18 +87,18 @@ interface BackupAllSandboxAttempt {
   mutationLockError?: unknown;
 }
 
-function retainStrictPreUpgradePolicy(
+async function retainStrictPreUpgradePolicy(
   sandboxName: string,
   result: sandboxState.BackupResult,
   enabled: boolean,
-): sandboxState.BackupResult {
+): Promise<sandboxState.BackupResult> {
   if (!enabled || !result.success) return result;
   if (!result.manifest) {
     throw new Error(
       `Strict pre-upgrade backup for '${sandboxName}' completed without a published manifest`,
     );
   }
-  const policyDocument = captureRecordedSandboxBasePolicy(
+  const policyDocument = await captureRecordedSandboxBasePolicy(
     sandboxName,
     "capture the live policy for pre-upgrade recovery",
   );

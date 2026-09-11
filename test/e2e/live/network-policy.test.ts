@@ -9,7 +9,7 @@ import { validateNemoClawConfig } from "../../../src/lib/config/schema.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
-  syncCliOpenShellSandboxPolicyReader,
+  cliOpenShellSandboxPolicyReader,
 } from "../../../src/lib/adapters/openshell/sandbox-policy-cli.ts";
 import { load, save } from "../../../src/lib/state/registry/persistence.ts";
 import { createServer, type Server } from "node:http";
@@ -345,7 +345,7 @@ test(
     );
     const registry = load();
     const entry = registry.sandboxes[SANDBOX_NAME];
-    const policy = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
+    const policy = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
       target: namedOpenShellGateway(entry.gatewayName ?? ""),
       sandboxName: SANDBOX_NAME,
       scope: "effective",

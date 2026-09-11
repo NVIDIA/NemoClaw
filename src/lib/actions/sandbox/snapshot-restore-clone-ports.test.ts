@@ -206,7 +206,7 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
         }),
       );
       f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
-      f.readSandboxPolicyMock.mockReturnValue({ ok: false, error: policyReadError });
+      f.readSandboxPolicyMock.mockResolvedValue({ ok: false, error: policyReadError });
       const secureTempFile = vi.spyOn(tempFiles, "secureTempFile");
       const { runSandboxSnapshot } = await import("./snapshot");
 
@@ -241,7 +241,7 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
       dashboardPort: name === "alpha" ? 18790 : 18791,
     }));
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    f.readSandboxPolicyMock.mockReturnValue({
+    f.readSandboxPolicyMock.mockResolvedValue({
       ok: true,
       value: {
         document: [
@@ -290,11 +290,11 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     const initialPolicy = "version: 1\nnetwork_policies:\n  initial: {}\n";
     const latestPolicy = "version: 1\nnetwork_policies:\n  host_edit: {}\n";
     f.readSandboxPolicyMock
-      .mockReturnValueOnce({
+      .mockResolvedValueOnce({
         ok: true,
         value: { document: initialPolicy, appliedRevision: null },
       })
-      .mockReturnValue({
+      .mockResolvedValue({
         ok: true,
         value: { document: latestPolicy, appliedRevision: null },
       });
@@ -337,11 +337,11 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
 
   it("keeps a --force destination when the final pre-delete policy read fails", async () => {
     f.readSandboxPolicyMock
-      .mockReturnValueOnce({
+      .mockResolvedValueOnce({
         ok: true,
         value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: null },
       })
-      .mockReturnValue({
+      .mockResolvedValue({
         ok: false,
         error: {
           kind: "command",
