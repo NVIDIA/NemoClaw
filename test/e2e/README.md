@@ -350,7 +350,7 @@ npx tsx tools/e2e/credential-free-tests.mts
 OpenShell target work in issue #9872. The trusted workflow downloads and
 verifies the exact OpenShell SDK archive with package-read permission. The
 candidate job receives the archive but no package credential. It calls a local
-OpenShell 0.0.106 gateway over HTTPS with an explicit CA. The target confirms
+OpenShell 0.0.116 gateway over HTTPS with an explicit CA. The target confirms
 that its configured authentication file path does not exist before and after
 the health request. A successful request proves that public health does not
 require a credential read or make an authenticated gateway call.
@@ -784,8 +784,10 @@ write failure propagates, so that retry artifact may be absent. `tools.invoke`
 assertions prove the plugin version after onboarding, restart, and recreation.
 The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
 across the proven filesystem boundary before restart. `e2e-support` tests own
-deterministic wrapper argument rewriting. Deterministic tests own exact package
-versions and third-party replacement internals. Runtime inspection and catalog
+sandbox-create interception and wrapper argument rewriting. Onboarding and
+recreation load the test-only interceptor; all other OpenShell commands use the
+canonical binary so dashboard forward ownership remains verifiable. Deterministic
+tests own exact package versions and third-party replacement internals. Runtime inspection and catalog
 permutations are outside this live contract. Workspace preservation and policy
 selection retain their focused coverage instead of another assertion in this
 target. The `rebuild-openclaw` job remains the canonical live rebuild coverage.
@@ -810,6 +812,10 @@ the GitHub asset ID, source URL, size, and SHA-256 digest for every required
 Linux x64 archive and checksum file. It rejects release drift during download,
 then uploads the verified bytes under a content-addressed name with the shared
 14-day E2E retention policy.
+
+`mcp-bridge-dev` is an explicit-only compatibility lane. Empty-selector full-suite
+dispatches qualify the exact stable OpenShell 0.0.116 product contract and do not
+select the development runtime.
 
 The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify that same artifact with the trusted workflow revision.
 The `actions/setup-node` step selects Node.js 22 and disables automatic package manager caching before candidate checkout.

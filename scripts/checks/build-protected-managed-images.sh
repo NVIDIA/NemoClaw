@@ -5,7 +5,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref> [--source-root <absolute-dir>] [--cache-to <absolute-dir>] [--cache-from <absolute-dir> --audit-evidence-from <absolute-dir>]" >&2
+  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref> [--runtime-user <root|sandbox>] [--source-root <absolute-dir>] [--cache-to <absolute-dir>] [--cache-from <absolute-dir> --audit-evidence-from <absolute-dir>]" >&2
   exit 2
 }
 
@@ -20,6 +20,7 @@ source_root="$PWD"
 cache_to=""
 cache_from=""
 audit_evidence_from=""
+runtime_user="root"
 while (($# > 0)); do
   case "$1" in
     --audit-evidence-from)
@@ -40,6 +41,11 @@ while (($# > 0)); do
     --revision)
       (($# >= 2)) || usage
       revision="$2"
+      shift 2
+      ;;
+    --runtime-user)
+      (($# >= 2)) || usage
+      runtime_user="$2"
       shift 2
       ;;
     --cohort)
@@ -87,6 +93,7 @@ done
 [[ "$revision" =~ ^[a-f0-9]{40}$ ]] || usage
 [[ "$cohort" =~ ^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] || usage
 [[ "$platform" == "linux/amd64" || "$platform" == "linux/arm64" ]] || usage
+[[ "$runtime_user" == "root" || "$runtime_user" == "sandbox" ]] || usage
 case "$platform" in
   linux/amd64) npm_target_cpu="x64" ;;
   linux/arm64) npm_target_cpu="arm64" ;;
@@ -449,7 +456,7 @@ build_agent() {
     -f "$dockerfile_path" \
     --build-arg "BASE_IMAGE=${base_reference}" \
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
+    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=${runtime_user}" \
     --build-arg "TARGETARCH=${target_arch}"
 
   local -a build_command=(docker buildx build
@@ -474,7 +481,7 @@ build_agent() {
     # Buildx target explicitly so that default cannot override linux/arm64.
     --build-arg "TARGETARCH=${platform#linux/}"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
-    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=${runtime_user}"
     --build-arg "TARGETARCH=${target_arch}"
     "$source_root")
   run_build_with_retry "$agent" "$image_repository" "${build_command[@]}"
@@ -507,11 +514,16 @@ build_agent() {
     --arg cohort "$cohort" \
     --arg image_id "$image_id" \
     --arg platform "$platform" \
+    --arg runtime_user "$runtime_user" \
     --arg revision "$revision" '
       length == 1 and
       .[0].Id == $image_id and
       ((.[0].Config.User // "") as $user |
-        $user == "" or $user == "root" or $user == "0") and
+        if $runtime_user == "root" then
+          $user == "" or $user == "root" or $user == "0"
+        else
+          $user == "sandbox"
+        end) and
       .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == $agent and
       .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.contract"] == "1" and
       .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.platform"] == $platform and

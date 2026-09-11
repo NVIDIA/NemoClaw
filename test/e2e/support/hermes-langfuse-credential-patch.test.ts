@@ -69,9 +69,13 @@ assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "sk-lf-secret") is N
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is None
 assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "openshell:resolve:env:v0_LANGFUSE_SECRET_KEY") is None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:v12345678901234567890_LANGFUSE_PUBLIC_KEY") is None
+assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "openshell:resolve:env:s${"a".repeat(64)}_LANGFUSE_SECRET_KEY") is None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:LANGFUSE_SECRET_KEY") is not None
 assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is not None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:v123456789012345678901_LANGFUSE_PUBLIC_KEY") is not None
+assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:s${"a".repeat(63)}_LANGFUSE_PUBLIC_KEY") is not None
+assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:s${"a".repeat(65)}_LANGFUSE_PUBLIC_KEY") is not None
+assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:s${"A".repeat(64)}_LANGFUSE_PUBLIC_KEY") is not None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "prefix-openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is not None
 assert _validate_langfuse_base_url("https://cloud.langfuse.com") is None
 assert _validate_langfuse_base_url("https://langfuse.example.test:8443/base") is None
