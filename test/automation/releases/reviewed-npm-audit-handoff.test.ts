@@ -607,9 +607,7 @@ describe("npm audit handoff", () => {
         forgedRawHelper,
       );
       expect(rejectedRawReport.status).not.toBe(0);
-      expect(rejectedRawReport.stderr).toContain(
-        "raw report does not match the verified receipt",
-      );
+      expect(rejectedRawReport.stderr).toContain("raw report does not match the verified receipt");
       expect(fs.existsSync(retainedReport)).toBe(false);
       expect(fs.existsSync(retainedResult)).toBe(false);
       expect(fs.existsSync(nodeLog)).toBe(false);
