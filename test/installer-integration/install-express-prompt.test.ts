@@ -11,16 +11,6 @@ import { runExpressPromptWithTty } from "../helpers/installer-express-prompt-pty
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
-  const firmwareStates = [
-    [/(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu, "station-gb300"],
-    [/DGX[\s_-]+Spark/iu, "spark"],
-    [/(?:^|[^A-Za-z0-9])P3830(?:$|[^A-Za-z0-9])|DGX[\s_-]+Station/iu, "station-other"],
-    [/Jetson|Tegra|Thor|Orin|Xavier/iu, "jetson"],
-  ] as const;
-  function firmwareStateForProduct(productName: string): string {
-    return firmwareStates.find(([pattern]) => pattern.test(productName))?.[1] ?? "not-station";
-  }
-
   it("carries a declined N1x preview through preflight into ordinary onboarding (#11041)", () => {
     const result = runExpressPromptWithTty("n\n", "pipe", "N1x", {}, "n1x-standard-main");
     const output = `${result.stdout}${result.stderr}`;
@@ -69,60 +59,62 @@ describe("installer express install prompt (sourced)", () => {
     releasePath: string,
     extraEnv: Record<string, string> = {},
   ) {
-    return spawnSync(
-      "bash",
-      [
-        "-c",
-        `
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-detect-"));
+    const pci = path.join(fixture, "pci", "0000:01:00.0");
+    try {
+      fs.mkdirSync(pci, { recursive: true });
+      fs.writeFileSync(path.join(fixture, "product_name"), productName);
+      fs.writeFileSync(path.join(fixture, "product_family"), extraEnv.EXPRESS_PRODUCT_FAMILY ?? "");
+      fs.writeFileSync(path.join(pci, "vendor"), "0x10de\n");
+      fs.writeFileSync(path.join(pci, "device"), "0x31c2\n");
+      fs.writeFileSync(path.join(pci, "class"), "0x030200\n");
+      fs.writeFileSync(
+        path.join(fixture, "prepare-dgx-station-host.sh"),
+        `#!/bin/bash
+source "$STATION_PREPARE"
+station_product_name_path() { printf '%s/product_name' "$FIXTURE"; }
+station_product_family_path() { printf '%s/product_family' "$FIXTURE"; }
+station_board_name_path() { printf '%s/board_name' "$FIXTURE"; }
+station_device_tree_model_path() { printf '%s/model' "$FIXTURE"; }
+station_pci_devices_path() { printf '%s/pci' "$FIXTURE"; }
+dgx_station_release_path() { printf '%s' "\${EXPRESS_DGX_RELEASE_PATH:-$FIXTURE/dgx-release}"; }
+dgx_station_release_file_is_safe() { return 0; }
+main "$@"
+`,
+      );
+      return spawnSync(
+        "bash",
+        [
+          "-c",
+          `
 source "$INSTALLER_UNDER_TEST" >/dev/null
-classify_dgx_station_release() {
-  if [[ -z "$EXPRESS_DGX_RELEASE_PATH" ]]; then
-    printf "generic-ubuntu"
-    return
-  fi
-  bash -c '
-    source "$STATION_PREPARE" >/dev/null
-    dgx_station_release_file_is_safe() { return 0; }
-    dgx_station_release_state "$EXPRESS_DGX_RELEASE_PATH"
-  '
-}
-classify_dgx_station_hardware() { printf "%s" "$EXPRESS_FIRMWARE_STATE"; }
-function [ {
-  if [[ "$#" -eq 3 && "$1" = "-r" && "$2" = "/sys/class/dmi/id/product_name" && "$3" = "]" ]]; then
-    return 0
-  fi
-  builtin [ "$@"
-}
-cat() {
-  if [[ "$#" -eq 1 && "$1" = "/sys/class/dmi/id/product_name" ]]; then
-    printf "%s" "$EXPRESS_PRODUCT_NAME"
-    return
-  fi
-  command cat "$@"
-}
+SCRIPT_DIR="$FIXTURE"
 is_wsl_host() { return 1; }
 detect_express_platform
 `,
-      ],
-      {
-        cwd: path.join(import.meta.dirname, "../.."),
-        encoding: "utf-8",
-        env: {
-          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-detect-")),
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-          STATION_PREPARE: path.join(
-            path.resolve(import.meta.dirname, "../.."),
-            "scripts",
-            "prepare-dgx-station-host.sh",
-          ),
-          EXPRESS_PRODUCT_NAME: productName,
-          EXPRESS_FIRMWARE_STATE: firmwareStateForProduct(productName),
-          EXPRESS_DGX_RELEASE_PATH: releasePath,
-          ...extraEnv,
+        ],
+        {
+          cwd: path.join(import.meta.dirname, "../.."),
+          encoding: "utf-8",
+          timeout: 15_000,
+          env: {
+            HOME: fixture,
+            PATH: TEST_SYSTEM_PATH,
+            INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+            STATION_PREPARE: path.join(
+              path.resolve(import.meta.dirname, "../.."),
+              "scripts",
+              "prepare-dgx-station-host.sh",
+            ),
+            FIXTURE: fixture,
+            EXPRESS_DGX_RELEASE_PATH: releasePath,
+            ...extraEnv,
+          },
         },
-      },
-    );
+      );
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
   }
 
   function detectExpressPlatformForProductName(productName: string) {
@@ -1214,19 +1206,21 @@ detect_express_platform
     expect(result.stdout).toBe("Windows WSL");
   });
 
-  it.each(["Dell Pro Max with Station GB300", "NVIDIA DGX Station GB300", "DGX_Station_GB300"])(
-    "recognizes supported Station GB300 firmware as DGX Station: %s",
-    (productName) => {
-      const result = detectExpressPlatformForProductName(productName);
+  it.each([
+    "Dell Pro Max with Station GB300",
+    "NVIDIA DGX Station GB300",
+    "DGX_Station_GB300",
+    "GB300 DGX Station",
+  ])("recognizes supported Station GB300 firmware as DGX Station: %s", (productName) => {
+    const result = detectExpressPlatformForProductName(productName);
 
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(result.stdout).toBe("DGX Station");
-    },
-  );
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  });
 
   it("rejects conflicting NVIDIA firmware identities before platform selection (#10928)", () => {
     const result = detectExpressPlatform("NVIDIA DGX Spark", "", {
-      EXPRESS_FIRMWARE_STATE: "conflicting",
+      EXPRESS_PRODUCT_FAMILY: "GB300 DGX Station",
     });
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
@@ -1337,7 +1331,7 @@ detect_express_platform
     ["future OTA version", stockDgxRelease("7.7.0")],
     ["unreviewed no-OTA version", noOtaDgxOs76Release("7.7.0")],
   ])("keeps a Station with %s outside automatic Express handling (#10928)", (_scenario, marker) => {
-    const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", marker);
+    const result = detectExpressPlatformForStockDgxRelease("GB300 DGX Station", marker);
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toBe("Unsupported DGX Station OS");

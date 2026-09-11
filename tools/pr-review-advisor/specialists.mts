@@ -10,6 +10,7 @@ import {
   type AdvisorSpecialist,
 } from "./specialist-catalog.mts";
 import { specialistToolNames } from "./specialist-tools.mts";
+import { E2E_RECEIPT_TOOL } from "./e2e-receipt.mts";
 
 function advisorSpecialist(interest: AdvisorInterest): AdvisorSpecialist {
   const specialist = ADVISOR_SPECIALISTS.find((candidate) => candidate.interest === interest);
@@ -78,6 +79,8 @@ const COMMON_PROMPT = `Call every deterministic context tool supplied to this tu
 
 Reach a conclusion for the assigned area. Support it with repository evidence. Report each issue that requires a change, its effect, and the change that would resolve it. If you find no issue, explain why the change satisfies the assignment.
 
+Record every additional E2E recommendation, including optional coverage, with pr_review_record_e2e_recommendations before your final Markdown review. Give an explicit reason when no additional E2E is needed. Record needed coverage without a supported selector as unresolved. The recorded recommendations must include every E2E recommendation in your Markdown review.
+
 This is an investigation-only specialist turn. Do not invent a finding ID, merge recommendation, or GitHub comment. After writing the human-readable analysis, call \`${RECORD_ADVISOR_FINDINGS_TOOL}\` exactly once as the terminal action. Record only P0/P1 issues that require a repository change; the trusted host derives exact-head IDs. For each blocker, name one exact repository path and disclose every applicable exclusion. Use an empty finding list with a concrete reason when no blocker remains. Do not mutate files, execute repository code, access the network, run a package manager, or run tests.`;
 
 export function buildSpecialistInvestigateTurn(
@@ -89,7 +92,12 @@ export function buildSpecialistInvestigateTurn(
   return {
     ...fullTurn,
     name: `investigate-${interest}`,
-    activeToolNames: [...specialistToolNames(interest), RECORD_ADVISOR_FINDINGS_TOOL],
+    activeToolNames: [
+      ...specialistToolNames(interest),
+      RECORD_ADVISOR_FINDINGS_TOOL,
+      E2E_RECEIPT_TOOL,
+    ],
+    requiredToolNames: [...(fullTurn.requiredToolNames ?? []), E2E_RECEIPT_TOOL],
     requiredReadOneOfPaths: [context.diffPath],
     terminalSubmitToolName: RECORD_ADVISOR_FINDINGS_TOOL,
     terminalSubmitRepairPrompt:
