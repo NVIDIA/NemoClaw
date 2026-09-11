@@ -599,7 +599,11 @@ describe("Hermes portable lifecycle", () => {
     expect(requalified.kind).toBe("already-current");
     expect(fixture.captureOpenShell).not.toHaveBeenCalled();
     expect(fixture.capturePodmanExecutableAuthority).not.toHaveBeenCalled();
-    expect(() => requalified.assertCurrent()).not.toThrow();
+    expect(() =>
+      (
+        requalified as Extract<typeof requalified, { readonly kind: "already-current" }>
+      ).assertCurrent(),
+    ).not.toThrow();
   });
 
   it("rejects successor-publication generation drift between lifecycle snapshots (#10423)", async () => {

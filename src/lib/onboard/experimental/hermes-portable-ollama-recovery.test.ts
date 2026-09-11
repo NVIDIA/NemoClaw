@@ -948,8 +948,6 @@ describe("Hermes Portable Ollama inference recovery", () => {
   it("reuses health-proven durable GFN inference authority without full reconstruction", async () => {
     const harness = createHarness(true, true);
     const dependency = { release: vi.fn(), rollback: vi.fn() };
-    harness.input.env = { GFN_HERMES_TRUST_DURABLE_AUTHORITY: "1" };
-    harness.input.prepareProbeDependency = vi.fn(() => dependency);
     harness.overrides.readReceipt.mockReturnValue({
       receipt: {
         phase: "active",
@@ -958,10 +956,17 @@ describe("Hermes Portable Ollama inference recovery", () => {
         lifecycleGeneration: "generation-1",
       },
       successor: {},
-    });
+    } as never);
 
     await expect(
-      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+      recoverHermesPortableOllamaInference(
+        {
+          ...harness.input,
+          env: { GFN_HERMES_TRUST_DURABLE_AUTHORITY: "1" },
+          prepareProbeDependency: vi.fn(() => dependency),
+        },
+        harness.overrides as never,
+      ),
     ).resolves.toBe("reused");
 
     expect(harness.input.verifyRoute).toHaveBeenCalledOnce();
@@ -972,7 +977,6 @@ describe("Hermes Portable Ollama inference recovery", () => {
 
   it("falls back to full GFN recovery when the live inference route is unavailable", async () => {
     const harness = createHarness(true, true);
-    harness.input.env = { GFN_HERMES_TRUST_DURABLE_AUTHORITY: "1" };
     harness.input.verifyRoute.mockRejectedValueOnce(new Error("route unavailable"));
     harness.overrides.readReceipt.mockReturnValue({
       receipt: {
@@ -982,10 +986,16 @@ describe("Hermes Portable Ollama inference recovery", () => {
         lifecycleGeneration: "generation-1",
       },
       successor: {},
-    });
+    } as never);
 
     await expect(
-      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+      recoverHermesPortableOllamaInference(
+        {
+          ...harness.input,
+          env: { GFN_HERMES_TRUST_DURABLE_AUTHORITY: "1" },
+        },
+        harness.overrides as never,
+      ),
     ).resolves.toBe("reused");
 
     expect(harness.input.verifyRoute).toHaveBeenCalledTimes(2);
@@ -1004,14 +1014,19 @@ describe("Hermes Portable Ollama inference recovery", () => {
       },
       successor: {},
     };
-    harness.input.env = { GFN_HERMES_TRUST_DURABLE_AUTHORITY: "1" };
-    harness.input.prepareProbeDependency = vi.fn(() => dependency);
     harness.overrides.readReceipt
-      .mockReturnValueOnce(snapshot)
-      .mockReturnValueOnce({ ...snapshot, successorPublicationPending: true });
+      .mockReturnValueOnce(snapshot as never)
+      .mockReturnValueOnce({ ...snapshot, successorPublicationPending: true } as never);
 
     await expect(
-      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+      recoverHermesPortableOllamaInference(
+        {
+          ...harness.input,
+          env: { GFN_HERMES_TRUST_DURABLE_AUTHORITY: "1" },
+          prepareProbeDependency: vi.fn(() => dependency),
+        },
+        harness.overrides as never,
+      ),
     ).rejects.toThrow("durable GFN authority changed");
 
     expect(dependency.rollback).toHaveBeenCalledOnce();
