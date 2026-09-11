@@ -525,7 +525,10 @@ void observe_ordinary_default_acl(HANDLE server, HANDLE root) {
     DWORD tokenRequired = 0, effectiveRequired = 0;
     DWORD tokenError = 0, effectiveError = 0;
     bool tokenQueried = false, tokenNullDacl = false, tokenBounded = false, effectiveQueried = false;
-    DWORD tokenAclSize = 0, effectiveCaptured = 0;
+    DWORD tokenAclSize = 0, effectiveCaptured = 0, effectiveDescriptorLength = 0;
+    DWORD effectiveRevision = 0, effectiveHeaderError = 0, effectiveValidationException = 0;
+    SECURITY_DESCRIPTOR_CONTROL effectiveControl = 0;
+    bool effectiveDescriptorValid = false;
     PACL tokenAcl = nullptr;
     HANDLE token = nullptr;
     if (currentIdentity) {
@@ -552,8 +555,27 @@ void observe_ordinary_default_acl(HANDLE server, HANDLE root) {
             OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
             effectiveBytes, sizeof(effectiveBytes), &effectiveRequired) != FALSE;
         if (!effectiveQueried) effectiveError = GetLastError();
-        if (effectiveQueried && effectiveRequired >= sizeof(SECURITY_DESCRIPTOR_RELATIVE) &&
-            effectiveRequired <= sizeof(effectiveBytes)) effectiveCaptured = effectiveRequired;
+        if (effectiveQueried) {
+            __try {
+                const auto header = reinterpret_cast<const SECURITY_DESCRIPTOR_RELATIVE*>(effectiveBytes);
+                effectiveRevision = header->Revision;
+                effectiveControl = header->Control;
+                SECURITY_DESCRIPTOR_CONTROL checkedControl = 0;
+                DWORD checkedRevision = 0;
+                const BOOL headerValid = GetSecurityDescriptorControl(effectiveBytes, &checkedControl, &checkedRevision);
+                if (!headerValid) effectiveHeaderError = GetLastError();
+                if (headerValid && checkedRevision == SECURITY_DESCRIPTOR_REVISION &&
+                    checkedRevision == effectiveRevision && checkedControl == effectiveControl &&
+                    (checkedControl & SE_SELF_RELATIVE) && IsValidSecurityDescriptor(effectiveBytes)) {
+                    effectiveDescriptorLength = GetSecurityDescriptorLength(effectiveBytes);
+                    effectiveDescriptorValid = effectiveDescriptorLength >= sizeof(SECURITY_DESCRIPTOR_RELATIVE) &&
+                                               effectiveDescriptorLength <= sizeof(effectiveBytes);
+                    if (effectiveDescriptorValid) effectiveCaptured = effectiveDescriptorLength;
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                effectiveValidationException = GetExceptionCode();
+            }
+        }
     }
     char tokenHex[1025] = {}, effectiveHex[2049] = {};
     constexpr char hex[] = "0123456789abcdef";
@@ -568,11 +590,13 @@ void observe_ordinary_default_acl(HANDLE server, HANDLE root) {
     }
     char line[4096];
     const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
-        "NEMOCLAW_MSYS_ORDINARY_ACL={\"schemaVersion\":1,\"pid\":%lu,\"serverHandle\":\"0x%llx\",\"rootHandle\":\"0x%llx\",\"currentProcessIdentity\":%s,\"identityReason\":\"%s\",\"identityError\":%lu,\"tokenQuerySucceeded\":%s,\"tokenError\":%lu,\"tokenRequired\":%lu,\"tokenNullDacl\":%s,\"tokenAclBounded\":%s,\"tokenAclBytes\":%lu,\"tokenAclHex\":\"%s\",\"effectiveQuerySucceeded\":%s,\"effectiveError\":%lu,\"effectiveRequired\":%lu,\"effectiveCaptured\":%lu,\"effectiveSecurityInformation\":7,\"effectiveSdHex\":\"%s\"}\n",
+        "NEMOCLAW_MSYS_ORDINARY_ACL={\"schemaVersion\":1,\"pid\":%lu,\"serverHandle\":\"0x%llx\",\"rootHandle\":\"0x%llx\",\"currentProcessIdentity\":%s,\"identityReason\":\"%s\",\"identityError\":%lu,\"tokenQuerySucceeded\":%s,\"tokenError\":%lu,\"tokenRequired\":%lu,\"tokenNullDacl\":%s,\"tokenAclBounded\":%s,\"tokenAclBytes\":%lu,\"tokenAclHex\":\"%s\",\"effectiveQuerySucceeded\":%s,\"effectiveError\":%lu,\"effectiveRequired\":%lu,\"effectiveCaptured\":%lu,\"effectiveDescriptorLength\":%lu,\"effectiveDescriptorValid\":%s,\"effectiveRevision\":%lu,\"effectiveControl\":\"0x%04x\",\"effectiveHeaderError\":%lu,\"effectiveValidationException\":\"0x%08lx\",\"effectiveSecurityInformation\":7,\"effectiveSdHex\":\"%s\"}\n",
         GetCurrentProcessId(), reinterpret_cast<unsigned long long>(server), reinterpret_cast<unsigned long long>(root),
         currentIdentity ? "true" : "false", identityReason, identityError, tokenQueried ? "true" : "false", tokenError,
         tokenRequired, tokenNullDacl ? "true" : "false", tokenBounded ? "true" : "false", tokenAclSize, tokenHex,
-        effectiveQueried ? "true" : "false", effectiveError, effectiveRequired, effectiveCaptured, effectiveHex);
+        effectiveQueried ? "true" : "false", effectiveError, effectiveRequired, effectiveCaptured,
+        effectiveDescriptorLength, effectiveDescriptorValid ? "true" : "false", effectiveRevision,
+        static_cast<unsigned>(effectiveControl), effectiveHeaderError, effectiveValidationException, effectiveHex);
     DWORD written = 0;
     writingPipeDiagnostic = true;
     if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
