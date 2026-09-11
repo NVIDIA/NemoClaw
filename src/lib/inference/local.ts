@@ -812,6 +812,30 @@ export interface LocalProviderHealthProbeOptions {
   getManagedVllmBaseUrlImpl?: ManagedStationVllmBaseUrlResolver;
   /** Recovers a receipt-owned managed cluster endpoint. */
   recoverManagedClusterVllmEndpointImpl?: ManagedClusterVllmEndpointResolver;
+  /**
+   * Sandbox route endpoint recorded at onboard. A bearerless managed vLLM
+   * container leaves no receipt, so this URL is the only durable record of
+   * the host port that a NEMOCLAW_VLLM_PORT override selected.
+   */
+  recordedEndpointUrl?: string | null;
+}
+
+/**
+ * Host port from a recorded local vLLM route such as
+ * `http://host.openshell.internal:<port>/v1`, or null when the URL does not
+ * name a usable one.
+ */
+export function recordedLocalVllmHostPort(endpointUrl: string | null | undefined): number | null {
+  if (!endpointUrl) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(endpointUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" || !/^\/v1\/?$/.test(parsed.pathname)) return null;
+  const port = Number(parsed.port);
+  return Number.isSafeInteger(port) && port >= 1024 && port <= 65_535 ? port : null;
 }
 
 function defaultLoadOllamaProxyToken(): string | null {
@@ -1523,7 +1547,7 @@ export function probeLocalProviderHealth(
   const endpoint = managedValidationBaseUrl
     ? `${managedValidationBaseUrl}/models`
     : provider === "vllm-local"
-      ? `http://127.0.0.1:${VLLM_PORT}/v1/models`
+      ? `http://127.0.0.1:${recordedLocalVllmHostPort(options.recordedEndpointUrl) ?? VLLM_PORT}/v1/models`
       : getLocalProviderHealthEndpoint(provider);
   if (!endpoint) return null;
 

@@ -72,8 +72,10 @@ import {
 } from "./destroy-presence";
 import {
   prepareSandboxDestroy,
+  reportManagedVllmDestroyOutcome,
   resolveSandboxDestroyGatewayName,
   resolveSandboxDestroyRuntimeSelection,
+  retireManagedVllmForDestroyedSandbox,
   stopModelRouterForDestroyedSandbox,
   stopSandboxInferenceResources,
   teardownSandboxDashboardForward,
@@ -1139,6 +1141,12 @@ async function destroySandboxUnlocked(
           `that still owns the matching port and model-router command line.`,
       );
     }
+    // The registry row is gone, so every remaining Local vLLM row in any
+    // gateway state root is a peer that still needs the host-global container.
+    reportManagedVllmDestroyOutcome(
+      retireManagedVllmForDestroyedSandbox(sandbox, { keepVllm: normalized.keepVllm }),
+      { log: console.log, warn: defaultDestroyWarn },
+    );
   }
   const retainedRecoveryOwnsDestroySession = retainedRecoveryAuthority
     ? onboardSession.retainedSandboxRecoveryMatchesSession(

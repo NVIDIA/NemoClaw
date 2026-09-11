@@ -236,7 +236,7 @@ export type SandboxInferenceRouteRepairDeps = {
 export type ManagedInferenceRouteResetDeps = {
   verifyLocalInferenceRouteDependencies: (
     provider: string,
-    options: { quiet?: boolean },
+    options: { quiet?: boolean; recordedEndpointUrl?: string | null },
   ) => boolean;
   runInferenceSet: (provider: string, model: string) => { status: number | null };
   probe: (
@@ -1424,7 +1424,10 @@ async function repairSandboxInferenceRouteIfNeeded(
 
 function verifyLocalInferenceRouteDependencies(
   provider: string,
-  { quiet = false }: { quiet?: boolean } = {},
+  {
+    quiet = false,
+    recordedEndpointUrl,
+  }: { quiet?: boolean; recordedEndpointUrl?: string | null } = {},
 ): boolean {
   const isOllamaLocal = provider === "ollama-local";
   if (isOllamaLocal) {
@@ -1436,6 +1439,7 @@ function verifyLocalInferenceRouteDependencies(
   }
   const localHealth = probeLocalProviderHealth(provider, {
     skipOllamaAuthProxySubprobe: isOllamaLocal,
+    recordedEndpointUrl,
   });
   if (!localHealth) return true;
   if (!localHealth.ok) {
@@ -1501,14 +1505,15 @@ export async function resetManagedInferenceRouteWithDeps(
     return false;
   };
 
-  if (!deps.verifyLocalInferenceRouteDependencies(provider, { quiet })) {
+  const dependencyOptions = { quiet, recordedEndpointUrl: sb.endpointUrl };
+  if (!deps.verifyLocalInferenceRouteDependencies(provider, dependencyOptions)) {
     return fail(detail);
   }
 
   if (!quiet) log(`  Resetting inference route to ${route}.`);
   const resetResult = deps.runInferenceSet(provider, model);
   const resetFailed = resetResult.status !== 0;
-  if (!resetFailed && !deps.verifyLocalInferenceRouteDependencies(provider, { quiet })) {
+  if (!resetFailed && !deps.verifyLocalInferenceRouteDependencies(provider, dependencyOptions)) {
     return fail(detail);
   }
 

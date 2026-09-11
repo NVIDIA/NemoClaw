@@ -300,7 +300,11 @@ function makeResetDeps(
   overrides: Partial<ManagedInferenceRouteResetDeps> = {},
 ) {
   const calls = {
-    localChecks: [] as Array<{ provider: string; quiet?: boolean }>,
+    localChecks: [] as Array<{
+      provider: string;
+      quiet?: boolean;
+      recordedEndpointUrl?: string | null;
+    }>,
     inferenceSets: [] as Array<{ provider: string; model: string }>,
     unrecoverable: [] as Array<{ sandboxName: string; detail: string }>,
     logs: [] as string[],
@@ -310,7 +314,11 @@ function makeResetDeps(
   const queue = [...probes];
   const deps: ManagedInferenceRouteResetDeps = {
     verifyLocalInferenceRouteDependencies: vi.fn((provider, options) => {
-      calls.localChecks.push({ provider, quiet: options.quiet });
+      calls.localChecks.push({
+        provider,
+        quiet: options.quiet,
+        recordedEndpointUrl: options.recordedEndpointUrl,
+      });
       return true;
     }),
     runInferenceSet: vi.fn((provider, model) => {
@@ -344,11 +352,40 @@ describe("managed inference route reset unit flow", () => {
 
     expect(result).toBe(true);
     expect(calls.localChecks).toEqual([
-      { provider: "ollama-local", quiet: false },
-      { provider: "ollama-local", quiet: false },
+      { provider: "ollama-local", quiet: false, recordedEndpointUrl: undefined },
+      { provider: "ollama-local", quiet: false, recordedEndpointUrl: undefined },
     ]);
     expect(calls.inferenceSets).toEqual([{ provider: "ollama-local", model: "qwen3:0.6b" }]);
     expect(calls.logs).toContain("  inference.local route repaired.");
+  });
+
+  it("verifies local vLLM dependencies against the sandbox's recorded route endpoint", async () => {
+    const { calls, deps } = makeResetDeps([healthy()]);
+
+    const result = await resetManagedInferenceRouteWithDeps(
+      "demo",
+      sandbox({
+        provider: "vllm-local",
+        model: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
+        endpointUrl: "http://host.openshell.internal:46145/v1",
+      }),
+      { detail: "BROKEN 503" },
+      deps,
+    );
+
+    expect(result).toBe(true);
+    expect(calls.localChecks).toEqual([
+      {
+        provider: "vllm-local",
+        quiet: false,
+        recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
+      },
+      {
+        provider: "vllm-local",
+        quiet: false,
+        recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
+      },
+    ]);
   });
 
   it("probes route health after a non-zero inference set and accepts a healthy route", async () => {

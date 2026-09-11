@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
+import { VLLM_PORT } from "../core/ports";
 import { OLLAMA_MODEL_REGISTRY } from "./ollama-model-registry";
 
 // Derive the "large enough to fit every registry entry" memory threshold
@@ -608,6 +609,58 @@ describe("local inference helpers", () => {
 
     expect(result?.ok).toBe(expected);
   });
+
+  it("probes the host port recorded in the sandbox route for a bearerless local vLLM server", () => {
+    const probedEndpoints: string[] = [];
+
+    const result = probeLocalProviderHealth("vllm-local", {
+      recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
+      runCurlProbeImpl: (argv) => {
+        probedEndpoints.push(argv.at(-1) ?? "");
+        return {
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: '{"data":[]}',
+          stderr: "",
+          message: "HTTP 200",
+        };
+      },
+    });
+
+    expect(result?.ok).toBe(true);
+    expect(result?.endpoint).toBe("http://127.0.0.1:46145/v1/models");
+    expect(probedEndpoints).toEqual(["http://127.0.0.1:46145/v1/models"]);
+  });
+
+  it.each([
+    { recordedEndpointUrl: null, reason: "no recorded route" },
+    { recordedEndpointUrl: "https://inference.local/v1", reason: "an in-sandbox route" },
+    { recordedEndpointUrl: "http://host.openshell.internal/v1", reason: "no port" },
+    { recordedEndpointUrl: "http://host.openshell.internal:80/v1", reason: "a privileged port" },
+    {
+      recordedEndpointUrl: "http://host.openshell.internal:46145/v1/chat",
+      reason: "a non-route path",
+    },
+    { recordedEndpointUrl: "not a url", reason: "a malformed URL" },
+  ])(
+    "keeps the configured local vLLM port when the recorded route has $reason",
+    ({ recordedEndpointUrl }) => {
+      const result = probeLocalProviderHealth("vllm-local", {
+        recordedEndpointUrl,
+        runCurlProbeImpl: () => ({
+          ok: false,
+          httpStatus: 0,
+          curlStatus: 7,
+          body: "",
+          stderr: "Failed to connect",
+          message: "curl failed (exit 7)",
+        }),
+      });
+
+      expect(result?.endpoint).toBe(`http://127.0.0.1:${VLLM_PORT}/v1/models`);
+    },
+  );
 
   it("reports a clear local provider outage when the host probe cannot connect", () => {
     const result = probeLocalProviderHealth("ollama-local", {

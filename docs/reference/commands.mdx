@@ -1949,7 +1949,7 @@ The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` 
 
 ### `$$nemoclaw <name> destroy`
 
-Stop managed local inference resources, remove the host-side Docker image built during onboard, and delete the sandbox. This removes the sandbox from the registry. For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis. For Model Router sandboxes, `destroy` keeps the process and recovery identity when another sandbox uses the port or when session, process, or absence checks are inconclusive. It also preserves a replacement onboarding session when the captured session identity changed. If the captured session uses the destroyed sandbox name with another router port, `destroy` clears only the sandbox association and preserves that router's recovery identity. For lock order, same-port peer handling, and cleanup checks, refer to [Set Up Model Router](../inference/hosted-inference/set-up-model-router#router-and-sandbox-lifecycle-locks).
+Stop managed local inference resources, remove the host-side Docker image built during onboard, and delete the sandbox. This removes the sandbox from the registry. For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis. For a Local vLLM sandbox, `destroy` removes the NemoClaw-managed `nemoclaw-vllm` container and frees its GPU memory after the registry removal leaves no sandbox in any gateway state root with provider `vllm-local`. Pass `--keep-vllm` or set `NEMOCLAW_KEEP_VLLM=1` to keep that container running for a later sandbox. `destroy` preserves the container and reports why when another registered sandbox uses Local vLLM, when the container lacks the NemoClaw managed label, when it belongs to a distributed vLLM runtime, when an authenticated container does not match its persisted API key and receipt, when a distributed vLLM receipt owns it, when NemoClaw cannot read every gateway sandbox registry to confirm that no sandbox still uses Local vLLM, or when Docker is unavailable. For Model Router sandboxes, `destroy` keeps the process and recovery identity when another sandbox uses the port or when session, process, or absence checks are inconclusive. It also preserves a replacement onboarding session when the captured session identity changed. If the captured session uses the destroyed sandbox name with another router port, `destroy` clears only the sandbox association and preserves that router's recovery identity. For lock order, same-port peer handling, and cleanup checks, refer to [Set Up Model Router](../inference/hosted-inference/set-up-model-router#router-and-sandbox-lifecycle-locks).
 
 If `destroy` warns that it could not identify or stop a listener for the deleted sandbox:
 
@@ -2050,7 +2050,7 @@ Retry after the recorded gateway is available.
 Managed MCP ownership disables the local-only fallback because exact provider cleanup requires retained ownership state.
 
 ```bash
-$$nemoclaw my-assistant destroy [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]
+$$nemoclaw my-assistant destroy [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway] [--keep-vllm]
 ```
 
 After OpenShell confirms deletion of a sandbox that owns managed llama.cpp, `destroy` revalidates the exact container, internal network, lifecycle journal, and gateway-scoped receipt. It removes those resources by inspected ID, then removes the API key and managed ownership state. It preserves the shared `~/.cache/huggingface/` cache. If exact cleanup fails, `destroy` preserves the sandbox registry entry and ownership state so you can correct the reported conflict and retry.
@@ -4370,6 +4370,7 @@ The following flags change defaults for commands that manage existing sandboxes.
 | Variable | Format | Effect |
 | --- | --- | --- |
 | `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Overrides the platform default (macOS unattended: cleanup; Linux/Windows: preserve) for whether `$$nemoclaw <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
+| `NEMOCLAW_KEEP_VLLM` | `1`, `true`, or `yes` to keep; `0`, `false`, or `no` to remove | Keeps the NemoClaw-managed `nemoclaw-vllm` container running when `$$nemoclaw <name> destroy` deletes the last registered sandbox that uses Local vLLM. By default, that destroy removes the container. Command-line `--keep-vllm` has the same effect. |
 
 <AgentOnly variant="openclaw,hermes">
 | `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH` | Exactly `"1"` to opt in (`true`, `yes`, `on` are not accepted) | Allows `$$nemoclaw <name> config set` to write a dotpath that does not already exist in the sandbox config, without the interactive confirmation. Equivalent to passing `--config-accept-new-path`, and it takes precedence over `NEMOCLAW_NON_INTERACTIVE=1`. Without it, a run without a TTY refuses the write instead. |

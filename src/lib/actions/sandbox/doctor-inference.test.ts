@@ -289,4 +289,27 @@ describe("doctor inference checks", () => {
 
     expect(probe).toHaveBeenCalledWith("ollama-local", { model: "nemotron-mini:latest" });
   });
+
+  it("passes the recorded route endpoint to direct provider diagnostics", async () => {
+    const probe = vi.fn(() => upstream());
+
+    await collectInferenceChecks(
+      "alpha",
+      {
+        provider: "vllm-local",
+        model: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
+        recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
+      },
+      true,
+      {
+        probeProviderHealthImpl: probe,
+        probeSandboxInferenceGatewayHealthImpl: async () => gateway(true),
+      },
+    );
+
+    expect(probe).toHaveBeenCalledWith("vllm-local", {
+      model: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
+      recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
+    });
+  });
 });

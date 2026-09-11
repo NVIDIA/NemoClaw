@@ -1413,21 +1413,96 @@ export function cleanupManagedLlamaCppRuntimeForSandbox(
   return cleanupManagedLlamaCppRuntimeForSandboxInternal(sandboxName, options);
 }
 
+function resolveCleanupDeps(overrides: Partial<CleanupDeps> = {}): CleanupDeps {
+  return {
+    capture: overrides.capture ?? dockerCapture,
+    currentUserId:
+      overrides.currentUserId === undefined
+        ? typeof process.getuid === "function"
+          ? process.getuid()
+          : null
+        : overrides.currentUserId,
+    forceRm: overrides.forceRm ?? dockerForceRm,
+    run: overrides.run ?? dockerRun,
+  };
+}
+
+const DISTRIBUTED_VLLM_LABEL_PREFIX = "com.nvidia.nemoclaw.vllm-";
+
+export type HostLocalVllmRetirementResult =
+  | { status: "absent" }
+  | { status: "kept"; reason: string }
+  | { status: "removed"; containerId: string; removed: string[] }
+  | { status: "preserved"; reason: string; removed: string[] };
+
+function removeUnauthenticatedHostLocalVllm(
+  deps: CleanupDeps,
+  removed: string[],
+): HostLocalVllmRetirementResult {
+  const inspected = inspectOwnedResource(
+    "container",
+    HOST_LOCAL_VLLM_CONTAINER_NAME,
+    HOST_LOCAL_VLLM_MANAGED_LABEL,
+    "true",
+    deps.capture,
+  );
+  if (inspected.kind === "absent") return { status: "absent" };
+  if (inspected.kind === "foreign") {
+    throw new Error("the container does not carry the NemoClaw managed vLLM label");
+  }
+  const config = inspected.row.Config as { Labels?: unknown } | undefined;
+  const labels = (config?.Labels ?? {}) as Record<string, unknown>;
+  if (Object.keys(labels).some((label) => label.startsWith(DISTRIBUTED_VLLM_LABEL_PREFIX))) {
+    throw new Error("the container belongs to a distributed vLLM runtime");
+  }
+  if (labels[HOST_LOCAL_VLLM_AUTH_LABEL] !== undefined) {
+    throw new Error("the container is bearer-protected but its persisted API key is missing");
+  }
+  const removal = deps.forceRm(inspected.id, { ignoreError: true, suppressOutput: true });
+  if (removal.status !== 0) throw new Error("Docker could not remove the container");
+  removed.push(`container:${inspected.id}`);
+  return { status: "removed", containerId: inspected.id, removed };
+}
+
+/**
+ * Retire the NemoClaw-managed single-host vLLM container once no registered
+ * sandbox uses it. An authenticated container must match its persisted key and
+ * receipt; a bearerless container must carry the managed label and no
+ * distributed or bearer labels. A distributed receipt keeps its container for
+ * full uninstall; any other container is left in place with the reason.
+ */
+export function retireHostLocalVllmRuntime(
+  options: { homeDir?: string; deps?: Partial<CleanupDeps> } = {},
+): HostLocalVllmRetirementResult {
+  const deps = resolveCleanupDeps(options.deps);
+  const removed: string[] = [];
+  try {
+    const homeDir = canonicalCleanupHomeDir(options.homeDir ?? os.homedir());
+    const vllmStateDir = managedVllmStateDir(homeDir);
+    if (distributedReceiptPresent(vllmStateDir)) {
+      return { status: "kept", reason: "a distributed vLLM receipt owns it until full uninstall" };
+    }
+    if (deps.run(["info"], { ignoreError: true, suppressOutput: true }).status !== 0) {
+      return { status: "preserved", reason: "Docker is unavailable", removed };
+    }
+    if (!fs.existsSync(path.join(vllmStateDir, MANAGED_VLLM_API_KEY_FILE))) {
+      return removeUnauthenticatedHostLocalVllm(deps, removed);
+    }
+    cleanupHostLocalVllm(vllmStateDir, deps, removed);
+    const containerId = removed
+      .find((entry) => entry.startsWith("container:"))
+      ?.slice("container:".length);
+    return containerId ? { status: "removed", containerId, removed } : { status: "absent" };
+  } catch (error) {
+    return { status: "preserved", reason: (error as Error).message, removed };
+  }
+}
+
 /** Remove only exact owned host-local runtime resources before uninstall deletes state. */
 export function cleanupLocalModelRuntimes(
   options: LocalModelRuntimeCleanupOptions,
 ): LocalModelRuntimeCleanupResult {
-  const deps: CleanupDeps = {
-    capture: options.deps?.capture ?? dockerCapture,
-    currentUserId:
-      options.deps?.currentUserId === undefined
-        ? typeof process.getuid === "function"
-          ? process.getuid()
-          : null
-        : options.deps.currentUserId,
-    forceRm: options.deps?.forceRm ?? dockerForceRm,
-    run: options.deps?.run ?? dockerRun,
-  };
+  const deps = resolveCleanupDeps(options.deps);
   const removed: string[] = [];
   const preserved: string[] = [];
   try {

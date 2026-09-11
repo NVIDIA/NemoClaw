@@ -7,6 +7,11 @@ import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/co
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
+import {
+  HOST_LOCAL_VLLM_CONTAINER_NAME,
+  type HostLocalVllmRetirementResult,
+  retireHostLocalVllmRuntime,
+} from "../../inference/local-model-profile/cleanup";
 import { DEFAULT_MODEL_ROUTER_PORT, isRoutedInferenceProvider } from "../../onboard/model-router";
 import {
   doesModelRouterProcessOwnPort,
@@ -98,6 +103,103 @@ export function stopSandboxInferenceResources(
       killStaleProxy: () => void;
     };
     killStaleProxy();
+  }
+}
+
+const LOCAL_VLLM_PROVIDER = "vllm-local";
+const MANAGED_VLLM_INSPECT_HINT = `Inspect it with 'docker container inspect ${HOST_LOCAL_VLLM_CONTAINER_NAME}' before you stop it.`;
+
+export type ManagedVllmDestroyOutcome =
+  | { kind: "not-applicable" }
+  | { kind: "kept"; reason: "option" }
+  | { kind: "kept"; reason: "consumers"; consumers: number }
+  | { kind: "inventory-failed"; detail: string }
+  | ({ kind: "retirement" } & HostLocalVllmRetirementResult);
+
+export type ManagedVllmDestroyDeps = {
+  keepVllm?: boolean;
+  listHostRegistryEntries?: typeof listHostGatewayRegistryEntries;
+  resolveHomeDir?: () => string;
+  retireRuntime?: typeof retireHostLocalVllmRuntime;
+};
+
+/**
+ * Retire the host-global managed vLLM container after the destroyed sandbox's
+ * registry row is gone and no registered sandbox in any gateway state root
+ * still uses Local vLLM. A sandbox whose runtime provider owns a host-local
+ * inference receipt retires its runtime through that provider instead.
+ */
+export function retireManagedVllmForDestroyedSandbox(
+  sandbox: SandboxEntry | null,
+  deps: ManagedVllmDestroyDeps = {},
+): ManagedVllmDestroyOutcome {
+  if (
+    !sandbox ||
+    sandbox.provider !== LOCAL_VLLM_PROVIDER ||
+    typeof sandbox.hostLocalInferenceReceipt === "string"
+  ) {
+    return { kind: "not-applicable" };
+  }
+  if (deps.keepVllm === true) return { kind: "kept", reason: "option" };
+  const home = (deps.resolveHomeDir ?? (() => process.env.HOME || os.homedir()))();
+  let consumers: number;
+  try {
+    consumers = (deps.listHostRegistryEntries ?? listHostGatewayRegistryEntries)(home).filter(
+      ({ entry }) => entry.provider === LOCAL_VLLM_PROVIDER,
+    ).length;
+  } catch (error) {
+    return {
+      kind: "inventory-failed",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (consumers > 0) return { kind: "kept", reason: "consumers", consumers };
+  return {
+    kind: "retirement",
+    ...(deps.retireRuntime ?? retireHostLocalVllmRuntime)({ homeDir: home }),
+  };
+}
+
+/** Report the retirement outcome; a preserved container is a warning because the sandbox is already gone. */
+export function reportManagedVllmDestroyOutcome(
+  outcome: ManagedVllmDestroyOutcome,
+  output: { log: (message: string) => void; warn: (message: string) => void },
+): void {
+  const name = HOST_LOCAL_VLLM_CONTAINER_NAME;
+  switch (outcome.kind) {
+    case "not-applicable":
+      return;
+    case "kept":
+      output.log(
+        outcome.reason === "option"
+          ? `  Managed vLLM container '${name}' preserved (--keep-vllm).`
+          : `  Managed vLLM container '${name}' preserved: ${String(outcome.consumers)} other registered sandbox(es) use Local vLLM.`,
+      );
+      return;
+    case "inventory-failed":
+      output.warn(
+        `Sandbox deletion succeeded, but NemoClaw could not read every gateway sandbox registry to confirm that no sandbox still uses Local vLLM: ${outcome.detail}. The managed vLLM container '${name}' was left in place. ${MANAGED_VLLM_INSPECT_HINT}`,
+      );
+      return;
+    case "retirement":
+      break;
+  }
+  switch (outcome.status) {
+    case "absent":
+      return;
+    case "kept":
+      output.log(`  Managed vLLM container '${name}' preserved: ${outcome.reason}.`);
+      return;
+    case "removed":
+      output.log(
+        `  Removed managed vLLM container '${name}' (${outcome.containerId.slice(0, 12)}); no registered sandbox uses Local vLLM.`,
+      );
+      output.log("  Pass '--keep-vllm' or set NEMOCLAW_KEEP_VLLM=1 to keep it running next time.");
+      return;
+    case "preserved":
+      output.warn(
+        `Sandbox deletion succeeded, but the managed vLLM container '${name}' was left in place: ${outcome.reason}. ${MANAGED_VLLM_INSPECT_HINT}`,
+      );
   }
 }
 

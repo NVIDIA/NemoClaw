@@ -21,6 +21,7 @@ The vLLM `/v1/responses` endpoint does not run the configured tool-call parser, 
 <Warning>
 Local vLLM does not require authentication by default.
 Existing-server and single-host managed-vLLM paths use `NEMOCLAW_VLLM_PORT`, which defaults to `8000`, on host loopback for validation and on the OpenShell Docker bridge for sandbox traffic.
+After onboarding, `status`, `doctor`, and `connect` probe the host port recorded in the sandbox registry, so those commands do not need `NEMOCLAW_VLLM_PORT` in their environment.
 Use a host firewall with default-deny inbound rules.
 Allow the configured TCP port only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
 Do not expose the port to your LAN or the internet.
@@ -152,7 +153,9 @@ $$nemoclaw onboard --profile <profile-id> --vllm-gpu-device <index-or-uuid>
 #### Handle a Running vLLM Server
 
 The single-host managed vLLM runtime is host-global.
-Destroying a sandbox does not stop it, and the container remains available for other sandboxes.
+`$$nemoclaw <name> destroy` keeps the container while another registered sandbox in any gateway state root uses Local vLLM.
+When the destroyed sandbox was the last one, `destroy` removes the NemoClaw-managed container and frees its GPU memory.
+Pass `--keep-vllm` or set `NEMOCLAW_KEEP_VLLM=1` to keep that container running for a later sandbox.
 Later standard onboarding normally reuses a server that is already listening on the configured vLLM port instead of replacing it automatically.
 When a managed GPU selection accompanies explicit managed-install intent, NemoClaw preserves that intent and reports the running-server conflict.
 
@@ -189,7 +192,7 @@ Choose one action:
   ```
 
 Accept the result when onboarding completes and `$$nemoclaw list` reports the new sandbox with provider `vllm-local` and the expected model.
-NemoClaw does not stop or recreate a running vLLM server automatically because another sandbox can use it.
+Onboarding does not stop or recreate a running vLLM server automatically because another sandbox can use it.
 
 NemoClaw requires a resumed session to reuse the recorded GPU selector.
 A legacy in-progress session cannot add one, and a resumed session cannot change one.
