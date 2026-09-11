@@ -35,6 +35,9 @@ type fixture struct {
 	effects       int
 	creates       map[string]int
 	loseProvider  bool
+	loseDelete    bool
+	deleteFailure string
+	deletes       []string
 	blockSandbox  chan struct{}
 	sandboxPhase  pb.SandboxPhase
 	endpoint      string

@@ -35,23 +35,28 @@ type Result struct {
 	Changes       []Change `json:"changes"`
 	Deferred      []string `json:"deferred,omitempty"`
 	AgentResponse string   `json:"agentResponse,omitempty"`
+	Retained      []string `json:"retained,omitempty"`
 }
 type Plan struct {
-	ResourceChanges []struct {
-		Address string `json:"address"`
-		Change  struct {
-			Actions []string `json:"actions"`
-		} `json:"change"`
-	} `json:"resource_changes"`
+	ResourceChanges []ResourceChange `json:"resource_changes"`
+	ResourceDrift   []ResourceChange `json:"resource_drift"`
+}
+
+type ResourceChange struct {
+	Address string `json:"address"`
+	Change  struct {
+		Actions []string       `json:"actions"`
+		Before  map[string]any `json:"before"`
+	} `json:"change"`
 }
 
 func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) error {
-	if operation != "apply" && operation != "plan" && operation != "export" {
-		return errors.New("expected apply, plan, or export")
+	if !slices.Contains([]string{"apply", "plan", "export", "destroy", "plan-destroy"}, operation) {
+		return errors.New("expected apply, plan, export, or destroy")
 	}
 	var d config.Document
 	var err error
-	if operation != "export" {
+	if operation == "apply" || operation == "plan" {
 		d, err = config.Parse(input)
 		if err != nil {
 			return err
@@ -84,6 +89,12 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 	if err != nil {
 		return err
 	}
+	if operation == "destroy" || operation == "plan-destroy" {
+		return e.destroy(ctx, record, operation == "plan-destroy")
+	}
+	if record.Destroying {
+		return errors.New("unfinished destroy; rerun destroy before any other operation")
+	}
 	if operation == "export" {
 		return e.export(ctx, record)
 	}
@@ -102,6 +113,8 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 	} else {
 		record = Record{Version: 1, Generations: newGenerations()}
 	}
+	record.Destroyed = false
+	record.DestroyRuntime = false
 	if d.Spec.InferenceProviders[0].Ollama != nil && record.Generations["ollama"] == "" {
 		record.Generations["ollama"] = newGenerations()["ollama"]
 	}

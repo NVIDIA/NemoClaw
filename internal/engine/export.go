@@ -17,7 +17,7 @@ import (
 )
 
 func (e *Engine) export(ctx context.Context, r Record) error {
-	if r.Version == 0 || r.Pending {
+	if r.Version == 0 || r.Pending || r.Destroyed {
 		return errors.New("export requires established resource bindings; reconcile any unfinished apply first")
 	}
 	ids, err := e.stateIDs()

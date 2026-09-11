@@ -129,12 +129,40 @@ The proposed command surface is:
 nemoclaw plan < deployment.yaml
 nemoclaw apply < deployment.yaml
 nemoclaw export > deployment.yaml
+nemoclaw plan --destroy
+nemoclaw destroy
 ```
 
 `plan` previews changes. A later `apply` creates a fresh internal plan and executes
 that checked plan. The first slice does not expose saved plans as a public artifact.
 Execution options select a deployment or target; they do not override desired fields.
 Ambiguous selection fails before mutation.
+
+Destroy selects the deployment from local state, without desired YAML. Its preview
+uses `plan --destroy`. Both commands take the same deployment lock and observe the
+complete applicable resource graphs. Destroy executes newly checked saved plans;
+a previous preview does not authorize a different operation.
+
+The first implemented teardown removes the individually bound sandbox, route,
+provider, and managed process containers. It retains the workspace, model and
+prepared data, gateway database and keys, bridge, initializer, images, and local
+state. Sandbox files and conversation history are deleted. Retained resource
+bindings appear in the result and remain in OpenTofu state. A later apply recreates
+workloads against those retained bindings.
+
+This changes the initial assumption that teardown should delete the entire
+workspace. OpenShell's workspace delete cascades into routes and memberships; its
+Go SDK does not provide a complete named-route inventory. Deleting only bound
+children avoids granting that broader cascade through NemoClaw. A future purge
+contract needs explicit ownership and data-lifecycle semantics.
+
+An interrupted destroy persists its operation and completed graph boundary. It
+can resume after the managed gateway has disappeared without querying it again.
+Other operations refuse while teardown is incomplete. Failed deletion responses
+retain bindings; only confirmed absence retires them on the next explicit destroy.
+An unfinished create with potentially unbound effects must first be reconciled.
+The combined Ollama resource remains outside this first teardown implementation
+because it lacks an independent retained-storage binding.
 
 The schema defines supported fields, versioned defaults, and omission behavior.
 Inputs MUST reject unknown fields, duplicate keys, unsupported versions,
@@ -450,6 +478,21 @@ Checking for `delete` alone is insufficient. OpenTofu can forget a resource whil
 leaving the object alive, and `prevent_destroy` does not protect a resource block
 removed from configuration. `destroy = false` also permits forgetting, so it does
 not satisfy our binding-retention contract [TOFU-LIFECYCLE].
+
+Explicit destroy has a separate allowlist: `delete` for individually bound
+workloads and `no-op` for retained resources. Every prior binding must appear in
+the plan or in an explicit confirmed-absence drift record. Unknown resources,
+changed identities, incomplete results, creates, updates, replacements, forgetting,
+and deletion of retained resources reject the whole operation. Both graphs are
+checked before deletes begin. The OpenShell graph runs before the runtime graph;
+its completion is persisted before removing the gateway process. Runtime readiness,
+model downloads, preparation, and inference probes are not teardown prerequisites.
+
+OpenShell 0.0.116 deletes by name and exposes no caller-provided resource ID or
+version precondition. Immediate identity verification narrows the race but does
+not make deletion atomic against an unrelated client replacing the same name.
+This prototype requires one managing client per deployment; its local lock cannot
+provide gateway-wide exclusion. Docker mutations use the verified container ID.
 
 The checked saved plan is bound to the deployment, generated configuration, engine
 bundle, and local state. Apply executes that artifact under the deployment lock.

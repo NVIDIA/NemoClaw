@@ -10,12 +10,15 @@ The supported prototype commands are:
 nemoclaw plan < deployment.yaml
 nemoclaw apply < deployment.yaml
 nemoclaw export > exported.yaml
+nemoclaw plan --destroy
+nemoclaw destroy
 ```
 
 Each command accepts `--state-dir DIR`, which defaults to `.nemoclaw` in the
 current directory. Keep this directory: it contains deployment identity,
 unfinished intent, the OpenTofu state, and the provider lock file.
-On PowerShell, use `--file deployment.yaml` for input.
+On PowerShell, use `--file deployment.yaml` for plan/apply input. Export and
+destroy select the recorded deployment through `--state-dir`; they accept no YAML.
 
 ## Build
 
@@ -151,6 +154,35 @@ Host observations describe that host; guest and remote resources are read throug
 the owning API or inside the environment being observed.
 
 ## Recovery and limits
+
+`nemoclaw plan --destroy --state-dir DIR` previews teardown without changing runtime
+resources. `nemoclaw destroy --state-dir DIR` makes a fresh checked plan and removes
+the bound sandbox, route, provider registration, and managed process containers.
+Sandbox files and conversation history are deleted with the sandbox. Model weights,
+prepared artifacts, gateway data and keys, the bridge, the stopped initializer,
+images, local state, and the workspace remain. The result lists retained OpenTofu
+resources. There is no data-purge option in this slice.
+
+The workspace stays tracked because upstream workspace deletion can cascade into
+untracked routes and memberships. Retained storage also stays tracked; it is never
+forgotten merely to make a destroy plan succeed. A later apply of the original YAML
+recreates workloads using the retained workspace and data.
+
+Destroy checks both graphs before effects and removes OpenShell workloads before
+the managed gateway. It requires observable ownership, generation, configuration,
+and durable identities, but does not require healthy inference or its API credential.
+A failed delete or observation retains state. Rerun destroy to reconcile; other
+operations refuse an unfinished teardown. Repeating completed destroy returns no
+changes without trying to contact the removed gateway.
+
+This first destroy slice supports external inference endpoints and managed Spark.
+The older combined Ollama container/storage resource is rejected before effects.
+An unfinished apply with potentially unbound effects must first be reconciled using
+its original YAML. The gateway must be reachable until its workloads are removed.
+OpenShell 0.0.116 has no conditional delete ID/version parameter: we verify identity
+immediately before its name-addressed delete, but cannot eliminate concurrent
+replacement between that read and the request. The local deployment lock does not
+lock other gateway clients.
 
 An apply records intent before external effects. If interrupted, retain the state
 directory and apply the same YAML. Reads reconcile resources using deployment

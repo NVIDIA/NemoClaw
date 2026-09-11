@@ -20,6 +20,13 @@ This prototype is a subset, not implementation of the entire accepted epic.
 The user supplies YAML to `nemoclaw apply` and retrieves it with
 `nemoclaw export`. Planning uses OpenTofu and is exposed through
 `nemoclaw plan`. Execution location is an operational option.
+Explicit teardown is now authorized through `nemoclaw destroy`, with
+`nemoclaw plan --destroy` for preview. Its first slice removes bound workloads and
+retains workspace and persistent storage bindings; cv remains the accountable
+maintainer. Validation covers ordered deletion, read-only preview, ownership and
+observation failures, interrupted deletion, data retention, and reapply. External
+endpoints and the managed Spark layout are in scope; the earlier combined Ollama
+resource needs a separate storage boundary before teardown can support it.
 
 The first deployment attaches to an explicitly selected OpenShell gateway and
 manages a deployment workspace, inference registrations/routes, and an OpenClaw

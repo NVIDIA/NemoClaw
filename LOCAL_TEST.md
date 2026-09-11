@@ -164,8 +164,12 @@ Docker volumes. CLI interruption leaves the runtime supervisor and data intact.
 Names derive from the deployment UID. For `examples/spark.yaml`, the inference
 container is `nc-68d203b0c7e6083f-inference`; its data volume adds `-data`. The gateway
 is `nc-68d203b0c7e6083f-gateway`, with its own data volume. Inspect only those owned
-resources with `docker logs` and `docker inspect`. Ordinary apply retains data;
-there is no pruning or destroy command in this experiment.
+resources with `docker logs` and `docker inspect`. Ordinary apply retains data.
+Explicit teardown uses `nemoclaw plan --destroy --state-dir DIR` followed by
+`nemoclaw destroy --state-dir DIR`. Choose the intended state directory: destroy
+deletes sandbox files and conversation history. It retains model/preparation data,
+gateway storage and its stopped initializer, the bridge, images, and workspace.
+There is no purge command. Keep the state directory to reapply using those bindings.
 
 To qualify the watchdog shutdown without creating memory pressure, after a
 successful apply send `docker kill --signal=USR1 nc-68d203b0c7e6083f-inference`.

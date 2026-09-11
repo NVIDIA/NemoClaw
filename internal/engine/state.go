@@ -14,13 +14,16 @@ import (
 )
 
 type Record struct {
-	Version     int               `json:"version"`
-	Document    config.Document   `json:"document"`
-	Generations map[string]string `json:"generations"`
-	Pending     bool              `json:"pending"`
-	Succeeded   bool              `json:"succeeded"`
-	Digest      string            `json:"digest"`
-	PlanDigest  string            `json:"planDigest,omitempty"`
+	Version        int               `json:"version"`
+	Document       config.Document   `json:"document"`
+	Generations    map[string]string `json:"generations"`
+	Pending        bool              `json:"pending"`
+	Succeeded      bool              `json:"succeeded"`
+	Digest         string            `json:"digest"`
+	PlanDigest     string            `json:"planDigest,omitempty"`
+	Destroying     bool              `json:"destroying,omitzero"`
+	Destroyed      bool              `json:"destroyed,omitzero"`
+	DestroyRuntime bool              `json:"destroyRuntime,omitzero"`
 }
 
 func loadRecord(dir string) (Record, error) {
