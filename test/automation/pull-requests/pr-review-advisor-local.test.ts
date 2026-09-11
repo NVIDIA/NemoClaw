@@ -112,6 +112,7 @@ function artifactLifecycle(stop = async (): Promise<void> => undefined): LocalRe
       fs.mkdirSync(output, { recursive: true });
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-summary.md"), "review\n");
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-session.jsonl"), "{}\n");
+      fs.writeFileSync(path.join(output, "pr-review-" + interest + "-e2e.json"), "{}\n");
     },
     remove: () => undefined,
   };
@@ -502,6 +503,7 @@ describe("local PR review advisor", () => {
         fs.mkdirSync(out, { recursive: true });
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-summary.md"), "review\n");
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-session.jsonl"), "{}\n");
+        fs.writeFileSync(path.join(out, "pr-review-" + interest + "-e2e.json"), "{}\n");
       },
       remove: (env) => {
         calls.push("remove:" + env.PR_REVIEW_ADVISOR_INTEREST);
@@ -833,7 +835,7 @@ describe("local PR review advisor", () => {
     ).rejects.toMatchObject({
       message: expect.stringContaining("failed during validate"),
       cause: expect.objectContaining({
-        message: "Specialist artifacts do not match the existing Markdown and JSONL contract",
+        message: "Specialist artifacts do not match the E2E, Markdown, and JSONL contract",
       }),
     });
   });
