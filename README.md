@@ -7,7 +7,14 @@
 
 **The source acceptance run failed. This preview remains unqualified.** No complete native qualification passes are certified by this publication.
 This is a selected OpenClaw finished-application candidate, not a production release.
-It does not qualify other agents, physical hardware, live search or the installation-time target.
+It does not qualify other agents, physical hardware or live search.
+
+The [fresh Windows ARM64 run](https://github.com/NVIDIA/NemoClaw/actions/runs/34544062535/job/103095368896)
+measured install **20.025 seconds** and uninstall **15.811 seconds**, both exit 0.
+This measured fresh install meets the 30-second target. Uninstall left one empty installation directory.
+The installed payload contains 2,488 files (607,983,795 bytes; 374 MSI components).
+Startup acceptance failed in the session observer before any HTTP probe; no model/tool or warm-start pass is claimed.
+The retained application diagnostic reached browser handoff after 22.768 seconds; this is not a usable-prompt measurement.
 
 Known limitation: Discord, Slack and Tavily plugin dependencies are not included in this preview.
 Those choices can enter an upstream plugin-install path and do not meet the finished-payload contract.
