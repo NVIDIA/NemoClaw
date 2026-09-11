@@ -39,10 +39,10 @@ func TestInterruptedRuntimeChangeObservesEstablishedSpecification(t *testing.T) 
 
 func TestRuntimePlanChecksAllActionsBeforeAnyMutation(t *testing.T) {
 	gateway, storage, service := "nemoclaw_managed_gateway.runtime", storageAddress, "nemoclaw_inference_service.runtime"
-	for _, scenario := range []string{"no-op", "initial", "restart", "explicit image change", "same intent replacement", "storage replacement", "gateway replacement", "forget", "missing", "duplicate", "undeclared", "empty action"} {
+	for _, scenario := range []string{"no-op", "initial", "restart", "explicit image change", "explicit gateway layout change", "same intent replacement", "storage replacement", "gateway replacement", "forget", "missing", "duplicate", "undeclared", "empty action"} {
 		t.Run(scenario, func(t *testing.T) {
 			actions := map[string][]string{gateway: {"no-op"}, storage: {"no-op"}, service: {"no-op"}}
-			replace := scenario == "explicit image change"
+			replace := scenario == "explicit image change" || scenario == "explicit gateway layout change"
 			ok := scenario == "no-op" || scenario == "initial" || scenario == "restart" || replace
 			switch scenario {
 			case "initial":
@@ -55,7 +55,7 @@ func TestRuntimePlanChecksAllActionsBeforeAnyMutation(t *testing.T) {
 				actions[service] = []string{"delete", "create"}
 			case "storage replacement":
 				actions[storage] = []string{"delete", "create"}
-			case "gateway replacement":
+			case "gateway replacement", "explicit gateway layout change":
 				actions[gateway] = []string{"delete", "create"}
 			case "forget":
 				actions[service] = []string{"forget"}
@@ -78,7 +78,7 @@ func TestRuntimePlanChecksAllActionsBeforeAnyMutation(t *testing.T) {
 			if err := json.Unmarshal(b, &plan); err != nil {
 				t.Fatal(err)
 			}
-			got, err := checkRuntimePlan(plan, map[string]bool{gateway: true, storage: true, service: true}, replace)
+			got, err := checkRuntimePlan(plan, map[string]bool{gateway: true, storage: true, service: true}, map[string]bool{service: scenario == "explicit image change", gateway: scenario == "explicit gateway layout change"})
 			if (err == nil) != ok || (!ok && got != nil) {
 				t.Fatal("unsafe or incomplete plan accepted", got, err)
 			}

@@ -24,7 +24,7 @@ func runtimeSpecs(d config.Document, g map[string]string) []managed.Spec {
 	if d.Spec.Gateway.Management != "managed" {
 		return nil
 	}
-	s := []managed.Spec{{Kind: managed.GatewayKind, Name: d.Workspace() + "-gateway", Owner: d.Metadata.UID, Generation: g[managed.GatewayKind], Gateway: d.Spec.Gateway}}
+	s := []managed.Spec{{Layout: 2, Kind: managed.GatewayKind, Name: d.Workspace() + "-gateway", Owner: d.Metadata.UID, Generation: g[managed.GatewayKind], Gateway: d.Spec.Gateway}}
 	if service := d.Spec.InferenceProviders[0].Service; service != nil {
 		s = append(s, managed.Spec{Kind: managed.ServiceKind, Name: d.Workspace() + "-inference", Owner: d.Metadata.UID, Generation: g[managed.ServiceKind], Gateway: d.Spec.Gateway, Service: service})
 	}
@@ -37,6 +37,13 @@ func runtimeStorage(d config.Document, g map[string]string) managed.Storage {
 	return managed.Storage{Name: d.Workspace() + "-inference-data", Owner: d.Metadata.UID, Generation: g[managed.ServiceKind], Engine: d.Spec.Gateway.Engine}
 }
 
+func gatewayStorageSpec(d config.Document, g map[string]string) managed.Spec {
+	s := runtimeSpecs(d, g)[0]
+	s.Layout = 0
+	return s
+}
+
+const gatewayStorageAddress = "nemoclaw_gateway_storage.runtime"
 const storageAddress = "nemoclaw_inference_storage.runtime"
 
 func (e *Engine) runtimeStage(ctx context.Context, operation string, d config.Document, r *Record) ([]Change, bool, error) {
@@ -61,7 +68,7 @@ func (e *Engine) runtimeStage(ctx context.Context, operation string, d config.Do
 		return nil, false, err
 	}
 	specs := runtimeSpecs(d, r.Generations)
-	expected := len(specs)
+	expected := len(specs) + 1
 	if d.Spec.InferenceProviders[0].Service != nil {
 		expected++
 	}
@@ -73,6 +80,10 @@ func (e *Engine) runtimeStage(ctx context.Context, operation string, d config.Do
 		return nil, false, err
 	}
 	defer docker.Close()
+	gatewayStorageID, err := docker.GatewayStorage(ctx, gatewayStorageSpec(d, r.Generations), ids[gatewayStorageAddress], false)
+	if err != nil && !errors.Is(err, managed.ErrPartial) {
+		return nil, false, err
+	}
 	storageIdentity := ""
 	if d.Spec.InferenceProviders[0].Service != nil {
 		storageIdentity, err = docker.Storage(ctx, runtimeStorage(d, r.Generations), ids[storageAddress], false)
@@ -81,13 +92,20 @@ func (e *Engine) runtimeStage(ctx context.Context, operation string, d config.Do
 		}
 	}
 	gatewayRunning := false
-	changedServiceIntent := false
+	replacements := map[string]bool{}
 	for _, s := range specs {
 		observedSpec, err := boundRuntimeSpec(s, bindings[runtimeAddress(s)])
 		if err != nil {
 			return nil, false, err
 		}
-		changedServiceIntent = changedServiceIntent || (s.Kind == managed.ServiceKind && observedSpec.JSON() != s.JSON())
+		if observedSpec.JSON() != s.JSON() {
+			switch s.Kind {
+			case managed.ServiceKind:
+				replacements[runtimeAddress(s)] = storageIdentity != ""
+			case managed.GatewayKind:
+				replacements[runtimeAddress(s)] = gatewayStorageID != ""
+			}
+		}
 		o, err := docker.Observe(ctx, observedSpec, ids[runtimeAddress(s)])
 		if err != nil && !errors.Is(err, managed.ErrPartial) {
 			return nil, false, err
@@ -112,16 +130,15 @@ func (e *Engine) runtimeStage(ctx context.Context, operation string, d config.Do
 	if err = json.Unmarshal(b, &compiled); err != nil {
 		return nil, false, err
 	}
-	resources := map[string]any{}
+	resources := map[string]any{"nemoclaw_gateway_storage": map[string]any{"runtime": map[string]any{"spec": gatewayStorageSpec(d, r.Generations).JSON(), "lifecycle": map[string]any{"prevent_destroy": true}}}}
 	if d.Spec.InferenceProviders[0].Service != nil {
 		storage, _ := json.Marshal(runtimeStorage(d, r.Generations))
 		resources["nemoclaw_inference_storage"] = map[string]any{"runtime": map[string]any{"spec": string(storage), "lifecycle": map[string]any{"prevent_destroy": true}}}
 	}
 	for _, s := range specs {
-		attrs := map[string]any{"spec": s.JSON(), "lifecycle": map[string]any{"prevent_destroy": true}}
+		attrs := map[string]any{"spec": s.JSON(), "depends_on": []string{gatewayStorageAddress}}
 		if s.Service != nil {
 			attrs["depends_on"] = []string{"nemoclaw_managed_gateway.runtime", storageAddress}
-			delete(attrs, "lifecycle")
 		}
 		resources["nemoclaw_"+s.Kind] = map[string]any{"runtime": attrs}
 	}
@@ -143,14 +160,14 @@ func (e *Engine) runtimeStage(ctx context.Context, operation string, d config.Do
 	if json.Unmarshal(b, &plan) != nil {
 		return nil, false, errors.New("invalid runtime plan")
 	}
-	allowed := map[string]bool{}
+	allowed := map[string]bool{gatewayStorageAddress: true}
 	if d.Spec.InferenceProviders[0].Service != nil {
 		allowed[storageAddress] = true
 	}
 	for _, s := range specs {
 		allowed[runtimeAddress(s)] = true
 	}
-	changes, err := checkRuntimePlan(plan, allowed, storageIdentity != "" && changedServiceIntent)
+	changes, err := checkRuntimePlan(plan, allowed, replacements)
 	if err != nil {
 		return nil, false, err
 	}
@@ -214,11 +231,11 @@ func boundRuntimeSpec(want managed.Spec, binding stateBinding) (managed.Spec, er
 	return old, nil
 }
 
-func checkRuntimePlan(plan Plan, allowed map[string]bool, replaceService bool) ([]Change, error) {
+func checkRuntimePlan(plan Plan, allowed map[string]bool, replacements map[string]bool) ([]Change, error) {
 	changes := []Change{}
 	seen := map[string]bool{}
 	for _, c := range plan.ResourceChanges {
-		replacement := c.Address == "nemoclaw_inference_service.runtime" && replaceService && slices.Equal(c.Change.Actions, []string{"delete", "create"})
+		replacement := (c.Address == "nemoclaw_inference_service.runtime" || c.Address == "nemoclaw_managed_gateway.runtime") && replacements[c.Address] && slices.Equal(c.Change.Actions, []string{"delete", "create"})
 		if !allowed[c.Address] || seen[c.Address] || (!replacement && (len(c.Change.Actions) != 1 || !slices.Contains([]string{"no-op", "create", "update"}, c.Change.Actions[0]))) {
 			return nil, errors.New("runtime plan would remove, replace, or affect an undeclared resource")
 		}

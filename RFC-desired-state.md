@@ -187,12 +187,12 @@ Later removal or replacement needs explicit intent, retention rules, and recover
 behavior. The first slice cannot repair a lost persistent resource by silently
 creating an empty replacement.
 
-The Spark extension permits one narrower replacement: an explicit change to the
-inference service specification can replace its container after the independent
-model volume's ownership and durable binding are confirmed. It retains that volume,
-the gateway, and OpenShell identities. A tainted container under unchanged intent
-does not authorize replacement. Removal, storage replacement, and gateway
-replacement remain forbidden.
+The Spark extension permits process-container replacement after an explicit
+service specification or versioned gateway launch-layout change. The independent
+storage binding must first be observed, and deletion must verify the old container
+and retain its data. Gateway storage includes the database, signing identity,
+credential-encryption key, and bridge. A tainted container under unchanged intent
+does not authorize replacement. Removal and storage replacement remain forbidden.
 
 Apply builds its own plan under the deployment lock.
 The sequence below shows successful resource operations; Section 5.4 defines recovery from operation failures.
@@ -389,7 +389,7 @@ managed resource has a stable address, allowing OpenTofu to order its operations
 
 The Spark implementation uses two explicit graphs under one deployment lock:
 runtime infrastructure, then OpenShell resources. The runtime graph owns the
-gateway, retained model volume, and replaceable inference container. The second
+gateway process and its retained storage, model volume, and inference container. The second
 graph owns the workspace, registration, route, and sandbox. Each graph gets its
 own checked saved plan and state checkpoint. This is ordered convergence, with
 partial completion retained across graphs; it is not a transaction.
@@ -572,6 +572,20 @@ The container's running flag is computed and becomes unknown in a restart plan.
 An immediate process exit can therefore record the configured container's identity
 without contradicting a promised `running = true` value and tainting the resource.
 Deployment readiness still fails until loading and an actual agent reply succeed.
+
+The gateway experiment required a second storage boundary. Its supervisor binary
+and sandbox tokens must use paths visible to both the gateway container and the
+host Docker daemon. `XDG_STATE_HOME` now points inside the volume mounted at the
+same absolute path. The database's credential-encryption key also lives there;
+persisting only the database and signing key does not preserve usable credentials.
+The process binding checks both signing and encryption-key fingerprints.
+
+A newly introduced dependency does not necessarily run before destruction of the
+old resource in OpenTofu's graph. The gateway delete operation must preserve and
+verify any legacy encryption key before removing its container, even when the
+new storage resource has not yet been recorded. This is part of the planned
+mutation; refresh remains read-only. Ordinary apply still rejects missing bound
+storage and unexpected identity changes.
 
 Snapshot files have pinned sizes and hashes, resumable range downloads, and atomic
 completion receipts. Packed PLE preparation uses a staging directory, verifies

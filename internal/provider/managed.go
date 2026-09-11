@@ -20,6 +20,7 @@ var managedDefinitions = []oshell.Definition{
 	{Kind: managed.GatewayKind, Fields: []string{"spec", "running"}, Mutable: []string{"running"}},
 	{Kind: managed.ServiceKind, Fields: []string{"spec", "running"}, Mutable: []string{"running"}},
 	{Kind: managed.StorageKind, Fields: []string{"spec"}},
+	{Kind: managed.GatewayStorageKind, Fields: []string{"spec"}},
 }
 
 func managedSpec(row oshell.Row, kind string) (managed.Spec, error) {
@@ -47,7 +48,11 @@ func (r *Resource) managed(ctx context.Context, want oshell.Row, apply bool) (os
 		}
 		return oshell.Row{"id": id, "spec": want["spec"]}, nil
 	}
-	s, err := managedSpec(want, r.definition.Kind)
+	kind := r.definition.Kind
+	if kind == managed.GatewayStorageKind {
+		kind = managed.GatewayKind
+	}
+	s, err := managedSpec(want, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +61,13 @@ func (r *Resource) managed(ctx context.Context, want oshell.Row, apply bool) (os
 		return nil, err
 	}
 	defer d.Close()
+	if r.definition.Kind == managed.GatewayStorageKind {
+		id, err := d.GatewayStorage(ctx, s, want["id"], apply)
+		if err != nil || id == "" {
+			return nil, err
+		}
+		return oshell.Row{"id": id, "spec": want["spec"]}, nil
+	}
 	var o *managed.Observation
 	if apply {
 		o, err = d.Ensure(ctx, s, want["id"])

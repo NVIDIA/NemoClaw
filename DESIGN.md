@@ -2,7 +2,9 @@
 
 Decision: Accept for a local experiment, authorized by cv in this task on 2026-09-11.
 Placement: the independent root of `codex/desired-state-prototype`.
-Accountable maintainer: cv. No publication or existing-deployment migration is authorized.
+Accountable maintainer: cv. Git commits may be pushed to `origin/v1`, as authorized
+in this task. Artifact publication and migration of unrelated deployments remain
+outside this experiment.
 
 The experiment tests whether Go, OpenTofu, and OpenShell can implement
 NemoClaw's desired-state workflow with a small amount of new code.

@@ -166,7 +166,7 @@ func (r *Resource) Read(ctx context.Context, q resource.ReadRequest, out *resour
 	if out.Diagnostics.HasError() {
 		return
 	}
-	if r.definition.Kind == managed.GatewayKind || r.definition.Kind == managed.ServiceKind || r.definition.Kind == managed.StorageKind {
+	if r.definition.Kind == managed.GatewayKind || r.definition.Kind == managed.ServiceKind || r.definition.Kind == managed.StorageKind || r.definition.Kind == managed.GatewayStorageKind {
 		got, err := r.managed(ctx, want, false)
 		if err != nil {
 			out.Diagnostics.AddError("Resource observation", err.Error())
@@ -227,7 +227,7 @@ func (r *Resource) apply(ctx context.Context, want oshell.Row, plan tfsdk.Plan, 
 	defer cancel()
 	var got oshell.Row
 	var err error
-	if r.definition.Kind == managed.GatewayKind || r.definition.Kind == managed.ServiceKind || r.definition.Kind == managed.StorageKind {
+	if r.definition.Kind == managed.GatewayKind || r.definition.Kind == managed.ServiceKind || r.definition.Kind == managed.StorageKind || r.definition.Kind == managed.GatewayStorageKind {
 		got, err = r.managed(ctx, want, true)
 	} else if r.definition.Kind == "ollama" || r.definition.Kind == "ollama_model" {
 		got, err = r.applyOllama(ctx, want)
@@ -243,7 +243,7 @@ func (r *Resource) apply(ctx context.Context, want oshell.Row, plan tfsdk.Plan, 
 	r.put(ctx, state, got, diags)
 }
 func (r *Resource) Delete(ctx context.Context, q resource.DeleteRequest, out *resource.DeleteResponse) {
-	if r.definition.Kind == managed.ServiceKind {
+	if r.definition.Kind == managed.ServiceKind || r.definition.Kind == managed.GatewayKind {
 		want := r.values(ctx, q.State, &out.Diagnostics)
 		if out.Diagnostics.HasError() {
 			return

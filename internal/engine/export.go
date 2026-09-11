@@ -36,6 +36,12 @@ func (e *Engine) export(ctx context.Context, r Record) error {
 			return err
 		}
 		defer docker.Close()
+		if bound[gatewayStorageAddress] == "" {
+			return errors.New("gateway storage has no established identity")
+		}
+		if _, err = docker.GatewayStorage(ctx, gatewayStorageSpec(d, r.Generations), bound[gatewayStorageAddress], false); err != nil {
+			return err
+		}
 		if d.Spec.InferenceProviders[0].Service != nil {
 			if bound[storageAddress] == "" {
 				return errors.New("model storage has no established identity")

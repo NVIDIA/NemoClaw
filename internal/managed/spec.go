@@ -21,6 +21,7 @@ import (
 )
 
 const GatewayKind = "managed_gateway"
+const GatewayStorageKind = "gateway_storage"
 const ServiceKind = "inference_service"
 const OwnerLabel = "nemoclaw.nvidia.com/uid"
 const GenerationLabel = "nemoclaw.nvidia.com/generation"
@@ -29,6 +30,7 @@ const SupervisorImage = "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c2
 const SupervisorSHA256 = "7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d"
 
 type Spec struct {
+	Layout     int            `json:"layout,omitzero"`
 	Kind       string         `json:"kind"`
 	Name       string         `json:"name"`
 	Owner      string         `json:"owner"`
@@ -44,10 +46,10 @@ func (s Spec) Validate() error {
 	if err := s.Gateway.ValidateManaged(); err != nil {
 		return err
 	}
-	if s.Kind == GatewayKind && s.Service == nil {
+	if s.Kind == GatewayKind && s.Service == nil && (s.Layout >= 0 && s.Layout <= 2) {
 		return nil
 	}
-	if s.Kind == ServiceKind && s.Service != nil {
+	if s.Kind == ServiceKind && s.Service != nil && s.Layout == 0 {
 		return s.Service.Validate()
 	}
 	return errors.New("invalid managed runtime kind")
@@ -76,6 +78,9 @@ func (s Spec) Container(dataPath string) (*container.Config, *container.HostConf
 	if s.Kind == GatewayKind {
 		u, _ := url.Parse(s.Gateway.Endpoint)
 		c.User = "0:0"
+		if s.Layout >= 1 {
+			c.Env = []string{"XDG_STATE_HOME=" + dataPath + "/state"}
+		}
 		c.Entrypoint = []string{"/usr/local/bin/openshell-gateway"}
 		c.Cmd = []string{"--config", dataPath + "/gateway.toml", "--name", s.Name, "--bind-address", "127.0.0.1", "--port", u.Port(), "--drivers", "docker", "--disable-tls", "--db-url", "sqlite:" + dataPath + "/gateway.db"}
 		h.NetworkMode = "host"

@@ -193,7 +193,7 @@ func captureSpark(t *testing.T, e *Engine, d config.Document) sparkCapture {
 	}
 	stage := &Engine{StateDir: filepath.Join(e.StateDir, "runtime")}
 	runtimeIDs, err := stage.stateIDs()
-	if err != nil || len(ids) != 4 || len(runtimeIDs) != 3 {
+	if err != nil || len(ids) != 4 || len(runtimeIDs) != 4 {
 		t.Fatal("incomplete resource bindings", err)
 	}
 	maps.Copy(ids, runtimeIDs)

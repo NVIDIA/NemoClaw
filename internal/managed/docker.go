@@ -45,7 +45,7 @@ func (d *Docker) Close() error { return d.API.Close() }
 type Observation struct {
 	Spec                      Spec
 	ID, ContainerID, DataPath string
-	Running, Initialized      bool
+	Running                   bool
 	StartedAt                 time.Time
 }
 
@@ -120,15 +120,11 @@ func (d *Docker) Observe(ctx context.Context, want Spec, id string) (*Observatio
 	if err = verifyContainer(want, c.Container, v.Volume.Mountpoint, image.Config.Env, image.ID); err != nil {
 		return nil, err
 	}
-	o := &Observation{Spec: want, ContainerID: c.Container.ID, DataPath: v.Volume.Mountpoint, Running: c.Container.State.Running, Initialized: true}
+	o := &Observation{Spec: want, ContainerID: c.Container.ID, DataPath: v.Volume.Mountpoint, Running: c.Container.State.Running}
 	o.StartedAt, _ = time.Parse(time.RFC3339Nano, c.Container.State.StartedAt)
 	o.ID = info.Info.ID + "/" + o.ContainerID + "/" + v.Volume.CreatedAt + "/" + n.Network.ID
 	if want.Kind == GatewayKind {
 		b, e := d.ReadFile(ctx, o.ContainerID, o.DataPath+"/gateway.toml", 128<<10)
-		if errdefs.IsNotFound(e) && id == "" && !o.Running {
-			o.Initialized = false
-			return o, nil
-		}
 		if e != nil || !bytes.Equal(b, want.GatewayConfig(o.DataPath)) {
 			return nil, errors.New("managed gateway configuration changed or is unobservable")
 		}
@@ -138,6 +134,14 @@ func (d *Docker) Observe(ctx context.Context, want Spec, id string) (*Observatio
 		}
 		h := sha256.Sum256(pub)
 		o.ID += "/" + hex.EncodeToString(h[:])
+		if want.Layout >= 2 {
+			key, e := d.ReadFile(ctx, o.ContainerID, o.DataPath+credentialKeyPath, 32)
+			if e != nil || len(key) != 32 {
+				return nil, errors.New("gateway credential encryption key is unobservable; restart forbidden")
+			}
+			h := sha256.Sum256(key)
+			o.ID += "/" + hex.EncodeToString(h[:])
+		}
 		binary, e := d.ReadFile(ctx, o.ContainerID, o.DataPath+"/openshell-sandbox", 128<<20)
 		if e != nil {
 			return nil, errors.New("gateway supervisor artifact observation failed")
@@ -154,10 +158,7 @@ func (d *Docker) Observe(ctx context.Context, want Spec, id string) (*Observatio
 }
 
 func verifyVolume(want Spec, v volume.Volume) error {
-	labels := want.labels()
-	if want.Kind == ServiceKind {
-		labels = map[string]string{OwnerLabel: want.Owner, GenerationLabel: want.Generation}
-	}
+	labels := map[string]string{OwnerLabel: want.Owner, GenerationLabel: want.Generation}
 	if err := verifyLabels(labels, v.Labels); err != nil {
 		return err
 	}
@@ -173,7 +174,7 @@ func verifyNetwork(want Spec, n network.Inspect) error {
 		return errors.New("managed bridge identity, ownership, or configuration drifted")
 	}
 	if want.Kind == GatewayKind {
-		return verifyLabels(want.labels(), n.Labels)
+		return verifyLabels(map[string]string{OwnerLabel: want.Owner, GenerationLabel: want.Generation}, n.Labels)
 	}
 	return nil
 }
@@ -302,12 +303,7 @@ func (d *Docker) Ensure(ctx context.Context, want Spec, id string) (*Observation
 		if err != nil || created.ID == "" {
 			return nil, errors.New("container create outcome unknown; retain intent and reapply")
 		}
-		o = &Observation{Spec: want, ContainerID: created.ID, DataPath: v.Volume.Mountpoint, Initialized: want.Kind == ServiceKind}
-	}
-	if want.Kind == GatewayKind && !o.Initialized {
-		if err = d.initializeGateway(ctx, want, o); err != nil {
-			return nil, err
-		}
+		o = &Observation{Spec: want, ContainerID: created.ID, DataPath: v.Volume.Mountpoint}
 	}
 	// Reconcile by immutable identity before starting, never by process name.
 	o, err = d.Observe(ctx, want, id)
@@ -383,6 +379,7 @@ func (d *Docker) ensureNetwork(ctx context.Context, s Spec) error {
 }
 
 func (d *Docker) initializeGateway(ctx context.Context, s Spec, o *Observation) error {
+	s.Layout = 0
 	name := s.Name + "-initialize"
 	i, err := d.API.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
 	if errdefs.IsNotFound(err) {
@@ -413,6 +410,10 @@ func (d *Docker) initializeGateway(ctx context.Context, s Spec, o *Observation) 
 		if result.StatusCode != 0 || result.Error != nil {
 			return errors.New("gateway credential initialization failed; container retained")
 		}
+	}
+	o.ContainerID = i.Container.ID
+	if _, err = d.credentialKey(ctx, s, o.ContainerID, o.DataPath, false, true); err != nil {
+		return err
 	}
 	b := s.GatewayConfig(o.DataPath)
 	if err = d.copySupervisor(ctx, s, o); err != nil {

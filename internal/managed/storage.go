@@ -4,6 +4,7 @@
 package managed
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"regexp"
@@ -60,11 +61,11 @@ func (d *Docker) Storage(ctx context.Context, s Storage, id string, create bool)
 	return got, nil
 }
 
-// ReplaceContainer removes only the verified inference process container.
+// ReplaceContainer removes only the verified runtime process container.
 // Persistent storage has its own immutable resource and deletion is forbidden.
 func (d *Docker) ReplaceContainer(ctx context.Context, s Spec, id string) error {
-	if s.Kind != ServiceKind || id == "" {
-		return errors.New("only a bound inference container may be replaced")
+	if (s.Kind != ServiceKind && s.Kind != GatewayKind) || id == "" {
+		return errors.New("only a bound managed process container may be replaced")
 	}
 	o, err := d.Observe(ctx, s, id)
 	if err != nil {
@@ -73,13 +74,26 @@ func (d *Docker) ReplaceContainer(ctx context.Context, s Spec, id string) error 
 	if o == nil {
 		return errors.New("replacement identity is unobservable")
 	}
+	// A newly introduced storage dependency need not precede destruction in
+	// OpenTofu's old graph. Preserve the legacy key while this verified container
+	// still exists, even if the storage resource's Create has not run yet.
+	if s.Kind == GatewayKind && s.Layout == 0 {
+		key, e := d.credentialKey(ctx, s, o.ContainerID, o.DataPath, false, true)
+		if e != nil {
+			return e
+		}
+		legacy, e := d.ReadFile(ctx, o.ContainerID, "/root/.local/state/openshell/gateway/credentials/key-encryption-key.bin", 32)
+		if e != nil || !bytes.Equal(key, legacy) {
+			return errors.New("legacy gateway encryption key was not preserved; replacement forbidden")
+		}
+	}
 	if o.Running {
 		if _, err = d.API.ContainerStop(ctx, o.ContainerID, client.ContainerStopOptions{Timeout: new(60)}); err != nil {
-			return errors.New("inference stop outcome unknown; data retained")
+			return errors.New("runtime stop outcome unknown; data retained")
 		}
 	}
 	if _, err = d.API.ContainerRemove(ctx, o.ContainerID, client.ContainerRemoveOptions{}); err != nil {
-		return errors.New("inference container removal outcome unknown; storage retained")
+		return errors.New("runtime container removal outcome unknown; storage retained")
 	}
 	return nil
 }
