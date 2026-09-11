@@ -3,12 +3,14 @@
 
 import { describe, expect, it } from "vitest";
 
+import { openshellMainProcessSpecEnvValue } from "../../../src/lib/onboard/docker-startup-command-env.ts";
 import type { ManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority.ts";
 import {
   assertHermesContainerImageAuthority,
   assertHermesGpuStartupOutputContract,
   assertHermesManagedWorkloadAuthority,
   HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS,
+  hermesRuntimeIntendedCommand,
   normalizeImmutableImageContentId,
 } from "../live/hermes-gpu-startup-proof.ts";
 
@@ -93,6 +95,25 @@ describe("Hermes GPU startup output contract", () => {
 });
 
 describe("Hermes GPU managed-image authority proof", () => {
+  it("reads the OpenShell 0.0.116 structured main-process command", () => {
+    const command = ["env", "CHAT_UI_URL=http://127.0.0.1:18789", "/usr/local/bin/nemoclaw-start"];
+
+    expect(
+      hermesRuntimeIntendedCommand({
+        OPENSHELL_MAIN_PROCESS_SPEC: openshellMainProcessSpecEnvValue(command, false),
+      }),
+    ).toEqual(command);
+  });
+
+  it("retains the legacy OpenShell sandbox-command fallback", () => {
+    expect(
+      hermesRuntimeIntendedCommand({
+        OPENSHELL_SANDBOX_COMMAND:
+          "env CHAT_UI_URL=http://127.0.0.1:18789 /usr/local/bin/nemoclaw-start",
+      }),
+    ).toEqual(["env", "CHAT_UI_URL=http://127.0.0.1:18789", "/usr/local/bin/nemoclaw-start"]);
+  });
+
   it("canonicalizes a Podman bare image content ID without changing canonical Docker IDs", () => {
     expect(normalizeImmutableImageContentId("c".repeat(64))).toBe(MANAGED_IMAGE_CONTENT_ID);
     expect(normalizeImmutableImageContentId(MANAGED_IMAGE_CONTENT_ID)).toBe(

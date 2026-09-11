@@ -74,6 +74,11 @@ export type TrustedSandboxShellScript = string & {
   readonly [trustedSandboxShellScriptBrand]: true;
 };
 
+// OpenShell records the create argv as the sandbox's canonical main process.
+// Historical rebuild fixtures therefore need a non-terminal process until the
+// real rebuild flow takes ownership of the sandbox lifecycle.
+export const HISTORICAL_SANDBOX_MAIN_PROCESS = ["sleep", "infinity"] as const;
+
 export function trustedSandboxShellScript(script: string): TrustedSandboxShellScript {
   if (script.length === 0) {
     throw new Error("sandbox shell script must not be empty");

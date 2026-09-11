@@ -207,7 +207,7 @@ describe("MCP adapter teardown rollback", () => {
     await expect(
       scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry, runtimeSelection),
     ).rejects.toThrow(
-      "Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server 'github'.",
+      "Could not prove a generation-scoped credential before removing the managed adapter entry for MCP server 'github'.",
     );
     expect(mocks.inspectMcpProvider).not.toHaveBeenCalled();
     expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
