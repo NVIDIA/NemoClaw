@@ -722,7 +722,10 @@ describe("gateway guard legacy keepalive fixture", () => {
     const result = spawnSync(
       process.execPath,
       ["--import", "tsx", FIXTURE_PATH, "fixture-import-probe", "f".repeat(64)],
-      { encoding: "utf8" },
+      {
+        encoding: "utf8",
+        env: { ...process.env, NEMOCLAW_OPENSHELL_BIN: process.execPath },
+      },
     );
 
     expect(result.status).toBe(1);
