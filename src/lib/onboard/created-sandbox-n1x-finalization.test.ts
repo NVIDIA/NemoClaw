@@ -5,8 +5,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
+import { requireValue } from "../core/require-value";
+import { isRecordedN1xManagedVllmRebuildEligible } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import { createSession, type Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import {
@@ -21,6 +23,9 @@ import {
   type InitialOnboardFlowContext,
 } from "./machine/initial-flow-phases";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
+import { parseHostLocalInferenceReceipt } from "./runtime-provider/host-local-inference";
+import type { SetupNimSelectionState } from "./setup-nim-flow";
+import { createSetupNimVllmHandler } from "./setup-nim-vllm";
 
 const sandboxName = "n1x-preview";
 const model = "nvidia/Qwen3.6-35B-A3B-NVFP4";
@@ -32,18 +37,54 @@ afterEach(async () => {
   vi.resetModules();
   await Promise.all(homes.splice(0).map((home) => fs.rm(home, { recursive: true, force: true })));
 });
-const inferenceSelection = {
+const inferenceSelection: SetupNimSelectionState & {
+  model: string;
+  endpointSource: null;
+  compatibleEndpointReasoning: null;
+  compatibleEndpointReasoningEffort: null;
+} = {
   provider,
   model,
   endpointUrl: null,
   endpointSource: null,
   credentialEnv: null,
   hermesAuthMethod: null,
+  hermesToolGateways: [],
   preferredInferenceApi: "openai-completions",
   compatibleEndpointReasoning: null,
   compatibleEndpointReasoningEffort: null,
   nimContainer: null,
-} as const;
+  allowToolsIncompatible: false,
+};
+
+beforeEach(async () => {
+  inferenceSelection.endpointUrl = null;
+  const handler = createSetupNimVllmHandler({
+    VLLM_PORT: 8000,
+    getLocalProviderBaseUrl: () => "http://host.openshell.internal:8000/v1",
+    getLocalProviderValidationBaseUrl: () => "http://127.0.0.1:8000/v1",
+    getManagedVllmProviderBinding: () => ({
+      baseUrl: "http://host.openshell.internal:8000/v1",
+      validationBaseUrl: "http://127.0.0.1:8000/v1",
+      apiKey: "test-key",
+    }),
+    runCapture: vi.fn(() => {
+      throw new Error("Unexpected unauthenticated vLLM query");
+    }),
+    queryVllmModels: () => JSON.stringify({ data: [{ id: model }] }),
+    isSafeModelId: () => true,
+    requireValue,
+    validateOpenAiLikeSelection: async () => ({ ok: true, api: "openai-completions" }),
+    applyVllmRuntimeContextWindow: vi.fn(),
+    persistConfiguredManagedVllmRuntimeReceipt: async () => ({ ok: true, persisted: true }),
+    exitProcess: (code) => {
+      throw new Error(`Unexpected vLLM setup exit ${code}`);
+    },
+  });
+  expect(await handler(inferenceSelection, { managedInstall: true, sparkHost: false })).toBe(
+    "selected",
+  );
+});
 
 type Gpu = { type: "nvidia"; platform: "n1x" | "spark" };
 type GpuConfig = {
@@ -340,6 +381,15 @@ it.each([
       ...(allow === undefined ? {} : { allowDeferredN1xManagedVllm: allow }),
     });
     const registration = await completeRegistration(flow.createIntent);
+
+    expect(registration.endpointUrl).toBe("http://host.openshell.internal:8000/v1");
+    expect(
+      isRecordedN1xManagedVllmRebuildEligible(
+        registration,
+        { provider, model, pinEndpoint: true, endpointUrl: null },
+        parseHostLocalInferenceReceipt,
+      ),
+    ).toBe(expected);
 
     expect([
       flow.accepted,
