@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AdvisorPromptTurn } from "../advisors/session.mts";
+import { RECORD_ADVISOR_FINDINGS_TOOL } from "./finding-ledger.mts";
 import { buildInvestigateTurn, type InvestigateTurnContext } from "./investigate-turn.mts";
 import {
   ADVISOR_SPECIALISTS,
@@ -80,7 +81,7 @@ Reach a conclusion for the assigned area. Support it with repository evidence. R
 
 Record every additional E2E recommendation, including optional coverage, with pr_review_record_e2e_recommendations before your final Markdown review. Give an explicit reason when no additional E2E is needed. Record needed coverage without a supported selector as unresolved. The recorded recommendations must include every E2E recommendation in your Markdown review.
 
-This is an investigation-only specialist turn. Do not emit a final result schema, canonical finding ID, merge recommendation, or GitHub comment. Do not mutate files, execute repository code, access the network, run a package manager, or run tests.`;
+This is an investigation-only specialist turn. Do not invent a finding ID, merge recommendation, or GitHub comment. After writing the human-readable analysis, call \`${RECORD_ADVISOR_FINDINGS_TOOL}\` exactly once as the terminal action. Record only P0/P1 issues that require a repository change; the trusted host derives exact-head IDs. For each blocker, name one exact repository path and disclose every applicable exclusion. Use an empty finding list with a concrete reason when no blocker remains. Do not mutate files, execute repository code, access the network, run a package manager, or run tests.`;
 
 export function buildSpecialistInvestigateTurn(
   interest: AdvisorInterest,
@@ -91,9 +92,17 @@ export function buildSpecialistInvestigateTurn(
   return {
     ...fullTurn,
     name: `investigate-${interest}`,
-    activeToolNames: [...specialistToolNames(interest), E2E_RECEIPT_TOOL],
+    activeToolNames: [
+      ...specialistToolNames(interest),
+      RECORD_ADVISOR_FINDINGS_TOOL,
+      E2E_RECEIPT_TOOL,
+    ],
     requiredToolNames: [...(fullTurn.requiredToolNames ?? []), E2E_RECEIPT_TOOL],
     requiredReadOneOfPaths: [context.diffPath],
+    terminalSubmitToolName: RECORD_ADVISOR_FINDINGS_TOOL,
+    terminalSubmitRepairPrompt:
+      `Commit the complete blocker ledger now by calling ${RECORD_ADVISOR_FINDINGS_TOOL}. ` +
+      "Do not emit more prose. If there are no P0/P1 blockers, submit an empty finding list and a concrete noFindingsReason.",
     prompt: `Review the ${specialist.label} area.
 
 ${COMMON_PROMPT}
