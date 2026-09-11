@@ -3,17 +3,31 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { ForwardServiceTarget } from "../../src/lib/adapters/openshell/forward-service";
+import {
+  launchForwardService,
+  type ForwardServiceLaunchOptions,
+  type ForwardServiceTarget,
+} from "../../src/lib/adapters/openshell/forward-service";
 import { createOnboardDashboardHelpers } from "../../src/lib/onboard/dashboard";
+import { loadAgent } from "../../src/lib/agent/defs";
 import type { ListSandboxesFn } from "../../src/lib/onboard/dashboard-port";
 
 function harness(options: {
   listSandboxes: ListSandboxesFn;
   isPortBound?: (port: number) => boolean;
   ownsForward?: (target: ForwardServiceTarget) => boolean;
+  launch?: typeof launchForwardService;
 }) {
-  const launch = vi.fn();
-  const owns = vi.fn(options.ownsForward ?? (() => false));
+  const startedPorts = new Set<number>();
+  const launch = vi.fn(
+    options.launch ??
+      ((target: ForwardServiceTarget, launchOptions?: ForwardServiceLaunchOptions) => {
+        startedPorts.add(target.localPort);
+        launchOptions?.verifyReady?.();
+      }),
+  );
+  const owns = vi.fn(options.ownsForward ?? ((target) => startedPorts.has(target.localPort)));
+
   const helpers = createOnboardDashboardHelpers({
     runOpenshell: vi.fn(() => ({ status: 0 })),
     runCaptureOpenshell: vi.fn(() => ""),
@@ -28,6 +42,7 @@ function harness(options: {
     printAgentDashboardUi: vi.fn(),
     listSandboxes: options.listSandboxes,
     isPortBoundOnHost: options.isPortBound ?? (() => false),
+    getSandbox: (name) => options.listSandboxes().sandboxes.find((entry) => entry.name === name),
     forwardService: {
       executable: () => "/usr/local/bin/openshell",
       launch,
@@ -56,6 +71,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
         localPort: 18_790,
         targetPort: 18_790,
       }),
+      expect.objectContaining({ verifyReady: expect.any(Function) }),
     );
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
   });
@@ -114,46 +130,88 @@ describe("finalization dashboard ForwardTcp launch", () => {
     });
 
     expect(() => helpers.ensureFinalizationDashboardForward("reonboard-test")).toThrow(
-      /cannot be reallocated or adopted/u,
+      /not available/u,
     );
     expect(launch).not.toHaveBeenCalled();
   });
 
-  it("enables owned-forward reuse only for OpenClaw agents", async () => {
+  it.each(["openclaw", "hermes"])(
+    "reuses registered forwards for %s without launching another listener (#11425)",
+    async (name) => {
+      vi.stubEnv("CHAT_UI_URL", undefined);
+      const agent = loadAgent(name);
+      const ports = name === "openclaw" ? [18790] : [18790, 8643];
+      const { helpers, launch, owns } = harness({
+        listSandboxes: () => ({
+          sandboxes: [
+            { name: "reonboard-test", dashboardPort: 18790, hermesApiPort: 8643 },
+            { name: "sibling", dashboardPort: 18789, hermesApiPort: 8642 },
+          ],
+        }),
+        isPortBound: () => true,
+        ownsForward: (target) => ports.includes(target.localPort),
+      });
+      await expect(
+        helpers.ensureFinalizationAgentDashboardForward("reonboard-test", agent),
+      ).resolves.toBe(18790);
+      expect(owns.mock.calls.map(([target]) => target.localPort)).toEqual(ports);
+      expect(launch).not.toHaveBeenCalled();
+      expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
+    },
+  );
+
+  it.each([18790, 8643])(
+    "establishes missing Hermes forward %s on its recorded port",
+    async (missingPort) => {
+      vi.stubEnv("CHAT_UI_URL", undefined);
+      const { helpers, launch } = harness({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "reonboard-test", dashboardPort: 18790, hermesApiPort: 8643 }],
+        }),
+        isPortBound: (port) => port !== missingPort,
+        ownsForward: () => true,
+      });
+      await expect(
+        helpers.ensureFinalizationAgentDashboardForward("reonboard-test", loadAgent("hermes")),
+      ).resolves.toBe(18790);
+      expect(launch).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          localPort: missingPort,
+          targetPort: missingPort,
+        }),
+        expect.objectContaining({ verifyReady: expect.any(Function) }),
+      );
+    },
+  );
+
+  it.each([
+    { state: "foreign", launches: 0 },
+    { state: "sibling", launches: 0 },
+    { state: "launch-failure", launches: 1 },
+    { state: "ownership-changed", launches: 1 },
+  ])("rejects a Hermes API forward with $state state (#11425)", async ({ state, launches }) => {
     vi.stubEnv("CHAT_UI_URL", undefined);
-    const openClaw = harness({
+    const { helpers, launch } = harness({
       listSandboxes: () => ({
-        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+        sandboxes: [
+          { name: "reonboard-test", dashboardPort: 18790, hermesApiPort: 8643 },
+          ...(state === "sibling" ? [{ name: "sibling", hermesApiPort: 8643 }] : []),
+        ],
       }),
-      isPortBound: (port) => port === 18_790,
-      ownsForward: () => true,
+      isPortBound: (port) => port === 18790 || state === "foreign" || state === "sibling",
+      ownsForward: (target) => target.localPort === 18790 || state === "sibling",
+      ...(state === "launch-failure"
+        ? {
+            launch: () => {
+              throw new Error("forward startup failed");
+            },
+          }
+        : {}),
     });
-
     await expect(
-      openClaw.helpers.ensureFinalizationAgentDashboardForward(
-        "reonboard-test",
-        { name: "openclaw", forwardPort: 18_790 },
-        undefined,
-        undefined,
-      ),
-    ).resolves.toBe(18_790);
-
-    const hermes = harness({
-      listSandboxes: () => ({
-        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
-      }),
-      isPortBound: (port) => port === 18_790,
-      ownsForward: () => true,
-    });
-
-    await expect(
-      hermes.helpers.ensureFinalizationAgentDashboardForward(
-        "reonboard-test",
-        { name: "hermes", forwardPort: 18_790 },
-        undefined,
-        undefined,
-      ),
-    ).rejects.toThrow(/cannot be reallocated/u);
+      helpers.ensureFinalizationAgentDashboardForward("reonboard-test", loadAgent("hermes")),
+    ).rejects.toThrow(/occupied|not available|startup failed|ownership/u);
+    expect(launch).toHaveBeenCalledTimes(launches);
   });
 
   it("honors an explicit dashboard URL", () => {
@@ -163,6 +221,58 @@ describe("finalization dashboard ForwardTcp launch", () => {
     });
 
     expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).toBe(19_001);
-    expect(launch).toHaveBeenCalledWith(expect.objectContaining({ localPort: 19_001 }));
+    expect(launch).toHaveBeenCalledWith(
+      expect.objectContaining({ localPort: 19_001 }),
+      expect.objectContaining({ verifyReady: expect.any(Function) }),
+    );
   });
+
+  it.each([
+    { failure: "ownership", ownsApi: false, afterLaunch: () => {} },
+    {
+      failure: "sandbox-identity",
+      ownsApi: true,
+      afterLaunch: () => {
+        throw new Error("Sandbox identity changed");
+      },
+    },
+  ])(
+    "retires a newly launched Hermes API forward when $failure changes",
+    async ({ ownsApi, afterLaunch }) => {
+      vi.stubEnv("CHAT_UI_URL", undefined);
+      const boundPorts = new Set([18790]);
+      const child = { pid: process.pid + 1, unref: vi.fn() };
+      const revalidateSandboxIdentity = vi.fn();
+      const terminateProcessTree = vi.fn(() => boundPorts.delete(8643));
+      const { helpers } = harness({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "reonboard-test", dashboardPort: 18790, hermesApiPort: 8643 }],
+        }),
+        isPortBound: (port) => boundPorts.has(port),
+        ownsForward: (target) => target.localPort === 18790 || ownsApi,
+        launch: (target, options) =>
+          launchForwardService(target, {
+            ...options,
+            isReachable: () => boundPorts.has(target.localPort),
+            spawnDetached: () => {
+              boundPorts.add(target.localPort);
+              revalidateSandboxIdentity.mockImplementation(afterLaunch);
+              return child;
+            },
+            terminateProcessTree,
+          }),
+      });
+      await expect(
+        helpers.ensureFinalizationAgentDashboardForward(
+          "reonboard-test",
+          loadAgent("hermes"),
+          revalidateSandboxIdentity,
+        ),
+      ).rejects.toThrow(/ownership|identity/iu);
+      expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+      expect(boundPorts).toEqual(new Set([18790]));
+      expect(child.unref).not.toHaveBeenCalled();
+      expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
+    },
+  );
 });

@@ -7,8 +7,6 @@ import {
   loadManagedToolGatewayMatrix,
 } from "./managed-tool-gateway.ts";
 
-const TAVILY_API_KEY_PLACEHOLDER = "openshell:resolve:env:TAVILY_API_KEY";
-
 export function buildHermesEnvLines(
   settings: HermesBuildSettings,
   env: NodeJS.ProcessEnv = process.env,
@@ -17,10 +15,6 @@ export function buildHermesEnvLines(
 
   for (const { envKey, placeholder } of settings.messagingCredentialPlaceholders) {
     envLines.push(`${envKey}=${placeholder}`);
-  }
-
-  if (settings.webSearchProvider === "tavily") {
-    envLines.push(`TAVILY_API_KEY=${TAVILY_API_KEY_PLACEHOLDER}`);
   }
 
   const managedToolGatewayPresets = effectiveManagedToolGatewayPresets(settings);

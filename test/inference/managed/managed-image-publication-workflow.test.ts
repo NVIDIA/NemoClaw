@@ -1149,6 +1149,7 @@ fi
       publisher = managedPublisher(workflow),
       action = readAction("publish-managed-image-digest"),
       source = JSON.stringify(workflow);
+    const auditEvidence = step(publisher, "Prepare same-run mcporter audit evidence");
     expect(workflow.jobs?.["reviewed-npm-audit"]?.if).toBe("github.event_name != 'pull_request'");
     expect(publisher.needs).toEqual(["publication-identity", "reviewed-npm-audit"]);
     expect(
@@ -1157,12 +1158,17 @@ fi
         "Prepare same-run mcporter audit evidence",
         "mcporter-runtime.receipt.json",
         "mcporter-runtime.raw.json",
+        "mcporter-runtime.policy.json",
         "nemoclaw-mcporter-audit-receipt",
         "nemoclaw-mcporter-audit-raw-report",
+        "nemoclaw-mcporter-audit-policy-result",
         "NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256",
+        "NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256",
       ].filter((marker) => !source.includes(marker)),
     ).toEqual([]);
     expect(source).not.toContain("NEMOCLAW_MCPORTER_AUDIT_RAW_REPORT_SHA256");
+    expect(auditEvidence.run).toContain('test -s "$policy"');
+    expect(auditEvidence.run).toContain('test ! -L "$policy"');
     const actionSource = JSON.stringify(action);
     expect([
       actionSource.includes('"secret-files":{"description"'),

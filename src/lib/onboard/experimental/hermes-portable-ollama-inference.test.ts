@@ -413,7 +413,7 @@ describe("Hermes Portable Ollama inference activation", () => {
       id: "portable-ollama-provider",
       resourceVersion: 1,
     });
-    prepared.removeAndVerify();
+    await prepared.removeAndVerify();
     expect(fixture.gatewayProvider.isPresent()).toBe(false);
 
     const retry = prepareHermesPortableOllamaProviderRetirement({
@@ -421,7 +421,7 @@ describe("Hermes Portable Ollama inference activation", () => {
       allowAbsent: true,
     });
     expect(retry.present).toBe(false);
-    retry.removeAndVerify();
+    await retry.removeAndVerify();
     retry.verifyAbsent();
     expect(
       fixture.gatewayProvider
@@ -723,7 +723,7 @@ describe("Hermes Portable Ollama inference activation", () => {
       runGatewayOpenshell: fixture.gatewayProvider.run,
     });
     expect(retirement.present).toBe(true);
-    retirement.removeAndVerify();
+    await retirement.removeAndVerify();
     retirement.verifyAbsent();
   });
 
@@ -1236,7 +1236,9 @@ describe("Hermes Portable Ollama inference activation", () => {
     createExactGatewayProvider(mutation);
     fixture.gatewayProvider.bumpResourceVersion();
     expect(() => mutation.commit()).toThrow("gateway provider authority changed");
-    expect(() => mutation.rollback()).toThrow("refused to delete changed gateway authority");
+    await expect(mutation.rollback()).rejects.toThrow(
+      "refused to delete changed gateway authority",
+    );
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
   });
 
@@ -1330,7 +1332,9 @@ describe("Hermes Portable Ollama inference activation", () => {
     createExactGatewayProvider(mutation);
     await mutation.commit();
     fixture.gatewayProvider.setDeleteFailure(true);
-    expect(() => mutation.rollback()).toThrow("could not resume its gateway provider rollback");
+    await expect(mutation.rollback()).rejects.toThrow(
+      "could not resume its gateway provider rollback",
+    );
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
     expect(gatewayJournal(fixture)).toMatchObject({ phase: "rolling-back" });
 
