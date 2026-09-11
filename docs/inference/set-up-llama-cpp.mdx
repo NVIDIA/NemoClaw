@@ -141,18 +141,29 @@ Run interactive onboarding on the qualified host:
 $$nemoclaw onboard
 ```
 
-NemoClaw lists compatible managed llama.cpp profiles in descending YAML `priority` order.
-During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and marks the unique highest-priority compatible profile as `(recommended)`.
+NemoClaw lists compatible managed llama.cpp profiles with automatic selection in descending YAML `priority` order.
+During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and `NEMOCLAW_SERVING_PRESET` and marks the unique highest-priority compatible profile as `(recommended)`.
 On DGX Spark, the recommended profile appears as **Managed llama.cpp: NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark (recommended)**.
 On Linux x86_64, the recommended profile identifies one NVIDIA GPU instead.
 During Windows Express or non-interactive onboarding, a qualifying Windows WSL N1x host selects managed llama.cpp without a provider prompt when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset.
 With `NEMOCLAW_LLAMACPP_RECIPE` unset, it selects **Managed llama.cpp: Qwen 3.6 35B-A3B on N1x WSL (recommended)**; a compatible explicit recipe selects that managed recipe.
 Ordinary interactive onboarding lists the same recommended profile but allows another provider selection.
-The Meta Muse Glimmer profile remains available on DGX Spark without the recommendation marker.
+The explicit-only Meta Muse Glimmer profile does not appear in the menu.
 Select any listed profile to install its exact repository-owned recipe.
 The selected menu entry determines the exact recipe even when `NEMOCLAW_LLAMACPP_RECIPE` names another recipe.
 
-For non-interactive onboarding, select the repository-owned recipe explicitly:
+Use `--profile` to select a profile by its stable ID, including the explicit-only Meta Muse Glimmer profile.
+Confirm that `$$nemoclaw profiles list` reports the profile as compatible first:
+
+```bash
+$$nemoclaw profiles list
+$$nemoclaw onboard --profile llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b
+```
+
+The profile selects the managed llama.cpp provider and installs the recipe that the profile declares.
+Do not combine `--profile` with `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, or `NEMOCLAW_LLAMACPP_RECIPE`.
+
+For non-interactive onboarding without `--profile`, select the repository-owned recipe explicitly:
 
 ```bash
 NEMOCLAW_PROVIDER=install-llama-cpp \

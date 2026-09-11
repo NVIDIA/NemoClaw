@@ -92,9 +92,9 @@ export function buildListCommandDeps(): ListSandboxesCommandDeps {
       }
     },
     loadLastSession: () => onboardSession.loadSession(),
-    getPolicyPresets: (sandboxName) => {
+    getPolicyPresets: async (sandboxName) => {
       try {
-        return policy.getAppliedPresets(sandboxName, INVENTORY_POLICY_PROBE_TIMEOUT_MS);
+        return await policy.getAppliedPresets(sandboxName, INVENTORY_POLICY_PROBE_TIMEOUT_MS);
       } catch {
         return [];
       }

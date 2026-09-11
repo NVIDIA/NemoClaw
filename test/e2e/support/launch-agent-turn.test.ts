@@ -527,7 +527,7 @@ exec "$@"
       NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
       NEMOCLAW_LAUNCH_SANDBOX: invocationEnv.NEMOCLAW_LAUNCH_SANDBOX ?? "sandbox",
       NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS:
-        mode === "restored-canonical-timeout"
+        mode === "restored-canonical-timeout" || mode === "supervisor-timeout"
           ? "10"
           : mode === "pty-socket-timeout"
             ? "5"
