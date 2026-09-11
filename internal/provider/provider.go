@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/NVIDIA/NemoClaw/internal/config"
+	"github.com/NVIDIA/NemoClaw/internal/managed"
 	"github.com/NVIDIA/NemoClaw/internal/ollama"
 	oshell "github.com/NVIDIA/NemoClaw/internal/openshell"
 	"github.com/NVIDIA/NemoClaw/internal/query"
@@ -91,15 +92,19 @@ func (*Provider) Resources(context.Context) []func() resource.Resource {
 	for _, d := range ollamaDefinitions {
 		result = append(result, func() resource.Resource { return &Resource{definition: d} })
 	}
+	for _, d := range managedDefinitions {
+		result = append(result, func() resource.Resource { return &Resource{definition: d} })
+	}
 	return result
 }
 func (*Provider) DataSources(context.Context) []func() datasource.DataSource { return nil }
 
 type Resource struct {
-	definition oshell.Definition
-	client     oshell.Client
-	observer   query.Client
-	docker     *ollama.Docker
+	definition     oshell.Definition
+	client         oshell.Client
+	observer       query.Client
+	docker         *ollama.Docker
+	runtimeFactory func(string) (*managed.Docker, error)
 }
 
 type resourceClients struct {
@@ -169,6 +174,19 @@ func (r *Resource) Read(ctx context.Context, q resource.ReadRequest, out *resour
 	if out.Diagnostics.HasError() {
 		return
 	}
+	if r.definition.Kind == managed.GatewayKind || r.definition.Kind == managed.ServiceKind || r.definition.Kind == managed.StorageKind {
+		got, err := r.managed(ctx, want, false)
+		if err != nil {
+			out.Diagnostics.AddError("Resource observation", err.Error())
+			return
+		}
+		if got == nil {
+			out.State.RemoveResource(ctx)
+			return
+		}
+		r.put(ctx, &out.State, got, &out.Diagnostics)
+		return
+	}
 	if r.definition.Kind == "ollama" || r.definition.Kind == "ollama_model" {
 		got, err := r.readOllama(ctx, want)
 		if err != nil {
@@ -220,7 +238,9 @@ func (r *Resource) apply(ctx context.Context, want oshell.Row, plan tfsdk.Plan, 
 	defer cancel()
 	var got oshell.Row
 	var err error
-	if r.definition.Kind == "ollama" || r.definition.Kind == "ollama_model" {
+	if r.definition.Kind == managed.GatewayKind || r.definition.Kind == managed.ServiceKind || r.definition.Kind == managed.StorageKind {
+		got, err = r.managed(ctx, want, true)
+	} else if r.definition.Kind == "ollama" || r.definition.Kind == "ollama_model" {
 		got, err = r.applyOllama(ctx, want)
 	} else {
 		got, err = oshell.Ensure(ctx, r.client, r.definition.Kind, want)
@@ -233,6 +253,27 @@ func (r *Resource) apply(ctx context.Context, want oshell.Row, plan tfsdk.Plan, 
 	state.Schema = plan.Schema
 	r.put(ctx, state, got, diags)
 }
-func (r *Resource) Delete(_ context.Context, _ resource.DeleteRequest, out *resource.DeleteResponse) {
+func (r *Resource) Delete(ctx context.Context, q resource.DeleteRequest, out *resource.DeleteResponse) {
+	if r.definition.Kind == managed.ServiceKind {
+		want := r.values(ctx, q.State, &out.Diagnostics)
+		if out.Diagnostics.HasError() {
+			return
+		}
+		s, err := managedSpec(want, r.definition.Kind)
+		if err != nil {
+			out.Diagnostics.AddError("Replacement rejected", err.Error())
+			return
+		}
+		d, err := r.runtimeClient(s.Gateway.Engine)
+		if err != nil {
+			out.Diagnostics.AddError("Replacement rejected", err.Error())
+			return
+		}
+		defer d.Close()
+		if err = d.ReplaceContainer(ctx, s, want["id"]); err != nil {
+			out.Diagnostics.AddError("Replacement incomplete", err.Error())
+		}
+		return
+	}
 	out.Diagnostics.AddError("Deletion forbidden", fmt.Sprintf("ordinary apply cannot delete or replace a %s", r.definition.Kind))
 }
