@@ -910,7 +910,6 @@ test(
     await runFullMcpBridgeE2eCoverage(mcpBridgeE2eScope, () =>
       assertTrustedPrivateMcpRebindingDenied(host, sandbox, cleanup, {
         adapter: "openclaw-config",
-        artifacts,
         artifactPrefix: "openclaw",
         assertSecretAbsent: assertSecretAbsentFromSandbox,
         cleanupBridge: cleanupMcpBridge,
@@ -1220,7 +1219,6 @@ mcpBridgeShardTest("hermes")(
     await runFullMcpBridgeE2eCoverage(mcpBridgeE2eScope, () =>
       assertTrustedPrivateMcpRebindingDenied(host, sandbox, cleanup, {
         adapter: "hermes-config",
-        artifacts,
         artifactPrefix: "hermes",
         assertSecretAbsent: assertSecretAbsentFromSandbox,
         cleanupBridge: cleanupMcpBridge,
@@ -1414,7 +1412,6 @@ mcpBridgeShardTest("deepagents")(
     await runFullMcpBridgeE2eCoverage(mcpBridgeE2eScope, () =>
       assertTrustedPrivateMcpRebindingDenied(host, sandbox, cleanup, {
         adapter: "deepagents-config",
-        artifacts,
         artifactPrefix: "deepagents",
         assertSecretAbsent: assertSecretAbsentFromSandbox,
         cleanupBridge: cleanupMcpBridge,
