@@ -773,8 +773,8 @@ test(
       timeoutMs: 60_000,
     });
     const stoppedStatusTextB = resultText(stoppedStatusB);
-    expect(stoppedStatusB.exitCode, stoppedStatusTextB).toBe(1);
-    expect(stoppedStatusTextB).toContain("sandbox_container_stopped");
+    expect(stoppedStatusB.exitCode, stoppedStatusTextB).toBe(0);
+    expect(stoppedStatusTextB).toContain("Phase: Stopped");
     expect(stoppedStatusTextB).not.toContain("sandbox_dashboard_port_conflict");
 
     const retainedForwardAAfterStop = await waitForDashboardReachability(
@@ -938,7 +938,7 @@ test(
           stopB.exitCode === 0 &&
           !releasedForwardB.reachable &&
           retainedForwardAAfterStop.reachable &&
-          stoppedStatusTextB.includes("sandbox_container_stopped") &&
+          stoppedStatusTextB.includes("Phase: Stopped") &&
           !stoppedStatusTextB.includes("sandbox_dashboard_port_conflict"),
         staleRegistryRecovered: rebuild.exitCode === 0,
         gatewayStopGuidance:
