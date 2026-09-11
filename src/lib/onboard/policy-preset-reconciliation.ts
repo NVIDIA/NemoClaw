@@ -52,11 +52,22 @@ export function mergeRequiredSetupPolicyPresets(
         customOwnsObservability: options.customOwnsObservability,
       }),
   );
-  const activeAgentPresets = pruneInactiveMessagingPolicyPresets(
-    agentFilteredPresets,
-    options.enabledChannels,
-    options.customPresetNames,
-  );
+  // A tier's own messaging presets (e.g. Open's slack/discord/telegram/wechat/
+  // whatsapp/teams) are tier egress defaults, not per-channel opt-ins, so they
+  // must survive a merge just because no channel is enabled -- matching the
+  // agent-conditional exemption `createUnavailablePolicyPresetPruner` already
+  // applies for OpenClaw. Only Hermes, whose recovery records the full enabled
+  // channel set, prunes down to that set here; OpenClaw relies solely on
+  // `disabledChannels` (applied downstream) to retire a channel's preset. (#11058)
+  const isHermesAgent =
+    typeof options.agent === "string" && options.agent.trim().toLowerCase() === "hermes";
+  const activeAgentPresets = isHermesAgent
+    ? pruneInactiveMessagingPolicyPresets(
+        agentFilteredPresets,
+        options.enabledChannels,
+        options.customPresetNames,
+      )
+    : agentFilteredPresets;
   const effectiveHermesToolGateways = (options.hermesToolGateways ?? []).filter(
     (name) =>
       !isStaleBuiltinWebSearchPolicyPreset(name, {
