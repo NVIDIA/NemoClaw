@@ -4132,9 +4132,9 @@ GUARDENVEOF
     for _redir in "${_TOOL_REDIRECTS[@]}"; do
       echo "export ${_redir?}"
     done
-    # Root also sources this file before stepping down; keep its PATH trusted.
+    # Only the sandbox account searches its writable user bin directory.
     cat <<'USERPATHENVEOF'
-if [ "$(/usr/bin/id -u)" -ne 0 ]; then
+if [ "$(/usr/bin/id -un)" = sandbox ]; then
   export PATH="$PATH:/sandbox/.local/bin"
 fi
 USERPATHENVEOF
@@ -5108,7 +5108,7 @@ launch_openclaw_gateway_process() {
       # The gateway cannot create native Git config in the sandbox-owned HOME.
       # Keep its fallback private so user commands retain native Git settings.
       gateway_launch_prefix=(
-        "${STEP_DOWN_PREFIX_GATEWAY[@]}" /usr/bin/env HOME=/sandbox GIT_CONFIG_GLOBAL=/tmp/.gitconfig PATH="$PATH:/sandbox/.local/bin" sh -c
+        "${STEP_DOWN_PREFIX_GATEWAY[@]}" /usr/bin/env HOME=/sandbox GIT_CONFIG_GLOBAL=/tmp/.gitconfig sh -c
         'umask 0007; exec "$@"' sh
       )
       ;;

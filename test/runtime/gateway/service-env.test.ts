@@ -522,12 +522,30 @@ describe("service environment", () => {
       expect(noProxy).toContain("10.200.0.1");
     });
 
-    it.each(["sh", "bash"])(
-      "root entrypoint preserves native Git defaults for %s connect shells",
-      (sourceShell) => {
+    it.each([
+      ["sh", "sandbox"],
+      ["bash", "sandbox"],
+      ["sh", "gateway"],
+      ["bash", "gateway"],
+    ])(
+      "root entrypoint preserves native Git and scopes user tools for %s connect shells as %s",
+      (sourceShell, account) => {
         const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-data-test-"));
         const nativeHome = join(fakeDataDir, "home");
         const nativeEnv = { HOME: nativeHome, PATH: process.env.PATH };
+        const userBin = join(fakeDataDir, "user-bin");
+        const identityPath = join(fakeDataDir, "id");
+        mkdirSync(userBin);
+        writeFileSync(
+          join(userBin, "nemoclaw-user-bin-sentinel"),
+          "#!/bin/sh\nprintf 'USER_TOOL=executed\\n'\n",
+          { mode: 0o700 },
+        );
+        writeFileSync(
+          identityPath,
+          `#!/bin/sh\ncase "$1" in -un) echo ${account};; -u) echo ${account === "sandbox" ? 998 : 999};; esac\n`,
+          { mode: 0o700 },
+        );
         const legacyGitConfig = join(fakeDataDir, "legacy.gitconfig");
         const legacyGitContent = "[user]\n\temail = legacy@example.invalid\n";
         writeFileSync(legacyGitConfig, legacyGitContent);
@@ -558,7 +576,9 @@ describe("service environment", () => {
             // Override the hardcoded path to use our temp dir
             persistBlock
               .trimEnd()
-              .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
+              .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`)
+              .replaceAll("/usr/bin/id", identityPath)
+              .replaceAll("/sandbox/.local/bin", userBin),
           ].join("\n");
           writeFileSync(tmpFile, wrapper, { mode: 0o700 });
           expect(
@@ -624,6 +644,7 @@ describe("service environment", () => {
                 "git config --global --get user.email",
                 "python3 -S -c 'import site; print(site.getuserbase())'",
                 'printf "%s|%s\\n" "${XDG_DATA_HOME-unset}" "${XDG_STATE_HOME-unset}"',
+                'nemoclaw-user-bin-sentinel 2>/dev/null || printf "USER_TOOL=unavailable\\n"',
               ].join("\n"),
             ],
             { encoding: "utf-8", env: nativeEnv },
@@ -633,6 +654,7 @@ describe("service environment", () => {
             "native@example.invalid",
             pythonUserBase,
             "unset|unset",
+            account === "sandbox" ? "USER_TOOL=executed" : "USER_TOOL=unavailable",
           ]);
           expect(readFileSync(legacyGitConfig, "utf-8")).toBe(legacyGitContent);
           expect(readFileSync(join(nativeHome, ".config", "git", "config"), "utf-8")).toContain(

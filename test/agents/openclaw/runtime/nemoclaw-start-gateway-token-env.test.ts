@@ -19,16 +19,22 @@ describe("OpenClaw gateway credential environment", () => {
     ["append", "current"],
     ["append", "gateway"],
   ])(
-    "keeps gateway tokens private and scopes Git config for %s logging as %s (#8693)",
+    "keeps gateway tokens private and scopes Git and user tools for %s logging as %s (#8693)",
     (logMode, identity) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-token-env-"));
       const gatewayLog = path.join(tmpDir, "gateway.log");
+      const userBin = path.join(tmpDir, "user-bin");
+      fs.mkdirSync(userBin);
+      fs.writeFileSync(
+        path.join(userBin, "nemoclaw-user-bin-sentinel"),
+        "#!/bin/sh\nprintf 'USER_TOOL=executed\\n'\n",
+        { mode: 0o700 },
+      );
       const seed = "existing gateway output\n";
       const source = fs.readFileSync(START_SCRIPT, "utf8");
-      const launch = extractShellFunctionFromSource(
-        source,
-        "launch_openclaw_gateway_process",
-      ).replaceAll("/tmp/gateway.log", gatewayLog);
+      const launch = extractShellFunctionFromSource(source, "launch_openclaw_gateway_process")
+        .replaceAll("/tmp/gateway.log", gatewayLog)
+        .replaceAll("/sandbox/.local/bin", userBin);
       fs.writeFileSync(gatewayLog, seed);
       const script = [
         "set -euo pipefail",
@@ -36,7 +42,7 @@ describe("OpenClaw gateway credential environment", () => {
         launch,
         "export OPENCLAW_GATEWAY_TOKEN=gateway-secret GIT_CONFIG_GLOBAL=/nonexistent/native.gitconfig",
         "STEP_DOWN_PREFIX_GATEWAY=(/usr/bin/env)",
-        `launch_openclaw_gateway_process ${logMode} ${identity} sh -c 'printf "ENV=%s\\nGIT=%s\\nARGS=%s\\n" "\${OPENCLAW_GATEWAY_TOKEN-unset}" "$GIT_CONFIG_GLOBAL" "$*"' sh`,
+        `launch_openclaw_gateway_process ${logMode} ${identity} sh -c 'printf "ENV=%s\\nGIT=%s\\nARGS=%s\\n" "\${OPENCLAW_GATEWAY_TOKEN-unset}" "$GIT_CONFIG_GLOBAL" "$*"; nemoclaw-user-bin-sentinel 2>/dev/null || printf "USER_TOOL=unavailable\\n"' sh`,
         'wait "$GATEWAY_PID"',
         'printf "%s" "$GIT_CONFIG_GLOBAL"',
       ].join("\n");
@@ -50,7 +56,7 @@ describe("OpenClaw gateway credential environment", () => {
         expect(result.stdout).toBe("/nonexistent/native.gitconfig");
         const gitConfig =
           identity === "gateway" ? "/tmp/.gitconfig" : "/nonexistent/native.gitconfig";
-        const expectedOutput = `ENV=unset\nGIT=${gitConfig}\nARGS=\n`;
+        const expectedOutput = `ENV=unset\nGIT=${gitConfig}\nARGS=\nUSER_TOOL=unavailable\n`;
         expect(fs.readFileSync(gatewayLog, "utf8")).toBe(
           logMode === "append" ? `${seed}${expectedOutput}` : expectedOutput,
         );
