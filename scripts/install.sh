@@ -4200,6 +4200,16 @@ restart_selected_openshell_gateway_user_service() {
 
   systemctl --user daemon-reload
   systemctl --user restart "$service_name"
+  if systemd_user_service_is_active "$service_name"; then
+    return 0
+  else
+    inspect_status=$?
+  fi
+  if [ "$inspect_status" -eq 1 ]; then
+    printf 'The trusted OpenShell gateway user service did not become active after restart: %s\n' \
+      "$service_name" >&2
+  fi
+  return "$inspect_status"
 }
 
 stop_openshell_gateway_for_upgrade_retirement() {

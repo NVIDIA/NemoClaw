@@ -356,7 +356,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
 });
 
 describe("managed OpenShell gateway user-service restart", () => {
-  it("restarts the marked service selected when the trusted upstream service is inactive (#10947)", () => {
+  it("restarts the marked service and reports an immediately inactive restart (#10947)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-service-"));
     const home = path.join(root, "home");
     const configHome = path.join(root, "config");
@@ -375,6 +375,7 @@ describe("managed OpenShell gateway user-service restart", () => {
     );
     const upstreamGatewayBin = path.join(root, "usr", "bin", "openshell-gateway");
     const active = path.join(root, "managed-active");
+    const restartActivates = path.join(root, "restart-activates");
     const trustedInstaller = writeTrustedInstaller(root, upstreamUnit, upstreamGatewayBin);
 
     fs.mkdirSync(home, { recursive: true });
@@ -386,6 +387,7 @@ describe("managed OpenShell gateway user-service restart", () => {
     fs.writeFileSync(gatewayBin, "#!/bin/sh\n", { mode: 0o755 });
     fs.writeFileSync(upstreamGatewayBin, "#!/bin/sh\n", { mode: 0o755 });
     fs.writeFileSync(active, "active\n");
+    fs.writeFileSync(restartActivates, "yes\n");
     fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
     fs.writeFileSync(
       path.join(bin, "systemctl"),
@@ -402,7 +404,7 @@ describe("managed OpenShell gateway user-service restart", () => {
         `if [ "$*" = "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value" ]; then printf '{ path=%s ; argv[]=%s ; }\\n' ${JSON.stringify(gatewayBin)} ${JSON.stringify(gatewayBin)}; exit 0; fi`,
         `if [ "$*" = "--user is-active --quiet nemoclaw-openshell-gateway.service" ]; then test -f ${JSON.stringify(active)} && exit 0; exit 3; fi`,
         `if [ "$*" = "--user stop nemoclaw-openshell-gateway.service" ]; then rm -f ${JSON.stringify(active)}; exit 0; fi`,
-        `if [ "$*" = "--user restart nemoclaw-openshell-gateway.service" ]; then touch ${JSON.stringify(active)}; exit 0; fi`,
+        `if [ "$*" = "--user restart nemoclaw-openshell-gateway.service" ]; then [ ! -f ${JSON.stringify(restartActivates)} ] || touch ${JSON.stringify(active)}; exit 0; fi`,
         'if [ "$*" = "--user show-environment" ] || [ "$*" = "--user daemon-reload" ]; then exit 0; fi',
         "exit 97",
       ].join("\n"),
@@ -443,8 +445,31 @@ describe("managed OpenShell gateway user-service restart", () => {
         "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value",
         "--user daemon-reload",
         "--user restart nemoclaw-openshell-gateway.service",
+        "--user is-active --quiet nemoclaw-openshell-gateway.service",
       ]);
       expect(fs.existsSync(active)).toBe(true);
+
+      fs.rmSync(active);
+      fs.rmSync(restartActivates);
+      fs.writeFileSync(log, "");
+      const inactiveRestart = runRestartScript(
+        trustedInstaller,
+        "systemd:nemoclaw-openshell-gateway.service",
+        env,
+      );
+      expect(inactiveRestart.status).toBe(1);
+      expect(inactiveRestart.stderr).toContain(
+        "The trusted OpenShell gateway user service did not become active after restart: " +
+          "nemoclaw-openshell-gateway.service",
+      );
+      expect(fs.existsSync(active)).toBe(false);
+      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value",
+        "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value",
+        "--user daemon-reload",
+        "--user restart nemoclaw-openshell-gateway.service",
+        "--user is-active --quiet nemoclaw-openshell-gateway.service",
+      ]);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
@@ -580,6 +605,7 @@ describe("managed OpenShell gateway user-service stop", () => {
         upstreamServiceShow,
         "--user daemon-reload",
         "--user restart openshell-gateway.service",
+        "--user is-active --quiet openshell-gateway.service",
       ]);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
