@@ -612,9 +612,11 @@ exec ${JSON.stringify(process.execPath)} "$@"
       const shimPath = path.join(tmp, ".local", "bin", "nemoclaw-acp");
       const packagedCli = path.join(prefixBin, "nemoclaw-acp");
       const targetPath = path.join(tmp, "user-command");
+      const swapLink = path.join(tmp, "replacement-link");
       const foreignContents = Buffer.from("#!/usr/bin/env bash\nprintf 'user-owned\\n'\n");
       fs.mkdirSync(path.dirname(shimPath), { recursive: true });
       fs.writeFileSync(targetPath, foreignContents, { mode: 0o755 });
+      fs.symlinkSync(targetPath, swapLink);
       writeExecutable(
         shimPath,
         [
@@ -627,7 +629,7 @@ exec ${JSON.stringify(process.execPath)} "$@"
 
       const result = runInstallerFunction(
         `shim_path=${JSON.stringify(shimPath)}
-swap_target=${JSON.stringify(targetPath)}
+swap_link=${JSON.stringify(swapLink)}
 identity_calls=${JSON.stringify(path.join(tmp, "identity-calls"))}
 eval "$(declare -f cli_shim_entry_identity | sed '1s/cli_shim_entry_identity/original_cli_shim_entry_identity/')"
 cli_shim_entry_identity() {
@@ -636,8 +638,7 @@ cli_shim_entry_identity() {
   count=$((count + 1))
   printf '%s\\n' "$count" >"$identity_calls"
   if [[ "$count" -eq 3 ]]; then
-    rm -f "$shim_path"
-    ln -s "$swap_target" "$shim_path"
+    mv -f "$swap_link" "$shim_path"
   fi
   original_cli_shim_entry_identity "$@"
 }
