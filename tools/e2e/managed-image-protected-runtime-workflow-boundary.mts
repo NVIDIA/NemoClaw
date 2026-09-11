@@ -109,7 +109,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   if (job["runs-on"] !== "linux-amd64-gpu-rtxpro6000-latest-1") {
     errors.push(`${JOB_ID} must run on the protected amd64 GPU runner`);
   }
-  if (job["timeout-minutes"] !== 300) errors.push(`${JOB_ID} must keep the 300 minute timeout`);
+  if (job["timeout-minutes"] !== 75) errors.push(`${JOB_ID} must keep the 75 minute timeout`);
   if (!isDeepStrictEqual(job.permissions, { contents: "read" })) {
     errors.push(`${JOB_ID} permissions must be exactly contents: read`);
   }

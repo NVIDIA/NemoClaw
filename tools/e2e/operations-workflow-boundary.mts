@@ -391,7 +391,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
   const authEnvironment = {
-    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
     ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
@@ -426,11 +425,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
     'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
     '"$ALLOW_JETSON_DISPATCH" != "true"',
-    '"$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true"',
     '",${TARGETS}," != *",jetson-nvmap-gpu,"*',
     '",${JOBS}," != *",jetson-nvmap-gpu,"*',
-    '",${TARGETS}," != *",llama-cpp-dgx-spark-qualification,"*',
-    '",${JOBS}," != *",llama-cpp-dgx-spark-qualification,"*',
     "exact-base E2E cannot select dedicated hardware jobs",
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
@@ -616,16 +612,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Checkout trusted Hermes resolver" &&
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
-      const trustedLlamaCppPlanCheckout =
-        jobName === "llama-cpp-dgx-spark-plan" &&
-        step.name === "Checkout trusted llama.cpp plan compiler" &&
-        step.with?.repository === "${{ github.repository }}" &&
-        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
-      const trustedLlamaCppQualificationCheckout =
-        jobName === "llama-cpp-dgx-spark-qualification" &&
-        step.name === "Checkout trusted llama.cpp qualification" &&
-        step.with?.repository === "${{ github.repository }}" &&
-        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedJetsonControllerCheckout =
         jobName === "jetson-nvmap-gpu" &&
         step.name === "Check out trusted Jetson controller" &&
@@ -692,8 +678,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedOpenShellSdkPackageCheckout ||
         trustedManagedImageMultiarchResolverCheckout ||
         trustedManagedImageRuntimeCheckout ||
-        trustedLlamaCppPlanCheckout ||
-        trustedLlamaCppQualificationCheckout ||
         trustedJetsonControllerCheckout ||
         nativeRuntimeQualificationCheckout ||
         trustedOpenShellDevToolingCheckout;
@@ -1163,7 +1147,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
 function validateReleaseQualification(errors: string[], workflow: OperationsWorkflow): void {
   const job = workflow.jobs["release-qualification"] ?? {};
   const expectedCondition =
-    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == '' && inputs.targets == '' && inputs.include_staging_brev_launchable && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue }}";
+    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == '' && inputs.targets == '' && inputs.include_staging_brev_launchable && !inputs.allow_jetson_dispatch }}";
   if (job.if !== expectedCondition) {
     errors.push("release-qualification must run only for a full manual run against main");
   }
