@@ -2325,8 +2325,9 @@ is_installer_managed_cli_shim() {
 }
 
 is_npm_managed_nemoclaw_acp_link() {
-  local shim_path="${1:-}" link_target
-  [[ -n "$shim_path" && -L "$shim_path" ]] || return 1
+  local shim_path="${1:-}" cli_path="${2:-}" link_target
+  [[ -n "$shim_path" && -n "$cli_path" && "$shim_path" == "$cli_path" && -L "$shim_path" ]] \
+    || return 1
   link_target="$(readlink "$shim_path")" || return 1
   [[ "$link_target" == "../lib/node_modules/nemoclaw/dist/lib/acp/main.js" ]]
 }
@@ -2344,7 +2345,7 @@ assert_nemoclaw_acp_shim_replaceable() {
   before_identity="$(cli_shim_entry_identity "$shim_path")" \
     || error "Installation stopped because NemoClaw could not inspect $shim_path without following symbolic links. NemoClaw left it unchanged."
   if ! is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" \
-    && ! is_npm_managed_nemoclaw_acp_link "$shim_path"; then
+    && ! is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path"; then
     error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
   fi
   after_identity="$(cli_shim_entry_identity "$shim_path")" \
@@ -2381,7 +2382,7 @@ assert_nemoclaw_acp_shim_unchanged() {
     || error "Installation stopped because $shim_path changed while NemoClaw prepared its shim. NemoClaw left the current path unchanged. Rerun the installer."
   if [[ "$expected_identity" != "absent" ]]; then
     is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" \
-      || is_npm_managed_nemoclaw_acp_link "$shim_path" \
+      || is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path" \
       || error "Installation stopped because $shim_path is no longer a NemoClaw-managed shim. NemoClaw left it unchanged. Rerun the installer."
   fi
 }
@@ -2397,7 +2398,7 @@ preflight_nemoclaw_acp_shim() {
     return 0
   fi
   is_installer_managed_cli_shim "$shim_path" "nemoclaw-acp" "$cli_path" && return 0
-  is_npm_managed_nemoclaw_acp_link "$shim_path" && return 0
+  is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path" && return 0
   error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
 }
 

@@ -385,6 +385,30 @@ echo "${cliBin} v0.1.0"
   );
 
   it.skipIf(process.platform === "win32")(
+    "rejects an npm-managed nemoclaw-acp link from an inactive prefix (#10947)",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-stale-prefix-"));
+      const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
+      const shimPath = path.join(tmp, ".local", "bin", "nemoclaw-acp");
+      fs.mkdirSync(path.dirname(shimPath), { recursive: true });
+      fs.symlinkSync("../lib/node_modules/nemoclaw/dist/lib/acp/main.js", shimPath);
+
+      const result = runInstallerFunction("preflight_nemoclaw_acp_shim", fakeBin, {
+        ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
+        HOME: tmp,
+        NO_COLOR: "1",
+      });
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(fs.readlinkSync(shimPath)).toBe("../lib/node_modules/nemoclaw/dist/lib/acp/main.js");
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        `${shimPath} already exists and is not a NemoClaw-managed shim`,
+      );
+      expect(`${result.stdout}${result.stderr}`).toContain("NemoClaw left it unchanged");
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
     "leaves a foreign nemoclaw-acp symbolic link and its target untouched (#10947)",
     () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-link-collision-"));
