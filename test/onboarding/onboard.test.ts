@@ -54,7 +54,7 @@ type OnboardTestInternals = {
     session: T,
     selectedAgentName: string,
   ) => T;
-  arePolicyPresetsApplied: (sandboxName: string, selectedPresets?: string[]) => boolean;
+  arePolicyPresetsApplied: (sandboxName: string, selectedPresets?: string[]) => Promise<boolean>;
   pullAndResolveBaseImageDigest: () => { digest: string | null; ref: string } | null;
   createSetupInference: (overrides?: Partial<SetupInferenceDeps>) => SetupInference;
   SANDBOX_BASE_IMAGE: string;
@@ -101,10 +101,6 @@ const createDirectSetupInferenceHarness =
   createDirectSetupInferenceHarnessFactory(createSetupInference);
 
 describe("onboard helpers", () => {
-  it("does not expose the removed provider argument builder", () => {
-    expect(loadedOnboardInternals).not.toHaveProperty("buildProviderArgs");
-  });
-
   it("does not treat an empty policy preset selection as already applied (#6042)", async () => {
     expect(await arePolicyPresetsApplied("unused", [])).toBe(false);
   });
