@@ -60,6 +60,7 @@ export function fixture(
     provisionImageRepositorySha?: string;
     provisionSha?: string;
     ready?: boolean;
+    realCommandEvidence?: boolean;
     receiptSha?: string;
     refreshError?: string;
     refreshStatus?: number;
@@ -91,6 +92,49 @@ export function fixture(
   const timeoutBlock = path.join(root, "timeout-block");
   fs.mkdirSync(bin);
   fs.mkdirSync(workDir);
+  const bakedRoot = path.join(root, "baked");
+  if (options.realCommandEvidence) {
+    fs.mkdirSync(path.join(bakedRoot, "node_modules", ".bin"), { recursive: true });
+    fs.mkdirSync(path.join(bakedRoot, "test", "e2e", "live"), { recursive: true });
+    fs.writeFileSync(
+      path.join(bakedRoot, "vitest.config.mts"),
+      `export default { test: { projects: [{ test: { name: "e2e-live", include: ["test/e2e/live/full-e2e.test.ts"], maxWorkers: 1 } }] } };`,
+    );
+    fs.writeFileSync(
+      path.join(bakedRoot, "launchable-config.mjs"),
+      'console.log("fixture-cloud-model");\n',
+    );
+    fs.writeFileSync(
+      path.join(bakedRoot, "test", "e2e", "live", "full-e2e.test.ts"),
+      `import { it, expect } from ${JSON.stringify(path.join(REPO_ROOT, "node_modules/vitest/dist/index.js"))};
+import { ArtifactSink } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/artifacts.ts"))};
+import { startTestProgress } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/progress.ts"))};
+import { redactString } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/redaction.ts"))};
+import { ShellProbe, trustedShellCommand } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/shell-probe.ts"))};
+it("emits evidence from a completed guest command", async () => {
+  const progress = startTestProgress("guest command", ["execute command", "verify result"], { logLine: () => undefined });
+  try {
+    const probe = new ShellProbe({
+      artifacts: new ArtifactSink(${JSON.stringify(path.join(bakedRoot, "artifacts"))}, [process.env.NVIDIA_INFERENCE_API_KEY]),
+      progress, redact: redactString, signal: new AbortController().signal,
+    });
+    const result = await probe.run(trustedShellCommand({
+      command: process.execPath,
+      args: ["-e", "console.log('guest-private-output'); process.exit(0)", "guest-command-proof", process.env.NVIDIA_INFERENCE_API_KEY],
+      reason: "prove completed command evidence reaches the retained controller log",
+    }), { artifactName: "guest-command-proof" });
+    expect(result.exitCode).toBe(0);
+  } finally { progress.stop(); }
+});
+`,
+    );
+    executable(
+      path.join(bakedRoot, "node_modules", ".bin", "vitest"),
+      `#!/usr/bin/env bash
+exec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(REPO_ROOT, "node_modules/vitest/vitest.mjs"))} --root ${JSON.stringify(bakedRoot)} --config ${JSON.stringify(path.join(bakedRoot, "vitest.config.mts"))} "$@"
+`,
+    );
+  }
   fs.writeFileSync(timeoutBlock, "block\n");
   fs.writeFileSync(
     path.join(root, "gateway.json"),
@@ -487,6 +531,12 @@ script="$(cat)"
 grep -q 'NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable' <<<"$script"
 grep -q 'NEMOCLAW_SOURCE_PATH=/opt/nemoclaw-image/NemoClaw' <<<"$script"
 grep -q 'runtime-overrides.json' <<<"$script"
+if [ -n "$FAKE_BAKED_ROOT" ]; then
+  script="\${script/\\/opt\\/nemoclaw-image\\/NemoClaw/$FAKE_BAKED_ROOT}"
+  script="\${script/\\/etc\\/nemoclaw\\/runtime-overrides.json/$FAKE_BAKED_ROOT/runtime-overrides.json}"
+  script="\${script/\\/usr\\/local\\/lib\\/nemoclaw\\/launchable-config.mjs/$FAKE_BAKED_ROOT/launchable-config.mjs}"
+  exec bash -s <<<"$script"
+fi
 printf 'ssh preinstalled full-e2e.test.ts\\n' >> "$FAKE_CALLS"
 printf 'remote output contains %s\\n' "$NVIDIA_INFERENCE_API_KEY"
 grep -q 'NEMOCLAW_E2E_COMMAND_EVIDENCE=1' <<<"$script"
@@ -502,6 +552,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     ...process.env,
     NEMOCLAW_GATEWAY_MANAGEMENT: path.join(root, "gateway.json"),
     FAKE_REPO_ROOT: options.diagnosticResolverMissing ? root : REPO_ROOT,
+    FAKE_BAKED_ROOT: options.realCommandEvidence ? bakedRoot : "",
     FAKE_OMIT_COMMAND_EVIDENCE: options.omitCommandEvidence ? "1" : "0",
     PATH: `${bin}:${process.env.PATH ?? ""}`,
     BREV_DELETE_TIMEOUT_SECONDS: "5",

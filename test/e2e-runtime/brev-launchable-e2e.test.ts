@@ -29,6 +29,32 @@ function identitySmokeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 describe("focused staging Brev Launchable lane", () => {
+  it("retains real guest ShellProbe evidence through Vitest and SSH capture (#9851)", () => {
+    const { env, workDir } = fixture({ realCommandEvidence: true });
+    const startedAt = Date.now();
+    const result = run(env);
+    const finishedAt = Date.now();
+    const log = fs.readFileSync(path.join(workDir, "full-e2e.log"), "utf8");
+    expect(result.status, log).toBe(0);
+    const records = log
+      .split("\n")
+      .filter((line) => line.startsWith("NEMOCLAW_E2E_COMMAND "))
+      .map((line) => JSON.parse(line.slice("NEMOCLAW_E2E_COMMAND ".length)));
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ schemaVersion: 1, exitCode: 0, timedOut: false });
+    expect(records[0].command).toContain("guest-command-proof");
+    expect(Date.parse(records[0].startedAt)).toBeGreaterThanOrEqual(startedAt);
+    expect(Date.parse(records[0].finishedAt)).toBeLessThanOrEqual(finishedAt);
+    expect(Date.parse(records[0].finishedAt) - Date.parse(records[0].startedAt)).toBe(
+      records[0].durationMs,
+    );
+    expect(log).not.toContain("nvapi-test-value");
+    expect(log).not.toContain("guest-private-output\n");
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
   it("reports missing command evidence from an older baked suite without changing its result (#9851)", () => {
     const { env, workDir } = fixture({ omitCommandEvidence: true });
     expect(run(env).status).toBe(0);
