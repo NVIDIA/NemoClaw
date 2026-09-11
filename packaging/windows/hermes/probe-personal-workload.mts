@@ -35,7 +35,11 @@ export async function bashDiagnostics(
           before,
           after,
           execution,
-          childrenClosed: execution.childClosed,
+          childrenClosed:
+            execution.childClosed &&
+            !execution.timedOut &&
+            !execution.outputExceeded &&
+            !execution.error,
           bytesUnchanged: before.sha256 === after.sha256,
           sentinelObserved: execution.exitCode === 0 && execution.stdout.trim() === marker,
         };
