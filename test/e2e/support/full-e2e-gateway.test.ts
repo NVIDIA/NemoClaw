@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
 
 const directories: string[] = [];
-afterEach(() => {
+const disposables: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  for (const dispose of disposables.splice(0).reverse()) await dispose();
   for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true });
   vi.unstubAllEnvs();
 });
@@ -57,16 +59,20 @@ function declaration(
 }
 
 describe("full E2E gateway ownership", () => {
-  it.each([true, false])(
-    "respects gateway cleanup ownership in the live suite (preinstalled=%s) (#9851)",
-    async (preinstalled) => {
+  it.each([
+    { preinstalled: true, targetId: "staging-brev-launchable", measuresColdOnboard: false },
+    { preinstalled: false, targetId: "staging-brev-launchable", measuresColdOnboard: false },
+    { preinstalled: false, targetId: "full-e2e", measuresColdOnboard: true },
+  ])(
+    "respects cleanup and budget contracts for $targetId (preinstalled=$preinstalled) (#9851)",
+    async ({ preinstalled, targetId, measuresColdOnboard }) => {
       vi.resetModules();
       captured.test.mockClear();
       vi.stubEnv(
         "NEMOCLAW_E2E_SETUP_MODE",
         preinstalled ? "preinstalled-launchable" : "source-install",
       );
-      vi.stubEnv("E2E_TARGET_ID", "staging-brev-launchable");
+      vi.stubEnv("E2E_TARGET_ID", targetId);
       vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "");
       vi.stubEnv("NEMOCLAW_GATEWAY_MANAGEMENT", declaration().NEMOCLAW_GATEWAY_MANAGEMENT);
       const result = { exitCode: 0, stdout: "", stderr: "", timedOut: false, signal: null };
@@ -76,8 +82,14 @@ describe("full E2E gateway ownership", () => {
           exitCode: command === "brev-quickstart" || command === "bash" ? 42 : 0,
         })),
       };
-      const sandbox = { openshell: vi.fn(async () => result) };
-      const cleanup = { trackGateway: vi.fn(), trackDisposable: vi.fn(), trackSandbox: vi.fn() };
+      const sandbox = { openshell: vi.fn(async () => result), cleanupSandbox: vi.fn() };
+      const cleanup = {
+        trackGateway: vi.fn(),
+        trackDisposable: vi.fn((_name: string, dispose: () => Promise<void>) => {
+          disposables.push(dispose);
+        }),
+        trackSandbox: vi.fn(),
+      };
       const lifecycle = { trackInstallerGatewayUserService: vi.fn() };
       const declare = vi.fn();
       await import("../live/full-e2e.test.ts");
@@ -105,9 +117,11 @@ describe("full E2E gateway ownership", () => {
       ][];
       expect(calls.some(([args]) => args[0] === "gateway")).toBe(!preinstalled);
       expect(calls[0]![1].env.OPENSHELL_GATEWAY).toBe(preinstalled ? "nemoclaw-18080" : "nemoclaw");
-      expect(declare.mock.calls[0]![0].contracts).not.toContain(
-        "cold onboarding stays within the checked-in full-E2E performance budgets",
-      );
+      expect(
+        declare.mock.calls[0]![0].contracts.includes(
+          "cold onboarding stays within the checked-in full-E2E performance budgets",
+        ),
+      ).toBe(measuresColdOnboard);
     },
     20_000,
   );
