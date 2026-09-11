@@ -11,6 +11,7 @@ import {
   hasDgxStationGb300PciGpu,
   readBoundedNvidiaFirmwareValue,
 } from "../../src/lib/inference/dgx-station-identity";
+import { projectPlatformQualification } from "../../src/lib/readiness/platform-qualification";
 
 const helper = path.resolve(import.meta.dirname, "../../scripts/prepare-dgx-station-host.sh");
 const cases = [
@@ -22,6 +23,26 @@ const cases = [
   },
   { name: "product identity", product: "Station GB300", state: "station-gb300" },
   { name: "board identity", board: "Station GB300", state: "station-gb300" },
+  {
+    name: "generation-first product (#11476)",
+    product: "GB300 DGX Station",
+    state: "station-gb300",
+  },
+  { name: "generation-first family", family: "NVIDIA GB300 DGX Station", state: "station-gb300" },
+  { name: "generation-first board", board: "GB300 Station", state: "station-gb300" },
+  { name: "generation-first device tree", tree: "GB300 DGX Station\0", state: "station-gb300" },
+  { name: "intervening DGX", product: "Station DGX GB300", state: "station-gb300" },
+  { name: "generation-first separators", product: "gb300_dgx-station", state: "station-gb300" },
+  { name: "workstation substring", product: "GB300 Workstation", state: "not-station" },
+  { name: "Station token suffix", product: "GB300 StationX", state: "not-station" },
+  { name: "GB300 token prefix", product: "XGB300 DGX Station", state: "station-other" },
+  { name: "GB300 token suffix", product: "GB300X DGX Station", state: "station-other" },
+  { name: "other generation", product: "GB200 DGX Station", state: "station-other" },
+  {
+    name: "generation-first non-ASCII separator",
+    product: "GB300\u00a0DGX Station",
+    state: "station-other",
+  },
   { name: "oversized firmware", family: "Station GB300".padEnd(257, " "), state: "not-station" },
   { name: "ASCII underscore", family: "Station_GB300", state: "station-gb300" },
   { name: "ASCII hyphen", family: "Station-GB300", state: "station-gb300" },
@@ -30,7 +51,7 @@ const cases = [
   {
     name: "conflicting firmware",
     product: "DGX Spark",
-    family: "Station GB300",
+    family: "GB300 DGX Station",
     state: "conflicting",
   },
   { name: "embedded NUL", family: "Station\0 GB300", state: "not-station" },
@@ -39,7 +60,7 @@ const cases = [
   { name: "repeated device-tree terminator", tree: "Station GB300\0\0", state: "not-station" },
   {
     name: "missing exact PCI identity",
-    family: "Station GB300",
+    family: "GB300 DGX Station",
     device: "0x9999",
     state: "station-gb300-pci-missing",
     pci: false,
@@ -113,9 +134,29 @@ main --classify-station-hardware
           ? "conflicting"
           : (identity.firmwareClass ?? "not-station"),
       ).toBe(scenario.state === "station-gb300-pci-missing" ? "station-gb300" : scenario.state);
-      expect(hasDgxStationGb300PciGpu(readFile, (dir) => fs.readdirSync(dir), pciRoot)).toBe(
-        "pci" in scenario ? scenario.pci : true,
-      );
+      const pci = hasDgxStationGb300PciGpu(readFile, (dir) => fs.readdirSync(dir), pciRoot);
+      expect(pci).toBe("pci" in scenario ? scenario.pci : true);
+      const readiness = projectPlatformQualification({
+        platform: "linux",
+        architecture: "arm64",
+        isWsl: false,
+        dockerInstalled: true,
+        dockerReachable: true,
+        runtime: "docker",
+        hasNvidiaGpu: pci === true,
+        osId: "ubuntu",
+        osVersionId: "24.04",
+        nvidiaPlatform: identity.nvidiaPlatform,
+        productName: identity.stationFirmwareProduct,
+        platformIdentityConflict: identity.platformIdentityConflict,
+        stationProfile: "generic-ubuntu",
+        stationGb300PciGpu: pci,
+      });
+      expect(
+        readiness.capabilities.some(
+          ({ id, state }) => id === "host.platform.dgx_station" && state === "present",
+        ),
+      ).toBe(scenario.state === "station-gb300");
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
