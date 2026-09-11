@@ -19,15 +19,29 @@ function providerLocalName(provider: string): string {
   return `hosted-${normalized || "provider"}`.slice(0, 63).replace(/[^a-z0-9]+$/gu, "");
 }
 
+function exportedProviderName(inference: VerifiedExportSource["inference"]): string {
+  if ("serving" in inference)
+    return inference.serving.backend === "vllm" ? "managed-vllm" : "local-ollama";
+  return providerLocalName(inference.provider);
+}
+
 function inferenceProvider(
   source: VerifiedExportSource,
   name: string,
 ): NemoClawInferenceProviderConfig {
   if ("serving" in source.inference) {
+    if (source.inference.serving.backend === "ollama") {
+      return {
+        name,
+        provider: "ollama-local",
+        api: "openai-completions",
+        serving: source.inference.serving,
+      };
+    }
     return {
       name,
-      provider: source.inference.provider,
-      api: source.inference.api,
+      provider: "vllm-local",
+      api: "openai-completions",
       serving: source.inference.serving,
     };
   }
@@ -73,7 +87,7 @@ function exportAgent(source: VerifiedExportSource, providerName: string): NemoCl
           providerRef: providerName,
           overrides: {
             model: source.inference.model,
-            ...("serving" in source.inference
+            ...(source.inference.provider === "vllm-local" && "serving" in source.inference
               ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
               : {}),
             ...("overrides" in source.inference ? source.inference.overrides : {}),
@@ -82,6 +96,19 @@ function exportAgent(source: VerifiedExportSource, providerName: string): NemoCl
       ],
     },
   };
+}
+
+function exportAgents(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig[] {
+  const primary = exportAgent(source, providerName);
+  return [
+    primary,
+    ...(source.additionalAgents ?? []).map((agent) => ({
+      name: agent.name,
+      type: "openclaw" as const,
+      tools: agent.tools,
+      inference: primary.inference,
+    })),
+  ];
 }
 
 export interface ExportConfigBuildIdentity {
@@ -94,8 +121,7 @@ export function buildExportConfig(
   source: VerifiedExportSource,
   identity: ExportConfigBuildIdentity,
 ): NemoClawConfig {
-  const providerName =
-    "serving" in source.inference ? "managed-vllm" : providerLocalName(source.inference.provider);
+  const providerName = exportedProviderName(source.inference);
   const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1",
     kind: "NemoClawConfig",
@@ -121,7 +147,7 @@ export function buildExportConfig(
           ...(source.webSearch === undefined
             ? {}
             : { integrations: { webSearch: source.webSearch } }),
-          agents: [exportAgent(source, providerName)],
+          agents: exportAgents(source, providerName),
         },
       ],
     },

@@ -3,6 +3,7 @@
 
 import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
 import { isDeepStrictEqual } from "node:util";
+import { validateExtraAgents, type NormalizedExtraAgent } from "../../extra-agents-validation";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
@@ -27,6 +28,7 @@ import {
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
   NemoClawAgentToolsConfigSchema,
+  NemoClawAdditionalAgentSchema,
   NemoClawOpenClawObservabilitySchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
@@ -35,6 +37,7 @@ import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
 import { ExportSourceValuesSchema } from "./export-evidence";
 import { validateManagedServing } from "./verify-managed-serving";
+import { validateOllamaServing } from "./verify-ollama-serving";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
 import type {
   CanonicalExportPolicy,
@@ -92,6 +95,7 @@ const EXPORT_AGENT_PROFILE_PROJECTIONS: Record<
 
 type VerifiedExportSourceData = Pick<
   VerifiedExportSource,
+  | "additionalAgents"
   | "agent"
   | "execution"
   | "auth"
@@ -542,6 +546,7 @@ function classifyToolDisclosureAgreement(
 function supportedAgentSettingsProfile(
   profile: ManagedStartupProfile,
   expected: ManagedStartupProfile,
+  additionalAgents?: VerifiedExportSource["additionalAgents"],
 ): ManagedStartupProfile | null {
   if (profile.agentConfig.agent === "hermes" && expected.agentConfig.agent === "hermes") {
     return expected;
@@ -567,8 +572,22 @@ function supportedAgentSettingsProfile(
       ...expected.agentConfig,
       agentTimeoutSeconds: profile.agentConfig.agentTimeoutSeconds,
       heartbeatEvery: profile.agentConfig.heartbeatEvery,
+      extraAgents: additionalAgents
+        ? profile.agentConfig.extraAgents
+        : expected.agentConfig.extraAgents,
     },
   };
+}
+
+function isSupportedAdditionalAgent(
+  secondary: NormalizedExtraAgent,
+  primaryModelRef: string | null,
+): boolean {
+  return (
+    secondary.subagents === undefined &&
+    secondary.description === undefined &&
+    (secondary.model === undefined || secondary.model === primaryModelRef)
+  );
 }
 
 function supportedHostProfile(
@@ -585,66 +604,49 @@ function supportedHostProfile(
   };
 }
 
-function supportedObservabilityProfile(
-  profile: ManagedStartupProfile,
-  expected: ManagedStartupProfile,
-): ManagedStartupProfile {
-  const observability = exportedObservability(profile);
-  if (!observability || expected.agentConfig.agent !== "openclaw") return expected;
-  const { endpoint: endpointUrl, ...telemetry } = observability.otlp;
-  return {
-    ...expected,
-    agentConfig: { ...expected.agentConfig, otel: { ...telemetry, endpointUrl } },
-  };
+function supportsAdditionalAgents(
+  entry: ObservedExportRegistry,
+  manifest: ReturnType<typeof validateExtraAgents>,
+): boolean {
+  return (
+    entry.openshellDriver === "docker" &&
+    entry.servingProfileProvenance === undefined &&
+    manifest.agents.length === 1 &&
+    Object.keys(manifest.defaults.subagents).length === 0 &&
+    Object.keys(manifest.main).length === 0
+  );
 }
 
-function expectedProfileWithHostSettings(
+function projectAdditionalAgents(
   entry: ObservedExportRegistry,
   profile: ManagedStartupProfile,
-): ManagedStartupProfile | null {
+): VerifiedExportSource["additionalAgents"] | null {
+  if (profile.agentConfig.agent !== "openclaw") return undefined;
   try {
-    return supportedHostProfile(profile, expectedManagedStartupProfile(entry));
+    const manifest = validateExtraAgents(
+      profile.agentConfig.extraAgents,
+      profile.inference.routeProvider,
+    );
+    if (manifest.agents.length === 0) return undefined;
+    const [secondary] = manifest.agents;
+    if (!secondary || !supportsAdditionalAgents(entry, manifest)) return null;
+    const exported = { name: secondary.id, tools: secondary.tools };
+    if (
+      !isSupportedAdditionalAgent(secondary, profile.inference.primaryModelRef) ||
+      !Check(NemoClawAdditionalAgentSchema, exported)
+    )
+      return null;
+    return [exported];
   } catch {
     return null;
   }
 }
 
-function classifyManagedStartupProfile(
-  entry: ObservedExportRegistry,
+function classifyProfileEquality(
   profile: ManagedStartupProfile,
+  expected: ManagedStartupProfile,
 ): ExportFinding[] {
-  let expected = expectedProfileWithHostSettings(entry, profile);
-  if (!expected) {
-    return [
-      finding(
-        "source.workload.startupProfile",
-        "missing-provenance",
-        "The managed startup profile cannot be matched to the registered inference selection.",
-      ),
-    ];
-  }
-  expected = supportedObservabilityProfile(profile, expected);
-  const interfaces = inspectAgentInterfaces(entry, profile);
-  if (interfaces.dashboard) expected = { ...expected, dashboard: interfaces.dashboard };
-  const findings = [
-    ...interfaces.findings,
-    ...classifyReasoningAgreement(entry, profile),
-    ...classifyToolDisclosureAgreement(entry, profile, expected),
-  ];
-  if (entry.servingProfileProvenance?.preset.id !== EXPORTED_VLLM_PROFILE_ID) {
-    const supported = supportedAgentSettingsProfile(profile, expected);
-    if (!supported) {
-      return [
-        ...findings,
-        finding(
-          "source.workload.startupProfile",
-          "unsupported",
-          "The managed agent settings cannot be represented by v1 export.",
-        ),
-      ];
-    }
-    expected = supported;
-  }
+  const findings: ExportFinding[] = [];
   if (!hasEqualJsonStructure(profile.inference, expected.inference)) {
     findings.push(
       finding(
@@ -664,6 +666,70 @@ function classifyManagedStartupProfile(
     );
   }
   return findings;
+}
+
+function supportedObservabilityProfile(
+  profile: ManagedStartupProfile,
+  expected: ManagedStartupProfile,
+): ManagedStartupProfile {
+  const observability = exportedObservability(profile);
+  if (!observability || expected.agentConfig.agent !== "openclaw") return expected;
+  const { endpoint: endpointUrl, ...telemetry } = observability.otlp;
+  return {
+    ...expected,
+    agentConfig: { ...expected.agentConfig, otel: { ...telemetry, endpointUrl } },
+  };
+}
+
+function expectedProfileWithObservedHostSettings(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile,
+): ManagedStartupProfile | null {
+  try {
+    return supportedHostProfile(profile, expectedManagedStartupProfile(entry));
+  } catch {
+    return null;
+  }
+}
+
+function classifyManagedStartupProfile(
+  entry: ObservedExportRegistry,
+  profile: ManagedStartupProfile,
+  additionalAgents?: VerifiedExportSource["additionalAgents"],
+): ExportFinding[] {
+  let expected = expectedProfileWithObservedHostSettings(entry, profile);
+  if (!expected) {
+    return [
+      finding(
+        "source.workload.startupProfile",
+        "missing-provenance",
+        "The managed startup profile cannot be matched to the registered inference selection.",
+      ),
+    ];
+  }
+  expected = supportedObservabilityProfile(profile, expected);
+  const interfaces = inspectAgentInterfaces(entry, profile);
+  if (interfaces.dashboard) expected = { ...expected, dashboard: interfaces.dashboard };
+  const findings = [
+    ...interfaces.findings,
+    ...classifyReasoningAgreement(entry, profile),
+    ...classifyToolDisclosureAgreement(entry, profile, expected),
+  ];
+  if (entry.servingProfileProvenance?.preset.id !== EXPORTED_VLLM_PROFILE_ID) {
+    const supported = supportedAgentSettingsProfile(profile, expected, additionalAgents);
+    if (!supported) {
+      return [
+        ...findings,
+        finding(
+          "source.workload.startupProfile",
+          "unsupported",
+          "The managed agent settings cannot be represented by v1 export.",
+        ),
+      ];
+    }
+    expected = supported;
+  }
+  return [...findings, ...classifyProfileEquality(profile, expected)];
 }
 
 function endpointEvidenceMatchesRoute(inference: QualifiedExportSnapshot["inference"]): boolean {
@@ -874,7 +940,11 @@ function validateGateway(snapshot: QualifiedExportSnapshot): ExportFinding[] {
 function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { registry: entry, inference } = snapshot;
   const findings: ExportFinding[] = [];
-  if (inference.topology !== "hosted" && inference.topology !== "managed")
+  if (
+    inference.topology !== "hosted" &&
+    inference.topology !== "managed" &&
+    !(inference.topology === "local" && inference.provider === "ollama-local")
+  )
     findings.push(
       finding(
         "spec.inferenceProviders",
@@ -925,6 +995,8 @@ function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFi
 
 function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
+  if (inference.provider === "ollama-local" || inference.ollamaServing)
+    return validateOllamaServing(snapshot);
   if (inference.topology === "managed") return validateManagedServing(snapshot);
   const findings: ExportFinding[] = [];
   if (
@@ -975,7 +1047,11 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
   }
   const findings: ExportFinding[] = [];
 
-  if (inference.topology !== "managed" && !isValidNemoClawInferenceEndpoint(evidence.endpoint))
+  if (
+    inference.topology !== "managed" &&
+    inference.provider !== "ollama-local" &&
+    !isValidNemoClawInferenceEndpoint(evidence.endpoint)
+  )
     findings.push(
       finding(
         "source.inference.endpoint",
@@ -1012,7 +1088,7 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
 
 function validateCredentialReference(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
-  if (inference.topology === "managed") return [];
+  if (inference.topology === "managed" || inference.provider === "ollama-local") return [];
   const findings: ExportFinding[] = [];
   if (
     inference.credentialEnv !== null &&
@@ -1084,11 +1160,26 @@ function validateAgreement(
 
 function inspectWorkload(entry: ObservedExportRegistry) {
   let authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null = null;
+  let additionalAgents: VerifiedExportSource["additionalAgents"];
   const findings: ExportFinding[] = [];
   if (entry.workload?.kind === "managed-image") {
     try {
       authority = readManagedWorkloadAuthority(entry);
-      if (authority) findings.push(...classifyManagedStartupProfile(entry, authority.profile));
+      if (authority) {
+        const projected = projectAdditionalAgents(entry, authority.profile);
+        if (projected === null) {
+          findings.push(
+            finding(
+              "spec.sandboxes[].agents",
+              "unsupported",
+              "The retained secondary-agent manifest cannot be represented by v1 export.",
+            ),
+          );
+        } else {
+          additionalAgents = projected;
+          findings.push(...classifyManagedStartupProfile(entry, authority.profile, projected));
+        }
+      }
     } catch {
       findings.push(
         finding(
@@ -1099,7 +1190,7 @@ function inspectWorkload(entry: ObservedExportRegistry) {
       );
     }
   }
-  return { authority, findings };
+  return { authority, additionalAgents, findings };
 }
 
 function projectVerifiedInference(
@@ -1113,6 +1204,9 @@ function projectVerifiedInference(
     model: selected.model,
     api: selected.preferredInferenceApi,
   };
+  if (snapshot.inference.provider === "ollama-local") {
+    return { ...common, serving: snapshot.inference.ollamaServing?.serving };
+  }
   return snapshot.inference.topology === "managed"
     ? { ...common, serving: snapshot.inference.managedServing?.serving }
     : {
@@ -1171,6 +1265,7 @@ function completeVerifiedSource(
   snapshot: QualifiedExportSnapshot,
   authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
   policy: CanonicalExportPolicy,
+  additionalAgents?: VerifiedExportSource["additionalAgents"],
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
   const observability = authority ? exportedObservability(authority.profile) : undefined;
@@ -1182,6 +1277,7 @@ function completeVerifiedSource(
   const values = {
     ...(observability ? { observability } : {}),
     sandboxName: requestedSandboxName,
+    ...(additionalAgents ? { additionalAgents } : {}),
     agent: entry.agent,
     ...projectVerifiedExecution(settings),
     ...projectVerifiedWebSearch(entry),
@@ -1213,7 +1309,7 @@ export function verifyExportSource(
 ): ExportSourceVerificationResult {
   const entry = snapshot.registry;
   const findings = validateAgreement(requestedSandboxName, snapshot);
-  const { authority, findings: workloadFindings } = inspectWorkload(entry);
+  const { authority, additionalAgents, findings: workloadFindings } = inspectWorkload(entry);
   findings.push(...workloadFindings);
   const policy = snapshot.policy.kind === "verified" ? snapshot.policy.canonical : undefined;
   if (snapshot.policy.kind === "not-representable") {
@@ -1227,5 +1323,11 @@ export function verifyExportSource(
   }
   if (findings.length > 0 || !policy) return { kind: "rejected", findings: nonEmpty(findings) };
 
-  return completeVerifiedSource(requestedSandboxName, snapshot, authority, policy);
+  return completeVerifiedSource(
+    requestedSandboxName,
+    snapshot,
+    authority,
+    policy,
+    additionalAgents,
+  );
 }
