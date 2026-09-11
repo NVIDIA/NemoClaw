@@ -284,7 +284,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   ): boolean {
     return (
       forwardService?.owns?.(
-        forwardTarget(sandboxName, gatewayName, port, getDashboardForwardTarget(chatUiUrl)),
+        forwardTarget(
+          sandboxName,
+          gatewayName,
+          port,
+          getDashboardForwardTarget(chatUiUrl, { isWsl: deps.isWsl() }),
+        ),
       ) === true
     );
   }
@@ -292,6 +297,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   function ownsForwardServicePort(sandboxName: string, port: number): boolean {
     const gatewayName = resolveForwardServiceGateway(sandboxName);
     if (gatewayName === null) return false;
+    if (getSandbox?.(sandboxName)?.hermesApiPort === port) {
+      return (
+        forwardService?.owns?.(forwardTarget(sandboxName, gatewayName, port, String(port))) === true
+      );
+    }
     return ownsDashboardForward(sandboxName, gatewayName, port, `http://127.0.0.1:${String(port)}`);
   }
 

@@ -378,13 +378,20 @@ RUN chown root:sandbox /sandbox \
 RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod -R a+rwX /sandbox/.deepagents; \
         find /sandbox/.deepagents -type d -exec chmod a+rwx {} +; \
+        chmod 1777 /sandbox/.deepagents; \
         for p in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do \
             chmod -R a+rwX "$p"; \
             find "$p" -type d -exec chmod a+rwx {} +; \
         done; \
         chmod a+rw /sandbox/.nemoclaw/config.json; \
         chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
-    fi
+    fi \
+    && chown sandbox:sandbox /sandbox/.deepagents/conversation_history \
+    && chmod 0700 /sandbox/.deepagents/conversation_history \
+    && test "$(stat -c '%U:%G:%a' /sandbox/.deepagents/conversation_history)" = 'sandbox:sandbox:700' \
+    && setpriv --reuid=65534 --regid=65534 --clear-groups sh -c \
+        "test ! -r \"\$1\" && test ! -w \"\$1\" && ! mv \"\$1\" \"\$1.deleted\"" \
+        sh /sandbox/.deepagents/conversation_history
 
 # Verify the managed bootstrap files in dynamically built images.
 RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \

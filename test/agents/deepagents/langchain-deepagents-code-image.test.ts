@@ -208,18 +208,36 @@ function assertEveryRequirementIsHashLocked(requirementsLock: string): void {
 }
 
 describe("LangChain Deep Agents Code image contracts", () => {
-  it("keeps conversation history writable by the sandbox runtime user", () => {
-    const dockerfile = readAgentFile("Dockerfile");
+  // source-shape-contract: security -- The image build must enforce private conversation-history metadata after Darwin permission replay
+  it("enforces private conversation history in the completed image", () => {
+    const dockerfile = fs.readFileSync(
+      path.join(process.cwd(), "agents", "langchain-deepagents-code", "Dockerfile"),
+      "utf8",
+    );
     const ownershipRepair =
       "install -d -o sandbox -g sandbox -m 0700 /sandbox/.deepagents/conversation_history";
     const ownershipAssertion =
       "test \"$(stat -c '%U:%G:%a' /sandbox/.deepagents/conversation_history)\" = 'sandbox:sandbox:700'";
+    const darwinPermissionReplay = "chmod -R a+rwX /sandbox/.deepagents";
+    const privateParent = "chmod 1777 /sandbox/.deepagents";
+    const otherUidProbe = "setpriv --reuid=65534 --regid=65534 --clear-groups sh -c";
     const finalRuntimeUser = dockerfile.lastIndexOf("USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}");
 
     expect(dockerfile).toContain(ownershipRepair);
     expect(dockerfile).toContain(ownershipAssertion);
+    expect(dockerfile).toContain(privateParent);
+    expect(dockerfile).toContain(otherUidProbe);
+    expect(dockerfile).toContain(
+      `"test ! -r \\"\\$1\\" && test ! -w \\"\\$1\\" && ! mv \\"\\$1\\" \\"\\$1.deleted\\""`,
+    );
     expect(dockerfile.indexOf(ownershipRepair)).toBeLessThan(finalRuntimeUser);
-    expect(dockerfile.indexOf(ownershipAssertion)).toBeLessThan(finalRuntimeUser);
+    expect(dockerfile.lastIndexOf(darwinPermissionReplay)).toBeLessThan(
+      dockerfile.lastIndexOf(ownershipAssertion),
+    );
+    expect(dockerfile.lastIndexOf(ownershipAssertion)).toBeLessThan(
+      dockerfile.lastIndexOf(otherUidProbe),
+    );
+    expect(dockerfile.lastIndexOf(otherUidProbe)).toBeLessThan(finalRuntimeUser);
   });
 
   it.each([

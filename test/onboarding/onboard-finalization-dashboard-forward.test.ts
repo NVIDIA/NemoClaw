@@ -14,6 +14,7 @@ import type { ListSandboxesFn } from "../../src/lib/onboard/dashboard-port";
 
 function harness(options: {
   listSandboxes: ListSandboxesFn;
+  isWsl?: boolean;
   isPortBound?: (port: number) => boolean;
   ownsForward?: (target: ForwardServiceTarget) => boolean;
   launch?: typeof launchForwardService;
@@ -36,7 +37,7 @@ function harness(options: {
     agentProductName: () => "NemoClaw",
     getProviderLabel: (provider) => provider,
     note: vi.fn(),
-    isWsl: () => false,
+    isWsl: () => options.isWsl ?? false,
     redact: String,
     sleep: vi.fn(),
     printAgentDashboardUi: vi.fn(),
@@ -55,8 +56,13 @@ function harness(options: {
 }
 
 describe("finalization dashboard ForwardTcp launch", () => {
-  it("proves exact ForwardTcp ownership for pre-delete port reservation", () => {
+  it.each([
+    { label: "WSL", isWsl: true, dashboardBind: undefined },
+    { label: "remote dashboard bind", isWsl: false, dashboardBind: "0.0.0.0" },
+  ])("keeps Hermes ownership loopback-only during $label resume", ({ isWsl, dashboardBind }) => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", dashboardBind);
     const { helpers, owns } = harness({
+      isWsl,
       listSandboxes: () => ({
         sandboxes: [{ name: "reonboard-test", dashboardPort: 18790, hermesApiPort: 8643 }],
       }),
@@ -65,6 +71,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
 
     expect(helpers.ownsForwardServicePort("reonboard-test", 8643)).toBe(true);
     expect(helpers.ownsForwardServicePort("reonboard-test", 8644)).toBe(false);
+    expect(helpers.ownsForwardServicePort("reonboard-test", 18790)).toBe(false);
     expect(owns).toHaveBeenNthCalledWith(1, {
       executable: "/usr/local/bin/openshell",
       gatewayName: "nemoclaw",
@@ -75,6 +82,13 @@ describe("finalization dashboard ForwardTcp launch", () => {
       targetHost: "127.0.0.1",
       targetPort: 8643,
     });
+    expect(owns).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        localHost: "0.0.0.0",
+        localPort: 18790,
+      }),
+    );
   });
 
   it("launches the persisted dashboard port and publishes its URL", () => {
