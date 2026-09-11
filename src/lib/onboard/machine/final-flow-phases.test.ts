@@ -2,12 +2,97 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { context, createPhases } from "../../../../test/helpers/onboard-final-flow-phases";
+import {
+  context,
+  createPhases,
+  createProviderlessComponentFlow,
+} from "../../../../test/helpers/onboard-final-flow-phases";
 import { createSession } from "../../state/onboard-session";
 import { runFinalOnboardFlowSlice } from "./final-flow-phases";
 import { advanceTo } from "./result";
 
 describe("final onboard flow phases", () => {
+  it("completes providerless onboarding only after verified component activation (#11486)", async () => {
+    const flow = createProviderlessComponentFlow();
+    const result = await flow.run();
+    expect(result.session.machine.state).toBe("complete");
+    expect(flow.transport).toHaveBeenCalledOnce();
+    expect(flow.revalidate).toHaveBeenCalledTimes(2);
+    expect(flow.evidence).toHaveBeenLastCalledWith(null);
+    expect(flow.order).toEqual(["verify-proof", "activate"]);
+    await expect(createPhases("openclaw")[3].run(flow.initial)).rejects.toThrow(
+      "Providerless component activation has not completed in this onboarding run.",
+    );
+  });
+
+  it("preserves failed providerless activation evidence after rejection (#11486)", async () => {
+    const flow = createProviderlessComponentFlow();
+    flow.response.result = "rejected";
+    const result = await flow.run();
+    expect(result.session.machine.state).toBe("finalizing");
+    expect(result.session.externalComponentActivation).toMatchObject({
+      sandboxIdentityFingerprint: flow.proof.sandboxIdentityFingerprint,
+      lifecycleGeneration: flow.proof.lifecycleGeneration,
+      resultClass: "failed",
+    });
+    expect(flow.transport).toHaveBeenCalledOnce();
+    expect(flow.order).toEqual(["verify-proof", "activate"]);
+  });
+
+  it.each([
+    {
+      outcome: "malformed response",
+      arrange: (flow: ReturnType<typeof createProviderlessComponentFlow>) =>
+        flow.transport.mockResolvedValue("{}"),
+      requests: 1,
+      order: ["verify-proof", "activate"],
+    },
+    {
+      outcome: "changed endpoint",
+      arrange: (flow: ReturnType<typeof createProviderlessComponentFlow>) =>
+        flow.revalidateEndpoint.mockImplementation(() => {
+          throw new Error("changed endpoint");
+        }),
+      requests: 0,
+      order: ["verify-proof"],
+    },
+    {
+      outcome: "changed identity or policy proof",
+      arrange: (flow: ReturnType<typeof createProviderlessComponentFlow>) =>
+        flow.revalidate
+          .mockImplementationOnce(() => undefined)
+          .mockImplementationOnce(() => {
+            throw new Error("drift");
+          }),
+      requests: 1,
+      order: ["verify-proof", "activate"],
+    },
+  ])(
+    "preserves ambiguous providerless activation evidence for $outcome (#11486)",
+    async ({ arrange, requests, order }) => {
+      const flow = createProviderlessComponentFlow();
+      arrange(flow);
+      const result = await flow.run();
+      expect(result.session.machine.state).toBe("finalizing");
+      expect(result.session.externalComponentActivation).toMatchObject({
+        sandboxIdentityFingerprint: flow.proof.sandboxIdentityFingerprint,
+        lifecycleGeneration: flow.proof.lifecycleGeneration,
+        resultClass: "ambiguous",
+      });
+      expect(flow.transport).toHaveBeenCalledTimes(requests);
+      expect(flow.order).toEqual(order);
+    },
+  );
+
+  it("refuses providerless activation when policy proof is unavailable (#11486)", async () => {
+    const flow = createProviderlessComponentFlow();
+    flow.createProof.mockImplementation(() => {
+      throw new Error("policy unavailable");
+    });
+    await expect(flow.run()).rejects.toThrow("policy unavailable");
+    expect(flow.transport).not.toHaveBeenCalled();
+  });
+
   it("selects the requested branch setup state", () => {
     expect(createPhases("openclaw")[0].state).toBe("openclaw");
     expect(createPhases("agent_setup")[0].state).toBe("agent_setup");

@@ -81,11 +81,12 @@ function captureProofSnapshotUnchecked(
     "verify external component activation policy",
     expectedGatewayName,
   );
+  const policyDigest = policy.inspection.policyIdentity.hash.replace(/^sha256:/u, "");
   if (
     policy.gatewayName !== expectedGatewayName ||
     policy.inspection.policySource !== "sandbox" ||
     row.current_policy_version !== policy.inspection.policyIdentity.activeVersion ||
-    !/^sha256:[0-9a-f]{64}$/u.test(policy.inspection.policyIdentity.hash)
+    !/^[0-9a-f]{64}$/u.test(policyDigest)
   ) {
     throw new ExternalComponentProofError();
   }
@@ -101,7 +102,7 @@ function captureProofSnapshotUnchecked(
     gatewayName: expectedGatewayName,
     lifecycleGeneration: entry.lifecycleGeneration,
     policyActiveVersion: policy.inspection.policyIdentity.activeVersion,
-    policyHash: policy.inspection.policyIdentity.hash,
+    policyHash: `sha256:${policyDigest}`,
     policySource: policy.inspection.policySource,
     sandboxId: row.id,
     sandboxIdentityFingerprint: `sha256:${fingerprint}`,

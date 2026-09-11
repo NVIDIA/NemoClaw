@@ -5,8 +5,8 @@
   "interest": "verification-mistake-proofing",
   "expectedSpecialists": ["verification-mistake-proofing"],
   "deterministic": {
-    "version": 22,
-    "planHash": "5564cf0b7176c9167472040688dd4fcfa336e7db179a20fd120bfaa33cc328ab"
+    "version": 23,
+    "planHash": "59382646287943f44ab820a5ebb0e8be6b177140c960ff97847d542488bb8048"
   },
   "advisor": {
     "recommendations": [
