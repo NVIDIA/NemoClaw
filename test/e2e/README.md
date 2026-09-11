@@ -13,8 +13,6 @@ before those targets run; local runners must provide it themselves.
   It also supports trusted manual dispatches for the latest PR commit.
   Full manual runs dispatched against `main` publish the `Release qualification` check for the candidate commit SHA.
   Each trusted push to `main` selects the CPU-only `jetson-nvmap-gpu` proof.
-  Push runs skip the DGX Spark llama.cpp jobs because their required workflow
-  dispatch flag cannot be set by a push event.
 - `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
   failures from approved `main` workflows and requests one full rerun only when
   every non-passing job has authenticated GitHub-hosted runner-loss evidence.
@@ -1148,8 +1146,7 @@ expires, `lane.log` records that result and cleanup continues. The diagnostic
 phase is read-only, uses one 30-second budget, and does not retry the failed E2E
 or repair the workspace.
 
-Manual ordinary and full runs exclude the Jetson nvmap and DGX Spark llama.cpp
-jobs unless their independent opt-in flags are `true`.
+Manual ordinary and full runs exclude the Jetson nvmap job unless `allow_jetson_dispatch` is `true`.
 Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` after the
 operator-owned dispatch service is available at the repository variable
 `JETSON_DISPATCH_URL`. Refer to the
@@ -1157,12 +1154,7 @@ operator-owned dispatch service is available at the repository variable
 HTTP contract, and evidence boundary that NemoClaw owns.
 Each trusted push to `main` selects `jetson-nvmap-gpu` without changing the
 manual input default.
-Set `allow_dgx_spark_runner_queue=true` to select both
-`llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`.
-GitHub can pause the qualification job for the
-`approve-dgx-spark-image-qualification` environment before it reaches the DGX
-Spark runner.
-Full manual `main` dispatches require both hardware opt-in flags to remain `false`.
+Full manual `main` dispatches require `allow_jetson_dispatch=false`.
 Jetson push results and opt-in hardware results do not enter the strict full-run
 qualification set.
 
@@ -1447,7 +1439,6 @@ If no other E2E target owns a changed file, `Relevant E2E` requires only the Jet
 Otherwise, `Relevant E2E` requires every selected workflow job to pass.
 For trusted manual PR runs, the same check also records selected results and references the existing dispatch receipt.
 The [review queue evidence contract](../../tools/pr-review-advisor/REVIEW-QUEUE.md#results) defines artifact validation and incomplete results.
-The central workflow skips the DGX Spark llama.cpp jobs on push.
 The central workflow has no scheduled trigger.
 
 The workflow planner connects each trusted input to its execution and evidence boundary:
@@ -1527,8 +1518,6 @@ Main and manual PR runs use the same typed planner from the trusted workflow rev
 PRs from forks, including other NVIDIA repositories, are rejected before candidate execution.
 The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
 Jetson and Launchable retain their operator and image-producer requirements.
-It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`
-unless their runner-queue flag is `true`.
 The trusted workflow definition remains on `main` and binds the latest PR commit to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
 Before candidate execution, the workflow uploads a `nemoclaw-e2e-dispatch-v2` receipt for the trusted manual run.
@@ -1629,9 +1618,7 @@ recorded base SHA and `checkout_repository` to `NVIDIA/NemoClaw`, while leaving 
 or automatically replay the base.
 
 For the default same-repository PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
-Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
-If `allow_dgx_spark_runner_queue=true`, GitHub can pause the qualification job for the `approve-dgx-spark-image-qualification` environment.
-An authorized environment reviewer must approve it before qualification starts.
+Keep `allow_jetson_dispatch=false` for the default PR revision selection.
 To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.

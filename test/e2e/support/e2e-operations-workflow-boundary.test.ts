@@ -433,7 +433,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           env: {
             ...process.env,
             ALLOW_JETSON_DISPATCH: "false",
-            ALLOW_DGX_SPARK_RUNNER_QUEUE: "false",
             TARGETS: "",
             BASE_SHA: baseSha,
             CHECKOUT_REPOSITORY: revision === "base" ? "NVIDIA/NemoClaw" : sourceRepository,
@@ -566,12 +565,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       0,
       "",
     ],
-    ...(
-      [
-        ["Jetson", "jetson-nvmap-gpu"],
-        ["DGX Spark", "llama-cpp-dgx-spark-qualification"],
-      ] as const
-    ).flatMap(([name, selector]) =>
+    ...([["Jetson", "jetson-nvmap-gpu"]] as const).flatMap(([name, selector]) =>
       (["job", "target"] as const).map(
         (channel) =>
           [
@@ -621,7 +615,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           encoding: "utf8",
           env: {
             ...process.env,
-            ALLOW_DGX_SPARK_RUNNER_QUEUE: "false",
             ALLOW_JETSON_DISPATCH: "false",
             BASE_SHA: requestedBaseCharacter.repeat(40),
             CHECKOUT_REPOSITORY: requestedRepository,

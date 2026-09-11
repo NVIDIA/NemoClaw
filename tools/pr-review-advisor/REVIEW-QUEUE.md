@@ -67,8 +67,8 @@ An explicit full-suite selection does not erase separately recommended hardware 
 Use `inference_mode:mock` unless the requested coverage requires another supported mode.
 Preserve `gateway_runtime` or `gateway_runtimes` when coverage requires a specific runtime.
 
-Keep `allow_jetson_dispatch`, `allow_dgx_spark_runner_queue`, and `include_staging_brev_launchable` false unless separately authorized.
-Recommendations do not grant hardware opt-in. The DGX Spark runner confirmation, protected environments, and other workflow checks still apply.
+Keep `allow_jetson_dispatch` and `include_staging_brev_launchable` false unless separately authorized.
+Recommendations do not grant hardware opt-in. Protected environments and other workflow checks still apply.
 See the owning `test/e2e/README.md` for credential custody and hardware requirements.
 
 Generate a UUIDv4 `correlation_id` once for the logical dispatch. Persist the candidate, base, workflow SHA, selectors, opt-ins, correlation, and send time before sending.

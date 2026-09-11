@@ -114,7 +114,6 @@ describe("E2E workflow plan", () => {
     expect(plan.explicitOnlyJobs).toEqual([
       "staging-brev-launchable-identity",
       "external-gateway-health",
-      "llama-cpp-dgx-spark-qualification",
     ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
@@ -1361,9 +1360,7 @@ describe("E2E workflow plan", () => {
       "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code / docker`, `ubuntu-repo-cloud-openclaw / docker` | agent runtime |",
     );
     expect(complete.stdout).toContain("### Intentional exclusions");
-    expect(complete.stdout).toContain(
-      "| `llama-cpp-dgx-spark-qualification` | unresolved | Exact NemoClaw-built llama.cpp image produces protected DGX Spark evidence | NVIDIA DGX Spark GB10; local llama.cpp inference | Explicit dispatch only; excluded from the default release matrix | The protected plan can enable or skip its OpenClaw subqualification |",
-    );
+    expect(complete.stdout).not.toContain("llama-cpp-dgx-spark-qualification");
     expect(complete.stdout).toContain("### Unsupported or unresolved typed declarations");
     const inertDeclarationCount = listTargets().filter(
       (target) => !liveTargetSupport(target).supported,
