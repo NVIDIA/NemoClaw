@@ -61,6 +61,7 @@ import {
   HERMES_MCP_ENV_LOAD_COMMANDS,
   HERMES_MCP_DENIED_TOOL_PROBE,
   readConcurrentMcpStatusAndConfirmHermesRegistration,
+  MCP_CONCURRENT_ADD_REJECTION,
   MCP_BRIDGE_DENIED_TOOL_NAME,
   MCP_BRIDGE_DENIED_TOOL_SELECTOR,
   runDeniedMcpToolCall,
@@ -305,8 +306,8 @@ async function assertConcurrentAddSerialized(
         artifactName: `${options.artifactPrefix}-mcp-concurrent-add-${attempt}`,
         env,
         redactionValues: [HOST_SECRET],
-        // Keep both clients alive through Hermes' bounded restart and config
-        // reload; the loser then acquires the lock and rejects the duplicate.
+        // Keep both clients alive through Hermes' bounded restart and config reload.
+        // The contender can also reach the outer host fence's contention limit.
         timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
       }),
     ),
@@ -355,8 +356,8 @@ async function assertConcurrentAddSerialized(
   });
   expectExitNonZero(
     duplicateRejection,
-    `${options.artifactPrefix} concurrent MCP add rejects the serialized duplicate`,
-    /already exists/,
+    `${options.artifactPrefix} concurrent MCP add rejects the competing command`,
+    MCP_CONCURRENT_ADD_REJECTION,
   );
   const remove = await host.nemoclaw(
     [options.sandboxName, "mcp", "remove", CONCURRENT_SERVER_NAME],

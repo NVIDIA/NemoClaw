@@ -15,6 +15,7 @@ import {
   type PodmanSocketAuthority,
 } from "../../adapters/podman";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createPodmanRuntimeProviderBundle } from "./podman";
 import {
@@ -284,16 +285,18 @@ describe("managed Podman runtime provider", () => {
           log: vi.fn(),
         }),
       ).resolves.toEqual({ exitCode: 0 });
-      expect(
-        stopSandbox(runtime.sandboxName, {
-          getSandbox: () => runtime.entry,
-          updateSandbox,
-          runtimeProviders: runtime.providers,
-          stopSandboxChannels,
-          teardownSandboxDashboardForward: vi.fn(),
-          log: vi.fn(),
-        }),
-      ).toEqual({ exitCode: 0 });
+      await expect(
+        withCurrentPortableHostFence(() =>
+          stopSandbox(runtime.sandboxName, {
+            getSandbox: () => runtime.entry,
+            updateSandbox,
+            runtimeProviders: runtime.providers,
+            stopSandboxChannels,
+            teardownSandboxDashboardForward: vi.fn(),
+            log: vi.fn(),
+          }),
+        ),
+      ).resolves.toEqual({ exitCode: 0 });
 
       expect(restoreStartupState).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
       expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);

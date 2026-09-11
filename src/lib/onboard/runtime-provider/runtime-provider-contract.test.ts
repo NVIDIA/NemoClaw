@@ -23,6 +23,7 @@ import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
 import { MANAGED_IMAGE_REPOSITORIES } from "../managed-image/contract";
@@ -1127,17 +1128,19 @@ describe("socket-free MXC action contract", () => {
           log: vi.fn(),
         }),
       ).resolves.toEqual({ exitCode: 0 });
-      expect(
-        stopSandbox(sandboxName, {
-          getSandbox,
-          updateSandbox,
-          runtimeProviders: providers,
-          stopSandboxChannels,
-          teardownSandboxDashboardForward,
-          log: vi.fn(),
-          warn: vi.fn(),
-        }),
-      ).toEqual({ exitCode: 0 });
+      await expect(
+        withCurrentPortableHostFence(() =>
+          stopSandbox(sandboxName, {
+            getSandbox,
+            updateSandbox,
+            runtimeProviders: providers,
+            stopSandboxChannels,
+            teardownSandboxDashboardForward,
+            log: vi.fn(),
+            warn: vi.fn(),
+          }),
+        ),
+      ).resolves.toEqual({ exitCode: 0 });
       expect(() => requireInferenceSetRuntimeAuthority(entry, providers)).not.toThrow();
       await expect(
         executeSandboxDestroy({

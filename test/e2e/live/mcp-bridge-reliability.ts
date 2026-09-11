@@ -665,6 +665,9 @@ export function isHermesRestartTransportFailure(adapter: string, diagnostic: str
   return HERMES_RESTART_SUCCESS_PREFIX.test(normalized.slice(0, -suffix.length));
 }
 
+export const MCP_CONCURRENT_ADD_REJECTION =
+  /already exists|^[\t \r\n]*Error: Failed to acquire lock on [^\r\n]+\/\.nemoclaw-portable-host\.lock after 120 retries[\t \r\n]*$/iu;
+
 export async function retryAfterHermesRestartTransportFailure<T>(options: {
   adapter: string;
   committedBridgeVerified: boolean;
@@ -675,7 +678,7 @@ export async function retryAfterHermesRestartTransportFailure<T>(options: {
   if (!options.committedBridgeVerified) {
     throw new Error("Hermes restart retry requires a verified committed bridge");
   }
-  if (/already exists/iu.test(options.diagnostic)) return options.originalResult;
+  if (MCP_CONCURRENT_ADD_REJECTION.test(options.diagnostic)) return options.originalResult;
   if (!isHermesRestartTransportFailure(options.adapter, options.diagnostic)) {
     throw new Error("rejected concurrent add was not a known Hermes restart transport failure");
   }
