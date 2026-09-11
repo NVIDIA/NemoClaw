@@ -656,6 +656,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       );
       const authority = getForwardRuntimeAuthority();
       const target = forwardTarget(sandboxName, gatewayName, port, String(port), authority);
+      let readinessVerified = false;
       (forwardService?.launch ?? launchForwardService)(target, {
         sourceEnvironment: forwardSourceEnvironment(gatewayName, authority),
         verifyReady: () => {
@@ -668,8 +669,14 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
           revalidateSandboxIdentity?.(
             `accept ${label} forward ${String(port)} for sandbox '${sandboxName}'`,
           );
+          readinessVerified = true;
         },
       });
+      if (!readinessVerified) {
+        throw new Error(
+          `Forward readiness verification did not run on port ${String(port)} for '${sandboxName}'.`,
+        );
+      }
       return true;
     } catch (error) {
       const diagnostic = error instanceof Error ? error.message : String(error);

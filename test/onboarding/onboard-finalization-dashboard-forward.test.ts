@@ -109,6 +109,21 @@ describe("finalization dashboard ForwardTcp launch", () => {
     );
   });
 
+  it("rejects a fixed-forward launch that skips readiness verification", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { helpers, owns } = harness({
+      listSandboxes: () => ({ sandboxes: [{ name: "reonboard-test" }] }),
+      ownsForward: () => true,
+      launch: () => undefined,
+    });
+
+    expect(helpers.ensureAgentFixedForward("reonboard-test", 8_642, "Hermes API")).toBe(false);
+    expect(owns).not.toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join("\n")).toContain(
+      "Forward readiness verification did not run on port 8642",
+    );
+  });
+
   it("reuses an exactly owned dashboard forward (#11074)", () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     const { helpers, launch, owns } = harness({

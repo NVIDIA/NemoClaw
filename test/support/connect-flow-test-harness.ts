@@ -577,7 +577,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     .mockReturnValue(true);
   const forwardServiceOwnerSpy = vi
     .spyOn(forwardService, "isForwardServiceListenerOwner")
-    .mockReturnValue(false);
+    .mockReturnValue(true);
   const launchForwardServiceSpy = vi
     .spyOn(forwardService, "launchForwardService")
     .mockImplementation(() => undefined);

@@ -485,15 +485,30 @@ describe("a dashboard port held by a listener the sandbox does not own (#11149)"
     expect(mocks.isForwardServiceListenerOwner).toHaveBeenCalledOnce();
   });
 
-  it("fails cleanly when reachable-listener authority cannot be resolved", async () => {
+  it("classifies a reachable listener as unverified when gateway authority resolution fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.resolveGatewayForwardAuthority.mockImplementation(() => {
       throw new Error("authority unavailable");
     });
-    const { ensureSandboxPortForward } = await import("./forward-recovery");
+    const { describeSandboxForwardListener, ensureSandboxPortForward } =
+      await import("./forward-recovery");
 
+    expect(describeSandboxForwardListener("box", { isWsl: false })).toBe("unverified");
     expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
     expect(mocks.isForwardServiceListenerOwner).not.toHaveBeenCalled();
+    expect(mocks.launchForwardService).not.toHaveBeenCalled();
+  });
+
+  it("classifies a reachable listener as unverified when ownership proof fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.isForwardServiceListenerOwner.mockImplementation(() => {
+      throw new Error("ownership proof unavailable");
+    });
+    const { describeSandboxForwardListener, ensureSandboxPortForward } =
+      await import("./forward-recovery");
+
+    expect(describeSandboxForwardListener("box", { isWsl: false })).toBe("unverified");
+    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
     expect(mocks.launchForwardService).not.toHaveBeenCalled();
   });
 

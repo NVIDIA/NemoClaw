@@ -1352,16 +1352,18 @@ describe("Hermes Portable connect composition", () => {
     );
   });
 
-  it("keeps direct interactive connect outside the probe-only forward recovery seam", async () => {
+  it("accepts exact-owned forwards before direct interactive connect", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
     });
+    harness.forwardServiceOwnerSpy.mockReturnValue(true);
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
+    expect(harness.forwardServiceOwnerSpy).toHaveBeenCalled();
     expect(
       harness.runOpenshellSpy.mock.calls.some(
         ([args]) => Array.isArray(args) && args[0] === "forward",

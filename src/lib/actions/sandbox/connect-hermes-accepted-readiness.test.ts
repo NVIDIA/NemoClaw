@@ -142,7 +142,7 @@ describe("Hermes accepted launch-readiness probe", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.assertHermesPortableOperatingCommandCurrentSpy).toHaveBeenCalledTimes(10);
+    expect(harness.assertHermesPortableOperatingCommandCurrentSpy).toHaveBeenCalledTimes(14);
     expect(harness.requalifyPortableAgentAuthoritySpy).not.toHaveBeenCalled();
     expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
@@ -494,7 +494,7 @@ describe("Hermes accepted launch-readiness probe", () => {
       },
     });
     expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledOnce();
-    expect(harness.assertHermesPortableOperatingCommandCurrentSpy).toHaveBeenCalledTimes(10);
+    expect(harness.assertHermesPortableOperatingCommandCurrentSpy).toHaveBeenCalledTimes(14);
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });

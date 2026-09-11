@@ -474,25 +474,33 @@ function inspectSandboxPortForwardListener(
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) return "absent";
   if (!isLocalForwardReachable(port)) return "absent";
-  const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
-  const authority = resolveForwardGatewayAuthority(gatewayName);
-  const proofRuntime = selectedForwardRuntime(gatewayName, runtimeSelection, authority.localTlsDir);
-  const executable = resolveOpenshell();
-  if (!executable) return "unverified";
-  const bindAddress = expectedBind ?? "127.0.0.1";
-  const target = forwardServiceTarget(
-    executable,
-    gatewayName,
-    sandboxName,
-    port,
-    bindAddress,
-    proofRuntime.workspace,
-    authority.endpoint,
-  );
-  if (!isForwardServiceListenerOwner(target)) return "unverified";
-  return sameForwardGatewayAuthority(resolveForwardGatewayAuthority(gatewayName), authority)
-    ? "owned"
-    : "unverified";
+  try {
+    const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
+    const authority = resolveForwardGatewayAuthority(gatewayName);
+    const proofRuntime = selectedForwardRuntime(
+      gatewayName,
+      runtimeSelection,
+      authority.localTlsDir,
+    );
+    const executable = resolveOpenshell();
+    if (!executable) return "unverified";
+    const bindAddress = expectedBind ?? "127.0.0.1";
+    const target = forwardServiceTarget(
+      executable,
+      gatewayName,
+      sandboxName,
+      port,
+      bindAddress,
+      proofRuntime.workspace,
+      authority.endpoint,
+    );
+    if (!isForwardServiceListenerOwner(target)) return "unverified";
+    return sameForwardGatewayAuthority(resolveForwardGatewayAuthority(gatewayName), authority)
+      ? "owned"
+      : "unverified";
+  } catch {
+    return "unverified";
+  }
 }
 
 export function ensureSandboxPortForwardForPort(
