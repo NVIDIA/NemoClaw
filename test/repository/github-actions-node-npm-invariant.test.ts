@@ -19,9 +19,9 @@ const GITHUB_ROOT = path.join(REPO_ROOT, ".github");
 const SETUP_NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const REVIEWED_NPM_ACTION = "setup-reviewed-npm";
 const IMMUTABLE_REVIEWED_NPM_ACTION =
-  "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e";
+  "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2";
 const IMMUTABLE_PREPARE_E2E_NPM_ACTION =
-  "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e";
+  "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2";
 
 type Step = {
   if?: string;

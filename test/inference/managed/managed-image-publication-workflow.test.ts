@@ -458,7 +458,7 @@ describe("complete managed-image publication workflow", () => {
     });
     const trustedCheckout = step(reviewedAudit, "Checkout npm audit code from the base commit");
     expect(trustedCheckout.with).toMatchObject({
-      ref: "7363df49a5f25b0dd1c20c80905917c31760a27e",
+      ref: "98669f24d35f18e49b6b2769cd68709509ea24f2",
       path: ".trusted-reviewed-npm-audit",
       "persist-credentials": false,
       "sparse-checkout-cone-mode": false,
@@ -470,7 +470,7 @@ describe("complete managed-image publication workflow", () => {
     const verifyAuditIdentities = step(reviewedAudit, "Verify exact audit source and target");
     expect(verifyAuditIdentities.env).toEqual({
       CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
-      REVIEWED_AUDIT_SHA: "7363df49a5f25b0dd1c20c80905917c31760a27e",
+      REVIEWED_AUDIT_SHA: "98669f24d35f18e49b6b2769cd68709509ea24f2",
     });
     expect(verifyAuditIdentities.run).toContain(
       "git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD",

@@ -78,7 +78,7 @@ const trustedPrActionPaths = {
   pluginCoverage: "./.trusted-ci-actions/.github/actions/ci-plugin-coverage",
   installerIntegration: "./.trusted-ci-actions/.github/actions/ci-installer-integration",
   reviewedNpmAudit:
-    "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@7363df49a5f25b0dd1c20c80905917c31760a27e",
+    "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@98669f24d35f18e49b6b2769cd68709509ea24f2",
 } as const;
 
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";

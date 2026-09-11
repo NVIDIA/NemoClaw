@@ -86,6 +86,7 @@ describe("plugin Vitest project contract", () => {
     expect(testFiles).toContain(path.join(repositoryRoot, "nemoclaw", "vitest.project.ts"));
     expect(typecheck.error).toBeUndefined();
     expect(typecheck.status, typecheckOutput).toBe(0);
-    expect(typecheckOutput).toContain("tsc --noEmit -p tsconfig.test.json");
+    expect(typecheckOutput).toContain("-p tsconfig.json");
+    expect(typecheckOutput).toContain("-p tsconfig.test.json");
   });
 });

@@ -72,7 +72,7 @@ jobs:
           node-version: 24.18.1
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
 
       - name: Install ShellCheck
         run: |

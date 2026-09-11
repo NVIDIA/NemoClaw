@@ -492,7 +492,7 @@ jobs:
             nemoclaw/package-lock.json
 
       - name: Install reviewed npm
-        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
 
       - name: Install dependencies
         run: bash .trusted-ci-actions/.github/actions/ci-install-dependencies.sh
@@ -575,7 +575,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Audit reviewed production npm graphs
-        uses: NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@7363df49a5f25b0dd1c20c80905917c31760a27e
+        uses: NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@98669f24d35f18e49b6b2769cd68709509ea24f2
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit

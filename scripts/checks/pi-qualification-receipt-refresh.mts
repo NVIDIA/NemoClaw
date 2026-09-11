@@ -100,12 +100,18 @@ function mergeBaseRevision(git: GitRunner, baseBranch: string | undefined): stri
 }
 
 function changedPathsFromBase(git: GitRunner, revision: string): string[] {
-  return requireGitOutput(
+  const committed = requireGitOutput(
     git(["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", revision, "HEAD", "--"]),
     `Could not inspect changes after ${revision}`,
-  )
-    .split("\0")
-    .filter(Boolean);
+  );
+  // Pre-commit runs before the receipt refresh is part of HEAD. Include the
+  // index so the final receipt commit can be validated without bypassing this
+  // check; CI still validates the committed comparison with an empty index.
+  const staged = requireGitOutput(
+    git(["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "--cached", "--"]),
+    "Could not inspect staged Pi receipt changes",
+  );
+  return [...new Set(`${committed}${staged}`.split("\0").filter(Boolean))];
 }
 
 function piImageSourcePaths(rootDir: string): string[] {
