@@ -18,7 +18,39 @@ import {
   sanitizedFailure,
   toolIds,
   verifyToolOutput,
+  visibleChatReady,
 } from "./qualify-installed-openclaw.mts";
+
+test("an enabled composer waits for its actual session identity", () => {
+  const oldDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const oldTextarea = Object.getOwnPropertyDescriptor(globalThis, "HTMLTextAreaElement");
+  class Textarea {
+    disabled = false;
+  }
+  const input = new Textarea();
+  const shell: { activeSessionKey?: string } = {};
+  Object.defineProperty(globalThis, "HTMLTextAreaElement", { configurable: true, value: Textarea });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: {
+      querySelector: (selector: string) => (selector === "openclaw-app-shell" ? shell : input),
+    },
+  });
+  try {
+    assert.equal(visibleChatReady(), false);
+    shell.activeSessionKey = "agent:other:main";
+    assert.equal(visibleChatReady(), false);
+    shell.activeSessionKey = "agent:main:main";
+    assert.equal(visibleChatReady(), true);
+    input.disabled = true;
+    assert.equal(visibleChatReady(), false);
+  } finally {
+    if (oldDocument) Object.defineProperty(globalThis, "document", oldDocument);
+    else Reflect.deleteProperty(globalThis, "document");
+    if (oldTextarea) Object.defineProperty(globalThis, "HTMLTextAreaElement", oldTextarea);
+    else Reflect.deleteProperty(globalThis, "HTMLTextAreaElement");
+  }
+});
 
 test("only the intended dashboard path accepts its session query", () => {
   assert.equal(

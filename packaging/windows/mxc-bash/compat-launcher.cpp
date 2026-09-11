@@ -45,7 +45,7 @@ int wmain(int argc, wchar_t** argv) {
     startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
     startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
     PROCESS_INFORMATION child = {};
-    if (!CreateProcessW(argv[2], writable.data(), nullptr, nullptr, TRUE, CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
+    if (!NemoClawCreateProcessW(argv[2], writable.data(), nullptr, nullptr, TRUE, CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
                         nullptr, nullptr, &startup, &child)) {
         DWORD error = GetLastError();
         NemoClawLogLaunch(0, error, FALSE, error);

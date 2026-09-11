@@ -10,3 +10,9 @@ extern "C" BOOL NemoClawInitializeProcessContext(HMODULE self);
 extern "C" LONG NemoClawStageProcessPropagation();
 extern "C" BOOL NemoClawCompleteSuspendedChild(PROCESS_INFORMATION* child, DWORD callerFlags);
 extern "C" void NemoClawLogLaunch(DWORD childPid, DWORD exitCode, BOOL exited, DWORD error);
+
+// Scoped prototype creation option; all original startup fields are retained.
+extern "C" BOOL NemoClawCreateProcessW(LPCWSTR app, LPWSTR args, LPSECURITY_ATTRIBUTES processAttributes,
+    LPSECURITY_ATTRIBUTES threadAttributes, BOOL inherit, DWORD flags, LPVOID environment,
+    LPCWSTR directory, LPSTARTUPINFOW startup, LPPROCESS_INFORMATION output);
+extern "C" void NemoClawLogCurrentImageLayout();

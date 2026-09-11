@@ -47,6 +47,7 @@ export function fixedEnvironment(windows: string, home: string, git: string, nod
     ].join(";"),
     GITHUB_ACTIONS: "true",
     NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD: "repair-query",
+    NEMOCLAW_MSYS_IMAGE_LAYOUT: "preferred",
     NEMOCLAW_MSYS_PROBE_NODE: node.replaceAll("\\", "/"),
   };
 }

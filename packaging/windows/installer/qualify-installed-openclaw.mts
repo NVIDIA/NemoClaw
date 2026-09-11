@@ -352,6 +352,21 @@ type Observation = {
   status?: string | null;
 };
 
+export function visibleChatReady() {
+  const input = globalThis.document.querySelector(".agent-chat__composer-combobox > textarea");
+  const sessionKey = (
+    globalThis.document.querySelector("openclaw-app-shell") as unknown as {
+      activeSessionKey?: string;
+    }
+  )?.activeSessionKey;
+  return (
+    input instanceof globalThis.HTMLTextAreaElement &&
+    !input.disabled &&
+    typeof sessionKey === "string" &&
+    /^agent:main:[A-Za-z0-9:._-]+$/u.test(sessionKey)
+  );
+}
+
 async function main() {
   assert.equal(process.platform, "win32");
   assert.equal(process.arch, "arm64");
@@ -694,19 +709,12 @@ async function main() {
     await page.waitForURL((url: URL) => exactChatAddress(url.href, origin!), { timeout: 30_000 });
     const composer = page.locator(".agent-chat__composer-combobox > textarea").first();
     await composer.waitFor({ state: "visible", timeout: 90_000 });
-    await page.waitForFunction(
-      () => {
-        const input = document.querySelector(".agent-chat__composer-combobox > textarea");
-        return input instanceof HTMLTextAreaElement && !input.disabled;
-      },
-      undefined,
-      { timeout: 90_000 },
-    );
+    await page.waitForFunction(visibleChatReady, undefined, { timeout: 90_000 });
     const rpc = (method: string, params: Record<string, unknown>) =>
       boundedClose(
         page.evaluate(
           async ({ method, params }: { method: string; params: Record<string, unknown> }) => {
-            const app = document.querySelector("openclaw-app") as unknown as {
+            const app = globalThis.document.querySelector("openclaw-app") as unknown as {
               context?: {
                 gateway?: {
                   snapshot?: {
@@ -727,8 +735,11 @@ async function main() {
       ) as Promise<any>;
     const sessionKey = await page.evaluate(
       () =>
-        (document.querySelector("openclaw-app-shell") as unknown as { activeSessionKey?: string })
-          ?.activeSessionKey,
+        (
+          globalThis.document.querySelector("openclaw-app-shell") as unknown as {
+            activeSessionKey?: string;
+          }
+        )?.activeSessionKey,
     );
     assert.ok(
       typeof sessionKey === "string" && /^agent:main:[A-Za-z0-9:._-]+$/u.test(sessionKey),

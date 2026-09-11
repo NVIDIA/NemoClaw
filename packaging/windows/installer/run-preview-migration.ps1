@@ -29,7 +29,7 @@ $oldUrl = 'https://media.githubusercontent.com/media/NVIDIA/NemoClaw/8aa14e4d1c2
 $report = [ordered]@{schemaVersion=1;classification='actual-published-preview-native-migration';sourceRevision=$env:GITHUB_SHA;productVersion=$ProductVersion;
     oldSource='491a3a3d5e7206d82c741198062b6e2aa98dc72c';oldSha256=$oldHash;newSha256=$newHash;status='failed';
     freshInstallTimingContaminated=$false;realModelRequests=0;cases=@();cleanupErrors=@()}
-$primary = $null; $retainedHelper = $null; $binding = $null; $ownedCanary = $false; $script:MigrationInstallerOpen = $false
+$primary = $null; $retainedHelper = $null; $binding = $null; $configHash = $null; $ownedCanary = $false; $script:MigrationInstallerOpen = $false
 
 function Get-MigrationRegistrations {
     $rows = @()
@@ -147,8 +147,11 @@ try {
         if ($identity.exitCode -ne 0 -or $leaseIdentity.runtimeId -cne $expected.runtimeId -or $leaseIdentity.sourceRevision -cne $env:GITHUB_SHA) { throw 'The migrated installed runtime differs from the same-run artifact.' }
         $case.newUninstall=Invoke-PreviewUi -SetupPath $newSetup -SetupSha256 $newHash -Mode uninstall -LogPath (Join-Path $caseRoot 'new-uninstall.log') -RemoveOpenClawData
         Assert-MigrationRegistrations ''
-        if ((Test-Path -LiteralPath $installation) -or (Test-Path -LiteralPath $configuration) -or (Test-Path -LiteralPath $state)) { throw 'Native tester reset retained selected owned application or agent data.' }
         $read=Invoke-MigrationHelper $retainedHelper @('--credential-read','compatible','--binding',$binding)
+        $case['resetObserved'] = @{installationRootExists=(Test-Path -LiteralPath $installation);configurationExists=(Test-Path -LiteralPath $configuration);stateRootExists=(Test-Path -LiteralPath $state);credentialReadExitCode=$read.exitCode;credentialOutputEmpty=($read.stdout.Length -eq 0)}
+        if ($case.resetObserved.installationRootExists) { throw 'Native tester reset retained the installation root.' }
+        if ($case.resetObserved.configurationExists) { throw 'Native tester reset retained the selected agent configuration.' }
+        if ($case.resetObserved.stateRootExists) { throw 'Native tester reset retained the selected agent state root.' }
         if ($read.exitCode -eq 0 -or $read.stdout.Length -ne 0) { throw 'Native tester reset retained the selected canary key.' }
         $ownedCanary=$false; $binding=$null; $case.resetVerified=$true
     }
@@ -159,14 +162,32 @@ finally {
         try { if ((Get-Content -LiteralPath $uiRecord.FullName -Raw | ConvertFrom-Json).cleanupClosed -ne $true) { $script:MigrationInstallerOpen=$true } } catch { $script:MigrationInstallerOpen=$true }
     }
     if ($script:MigrationInstallerOpen) { $report.cleanupErrors+=@('A live Windows installer transaction remains; no concurrent cleanup was attempted.') }
-    if (-not $script:MigrationInstallerOpen -and (Test-Path -LiteralPath $installation)) {
-        try {
-            if ($ownedCanary) { $null=Invoke-MigrationHelper (Join-Path $installation 'bin\NemoClaw.exe') @('--remove-native-data','--agent','openclaw') }
-            $null=Invoke-MigrationQuietUninstall $newSetup 'cleanup-uninstall'
-        } catch { $report.cleanupErrors+=@($_.Exception.Message) }
+    $installedHelper=Join-Path $installation 'bin\NemoClaw.exe'
+    if (-not $script:MigrationInstallerOpen -and (Test-Path -LiteralPath $installedHelper -PathType Leaf)) {
+        if ($ownedCanary) {
+            try {
+                $cleanupResult=Invoke-MigrationHelper $installedHelper @('--remove-native-data','--agent','openclaw')
+                if ($cleanupResult.exitCode -ne 0) { throw 'Installed owned-data cleanup failed.' }
+            } catch { $report.cleanupErrors+=@($_.Exception.Message) }
+        }
+        try { $null=Invoke-MigrationQuietUninstall $newSetup 'cleanup-uninstall' }
+        catch { $report.cleanupErrors+=@($_.Exception.Message) }
     }
     if (-not $script:MigrationInstallerOpen -and $ownedCanary -and $null -ne $retainedHelper -and (Test-Path -LiteralPath $retainedHelper)) {
-        try { $null=Invoke-MigrationHelper $retainedHelper @('--remove-native-data','--agent','openclaw') } catch { $report.cleanupErrors+=@($_.Exception.Message) }
+        # These two commands execute directly in the native launcher and do not
+        # require the removed installed runtime. Never use --remove-native-data
+        # through a retained copy: it dispatches into the installed application.
+        foreach ($command in @(@('--state-remove','openclaw'), @('--credential-delete','compatible','--binding',$binding))) {
+            try {
+                $cleanupResult=Invoke-MigrationHelper $retainedHelper $command
+                if ($cleanupResult.exitCode -ne 0) { throw 'Retained native canary cleanup failed.' }
+            } catch { $report.cleanupErrors+=@($_.Exception.Message) }
+        }
+        if (Test-Path -LiteralPath $configuration -PathType Leaf) {
+            if ($null -ne $configHash -and (Get-FileHash -LiteralPath $configuration -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $configHash) {
+                [IO.File]::Delete($configuration)
+            } else { $report.cleanupErrors+=@('The remaining configuration changed; it was preserved.') }
+        }
     }
     $report['installationRootRemoved']= -not(Test-Path -LiteralPath $installation)
     if ($report.cleanupErrors.Count -ne 0) { $report.status='failed' }

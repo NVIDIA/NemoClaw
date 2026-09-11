@@ -19,6 +19,103 @@ decltype(&CreateProcessA) realCreateA = CreateProcessA;
 decltype(&CreateProcessAsUserW) realCreateAsUserW = CreateProcessAsUserW;
 decltype(&CreateProcessAsUserA) realCreateAsUserA = CreateProcessAsUserA;
 
+// The canonical MSYS image does not opt into DYNAMIC_BASE and fork expects
+// its DLL data at identical addresses. This explicit prototype option changes
+// only mandatory relocation; images opting into ASLR keep their normal policy.
+bool preferredMsysLayout() {
+    const DWORD saved = GetLastError();
+    WCHAR ci[8] = {}, mode[16] = {};
+    const bool enabled = initialized && GetEnvironmentVariableW(L"GITHUB_ACTIONS", ci, 8) == 4 && !wcscmp(ci, L"true") &&
+        GetEnvironmentVariableW(L"NEMOCLAW_MSYS_IMAGE_LAYOUT", mode, 16) == 9 && !wcscmp(mode, L"preferred");
+    SetLastError(saved);
+    return enabled;
+}
+
+template<class Startup, class Extended> struct MsysCreationLayout {
+    Startup* startup = nullptr;
+    Extended extended = {};
+    DWORD flags = 0;
+    bool requested = false, applied = false, preservedExtended = false, attributesInitialized = false;
+    LPPROC_THREAD_ATTRIBUTE_LIST attributes = nullptr;
+    DWORD64 policy = 0x0000000000000200ULL; // FORCE_RELOCATE_IMAGES_ALWAYS_OFF, no other override.
+    bool ready(Startup* original, DWORD originalFlags) {
+        startup = original; flags = originalFlags; requested = preferredMsysLayout();
+        if (!requested) return true;
+        // Never replace an opaque caller-owned attribute list or a nonstandard
+        // startup structure. The canonical launcher and MSYS fork use basic SI.
+        preservedExtended = (flags & EXTENDED_STARTUPINFO_PRESENT) != 0;
+        if (preservedExtended || !original || original->cb != sizeof(Startup)) return true;
+        SIZE_T needed = 0;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &needed);
+        if (!needed || needed > 4096) { SetLastError(ERROR_INVALID_DATA); return false; }
+        attributes = static_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(HeapAlloc(GetProcessHeap(), 0, needed));
+        if (!attributes) { SetLastError(ERROR_NOT_ENOUGH_MEMORY); return false; }
+        if (!InitializeProcThreadAttributeList(attributes, 1, 0, &needed)) return false;
+        attributesInitialized = true;
+        if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
+                &policy, sizeof(policy), nullptr, nullptr)) return false;
+        extended.StartupInfo = *original; // Includes cbReserved2/lpReserved2 and every stdio/desktop field.
+        extended.StartupInfo.cb = sizeof(Extended);
+        extended.lpAttributeList = attributes;
+        startup = &extended.StartupInfo;
+        flags |= EXTENDED_STARTUPINFO_PRESENT;
+        applied = true;
+        return true;
+    }
+    ~MsysCreationLayout() {
+        const DWORD saved = GetLastError();
+        if (attributes) { if (attributesInitialized) DeleteProcThreadAttributeList(attributes); HeapFree(GetProcessHeap(), 0, attributes); }
+        SetLastError(saved);
+    }
+};
+
+struct MsysMappedLayout {
+    DWORD64 base = 0, preferred = 0, caps = 0;
+    DWORD size = 0;
+    WORD characteristics = 0;
+    BOOL exactShape = FALSE;
+};
+MsysMappedLayout currentMsysLayout() {
+    MsysMappedLayout value;
+    HMODULE module = GetModuleHandleW(L"msys-2.0.dll");
+    if (!module) return value;
+    value.base = reinterpret_cast<DWORD64>(module);
+    __try {
+        const BYTE* base = reinterpret_cast<const BYTE*>(module);
+        const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew < 64 || dos->e_lfanew > 1024) return value;
+        const auto pe = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+        if (pe->Signature != IMAGE_NT_SIGNATURE || pe->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
+            pe->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return value;
+        value.preferred = pe->OptionalHeader.ImageBase;
+        value.size = pe->OptionalHeader.SizeOfImage;
+        value.characteristics = pe->OptionalHeader.DllCharacteristics;
+        value.exactShape = value.preferred == 0x210040000ULL && value.size == 0x360000 &&
+            pe->FileHeader.TimeDateStamp == 0x69c910a9;
+        if (value.exactShape) value.caps = *reinterpret_cast<const DWORD64*>(base + 0x34d198);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    return value;
+}
+void logMsysCreationLayout(HANDLE child, bool requested, bool applied, bool preservedExtended) {
+    if (!preferredMsysLayout()) return;
+    const DWORD saved = GetLastError();
+    PROCESS_MITIGATION_ASLR_POLICY parentPolicy = {}, childPolicy = {};
+    const BOOL parentKnown = GetProcessMitigationPolicy(GetCurrentProcess(), ProcessASLRPolicy, &parentPolicy, sizeof(parentPolicy));
+    const DWORD parentError = parentKnown ? 0 : GetLastError();
+    const BOOL childKnown = child && GetProcessMitigationPolicy(child, ProcessASLRPolicy, &childPolicy, sizeof(childPolicy));
+    const DWORD childError = child && !childKnown ? GetLastError() : 0;
+    const MsysMappedLayout module = currentMsysLayout();
+    char line[1024];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_IMAGE_LAYOUT={\"schemaVersion\":1,\"pid\":%lu,\"childPid\":%lu,\"requested\":%s,\"applied\":%s,\"existingExtendedAttributesPreserved\":%s,\"creationPolicy\":\"0x0000000000000200\",\"parentAslrKnown\":%s,\"parentAslrFlags\":%lu,\"parentAslrError\":%lu,\"childAslrKnown\":%s,\"childAslrFlags\":%lu,\"childAslrError\":%lu,\"msysBase\":\"0x%llx\",\"msysPreferredBase\":\"0x%llx\",\"msysImageSize\":%lu,\"msysDllCharacteristics\":%u,\"exactMsysShape\":%s,\"capsPointer\":\"0x%llx\"}\n",
+        GetCurrentProcessId(), child ? GetProcessId(child) : 0, requested ? "true" : "false", applied ? "true" : "false", preservedExtended ? "true" : "false",
+        parentKnown ? "true" : "false", parentPolicy.Flags, parentError, childKnown ? "true" : "false", childPolicy.Flags, childError,
+        module.base, module.preferred, module.size, static_cast<unsigned>(module.characteristics), module.exactShape ? "true" : "false", module.caps);
+    DWORD written = 0;
+    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    SetLastError(saved);
+}
+
 uint16_t machineFromPeHeader(const unsigned char* header, size_t size) {
     if (size < 26 || header[0] != 'P' || header[1] != 'E' || header[2] || header[3]) return 0;
     const uint16_t machine = static_cast<uint16_t>(header[4] | (header[5] << 8));
@@ -508,7 +605,7 @@ BOOL WINAPI hookedCreateW(LPCWSTR app, LPWSTR args, LPSECURITY_ATTRIBUTES proces
     if (!allowed(output, flags)) return FALSE;
     CreationScope scope;
     PROCESS_INFORMATION child = {};
-    if (!realCreateW(app,args,processAttributes,threadAttributes,inherit,flags|CREATE_SUSPENDED,environment,directory,startup,&child)) return FALSE;
+    if (!NemoClawCreateProcessW(app,args,processAttributes,threadAttributes,inherit,flags|CREATE_SUSPENDED,environment,directory,startup,&child)) return FALSE;
     if (!NemoClawCompleteSuspendedChild(&child, flags)) return FALSE;
     *output = child;
     return TRUE;
@@ -521,7 +618,10 @@ BOOL WINAPI hookedCreateA(LPCSTR app, LPSTR args, LPSECURITY_ATTRIBUTES processA
     if (!allowed(output, flags)) return FALSE;
     CreationScope scope;
     PROCESS_INFORMATION child = {};
-    if (!realCreateA(app,args,processAttributes,threadAttributes,inherit,flags|CREATE_SUSPENDED,environment,directory,startup,&child)) return FALSE;
+    MsysCreationLayout<STARTUPINFOA, STARTUPINFOEXA> layout;
+    if (!layout.ready(startup, flags | CREATE_SUSPENDED)) return FALSE;
+    if (!realCreateA(app,args,processAttributes,threadAttributes,inherit,layout.flags,environment,directory,layout.startup,&child)) return FALSE;
+    logMsysCreationLayout(child.hProcess, layout.requested, layout.applied, layout.preservedExtended);
     if (!NemoClawCompleteSuspendedChild(&child, flags)) return FALSE;
     *output = child;
     return TRUE;
@@ -534,7 +634,10 @@ BOOL WINAPI hookedAsUserW(HANDLE token, LPCWSTR app, LPWSTR args, LPSECURITY_ATT
     if (!allowed(output, flags)) return FALSE;
     CreationScope scope;
     PROCESS_INFORMATION child = {};
-    if (!realCreateAsUserW(token,app,args,processAttributes,threadAttributes,inherit,flags|CREATE_SUSPENDED,environment,directory,startup,&child)) return FALSE;
+    MsysCreationLayout<STARTUPINFOW, STARTUPINFOEXW> layout;
+    if (!layout.ready(startup, flags | CREATE_SUSPENDED)) return FALSE;
+    if (!realCreateAsUserW(token,app,args,processAttributes,threadAttributes,inherit,layout.flags,environment,directory,layout.startup,&child)) return FALSE;
+    logMsysCreationLayout(child.hProcess, layout.requested, layout.applied, layout.preservedExtended);
     if (!NemoClawCompleteSuspendedChild(&child, flags)) return FALSE;
     *output = child;
     return TRUE;
@@ -547,11 +650,27 @@ BOOL WINAPI hookedAsUserA(HANDLE token, LPCSTR app, LPSTR args, LPSECURITY_ATTRI
     if (!allowed(output, flags)) return FALSE;
     CreationScope scope;
     PROCESS_INFORMATION child = {};
-    if (!realCreateAsUserA(token,app,args,processAttributes,threadAttributes,inherit,flags|CREATE_SUSPENDED,environment,directory,startup,&child)) return FALSE;
+    MsysCreationLayout<STARTUPINFOA, STARTUPINFOEXA> layout;
+    if (!layout.ready(startup, flags | CREATE_SUSPENDED)) return FALSE;
+    if (!realCreateAsUserA(token,app,args,processAttributes,threadAttributes,inherit,layout.flags,environment,directory,layout.startup,&child)) return FALSE;
+    logMsysCreationLayout(child.hProcess, layout.requested, layout.applied, layout.preservedExtended);
     if (!NemoClawCompleteSuspendedChild(&child, flags)) return FALSE;
     *output = child;
     return TRUE;
 }
+}
+
+extern "C" BOOL NemoClawCreateProcessW(LPCWSTR app, LPWSTR args, LPSECURITY_ATTRIBUTES processAttributes,
+    LPSECURITY_ATTRIBUTES threadAttributes, BOOL inherit, DWORD flags, LPVOID environment,
+    LPCWSTR directory, LPSTARTUPINFOW startup, LPPROCESS_INFORMATION output) {
+    MsysCreationLayout<STARTUPINFOW, STARTUPINFOEXW> layout;
+    if (!layout.ready(startup, flags)) return FALSE;
+    const BOOL created = realCreateW(app,args,processAttributes,threadAttributes,inherit,layout.flags,environment,directory,layout.startup,output);
+    if (created) logMsysCreationLayout(output->hProcess, layout.requested, layout.applied, layout.preservedExtended);
+    return created;
+}
+extern "C" void NemoClawLogCurrentImageLayout() {
+    logMsysCreationLayout(nullptr, preferredMsysLayout(), false, false);
 }
 
 extern "C" BOOL NemoClawInitializeProcessContext(HMODULE self) {

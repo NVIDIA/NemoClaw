@@ -947,6 +947,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     DetourRestoreAfterWith();
     if (!initialize_namespace()) return initialization_result("namespace-context", GetLastError() ? GetLastError() : ERROR_DLL_INIT_FAILED);
     if (!NemoClawInitializeProcessContext(self)) return initialization_result("process-context", GetLastError() ? GetLastError() : ERROR_DLL_INIT_FAILED);
+    NemoClawLogCurrentImageLayout();
     LONG error = DetourTransactionBegin();
     if (error) return initialization_result("transaction-begin", error);
     error = DetourUpdateThread(GetCurrentThread());
