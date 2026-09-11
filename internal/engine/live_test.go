@@ -8,15 +8,14 @@ package engine
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/NVIDIA/NemoClaw/internal/config"
 	oshell "github.com/NVIDIA/NemoClaw/internal/openshell"
@@ -43,7 +42,7 @@ func TestLivePlanApplyModelExportRecreate(t *testing.T) {
 	if d.Spec.Sandboxes[0].Agents[0].Inference.Routes[0].Overrides.Model == alternate {
 		t.Fatal("alternate model must differ")
 	}
-	d.Metadata.UID = liveUUID(t)
+	d.Metadata.UID = uuid.NewV4().String()
 	root, err := filepath.Abs(filepath.Join("../../.local", "live-"+d.Metadata.UID))
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +54,7 @@ func TestLivePlanApplyModelExportRecreate(t *testing.T) {
 	bundle, _ := filepath.Abs("../../dist/" + runtime.GOOS + "_" + runtime.GOARCH)
 	out := &bytes.Buffer{}
 	e := &Engine{StateDir: filepath.Join(root, "original"), BundleDir: bundle, Output: out}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	invoke := func(e *Engine, operation string, d config.Document) Result {
 		t.Helper()
@@ -125,7 +124,7 @@ func TestLivePlanApplyModelExportRecreate(t *testing.T) {
 	// Fork the exported deployment into a new workspace with an explicit new UID.
 	// The protocol integration test additionally recreates the same UID on a
 	// different gateway endpoint.
-	exported.Metadata.UID = liveUUID(t)
+	exported.Metadata.UID = uuid.NewV4().String()
 	other := &Engine{StateDir: filepath.Join(root, "recreated"), BundleDir: bundle, Output: out}
 	if result := invoke(other, "apply", exported); len(result.Changes) != 4 {
 		t.Fatal("export did not create four resources")
@@ -145,20 +144,9 @@ func TestLivePlanApplyModelExportRecreate(t *testing.T) {
 	}
 }
 
-func liveUUID(t *testing.T) string {
-	t.Helper()
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		t.Fatal(err)
-	}
-	b[6] = (b[6] & 15) | 64
-	b[8] = (b[8] & 63) | 128
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
-
 func liveAgentReply(t *testing.T, ctx context.Context, c oshell.Client, d config.Document) {
 	t.Helper()
-	r, err := c.Exec().Run(ctx, d.Workspace(), d.Spec.Sandboxes[0].Name, []string{"openclaw", "agent", "--agent", d.Spec.Sandboxes[0].Agents[0].Name, "--session-id", liveUUID(t), "--message", "Reply with the word FOUR.", "--thinking", "off", "--json", "--timeout", "120"}, v1.ExecOptions{})
+	r, err := c.Exec().Run(ctx, d.Workspace(), d.Spec.Sandboxes[0].Name, []string{"openclaw", "agent", "--agent", d.Spec.Sandboxes[0].Agents[0].Name, "--session-id", uuid.NewV4().String(), "--message", "Reply with the word FOUR.", "--thinking", "off", "--json", "--timeout", "120"}, v1.ExecOptions{})
 	if err != nil || r.ExitCode != 0 {
 		t.Fatal("live OpenClaw inference failed; inspect retained deployment")
 	}
@@ -173,6 +161,8 @@ func liveAgentReply(t *testing.T, ctx context.Context, c oshell.Client, d config
 
 func liveCleanup(t *testing.T, d config.Document, ids map[string]string) {
 	t.Helper()
+	// t.Context is canceled before cleanup callbacks, which still need to delete
+	// the resources owned by this live test.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	c, err := oshell.Connect(d.Spec.Gateway)

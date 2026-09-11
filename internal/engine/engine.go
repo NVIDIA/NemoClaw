@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -117,13 +118,8 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 		return errors.New("this slice requires a gateway with one compute driver")
 	}
 	wantDriver := d.Spec.Sandboxes[0].Runtime.Provider
-	found := false
-	for _, driver := range info.ComputeDrivers {
-		if driver.Name == wantDriver || driver.DriverName == wantDriver {
-			found = true
-		}
-	}
-	if !found {
+	driver := info.ComputeDrivers[0]
+	if driver.Name != wantDriver && driver.DriverName != wantDriver {
 		return errors.New("gateway compute driver does not satisfy the configuration")
 	}
 	ids, err := e.stateIDs()
@@ -163,10 +159,8 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 	}
 	result := Result{Outcome: "planned", Changes: []Change{}}
 	for _, change := range plan.ResourceChanges {
-		for _, action := range change.Change.Actions {
-			if action == "delete" {
-				return errors.New("plan would delete or replace a resource; resources retained")
-			}
+		if slices.Contains(change.Change.Actions, "delete") {
+			return errors.New("plan would delete or replace a resource; resources retained")
 		}
 		if len(change.Change.Actions) == 1 && change.Change.Actions[0] == "no-op" {
 			continue

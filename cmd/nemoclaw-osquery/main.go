@@ -79,10 +79,9 @@ func run() error {
 	return s.Run()
 }
 func equal(q table.QueryContext, name string) (string, error) {
-	for _, c := range q.Constraints[name].Constraints {
-		if c.Operator == table.OperatorEquals {
-			return c.Expression, nil
-		}
+	constraints := q.Constraints[name].Constraints
+	if i := slices.IndexFunc(constraints, func(c table.Constraint) bool { return c.Operator == table.OperatorEquals }); i >= 0 {
+		return constraints[i].Expression, nil
 	}
 	return "", fmt.Errorf("an equality constraint on %s is required", name)
 }

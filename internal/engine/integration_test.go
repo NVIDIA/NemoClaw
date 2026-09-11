@@ -48,7 +48,7 @@ func invoke(t *testing.T, e *Engine, operation string, d config.Document) error 
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	return e.Run(ctx, operation, bytes.NewReader(b))
 }
@@ -158,7 +158,7 @@ func TestInterruptedApplyRecoversAfterSandboxCreation(t *testing.T) {
 	created := make(chan struct{})
 	f.blockSandbox = created
 	b, _ := d.YAML()
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- e.Run(ctx, "apply", bytes.NewReader(b)) }()

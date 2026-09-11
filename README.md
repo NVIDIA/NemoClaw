@@ -156,6 +156,9 @@ own live runtime test.
 
 ## Verify
 
+Go changes follow the JetBrains Modern Go Guidelines through the locally
+vendored skill. See [AGENTS.md](AGENTS.md) for the version-aware workflow.
+
 ```sh
 go test ./...
 go vet ./...

@@ -96,9 +96,7 @@ func run(ctx context.Context, dir, binary string, env []string, args ...string) 
 			return nil, errors.New("operation interrupted; retain state and reapply the same YAML")
 		}
 		msg := stderr.String()
-		if len(msg) > 16384 {
-			msg = msg[:16384]
-		}
+		msg = msg[:min(len(msg), 16384)]
 		// Credentials never enter configuration, but upstream diagnostics are still
 		// treated as untrusted and redacted before reaching the terminal.
 		for _, entry := range env {

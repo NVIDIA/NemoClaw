@@ -6,6 +6,7 @@ respective licenses. `go.mod`, `go.sum`, and `versions.json` identify the inputs
 | Component | Role | License |
 | --- | --- | --- |
 | Go | Compiler and standard library | BSD-3-Clause |
+| JetBrains Modern Go Guidelines | Development guidance and skill wrappers | Apache-2.0 |
 | OpenTofu | Separate executable | MPL-2.0 |
 | osquery | Separate executable | Apache-2.0 |
 | Terraform plugin framework | Provider protocol implementation | MPL-2.0 |

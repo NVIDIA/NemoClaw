@@ -1,4 +1,4 @@
-# Local validation: 2026-09-11
+# Initial slice validation: 2026-09-11
 
 The first slice passed on Linux ARM64 with Docker 29.2.1, OpenShell 0.0.116,
 OpenClaw 2026.9.4, and Ollama 0.34.0. This is local experiment evidence, not a
@@ -55,7 +55,7 @@ The live recreation used a fresh workspace and explicit new UID on the same gate
 ## Build availability
 
 Go 1.27.1, OpenTofu 1.12.6, and osquery 5.23.1 were executed locally. Each generated
-bundle contains five executables and a verified manifest. The final source-derived
+bundle contains five executables and a verified manifest. The initial source-derived
 provider version is `0.1.0-dev.g72caa84deee8`.
 
 | Bundle | Build and checksums | Runtime evidence | Uncompressed size |
@@ -93,3 +93,17 @@ Remaining work includes managed gateway/inference provisioning, the rest of the
 local directory, native macOS/Windows and Podman qualification, and distribution
 packaging. Windows child-process cleanup needs live verification. There is no
 automatic rollback or migration from an existing NemoClaw deployment.
+
+## Modern Go guidance adoption: 2026-09-11
+
+Added the upstream JetBrains `use-modern-go` skill at revision
+`155dc7ca10da5e1f6c841503086957b1b37f5815`, using guidance CLI `v0.1.1`.
+Read the full Go 1.27 guideline list and applied the relevant standard-library
+UUID, test-context, slice, error-matching, ticker, and `min` idioms. Existing
+JSON v1 behavior and the deployment format remain unchanged.
+
+`go test -race -tags=integration ./...` passed, including all nine integration
+tests. `go vet -tags=integration,live ./...` passed, the live test compiled, and
+`go fix -diff -tags=integration,live ./...` returned no changes. All five platform
+bundles rebuilt at provider version `0.1.0-dev.gbce1d676b2a4`.
+The live runtime scenario above was not rerun for this idiom cleanup.

@@ -288,7 +288,7 @@ func extractBinary(archive, dest, tool string, isZip bool) error {
 		t := tar.NewReader(g)
 		for {
 			h, err := t.Next()
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {

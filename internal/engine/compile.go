@@ -41,9 +41,7 @@ func newGenerations() map[string]string {
 	m := map[string]string{}
 	for _, kind := range []string{"workspace", "provider", "sandbox"} {
 		b := make([]byte, 16)
-		if _, err := rand.Read(b); err != nil {
-			panic(err)
-		}
+		rand.Read(b)
 		m[kind] = hex.EncodeToString(b)
 	}
 	return m

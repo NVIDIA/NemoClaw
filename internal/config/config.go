@@ -118,7 +118,7 @@ func Parse(r io.Reader) (Document, error) {
 		return d, errors.New("configuration contains an unknown field or invalid field type")
 	}
 	var extra yaml.Node
-	if err := dec.Decode(&extra); err != io.EOF {
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return d, errors.New("expected exactly one YAML document")
 	}
 	return d, d.Validate()

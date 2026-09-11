@@ -44,10 +44,8 @@ type Client interface {
 }
 
 func DefinitionFor(kind string) Definition {
-	for _, d := range Definitions {
-		if d.Kind == kind {
-			return d
-		}
+	if i := slices.IndexFunc(Definitions, func(d Definition) bool { return d.Kind == kind }); i >= 0 {
+		return Definitions[i]
 	}
 	panic("unknown internal resource kind")
 }
