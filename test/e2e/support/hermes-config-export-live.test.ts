@@ -23,7 +23,7 @@ vi.mock("../../../src/lib/state/registry/persistence.ts", () => ({
 
 vi.mock("../../../src/lib/adapters/openshell/sandbox-policy-cli.ts", () => ({
   namedOpenShellGateway: (name: string) => ({ kind: "named", name }),
-  syncCliOpenShellSandboxPolicyReader: { readSandboxPolicy: mocks.readSandboxPolicy },
+  cliOpenShellSandboxPolicyReader: { readSandboxPolicy: mocks.readSandboxPolicy },
 }));
 
 vi.mock("../../../src/lib/config/schema.ts", () => ({
