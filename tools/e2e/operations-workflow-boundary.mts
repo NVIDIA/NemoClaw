@@ -81,10 +81,15 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
   [
     "set -euo pipefail",
     'case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in',
-    "  NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
+    "  NVIDIA/NemoClaw:refs/heads/main:push:)",
     '    expected_sha="$WORKFLOW_SHA"',
     "    allow_non_head=0",
     "    select_nearest_successful=0",
+    "    ;;",
+    "  NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
+    '    expected_sha="$WORKFLOW_SHA"',
+    "    allow_non_head=0",
+    "    select_nearest_successful=1",
     "    ;;",
     "  NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)",
     '    [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {',
@@ -938,7 +943,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     "catalogue-brave-nvidia-inference",
   ]) {
     const catalogue = workflow.jobs[jobName] ?? {};
-    if (!sameMembers(needs(catalogue), ["base-image-publication", "generate-matrix"])) {
+    if (
+      !sameMembers(needs(catalogue), [
+        "base-image-publication",
+        "generate-matrix",
+        "package-openshell-sdk",
+      ])
+    ) {
       errors.push(`${jobName} must wait for matrix generation and base-image publication`);
     }
     if (
@@ -1143,8 +1154,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}" ||
-    requireResults.run !==
-      "node --no-warnings tools/e2e/release-qualification.mts"
+    requireResults.run !== "node --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("relevant-e2e must evaluate planner-selected jobs from needs");
   }
@@ -1186,8 +1196,7 @@ function validateReleaseQualification(errors: string[], workflow: OperationsWork
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.release_required_jobs }}" ||
-    requireResults.run !==
-      "node --no-warnings tools/e2e/release-qualification.mts"
+    requireResults.run !== "node --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("release-qualification must evaluate planner-selected jobs from needs");
   }

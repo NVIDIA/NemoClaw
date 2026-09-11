@@ -10,30 +10,23 @@ if [ "$#" -ne 1 ]; then
 fi
 
 config_file="$1"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 download_dir="$(mktemp -d "$RUNNER_TEMP/reviewed-npm.XXXXXX")"
 trap 'rm -rf "$download_dir"' EXIT
-identity_file="$download_dir/identity"
 
-node --input-type=module - "$config_file" >"$identity_file" <<'NODE'
+IFS=$'\t' read -r version expected_integrity expected_sha256 < <(
+  node --input-type=module - \
+    "$config_file" \
+    "$script_dir/../../../scripts/lib/reviewed-npm-audit.mts" <<'NODE'
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
-const [configFile] = process.argv.slice(2);
-const config = JSON.parse(readFileSync(configFile, "utf8"));
-if (!/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(config.npmVersion)) {
-  throw new Error("reviewed npm audit configuration has an invalid npmVersion");
-}
-if (!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(config.npmIntegrity)) {
-  throw new Error("reviewed npm audit configuration has an invalid npmIntegrity");
-}
-if (!/^[a-f0-9]{64}$/.test(config.npmArchiveSha256)) {
-  throw new Error("reviewed npm audit configuration has an invalid npmArchiveSha256");
-}
-process.stdout.write(`${config.npmVersion}\n${config.npmIntegrity}\n${config.npmArchiveSha256}\n`);
+const [configFile, reviewedNpmAuditFile] = process.argv.slice(2);
+const { parseReviewedNpmIdentityConfig } = await import(pathToFileURL(reviewedNpmAuditFile).href);
+const identity = parseReviewedNpmIdentityConfig(readFileSync(configFile, "utf8"));
+process.stdout.write(`${identity.npmVersion}\t${identity.npmIntegrity}\t${identity.npmArchiveSha256}\n`);
 NODE
-
-IFS= read -r version <"$identity_file"
-IFS= read -r expected_integrity < <(sed -n '2p' "$identity_file")
-IFS= read -r expected_sha256 < <(sed -n '3p' "$identity_file")
+)
 [ -n "$version" ]
 [ -n "$expected_integrity" ]
 [ -n "$expected_sha256" ]
@@ -60,6 +53,21 @@ IFS= read -r actual_sha256 < <(sed -n '2p' "$actual_hashes")
 actual_integrity="sha512-$actual_sha512"
 if [ "$actual_integrity" != "$expected_integrity" ] || [ "$actual_sha256" != "$expected_sha256" ]; then
   echo "ERROR: npm@$version archive integrity mismatch." >&2
+  exit 1
+fi
+
+if ! archive_version="$(
+  tar -xOf "$archive" package/package.json | node -e '
+    const version = JSON.parse(require("node:fs").readFileSync(0, "utf8")).version;
+    if (typeof version !== "string") process.exit(1);
+    process.stdout.write(version);
+  '
+)"; then
+  echo "ERROR: npm@$version archive package/package.json is missing or invalid." >&2
+  exit 1
+fi
+if [ "$archive_version" != "$version" ]; then
+  echo "ERROR: npm archive version $archive_version does not match reviewed npm@$version." >&2
   exit 1
 fi
 

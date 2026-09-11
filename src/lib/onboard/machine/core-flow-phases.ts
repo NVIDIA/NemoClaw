@@ -333,6 +333,8 @@ export function createSandboxOnboardFlowPhase<
       gatewayName: options.gatewayName,
       hermesPortableLifecycle: options.hermesPortableLifecycle === true,
       apfInterceptorRequested: options.apfInterceptorRequested === true,
+      externalComponentRegistered:
+        context.externalComponent !== null && context.externalComponent !== undefined,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       deferredN1xManagedVllmPreviewIntent:
         context.deferredN1xManagedVllmPreviewAccepted === true &&

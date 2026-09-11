@@ -593,12 +593,15 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         fs.mkdirSync(fakeNpmBin);
         const fakeNpm = path.join(fakeNpmBin, "npm");
         const previousPath = process.env.PATH ?? "";
+        const sentinelFilename = "npm12-shape-probe.tgz";
+        const sentinelIntegrity = `sha512-${Buffer.alloc(64, 12).toString("base64")}`;
+        const sentinelVersion = "0.0.0-npm12-shape-probe";
         const expectedMetadata = {
-          filename: path.basename(tarballPath),
-          id: `openclaw@${version}`,
-          integrity,
+          filename: sentinelFilename,
+          id: `openclaw@${sentinelVersion}`,
+          integrity: sentinelIntegrity,
           name: "openclaw",
-          version,
+          version: sentinelVersion,
         };
         try {
           process.env.PATH = `${fakeNpmBin}:${previousPath}`;
@@ -624,8 +627,18 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           );
           requireRuntimeEqual(
             arrayMetadata.metadata?.version ?? "missing",
-            version,
+            sentinelVersion,
             "npm 12 pack JSON real parser array package version",
+          );
+          requireRuntimeEqual(
+            arrayMetadata.metadata?.integrity ?? "missing",
+            sentinelIntegrity,
+            "npm 12 pack JSON real parser array integrity",
+          );
+          requireRuntimeEqual(
+            arrayMetadata.tarballName ?? "missing",
+            sentinelFilename,
+            "npm 12 pack JSON real parser array filename",
           );
 
           fs.writeFileSync(
@@ -650,8 +663,18 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           );
           requireRuntimeEqual(
             directMetadata.metadata?.version ?? "missing",
-            version,
+            sentinelVersion,
             "npm 12 pack JSON real parser direct-object package version",
+          );
+          requireRuntimeEqual(
+            directMetadata.metadata?.integrity ?? "missing",
+            sentinelIntegrity,
+            "npm 12 pack JSON real parser direct-object integrity",
+          );
+          requireRuntimeEqual(
+            directMetadata.tarballName ?? "missing",
+            sentinelFilename,
+            "npm 12 pack JSON real parser direct-object filename",
           );
         } finally {
           process.env.PATH = previousPath;
@@ -676,14 +699,10 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "embedded-agent retry persistence patch preimage count",
         );
 
-        const chatPatch = spawnSync(
-          nodeRuntime.executable,
-          [PATCH_OPENCLAW_CHAT_SEND, dist],
-          {
-            encoding: "utf-8",
-            timeout: PATCH_COMMAND_TIMEOUT_MS,
-          },
-        );
+        const chatPatch = spawnSync(nodeRuntime.executable, [PATCH_OPENCLAW_CHAT_SEND, dist], {
+          encoding: "utf-8",
+          timeout: PATCH_COMMAND_TIMEOUT_MS,
+        });
         requireSpawnSuccess(chatPatch, "apply chat.send compatibility patch");
         requireRuntimeIncludes(
           chatPatch.stdout,

@@ -165,13 +165,14 @@ describe("locked npm cache seed materialization", () => {
     ]);
   });
 
-  it("does not invent an archive for a peer omitted by a legacy-peer lock", async () => {
+  it("does not invent an archive for an absent optional peer", async () => {
     const alpha = archive("alpha", "alpha archive");
     const lockfile = writeLock(testRoot, [alpha.locked]);
     const lock = JSON.parse(readFileSync(lockfile, "utf8")) as {
       packages: Record<string, Record<string, unknown>>;
     };
     lock.packages["node_modules/alpha"].peerDependencies = { host: ">=1" };
+    lock.packages["node_modules/alpha"].peerDependenciesMeta = { host: { optional: true } };
     writeFileSync(lockfile, `${JSON.stringify(lock, null, 2)}\n`);
     const seed = path.join(testRoot, "seed");
 
@@ -184,6 +185,55 @@ describe("locked npm cache seed materialization", () => {
 
     expect(manifest.archiveCount).toBe(1);
     expect(readdirSync(seed).sort()).toEqual(["alpha-1.0.0.tgz", "manifest.json"]);
+  });
+
+  it.each(["^1.0.0", "~1.0.0", ">=1.0.0 <2", "npm:beta@1.0.0", "1.0.0+build.1"])(
+    "does not treat non-exact dependency spec %s as an exact locked version",
+    async (requested) => {
+      const alpha = archive("alpha", "alpha archive");
+      const lockfile = writeLock(testRoot, [alpha.locked]);
+      const lock = JSON.parse(readFileSync(lockfile, "utf8")) as {
+        packages: Record<string, Record<string, unknown>>;
+      };
+      lock.packages[""].dependencies = { alpha: requested };
+      lock.packages["node_modules/alpha"].version = "9.9.9";
+      writeFileSync(lockfile, `${JSON.stringify(lock, null, 2)}\n`);
+
+      const manifest = await materializeLockedNpmCacheSeed({
+        downloadArchive: async () => alpha.bytes,
+        lockfile,
+        output: path.join(testRoot, "seed"),
+        target: TARGET,
+      });
+
+      expect(manifest.archiveCount).toBe(1);
+    },
+  );
+
+  it("rejects a resolved optional peer with a different exact version", async () => {
+    const alpha = archive("alpha", "alpha archive");
+    const beta = archive("beta", "beta archive");
+    const lockfile = writeLock(testRoot, [alpha.locked, beta.locked]);
+    const lock = JSON.parse(readFileSync(lockfile, "utf8")) as {
+      packages: Record<string, Record<string, unknown>>;
+    };
+    lock.packages[""].dependencies = { alpha: "1.0.0" };
+    lock.packages["node_modules/alpha"].peerDependencies = { beta: "2.0.0" };
+    lock.packages["node_modules/alpha"].peerDependenciesMeta = { beta: { optional: true } };
+    writeFileSync(lockfile, `${JSON.stringify(lock, null, 2)}\n`);
+    const downloadArchive = vi.fn(async () => alpha.bytes);
+
+    await expect(
+      materializeLockedNpmCacheSeed({
+        downloadArchive,
+        lockfile,
+        output: path.join(testRoot, "seed"),
+        target: TARGET,
+      }),
+    ).rejects.toThrow(
+      "package-lock exact dependency is unresolved: beta@2.0.0 from node_modules/alpha",
+    );
+    expect(downloadArchive).not.toHaveBeenCalled();
   });
 
   it("rejects an exact dependency resolved to a different locked version", async () => {

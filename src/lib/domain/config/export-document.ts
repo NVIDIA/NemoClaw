@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { EXPORTED_VLLM_CONTEXT_WINDOW } from "../../config/model";
 import type {
   NemoClawConfig,
   NemoClawConfigDocumentName,
   NemoClawConfigDocumentUid,
+  NemoClawAgentConfig,
   NemoClawInferenceProviderConfig,
 } from "../../config/model";
 import type { VerifiedExportSource } from "./export-evidence";
@@ -21,6 +23,14 @@ function inferenceProvider(
   source: VerifiedExportSource,
   name: string,
 ): NemoClawInferenceProviderConfig {
+  if ("serving" in source.inference) {
+    return {
+      name,
+      provider: source.inference.provider,
+      api: source.inference.api,
+      serving: source.inference.serving,
+    };
+  }
   const provider = {
     name,
     provider: source.inference.provider,
@@ -32,9 +42,47 @@ function inferenceProvider(
     : { ...provider, credential: { env: source.inference.credentialEnv } };
 }
 
+function primaryAgent(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig {
+  return {
+    name: "primary",
+    ...agentSettings(source),
+    ...(source.auth === undefined
+      ? {}
+      : { auth: { method: source.auth.method, providerRef: providerName } }),
+    inference: {
+      routes: [
+        {
+          name: "primary",
+          providerRef: providerName,
+          overrides: {
+            model: source.inference.model,
+            ...("serving" in source.inference
+              ? { contextWindow: EXPORTED_VLLM_CONTEXT_WINDOW }
+              : {}),
+            ...("overrides" in source.inference ? source.inference.overrides : {}),
+          },
+        },
+      ],
+    },
+  };
+}
+
 export interface ExportConfigBuildIdentity {
   readonly documentName: NemoClawConfigDocumentName;
   readonly documentUid: NemoClawConfigDocumentUid;
+}
+
+function agentSettings(source: VerifiedExportSource) {
+  return {
+    ...(source.agent === "openclaw"
+      ? {
+          type: "openclaw" as const,
+          ...(source.interfaces ? { interfaces: source.interfaces } : {}),
+          ...(source.observability ? { observability: source.observability } : {}),
+        }
+      : { type: "hermes" as const }),
+    ...(source.execution ? { execution: source.execution } : {}),
+  };
 }
 
 /** Map one verified export source to an unbound aggregate document. */
@@ -42,7 +90,8 @@ export function buildExportConfig(
   source: VerifiedExportSource,
   identity: ExportConfigBuildIdentity,
 ): NemoClawConfig {
-  const providerName = providerLocalName(source.inference.provider);
+  const providerName =
+    "serving" in source.inference ? "managed-vllm" : providerLocalName(source.inference.provider);
   const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1",
     kind: "NemoClawConfig",
@@ -61,22 +110,12 @@ export function buildExportConfig(
             provider: source.runtime.provider,
             image: { ref: source.runtime.imageRef },
           },
-          network: { policy: { explicit: source.policy } },
-          agents: [
-            {
-              name: "primary",
-              type: "openclaw",
-              inference: {
-                routes: [
-                  {
-                    name: "primary",
-                    providerRef: providerName,
-                    overrides: { model: source.inference.model },
-                  },
-                ],
-              },
-            },
-          ],
+          network: {
+            policy: { explicit: source.policy },
+            ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
+          },
+          ...(source.webSearch ? { integrations: { webSearch: source.webSearch } } : {}),
+          agents: [primaryAgent(source, providerName)],
         },
       ],
     },

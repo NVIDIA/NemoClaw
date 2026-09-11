@@ -221,6 +221,19 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     name: "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}",
     path: "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}",
   });
+  const audit = requireStep(
+    errors,
+    workflowSteps,
+    "Reuse or refresh reviewed audit evidence before the offline build",
+  );
+  if (audit?.uses !== "./.github/actions/ci-reviewed-npm-audit") {
+    errors.push(`${JOB_ID} must execute the trusted reviewed npm audit action`);
+  }
+  requireValues(errors, `${JOB_ID} audit action`, record(audit?.with), {
+    "target-root": "${{ github.workspace }}/.candidate-runtime",
+    "report-dir": "artifacts/reviewed-npm-audit",
+    "cache-directory": "${{ runner.temp }}/reviewed-npm-audit-cache",
+  });
 
   const buildx = requireStep(errors, workflowSteps, "Set up protected runtime Buildx");
   if (buildx?.uses !== "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c") {
@@ -317,10 +330,16 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "--platform linux/amd64",
     '--source-root "$GITHUB_WORKSPACE/.candidate-runtime"',
     '--cache-from "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE"',
+    '--audit-evidence-from "$GITHUB_WORKSPACE/.candidate-runtime/artifacts/reviewed-npm-audit"',
     '--openclaw-base "$BASE_OPENCLAW"',
     '--hermes-base "$BASE_HERMES"',
     '--dcode-base "$BASE_DCODE"',
   ]);
+  if (
+    text(build?.run).includes(".candidate-runtime/scripts/checks/build-protected-managed-images.sh")
+  ) {
+    errors.push(`${JOB_ID} build controller must execute trusted workflow code`);
+  }
   requireValues(errors, `${JOB_ID} protected runtime build bases`, record(build?.env), {
     BASE_HERMES:
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}",
@@ -382,6 +401,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Validate protected runtime exact-head dispatch",
     "Checkout trusted protected runtime qualification",
     "Checkout exact protected runtime candidate source",
+    "Reuse or refresh reviewed audit evidence before the offline build",
     "Download exact protected runtime build cache",
     "Prepare E2E workspace",
     "Validate protected runtime activation contract",

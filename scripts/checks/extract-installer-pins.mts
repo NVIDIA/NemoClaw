@@ -196,6 +196,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
     pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
@@ -315,6 +317,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
     pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
@@ -366,6 +370,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
     pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
@@ -414,15 +420,20 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
     pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.103",
   },
   {
+    // The final template pre-authorizes the exact Brev Node/npm bootstrap in #11080 because
+    // dependent installer validation reads this trust record from the base branch.
     brevTemplateSha256: [
       "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
       "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
+      "ee86b418f29c48e4d4042cdb9bb5424eaaef0d89782134646c4b539e2849703e",
     ],
     formula: {
       asset: "openshell.rb",
@@ -482,6 +493,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
     pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
@@ -543,6 +556,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
         // Exact #11251 template after the reviewed 0.0.116-only recovery gate.
         "593ced09573f8cea5d2323b6d388ebb5d30f6da241d4f511e5364a3057887911",
         // Exact #11251 template after stable supervisor override binding.

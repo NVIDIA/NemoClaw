@@ -2,6 +2,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
+# FIXTURE — DO NOT EXECUTE, DO NOT UPDATE.
+# Frozen pre-migration copy of scripts/brev-launchable-ci-cpu.sh at Node.js 22.
+# Consumed by test/install/installer-hash-check.test.ts for historical scenarios.
+# Keep the Node.js 22 pins unchanged; the live script owns the current runtime.
+#
 # Brev launchable startup script — CI-Ready CPU
 #
 # Pre-bakes a VM with everything needed for NemoClaw E2E tests so that

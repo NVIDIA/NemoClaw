@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -10,10 +11,16 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { emitAuditReceipt } from "../../../scripts/audit-reviewed-npm-graph.mts";
+import { prepareReviewedNpmBootstrap } from "../../support/reviewed-npm-bootstrap";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const NPM_INTEGRITY =
   "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==";
+const REVIEWED_NPM_IDENTITY = {
+  npmArchiveSha256: "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1",
+  npmIntegrity: NPM_INTEGRITY,
+  npmVersion: "12.0.2",
+} as const;
 const TRUSTED_WORKFLOWS = [
   "e2e.yaml",
   "managed-images.yaml",
@@ -34,6 +41,15 @@ type Workflow = {
   >;
 };
 
+type CompositeAction = {
+  readonly runs?: {
+    readonly steps?: readonly {
+      readonly name?: string;
+      readonly run?: string;
+    }[];
+  };
+};
+
 const TRUSTED_AUDIT_SPARSE_CHECKOUTS = TRUSTED_WORKFLOWS.flatMap((workflowFile) => {
   const workflow = YAML.parse(
     fs.readFileSync(path.join(REPO_ROOT, ".github", "workflows", workflowFile), "utf8"),
@@ -52,6 +68,22 @@ const TRUSTED_AUDIT_SPARSE_CHECKOUTS = TRUSTED_WORKFLOWS.flatMap((workflowFile) 
       })),
   );
 });
+const TRUSTED_AUDIT_ACTION_CHECKOUTS = TRUSTED_AUDIT_SPARSE_CHECKOUTS.filter(({ sparseCheckout }) =>
+  sparseCheckout.includes(".github/actions/ci-reviewed-npm-audit"),
+);
+const REVIEWED_NPM_ACTION = YAML.parse(
+  fs.readFileSync(
+    path.join(REPO_ROOT, ".github", "actions", "ci-reviewed-npm-audit", "action.yaml"),
+    "utf8",
+  ),
+) as CompositeAction;
+const reviewedNpmBootstrapCommand = REVIEWED_NPM_ACTION.runs?.steps?.find(
+  (step) => step.name === "Download and verify production npm",
+)?.run;
+const REVIEWED_NPM_BOOTSTRAP_COMMAND =
+  typeof reviewedNpmBootstrapCommand === "string"
+    ? reviewedNpmBootstrapCommand
+    : assert.fail("The npm audit action does not define the production npm bootstrap command");
 
 function stageSparseCheckout(root: string, sparseCheckout: string): void {
   sparseCheckout
@@ -65,7 +97,7 @@ function stageSparseCheckout(root: string, sparseCheckout: string): void {
     });
 }
 
-describe("reviewed npm audit handoff", () => {
+describe("npm audit handoff", () => {
   it.each(TRUSTED_AUDIT_SPARSE_CHECKOUTS)(
     "loads the audit producer from the $name trusted sparse checkout",
     ({ sparseCheckout }) => {
@@ -91,6 +123,26 @@ describe("reviewed npm audit handoff", () => {
     },
   );
 
+  it.each(TRUSTED_AUDIT_ACTION_CHECKOUTS)(
+    "runs the reviewed npm bootstrap from the $name trusted sparse checkout (#8253)",
+    ({ sparseCheckout }) => {
+      const fixture = prepareReviewedNpmBootstrap({
+        command: REVIEWED_NPM_BOOTSTRAP_COMMAND,
+        configFile: (root) => path.join(root, "ci", "reviewed-npm-audit.json"),
+        environment: (root) => ({
+          GITHUB_ACTION_PATH: path.join(root, ".github", "actions", "ci-reviewed-npm-audit"),
+        }),
+        prepare: (root) => stageSparseCheckout(root, sparseCheckout),
+      });
+      const result = spawnSync("bash", fixture.args, fixture.spawnOptions);
+      try {
+        expect(result.status, result.stderr).toBe(0);
+      } finally {
+        fixture.cleanup();
+      }
+    },
+  );
+
   it("passes producer output to the Docker receipt verifier and rejects an npm mismatch", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-audit-receipt-handoff-"));
     const packageJsonFile = path.join(root, "package.json");
@@ -109,10 +161,7 @@ describe("reviewed npm audit handoff", () => {
       fs.writeFileSync(packageLockFile, packageLock);
       fs.writeFileSync(rawReportFile, rawReport);
       fs.writeFileSync(exceptionFile, exceptionPolicy);
-      fs.writeFileSync(
-        auditConfigFile,
-        JSON.stringify({ npmIntegrity: NPM_INTEGRITY, npmVersion: "12.0.2" }),
-      );
+      fs.writeFileSync(auditConfigFile, JSON.stringify(REVIEWED_NPM_IDENTITY));
       fs.writeFileSync(
         path.join(root, "report.provenance.json"),
         JSON.stringify({ run: { startedAt: new Date().toISOString() } }),
@@ -120,8 +169,7 @@ describe("reviewed npm audit handoff", () => {
       const receiptFile = emitAuditReceipt({
         artifactDirectory: root,
         graphId: "temporary-graph",
-        npmIntegrity: NPM_INTEGRITY,
-        npmVersion: "12.0.2",
+        reviewedNpmIdentity: REVIEWED_NPM_IDENTITY,
         packageJsonFile,
         packageLockFile,
         preserveInputs: true,
@@ -179,11 +227,13 @@ describe("reviewed npm audit handoff", () => {
       fs.rmSync(resultFile);
       fs.writeFileSync(
         auditConfigFile,
-        JSON.stringify({ npmIntegrity: NPM_INTEGRITY, npmVersion: "11.18.0" }),
+        JSON.stringify({ ...REVIEWED_NPM_IDENTITY, npmVersion: "11.18.0" }),
       );
       const rejected = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
       expect(rejected.status).not.toBe(0);
-      expect(rejected.stderr).toContain("receipt identity does not match expected graph and npm");
+      expect(rejected.stderr).toContain(
+        "receipt identity does not match expected graph and reviewed npm",
+      );
       expect(fs.existsSync(resultFile)).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

@@ -113,7 +113,7 @@ describe("base-image publication workflow boundary (#7372)", () => {
 
   it.each([
     ["push to main", "push", "", "refs/heads/main", "0", "c".repeat(40), "0"],
-    ["manual main", "workflow_dispatch", "", "refs/heads/main", "0", "c".repeat(40), "0"],
+    ["manual main", "workflow_dispatch", "", "refs/heads/main", "0", "c".repeat(40), "1"],
     [
       "controller-selected PR",
       "workflow_dispatch",
@@ -206,20 +206,32 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ["Node condition", (value) => (gateSteps(value)[2].if = "${{ always() }}")],
     ["Node pin", (value) => (gateSteps(value)[2].uses = "actions/setup-node@v6")],
     ["Node dependency cache", (value) => (gateSteps(value)[2].with!.cache = "npm")],
-    ["verifier condition", (value) => (gateStep(value, "Select base and optional managed-image publication").if = "${{ always() }}")],
+    [
+      "verifier condition",
+      (value) =>
+        (gateStep(value, "Select base and optional managed-image publication").if =
+          "${{ always() }}"),
+    ],
     [
       "base publication selection condition",
-      (value) => (gateStep(value, "Select base and optional managed-image publication").if = "${{ false }}"),
+      (value) =>
+        (gateStep(value, "Select base and optional managed-image publication").if = "${{ false }}"),
     ],
     [
       "base contract download condition",
-      (value) => (gateStep(value, "Download immutable Deep Agents Code base contract").if = "${{ false }}"),
+      (value) =>
+        (gateStep(value, "Download immutable Deep Agents Code base contract").if = "${{ false }}"),
     ],
     [
       "base contract validation condition",
       (value) => (gateStep(value, "Validate immutable Deep Agents Code base").if = "${{ false }}"),
     ],
-    ["verifier token", (value) => (gateStep(value, "Select base and optional managed-image publication").env!.GITHUB_TOKEN = "${{ secrets.TOKEN }}")],
+    [
+      "verifier token",
+      (value) =>
+        (gateStep(value, "Select base and optional managed-image publication").env!.GITHUB_TOKEN =
+          "${{ secrets.TOKEN }}"),
+    ],
     [
       "verifier SHA",
       (value) =>

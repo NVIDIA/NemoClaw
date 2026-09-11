@@ -253,17 +253,16 @@ describe("reviewed npm cache seed", () => {
       ...process.env,
       NPM_CONFIG_CACHE: input.cacheDirectory,
       NPM_CONFIG_OFFLINE: "true",
+      NPM_CONFIG_REGISTRY: REGISTRY_ORIGIN,
     };
-    const viewedIntegrity = execFileSync(
-      "npm",
-      ["view", PACKAGE_SPEC, "dist.integrity", "--registry", REGISTRY_ORIGIN],
-      { encoding: "utf8", env: npmEnv },
-    ).trim();
-    const viewedTarball = execFileSync(
-      "npm",
-      ["view", PACKAGE_SPEC, "dist.tarball", "--registry", REGISTRY_ORIGIN],
-      { encoding: "utf8", env: npmEnv },
-    ).trim();
+    const viewedIntegrity = execFileSync("npm", ["view", PACKAGE_SPEC, "dist.integrity"], {
+      encoding: "utf8",
+      env: npmEnv,
+    }).trim();
+    const viewedTarball = execFileSync("npm", ["view", PACKAGE_SPEC, "dist.tarball"], {
+      encoding: "utf8",
+      env: npmEnv,
+    }).trim();
     const offlinePack = parseSingleNpmPackResult(
       execFileSync(
         "npm",

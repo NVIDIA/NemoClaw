@@ -17,6 +17,7 @@ import { printSandboxGatewayLookupStatus } from "./status-lookup-rendering";
 import {
   getSandboxStatusPreflight,
   printSandboxStatusPreflightHeader,
+  resolveSandboxStatusPhase,
   withoutTerminalPhasePreflight,
 } from "./status-preflight";
 import {
@@ -42,6 +43,7 @@ export {
   isDockerDaemonUnreachableForStatus,
   printGatewayFailureLayerHeader,
   printSandboxStatusPreflightHeader,
+  resolveSandboxStatusPhase,
   type SandboxStatusFailureLayer,
   type SandboxStatusPreflightFailure,
   type SandboxStatusPreflightResult,
@@ -197,7 +199,11 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
   // Resolve the docker-driver container once: reused for the paused-container
   // recovery hint (#4495) and the Docker health line below (#3975).
   const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
-  const phase = lookup.state === "present" ? (lookup.phase ?? null) : null;
+  const observedPhase = lookup.state === "present" ? (lookup.phase ?? null) : null;
+  const phase = resolveSandboxStatusPhase(
+    observedPhase,
+    snapshot.postRecoveryPreflight ?? preflight,
+  );
   const effectivePreflight = withoutTerminalPhasePreflight(
     snapshot.postRecoveryPreflight ?? preflight,
     phase,
@@ -227,6 +233,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
     terminalRuntimeHealth,
     servingProcessHealth,
     statusAgent,
+    phase,
   };
   const textOutcome = printSandboxDetails(textContext);
   if (

@@ -117,9 +117,7 @@ export function discoverActiveOllamaSandboxNames(
         }`,
       };
     }
-    const phases = new Map(
-      parseEntries(result.output).map((entry) => [entry.name, entry.phase]),
-    );
+    const phases = new Map(parseEntries(result.output).map((entry) => [entry.name, entry.phase]));
     const activeSandboxes: string[] = [];
     for (const peerName of peerNames) {
       const phase = phases.get(peerName);
@@ -148,19 +146,20 @@ function releaseStoppedSandboxOllamaModel(
   if (!isLocalOllamaRouteOwner(sandbox)) return { ok: true };
 
   try {
-    const proxy = require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy");
+    const proxy =
+      require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy");
     const withOwnershipLock =
       deps.withOllamaModelOwnershipLock ?? proxy.withOllamaModelOwnershipLock;
-    const loadPersistedOllamaHost =
-      deps.loadPersistedOllamaHost ?? proxy.loadPersistedOllamaHost;
+    const loadPersistedOllamaHost = deps.loadPersistedOllamaHost ?? proxy.loadPersistedOllamaHost;
     return withOwnershipLock(() => {
       const selectedHost = loadPersistedOllamaHost();
       if (!isLocalOllamaRouteOwner(sandbox, selectedHost)) return { ok: true };
       const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
       const matchingPeers = matchingOllamaModelPeers(sandbox, sandboxes, selectedHost);
-      const discovery = (
-        deps.discoverActiveOllamaSandboxNames ?? discoverActiveOllamaSandboxNames
-      )(matchingPeers, deps.environment ?? process.env);
+      const discovery = (deps.discoverActiveOllamaSandboxNames ?? discoverActiveOllamaSandboxNames)(
+        matchingPeers,
+        deps.environment ?? process.env,
+      );
       if (!discovery.ok) {
         return {
           ok: false,
@@ -238,6 +237,7 @@ export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
 export interface SandboxStopDeps {
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
+  updateSandbox?: typeof registry.updateSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
@@ -312,6 +312,13 @@ function stopSandboxWithinLifecycleFence(
   if (outcome.exitCode !== 0) return outcome;
   const hermesPortableVerified =
     "hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true;
+  const stopIntentRecorded =
+    hermesPortableVerified ||
+    registry.recordSandboxStopIntent(
+      sandboxName,
+      true,
+      deps.updateSandbox ?? registry.updateSandbox,
+    );
   const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);
   if (!hermesPortableVerified) {
     teardownDashboardForwardBestEffort(
@@ -319,6 +326,14 @@ function stopSandboxWithinLifecycleFence(
       deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
       warn,
     );
+  }
+  if (!stopIntentRecorded) {
+    return {
+      exitCode: 1,
+      message:
+        `Sandbox '${sandboxName}' stopped, but NemoClaw could not record the intentional stop. ` +
+        `Retry '${CLI_NAME} ${sandboxName} stop'.`,
+    };
   }
   if (!ollamaRelease.ok) return { exitCode: 1, message: ollamaRelease.message };
   if (hermesPortableVerified) {

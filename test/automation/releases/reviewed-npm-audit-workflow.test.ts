@@ -17,6 +17,7 @@ import {
   materializeSourceGraph,
   normalizeOpenClawSignatureAlias,
   parseAuditConfig,
+  reviewedArchiveGraphManifest,
   selectReviewedLockSha256,
   validateWechatRuntimeInputs,
   verifyMaterializedLockedGraph,
@@ -229,9 +230,7 @@ process.exit(0);
     );
     const result = spawnSync(
       process.execPath,
-      [
-        path.join(trustedRootAlias, "scripts/audit-reviewed-npm-graph.mts"),
-      ],
+      [path.join(trustedRootAlias, "scripts/audit-reviewed-npm-graph.mts")],
       {
         cwd: trustedRoot,
         encoding: "utf-8",
@@ -323,7 +322,7 @@ function writeProductionSourceGraph(
   return { sourceLock, sourcePackage };
 }
 
-describe("trusted reviewed npm audit workflow (#5896)", () => {
+describe("trusted npm audit workflow (#5896)", () => {
   // source-shape-contract: security -- Composite audit inputs must cross into executable shell only through the step environment
   it("passes the cache identity target root without interpolating it into shell source", () => {
     const action = YAML.parse(
@@ -332,7 +331,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         "utf8",
       ),
     ) as CompositeAction;
-    const cacheBucketStep = requiredStep(action.runs, "Resolve reviewed npm audit cache buckets");
+    const cacheBucketStep = requiredStep(action.runs, "Resolve npm audit cache buckets");
 
     expect(cacheBucketStep.env).toEqual({
       NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIRECTORY: "${{ inputs.cache-directory }}",
@@ -341,8 +340,8 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     expect(cacheBucketStep.run).toContain(
       "const targetRoot = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT;",
     );
-    expect(cacheBucketStep.run).toContain("npmIntegrity: config.npmIntegrity");
-    expect(cacheBucketStep.run).toContain("npmArchiveSha256: config.npmArchiveSha256");
+    expect(cacheBucketStep.run).toContain("const identity = parseReviewedNpmIdentity(config);");
+    expect(cacheBucketStep.run).toContain("...identity");
     expect(cacheBucketStep.run).not.toContain("${{ inputs.cache-directory }}");
     expect(cacheBucketStep.run).not.toContain("${{ inputs.target-root }}");
   });
@@ -352,7 +351,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
 
     expect(fixture.result.status).not.toBe(0);
     expect(fixture.result.stderr).toContain(
-      `reviewed npm audit requires npm ${REVIEWED_AUDIT_CONFIG.npmVersion}; running npm 11.18.0`,
+      `npm audit requires npm ${REVIEWED_AUDIT_CONFIG.npmVersion}; running npm 11.18.0`,
     );
     expect(fixture.lockedReceipt).toBeUndefined();
   });
@@ -453,9 +452,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
       emitAuditReceipt({
         artifactDirectory: root,
         graphId: "temporary-graph",
-        npmIntegrity:
-          "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",
-        npmVersion: "12.0.2",
+        reviewedNpmIdentity: REVIEWED_AUDIT_CONFIG,
         packageJsonFile,
         packageLockFile,
         preserveInputs: true,
@@ -588,6 +585,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         },
       ],
       nodeVersion: "24.18.1",
+      npmArchiveSha256: REVIEWED_AUDIT_CONFIG.npmArchiveSha256,
       npmIntegrity: REVIEWED_AUDIT_CONFIG.npmIntegrity,
       npmVersion: REVIEWED_AUDIT_CONFIG.npmVersion,
       registryOrigin: "https://registry.npmjs.org/",
@@ -658,6 +656,12 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     config.sourceRegistryPackagesWithoutIntegrity[0]!.packageSpec = "not-an-exact-spec";
     expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
       "ci/reviewed-npm-audit.json is invalid",
+    );
+  });
+
+  it("rejects an affected tar release for the reviewed archive graph", () => {
+    expect(() => reviewedArchiveGraphManifest("7.5.20")).toThrow(
+      "reviewed archive graph tar version must be exactly 7.5.21",
     );
   });
 
@@ -1250,10 +1254,8 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         artifactDirectory: "/artifacts",
         directory: "/materialized",
         exceptionFile: "/exceptions.json",
-        npmIntegrity:
-          "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",
-        npmVersion: "12.0.2",
         packageSpec: "nemoclaw@0.0.0",
+        reviewedNpmIdentity: REVIEWED_AUDIT_CONFIG,
         threshold: "high",
       },
       {
@@ -1265,11 +1267,10 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
             graph: "nemoclaw-cli",
             provenance: {
               label: "NemoClaw CLI locked production graph",
-              npmIntegrity:
-                "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",
               npmVersion: "12.0.2",
               packageSpecs: ["nemoclaw@0.0.0"],
             },
+            reviewedNpmIdentity: REVIEWED_AUDIT_CONFIG,
             reportFile: path.join("/artifacts", "source-graph.json"),
             resultFile: path.join("/artifacts", "source-graph-policy.json"),
             threshold: "high",
@@ -1290,7 +1291,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         "high",
       ),
     ).toThrow(
-      "reviewed npm audit threshold failed\nNemoClaw CLI locked production graph: 1 unaccepted at or above high",
+      "npm audit threshold failed\nNemoClaw CLI locked production graph: 1 unaccepted at or above high",
     );
   });
 

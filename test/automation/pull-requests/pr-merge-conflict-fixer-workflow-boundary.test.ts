@@ -90,6 +90,15 @@ describe("PR merge conflict fixer workflow boundary", () => {
       "./trusted/.github/actions/setup-reviewed-npm",
       "./trusted/.github/actions/setup-reviewed-npm",
     ]);
+    expect(namedStep(scan, "Install reviewed npm").uses).toBe(
+      "./.github/actions/setup-reviewed-npm",
+    );
+    expect(namedStep(resolve, "Install reviewed npm").uses).toBe(
+      "./trusted/.github/actions/setup-reviewed-npm",
+    );
+    expect(namedStep(publish, "Install reviewed npm").uses).toBe(
+      "./trusted/.github/actions/setup-reviewed-npm",
+    );
     expect(
       actionReferences
         .filter((reference) => !reference.startsWith("./"))

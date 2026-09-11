@@ -104,7 +104,7 @@ export function expectManagedToolDiscoveryRuntimeImageContract(dockerfile: strin
     `test ! -L ${MANAGED_STARTUP_RUNTIME_PATH} || managed_runtime_assertion_failed non-symlink ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `chown root:root ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null || managed_runtime_assertion_failed owner-root-root ${MANAGED_STARTUP_RUNTIME_PATH}`,
     `chmod 0444 ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null || managed_runtime_assertion_failed mode-0444 ${MANAGED_STARTUP_RUNTIME_PATH}`,
-    `test \"$(stat -c '%u:%g:%a' ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null)\" = '0:0:444' || managed_runtime_assertion_failed metadata-0:0:444 ${MANAGED_STARTUP_RUNTIME_PATH}`,
+    `test "$(stat -c '%u:%g:%a' ${MANAGED_STARTUP_RUNTIME_PATH} 2>/dev/null)" = '0:0:444' || managed_runtime_assertion_failed metadata-0:0:444 ${MANAGED_STARTUP_RUNTIME_PATH}`,
   ]) {
     expect(logicalInstruction.split(assertion)).toHaveLength(2);
   }
@@ -207,7 +207,7 @@ export function expectManagedToolDiscoveryRuntimeImageContract(dockerfile: strin
       [
         "-c",
         [
-          `stat() { printf '%s' \"$NEMOCLAW_TEST_STAT_OUTPUT\"; }`,
+          `stat() { printf '%s' "$NEMOCLAW_TEST_STAT_OUTPUT"; }`,
           functionSource,
           'managed_runtime_assertion_failed "$NEMOCLAW_TEST_INVARIANT" "$NEMOCLAW_TEST_ARTIFACT"',
         ].join("\n"),

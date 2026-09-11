@@ -419,15 +419,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       try {
         const result = spawnSync(
           "node",
-          [
-            SCRIPT_PATH,
-            "--agent",
-            agent,
-            "--phase",
-            "runtime-setup",
-            "--mode",
-            "apply",
-          ],
+          [SCRIPT_PATH, "--agent", agent, "--phase", "runtime-setup", "--mode", "apply"],
           {
             encoding: "utf-8",
             stdio: ["pipe", "pipe", "pipe"],

@@ -1,15 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
+import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
 import { runConfigExport } from "../../actions/config/export";
 import {
   parseNemoClawConfigDocumentName,
+  EXPORTED_VLLM_PROFILE_ID,
+  EXPORTED_VLLM_RECIPE_ID,
+  type ImmutableImageReference,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
 import { validateNemoClawConfig } from "../../config/schema";
 
+vi.mock("../../inference/serving/vllm-export-runtime", () => ({
+  observeManagedVllmForExport: vi.fn(),
+}));
 vi.mock("../../state/registry/persistence", () => ({ load: vi.fn() }));
 vi.mock("../../state/registry-entry-view", () => ({ getSandboxEntryInference: vi.fn() }));
 vi.mock("../../inference/live", () => ({ getLiveGatewayInference: vi.fn() }));
@@ -17,17 +26,31 @@ vi.mock("../openshell/sdk", () => ({ connectManagedOpenShellSdk: vi.fn() }));
 vi.mock("../openshell/sanitized-capture", () => ({
   captureSanitizedResolvedOpenshell: vi.fn(),
 }));
-vi.mock("../openshell/sandbox-policy-cli", () => ({
-  syncCliOpenShellSandboxPolicyReader: { readSandboxPolicy: vi.fn() },
-}));
+vi.mock("../openshell/sandbox-config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../openshell/sandbox-config")>();
+  return {
+    ...actual,
+    createSandboxConfig: () =>
+      actual.createSandboxConfig(undefined, async (policy) => YAML.stringify(policy)),
+  };
+});
 vi.mock("../../onboard/gateway/state-dir", () => ({
   managedGatewayStateRootOwnershipFailure: vi.fn(() => null),
   resolveGatewayStateDirForPort: vi.fn(() => "/managed/gateway"),
 }));
 
+import { observeManagedVllmForExport } from "../../inference/serving/vllm-export-runtime";
+import { loadServingCatalog } from "../../inference/serving/catalog-loader";
+import { servingProfileProvenance } from "../../inference/serving/profile-provenance";
+import { applyVllmRuntimeContextWindow } from "../../inference/vllm-runtime-context";
+import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
+import type { ObservedManagedVllmRuntime } from "../../domain/config/export-evidence";
 import { getLiveGatewayInference } from "../../inference/live";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
-import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
+import {
+  buildManagedStartupProfile,
+  type ManagedStartupProfileBuilderInput,
+} from "../../onboard/managed-startup/profile-builder";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import type { SandboxEntry } from "../../state/registry/types";
@@ -35,7 +58,6 @@ import { connectManagedOpenShellSdk } from "../openshell/sdk";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import { fingerprintOpenShellSandboxId } from "../openshell/sandbox-identity";
-import { syncCliOpenShellSandboxPolicyReader } from "../openshell/sandbox-policy-cli";
 import { createLiveExportSnapshotReader } from "./live-export-source";
 
 const sandboxId = "123e4567-e89b-42d3-a456-426614174000";
@@ -43,7 +65,7 @@ const identityFingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
 const endpoint = "https://integrate.api.nvidia.com/v1";
 const readFailureCanary = "credential-canary-value";
 const imageRef = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:" + "a".repeat(64);
-const startup = buildManagedStartupProfile({
+const startupInput = {
   agent: "openclaw",
   inference: {
     routeProvider: "inference",
@@ -71,9 +93,10 @@ const startup = buildManagedStartupProfile({
   observabilityEnabled: null,
   environment: {},
   corporateCa: null,
-});
+} satisfies ManagedStartupProfileBuilderInput;
+const startup = buildManagedStartupProfile(startupInput);
 
-const entry: SandboxEntry = {
+const entry = {
   name: "alpha",
   createdAt: "not-export-evidence",
   agent: "openclaw",
@@ -103,7 +126,32 @@ const entry: SandboxEntry = {
     credentialProxyReplayRequired: false,
     shared: true,
   },
-};
+} satisfies SandboxEntry;
+
+function telemetryEntry(
+  telemetry: Readonly<Record<string, unknown>> = {},
+  agentSettings: Readonly<Record<string, unknown>> = {},
+) {
+  const profile = JSON.parse(Buffer.from(startup.encodedProfile, "base64url").toString("utf8")) as {
+    agentConfig: { otel: Record<string, unknown> };
+  };
+  Object.assign(profile.agentConfig.otel, {
+    enabled: true,
+    serviceName: "research-assistant",
+    sampleRate: 0.5,
+    ...telemetry,
+  });
+  Object.assign(profile.agentConfig, agentSettings);
+  const encodedProfile = Buffer.from(JSON.stringify(profile)).toString("base64url");
+  return {
+    ...entry,
+    workload: {
+      ...entry.workload,
+      encodedProfile,
+      startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+    },
+  };
+}
 
 const raw = {
   getProvider: vi.fn(),
@@ -142,6 +190,18 @@ function provider() {
 }
 function configuration(revision = 3) {
   return {
+    policy: {
+      version: 1,
+      process: { run_as_user: "sandbox", run_as_group: "sandbox" },
+      filesystem_policy: { include_workdir: false, read_only: ["/usr"], read_write: ["/sandbox"] },
+      network_policies: {
+        api: {
+          name: "api",
+          endpoints: [{ host: "api.example.com", port: 443 }],
+          binaries: [{ path: "/usr/bin/curl" }],
+        },
+      },
+    },
     workspace: "default",
     version: revision,
     policyHash: "a".repeat(64),
@@ -175,15 +235,84 @@ function mockSupportedLiveSource(
   vi.mocked(connectManagedOpenShellSdk).mockResolvedValue({ raw });
   raw.getProvider.mockResolvedValue(provider());
   raw.getSandbox.mockResolvedValue(inventory(7, policyVersion));
-  raw.getSandboxConfig.mockResolvedValue(configuration(policyVersion));
-  vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
-    ok: true,
-    value: {
-      document:
-        "version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\nnetwork_policies:\n  api:\n    name: api\n    endpoints: [{host: api.example.com, port: 443}]\n    binaries: [{path: /usr/bin/curl}]\nfilesystem_policy:\n  include_workdir: false\n  read_only: [/usr]\n  read_write: [/sandbox]\n",
-      appliedRevision,
+  raw.getSandboxConfig.mockResolvedValue(configuration(appliedRevision));
+}
+
+function braveProvider() {
+  const readCredential = vi.fn(() => {
+    throw new Error(readFailureCanary);
+  });
+  const credentials = Object.defineProperty({}, "BRAVE_API_KEY", {
+    enumerable: true,
+    get: readCredential,
+  });
+  return {
+    readCredential,
+    provider: {
+      metadata: {
+        id: "brave-id",
+        name: "alpha-brave-search",
+        workspace: "default",
+        resourceVersion: 9n,
+      },
+      type: "brave",
+      profileWorkspace: "default",
+      credentials,
+      config: {},
+    },
+  };
+}
+
+function mockBraveLiveSource() {
+  const built = buildManagedStartupProfile({
+    ...startupInput,
+    webSearch: { fetchEnabled: true, provider: "brave" },
+  });
+  mockSupportedLiveSource(3, 3, {
+    ...entry,
+    webSearchEnabled: true,
+    webSearchProvider: "brave",
+    workload: {
+      ...(entry.workload as Extract<
+        NonNullable<SandboxEntry["workload"]>,
+        { kind: "managed-image" }
+      >),
+      encodedProfile: built.encodedProfile,
+      startupProfileSha256: built.startupProfileSha256,
     },
   });
+  const search = braveProvider();
+  raw.getProviderProfile.mockResolvedValue({ profile: managedBraveProfile() });
+  raw.getProvider.mockImplementation(async ({ name }: { name: string }) =>
+    name === "alpha-brave-search" ? { provider: search.provider } : provider(),
+  );
+  raw.getSandbox.mockResolvedValue({
+    sandbox: {
+      ...inventory().sandbox,
+      spec: { template: { image: imageRef }, providers: ["alpha-brave-search"] },
+    },
+  });
+  return search;
+}
+
+async function exportLiveSource() {
+  const writeStdout = vi.fn(async (_yaml: string) => {});
+  const publish = vi.fn();
+  const result = await runConfigExport(
+    {
+      sandboxName: "alpha",
+      documentName: parseNemoClawConfigDocumentName("alpha"),
+      target: { kind: "stdout" },
+    },
+    {
+      observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+      createDocumentUid: () =>
+        parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
+      writeStdout,
+      publish,
+    },
+  );
+  return { result, writeStdout, publish };
 }
 
 function nativeNvidiaProvider() {
@@ -206,6 +335,138 @@ function mockNativeNvidiaSource() {
 }
 
 describe("live export snapshot reader", () => {
+  it("exports Brave through SDK metadata without reading its credential value (#10904)", async () => {
+    const search = mockBraveLiveSource();
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const yaml = writeStdout.mock.calls[0]![0];
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.sandboxes[0]!.integrations?.webSearch).toEqual({
+      provider: "brave",
+      agentRefs: ["primary"],
+      credential: { env: "BRAVE_API_KEY" },
+    });
+    expect(document.spec.inferenceProviders).toHaveLength(1);
+    expect(search.readCredential).not.toHaveBeenCalled();
+    expect(yaml).not.toContain(readFailureCanary);
+    expect(raw.getProvider.mock.calls.map(([request]) => request.name)).toEqual([
+      "nvidia-prod",
+      "alpha-brave-search",
+      "nvidia-prod",
+      "alpha-brave-search",
+    ]);
+    expect(raw.getProviderProfile).toHaveBeenCalledTimes(2);
+    expect(raw.getProviderProfile).toHaveBeenCalledWith(
+      { id: "brave", workspace: "default" },
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { type: "generic" },
+    { profileWorkspace: undefined },
+    { profileWorkspace: "foreign" },
+    { credentials: { OTHER_API_KEY: readFailureCanary } },
+    { config: { BASE_URL: readFailureCanary } },
+  ])("rejects unsupported Brave provider metadata without output %j (#10904)", async (change) => {
+    const search = mockBraveLiveSource();
+    raw.getProvider.mockImplementation(async ({ name }: { name: string }) =>
+      name === "alpha-brave-search" ? { provider: { ...search.provider, ...change } } : provider(),
+    );
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toMatchObject({ ok: false });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(search.readCredential).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+  });
+
+  it("sanitizes a failed Brave metadata read before publication (#10904)", async () => {
+    mockBraveLiveSource();
+    raw.getProvider
+      .mockResolvedValueOnce(provider())
+      .mockRejectedValueOnce(new Error(readFailureCanary));
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { source: "interceptor/foreign" },
+    { source: "user", scope: "platform" },
+    { resourceVersion: 0n },
+    { endpoints: [] },
+    { binaries: [] },
+    { credentials: [] },
+  ])("rejects a shadowed or changed Brave profile %# (#10904)", async (change) => {
+    const search = mockBraveLiveSource();
+    raw.getProviderProfile.mockResolvedValue({ profile: { ...managedBraveProfile(), ...change } });
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toMatchObject({ ok: false });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(search.readCredential).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes a failed Brave profile read before publication (#10904)", async () => {
+    const search = mockBraveLiveSource();
+    raw.getProviderProfile.mockRejectedValue(new Error(readFailureCanary));
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(search.readCredential).not.toHaveBeenCalled();
+  });
+
+  it("rejects a changing managed Brave profile revision without output (#10904)", async () => {
+    const search = mockBraveLiveSource();
+    let revision = 10n;
+    raw.getProviderProfile.mockImplementation(async () => ({
+      profile: { ...managedBraveProfile(), resourceVersion: revision++ },
+    }));
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { findings: [expect.objectContaining({ category: "unstable-source" })] },
+    });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(search.readCredential).not.toHaveBeenCalled();
+  });
+
+  it.each(["id", "resourceVersion"])(
+    "rejects changing Brave provider %s without output (#10904)",
+    async (field) => {
+      const search = mockBraveLiveSource();
+      let revision = 10;
+      raw.getProvider.mockImplementation(async ({ name }: { name: string }) =>
+        name === "alpha-brave-search"
+          ? {
+              provider: {
+                ...search.provider,
+                metadata: {
+                  ...search.provider.metadata,
+                  [field]: field === "id" ? `provider-${revision++}` : BigInt(revision++),
+                },
+              },
+            }
+          : provider(),
+      );
+      const { result, writeStdout, publish } = await exportLiveSource();
+      expect(result).toMatchObject({
+        ok: false,
+        failure: { findings: [expect.objectContaining({ category: "unstable-source" })] },
+      });
+      expect(writeStdout).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+      expect(search.readCredential).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     {
       stage: "registry",
@@ -255,11 +516,9 @@ describe("live export snapshot reader", () => {
     {
       stage: "effective-policy",
       fail: () =>
-        vi
-          .mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy)
-          .mockImplementationOnce(() => {
-            throw new Error(readFailureCanary);
-          }),
+        raw.getSandboxConfig.mockImplementationOnce(() => {
+          throw new Error(readFailureCanary);
+        }),
     },
   ] as const)("tags a sanitized $stage read failure", async ({ stage, fail }) => {
     mockSupportedLiveSource();
@@ -325,10 +584,6 @@ describe("live export snapshot reader", () => {
     const first = await reader.read("alpha");
     raw.getSandbox.mockResolvedValue(inventory(8, 4));
     raw.getSandboxConfig.mockResolvedValue(configuration(4));
-    vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
-      ok: true,
-      value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: 4 },
-    });
 
     const second = await reader.read("alpha");
 
@@ -347,12 +602,9 @@ describe("live export snapshot reader", () => {
   it("sanitizes credential-bearing policy failures", async () => {
     mockSupportedLiveSource();
     const canary = "credential-canary-value";
-    vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
-      ok: true,
-      value: {
-        document: `version: 1\nenv: {TOKEN: "${canary}"}\nnetwork_policies: {}\n`,
-        appliedRevision: 3,
-      },
+    raw.getSandboxConfig.mockResolvedValue({
+      ...configuration(),
+      policy: { ...configuration().policy, env: { TOKEN: canary } },
     });
 
     const result = await createLiveExportSnapshotReader().read("alpha");
@@ -373,6 +625,37 @@ describe("live export snapshot reader", () => {
     await expect(createLiveExportSnapshotReader().read("alpha")).resolves.toEqual({
       kind: "read-failed",
       stage: "provider-metadata",
+    });
+  });
+
+  it.each([0, 3])(
+    "preserves global policy revision agreement for revision %i",
+    async (globalPolicyVersion) => {
+      mockSupportedLiveSource();
+      raw.getSandboxConfig.mockResolvedValue({
+        ...configuration(),
+        policySource: 2,
+        globalPolicyVersion,
+      });
+      const result = await createLiveExportSnapshotReader().read("alpha");
+      expect(result).toMatchObject({
+        kind: "observed",
+        policy: { revision: "3" },
+        configuration: { policySource: "global", globalPolicyVersion },
+      });
+    },
+  );
+
+  it("rejects a global policy revision that differs from the sandbox revision", async () => {
+    mockSupportedLiveSource();
+    raw.getSandboxConfig.mockResolvedValue({
+      ...configuration(),
+      policySource: 2,
+      globalPolicyVersion: 4,
+    });
+    await expect(createLiveExportSnapshotReader().read("alpha")).resolves.toEqual({
+      kind: "read-failed",
+      stage: "effective-policy",
     });
   });
 
@@ -502,6 +785,175 @@ describe("live export snapshot reader", () => {
     expect(raw.getProviderProfile).toHaveBeenCalledTimes(4);
   });
 
+  it.each([
+    { sampleRate: 0, serviceName: "s", collectorAllowed: true },
+    { sampleRate: 0.5, serviceName: "research-assistant", collectorAllowed: true },
+    { sampleRate: 1, serviceName: "s".repeat(256), collectorAllowed: true },
+    { sampleRate: 0.5, serviceName: "research assistant", collectorAllowed: false },
+  ])(
+    "exports retained OTLP settings at sample $sampleRate without changing policy",
+    async ({ sampleRate, serviceName, collectorAllowed }) => {
+      vi.stubEnv("NEMOCLAW_OPENCLAW_OTEL", "0");
+      vi.stubEnv(
+        "NEMOCLAW_OPENCLAW_OTEL_ENDPOINT",
+        "https://ignored.example/credential-canary-value",
+      );
+      vi.stubEnv("NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME", "ignored-service");
+      vi.stubEnv("NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE", "0.9");
+      mockSupportedLiveSource(3, 3, telemetryEntry({ sampleRate, serviceName }));
+      const effective = configuration();
+      const policy = {
+        ...effective.policy,
+        network_policies: {
+          ...effective.policy.network_policies,
+          ...(collectorAllowed
+            ? {
+                collector: {
+                  name: "collector",
+                  endpoints: [
+                    {
+                      host: "host.openshell.internal",
+                      port: 4318,
+                      protocol: "rest",
+                      enforcement: "enforce",
+                      allowed_ips: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+                      rules: [{ allow: { method: "POST", path: "/v1/traces" } }],
+                    },
+                  ],
+                  binaries: [{ path: "/usr/local/bin/node" }],
+                },
+              }
+            : {}),
+        },
+      };
+      raw.getSandboxConfig.mockResolvedValue({ ...effective, policy });
+      const writeStdout = vi.fn(async (_yaml: string) => {});
+      const publish = vi.fn();
+
+      const result = await runConfigExport(
+        {
+          sandboxName: "alpha",
+          documentName: parseNemoClawConfigDocumentName("alpha"),
+          target: { kind: "stdout" },
+        },
+        {
+          observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+          createDocumentUid: () =>
+            parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
+          writeStdout,
+          publish,
+        },
+      );
+
+      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
+      const document = validateNemoClawConfig(YAML.parse(yaml));
+      expect(document.spec.sandboxes[0]?.agents[0]).toMatchObject({
+        type: "openclaw",
+        observability: {
+          otlp: {
+            enabled: true,
+            endpoint: "http://host.openshell.internal:4318",
+            serviceName,
+            sampleRate,
+          },
+        },
+      });
+      expect(document.spec.sandboxes[0]?.network.policy.explicit).toEqual(policy);
+      expect(yaml).not.toContain(readFailureCanary);
+      expect(yaml).not.toContain("NEMOCLAW_OPENCLAW_OTEL");
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      label: "credential-bearing endpoint",
+      telemetry: {
+        endpointUrl: "http://user:credential-canary-value@host.openshell.internal:4318",
+      },
+    },
+    {
+      label: "collector query",
+      telemetry: {
+        endpointUrl: "http://host.openshell.internal:4318?token=credential-canary-value",
+      },
+    },
+    {
+      label: "remote collector",
+      telemetry: { endpointUrl: "https://collector.example/v1/traces" },
+    },
+    { label: "invalid service", telemetry: { serviceName: "service\n" } },
+    { label: "Unicode service", telemetry: { serviceName: "équipe" } },
+    { label: "oversized service", telemetry: { serviceName: "s".repeat(257) } },
+    { label: "out-of-range sample", telemetry: { sampleRate: 1.1 } },
+    { label: "disabled nondefault settings", telemetry: { enabled: false } },
+    { label: "invalid agent timeout", settings: { agentTimeoutSeconds: 1000000001 } },
+    { label: "conflicting agent", registry: { agent: "hermes" } },
+    { label: "DCode observability marker", registry: { observabilityEnabled: true } },
+    {
+      label: "stale workload",
+      registry: {
+        workload: { ...telemetryEntry().workload, startupProfileSha256: "c".repeat(64) },
+      },
+    },
+    { label: "missing workload", registry: { workload: undefined } },
+  ])("rejects telemetry $label before any output", async ({ telemetry, settings, registry }) => {
+    mockSupportedLiveSource(3, 3, { ...telemetryEntry(telemetry, settings), ...registry });
+    const writeStdout = vi.fn();
+    const publish = vi.fn();
+
+    const result = await runConfigExport(
+      {
+        sandboxName: "alpha",
+        documentName: parseNemoClawConfigDocumentName("alpha"),
+        target: { kind: "file", outputPath: "/tmp/alpha.yaml", force: false },
+      },
+      {
+        observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+        createDocumentUid: vi.fn(),
+        writeStdout,
+        publish,
+      },
+    );
+
+    expect(result).toMatchObject({ ok: false, failure: { kind: "observation" } });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+  });
+
+  it("does not publish telemetry that changes during both observation pairs", async () => {
+    mockSupportedLiveSource();
+    let reads = 0;
+    vi.mocked(loadRegistry).mockImplementation(() => ({
+      sandboxes: { alpha: telemetryEntry({ sampleRate: reads++ % 2 === 0 ? 0.5 : 1 }) },
+      defaultSandbox: null,
+    }));
+    const writeStdout = vi.fn();
+    const publish = vi.fn();
+    const result = await runConfigExport(
+      {
+        sandboxName: "alpha",
+        documentName: parseNemoClawConfigDocumentName("alpha"),
+        target: { kind: "stdout" },
+      },
+      {
+        observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+        createDocumentUid: vi.fn(),
+        writeStdout,
+        publish,
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { kind: "observation", attempts: 2, findings: [{ category: "unstable-source" }] },
+    });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it("exports a stable SDK endpoint with verified policy and workload evidence", async () => {
     mockSupportedLiveSource();
     const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
@@ -515,6 +967,7 @@ describe("live export snapshot reader", () => {
       },
     });
     expect(raw.getProvider).toHaveBeenCalledTimes(2);
+    expect(raw.getSandboxConfig).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
@@ -607,5 +1060,417 @@ describe("live export snapshot reader", () => {
 
     expect(result).toEqual({ kind: "read-failed", stage: "registry" });
     expect(JSON.stringify(result)).not.toContain(canary);
+  });
+});
+
+function mockManagedVllmSource(
+  environmentOverrides: NodeJS.ProcessEnv = {},
+  webSearch: ManagedStartupProfileBuilderInput["webSearch"] = null,
+) {
+  const catalog = loadServingCatalog();
+  const provenance = servingProfileProvenance(catalog, EXPORTED_VLLM_PROFILE_ID);
+  const recipe = catalog.recipes.find(({ metadata }) => metadata.id === EXPORTED_VLLM_RECIPE_ID)!;
+  const model = recipe.spec.model.servedName!;
+  const runtimeImage = provenance.runtimeImage as ImmutableImageReference;
+  const inference = resolveManagedStartupInferenceRoute(
+    "openclaw",
+    "vllm-local",
+    model,
+    "openai-completions",
+  );
+  const environment: NodeJS.ProcessEnv = {};
+  // This is the actual onboarding projection of the fixed server's /v1/models response.
+  applyVllmRuntimeContextWindow({ data: [{ id: model, max_model_len: 65536 }] }, model, {
+    env: environment,
+    logger: { log: vi.fn(), warn: vi.fn() },
+  });
+  Object.assign(environment, environmentOverrides);
+  const built = buildManagedStartupProfile({
+    agent: "openclaw",
+    inference: {
+      routeProvider: inference.providerKey,
+      upstreamProvider: "vllm-local",
+      model,
+      routedBaseUrl: inference.inferenceBaseUrl,
+      upstreamEndpointUrl: null,
+      api: "openai-completions",
+      primaryModelRef: inference.primaryModelRef,
+      compatibility: inference.inferenceCompat ?? {},
+    },
+    dashboard: {
+      agent: "openclaw",
+      mode: "loopback",
+      url: "http://127.0.0.1:18789",
+      port: 18789,
+      bindAddress: "127.0.0.1",
+      wslExposure: false,
+    },
+    webSearch,
+    toolDisclosure: "progressive",
+    hermesToolGateways: [],
+    messagingPlan: null,
+    dcodeAutoApprovalMode: null,
+    observabilityEnabled: null,
+    corporateCa: null,
+    environment,
+  });
+  const source: SandboxEntry = {
+    ...entry,
+    provider: "vllm-local",
+    model,
+    endpointUrl: "http://host.openshell.internal:18000/v1",
+    credentialEnv: null,
+    servingProfileProvenance: provenance,
+    webSearchEnabled: webSearch !== null,
+    webSearchProvider: webSearch?.provider ?? null,
+    workload: {
+      ...entry.workload!,
+      encodedProfile: built.encodedProfile,
+      startupProfileSha256: built.startupProfileSha256,
+    } as SandboxEntry["workload"],
+  };
+  const observed: ObservedManagedVllmRuntime = {
+    containerId: "a".repeat(64),
+    imageId: `sha256:${"b".repeat(64)}`,
+    networkId: "c".repeat(64),
+    startedAt: "2026-09-10T12:00:00Z",
+    serving: {
+      backend: "vllm",
+      catalogDigest: provenance.catalogDigest,
+      profile: { id: EXPORTED_VLLM_PROFILE_ID, digest: provenance.preset.digest },
+      recipe: { id: EXPORTED_VLLM_RECIPE_ID, digest: provenance.recipe.digest },
+      model: { ...provenance.model, servedName: model },
+      runtime: { image: { ref: runtimeImage } },
+      hostPort: 18000,
+    },
+  };
+  mockSupportedLiveSource(3, 3, source);
+  vi.mocked(observeManagedVllmForExport).mockReturnValue(observed);
+  vi.mocked(getSandboxEntryInference).mockReturnValue({
+    kind: "configured",
+    provider: "vllm-local",
+    model,
+  });
+  vi.mocked(getLiveGatewayInference).mockReturnValue({
+    failure: null,
+    inference: { provider: "vllm-local", model },
+    output: "",
+    status: 0,
+  });
+  const liveSandbox = inventory();
+  Object.assign(liveSandbox.sandbox.spec, { providers: ["vllm-local"] });
+  raw.getSandbox.mockResolvedValue(liveSandbox);
+  const credentials = { NEMOCLAW_VLLM_LOCAL_TOKEN: readFailureCanary };
+  raw.getProvider.mockResolvedValue({
+    provider: {
+      metadata: {
+        id: "provider-id",
+        name: "vllm-local",
+        workspace: "default",
+        resourceVersion: 8n,
+      },
+      type: "openai",
+      profileWorkspace: "default",
+      credentials,
+      config: { OPENAI_BASE_URL: source.endpointUrl },
+    },
+  });
+  raw.getProviderProfile.mockResolvedValue({
+    profile: {
+      id: "openai",
+      source: "user",
+      scope: "workspace",
+      resourceVersion: 4n,
+      credentials: [],
+      endpoints: [],
+      binaries: [],
+      inferenceCapable: true,
+    },
+  });
+  return { source, observed };
+}
+
+describe("managed vLLM export pipeline", () => {
+  it("exports the real fixed onboarding profile and reparses its managed provider", async () => {
+    const f = mockManagedVllmSource();
+    const output = vi.fn(async (_value: string) => {});
+    const publish = vi.fn();
+    const result = await runConfigExport(
+      {
+        sandboxName: "alpha",
+        documentName: parseNemoClawConfigDocumentName("alpha"),
+        target: { kind: "stdout" },
+      },
+      {
+        observe: (name) => observeStableExportSource(name, createLiveExportSnapshotReader()),
+        createDocumentUid: () =>
+          parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174000"),
+        publish,
+        writeStdout: output,
+      },
+    );
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const yaml = output.mock.calls[0]![0];
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.inferenceProviders).toEqual([
+      {
+        name: "managed-vllm",
+        provider: "vllm-local",
+        api: "openai-completions",
+        serving: f.observed.serving,
+      },
+    ]);
+    expect(document.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides).toEqual({
+      model: f.source.model,
+      contextWindow: 65536,
+    });
+    expect(yaml).not.toContain(readFailureCanary);
+    expect(yaml).not.toContain("NEMOCLAW_VLLM_LOCAL_TOKEN");
+    expect(yaml).not.toContain("host.openshell.internal");
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("exports managed vLLM, Brave and retained OTLP with qualified profile bindings", async () => {
+    const f = mockManagedVllmSource(
+      {
+        NEMOCLAW_OPENCLAW_OTEL: "1",
+        NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
+        NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: "research-assistant",
+        NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: "0.5",
+      },
+      { fetchEnabled: true, provider: "brave" },
+    );
+    const search = braveProvider();
+    const readManagedProvider = raw.getProvider.getMockImplementation()!;
+    const readManagedProfile = raw.getProviderProfile.getMockImplementation()!;
+    raw.getProvider.mockImplementation(async (request: { name: string }) =>
+      request.name === "alpha-brave-search"
+        ? { provider: search.provider }
+        : readManagedProvider(request),
+    );
+    raw.getProviderProfile.mockImplementation(async (request: { id: string }) =>
+      request.id === "brave" ? { profile: managedBraveProfile() } : readManagedProfile(request),
+    );
+    const liveSandbox = inventory();
+    Object.assign(liveSandbox.sandbox.spec, { providers: ["vllm-local", "alpha-brave-search"] });
+    raw.getSandbox.mockResolvedValue(liveSandbox);
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const yaml = writeStdout.mock.calls[0]![0];
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.inferenceProviders[0]).toMatchObject({ serving: f.observed.serving });
+    expect(document.spec.sandboxes[0]!.agents[0]).toMatchObject({
+      type: "openclaw",
+      observability: {
+        otlp: {
+          enabled: true,
+          endpoint: "http://host.openshell.internal:4318",
+          serviceName: "research-assistant",
+          sampleRate: 0.5,
+        },
+      },
+      inference: {
+        routes: [
+          {
+            name: "primary",
+            providerRef: "managed-vllm",
+            overrides: { model: f.source.model, contextWindow: 65536 },
+          },
+        ],
+      },
+    });
+    expect(document.spec.sandboxes[0]!.network.policy.explicit).toEqual(configuration().policy);
+    expect(yaml).not.toContain(readFailureCanary);
+    expect(yaml).not.toContain("NEMOCLAW_VLLM_LOCAL_TOKEN");
+    expect(yaml).not.toContain("host.openshell.internal:18000");
+    expect(document.spec.sandboxes[0]!.integrations?.webSearch).toEqual({
+      provider: "brave",
+      agentRefs: ["primary"],
+      credential: { env: "BRAVE_API_KEY" },
+    });
+    expect(search.readCredential).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it.each(["NEMOCLAW_MAX_TOKENS", "NEMOCLAW_AGENT_TIMEOUT"])(
+    "rejects unrepresented %s instead of losing it",
+    async (field) => {
+      mockManagedVllmSource({ [field]: "8192" });
+      const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
+      expect(result).toMatchObject({
+        ok: false,
+        findings: expect.arrayContaining([
+          expect.objectContaining({
+            category: "unsupported",
+            field: "source.workload.startupProfile",
+          }),
+        ]),
+      });
+    },
+  );
+
+  it("rejects a changed managed route and keeps publication unreachable", async () => {
+    const f = mockManagedVllmSource();
+    vi.mocked(observeManagedVllmForExport).mockReturnValue({
+      ...f.observed,
+      serving: { ...f.observed.serving, hostPort: 19000 },
+    });
+    const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
+    expect(result).toMatchObject({
+      ok: false,
+      findings: expect.arrayContaining([
+        expect.objectContaining({ field: "spec.inferenceProviders[].serving" }),
+      ]),
+    });
+  });
+
+  it("detects managed container restart between complete snapshots", async () => {
+    const f = mockManagedVllmSource();
+    let revision = 0;
+    vi.mocked(observeManagedVllmForExport).mockImplementation(() => ({
+      ...f.observed,
+      startedAt: String(revision++),
+    }));
+    expect(
+      await observeStableExportSource("alpha", createLiveExportSnapshotReader()),
+    ).toMatchObject({
+      ok: false,
+      attempts: 2,
+      findings: [expect.objectContaining({ category: "unstable-source" })],
+    });
+  });
+
+  it("rejects a shadowed OpenAI profile with additional endpoint behavior", async () => {
+    mockManagedVllmSource();
+    raw.getProviderProfile.mockResolvedValue({
+      profile: {
+        id: "openai",
+        source: "user",
+        scope: "workspace",
+        resourceVersion: 4n,
+        credentials: [],
+        endpoints: [{ host: "unexpected.example", port: 443 }],
+        binaries: [],
+        inferenceCapable: true,
+      },
+    });
+    expect(await createLiveExportSnapshotReader().read("alpha")).toEqual({
+      kind: "read-failed",
+      stage: "provider-metadata",
+    });
+  });
+
+  it("detects resolved provider profile revision changes", async () => {
+    mockManagedVllmSource();
+    let revision = 4n;
+    raw.getProviderProfile.mockImplementation(async () => ({
+      profile: {
+        id: "openai",
+        source: "user",
+        scope: "workspace",
+        resourceVersion: revision++,
+        credentials: [],
+        endpoints: [],
+        binaries: [],
+        inferenceCapable: true,
+      },
+    }));
+    expect(
+      await observeStableExportSource("alpha", createLiveExportSnapshotReader()),
+    ).toMatchObject({
+      ok: false,
+      attempts: 2,
+      findings: [expect.objectContaining({ category: "unstable-source" })],
+    });
+  });
+
+  it("contains runtime failures before provider metadata or publication", async () => {
+    mockManagedVllmSource();
+    vi.mocked(observeManagedVllmForExport).mockImplementation(() => {
+      throw new Error(readFailureCanary);
+    });
+    expect(await createLiveExportSnapshotReader().read("alpha")).toEqual({
+      kind: "read-failed",
+      stage: "managed-serving",
+    });
+    expect(raw.getProvider).not.toHaveBeenCalled();
+  });
+});
+
+describe("dashboard export observation", () => {
+  it("projects registered dashboard authority through complete live observation (#10904)", async () => {
+    const workload = entry.workload as Extract<
+      NonNullable<SandboxEntry["workload"]>,
+      { kind: "managed-image" }
+    >;
+    expect(workload?.kind).toBe("managed-image");
+    const profile = {
+      ...startup.profile,
+      dashboard: {
+        agent: "openclaw" as const,
+        mode: "remote" as const,
+        url: "http://127.0.0.1:19000",
+        port: 19000,
+        bindAddress: "0.0.0.0" as const,
+        wslExposure: false,
+      },
+    };
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const sourceEntry = {
+      ...entry,
+      dashboardPort: 19000,
+      dashboardRemoteBindPrepared: true,
+      workload: {
+        ...workload,
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+      },
+    };
+    mockSupportedLiveSource(3, 3, sourceEntry);
+    const reader = createLiveExportSnapshotReader();
+    const observed = await reader.read("alpha");
+    expect(observed).toMatchObject({
+      kind: "observed",
+      registry: { dashboardPort: 19000, dashboardRemoteBindPrepared: true },
+    });
+    const writeStdout = vi.fn(async (_yaml: string) => {});
+    const result = await runConfigExport(
+      {
+        sandboxName: "alpha",
+        documentName: parseNemoClawConfigDocumentName("alpha"),
+        target: { kind: "stdout" },
+      },
+      {
+        observe: (name) => observeStableExportSource(name, reader),
+        createDocumentUid: () =>
+          parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174001"),
+        writeStdout,
+        publish: vi.fn(),
+      },
+    );
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
+    expect(yaml).not.toContain(readFailureCanary);
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.sandboxes[0]?.agents[0]).toMatchObject({
+      type: "openclaw",
+      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+    });
+  });
+
+  it("retains dashboard registry changes in both complete snapshots (#10904)", async () => {
+    mockSupportedLiveSource();
+    let reads = 0;
+    vi.mocked(loadRegistry).mockImplementation(() => ({
+      sandboxes: { alpha: { ...entry, dashboardPort: reads++ % 2 === 0 ? 18789 : 19000 } },
+      defaultSandbox: null,
+    }));
+    const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
+    expect(result).toMatchObject({
+      ok: false,
+      attempts: 2,
+      findings: [expect.objectContaining({ category: "unstable-source" })],
+    });
+    expect(loadRegistry).toHaveBeenCalledTimes(4);
   });
 });

@@ -661,7 +661,7 @@ Unknown service query errors remain fatal. The installer also stops for malforme
 
 ### Sandbox build fails during OpenClaw plugin install
 
-During sandbox creation, the OpenClaw image setup can install managed plugins for selected features such as web search or diagnostics. If the build reaches `openclaw plugins install` and the npm registry or ClawHub is blocked, NemoClaw classifies that narrow failure and prints a policy hint instead of only generic resume guidance. Brave Search uses an external OpenClaw plugin and can reach this install path. Tavily ships with the pinned OpenClaw runtime, so NemoClaw verifies the bundled extension instead of installing a separate Tavily package.
+During sandbox creation, the OpenClaw image setup can install managed plugins for selected features such as web search or diagnostics. If the build reaches `openclaw plugins install` and the npm registry or ClawHub is blocked, NemoClaw classifies that narrow failure and prints a policy hint instead of only generic resume guidance. Brave Search uses an external OpenClaw plugin and can reach this install path. Tavily ships with the pinned OpenClaw runtime, so NemoClaw verifies the bundled extension instead of installing a separate Tavily package. The neutral managed image does not declare `plugins.entries.tavily`; onboarding adds that entry only when you select Tavily Search.
 
 Check that the active policy and host network allow the npm registry and ClawHub endpoints needed by the plugin, or disable the feature that requested the plugin. For example, if the plugin is for web search, disable that feature and resume onboarding:
 
@@ -1305,7 +1305,7 @@ If the host rebooted or the OpenShell gateway is down, first run:
 $$nemoclaw <name> status
 ```
 
-The status command selects or starts the sandbox's recorded OpenShell gateway when possible, then checks whether OpenShell can still see the sandbox. If the sandbox container is present but stopped on a Docker-driver host, status can recover the labeled container and then re-query OpenShell. After the sandbox is visible again, use `$$nemoclaw <name> recover` only for the in-sandbox OpenClaw gateway and host forwards. Use `$$nemoclaw <name> gateway restart` when you intentionally need the in-sandbox gateway to reload supported runtime configuration.
+The status command selects or starts the sandbox's recorded OpenShell gateway when possible, then checks whether OpenShell can still see the sandbox. If the sandbox container is present but stopped on a Docker-driver host without a matching intentional-stop record, status can recover the labeled container and then re-query OpenShell. If you stopped the sandbox intentionally, run `$$nemoclaw <name> start`. After the sandbox is visible again, use `$$nemoclaw <name> recover` only for the in-sandbox OpenClaw gateway and host forwards. Use `$$nemoclaw <name> gateway restart` when you intentionally need the in-sandbox gateway to reload supported runtime configuration.
 
 </AgentOnly>
 
@@ -2217,7 +2217,6 @@ WhatsApp pairs entirely inside the sandbox. NemoClaw advertises WhatsApp for Ope
 `scripts/rcf_patch.py` is intentionally absent from current NemoClaw blueprints. Older QA plans used that helper for a Dockerfile "Patch-4" test that corrupted the build-time `replaceConfigFile` monkey-patch and expected `ERROR: Patch 4 (replaceConfigFile EACCES) not applied`. The old Patch-4 fail-closed test no longer applies because NemoClaw no longer patches OpenClaw's compiled `replaceConfigFile` source at image build time.
 
 Current sandboxes use a mutable config model instead.
-`/sandbox/.openclaw/openclaw.json` is group-writable by the sandbox and gateway users, so OpenClaw config mutations should write normally rather than requiring an EACCES swallow.
 Use the host-side NemoClaw config command when you need validation and managed metadata to change with the config.
 
 To validate this area now, use the config lifecycle tests instead of looking for `rcf_patch.py`:
@@ -2259,7 +2258,10 @@ If `openclaw doctor` reports that it moved Telegram single-account values under 
 
 ### `openclaw doctor --fix` tightened config permissions and the gateway can no longer save config
 
-In a mutable NemoClaw sandbox, the gateway UID and the sandbox UID share the `sandbox` group, so `/sandbox/.openclaw` is setgid and group-writable (`2770`) and `openclaw.json` is group-writable (`660`). OpenClaw's `openclaw doctor --fix` enforces its own single-user `700/600` layout, so running it inside the sandbox strips group write and breaks gateway-side config writes (for example, control-UI toggles that mutate `openclaw.json`).
+In a sandbox with separate gateway and sandbox user IDs, both users need shared config access through the `sandbox` group.
+The directory `/sandbox/.openclaw` uses `2770`, and `openclaw.json` uses `0660`.
+Running `openclaw doctor --fix` can tighten these permissions to `0700/0600`, which prevents the separate gateway user from saving config changes.
+When the existing config guard verifies a same-user nonroot launch, `0700/0600` is supported and preserves gateway write access.
 
 When you invoke the command through the host-side one-shot path, NemoClaw restores the mutable contract as the command exits:
 
@@ -2275,27 +2277,27 @@ If you ran `openclaw doctor --fix` from an interactive `connect` shell or use an
 $$nemoclaw <sandbox> doctor --fix
 ```
 
-`$$nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores `2770/660`.
+`$$nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores the permissions selected by the existing config guard.
 Restarting the sandbox repairs the same drift automatically when the config tree passes its safety checks, and NemoClaw's own `rebuild` reapplies the contract after its post-upgrade `openclaw doctor --fix` step.
 For a persisted root-owned `700/600` tree, startup reclaims ownership only when both fixed config files have that exact posture under the expected sandbox-owned parent.
 Other root-owned layouts, links, mounts, and ambiguous metadata fail closed so startup cannot mistake an unsafe tree for ordinary mutable-permission drift.
 If startup reports `[SECURITY] Refusing mutable config permission normalization`, NemoClaw stops startup without following or modifying the unsafe target; safe permission repairs completed before detection are not rolled back.
 Rebuild with the current image and trusted host-side configuration instead of repairing the tree recursively.
 
-When verifying gateway write access by hand, step down to the gateway UID with the image's installed mechanism so the `sandbox` group membership is initialized:
+For a separate gateway user ID, verify write access with the image's installed mechanism so the `sandbox` group membership is initialized:
 
 ```bash
-setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c 'echo ok >> /sandbox/.openclaw/openclaw.json'
+setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c ': >> /sandbox/.openclaw/openclaw.json'
 ```
 
 If `setpriv` is unavailable, rebuild the sandbox from a NemoClaw-managed image that includes `util-linux`. When a root entrypoint must change identity, it fails closed if this required privilege-separation command is missing.
 
 Do not probe with `su -s /bin/sh gateway ...`: `su` does not initialize the gateway's supplementary groups the same way, so a group-write probe can spuriously report `EACCES` even when the mutable contract is intact.
 
-A NemoClaw sandbox supports the mutable permission state for `/sandbox/.openclaw`; `700/600` is drift:
+The existing config guard selects these permissions for `/sandbox/.openclaw` and `openclaw.json`:
 
-- **Mutable default:** `/sandbox/.openclaw` is `2770 sandbox:sandbox` and `openclaw.json` is `660 sandbox:sandbox`. Both the sandbox user and the gateway (same `sandbox` group, different UID) can write config, so control-UI toggles persist.
-- **`700/600` (drift):** the layout that upstream `openclaw doctor --fix` imposes inside a mutable sandbox. It is not a supported NemoClaw state; recover with `$$nemoclaw <sandbox> doctor --fix` or a sandbox restart.
+- **Verified same-user nonroot launch:** `0700/0600` keeps config private to the sandbox user shared by the agent and gateway.
+- **Separate gateway identity or unverified layout:** `2770/0660` retains shared access through the `sandbox` group.
 
 ### Discord bot logs in, but the channel still does not work
 
@@ -2366,6 +2368,10 @@ NODE
 ```
 
 Any HTTP status from these probes means the Node.js process reached the endpoint; the exact status can vary by unauthenticated path. A transport error or OpenShell policy denial means the probe failed. If the REST probe works but the Discord channel is still unhealthy, investigate the native gateway path instead of widening the preset. Check the gateway logs and blocked-request output with `openshell term`, and look for `gateway.discord.gg` connection or WebSocket upgrade failures.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
 
 ### Messaging bridge appears running but no messages arrive
 
@@ -2796,7 +2802,11 @@ For bridge-networked compatibility recreation without an explicit container DNS 
 
 #### Ordinary native Linux bounded fallback
 
-Ordinary Linux GPU onboarding uses native OpenShell GPU injection and stops on failure by default. Unset, `auto`, and `0` all preserve this native-only confinement boundary. `NEMOCLAW_DOCKER_GPU_PATCH=fallback` is the explicit operator authorization for one bounded retry. With that control set, if sandbox creation rejects the native GPU flag before progress, the exact OpenShell-managed container labeled for that sandbox records a host runtime GPU-injection error, or an explicit `nvidia-smi` driver proof fails while that container's immutable host configuration confirms that no GPU was attached, NemoClaw captures redacted diagnostics, deletes the incomplete sandbox, verifies that no OpenShell-managed Docker container labeled for that sandbox remains, and retries exactly once through the compatibility path. Free-form build/list text and sandbox-reported CUDA output never independently authorize the broader retry. Without corroborating host evidence, onboarding fails closed even when `fallback` is set and directs the operator to clean up and explicitly select compatibility with `NEMOCLAW_DOCKER_GPU_PATCH=1` if desired. Before the authorized retry, NemoClaw warns that the legacy GPU compatibility envelope recreates the OpenShell-managed Docker container and may relax container confinement compared with native injection. Specifically, compatibility recreation adds `SYS_PTRACE`, adds `apparmor=unconfined` when the original container has no AppArmor option, and uses a compatibility policy that makes `/proc` writable for the NVIDIA runtime's process-name initialization. These broader settings are why onboarding warns before the swap and retains a native-only opt-out. NemoClaw verifies cleanup with two stable checks (that sandbox is absent from the gateway list and no OpenShell-managed Docker containers labeled for that sandbox remain) before retrying through the compatibility path. Cleanup is polled at most five times, one second apart, and both conditions must pass twice consecutively; otherwise onboarding stops before the retry. These fail-closed safety limits are the internal constants `STABLE_ABSENCE_CHECKS` (2), `MAX_CLEANUP_ATTEMPTS` (5), and `CLEANUP_POLL_INTERVAL_MS` (1,000 ms); they are not configurable through environment variables. The first observation is immediate, so the default bound performs at most four one-second sleeps plus the five gateway/container queries. The bounds are intentionally fixed. Allowing environment input to weaken or extend the cleanup proof would make a security gate deployment-dependent. On a host that cannot prove absence within the bound, onboarding fails closed; select compatibility from the outset with `NEMOCLAW_DOCKER_GPU_PATCH=1` instead of weakening the handoff proof. If deletion or container cleanup cannot be proven safe, onboarding stops before the retry and prints manual cleanup guidance. Image build, upload, TLS, provider, policy, dashboard, and inference failures stay on their existing error paths and do not trigger the GPU compatibility fallback. Set `NEMOCLAW_DOCKER_GPU_PATCH=1` to use only the compatibility path for diagnostics or older host compatibility. Other legacy nonzero values keep that behavior through the `v0.0.x` release line and will be removed in `v0.1.0`.
+Ordinary Linux GPU onboarding uses native OpenShell GPU injection and stops on failure by default. Unset, `auto`, and `0` all preserve this native-only confinement boundary. `NEMOCLAW_DOCKER_GPU_PATCH=fallback` is the explicit operator authorization for one bounded retry. With that control set, if sandbox creation rejects the native GPU flag before progress, the exact OpenShell-managed container labeled for that sandbox records a host runtime GPU-injection error, or an explicit `nvidia-smi` driver proof fails while that container's immutable host configuration confirms that no GPU was attached, NemoClaw captures redacted diagnostics before one compatibility retry.
+For a native flag rejection before creation progress, it proves that the sandbox and its labeled containers are absent without deleting by name.
+For the other eligible failures, it requires verified cleanup before retrying.
+When the managed runtime requires cleanup tied to its recorded resource identities, NemoClaw stops before the compatibility retry.
+Free-form build/list text and sandbox-reported CUDA output never independently authorize the broader retry. Without corroborating host evidence, onboarding fails closed even when `fallback` is set and directs the operator to clean up and explicitly select compatibility with `NEMOCLAW_DOCKER_GPU_PATCH=1` if desired. Before the authorized retry, NemoClaw warns that the legacy GPU compatibility envelope recreates the OpenShell-managed Docker container and may relax container confinement compared with native injection. Specifically, compatibility recreation adds `SYS_PTRACE`, adds `apparmor=unconfined` when the original container has no AppArmor option, and uses a compatibility policy that makes `/proc` writable for the NVIDIA runtime's process-name initialization. These broader settings are why onboarding warns before the swap and retains a native-only opt-out. NemoClaw verifies cleanup with two stable checks (that sandbox is absent from the gateway list and no OpenShell-managed Docker containers labeled for that sandbox remain) before retrying through the compatibility path. Cleanup is polled at most five times, one second apart, and both conditions must pass twice consecutively; otherwise onboarding stops before the retry. These fail-closed safety limits are the internal constants `STABLE_ABSENCE_CHECKS` (2), `MAX_CLEANUP_ATTEMPTS` (5), and `CLEANUP_POLL_INTERVAL_MS` (1,000 ms); they are not configurable through environment variables. The first observation is immediate, so the default bound performs at most four one-second sleeps plus the five gateway/container queries. The bounds are intentionally fixed. Allowing environment input to weaken or extend the cleanup proof would make a security gate deployment-dependent. On a host that cannot prove absence within the bound, onboarding fails closed; select compatibility from the outset with `NEMOCLAW_DOCKER_GPU_PATCH=1` instead of weakening the handoff proof. If deletion or container cleanup cannot be proven safe, onboarding stops before the retry and prints manual cleanup guidance. Image build, upload, TLS, provider, policy, dashboard, and inference failures stay on their existing error paths and do not trigger the GPU compatibility fallback. Set `NEMOCLAW_DOCKER_GPU_PATCH=1` to use only the compatibility path for diagnostics or older host compatibility. Other legacy nonzero values keep that behavior through the `v0.0.x` release line and will be removed in `v0.1.0`.
 
 #### Docker Desktop WSL compatibility route
 

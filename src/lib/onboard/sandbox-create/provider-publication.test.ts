@@ -282,6 +282,25 @@ describe("sandbox provider preparation", () => {
     expect(harness.runOpenshell).not.toHaveBeenCalled();
   });
 
+  it("does not republish a transaction-bound inference provider (#11336)", async () => {
+    const harness = createHarness();
+
+    await publishAttachedProvidersBeforeDockerSandboxCreation(
+      publicationInput({
+        inferenceProvider: "ollama-local",
+        transactionBoundInferenceProvider: "ollama-local",
+        messagingProviders: [],
+        messagingProviderRequests: [],
+        extraProviders: ["ollama-local"],
+      }),
+      harness.deps,
+    );
+
+    expect(harness.adapter.getProvider).not.toHaveBeenCalled();
+    expect(harness.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(harness.cleanupCreateSources).not.toHaveBeenCalled();
+  });
+
   it("skips optional publication only when exact lookup reports absence (#9806)", async () => {
     const getProvider: OpenShellProviderAdapter["getProvider"] = vi.fn(async () => ({
       ok: false as const,

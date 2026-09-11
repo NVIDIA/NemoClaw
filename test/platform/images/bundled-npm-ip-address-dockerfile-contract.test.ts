@@ -13,7 +13,9 @@ import {
 } from "../../../scripts/lib/patch-bundled-npm-ip-address.mts";
 import { REVIEWED_NPM_VERSION as UPGRADED_NPM_VERSION } from "../../../scripts/upgrade-bundled-npm.mts";
 import {
+  requireDockerfileCopySources,
   requireReviewedDockerfileRunCommands,
+  requireSingleDockerfileCopySource,
   requireSingleReviewedDockerfileRunCommand,
 } from "../../helpers/dockerfile-run-commands";
 
@@ -28,9 +30,9 @@ const finalDockerfiles = [
   "agents/hermes/Dockerfile",
   "agents/langchain-deepagents-code/Dockerfile",
 ] as const;
-const copiedSource = "scripts/lib/patch-bundled-npm-ip-address.mts";
-const patchCommand =
-  "node /scripts/lib/patch-bundled-npm-ip-address.mts";
+const copySource = "scripts/lib/patch-bundled-npm-ip-address.mts";
+const copyDestination = "/scripts/lib/patch-bundled-npm-ip-address.mts";
+const patchCommand = "node /scripts/lib/patch-bundled-npm-ip-address.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const hermesTarCacheSeedArguments = [
   ...npmRootArguments,
@@ -63,7 +65,7 @@ describe("bundled npm ip-address image remediation contract", () => {
 
   it.each(baseDockerfiles)("patches the reviewed npm tree after upgrading it in %s", (file) => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
-    const copy = source.indexOf(copiedSource);
+    const copy = requireSingleDockerfileCopySource(source, copySource, copyDestination).start;
     const upgrade = requireSingleReviewedDockerfileRunCommand(
       source,
       "node /scripts/upgrade-bundled-npm.mts",
@@ -78,7 +80,12 @@ describe("bundled npm ip-address image remediation contract", () => {
 
   it.each(finalDockerfiles)("reasserts the private package fix in the completed %s", (file) => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
-    const copy = source.indexOf(copiedSource);
+    const copy = requireDockerfileCopySources(
+      source,
+      copySource,
+      copyDestination,
+      tarPatchCountByDockerfile[file],
+    ).at(-1)!.start;
     const tarPatches = requireReviewedDockerfileRunCommands(
       source,
       "node /scripts/patch-bundled-npm-tar.mts",
@@ -101,7 +108,6 @@ describe("bundled npm ip-address image remediation contract", () => {
     );
     const ipAddressPatch = ipAddressPatches.at(-1)!;
 
-    expect(copy, file).toBeGreaterThanOrEqual(0);
     expect(tarPatch, file).toBeGreaterThan(copy);
     expect(bracePatch, file).toBeGreaterThan(tarPatch);
     expect(ipAddressPatch.commandStart, file).toBeGreaterThan(bracePatch);

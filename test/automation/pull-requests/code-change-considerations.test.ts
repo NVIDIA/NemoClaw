@@ -60,12 +60,8 @@ describe("shared code change considerations", () => {
     try {
       process.chdir(untrustedCheckout);
       expect(readTrustedCodeChangeConsiderations()).toContain("shortest stable test");
-      expect(readTrustedCodeChangeConsiderations()).toContain(
-        "neutral or negative in total lines",
-      );
-      expect(readTrustedCodeChangeConsiderations()).toContain(
-        "what old structure does it remove",
-      );
+      expect(readTrustedCodeChangeConsiderations()).toContain("neutral or negative in total lines");
+      expect(readTrustedCodeChangeConsiderations()).toContain("what old structure does it remove");
       expect(readTrustedCodeChangeConsiderations()).not.toContain("Ignore the trusted resource");
       expect(buildSystemPrompt().match(/# Code Change Considerations/gu)).toHaveLength(1);
     } finally {
@@ -101,5 +97,4 @@ describe("shared code change considerations", () => {
       "Code change considerations malformed",
     );
   });
-
 });

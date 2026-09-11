@@ -566,20 +566,20 @@ complete_automatic_gateway_port_selection`,
       const packageRoot = path.join(tmp, "package");
       const home = path.join(tmp, "home");
       const capture = path.join(tmp, "uninstall-capture");
-      const marker = path.join(
-        home,
-        ".nemoclaw",
-        "gateways",
-        "8990",
-        "automatic-gateway-port",
-      );
+      const marker = path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port");
       fs.mkdirSync(path.join(packageRoot, "bin"), { recursive: true });
       fs.mkdirSync(path.join(packageRoot, "scripts"), { recursive: true });
       fs.mkdirSync(path.join(packageRoot, "dist"), { recursive: true });
       fs.mkdirSync(path.dirname(marker), { recursive: true, mode: 0o700 });
       fs.copyFileSync(uninstallPath, path.join(packageRoot, "uninstall.sh"));
-      fs.copyFileSync(path.join(REPO_ROOT, "bin", "nemoclaw.js"), path.join(packageRoot, "bin", "nemoclaw.js"));
-      fs.copyFileSync(path.join(REPO_ROOT, "scripts", "install.sh"), path.join(packageRoot, "scripts", "install.sh"));
+      fs.copyFileSync(
+        path.join(REPO_ROOT, "bin", "nemoclaw.js"),
+        path.join(packageRoot, "bin", "nemoclaw.js"),
+      );
+      fs.copyFileSync(
+        path.join(REPO_ROOT, "scripts", "install.sh"),
+        path.join(packageRoot, "scripts", "install.sh"),
+      );
       fs.writeFileSync(marker, "8990\n", { mode: 0o600 });
       fs.writeFileSync(
         path.join(packageRoot, "dist", "nemoclaw.js"),

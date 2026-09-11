@@ -174,10 +174,7 @@ describe("CLI layer import boundaries (#6245)", () => {
       'export type { buildOpenshellExecArgs } from "../actions/sandbox/exec";\n',
     ],
     ["a type-only star export", 'export type * from "../actions/sandbox/exec";\n'],
-    [
-      "a type-only namespace export",
-      'export type * as legacy from "../actions/sandbox/exec";\n',
-    ],
+    ["a type-only namespace export", 'export type * as legacy from "../actions/sandbox/exec";\n'],
     [
       "comment and string namespace-export bait",
       '// export * as legacy\nconst bait = "export * as legacy";\nexport { execSandbox } from "../actions/sandbox/exec";\n',

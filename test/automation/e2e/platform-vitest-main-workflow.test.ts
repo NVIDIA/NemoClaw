@@ -40,11 +40,11 @@ describe("platform evidence workflow", () => {
   it("uses the reviewed Node and npm identities for the WSL build and test lane", () => {
     expect(wslHelperSource).toContain(`node_version="${reviewedNpmConfig.nodeVersion}"`);
     expect(wslHelperSource).toContain(`npm_version="${reviewedNpmConfig.npmVersion}"`);
-    expect(wslHelperSource).toContain(
-      `expected_npm_integrity="${reviewedNpmConfig.npmIntegrity}"`,
-    );
+    expect(wslHelperSource).toContain(`expected_npm_integrity="${reviewedNpmConfig.npmIntegrity}"`);
     expect(wslHelperSource).toContain('npm install --global "$npm_archive"');
-    expect(wslHelperSource.indexOf('test "$actual_npm_integrity"')).toBeLessThan(
+    const integrityCheckIndex = wslHelperSource.indexOf('test "$actual_npm_integrity"');
+    expect(integrityCheckIndex).toBeGreaterThanOrEqual(0);
+    expect(integrityCheckIndex).toBeLessThan(
       wslHelperSource.indexOf('npm install --global "$npm_archive"'),
     );
     expect(wslHelperSource).toContain('test "$(npm --version)" = "$npm_version"');

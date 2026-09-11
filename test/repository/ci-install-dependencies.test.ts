@@ -80,8 +80,8 @@ describe("shared CI dependency installer", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(readFileSync(fixture.trace, "utf8").trim().split("\n")).toEqual([
-      `ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${join(fixture.root, "npm-cache")}`,
-      `--prefix nemoclaw ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${join(fixture.root, "npm-cache")}`,
+      `ci --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${join(fixture.root, "npm-cache")}`,
+      `--prefix nemoclaw ci --omit=dev --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${join(fixture.root, "npm-cache")}`,
     ]);
   });
 
@@ -91,7 +91,7 @@ describe("shared CI dependency installer", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(readFileSync(fixture.trace, "utf8").trim()).toBe(
-      `ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${join(fixture.root, "npm-cache")}`,
+      `ci --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${join(fixture.root, "npm-cache")}`,
     );
   });
 

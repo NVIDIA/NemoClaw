@@ -327,13 +327,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         );
         const result = spawnSync(
           "node",
-          [
-            SCRIPT_PATH,
-            "--agent",
-            "openclaw",
-            "--phase",
-            "agent-install",
-          ],
+          [SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install"],
           {
             encoding: "utf-8",
             stdio: ["pipe", "pipe", "pipe"],

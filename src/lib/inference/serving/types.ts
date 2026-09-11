@@ -3,8 +3,7 @@
 
 import type { SystemReadinessReport } from "../../readiness/types.js";
 
-export type ServingDefinitionKind =
-  "ServingModel" | "ServingRecipe" | "ServingPreset";
+export type ServingDefinitionKind = "ServingModel" | "ServingRecipe" | "ServingPreset";
 export type ServingSelectionPolicy = "automatic" | "explicit-only" | "disabled";
 export type ServingSupportState = "supported" | "experimental" | "disabled";
 
@@ -31,8 +30,7 @@ export interface ServingProfileProvenance {
   readonly estimatedImageDownloadBytes: number | null;
   readonly estimatedModelDownloadBytes: number | null;
 }
-export type ReadinessEntityKind =
-  "observation" | "capability" | "qualification";
+export type ReadinessEntityKind = "observation" | "capability" | "qualification";
 export type ReadinessValueType = "boolean" | "number" | "string" | "version";
 export type ServingReadinessObservationRole =
   | "operating-system"
@@ -262,9 +260,7 @@ interface GenericServingRecipe extends ServingRecipeEnvelope {
       readonly probePolicyRef?: string;
     };
     readonly modelRef?: string;
-    readonly runtime?: Partial<
-      ManagedInferenceServingRecipe["spec"]["runtime"]
-    > & {
+    readonly runtime?: Partial<ManagedInferenceServingRecipe["spec"]["runtime"]> & {
       readonly components?: Readonly<Record<string, string>>;
       readonly minimumComputeCapability?: number;
     };
@@ -487,8 +483,7 @@ export type ServingReadinessRequirement =
       };
     };
 
-export type ServingFactValue =
-  string | number | boolean | readonly (string | number | boolean)[];
+export type ServingFactValue = string | number | boolean | readonly (string | number | boolean)[];
 
 export interface ServingFactRequirement {
   readonly fact: string;
@@ -535,9 +530,7 @@ export interface ManagedInferenceServingPreset {
       readonly installPolicyRef?: string;
       readonly platform?: "spark" | "station" | "n1x" | "linux";
       readonly interactive?: boolean;
-      readonly bindings?: Readonly<
-        Record<string, ServingPresetTopologyBinding>
-      >;
+      readonly bindings?: Readonly<Record<string, ServingPresetTopologyBinding>>;
     };
   };
 }
@@ -559,9 +552,7 @@ export interface ServingPreset {
       readonly installPolicyRef?: string;
       readonly platform?: "spark" | "station" | "n1x" | "linux";
       readonly interactive?: boolean;
-      readonly bindings?: Readonly<
-        Record<string, ServingPresetTopologyBinding>
-      >;
+      readonly bindings?: Readonly<Record<string, ServingPresetTopologyBinding>>;
     };
   };
 }
@@ -626,10 +617,7 @@ export interface ServingCatalogRegistries {
   readonly orchestrations?: ReadonlySet<string>;
   readonly readiness: ReadonlyMap<string, ServingReadinessRegistryValue>;
   readonly facts?: ReadonlySet<string>;
-  readonly topologyQualifications?: ReadonlyMap<
-    string,
-    ServingTopologyRegistryEntry
-  >;
+  readonly topologyQualifications?: ReadonlyMap<string, ServingTopologyRegistryEntry>;
   readonly validateRecipe?: (recipe: ServingRecipe) => string | undefined;
 }
 
@@ -642,8 +630,7 @@ export type ManagedInferenceFactValue = ServingFactValue;
 export type ManagedInferenceFactRequirement = ServingFactRequirement;
 export type ManagedInferenceTopologyRequirement = ServingTopologyRequirement;
 export type ManagedInferencePresetRequirement = ServingPresetRequirement;
-export type ManagedInferencePresetTopologyBinding =
-  ServingPresetTopologyBinding;
+export type ManagedInferencePresetTopologyBinding = ServingPresetTopologyBinding;
 export interface CompiledManagedInferenceCatalog extends Omit<
   CompiledServingCatalog,
   "presets" | "recipes"
@@ -667,9 +654,7 @@ const MATERIALIZER_OWNED_SERVE_ARGUMENTS = new Set([
   "--tensor-parallel-size",
 ]);
 
-export function isManagedInferenceMaterializerOwnedArgument(
-  name: string,
-): boolean {
+export function isManagedInferenceMaterializerOwnedArgument(name: string): boolean {
   return MATERIALIZER_OWNED_SERVE_ARGUMENTS.has(name);
 }
 

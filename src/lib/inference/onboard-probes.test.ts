@@ -938,7 +938,7 @@ exit 0
     });
 
     it("retries chat-completions when /responses errors then chat-completions times out", () => {
-        const script = `#!/usr/bin/env bash
+      const script = `#!/usr/bin/env bash
 outfile=""
 url=""
 while [ "$#" -gt 0 ]; do
@@ -1015,36 +1015,36 @@ fi
 printf '200'
 exit 0
 `;
-        withFakeCurlProbe(
-          { script, dirPrefix: "nemoclaw-query-retry-probe-" },
-          ({ counter, tmpDir }) => {
-            const result = probeOpenAiLikeEndpoint(
-              "https://api.example.com/v1",
-              "test-model",
-              "secret key",
-              { skipResponsesProbe: true, authMode: "query-param" },
-            );
+      withFakeCurlProbe(
+        { script, dirPrefix: "nemoclaw-query-retry-probe-" },
+        ({ counter, tmpDir }) => {
+          const result = probeOpenAiLikeEndpoint(
+            "https://api.example.com/v1",
+            "test-model",
+            "secret key",
+            { skipResponsesProbe: true, authMode: "query-param" },
+          );
 
-            expect(result).toMatchObject({ ok: true, api: "openai-completions" });
-            expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
-            const firstArgs = fs.readFileSync(path.join(tmpDir, "args-1.txt"), "utf8");
-            const retryArgs = fs.readFileSync(path.join(tmpDir, "args-2.txt"), "utf8");
-            const combinedArgs = `${firstArgs}\n${retryArgs}`;
-            expect(combinedArgs).toContain("https://api.example.com/v1/chat/completions");
-            expect(combinedArgs).not.toContain("?key=");
-            expect(combinedArgs).not.toContain("Authorization: Bearer");
-            expect(combinedArgs).not.toContain("secret key");
+          expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+          expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+          const firstArgs = fs.readFileSync(path.join(tmpDir, "args-1.txt"), "utf8");
+          const retryArgs = fs.readFileSync(path.join(tmpDir, "args-2.txt"), "utf8");
+          const combinedArgs = `${firstArgs}\n${retryArgs}`;
+          expect(combinedArgs).toContain("https://api.example.com/v1/chat/completions");
+          expect(combinedArgs).not.toContain("?key=");
+          expect(combinedArgs).not.toContain("Authorization: Bearer");
+          expect(combinedArgs).not.toContain("secret key");
 
-            // Both calls must reuse the same auth config tmpfile so a doubled-
-            // timeout retry never spawns a second config write that could race
-            // with cleanup. PR #5975 review note PRA-9 / CodeRabbit "assert
-            // --config has a path value".
-            expect(captureAuthConfigPath(firstArgs.split("\n"))).toBe(
-              captureAuthConfigPath(retryArgs.split("\n")),
-            );
-          },
-        );
-      });
+          // Both calls must reuse the same auth config tmpfile so a doubled-
+          // timeout retry never spawns a second config write that could race
+          // with cleanup. PR #5975 review note PRA-9 / CodeRabbit "assert
+          // --config has a path value".
+          expect(captureAuthConfigPath(firstArgs.split("\n"))).toBe(
+            captureAuthConfigPath(retryArgs.split("\n")),
+          );
+        },
+      );
+    });
 
     it("retries Local Ollama validation when HTTP 200 omits a structured tool call (#8714)", () => {
       const body = `n=$(cat "${HARNESS_COUNTER}")

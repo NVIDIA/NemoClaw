@@ -56,42 +56,170 @@
         "inferenceProviders": {
           "type": "array",
           "items": {
-            "type": "object",
-            "required": ["name", "provider", "api", "endpoint"],
-            "properties": {
-              "name": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 63,
-                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-              },
-              "provider": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 512,
-                "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
-              },
-              "api": {
-                "enum": ["openai-completions", "openai-responses", "anthropic-messages"]
-              },
-              "endpoint": {
-                "type": "string",
-                "maxLength": 2048,
-                "pattern": "^https://[^\\s]+$"
-              },
-              "credential": {
+            "anyOf": [
+              {
                 "type": "object",
-                "required": ["env"],
+                "required": ["name", "provider", "api", "endpoint"],
                 "properties": {
-                  "env": {
+                  "name": {
                     "type": "string",
-                    "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+                    "minLength": 1,
+                    "maxLength": 63,
+                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                  },
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$",
+                    "not": {
+                      "const": "vllm-local"
+                    }
+                  },
+                  "api": {
+                    "enum": ["openai-completions", "openai-responses", "anthropic-messages"]
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "pattern": "^https://[^\\s]+$"
+                  },
+                  "credential": {
+                    "type": "object",
+                    "required": ["env"],
+                    "properties": {
+                      "env": {
+                        "type": "string",
+                        "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["name", "provider", "api", "serving"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 63,
+                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                  },
+                  "provider": {
+                    "type": "string",
+                    "const": "vllm-local"
+                  },
+                  "api": {
+                    "type": "string",
+                    "const": "openai-completions"
+                  },
+                  "serving": {
+                    "type": "object",
+                    "required": [
+                      "backend",
+                      "catalogDigest",
+                      "profile",
+                      "recipe",
+                      "model",
+                      "runtime",
+                      "hostPort"
+                    ],
+                    "properties": {
+                      "backend": {
+                        "type": "string",
+                        "const": "vllm"
+                      },
+                      "catalogDigest": {
+                        "type": "string",
+                        "pattern": "^sha256:[a-f0-9]{64}$"
+                      },
+                      "profile": {
+                        "type": "object",
+                        "required": ["id", "digest"],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "const": "vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4"
+                          },
+                          "digest": {
+                            "type": "string",
+                            "pattern": "^sha256:[a-f0-9]{64}$"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "recipe": {
+                        "type": "object",
+                        "required": ["id", "digest"],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "const": "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1"
+                          },
+                          "digest": {
+                            "type": "string",
+                            "pattern": "^sha256:[a-f0-9]{64}$"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "model": {
+                        "type": "object",
+                        "required": ["id", "revision", "servedName"],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                          },
+                          "revision": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{40}$"
+                          },
+                          "servedName": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "runtime": {
+                        "type": "object",
+                        "required": ["image"],
+                        "properties": {
+                          "image": {
+                            "type": "object",
+                            "required": ["ref"],
+                            "properties": {
+                              "ref": {
+                                "type": "string",
+                                "maxLength": 512,
+                                "pattern": "^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$"
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "hostPort": {
+                        "type": "integer",
+                        "minimum": 1024,
+                        "maximum": 65535
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false
               }
-            },
-            "additionalProperties": false
+            ]
           },
           "minItems": 1
         },
@@ -134,6 +262,24 @@
                 "type": "object",
                 "required": ["policy"],
                 "properties": {
+                  "proxy": {
+                    "type": "object",
+                    "required": ["host", "port"],
+                    "properties": {
+                      "host": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "pattern": "^[A-Za-z0-9._-]+$(?![\\s\\S])"
+                      },
+                      "port": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 65535
+                      }
+                    },
+                    "additionalProperties": false
+                  },
                   "policy": {
                     "type": "object",
                     "required": ["explicit"],
@@ -150,66 +296,319 @@
               "agents": {
                 "type": "array",
                 "items": {
-                  "type": "object",
-                  "required": ["name", "type", "inference"],
-                  "properties": {
-                    "name": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 63,
-                      "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                    },
-                    "type": {
-                      "type": "string",
-                      "const": "openclaw"
-                    },
-                    "inference": {
+                  "anyOf": [
+                    {
                       "type": "object",
-                      "required": ["routes"],
+                      "required": ["name", "inference", "type"],
                       "properties": {
-                        "routes": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "required": ["name", "providerRef", "overrides"],
-                            "properties": {
-                              "name": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 63,
-                                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                              },
-                              "providerRef": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 63,
-                                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                              },
-                              "overrides": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 63,
+                          "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                        },
+                        "auth": {
+                          "type": "object",
+                          "required": ["method", "providerRef"],
+                          "properties": {
+                            "method": {
+                              "type": "string",
+                              "const": "api-key"
+                            },
+                            "providerRef": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 63,
+                              "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "inference": {
+                          "type": "object",
+                          "required": ["routes"],
+                          "properties": {
+                            "routes": {
+                              "type": "array",
+                              "items": {
                                 "type": "object",
-                                "required": ["model"],
+                                "required": ["name", "providerRef", "overrides"],
                                 "properties": {
-                                  "model": {
+                                  "name": {
                                     "type": "string",
                                     "minLength": 1,
-                                    "maxLength": 512,
-                                    "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "providerRef": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "overrides": {
+                                    "type": "object",
+                                    "required": ["model"],
+                                    "properties": {
+                                      "model": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 512,
+                                        "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                      },
+                                      "contextWindow": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 4194304
+                                      },
+                                      "maxTokens": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 1000000000
+                                      },
+                                      "reasoning": {
+                                        "type": "boolean"
+                                      },
+                                      "reasoningEffort": {
+                                        "enum": ["default", "low", "medium", "high"]
+                                      }
+                                    },
+                                    "additionalProperties": false
                                   }
                                 },
                                 "additionalProperties": false
-                              }
-                            },
-                            "additionalProperties": false
+                              },
+                              "minItems": 1
+                            }
                           },
-                          "minItems": 1
+                          "additionalProperties": false
+                        },
+                        "type": {
+                          "type": "string",
+                          "const": "openclaw"
+                        },
+                        "execution": {
+                          "type": "object",
+                          "properties": {
+                            "timeoutSeconds": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1000000000
+                            },
+                            "heartbeatEvery": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "minProperties": 1
+                        },
+                        "interfaces": {
+                          "type": "object",
+                          "required": ["dashboard"],
+                          "properties": {
+                            "dashboard": {
+                              "type": "object",
+                              "properties": {
+                                "port": {
+                                  "type": "integer",
+                                  "minimum": 1024,
+                                  "maximum": 65535,
+                                  "not": {
+                                    "minimum": 8642,
+                                    "maximum": 8652
+                                  }
+                                },
+                                "bind": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "const": "127.0.0.1"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "0.0.0.0"
+                                    }
+                                  ]
+                                }
+                              },
+                              "additionalProperties": false,
+                              "minProperties": 1
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "observability": {
+                          "type": "object",
+                          "required": ["otlp"],
+                          "properties": {
+                            "otlp": {
+                              "type": "object",
+                              "required": ["enabled", "endpoint", "serviceName", "sampleRate"],
+                              "properties": {
+                                "enabled": {
+                                  "type": "boolean",
+                                  "const": true
+                                },
+                                "endpoint": {
+                                  "type": "string",
+                                  "const": "http://host.openshell.internal:4318"
+                                },
+                                "serviceName": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256,
+                                  "pattern": "^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])"
+                                },
+                                "sampleRate": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "additionalProperties": false
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": ["name", "inference", "type"],
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 63,
+                          "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                        },
+                        "auth": {
+                          "type": "object",
+                          "required": ["method", "providerRef"],
+                          "properties": {
+                            "method": {
+                              "type": "string",
+                              "const": "api-key"
+                            },
+                            "providerRef": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 63,
+                              "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "inference": {
+                          "type": "object",
+                          "required": ["routes"],
+                          "properties": {
+                            "routes": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "required": ["name", "providerRef", "overrides"],
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "providerRef": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "overrides": {
+                                    "type": "object",
+                                    "required": ["model"],
+                                    "properties": {
+                                      "model": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 512,
+                                        "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                      },
+                                      "contextWindow": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 4194304
+                                      },
+                                      "maxTokens": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 1000000000
+                                      },
+                                      "reasoning": {
+                                        "type": "boolean"
+                                      },
+                                      "reasoningEffort": {
+                                        "enum": ["default", "low", "medium", "high"]
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "minItems": 1
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "type": {
+                          "type": "string",
+                          "const": "hermes"
                         }
                       },
                       "additionalProperties": false
                     }
-                  },
-                  "additionalProperties": false
+                  ]
                 },
                 "minItems": 1
+              },
+              "integrations": {
+                "type": "object",
+                "required": ["webSearch"],
+                "properties": {
+                  "webSearch": {
+                    "type": "object",
+                    "required": ["provider", "agentRefs", "credential"],
+                    "properties": {
+                      "provider": {
+                        "type": "string",
+                        "const": "brave"
+                      },
+                      "agentRefs": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "const": "primary"
+                        },
+                        "minItems": 1,
+                        "maxItems": 1
+                      },
+                      "credential": {
+                        "type": "object",
+                        "required": ["env"],
+                        "properties": {
+                          "env": {
+                            "type": "string",
+                            "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "additionalProperties": false

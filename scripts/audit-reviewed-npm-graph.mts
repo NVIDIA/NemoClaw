@@ -19,8 +19,10 @@ import {
 } from "./lib/reviewed-npm-archive.mts";
 import {
   type AuditPolicyResult,
+  type ReviewedNpmIdentity,
   NPM_AUDIT_REGISTRY,
   assertExceptionGraphs,
+  parseReviewedNpmIdentity,
   readAuditExceptionRegistry,
   runReviewedNpmAudit,
   type Severity,
@@ -135,7 +137,7 @@ export function resolveTrustedAuditConfigPath(trustedRoot: string): string {
   return resolvePathWithinRoot(
     trustedRoot,
     "ci/reviewed-npm-audit.json",
-    "trusted reviewed npm audit configuration",
+    "trusted npm audit configuration",
   );
 }
 
@@ -151,7 +153,7 @@ function graphCacheFile(graphId: string): string | undefined {
   const configuredDirectory = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIR;
   if (!configuredDirectory) return undefined;
   if (!path.isAbsolute(configuredDirectory)) {
-    throw new Error("reviewed npm audit cache directory must be absolute");
+    throw new Error("npm audit cache directory must be absolute");
   }
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(graphId)) {
     throw new Error(`npm audit cache graph ID is unsafe: ${graphId}`);
@@ -162,13 +164,13 @@ function graphCacheFile(graphId: string): string | undefined {
     if (!component) continue;
     current = path.join(current, component);
     const stat = fs.lstatSync(current, { throwIfNoEntry: false });
-    if (!stat) throw new Error("reviewed npm audit cache directory must exist");
+    if (!stat) throw new Error("npm audit cache directory must exist");
     if (stat.isSymbolicLink()) {
-      throw new Error("reviewed npm audit cache directory must not contain symbolic links");
+      throw new Error("npm audit cache directory must not contain symbolic links");
     }
   }
   if (!fs.statSync(directory).isDirectory()) {
-    throw new Error("reviewed npm audit cache directory must be a directory");
+    throw new Error("npm audit cache directory must be a directory");
   }
   return path.join(directory, `${graphId}.json`);
 }
@@ -190,6 +192,7 @@ function run(command: string, args: readonly string[], cwd: string) {
 
 export function parseAuditConfig(contents: string): AuditConfig {
   const parsed = JSON.parse(contents) as AuditConfig;
+  const reviewedNpmIdentity = parseReviewedNpmIdentity(parsed);
   if (
     parsed.schemaVersion !== 2 ||
     !SEVERITIES.includes(parsed.severityThreshold) ||
@@ -268,7 +271,7 @@ export function parseAuditConfig(contents: string): AuditConfig {
   ) {
     throw new Error("ci/reviewed-npm-audit.json is invalid");
   }
-  return parsed;
+  return { ...parsed, ...reviewedNpmIdentity };
 }
 
 function readConfig(): AuditConfig {
@@ -334,14 +337,7 @@ function materializeArchiveGraph(
   });
   run(
     "npm",
-    [
-      "install",
-      "--ignore-scripts",
-      "--omit=dev",
-      "--no-audit",
-      "--no-fund",
-      ...archives,
-    ],
+    ["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund", ...archives],
     graphDirectory,
   );
   return graphDirectory;
@@ -739,8 +735,6 @@ function auditLockedGraph(
   tempRoot: string,
   exceptionFile: string,
   artifactDirectory: string,
-  npmIntegrity: string,
-  npmVersion: string,
 ) {
   const directory = materializeLockedGraph(graph, tempRoot, config.registryOrigin);
   const result = runReviewedNpmAudit({
@@ -751,10 +745,10 @@ function auditLockedGraph(
     provenance: {
       label: graph.label,
       nodeVersion: process.version,
-      npmIntegrity,
-      npmVersion,
+      npmVersion: config.npmVersion,
       packageSpecs: [graph.packageSpec],
     },
+    reviewedNpmIdentity: config,
     reportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
     resultFile: path.join(artifactDirectory, `locked-graph-${index + 1}-policy.json`),
     threshold: graph.severityThreshold ?? config.severityThreshold,
@@ -782,8 +776,6 @@ function auditSourceGraph(
   tempRoot: string,
   exceptionFile: string,
   artifactDirectory: string,
-  npmIntegrity: string,
-  npmVersion: string,
 ) {
   const sourcePackage = targetRepositoryPath("package.json", "NemoClaw CLI package manifest");
   const sourceLock = targetRepositoryPath("package-lock.json", "NemoClaw CLI lockfile");
@@ -806,8 +798,7 @@ function auditSourceGraph(
     directory,
     exceptionFile,
     artifactDirectory,
-    npmIntegrity,
-    npmVersion,
+    reviewedNpmIdentity: config,
     packageSpec: `${sourceManifest.name}@${sourceManifest.version}`,
     threshold: config.severityThreshold,
   });
@@ -818,9 +809,8 @@ export function auditMaterializedSourceGraph(
     artifactDirectory: string;
     directory: string;
     exceptionFile: string;
-    npmIntegrity: string;
-    npmVersion: string;
     packageSpec: string;
+    reviewedNpmIdentity: ReviewedNpmIdentity;
     threshold: Severity;
   }>,
   dependencies: Readonly<{
@@ -836,10 +826,10 @@ export function auditMaterializedSourceGraph(
     provenance: {
       label: SOURCE_GRAPH.label,
       nodeVersion: process.version,
-      npmIntegrity: options.npmIntegrity,
-      npmVersion: options.npmVersion,
+      npmVersion: options.reviewedNpmIdentity.npmVersion,
       packageSpecs: [options.packageSpec],
     },
+    reviewedNpmIdentity: options.reviewedNpmIdentity,
     reportFile: path.join(options.artifactDirectory, "source-graph.json"),
     resultFile: path.join(options.artifactDirectory, "source-graph-policy.json"),
     threshold: options.threshold,
@@ -856,8 +846,7 @@ export function emitAuditReceipt(
   options: Readonly<{
     artifactDirectory: string;
     graphId: string;
-    npmIntegrity: string;
-    npmVersion: string;
+    reviewedNpmIdentity: ReviewedNpmIdentity;
     packageJsonFile: string;
     packageLockFile: string;
     preserveInputs?: boolean;
@@ -889,8 +878,7 @@ export function emitAuditReceipt(
     ),
     exceptionPolicySha256: options.result.exceptionPolicySha256,
     graphId: options.graphId,
-    npmIntegrity: options.npmIntegrity,
-    npmVersion: options.npmVersion,
+    reviewedNpmIdentity: options.reviewedNpmIdentity,
     packageJson: fs.readFileSync(options.packageJsonFile),
     packageLock: fs.readFileSync(options.packageLockFile),
     rawResponse: fs.readFileSync(options.rawReportFile),
@@ -925,15 +913,14 @@ export function assertReviewedAuditReportsPass(
       ({ label, result, threshold: reportThreshold }) =>
         `${label}: ${result.unacceptedBlockingAdvisories.length} unaccepted at or above ${reportThreshold ?? threshold}`,
     );
-  if (failures.length > 0)
-    throw new Error(`reviewed npm audit threshold failed\n${failures.join("\n")}`);
+  if (failures.length > 0) throw new Error(`npm audit threshold failed\n${failures.join("\n")}`);
 }
 
 function main(): void {
   const config = readConfig();
   const expectedNode = `v${config.nodeVersion}`;
   if (process.version !== expectedNode) {
-    throw new Error(`reviewed npm audit requires Node ${expectedNode}; running ${process.version}`);
+    throw new Error(`npm audit requires Node ${expectedNode}; running ${process.version}`);
   }
   const artifactDirectory = targetRepositoryPath(
     process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR ?? config.artifactDirectory,
@@ -953,20 +940,11 @@ function main(): void {
   fs.mkdirSync(artifactDirectory, { recursive: true });
   const npmVersion = run("npm", ["--version"], TRUSTED_REPO_ROOT).stdout.trim();
   if (npmVersion !== config.npmVersion) {
-    throw new Error(
-      `reviewed npm audit requires npm ${config.npmVersion}; running npm ${npmVersion}`,
-    );
+    throw new Error(`npm audit requires npm ${config.npmVersion}; running npm ${npmVersion}`);
   }
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
-    const sourceResult = auditSourceGraph(
-      config,
-      tempRoot,
-      exceptionFile,
-      artifactDirectory,
-      config.npmIntegrity,
-      npmVersion,
-    );
+    const sourceResult = auditSourceGraph(config, tempRoot, exceptionFile, artifactDirectory);
     const archiveDirectory = materializeArchiveGraph(
       config.archivePackages,
       tempRoot,
@@ -984,22 +962,14 @@ function main(): void {
         npmVersion,
         packageSpecs: config.archivePackages.map((reviewed) => reviewed.packageSpec),
       },
+      reviewedNpmIdentity: config,
       reportFile: path.join(artifactDirectory, "reviewed-archive-graph.json"),
       resultFile: path.join(artifactDirectory, "reviewed-archive-graph-policy.json"),
       threshold: config.severityThreshold,
       throwOnBlock: false,
     });
     const lockedResults = config.lockedGraphs.map((graph, index) =>
-      auditLockedGraph(
-        graph,
-        index,
-        config,
-        tempRoot,
-        exceptionFile,
-        artifactDirectory,
-        config.npmIntegrity,
-        npmVersion,
-      ),
+      auditLockedGraph(graph, index, config, tempRoot, exceptionFile, artifactDirectory),
     );
     const reports = [
       { label: SOURCE_GRAPH.label, result: sourceResult },
@@ -1015,8 +985,7 @@ function main(): void {
     emitAuditReceipt({
       artifactDirectory,
       graphId: SOURCE_GRAPH.id,
-      npmIntegrity: config.npmIntegrity,
-      npmVersion,
+      reviewedNpmIdentity: config,
       packageJsonFile: targetRepositoryPath("package.json", "NemoClaw CLI package manifest"),
       packageLockFile: targetRepositoryPath("package-lock.json", "NemoClaw CLI lockfile"),
       rawReportFile: path.join(artifactDirectory, "source-graph.json"),
@@ -1027,8 +996,7 @@ function main(): void {
     emitAuditReceipt({
       artifactDirectory,
       graphId: config.archiveGraphId,
-      npmIntegrity: config.npmIntegrity,
-      npmVersion,
+      reviewedNpmIdentity: config,
       packageJsonFile: path.join(archiveDirectory, "package.json"),
       packageLockFile: path.join(archiveDirectory, "package-lock.json"),
       preserveInputs: true,
@@ -1041,8 +1009,7 @@ function main(): void {
       emitAuditReceipt({
         artifactDirectory,
         graphId: graph.id,
-        npmIntegrity: config.npmIntegrity,
-        npmVersion,
+        reviewedNpmIdentity: config,
         packageJsonFile: targetRepositoryPath(
           path.join(graph.directory, "package.json"),
           `${graph.label} package manifest`,

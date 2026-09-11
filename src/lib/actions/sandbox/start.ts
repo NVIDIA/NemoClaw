@@ -71,6 +71,7 @@ export interface SandboxStartDeps {
   observer?: OpenShellSandboxObserver;
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
+  updateSandbox?: typeof registry.updateSandbox;
   restoreProcessState?: (sandboxName: string) => Promise<SandboxStartupRecoveryResult>;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   restoreStartupState?: (sandboxName: string) => Promise<SandboxStartupRecoveryResult>;
@@ -189,6 +190,18 @@ async function startSandboxWithinLifecycleFence(
   if (preflight) return preflight;
   const result = resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
+  if (
+    resolved.sandbox.stopped === true &&
+    !registry.recordSandboxStopIntent(
+      sandboxName,
+      false,
+      deps.updateSandbox ?? registry.updateSandbox,
+    )
+  ) {
+    throw new Error(
+      `Sandbox '${sandboxName}' started, but NemoClaw could not clear its intentional-stop record. Run '${cliName()} ${sandboxName} status' before another lifecycle command.`,
+    );
+  }
   if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(sandboxName);

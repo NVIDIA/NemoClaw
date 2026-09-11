@@ -57,7 +57,9 @@ describe("stale sandbox rebuild safety (#4497)", () => {
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Cannot rebuild an absent sandbox without its authoritative OpenShell policy");
+    ).rejects.toThrow(
+      "Cannot rebuild an absent sandbox without its authoritative OpenShell policy",
+    );
 
     const output = [...harness.logSpy.mock.calls, ...harness.errorSpy.mock.calls]
       .map((call) => String(call[0]))
@@ -155,7 +157,9 @@ describe("stale sandbox rebuild safety (#4497)", () => {
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Cannot rebuild an absent sandbox without its authoritative OpenShell policy");
+    ).rejects.toThrow(
+      "Cannot rebuild an absent sandbox without its authoritative OpenShell policy",
+    );
 
     const output = [...harness.logSpy.mock.calls, ...harness.errorSpy.mock.calls]
       .map((call) => String(call[0]))

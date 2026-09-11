@@ -9,6 +9,14 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SCRIPT = path.join(import.meta.dirname, "../../..", "scripts", "brev-launchable-ci-cpu.sh");
+const REVIEWED_RUNTIME = JSON.parse(
+  fs.readFileSync(
+    path.join(import.meta.dirname, "../../..", "ci", "reviewed-npm-audit.json"),
+    "utf8",
+  ),
+) as { nodeVersion: string; npmVersion: string };
+const REVIEWED_NODE_VERSION = REVIEWED_RUNTIME.nodeVersion;
+const REVIEWED_NPM_VERSION = REVIEWED_RUNTIME.npmVersion;
 const BREV_LIFECYCLE_SCRIPT_MAX_BYTES = 16 * 1024;
 const ASSET = "openshell-x86_64-unknown-linux-musl.tar.gz";
 const PINNED_ASSET_SHA256 = "d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0";
@@ -117,14 +125,14 @@ exec bash -c "\${1:-}"
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then printf '${options.nodeSourceChecksumTool === false ? "v22.19.0" : "v24.18.1"}\\n'; exit 0; fi
+if [ "\${1:-}" = "--version" ]; then printf '${options.nodeSourceChecksumTool === false ? "v22.19.0" : `v${REVIEWED_NODE_VERSION}`}\\n'; exit 0; fi
 exit 0
 `,
   );
   writeExecutable(
     path.join(fakeBin, "npm"),
     `#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then printf '12.0.2\\n'; exit 0; fi
+if [ "\${1:-}" = "--version" ]; then printf '${REVIEWED_NPM_VERSION}\\n'; exit 0; fi
 printf 'npm stub %s\\n' "$*"
 exit 0
 `,
@@ -307,9 +315,9 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     }
   });
 
-  it("pins both Node.js 24.18.1 archives and installs the canonical reviewed npm", () => {
+  it("pins both reviewed Node.js archives and installs the canonical reviewed npm", () => {
     const source = fs.readFileSync(SCRIPT, "utf8");
-    expect(source).toContain('NODE_VERSION="24.18.1"');
+    expect(source).toContain(`NODE_VERSION="${REVIEWED_NODE_VERSION}"`);
     expect(source).toContain(
       'node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"',
     );
@@ -319,7 +327,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     expect(source).toContain(
       "bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json",
     );
-    expect(source).toContain('[[ "$(npm --version)" == "12.0.2" ]]');
+    expect(source).toContain(`[[ "$(npm --version)" == "${REVIEWED_NPM_VERSION}" ]]`);
     expect(source).not.toContain("deb.nodesource.com");
   });
 
@@ -385,10 +393,10 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
       expect(result.status, out).toBe(1);
       expect(out).toContain("No SHA-256 tool available (sha256sum/shasum)");
       expect(fs.readFileSync(fake.curlLog, "utf-8")).toContain(
-        "https://nodejs.org/dist/v24.18.1/node-v24.18.1-linux-x64.tar.gz",
+        `https://nodejs.org/dist/v${REVIEWED_NODE_VERSION}/node-v${REVIEWED_NODE_VERSION}-linux-x64.tar.gz`,
       );
       expect(sudoLog).not.toMatch(/^tar -xzf /m);
-      expect(out).not.toContain("Node.js v24.18.1 installed");
+      expect(out).not.toContain(`Node.js v${REVIEWED_NODE_VERSION} installed`);
     } finally {
       fake.cleanup();
     }

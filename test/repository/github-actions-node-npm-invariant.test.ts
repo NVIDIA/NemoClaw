@@ -93,6 +93,15 @@ function installsReviewedNode(step: Step): boolean {
   );
 }
 
+function runsSanitizedReviewedNpmBootstrap(step: Step): boolean {
+  const run = step.run ?? "";
+  return (
+    run.includes("env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN") &&
+    run.includes("$GITHUB_ACTION_PATH/../setup-reviewed-npm/verify-and-install-npm.sh") &&
+    run.includes("$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json")
+  );
+}
+
 function runsNpm(step: Step): boolean {
   return /(?:^|[\n;&|({])\s*(?:npm|npx)(?:\s|$)/mu.test(step.run ?? "");
 }
@@ -198,11 +207,13 @@ describe("controlled setup-node environments", () => {
               ? inputs?.path === undefined
               : String(inputs?.path) === checkoutPath,
           );
-        const sparsePaths = String(matchingCheckout?.with?.["sparse-checkout"] ?? "")
+        const sparseCheckout = matchingCheckout?.with?.["sparse-checkout"];
+        const sparsePaths = String(sparseCheckout ?? "")
           .split("\n")
-          .map((entry) => entry.trim());
+          .map((entry) => entry.trim())
+          .filter(Boolean);
         const completeSparseCheckout =
-          sparsePaths.length === 1 ||
+          sparseCheckout === undefined ||
           (sparsePaths.includes(".github/actions/setup-reviewed-npm") &&
             sparsePaths.includes("ci/reviewed-npm-audit.json"));
         return {
@@ -299,8 +310,10 @@ describe("controlled setup-node environments", () => {
       .filter(({ file }) => path.relative(GITHUB_ROOT, file).startsWith(`actions${path.sep}`))
       .filter(({ steps, index }) => {
         const reviewed = steps.slice(index + 1).find(installsReviewedNpm);
-        return ![IMMUTABLE_REVIEWED_NPM_ACTION, IMMUTABLE_PREPARE_E2E_NPM_ACTION].includes(
-          reviewed?.uses ?? "",
+        return (
+          ![IMMUTABLE_REVIEWED_NPM_ACTION, IMMUTABLE_PREPARE_E2E_NPM_ACTION].includes(
+            reviewed?.uses ?? "",
+          ) && !runsSanitizedReviewedNpmBootstrap(reviewed ?? {})
         );
       })
       .map(({ file }) => path.relative(REPO_ROOT, file));

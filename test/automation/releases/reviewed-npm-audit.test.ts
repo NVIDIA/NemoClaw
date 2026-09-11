@@ -25,6 +25,8 @@ import {
   extractAdvisoryIds,
   parseAuditExceptionRegistry,
   npmAuditProcessOptions,
+  parseReviewedNpmAuditCliArgs,
+  parseReviewedNpmIdentity,
   parseAuditReport,
   provenanceSidecarPath,
   readAuditCache,
@@ -169,7 +171,7 @@ function exceptionPolicy(
   );
 }
 
-describe("reviewed npm audit gate", () => {
+describe("npm audit gate", () => {
   it("removes the checked-in brace-expansion exception after remediation (#8116)", () => {
     expect(CHECKED_IN_POLICY).toEqual(EMPTY_POLICY);
   });
@@ -304,12 +306,9 @@ describe("reviewed npm audit gate", () => {
       NPM_AUDIT_ATTEMPT_TIMEOUT_MS * (NPM_AUDIT_RETRY_DELAYS_MS.length + 1) +
       NPM_AUDIT_RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0);
     const minimumJobTimeoutMinutes = Math.ceil(retryBudgetMs / 60_000) + 4;
-    const callers = reviewedNpmAuditWorkflowDeadlines(
-      path.join(REPO_ROOT, ".github", "workflows"),
-    );
+    const callers = reviewedNpmAuditWorkflowDeadlines(path.join(REPO_ROOT, ".github", "workflows"));
 
-    expect(callers).toHaveLength(5);
-    expect(callers.map(({ timeoutMinutes }) => timeoutMinutes)).toEqual([25, 25, 25, 25, 25]);
+    expect(callers).toHaveLength(6);
     expect(Math.min(...callers.map(({ timeoutMinutes }) => timeoutMinutes))).toBeGreaterThanOrEqual(
       minimumJobTimeoutMinutes,
     );
@@ -510,7 +509,13 @@ describe("reviewed npm audit gate", () => {
   });
 });
 
-describe("reviewed npm audit raw cache", () => {
+describe("npm audit raw cache", () => {
+  const npmIdentity = {
+    npmArchiveSha256: "a".repeat(64),
+    npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+    npmVersion: "10.9.7",
+  };
+
   function fixture() {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-cache-"));
     fs.writeFileSync(path.join(directory, "package.json"), '{"name":"fixture"}\n');
@@ -518,13 +523,79 @@ describe("reviewed npm audit raw cache", () => {
     return directory;
   }
 
+  function cliArgs(directory: string, ...extra: string[]) {
+    return [
+      "--directory",
+      directory,
+      "--exceptions",
+      "exceptions.json",
+      "--graph",
+      "fixture",
+      "--threshold",
+      "high",
+      ...extra,
+    ];
+  }
+
+  it.each([
+    ["flag", ["--cache", "cache.json"], {}],
+    ["environment", [], { NEMOCLAW_NPM_AUDIT_CACHE_FILE: "cache.json" }],
+  ] as const)(
+    "loads the reviewed npm identity for a CLI cache configured by %s (#8253)",
+    (_source, cacheArgs, environment) => {
+      const directory = fixture();
+      const auditConfigFile = path.join(directory, "reviewed-npm-audit.json");
+      try {
+        fs.writeFileSync(auditConfigFile, `${JSON.stringify(npmIdentity)}\n`);
+        expect(
+          parseReviewedNpmAuditCliArgs(
+            cliArgs(directory, "--audit-config", auditConfigFile, ...cacheArgs),
+            environment,
+          ),
+        ).toMatchObject({ cacheFile: "cache.json", reviewedNpmIdentity: npmIdentity });
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("rejects a CLI cache without the reviewed npm configuration", () => {
+    expect(() => parseReviewedNpmAuditCliArgs(cliArgs(".", "--cache", "cache.json"), {})).toThrow(
+      "npm audit cache requires --audit-config",
+    );
+  });
+
+  it("rejects a truncated reviewed npm SHA-512 integrity", () => {
+    expect(() => parseReviewedNpmIdentity({ ...npmIdentity, npmIntegrity: "sha512-A" })).toThrow(
+      "npm audit configuration has an invalid npmIntegrity",
+    );
+  });
+
+  it("fails closed when a cache caller omits the reviewed npm identity", () => {
+    const directory = fixture();
+    const exceptionFile = path.join(directory, "exceptions.json");
+    try {
+      fs.writeFileSync(exceptionFile, '{"schemaVersion":1,"exceptions":[]}\n');
+      expect(() =>
+        runReviewedNpmAudit({
+          cacheFile: path.join(directory, "cache.json"),
+          directory,
+          exceptionFile,
+          graph: "fixture",
+          threshold: "high",
+        }),
+      ).toThrow("npm audit cache requires the reviewed npm identity");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("replays an exact fresh raw result and reports cache evidence (#11028)", () => {
     const directory = fixture();
     try {
       const input = buildAuditCacheInput(
         directory,
-        NPM_INTEGRITY,
-        "12.0.2",
+        npmIdentity,
         "https://user:secret@registry.npmjs.org/private/path?token=query#fragment",
       );
       const filename = path.join(directory, "cache.json");
@@ -544,6 +615,7 @@ describe("reviewed npm audit raw cache", () => {
       expect(hit?.result.stdout).toBe(stdout);
       expect(hit?.evidence).toMatchObject({ origin: "cache", ageMs: 3_600_000 });
       expect(input.argv).toEqual(NPM_AUDIT_ARGV);
+      expect(input).toMatchObject(npmIdentity);
       expect(input.registryOrigin).toBe("https://registry.npmjs.org/");
       expect(JSON.stringify(input)).not.toContain("secret");
       expect(JSON.stringify(input)).not.toContain("private");
@@ -561,12 +633,7 @@ describe("reviewed npm audit raw cache", () => {
   ])("rejects a %s record", (_label, createdOffset) => {
     const directory = fixture();
     try {
-      const input = buildAuditCacheInput(
-        directory,
-        NPM_INTEGRITY,
-        "12.0.2",
-        "https://registry.npmjs.org/",
-      );
+      const input = buildAuditCacheInput(directory, npmIdentity, "https://registry.npmjs.org/");
       const filename = path.join(directory, "cache.json");
       fs.writeFileSync(
         filename,
@@ -586,12 +653,7 @@ describe("reviewed npm audit raw cache", () => {
   it("rejects malformed, extra-field, and input-mismatched records", () => {
     const directory = fixture();
     try {
-      const input = buildAuditCacheInput(
-        directory,
-        NPM_INTEGRITY,
-        "12.0.2",
-        "https://registry.npmjs.org/",
-      );
+      const input = buildAuditCacheInput(directory, npmIdentity, "https://registry.npmjs.org/");
       const filename = path.join(directory, "cache.json");
       fs.writeFileSync(filename, "not json");
       expect(readAuditCache(filename, input, NOW)).toBeNull();
@@ -606,7 +668,11 @@ describe("reviewed npm audit raw cache", () => {
         }),
       );
       expect(readAuditCache(filename, input, NOW)).toBeNull();
-      const changed = { ...input, npmVersion: "11.18.0" };
+      const changedInputs = [
+        { ...input, npmArchiveSha256: "b".repeat(64) },
+        { ...input, npmIntegrity: `sha512-${Buffer.alloc(64, 1).toString("base64")}` },
+        { ...input, npmVersion: "11.0.0" },
+      ];
       fs.writeFileSync(
         filename,
         JSON.stringify({
@@ -616,22 +682,14 @@ describe("reviewed npm audit raw cache", () => {
           result: { stdout: "{}", exitCode: 0 },
         }),
       );
-      expect(readAuditCache(filename, changed, NOW)).toBeNull();
-      expect(
-        readAuditCache(
-          filename,
-          { ...input, npmIntegrity: `sha512-${Buffer.alloc(64, 1).toString("base64")}` },
-          NOW,
-        ),
-      ).toBeNull();
+      expect(changedInputs.map((changed) => readAuditCache(filename, changed, NOW))).toEqual([
+        null,
+        null,
+        null,
+      ]);
       fs.writeFileSync(path.join(directory, "package.json"), '{"name":"changed"}\n');
       expect(
-        buildAuditCacheInput(
-          directory,
-          NPM_INTEGRITY,
-          "12.0.2",
-          "https://registry.npmjs.org/",
-        ),
+        buildAuditCacheInput(directory, npmIdentity, "https://registry.npmjs.org/"),
       ).not.toEqual(input);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
@@ -639,7 +697,7 @@ describe("reviewed npm audit raw cache", () => {
   });
 });
 
-describe("reviewed npm audit provenance", () => {
+describe("npm audit provenance", () => {
   const detectionReport = {
     metadata: {
       vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 0 },
