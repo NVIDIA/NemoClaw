@@ -7,7 +7,7 @@
 
 | Field | Value |
 |---|---|
-| Document | `draft-nemoclaw-desired-state-02` |
+| Document | `draft-nemoclaw-desired-state-03` |
 | Status | Draft for project discussion |
 | Intended scope | NemoClaw architecture and product contract |
 | Date | 2026-09-11 |
@@ -81,7 +81,13 @@ Success means creating a working agent, repeating apply without resource changes
 changing its inference model, recovering an interrupted operation, and exporting
 configuration that can recreate equivalent managed behavior.
 
-Later slices can cover gateway provisioning, Ollama, llama.cpp, vLLM, additional
+The next local experiment manages one Ollama container, its named model volume,
+and a selected CPU model on an existing Linux Docker engine and network. It keeps
+the gateway external. Its purpose is to test the resource boundary and recovery
+rules before expanding the proposal. Section 5.3 records a failed repair case;
+this experiment does not establish a supported managed-inference product.
+
+Later slices can cover gateway provisioning, other inference backends, additional
 agents, and other accepted configuration capabilities. Each needs a resource
 contract and qualification evidence before inclusion.
 
@@ -241,6 +247,12 @@ does not prevent export when the configuration can be established independently.
 Export does not send an inference request to prove health. A field whose effective
 value requires activation evidence remains unknown when that evidence is unavailable.
 
+These distinctions do not require a second persistent lifecycle state machine.
+The prototype records completed writes before probing readiness, then uses
+established bindings and fresh configuration observations to authorize export.
+An unavailable model-inventory API still prevents exporting managed Ollama:
+knowing the container exists does not establish which model is installed.
+
 The complete document is validated before output. YAML goes to standard output;
 diagnostics go to standard error. Shell redirection can truncate the destination
 before export starts, so this interface does not promise atomic file replacement.
@@ -364,7 +376,7 @@ managed resource has a stable address, allowing OpenTofu to order its operations
 
 For a sandbox managed by OpenShell, NemoClaw uses OpenShell's lifecycle API.
 It does not also manage that sandbox's Docker or Podman container directly.
-Direct backend handlers apply to separately owned resources, such as a future
+Direct backend handlers apply to separately owned resources, such as a
 managed inference service.
 
 ### 4.1. Authority and State
@@ -477,6 +489,15 @@ An isolated osquery 5.23.1 test distinguished a table error from confirmed absen
 (Appendix B). Consumers discard output on a failed invocation; valid JSON alone
 does not prove observation success. Joins across live tables are not atomic snapshots.
 
+Built-in tables need their own failure qualification. With osquery 5.23.1,
+`docker_containers` returned an empty array and exit code 0 for an unavailable
+Docker socket, just as it did for a successful query matching no containers.
+It therefore cannot supply confirmed absence for reconciliation by itself.
+The Ollama experiment shares direct typed Docker and model-API readers between
+refresh and export. Existing OpenShell observations retain their custom tables
+with explicit `present`, `absent`, and `failed` results. A future Docker table
+would need to preserve the direct reader's failure and identity semantics.
+
 Before bundling osquery, compare the same readers consumed directly and through
 custom tables. Measure collection code removed, useful joins, startup latency,
 memory, binary size, tests, and release maintenance. Retain osquery where that
@@ -500,6 +521,29 @@ A readiness timeout after configuration is recorded produces a failed deployment
 result while preserving the resource binding. Reapplying re-observes configuration
 and repeats bounded readiness checks. It does not force a replacement to rerun a
 probe. Dependencies that require readiness wait before their own mutation.
+
+Resource separation also needs a repair test. In the Ollama experiment, a service
+resource owns the container and volume, and a model resource queries its HTTP API.
+The model's implicit dependency orders initial creation correctly. When the service
+is stopped, however, model refresh fails before OpenTofu can plan the service's
+restart. Ordinary plan and apply stop with a diagnostic and retain bindings.
+The live test requires an explicit runtime restart to continue, after which apply
+is a no-op. Dependency ordering alone does not solve this failure.
+
+Before accepting this resource split, test a boundary that can repair the parent
+without inventing child observations. Candidates include one service/model resource
+with qualified in-place reconciliation, or an engine with explicit deferred
+observations. Any extra staging must justify its orchestration cost. Hidden writes
+during refresh, stale inventory reported as current, and unreviewed targeted apply
+are not acceptable substitutes.
+
+The experiment treats downloaded models as reproducible cache contents: changing
+the selected tag pulls the new model and retains previous weights. It records the
+observed digest but does not pin model contents in desired YAML. The named volume
+is retained; loss of a bound container or volume stops ordinary apply. Docker's
+engine ID, container ID, volume creation timestamp, and retained operation labels
+provide the current checks. The timestamp is not a native volume UUID, and this
+does not qualify general persistent application-data recovery.
 
 ### 5.4. Recovery Cases
 
@@ -742,19 +786,30 @@ from a passing test on another resource or platform.
 
 ## Appendix B. Research Evidence
 
-The following isolated tests ran on 2026-09-11 using local fixtures.
-Deployment and platform qualification remain pending.
+The following experiments ran on 2026-09-11. Fixture and live runtime results are
+identified separately. Full deployment and platform qualification remain pending.
 
 | Experiment | Setup | Observed result | Limit |
 |---|---|---|---|
 | Creation error and taint | OpenTofu 1.12.6; Provider Framework 1.19.0; Linux arm64; fixture returns a known ID and error | Apply exited 1; subsequent plan requested `delete, create` with `replace_because_tainted`; adding `prevent_destroy` blocked planning | Establishes engine behavior, not a production recovery implementation |
 | Failed and absent observations | osquery 5.23.1; osquery-go revision `eb39ad3443df`; Linux arm64; custom table fixtures | Table error exited 1 with diagnostic; absence exited 0 and `count(*)` returned 0 | Establishes these query paths, not all extensions, joins, or operating systems |
+| Built-in Docker observation failure | osquery 5.23.1; Linux arm64; live Docker socket versus nonexistent socket | Valid socket returned a running container; nonexistent socket returned `[]` with exit 0 | Built-in empty output cannot prove absence; full collector cost comparison remains open |
+| Managed inference lifecycle | Linux arm64; Docker 29.2.1; OpenShell 0.0.116; pinned Ollama 0.34.0 and OpenClaw 2026.9.4 images | Six resources created; repeat apply had no changes; model switch retained the sandbox and previous model; export recreated a second deployment with working inference | One native Docker topology, CPU models, and fresh volumes; no Podman/macOS/Windows runtime qualification |
+| Stopped inference parent | Same live deployment; stop the owned Ollama container before planning | Model inventory failed, blocking the restart plan; state stayed unchanged; explicit runtime start restored a no-op apply | Current service/model split fails automatic repair; no product restart workaround added |
+| Interrupted model installation | HTTP fixture; partial pull stream and cancellation during streaming | Failed operation did not report a model or retry the mutation; explicit reapply resumed and subsequent ensure had no effects | Reader boundary only; engine-level interruption during a real download still needs qualification |
+| Export after failed inference | Real OpenTofu/provider/osquery processes; OpenShell gRPC fixture | Failed probe retained four configured bindings; export succeeded; reapply created no duplicate resources | Existing sandbox Create still performs readiness checks; provider-error taint recovery remains open |
 
 Reproduce the first experiment with a provider whose `Create` records a local
 fixture object, returns its known identity in state, and adds an error diagnostic.
 Plan again, then repeat planning with deletion protection. Reproduce the second
 with one table returning an error and another returning an empty successful result;
 query each with `count(*)` and inspect both exit status and output.
+
+The managed-inference harness and setup are in [LOCAL_TEST.md](LOCAL_TEST.md).
+Current checks and redacted live artifact references are in
+[VALIDATION.md](VALIDATION.md). This remains a prototype: documented state
+inspection, the complete plan-action allowlist, credential installation versions,
+and qualified taint recovery in this RFC are still implementation gaps.
 
 SDK observations in Section 5 apply to Go SDK revision `d1155aa70042`.
 Platform observations in Section 7 refer to the linked upstream documentation

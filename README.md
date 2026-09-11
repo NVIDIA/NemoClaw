@@ -53,9 +53,9 @@ The other targets are `linux_amd64`, `linux_arm64`, `darwin_amd64`, and
 
 For a complete Linux Docker test setup, follow [LOCAL_TEST.md](LOCAL_TEST.md).
 
-Provide an OpenShell 0.0.116 gateway with one Docker or Podman compute driver,
-and an existing OpenAI-compatible inference endpoint. Gateway provisioning,
-engine installation, and model downloads are outside this slice.
+Provide an OpenShell 0.0.116 gateway with one Docker or Podman compute driver.
+Use an existing OpenAI-compatible inference endpoint, or the managed Ollama
+experiment below. Gateway provisioning and engine installation remain prerequisites.
 
 The OpenClaw image needs the network tools used by OpenShell's supervisor.
 Its inherited Docker health check is disabled because it runs outside the
@@ -87,6 +87,21 @@ Change `overrides.model` and apply again to update the inference route. The
 OpenClaw configuration uses a stable `primary` model alias, so this does not
 replace the sandbox.
 
+[examples/managed-ollama.yaml](examples/managed-ollama.yaml) adds an `ollama`
+block to the inference provider. It selects a local Unix engine socket, an
+existing Docker network, and a pinned Ollama image. The endpoint selects an
+explicit private address and port reachable by the CLI, gateway, and sandbox
+supervisor. Apply creates an owned container and named model volume, downloads
+the selected model, and then configures the OpenShell route. Changing the model
+retains previous weights and the sandbox. Follow the managed variant in
+[LOCAL_TEST.md](LOCAL_TEST.md) to exercise this Linux Docker topology.
+
+This experiment exposes a repair limitation: if Ollama stops, the separate model
+resource cannot refresh its inventory, so OpenTofu cannot plan the service's
+restart. Plan and apply stop with a diagnostic and retain state. The live harness
+explicitly starts the owned container to continue testing. Automatic repair needs
+a different resource boundary or a qualified engine strategy; it is not implemented.
+
 Every apply also sends a one-token inference probe through the sandbox. This
 can load a local model or incur inference usage even when the plan is empty.
 It does not add to the OpenClaw conversation history.
@@ -105,11 +120,12 @@ loopback addresses. Plaintext gateways must use literal loopback addresses.
 | --- | --- |
 | Go CLI | Strict YAML, compilation, deployment lock, ownership, unfinished intent |
 | OpenTofu | Dependency graph, refresh, diff, saved plan, resource state |
-| Go provider | Workspace, provider registration, inference route, sandbox resources |
+| Go provider | OpenShell resources and optional Ollama service/model resources |
 | OpenShell SDK | Table data source, mutation reconciliation, conditional writes, sandbox execution |
 | osquery extension | Explicit resource tables with observation status and policy checks |
 | Typed query adapter | Complete observations shared by provider refresh and export |
 | osqueryi | SQL execution for refresh and export |
+| Shared Docker/Ollama readers | Managed container, volume binding, and complete model inventory |
 
 Provider refresh and export query `openshell_workspaces`, `openshell_providers`,
 `openshell_inference_routes`, and `openshell_sandboxes`. For example:
@@ -123,7 +139,8 @@ WHERE workspace = 'nc-8bb56695710753e3' AND name = 'primary';
 Every table requires an equality constraint on `name`; nested tables also
 require `workspace`. There is no document table. Export uses observed resource
 values, verifies durable identities and the active policy, and checks the agent's
-configuration and health. Missing observations produce an error and no YAML.
+configuration. Export does not require a healthy inference result. Missing
+configuration observations produce an error and no YAML.
 
 Each constrained lookup returns one row with `observation_status` set to
 `present`, `absent`, or `failed`. An absent row contains the requested key and
@@ -142,12 +159,17 @@ The CLI supplies its verified absolute bundle directory to the private provider
 through `NEMOCLAW_INTERNAL_BUNDLE`. The adapter invokes that bundle's osquery and
 extension executables and supplies gateway configuration with secret references.
 Refresh starts one osquery process per resource; export batches its four tables
-in one process. There is no fallback from refresh or export to direct SDK reads.
+in one process. OpenShell refresh and export have no fallback to direct SDK reads.
 Host CPU and process inventory remain available in osquery's built-in tables;
-they are not needed to manage this externally provisioned first slice.
+they are not needed for the current resource contract. Managed Ollama uses shared
+direct readers: Docker's API for identity/configuration and Ollama's `/api/tags`
+for model inventory. osquery's built-in Docker table returned empty successful
+output for an unavailable socket, so it cannot establish absence by itself.
 
 These reads still bypass osquery in this slice:
 
+- Managed Ollama service/model refresh and export, engine identity and volume
+  ownership checks, image inventory, and bounded model-inventory activation waits.
 - CLI gateway version/compute-driver discovery and ownership preflight. The
   preflight retains the existing rule against replacing missing managed objects.
 - Mutation reconciliation before and after writes, parent ownership checks,
@@ -169,7 +191,7 @@ UIDs, random generation labels, and recorded resource IDs. Mutations have no
 automatic retry loop. A lost response requires another explicit apply.
 
 Ordinary apply cannot delete or replace resources. Unknown fields, inline
-credentials, foreign ownership, missing managed resources, and unsupported
+credentials, foreign ownership, missing bound services/storage or OpenShell resources, and unsupported
 combinations stop the operation. There is no adoption, pruning, migration,
 automatic rollback, or lost-state recovery command.
 
@@ -211,7 +233,11 @@ and `NEMOCLAW_LIVE_ALTERNATE_MODEL` to another model already available at that
 endpoint. Then run `go test -tags=live ./internal/engine -run TestLive -count=1 -v`.
 It creates two deployments with fresh UUIDs, exercises real agent replies, and
 removes only those deployments after success. A failure retains resources and
-recovery state under `.local/live-UUID`. Test credentials and model costs are
+recovery state under `.local/live-UUID`. With managed Ollama, the test also exercises
+the stopped-service limitation, checks retained cached models, and removes its
+owned containers and volumes after success. It downloads the selected models;
+the external-endpoint variant requires both models already available.
+Test credentials and model costs are
 those of the explicitly selected gateway and inference endpoint.
 
 Versions were checked on 2026-09-11: Go 1.27.1, OpenTofu 1.12.6, osquery 5.23.1,

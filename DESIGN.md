@@ -21,8 +21,11 @@ The user supplies YAML to `nemoclaw config apply` and retrieves it with
 
 The first deployment attaches to an explicitly selected OpenShell gateway and
 manages a deployment workspace, inference registrations/routes, and an OpenClaw
-sandbox. Gateway provisioning and inference-server installation are prerequisites
-for this slice. The upstream gateway owns Docker or Podman integration.
+sandbox. The next authorized local experiment optionally manages one Ollama
+container, named model volume, and selected CPU model on an existing Linux Docker
+engine and network. Gateway provisioning remains a prerequisite. The upstream
+gateway owns the sandbox's Docker or Podman integration; the new handler owns
+only the separately declared inference service.
 
 OpenTofu owns dependencies, refresh, diffs, saved plans, and resource state.
 NemoClaw owns YAML validation, compilation, ownership enforcement, and recovery
@@ -35,6 +38,14 @@ checks remain enforced. Mutations and their reconciliation, CLI preflight, activ
 probes, and local state/credential access remain direct in this slice.
 Host queries run on the machine being observed; they do not pretend to inspect
 a container guest.
+
+Ollama refresh and export share direct typed readers. osquery's built-in Docker
+inventory returned empty successful output for an unavailable socket, so it does
+not meet the absence contract. A custom table is deferred until its benefit is
+established. The separate service/model resources are also provisional: a stopped
+service makes model refresh fail and prevents OpenTofu from planning its restart.
+The live harness exposes this limitation and explicitly restarts the runtime to
+continue; ordinary apply has no implicit repair outside the plan.
 
 ## Acceptance evidence
 
@@ -50,6 +61,7 @@ a container guest.
 
 Tests will exercise real OpenTofu/provider/osquery process boundaries and a
 protocol fixture for deterministic failure cases. Linux runtime evidence uses
-only resources created for this prototype. Windows/macOS runtime qualification,
-managed inference installation, adoption, pruning, migration, and the rest of the
-#10904 schema remain separate work.
+only resources created for this prototype. Interrupted model streams and initial
+volume allocation use deterministic API fixtures. Windows/macOS/Podman runtime
+qualification, real download interruption through OpenTofu, stopped-parent repair,
+adoption, pruning, migration, and the rest of the #10904 schema remain separate work.
