@@ -36,6 +36,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   portableProfileSelected?: boolean;
   recreateJournalHandoff?: boolean;
   externalComponent?: PreparedExternalComponent | null;
+  providerless?: boolean;
   deps: {
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
@@ -198,6 +199,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   stagedLegacyKeys,
   migratedLegacyKeys,
   externalComponent = null,
+  providerless = false,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -205,6 +207,9 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   VerificationResult
 >): Promise<FinalizationStateResult> {
   const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
+  if (providerless && !externalComponent) {
+    throw new Error("Providerless finalization requires a registered external component.");
+  }
   if (externalComponent) {
     if (
       !deps.createExternalComponentActivationProof ||
@@ -244,6 +249,12 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
       };
     }
     deps.setExternalComponentActivationEvidence(null);
+  }
+  if (providerless) {
+    return {
+      stateResult: advanceTo("post_verify", { metadata: { state: "finalizing" } }),
+      unmigratedLegacyKeys: stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key)),
+    };
   }
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).

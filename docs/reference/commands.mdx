@@ -449,7 +449,9 @@ Without the lock, it preserves the foreign reservation.
 
 #### `--apf-interceptor`
 
-Use this option to request a policyless sandbox creation for an APF-interceptor flow. This option currently supports providerless sandbox creation only. APF onboarding with an inference provider and model is not yet supported. APF onboarding with an OpenShell provider for a Model Context Protocol (MCP) server is also not yet supported. OpenShell cannot bind provider attachment to the new sandbox's verified immutable ID. If the prepared plan contains any provider, NemoClaw exits before it:
+Use this option to request sandbox creation without a NemoClaw-supplied policy.
+This option supports providerless onboarding only; NemoClaw does not configure an inference provider, model, or credential provider in this mode.
+If NemoClaw's prepared plan contains any provider, it exits before it:
 
 - Creates the sandbox.
 - Registers or changes credentials.
@@ -464,6 +466,12 @@ The option requires these conditions:
 - Do not select the Portable experimental profile.
 
 NemoClaw omits a caller policy from every sandbox creation attempt. After creation, NemoClaw binds the returned durable sandbox identity and verifies its effective policy. The policy must be sandbox-scoped and contain every policy entry required by the prepared configuration. NemoClaw stores no policy owner, receipt, or desired state; later policy commands read OpenShell directly. This verification does not establish that APF injected the policy.
+
+With one [registered external component](../deployment/register-external-component#select-interceptor-supplied-policy), the component supplies policy through the existing OpenShell interceptor contract.
+Required providers must resolve through existing OpenShell mechanisms before activation.
+NemoClaw activates the component only after verifying immutable sandbox identity and effective policy, then verifies them again after the response.
+Missing or invalid policy does not trigger a fallback to NemoClaw policy or ordinary onboarding.
+Registration alone does not select this option.
 
 ```bash
 $$nemoclaw onboard --fresh --apf-interceptor --name my-apf-sandbox
