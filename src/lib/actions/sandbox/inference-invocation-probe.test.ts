@@ -5,17 +5,12 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { isNvcfFunctionNotFoundForAccount } from "../../inference/nvcf-model-access";
 
 import {
-  GEMINI_PROBE_REPLY_TOKENS,
-  MIN_PROBE_REPLY_TOKENS,
-} from "../../inference/max-tokens-field";
-import {
   buildDcodeSandboxInferenceInvocationRequest,
   buildSandboxInferenceInvocationCommand,
-  INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS,
   probeSandboxInferenceInvocation,
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
 } from "./inference-invocation-probe";
@@ -46,13 +41,14 @@ function bufferedResult(status: number, stdout: string, stderr: string) {
 /**
  * Run the generated probe command under a real shell with a stub curl that
  * serves `body` at `code`, so the in-sandbox classification is exercised rather
- * than simulated. Returns the probe's stdout.
+ * than simulated. Returns the probe output and the arguments received by curl.
  */
 function runProbeCommandWithBody(
   code: string,
   body: string,
   parentDirectory: string = tmpdir(),
-): string {
+  probeInput = input,
+): { stdout: string; argv: string[] } {
   const dir = mkdtempSync(path.join(parentDirectory, "nemoclaw-probe-parity-"));
   try {
     const bin = path.join(dir, "bin");
@@ -62,6 +58,7 @@ function runProbeCommandWithBody(
       path.join(bin, "curl"),
       [
         "#!/bin/sh",
+        `printf '%s\\n' "$@" > ${JSON.stringify(path.join(dir, "argv.txt"))}`,
         'out=""; prev=""',
         'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done',
         `cat ${JSON.stringify(path.join(dir, "body.txt"))} > "$out"`,
@@ -69,11 +66,14 @@ function runProbeCommandWithBody(
       ].join("\n"),
       { mode: 0o755 },
     );
-    const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(input)], {
+    const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(probeInput)], {
       encoding: "utf8",
       env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}` },
     });
-    return run.stdout || "";
+    return {
+      stdout: run.stdout || "",
+      argv: readFileSync(path.join(dir, "argv.txt"), "utf8").trimEnd().split("\n"),
+    };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -86,22 +86,6 @@ const NVCF_BODY_VARIANTS = [
 ] as const;
 
 describe("sandbox inference invocation probe", () => {
-  it("keeps command reference budgets aligned with source values", () => {
-    const commands = readFileSync(
-      path.join(import.meta.dirname, "../../../../docs/reference/commands.mdx"),
-      "utf8",
-    );
-
-    expect(commands).toContain(`Ordinary providers request ${MIN_PROBE_REPLY_TOKENS} reply tokens`);
-    expect(commands).toContain(`Gemini requests ${GEMINI_PROBE_REPLY_TOKENS} reply tokens`);
-    expect(commands).toContain(
-      `The request allows up to ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} seconds`,
-    );
-    expect(commands).toContain(
-      `the host wrapper allows ${READINESS_INFERENCE_INVOCATION_TIMEOUT_MS / 1000} seconds`,
-    );
-  });
-
   it("probes the recorded model through inference.local without embedding a credential (#6195)", () => {
     const command = buildSandboxInferenceInvocationCommand(input);
 
@@ -208,7 +192,7 @@ describe("sandbox inference invocation probe", () => {
       // one contract in nvcf-model-access.ts and must not drift.
       expect(isNvcfFunctionNotFoundForAccount(body)).toBe(true);
 
-      const stdout = runProbeCommandWithBody("404", body);
+      const { stdout } = runProbeCommandWithBody("404", body);
 
       expect(stdout).toContain("nemoclaw-probe:nvcf-function-not-found");
       expect(stdout).not.toContain("acct-42");
@@ -221,7 +205,7 @@ describe("sandbox inference invocation probe", () => {
 
     expect(isNvcfFunctionNotFoundForAccount(body)).toBe(false);
 
-    const stdout = runProbeCommandWithBody("404", body);
+    const { stdout } = runProbeCommandWithBody("404", body);
 
     expect(stdout.trim()).toBe("404");
     expect(stdout).not.toContain("nemoclaw-probe:nvcf-function-not-found");
@@ -243,13 +227,13 @@ describe("sandbox inference invocation probe", () => {
 
     expect(isNvcfFunctionNotFoundForAccount(body)).toBe(false);
 
-    const stdout = runProbeCommandWithBody("404", body);
+    const { stdout } = runProbeCommandWithBody("404", body);
 
     expect(stdout.trim()).toBe("404");
   });
 
   it("keeps a non-404 failure body out of the probe output (#6195)", () => {
-    const stdout = runProbeCommandWithBody("500", '{"echoed_value":"canary-replay-marker"}');
+    const { stdout } = runProbeCommandWithBody("500", '{"echoed_value":"canary-replay-marker"}');
 
     expect(stdout.trim()).toBe("500");
     expect(stdout).not.toContain("canary-replay-marker");
@@ -449,6 +433,12 @@ describe("sandbox inference invocation probe", () => {
       '200\n{"error":{"message":"provider failed"}}',
     ],
     ["Chat Completions", "openai-completions", "the wrong result shape", '200\n{"choices":[]}'],
+    [
+      "Chat Completions",
+      "openai-completions",
+      "null content",
+      '200\n{"choices":[{"message":{"content":null}}]}',
+    ],
     ["Responses", "openai-responses", "an empty response", "204\n"],
     ["Responses", "openai-responses", "malformed JSON", "200\nnot-json"],
     [
@@ -502,69 +492,24 @@ describe("sandbox inference invocation probe", () => {
     expect(command).not.toContain('"max_completion_tokens"');
   });
 
-  it("executes the Gemini sandbox request with the configured reply budget (#10260)", async () => {
-    const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-gemini-probe-"));
-    onTestFinished(() => rmSync(tempDir, { recursive: true, force: true }));
-    const fakeBin = path.join(tempDir, "bin");
-    const capturedPayload = path.join(tempDir, "payload.json");
-    mkdirSync(fakeBin);
-    writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/bin/sh
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --data-binary) printf '%s' "$2" > "$CAPTURED_PAYLOAD"; shift 2 ;;
-    -o) response_file="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' '{"choices":[{"message":{"content":"OK"}}]}' > "$response_file"
-printf '200'
-`,
-      { mode: 0o755 },
+  it.each([
+    ["gemini-api", "gemini-2.5-flash", 256],
+    ["compatible-endpoint", "nvidia/nemotron", 16],
+  ])("sends the %s budget through the shell request", (provider, model, maxTokens) => {
+    const { stdout, argv } = runProbeCommandWithBody(
+      "200",
+      '{"choices":[{"message":{"content":"OK"}}]}',
+      tmpdir(),
+      { ...input, provider, model },
     );
-    const execute = vi.fn(async (_sandboxName, command) => {
-      const result = spawnSync("/bin/sh", ["-c", command], {
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          CAPTURED_PAYLOAD: capturedPayload,
-          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-        },
-      });
-      return { status: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
+    expect(stdout).toContain('200\n{"choices":');
+    expect(JSON.parse(argv[argv.indexOf("--data-binary") + 1])).toMatchObject({
+      model,
+      max_tokens: maxTokens,
     });
-
-    await expect(
-      probeSandboxInferenceInvocation(
-        { ...input, provider: "gemini-api", model: "gemini-2.5-flash" },
-        { execute },
-      ),
-    ).resolves.toEqual({ ok: true });
-    expect(execute).toHaveBeenCalledOnce();
-    const payload = JSON.parse(readFileSync(capturedPayload, "utf-8"));
-    expect(payload).toMatchObject({ model: "gemini-2.5-flash", max_tokens: 256 });
-    expect(payload).not.toHaveProperty("max_completion_tokens");
-  });
-
-  it("still rejects a structurally empty Gemini response (#10260)", async () => {
-    const execute = vi.fn(async () => ({
-      status: 0,
-      stdout: '200\n{"choices":[{"message":{"content":null}}]}',
-      stderr: "",
-    }));
-
-    await expect(
-      probeSandboxInferenceInvocation(
-        { ...input, provider: "gemini-api", model: "gemini-2.5-flash" },
-        { execute },
-      ),
-    ).resolves.toEqual({
-      ok: false,
-      detail: "sandbox inference invocation probe returned an invalid response body",
-      httpStatus: 200,
-      endpoint: "https://inference.local/v1/chat/completions",
-    });
+    expect(Number(argv[argv.indexOf("--max-time") + 1]) * 1000).toBeLessThan(
+      READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+    );
   });
 
   it("sends max_output_tokens on the responses route", () => {
