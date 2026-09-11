@@ -29,19 +29,31 @@ afterEach(() => {
 
 describe("OpenShell driver configuration for main-branch E2E", () => {
   it("resolves one canonical executable set for CLI, gateway, and sandbox (#11547)", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-components-"));
+    const rootDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-components-"));
+    const installDirectory = path.join(rootDirectory, "install");
+    const pathDirectory = path.join(rootDirectory, "path");
     try {
-      fs.writeFileSync(path.join(directory, "openshell"), "#!/bin/sh\n", { mode: 0o700 });
-      fs.writeFileSync(path.join(directory, "openshell-gateway"), "#!/bin/sh\n", { mode: 0o700 });
-      fs.writeFileSync(path.join(directory, "openshell-sandbox"), "#!/bin/sh\n", { mode: 0o700 });
+      fs.mkdirSync(installDirectory);
+      fs.mkdirSync(pathDirectory);
+      fs.writeFileSync(path.join(installDirectory, "openshell"), "#!/bin/sh\n", { mode: 0o700 });
+      fs.writeFileSync(path.join(installDirectory, "openshell-gateway"), "#!/bin/sh\n", {
+        mode: 0o700,
+      });
+      fs.writeFileSync(path.join(installDirectory, "openshell-sandbox"), "#!/bin/sh\n", {
+        mode: 0o700,
+      });
+      fs.symlinkSync(
+        path.join(installDirectory, "openshell"),
+        path.join(pathDirectory, "openshell"),
+      );
 
-      expect(resolveOpenShellSiblingComponents(path.join(directory, "openshell"))).toEqual({
-        cli: path.join(directory, "openshell"),
-        gateway: path.join(directory, "openshell-gateway"),
-        sandbox: path.join(directory, "openshell-sandbox"),
+      expect(resolveOpenShellSiblingComponents(path.join(pathDirectory, "openshell"))).toEqual({
+        cli: path.join(installDirectory, "openshell"),
+        gateway: path.join(installDirectory, "openshell-gateway"),
+        sandbox: path.join(installDirectory, "openshell-sandbox"),
       });
     } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
+      fs.rmSync(rootDirectory, { recursive: true, force: true });
     }
   });
 
