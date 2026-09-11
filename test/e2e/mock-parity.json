@@ -22,17 +22,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts",
-      "fast": [
-        "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
-        "test/inference/llama/llama-cpp-dgx-spark-qualification-contract.test.ts",
-        "test/inference/llama/llama-cpp-dgx-spark-qualification-plan.test.ts",
-        "test/inference/llama/llama-cpp-dgx-spark-qualification-runner.test.ts",
-        "test/inference/llama/llama-cpp-image.test.ts",
-        "test/automation/pull-requests/pr-risk-plan.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/llama-cpp-generic-gpu.test.ts",
       "fast": [
         "src/lib/inference/llama-cpp/managed-selection.test.ts",

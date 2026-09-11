@@ -52,24 +52,49 @@ function fixture() {
 }
 
 describe("external component activation proof", () => {
-  it("binds the durable OpenShell identity to the effective policy (#11340)", () => {
-    const { deps } = fixture();
+  it.each([policyHash, policyHash.slice("sha256:".length)])(
+    "binds the durable OpenShell identity to policy digest %s (#11486)",
+    (hash) => {
+      const { deps, inspection } = fixture();
+      inspection.policyIdentity.hash = hash;
 
+      const proof = createExternalComponentActivationProof("assistant", "nemoclaw", deps);
+
+      expect(proof).toMatchObject({
+        gatewayName: "nemoclaw",
+        sandboxId,
+        sandboxIdentityFingerprint: `sha256:${fingerprintOpenShellSandboxId(sandboxId)}`,
+        lifecycleGeneration: "generation-1",
+        policySource: "sandbox",
+        policyHash,
+        policyActiveVersion: 3,
+      });
+      expect(deps.inspectPolicy).toHaveBeenCalledWith(
+        "assistant",
+        "verify external component activation policy",
+        "nemoclaw",
+      );
+    },
+  );
+
+  it("rejects a changed OpenShell digest after activation (#11486)", () => {
+    const { deps, inspection } = fixture();
+    inspection.policyIdentity.hash = "a".repeat(64);
     const proof = createExternalComponentActivationProof("assistant", "nemoclaw", deps);
+    inspection.policyIdentity.hash = "b".repeat(64);
+    expect(() => proof.revalidate("after_activation")).toThrow(ExternalComponentProofError);
+  });
 
-    expect(proof).toMatchObject({
-      gatewayName: "nemoclaw",
-      sandboxId,
-      sandboxIdentityFingerprint: `sha256:${fingerprintOpenShellSandboxId(sandboxId)}`,
-      lifecycleGeneration: "generation-1",
-      policySource: "sandbox",
-      policyHash,
-      policyActiveVersion: 3,
-    });
-    expect(deps.inspectPolicy).toHaveBeenCalledWith(
-      "assistant",
-      "verify external component activation policy",
-      "nemoclaw",
+  it.each([
+    "a".repeat(63),
+    "a".repeat(65),
+    `sha256:sha256:${"a".repeat(64)}`,
+    `sha512:${"a".repeat(64)}`,
+  ])("rejects malformed policy digest %s (#11486)", (hash) => {
+    const { deps, inspection } = fixture();
+    inspection.policyIdentity.hash = hash;
+    expect(() => createExternalComponentActivationProof("assistant", "nemoclaw", deps)).toThrow(
+      ExternalComponentProofError,
     );
   });
 
