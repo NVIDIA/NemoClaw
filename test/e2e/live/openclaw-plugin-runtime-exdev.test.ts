@@ -98,24 +98,6 @@ async function installAndResolveOpenShell(
   return resolveOpenShellSiblingComponents(resolved);
 }
 
-async function stopOpenShellGatewayBeforeInstall(
-  host: HostCliClient,
-  env: NodeJS.ProcessEnv = liveEnv(),
-): Promise<void> {
-  const openshellPath = resolveOpenshell();
-  if (!openshellPath) return;
-  const stop = await host.command(openshellPath, ["gateway", "stop", "-g", "nemoclaw"], {
-    artifactName: "stop-openshell-gateway-before-install",
-    env,
-    timeoutMs: 60_000,
-  });
-  const diagnostic = resultText(stop);
-  assert(
-    stop.exitCode === 0 || /^No gateway metadata found(?: for nemoclaw)?[.!]?$/i.test(diagnostic),
-    diagnostic,
-  );
-}
-
 type CustomPluginBuildContext = {
   crossDeviceVersionSourcePath: string;
   sourceParentDir: string;
@@ -399,7 +381,6 @@ test(
     const customPluginContext = await prepareCustomPluginSource(host, cleanup);
     const deploymentEnv = await startDeploymentFixture(artifacts, cleanup, progress);
     progress.phase("install and validate current OpenShell");
-    await stopOpenShellGatewayBeforeInstall(host);
     const openshell = await installAndResolveOpenShell(
       host,
       path.join(REPO_ROOT, "scripts", "install-openshell.sh"),
