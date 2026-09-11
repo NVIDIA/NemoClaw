@@ -3,7 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { ForwardServiceTarget } from "../../src/lib/adapters/openshell/forward-service";
+import {
+  launchForwardService,
+  type ForwardServiceLaunchOptions,
+  type ForwardServiceTarget,
+} from "../../src/lib/adapters/openshell/forward-service";
 import { createOnboardDashboardHelpers } from "../../src/lib/onboard/dashboard";
 import { loadAgent } from "../../src/lib/agent/defs";
 import type { ListSandboxesFn } from "../../src/lib/onboard/dashboard-port";
@@ -12,13 +16,14 @@ function harness(options: {
   listSandboxes: ListSandboxesFn;
   isPortBound?: (port: number) => boolean;
   ownsForward?: (target: ForwardServiceTarget) => boolean;
-  launch?: (target: ForwardServiceTarget) => void;
+  launch?: typeof launchForwardService;
 }) {
   const startedPorts = new Set<number>();
   const launch = vi.fn(
     options.launch ??
-      ((target: ForwardServiceTarget) => {
+      ((target: ForwardServiceTarget, launchOptions?: ForwardServiceLaunchOptions) => {
         startedPorts.add(target.localPort);
+        launchOptions?.verifyReady?.();
       }),
   );
   const owns = vi.fn(options.ownsForward ?? ((target) => startedPorts.has(target.localPort)));
@@ -66,6 +71,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
         localPort: 18_790,
         targetPort: 18_790,
       }),
+      expect.objectContaining({ verifyReady: expect.any(Function) }),
     );
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
   });
@@ -173,6 +179,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
           localPort: missingPort,
           targetPort: missingPort,
         }),
+        expect.objectContaining({ verifyReady: expect.any(Function) }),
       );
     },
   );
@@ -214,6 +221,58 @@ describe("finalization dashboard ForwardTcp launch", () => {
     });
 
     expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).toBe(19_001);
-    expect(launch).toHaveBeenCalledWith(expect.objectContaining({ localPort: 19_001 }));
+    expect(launch).toHaveBeenCalledWith(
+      expect.objectContaining({ localPort: 19_001 }),
+      expect.objectContaining({ verifyReady: expect.any(Function) }),
+    );
   });
+
+  it.each([
+    { failure: "ownership", ownsApi: false, afterLaunch: () => {} },
+    {
+      failure: "sandbox-identity",
+      ownsApi: true,
+      afterLaunch: () => {
+        throw new Error("Sandbox identity changed");
+      },
+    },
+  ])(
+    "retires a newly launched Hermes API forward when $failure changes",
+    async ({ ownsApi, afterLaunch }) => {
+      vi.stubEnv("CHAT_UI_URL", undefined);
+      const boundPorts = new Set([18790]);
+      const child = { pid: process.pid + 1, unref: vi.fn() };
+      const revalidateSandboxIdentity = vi.fn();
+      const terminateProcessTree = vi.fn(() => boundPorts.delete(8643));
+      const { helpers } = harness({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "reonboard-test", dashboardPort: 18790, hermesApiPort: 8643 }],
+        }),
+        isPortBound: (port) => boundPorts.has(port),
+        ownsForward: (target) => target.localPort === 18790 || ownsApi,
+        launch: (target, options) =>
+          launchForwardService(target, {
+            ...options,
+            isReachable: () => boundPorts.has(target.localPort),
+            spawnDetached: () => {
+              boundPorts.add(target.localPort);
+              revalidateSandboxIdentity.mockImplementation(afterLaunch);
+              return child;
+            },
+            terminateProcessTree,
+          }),
+      });
+      await expect(
+        helpers.ensureFinalizationAgentDashboardForward(
+          "reonboard-test",
+          loadAgent("hermes"),
+          revalidateSandboxIdentity,
+        ),
+      ).rejects.toThrow(/ownership|identity/iu);
+      expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+      expect(boundPorts).toEqual(new Set([18790]));
+      expect(child.unref).not.toHaveBeenCalled();
+      expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
+    },
+  );
 });

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { once } from "node:events";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { ArtifactSink } from "./artifacts.ts";
@@ -28,6 +27,7 @@ export type HermesAcpLiveScenario =
   | "remote-exit";
 
 export interface HermesAcpLiveOptions {
+  readonly adapterEntrypoint?: string;
   readonly artifacts: ArtifactSink;
   readonly deadlineAtMs?: number;
   readonly env: NodeJS.ProcessEnv;
@@ -148,10 +148,10 @@ async function writeRequest(
   const payload = `${JSON.stringify(request)}\n`;
   if (Buffer.byteLength(payload, "utf8") > 16 * 1024) return false;
   try {
-    const accepted = stream.write(payload);
-    onWritten?.();
-    if (!accepted) await once(stream, "drain");
-    return true;
+    return await new Promise<boolean>((resolve) => {
+      stream.write(payload, (error) => resolve(!error));
+      onWritten?.();
+    });
   } catch {
     return false;
   }
@@ -275,8 +275,9 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     Math.floor((scenarioTimeoutMs - ACP_SESSION_SHUTDOWN_RESERVE_MS) / 1_000),
   );
   const child = spawnObservedChild(
-    "nemoclaw-acp",
+    options.adapterEntrypoint ? process.execPath : "nemoclaw-acp",
     [
+      ...(options.adapterEntrypoint ? [options.adapterEntrypoint] : []),
       "--sandbox",
       options.sandboxName,
       "--gateway",
@@ -308,6 +309,11 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     for (const waiter of waiters) waiter();
     waiters.clear();
   };
+  input.on("error", () => {
+    protocolValid = false;
+    signalAdapter(child, "SIGTERM");
+    notify();
+  });
   const consumeLine = (line: string) => {
     if (!line.trim()) return;
     try {

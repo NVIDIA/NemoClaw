@@ -92,7 +92,7 @@ export interface OnboardDashboardDeps {
   forwardService?: {
     executable(): string;
     owns?(target: ForwardServiceTarget): boolean;
-    launch?(target: ForwardServiceTarget): void;
+    launch?: typeof launchForwardService;
     retireLegacy?(sandboxName: string, gatewayName: string, ports: readonly number[]): number;
     resolveGatewayName(
       sandbox: { gatewayName?: string | null; gatewayPort?: number | null } | null | undefined,
@@ -469,17 +469,21 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         forwardService?.retireLegacy?.(sandboxName, actualGateway, [actualPort]);
         (forwardService?.launch ?? launchForwardService)(
           forwardTarget(sandboxName, actualGateway, actualPort, actualTarget),
-        );
-        if (
-          reuseExistingForward &&
-          !ownsDashboardForward(sandboxName, actualGateway, actualPort, parsedUrl.toString())
-        ) {
-          throw new Error(
-            `Could not verify forward ownership on port ${String(actualPort)} for '${sandboxName}'.`,
-          );
-        }
-        revalidateSandboxIdentity?.(
-          `accept dashboard forward ${String(actualPort)} for sandbox '${sandboxName}'`,
+          {
+            verifyReady: () => {
+              if (
+                reuseExistingForward &&
+                !ownsDashboardForward(sandboxName, actualGateway, actualPort, parsedUrl.toString())
+              ) {
+                throw new Error(
+                  `Could not verify forward ownership on port ${String(actualPort)} for '${sandboxName}'.`,
+                );
+              }
+              revalidateSandboxIdentity?.(
+                `accept dashboard forward ${String(actualPort)} for sandbox '${sandboxName}'`,
+              );
+            },
+          },
         );
         fwdOk = true;
       } catch (error) {
@@ -502,7 +506,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       }
       if (reuseExistingForward) {
         throw new Error(
-          `Failed to start dashboard forward on port ${actualPort}: ${fwdDiagnostic.slice(0, 240)}`,
+          `Failed to start dashboard forward on port ${actualPort} for '${sandboxName}': ${fwdDiagnostic.slice(0, 240)}. ` +
+            "Inspect the listener before retrying onboarding.",
         );
       }
       if (looksLikePortConflict) {

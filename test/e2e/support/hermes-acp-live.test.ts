@@ -5,9 +5,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 import {
   acpMessageContainsPong,
   createHermesAcpPromptEvidenceTracker,
@@ -20,6 +22,96 @@ import {
 } from "../fixtures/hermes-acp-live.ts";
 
 describe("Hermes ACP live evidence boundary", () => {
+  it.each(["installed", "checkout"] as const)(
+    "initializes through the %s adapter",
+    async (installation) => {
+      const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-launch-"));
+      const adapterEntrypoint = path.join(artifactDir, "nemoclaw-acp");
+      fs.writeFileSync(
+        adapterEntrypoint,
+        `#!${process.execPath}
+const readline = require("node:readline");
+readline.createInterface({ input: process.stdin }).on("line", line => {
+  const request = JSON.parse(line);
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {} }) + "\\n");
+});
+`,
+        { mode: 0o700 },
+      );
+      const progress = startTestProgress(
+        "ACP adapter launch",
+        ["launch adapter", "verify result"],
+        {
+          logLine: () => undefined,
+        },
+      );
+      onTestFinished(() => {
+        progress.stop();
+        fs.rmSync(artifactDir, { force: true, recursive: true });
+      });
+      const sandbox = new SandboxClient({
+        run: vi.fn().mockResolvedValue({ exitCode: 1, stdout: "", stderr: "" }),
+      });
+
+      await expect(
+        runHermesAcpLiveScenario({
+          adapterEntrypoint: installation === "checkout" ? adapterEntrypoint : undefined,
+          artifacts: new ArtifactSink(artifactDir),
+          env: { PATH: installation === "installed" ? artifactDir : "" },
+          progress,
+          sandbox,
+          sandboxName: "e2e-hermes",
+          scenario: "initialize",
+        }),
+      ).resolves.toBe(true);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(artifactDir, "hermes-acp-initialize.json"), "utf8")),
+      ).toMatchObject({
+        passed: true,
+        initialized: true,
+        exitCode: 0,
+        adapterProcessAbsent: true,
+        remoteProcessAbsent: true,
+        timedOut: false,
+      });
+    },
+    2_000,
+  );
+
+  it("records a failed scenario when the adapter executable is missing", async () => {
+    const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-missing-"));
+    const progress = startTestProgress("missing ACP adapter", ["launch adapter", "verify result"], {
+      logLine: () => undefined,
+    });
+    onTestFinished(() => {
+      progress.stop();
+      fs.rmSync(artifactDir, { force: true, recursive: true });
+    });
+    const run = vi.fn().mockResolvedValue({ exitCode: 1, stdout: "", stderr: "" });
+    const sandbox = new SandboxClient({ run });
+
+    await expect(
+      runHermesAcpLiveScenario({
+        artifacts: new ArtifactSink(artifactDir),
+        env: { PATH: artifactDir },
+        progress,
+        sandbox,
+        sandboxName: "e2e-hermes",
+        scenario: "initialize",
+      }),
+    ).resolves.toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(artifactDir, "hermes-acp-initialize.json"), "utf8")),
+    ).toMatchObject({
+      passed: false,
+      initialized: false,
+      adapterProcessAbsent: true,
+      remoteProcessAbsent: true,
+      timedOut: false,
+    });
+    expect(run).toHaveBeenCalledOnce();
+  }, 2_000);
+
   it("passes only host runtime settings to the adapter process", () => {
     expect(
       hermesAcpLiveHostEnv({
