@@ -840,10 +840,11 @@ while growing to 658 target lines and 1,202 transitive live lines. Its first
 automatic main run completed the live step in 7 minutes 26 seconds.
 
 The #11547 reduction keeps all seven phases and the target's 9 direct `expect`
-calls and 17 direct assertion points. Its three companions bring the transitive
-totals to 9 `expect` calls, 26 assertion points, and no generated probe blocks
-across 1,159 lines. Against the current base, the live target falls from 658 to
-604 lines and the transitive live surface falls from 1,202 to 1,159 lines.
+calls while lowering the direct assertion points from 17 to 16. Its two
+companions bring the transitive totals to 9 `expect` calls, 25 assertion points,
+and no generated probe blocks across 1,140 lines. Against the current base, the
+live target falls from 658 to 585 lines and the transitive live surface falls
+from 1,202 to 1,140 lines.
 Push-run timing for this revision is recorded by the focused PR E2E run.
 
 ## OpenShell development artifact retention
