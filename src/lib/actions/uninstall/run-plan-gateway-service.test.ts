@@ -762,7 +762,9 @@ describe("uninstall OpenShell gateway user service", () => {
         guidance,
       ),
     ).toBe(recovery);
-    expect(runDocker.mock.calls.length).toBe(Number(dockerInstalled));
+    expect(runDocker.mock.calls).toEqual(
+      dockerInstalled ? [[["info"], expect.objectContaining({ timeout: 10_000 })]] : [],
+    );
     expect(fs.existsSync(servicePath)).toBe(true);
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
   }
