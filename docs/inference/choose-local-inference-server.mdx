@@ -4,8 +4,8 @@
 title: "Choose a Local Inference Server"
 sidebar-title: "Choose a Local Server"
 description: "Compare operator-run servers and managed runtime profiles before choosing local inference for NemoClaw."
-description-agent: "Compares NemoClaw local inference options. Use when choosing Ollama, vLLM, llama.cpp, NVIDIA NIM, or a fixed vLLM profile."
-keywords: ["nemoclaw local inference", "ollama vllm llama.cpp nim", "local inference server"]
+description-agent: "Compares NemoClaw local inference options. Use when choosing Ollama, vLLM, llama.cpp, llmman, NVIDIA NIM, or a fixed vLLM profile."
+keywords: ["nemoclaw local inference", "ollama vllm llama.cpp llmman nim", "local inference server"]
 content:
   type: "concept"
 ---
@@ -32,6 +32,7 @@ With `NEMOCLAW_LLAMACPP_RECIPE` unset, onboarding selects Qwen 3.6; a compatible
 | Managed vLLM | You want NemoClaw to pull an image, download model weights, and manage the server container. | Requires Docker on `PATH`. Appears by default on DGX Spark and DGX Station. Native N1x FASTOS offers this route through a Deferred preview. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. Attaching an already-running local vLLM server is separate. | `/v1/chat/completions`. |
 | Fixed vLLM profile | You need the fixed catalog-selected vLLM model and serving configuration. | Appears as option 2 in DGX Spark Express. Direct installation can use the dedicated installer flag. The profile does not appear in the provider menu. | `/v1/chat/completions`. |
 | Existing llama.cpp | You already operate an authenticated llama.cpp server on loopback port `8081`. | Experimental. Always available for explicit selection and attaches only after cooperative fingerprinting succeeds. | `/v1/chat/completions`. |
+| Existing llmman | You already operate an authenticated `llmman serve` daemon on loopback port `17434` and want to serve models pulled from OCI registries or Hugging Face. | Experimental. Always available for explicit selection and attaches only after the daemon identifies itself as llmman and requires an API key. | `/v1/chat/completions`. |
 | Managed llama.cpp | You want NemoClaw to acquire a verified GGUF file and manage an authenticated llama.cpp container. | Experimental. Lists compatible profiles on qualified DGX Spark hosts. Qualifying Windows WSL N1x hosts automatically select managed llama.cpp during Windows Express or non-interactive onboarding when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset. An unset recipe selects Qwen 3.6; a compatible explicit recipe selects that managed recipe. | `/v1/chat/completions`. |
 | NVIDIA NIM | You want NemoClaw to pull and manage a validated NIM container on a NIM-capable NVIDIA GPU. | Unavailable on native N1x FASTOS. On other hosts, this path is Experimental and requires `NEMOCLAW_EXPERIMENTAL=1`. | `/v1/chat/completions`. |
 </AgentOnly>
@@ -43,6 +44,7 @@ With `NEMOCLAW_LLAMACPP_RECIPE` unset, onboarding selects Qwen 3.6; a compatible
 | Managed vLLM | You want NemoClaw to pull an image, download model weights, and manage the server container. | Requires Docker on `PATH`. Appears by default on DGX Spark and DGX Station. Native N1x FASTOS offers this route through a Deferred preview. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. Attaching an already-running local vLLM server is separate. | `/v1/chat/completions`. |
 | Fixed vLLM profile | You need the fixed catalog-selected vLLM model and serving configuration. | Appears as option 2 in DGX Spark Express. Direct installation can use the dedicated installer flag. The profile does not appear in the provider menu. | `/v1/chat/completions`. |
 | Existing llama.cpp | You already operate an authenticated llama.cpp server on loopback port `8081`. | Experimental. Always available for explicit selection and attaches only after cooperative fingerprinting succeeds. | `/v1/chat/completions`. |
+| Existing llmman | You already operate an authenticated `llmman serve` daemon on loopback port `17434` and want to serve models pulled from OCI registries or Hugging Face. | Experimental. Always available for explicit selection and attaches only after the daemon identifies itself as llmman and requires an API key. | `/v1/chat/completions`. |
 | Managed llama.cpp | You want NemoClaw to acquire a verified GGUF file and manage an authenticated llama.cpp container. | Experimental. Lists compatible profiles on qualified DGX Spark hosts. Qualifying Windows WSL N1x hosts automatically select managed llama.cpp during Windows Express or non-interactive onboarding when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset. An unset recipe selects Qwen 3.6; a compatible explicit recipe selects that managed recipe. | `/v1/chat/completions`. |
 | NVIDIA NIM | You want NemoClaw to pull and manage a validated NIM container on a NIM-capable NVIDIA GPU. | Unavailable on native N1x FASTOS. On other hosts, this path is Experimental and requires `NEMOCLAW_EXPERIMENTAL=1`. | `/v1/chat/completions`. |
 </AgentOnly>
@@ -186,6 +188,14 @@ Refer to [Set Up llama.cpp](set-up-llama-cpp).
 ## Install Managed llama.cpp on an NVIDIA GPU Host
 
 The managed procedure moved to [Set Up llama.cpp](set-up-llama-cpp#install-managed-llamacpp-on-an-nvidia-gpu-host).
+
+## Choose llmman
+
+Choose llmman when you already run `llmman serve` and want to serve models pulled directly from Hugging Face or any OCI registry, such as Docker Hub, GHCR, or a self-hosted mirror.
+llmman speaks the Ollama, OpenAI, and Anthropic wire formats from one daemon, so NemoClaw identifies it through `/api/version` and lists its stored models through `/api/tags`, then routes sandbox traffic through Chat Completions.
+The daemon must require an API key; NemoClaw owns only provider registration and routing and does not install, start, or manage llmman.
+
+Refer to [Set Up llmman](set-up-llmman).
 
 ## Choose NVIDIA NIM
 

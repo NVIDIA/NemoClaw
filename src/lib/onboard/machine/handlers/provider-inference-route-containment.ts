@@ -65,9 +65,12 @@ export function guardProviderInferenceRouteSelection(
   }
   const provider = typeof route.provider === "string" ? route.provider.trim() : "";
   const completeCustomRoute =
-    !["compatible-endpoint", "compatible-anthropic-endpoint", "llama-cpp-local"].includes(
-      provider,
-    ) ||
+    ![
+      "compatible-endpoint",
+      "compatible-anthropic-endpoint",
+      "llama-cpp-local",
+      "llmman-local",
+    ].includes(provider) ||
     (typeof route.endpointUrl === "string" &&
       route.endpointUrl.trim().length > 0 &&
       typeof route.preferredInferenceApi === "string" &&

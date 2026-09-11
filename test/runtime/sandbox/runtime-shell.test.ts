@@ -157,6 +157,12 @@ describe("shell runtime helpers", () => {
     expect(result.stdout.trim()).toBe("http://host.openshell.internal:11434/v1");
   });
 
+  it("returns the fixed llmman-local base URL", () => {
+    const result = runShell(`source "${RUNTIME_SH}"; get_local_provider_base_url llmman-local`);
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("http://host.openshell.internal:17434/v1");
+  });
+
   it("rejects unknown local providers", () => {
     const result = runShell(`source "${RUNTIME_SH}"; get_local_provider_base_url bogus-provider`);
     expect(result.status).not.toBe(0);
@@ -214,6 +220,21 @@ describe("shell runtime helpers", () => {
     expect(result.stdout.trim()).toBe("");
     expect(result.stderr).toContain(
       `Invalid ${name}=${value} (conflicts with fixed llama.cpp inference port 8081)`,
+    );
+  });
+
+  it.each([
+    { name: "NEMOCLAW_VLLM_PORT", value: "17434", provider: "vllm-local" },
+    { name: "NEMOCLAW_OLLAMA_PORT", value: "017434", provider: "ollama-local" },
+  ])("rejects reserved llmman port $value for $name", ({ name, value, provider }) => {
+    const result = runShell(`source "${RUNTIME_SH}"; get_local_provider_base_url ${provider}`, {
+      [name]: value,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout.trim()).toBe("");
+    expect(result.stderr).toContain(
+      `Invalid ${name}=${value} (conflicts with fixed llmman inference port 17434)`,
     );
   });
 

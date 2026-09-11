@@ -1198,6 +1198,46 @@ describe("createSetupNim", () => {
     expect(getRuntimeProvider).not.toHaveBeenCalled();
   });
 
+  it("dispatches llmman existing-server selection without a managed install path", async () => {
+    const handleLlmmanSelection = vi.fn<SetupNimFlowDeps["handleLlmmanSelection"]>(
+      async (selection, requestedModel) => {
+        expect(requestedModel).toBe("qwen3.8");
+        expect(selection).toMatchObject({
+          provider: "llmman-local",
+          endpointUrl: "http://127.0.0.1:17434/v1",
+          credentialEnv: "NEMOCLAW_LLMMAN_LOCAL_TOKEN",
+        });
+        selection.model = "qwen3.8:latest";
+        selection.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>();
+    const runtimeProvider = makeDeps().getRuntimeProvider();
+    const getRuntimeProvider = vi.fn(() => runtimeProvider);
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "llmman",
+        getNonInteractiveModel: () => "qwen3.8",
+        getRuntimeProvider,
+        handleLlamaCppSelection,
+        handleLlmmanSelection,
+      }),
+    );
+
+    await expect(setupNim(null)).resolves.toMatchObject({
+      provider: "llmman-local",
+      model: "qwen3.8:latest",
+      endpointUrl: "http://127.0.0.1:17434/v1",
+      credentialEnv: "NEMOCLAW_LLMMAN_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+    });
+    expect(handleLlmmanSelection).toHaveBeenCalledOnce();
+    expect(handleLlamaCppSelection).not.toHaveBeenCalled();
+    expect(getRuntimeProvider).not.toHaveBeenCalled();
+  });
+
   it("does not resolve a host-local-inference runtime provider for existing vLLM", async () => {
     const getRuntimeProvider = vi.fn(() => unexpected("runtime provider selection"));
     const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {

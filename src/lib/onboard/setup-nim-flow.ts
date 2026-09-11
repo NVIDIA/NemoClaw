@@ -26,6 +26,7 @@ import {
   discoverManagedLlamaCppSelectionsForGpu,
   servingProfileProvenanceFromResolvedLlamaCpp,
 } from "../inference/llama-cpp/managed-selection";
+import { LLMMAN_SELECTION_KEY } from "../inference/llmman/contract";
 import { getOllamaContextWindowFloorForAgent } from "../inference/ollama-runtime-context";
 import {
   type RequestedServingProfileModel,
@@ -67,8 +68,12 @@ export { createHermesPortableOllamaInferenceResolver } from "./experimental/herm
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 import type { SetupNimSelectionState as BaseSetupNimSelectionState } from "./setup-nim-selection";
 
-export { probeLlamaCppAttachment } from "../inference/llama-cpp";
-export { createLlamaCppSelectionHandler } from "./llama-cpp-selection";
+export {
+  createEndpointAttachmentHandlers,
+  createLlamaCppSelectionHandler,
+  createLlmmanSelectionHandler,
+  probeLlamaCppAttachment,
+} from "./inference-providers/endpoint-attachment-handlers";
 export { createLocalModelProfileIntegration } from "./local-model-profile/integration";
 export { resumeManagedLlamaCppRuntime };
 
@@ -192,6 +197,11 @@ export interface SetupNimFlowDeps {
     recoveredRegistryRoute: RegistryInferenceRoute | null,
   ): Promise<SetupNimSelectionResult>;
   handleLlamaCppSelection(
+    state: SetupNimSelectionState,
+    requestedModel: string | null,
+    recoveredModel: string | null,
+  ): Promise<SetupNimSelectionResult>;
+  handleLlmmanSelection(
     state: SetupNimSelectionState,
     requestedModel: string | null,
     recoveredModel: string | null,
@@ -431,7 +441,11 @@ function applyGatewayRouteDiscoveryConstraints(
 }
 
 function isEndpointProviderSelection(deps: SetupNimFlowDeps, providerKey: string): boolean {
-  return providerKey === "llama-cpp" || Boolean(deps.remoteProviderConfig[providerKey]);
+  return (
+    providerKey === "llama-cpp" ||
+    providerKey === LLMMAN_SELECTION_KEY ||
+    Boolean(deps.remoteProviderConfig[providerKey])
+  );
 }
 
 function prepareEndpointProviderPolicyRoute(
@@ -446,6 +460,7 @@ function prepareEndpointProviderPolicyRoute(
     return;
   }
   const tentative = deps.remoteProviderConfig[selected.key];
+  if (!tentative) return; // llmman: the selection handler applies the contract.
   state.provider = tentative.providerName;
   state.endpointUrl = tentative.endpointUrl;
   state.credentialEnv = tentative.credentialEnv;
@@ -648,6 +663,13 @@ async function handleEndpointProviderSelection(input: {
   } = input;
   if (selected.key === "llama-cpp") {
     return deps.handleLlamaCppSelection(
+      state,
+      requestedModel,
+      recoveredFromSandbox ? recoveredModel : null,
+    );
+  }
+  if (selected.key === LLMMAN_SELECTION_KEY) {
+    return deps.handleLlmmanSelection(
       state,
       requestedModel,
       recoveredFromSandbox ? recoveredModel : null,

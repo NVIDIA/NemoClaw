@@ -19,7 +19,7 @@ describe("configured local-inference vLLM policy port", () => {
     };
 
     expect(document.network_policies.local_inference.endpoints.map(({ port }) => port)).toEqual([
-      8081, 11434, 11435, 19000,
+      8081, 17434, 11434, 11435, 19000,
     ]);
   });
 });

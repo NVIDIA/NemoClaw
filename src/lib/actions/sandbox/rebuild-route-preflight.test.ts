@@ -89,15 +89,15 @@ const remoteProviders = [
   (provider): provider is typeof provider & { credentialEnv: string } =>
     typeof provider.credentialEnv === "string" && provider.credentialEnv.length > 0,
 );
-const remoteProviderRouteOverrides = new Map<string, Partial<SandboxEntry>>([
-  [
-    REMOTE_PROVIDER_CONFIG["llama-cpp"].providerName,
+const remoteProviderRouteOverrides = new Map<string, Partial<SandboxEntry>>(
+  ["llama-cpp", "llmman"].map((key) => [
+    REMOTE_PROVIDER_CONFIG[key].providerName,
     {
-      endpointUrl: REMOTE_PROVIDER_CONFIG["llama-cpp"].endpointUrl ?? null,
+      endpointUrl: REMOTE_PROVIDER_CONFIG[key].endpointUrl ?? null,
       preferredInferenceApi: "openai-completions",
     },
-  ],
-]);
+  ]),
+);
 
 describe("commitRebuildRoutePreflight", () => {
   it("includes a credential-bearing provider in the migration matrix (#7798)", () => {

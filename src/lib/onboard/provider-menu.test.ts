@@ -59,6 +59,7 @@ describe("buildInferenceProviderMenu", () => {
       "anthropicCompatible",
       "gemini",
       "llama-cpp",
+      "llmman",
     ]);
   });
 
@@ -92,6 +93,7 @@ describe("buildInferenceProviderMenu", () => {
       "routed",
       "hermesProvider",
       "llama-cpp",
+      "llmman",
     ]);
     expect(result.options.find((option) => option.key === "build")?.label).toBe("NVIDIA Endpoints");
     expect(result.options.find((option) => option.key === "hermesProvider")?.label).toBe(
@@ -191,7 +193,7 @@ describe("buildInferenceProviderMenu", () => {
       windowsHostInstallLabel: "Install Ollama on Windows host (requires Docker Desktop)",
     });
 
-    expect(result.options.at(-2)).toEqual({
+    expect(result.options.at(-3)).toEqual({
       key: "install-windows-ollama",
       label: "Install Ollama on Windows host (requires Docker Desktop)",
     });
@@ -207,7 +209,7 @@ describe("buildInferenceProviderMenu", () => {
         reachable ? "Use Ollama on Windows host - running" : "Start Ollama on Windows host",
     });
 
-    expect(result.options.at(-2)).toEqual({
+    expect(result.options.at(-3)).toEqual({
       key: "start-windows-ollama",
       label: "Start Ollama on Windows host",
     });

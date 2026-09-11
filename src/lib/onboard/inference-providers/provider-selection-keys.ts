@@ -26,6 +26,7 @@ export const NON_INTERACTIVE_PROVIDER_KEYS: ReadonlySet<string> = new Set([
   "ollama",
   "llama-cpp",
   "install-llama-cpp",
+  "llmman",
   "custom",
   "nim-local",
   "vllm",
@@ -44,6 +45,7 @@ export const NON_INTERACTIVE_PROVIDER_VALID_VALUES = `Valid values: ${Array.from
 const PERSISTED_PROVIDER_SELECTION_KEYS: Readonly<Record<string, string>> = {
   "nvidia-router": "routed",
   "ollama-local": "ollama",
+  "llmman-local": "llmman",
   "vllm-local": "vllm",
   // This legacy name identifies NVIDIA Endpoints, not Local NVIDIA NIM.
   "nvidia-nim": "build",

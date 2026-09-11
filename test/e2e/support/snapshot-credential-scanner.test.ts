@@ -24,6 +24,7 @@ describe("snapshot credential scanner", () => {
     "AWS_BEARER_TOKEN_BEDROCK",
     "COMPATIBLE_ANTHROPIC_API_KEY",
     "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+    "NEMOCLAW_LLMMAN_LOCAL_TOKEN",
   ])("keeps required provider aliases in the shared credential inventory [case %#]", (name) => {
     expect(SUPPORTED_CREDENTIAL_ENV_NAMES.has(name), name).toBe(true);
   });

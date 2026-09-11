@@ -8,6 +8,13 @@ import {
   runCurlProbe,
 } from "../../adapters/http/probe";
 import {
+  ATTACHMENT_MAX_PROBE_RESPONSE_BYTES,
+  attachmentProbeArgs as probeArgs,
+  boundedProbeFailure as boundedAttachmentProbeFailure,
+  parseJsonObject,
+  resolveFixedLoopbackOrigin,
+} from "../probe/existing-server-attachment";
+import {
   isSafeLlamaCppServedModelAlias,
   LLAMA_CPP_HOST_BASE_URL,
   LLAMA_CPP_PORT,
@@ -64,24 +71,11 @@ const LLAMA_CPP_META_NUMERIC_KEYS = [
   "size",
 ] as const;
 
-const LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES = 256 * 1024;
-
 function failure(
   reason: LlamaCppAttachmentFailureReason,
   message: string,
 ): LlamaCppAttachmentResult {
   return { ok: false, reason, message };
-}
-
-function parseJsonObject(body: string): Record<string, unknown> | null {
-  try {
-    const value: unknown = JSON.parse(body);
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 function hasNativeLlamaCppModelMetadata(entry: LlamaCppModelEntry): boolean {
@@ -148,20 +142,6 @@ function hasNativeMetricsResponse(result: CurlProbeResult): boolean {
   );
 }
 
-function probeArgs(authArgs: readonly string[], url: string): string[] {
-  return [
-    "-sS",
-    "--connect-timeout",
-    "2",
-    "--max-time",
-    "5",
-    "--max-filesize",
-    String(LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES),
-    ...authArgs,
-    url,
-  ];
-}
-
 function probeModelEndpoint(
   probe: (argv: string[], options?: CurlProbeOptions) => CurlProbeResult,
   authArgs: readonly string[],
@@ -193,39 +173,8 @@ function probeModelEndpoint(
 }
 
 function boundedProbeFailure(result: CurlProbeResult): LlamaCppAttachmentResult | null {
-  if (result.curlStatus === 63) {
-    return failure(
-      "oversized-response",
-      "A llama.cpp fingerprint response exceeded the 256 KiB probe limit.",
-    );
-  }
-  if (result.curlStatus === 28) {
-    return failure("probe-timeout", "A llama.cpp fingerprint probe exceeded its time limit.");
-  }
-  return null;
-}
-
-function resolveFixedLoopbackBaseUrl(value: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return null;
-  }
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (
-    parsed.protocol !== "http:" ||
-    !["127.0.0.1", "localhost", "::1"].includes(hostname) ||
-    parsed.port !== String(LLAMA_CPP_PORT) ||
-    parsed.username ||
-    parsed.password ||
-    (parsed.pathname !== "/" && parsed.pathname !== "") ||
-    parsed.search ||
-    parsed.hash
-  ) {
-    return null;
-  }
-  return parsed.origin;
+  const bounded = boundedAttachmentProbeFailure(result, "llama.cpp");
+  return bounded ? failure(bounded.reason, bounded.message) : null;
 }
 
 /**
@@ -243,7 +192,10 @@ export function probeLlamaCppAttachment(
       "A native llama.cpp API key is required for existing-server attachment.",
     );
   }
-  const baseUrl = resolveFixedLoopbackBaseUrl(options.baseUrl ?? LLAMA_CPP_HOST_BASE_URL);
+  const baseUrl = resolveFixedLoopbackOrigin(
+    options.baseUrl ?? LLAMA_CPP_HOST_BASE_URL,
+    LLAMA_CPP_PORT,
+  );
   if (!baseUrl) {
     return failure(
       "invalid-endpoint",
@@ -252,7 +204,7 @@ export function probeLlamaCppAttachment(
   }
   const probe = options.runCurlProbeImpl ?? runCurlProbe;
   const anonymousProbeOptions: CurlProbeOptions = {
-    maxResponseBytes: LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES,
+    maxResponseBytes: ATTACHMENT_MAX_PROBE_RESPONSE_BYTES,
     pinnedAddresses: [],
   };
   const anonymousModels = probe(probeArgs([], `${baseUrl}/v1/models`), anonymousProbeOptions);
@@ -306,7 +258,7 @@ export function probeLlamaCppAttachment(
   }
   try {
     const probeOptions: CurlProbeOptions = {
-      maxResponseBytes: LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES,
+      maxResponseBytes: ATTACHMENT_MAX_PROBE_RESPONSE_BYTES,
       trustedConfigFiles: auth.trustedConfigFiles,
       pinnedAddresses: [],
     };

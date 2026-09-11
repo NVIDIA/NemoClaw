@@ -1017,17 +1017,16 @@ const handleVllmSelection = createSetupNimVllmHandler({
     vllmInference.persistConfiguredManagedVllmRuntimeReceipt,
   exitProcess: (code) => process.exit(code),
 });
-const handleLlamaCppSelection = setupNimFlow.createLlamaCppSelectionHandler({
-  isNonInteractive,
-  resolveCredential: resolveProviderCredential,
-  ensureNamedCredential: (envName, label) => credentialPrompt.ensureNamedCredential(envName, label),
-  returningToProviderSelection: credentialPrompt.returningToProviderSelection,
-  probeLlamaCppAttachment: setupNimFlow.probeLlamaCppAttachment,
-  validateOpenAiLikeSelection,
-  error: (message) => console.error(message),
-  log: (message) => console.log(message),
-  exitProcess: (code): never => process.exit(code),
-});
+const { handleLlamaCppSelection, handleLlmmanSelection } =
+  setupNimFlow.createEndpointAttachmentHandlers({
+    isNonInteractive,
+    resolveCredential: resolveProviderCredential,
+    ensureNamedCredential: credentialPrompt.ensureNamedCredential,
+    returningToProviderSelection: credentialPrompt.returningToProviderSelection,
+    validateOpenAiLikeSelection,
+    prompt,
+    selectFromNumberedMenu: selectFromNumberedMenuOrExit,
+  });
 const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
 function isOpenshellInstalled(): boolean {
   return resolveOpenshell() !== null;
@@ -2323,6 +2322,7 @@ function getSetupNimDeps(): SetupNimDeps {
         abortNonInteractive,
       ),
     handleLlamaCppSelection,
+    handleLlmmanSelection,
     handleRemoteProviderSelection,
     handleNimLocalSelection,
     handleRunningOllamaSelection,
@@ -2552,7 +2552,7 @@ const {
   setupPoliciesWithSelection,
   validatePolicyTierEnvEarly,
 } = createOnboardPolicyApplication({
-  localInferenceProviders: [...LOCAL_INFERENCE_PROVIDERS, "llama-cpp-local"],
+  localInferenceProviders: [...LOCAL_INFERENCE_PROVIDERS, "llama-cpp-local", "llmman-local"],
   step,
   note,
   isNonInteractive,

@@ -14,6 +14,12 @@ import {
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
+import {
+  isSafeLlmmanModelReference,
+  LLMMAN_CREDENTIAL_ENV,
+  LLMMAN_PROVIDER_LABEL,
+  LLMMAN_PROVIDER_NAME,
+} from "./llmman/contract";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "./ollama/contract";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
@@ -78,6 +84,7 @@ export const DEFAULT_ROUTE_CREDENTIAL_ENV = "OPENAI_API_KEY";
 // never read the user's host OpenAI key for local providers. See GH #2519.
 export { VLLM_LOCAL_CREDENTIAL_ENV };
 export const LLAMA_CPP_LOCAL_CREDENTIAL_ENV = LLAMA_CPP_CREDENTIAL_ENV;
+export const LLMMAN_LOCAL_CREDENTIAL_ENV = LLMMAN_CREDENTIAL_ENV;
 export const MANAGED_PROVIDER_ID = "inference";
 export { DEFAULT_OLLAMA_MODEL };
 
@@ -294,6 +301,14 @@ export function getProviderSelectionConfig(
         credentialEnv: LLAMA_CPP_LOCAL_CREDENTIAL_ENV,
         providerLabel: "Local llama.cpp",
       };
+    case LLMMAN_PROVIDER_NAME:
+      if (!model || !isSafeLlmmanModelReference(model)) return null;
+      return {
+        ...base,
+        model,
+        credentialEnv: LLMMAN_LOCAL_CREDENTIAL_ENV,
+        providerLabel: LLMMAN_PROVIDER_LABEL,
+      };
     default:
       return null;
   }
@@ -356,6 +371,7 @@ export function getSandboxInferenceConfig(
       break;
     case "compatible-endpoint":
     case "llama-cpp-local":
+    case LLMMAN_PROVIDER_NAME:
       providerKey = MANAGED_PROVIDER_ID;
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
       inferenceCompat = {

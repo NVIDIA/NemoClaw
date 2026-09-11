@@ -46,6 +46,18 @@ describe("compatible endpoint gateway routing", () => {
     ).toBe("http://127.0.0.1:8000/v1");
   });
 
+  it("rewrites only fixed loopback port 17434 for llmman attachment", async () => {
+    expect(gatewayReachableCompatibleEndpointUrl("llmman-local", "http://127.0.0.1:17434/v1")).toBe(
+      "http://host.openshell.internal:17434/v1",
+    );
+    expect(gatewayReachableCompatibleEndpointUrl("llmman-local", "http://127.0.0.1:8081/v1")).toBe(
+      "http://127.0.0.1:8081/v1",
+    );
+    expect(
+      gatewayReachableCompatibleEndpointUrl("compatible-endpoint", "http://127.0.0.1:17434/v1"),
+    ).toBe("http://127.0.0.1:17434/v1");
+  });
+
   it("preserves query strings and fragments for root and non-root routes (#5744)", async () => {
     expect(
       gatewayReachableCompatibleEndpointUrl(

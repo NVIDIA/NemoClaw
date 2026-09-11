@@ -8,6 +8,7 @@ import {
   OPENAI_GATEWAY_PROVIDER_TYPE,
 } from "../../adapters/openshell/provider-profile-registration";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
+import { LLMMAN_PORT, LLMMAN_PROVIDER_NAME } from "../../inference/llmman/contract";
 import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
 
 // Keep this list aligned with the materialized host.openshell.internal endpoints
@@ -17,12 +18,21 @@ export const BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS = [
   11434,
   11435,
   VLLM_PORT,
+  LLMMAN_PORT,
 ] as const;
 
 export const COMPATIBLE_ENDPOINT_GATEWAY_PORTS = [11434, 11435, VLLM_PORT] as const;
 
 const COMPATIBLE_ENDPOINT_GATEWAY_PORT_SET = new Set<number>(COMPATIBLE_ENDPOINT_GATEWAY_PORTS);
-const LOOPBACK_BRIDGE_PROVIDERS = new Set(["compatible-endpoint", "llama-cpp-local"]);
+const LOOPBACK_BRIDGE_PROVIDERS = new Set([
+  "compatible-endpoint",
+  "llama-cpp-local",
+  LLMMAN_PROVIDER_NAME,
+]);
+const FIXED_PORT_BRIDGE_PROVIDERS: ReadonlyMap<string, number> = new Map([
+  ["llama-cpp-local", LLAMA_CPP_PORT],
+  [LLMMAN_PROVIDER_NAME, LLMMAN_PORT],
+]);
 
 // #5744: keep host-side validation on the user-entered loopback URL, but
 // register the sandbox route through OpenShell's host bridge. Remove this when
@@ -45,10 +55,11 @@ export function gatewayReachableCompatibleEndpointUrl(
   const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   const port = parsed.port ? Number(parsed.port) : null;
   const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  const fixedBridgePort = FIXED_PORT_BRIDGE_PROVIDERS.get(provider);
   const usesAllowedBridgePort =
     port !== null &&
-    (provider === "llama-cpp-local"
-      ? port === LLAMA_CPP_PORT
+    (fixedBridgePort !== undefined
+      ? port === fixedBridgePort
       : COMPATIBLE_ENDPOINT_GATEWAY_PORT_SET.has(port));
   if (
     parsed.protocol !== "http:" ||

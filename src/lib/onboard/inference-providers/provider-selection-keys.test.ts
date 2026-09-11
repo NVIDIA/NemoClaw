@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { HERMES_PROVIDER_NAME } from "../../hermes-provider-auth";
 import { LLAMA_CPP_PROVIDER_NAME } from "../../inference/llama-cpp/contract";
+import { LLMMAN_PROVIDER_NAME, LLMMAN_SELECTION_KEY } from "../../inference/llmman/contract";
 import { OPENROUTER_PROVIDER_NAME } from "../../inference/openrouter";
 import { providerNameToOptionKey } from "../provider-recovery";
 
@@ -23,6 +24,7 @@ describe("provider selection identities", () => {
   it("uses the established runtime provider identities (#11041)", () => {
     expect(REMOTE_PROVIDER_CONFIG.openrouter.providerName).toBe(OPENROUTER_PROVIDER_NAME);
     expect(REMOTE_PROVIDER_CONFIG["llama-cpp"].providerName).toBe(LLAMA_CPP_PROVIDER_NAME);
+    expect(REMOTE_PROVIDER_CONFIG[LLMMAN_SELECTION_KEY].providerName).toBe(LLMMAN_PROVIDER_NAME);
     expect(REMOTE_PROVIDER_CONFIG.hermesProvider.providerName).toBe(HERMES_PROVIDER_NAME);
   });
 });

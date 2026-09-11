@@ -23,6 +23,13 @@ const {
   LLAMA_CPP_PROVIDER_NAME,
 } = require("../inference/llama-cpp/contract");
 const {
+  LLMMAN_CREDENTIAL_ENV,
+  LLMMAN_HOST_OPENAI_BASE_URL,
+  LLMMAN_PROVIDER_LABEL,
+  LLMMAN_PROVIDER_NAME,
+  LLMMAN_SELECTION_KEY,
+} = require("../inference/llmman/contract");
+const {
   matchesGatewayCredentialFamilyProviderBinding,
   matchesGatewayCredentialOnlyProviderBinding,
   readGatewayProviderMetadata,
@@ -167,14 +174,29 @@ const REMOTE_PROVIDER_CONFIG = {
     defaultModel: "",
     skipVerify: true,
   },
+  [LLMMAN_SELECTION_KEY]: {
+    label: LLMMAN_PROVIDER_LABEL,
+    providerName: LLMMAN_PROVIDER_NAME,
+    providerType: "openai",
+    credentialEnv: LLMMAN_CREDENTIAL_ENV,
+    endpointUrl: LLMMAN_HOST_OPENAI_BASE_URL,
+    helpUrl: null,
+    modelMode: "input",
+    defaultModel: "",
+    skipVerify: true,
+  },
 };
 
 // Providers that run on the host and need the local-inference policy preset.
 const LOCAL_INFERENCE_PROVIDERS = ["ollama-local", "vllm-local"];
 // Host-endpoint providers that need the declarative local-inference network policy.
-// Keep this separate from LOCAL_INFERENCE_PROVIDERS: llama.cpp is operator-owned,
-// credential-bearing, endpoint-bearing, and must never enter managed lifecycle paths.
-const LOCAL_INFERENCE_POLICY_PROVIDERS = [...LOCAL_INFERENCE_PROVIDERS, "llama-cpp-local"];
+// Keep this separate from LOCAL_INFERENCE_PROVIDERS: llama.cpp and llmman are
+// operator-owned and must never enter managed lifecycle paths.
+const LOCAL_INFERENCE_POLICY_PROVIDERS = [
+  ...LOCAL_INFERENCE_PROVIDERS,
+  "llama-cpp-local",
+  LLMMAN_PROVIDER_NAME,
+];
 
 // Re-exported alias matching the existing onboard.ts call sites. The canonical
 // definitions live in inference-config.ts so that getProviderSelectionConfig
@@ -205,6 +227,8 @@ function getProviderLabel(provider) {
       return "Local Ollama";
     case "llama-cpp-local":
       return "Local llama.cpp";
+    case LLMMAN_PROVIDER_NAME:
+      return LLMMAN_PROVIDER_LABEL;
     default:
       return provider;
   }
@@ -226,6 +250,8 @@ function getEffectiveProviderName(providerKey) {
       return "vllm-local";
     case "llama-cpp":
       return "llama-cpp-local";
+    case LLMMAN_SELECTION_KEY:
+      return LLMMAN_PROVIDER_NAME;
     case "routed":
       return "nvidia-router";
     default:
