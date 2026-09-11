@@ -115,6 +115,9 @@ finally {
       }
     }
     $timings['remainingInstallation'] = @{ entries=$remaining.ToArray(); truncated=$truncated; entryLimit=4096; contentRead=$false; reparseTraversal=$false }
+    if (-not $timings.installationRootRemoved -and $Mode -ceq 'current-build') {
+      throw 'The installed preview uninstall retained its installation root; see remainingInstallation.'
+    }
   } catch { if ($null -eq $primary) { $primary = $_ } else { Write-Warning 'The original failure is preserved; preview cleanup also failed.' } }
 }
 $timings.installTargetSatisfied = $timings.stages.Contains('-install') -and

@@ -5,7 +5,8 @@
 param(
     [Parameter(Mandatory)][string]$MsiPath,
     [Parameter(Mandatory)][string]$HelperSha256,
-    [Parameter(Mandatory)][string]$ReceiptPath
+    [Parameter(Mandatory)][string]$ReceiptPath,
+    [switch]$RequireInstallationRootRemoval
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -140,6 +141,16 @@ try {
         if ($sequence.ContainsKey($name) -and $sequence[$name].sequence -le $sequence.RemoveExistingProducts.sequence) {
             throw 'A compiled MSI mutation is scheduled before protected retirement and old removal.'
         }
+    }
+    if ($RequireInstallationRootRemoval) {
+        $rootFolders = @([NativeRuntimeMsiAudit]::Rows($MsiPath, 'SELECT `Component_` FROM `CreateFolder` WHERE `Directory_`=''INSTALLFOLDER''', 1))
+        if ($rootFolders.Count -ne 1 -or -not $sequence.ContainsKey('RemoveFiles') -or
+            -not $sequence.ContainsKey('RemoveFolders') -or
+            $sequence.RemoveFiles.sequence -ge $sequence.RemoveFolders.sequence) {
+            throw 'The compiled MSI must remove its empty installation root after child folders.'
+        }
+        $receipt.installationRootRemoval = @{ directory='INSTALLFOLDER'; component=$rootFolders[0][0];
+            mechanism='CreateFolder/RemoveFolders'; afterRemoveFiles=$true; emptyOnly=$true }
     }
     foreach ($name in $owned) {
         if (-not $actions.ContainsKey($name)) { throw "The MSI custom action is missing $name." }

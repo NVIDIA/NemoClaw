@@ -322,17 +322,9 @@ def payload_authoring(payload: Path, output: Path):
                 Bitness="always64",
             )
             components.append(identifier)
-            if directory == "" and index == 0:
-                # Standard MSI removal is empty-only. Preserve foreign files;
-                # a major upgrade also keeps the root while new files exist.
-                element(
-                    component,
-                    "RemoveFolder",
-                    Id="RemoveEmptyInstallRoot",
-                    Directory="INSTALLFOLDER",
-                    On="uninstall",
-                )
-            if not group:
+            if not group or (directory == "" and index == 0):
+                # Register the root for RemoveFolders, after child directories.
+                # RemoveFolder runs during RemoveFiles while those still exist.
                 element(component, "CreateFolder")
             for number, relative in enumerate(group):
                 element(

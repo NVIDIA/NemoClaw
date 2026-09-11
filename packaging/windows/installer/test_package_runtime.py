@@ -189,20 +189,15 @@ class PackageComposition(unittest.TestCase):
         )
         self.assertTrue(tree.findall(".//w:CreateFolder", ns))
         self.assertTrue(all(len(row.findall("w:File", ns)) <= 64 for row in components))
-        removals = tree.findall(".//w:RemoveFolder", ns)
-        self.assertEqual(len(removals), 1)
-        self.assertEqual(
-            removals[0].attrib,
-            {
-                "Id": "RemoveEmptyInstallRoot",
-                "Directory": "INSTALLFOLDER",
-                "On": "uninstall",
-            },
-        )
-        owner = next(row for row in components if removals[0] in list(row))
+        self.assertEqual(tree.findall(".//w:RemoveFolder", ns), [])
         root = tree.find(".//w:DirectoryRef[@Id='INSTALLFOLDER']", ns)
-        self.assertIn(owner, list(root))
-        self.assertTrue(owner.findall("w:File", ns))
+        owners = [
+            row
+            for row in root.findall("w:Component", ns)
+            if row.find("w:CreateFolder", ns) is not None
+        ]
+        self.assertEqual(len(owners), 1)
+        self.assertTrue(owners[0].findall("w:File", ns))
 
 
 if __name__ == "__main__":

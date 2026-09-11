@@ -182,7 +182,7 @@ try {
         (Join-Path $windows 'Product.wxs'), $payloadAuthoring, '-pdbtype', 'none', '-wx', '-out', $msi) 'msi-build'
     # Same existing ICE60 exception as NemoClaw.wixproj; all other ICEs run.
     Invoke-BuildTool $WixPath @('msi', 'validate', '-sice', 'ICE60', '-wx', $msi) 'msi-validation'
-    & (Join-Path $owner 'audit-runtime-msi.ps1') -MsiPath $msi -HelperSha256 $helperSha -ReceiptPath (Join-Path $OutputDirectory 'compiled-msi.json')
+    & (Join-Path $owner 'audit-runtime-msi.ps1') -MsiPath $msi -HelperSha256 $helperSha -ReceiptPath (Join-Path $OutputDirectory 'compiled-msi.json') -RequireInstallationRootRemoval
     $receipt['compiledMsi'] = Get-CompiledMsiCounts $msi
     $payloadFiles = @(Get-ChildItem -LiteralPath $payload -Recurse -File)
     $receipt['payload'] = @{ fileCount = $payloadFiles.Count; bytes = [long](($payloadFiles | Measure-Object -Property Length -Sum).Sum) }
