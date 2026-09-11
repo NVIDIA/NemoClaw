@@ -17,7 +17,10 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
-import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import {
+  HISTORICAL_SANDBOX_MAIN_PROCESS,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { runHermesAcpLiveScenario } from "../fixtures/hermes-acp-live.ts";
 import { expectSandboxProviderAttachment } from "../fixtures/gateway-providers.ts";
@@ -851,8 +854,7 @@ test(
           // OpenShell 0.0.116 treats this argv as the canonical main process,
           // so the historical fixture must stay alive until NemoClaw rebuilds it.
           "--",
-          "sleep",
-          "infinity",
+          ...HISTORICAL_SANDBOX_MAIN_PROCESS,
         ],
         {
           artifactName: "phase-3-create-old-hermes-sandbox",
