@@ -324,12 +324,12 @@ describe("managed vLLM retirement after the last Local vLLM sandbox", () => {
         [`VLLM_API_KEY=${apiKey}`],
       ),
     );
-    const unlink = vi.fn((filePath: fs.PathLike) => {
-      if (path.basename(String(filePath)) === HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE) {
+    const unlink = vi
+      .fn<(filePath: fs.PathLike) => void>()
+      .mockImplementationOnce((filePath) => fs.unlinkSync(filePath))
+      .mockImplementationOnce(() => {
         throw new Error("permission denied");
-      }
-      fs.unlinkSync(filePath);
-    });
+      });
 
     expect(retireHostLocalVllmRuntime({ homeDir, deps: { ...deps, unlink } })).toEqual({
       status: "partial",

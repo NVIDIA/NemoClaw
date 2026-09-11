@@ -49,11 +49,12 @@ function makeDeps(
   const listHostRegistryEntries = vi.fn(() => remaining);
   const retireRuntime = vi.fn(() => retirement);
   const hostLifecycleLockState = { calls: 0 };
-  const withHostLifecycleLock: NonNullable<ManagedVllmDestroyDeps["withHostLifecycleLock"]> =
-    async <T>(operation: () => Promise<T> | T): Promise<T> => {
-      hostLifecycleLockState.calls += 1;
-      return await operation();
-    };
+  const withHostLifecycleLock: NonNullable<
+    ManagedVllmDestroyDeps["withHostLifecycleLock"]
+  > = async <T>(operation: () => Promise<T> | T): Promise<T> => {
+    hostLifecycleLockState.calls += 1;
+    return await operation();
+  };
   return {
     hostLifecycleLockState,
     listHostRegistryEntries,
