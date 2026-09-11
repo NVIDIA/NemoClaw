@@ -429,7 +429,7 @@ mod tests {
             let file = open(root.join("child/file").as_os_str(), false, READ_CONTROL).unwrap();
             let child_before = read(&child).unwrap();
             let kernel_before = kernel_descriptor(&child);
-            let file_before = read(&file).unwrap();
+            let file_before = kernel_descriptor(&file);
             {
                 // Add a harmless owner-only inheritable metadata ACE without
                 // propagating it. The production update must not subsequently
@@ -470,18 +470,30 @@ mod tests {
                     kernel_after.control,
                     kernel_before.bytes == kernel_after.bytes
                 );
-                assert_eq!(child_after.bytes, child_before.bytes);
-                assert_eq!(read(&file).unwrap().bytes, file_before.bytes);
+                // GetSecurityInfo may synthesize protection/inheritance flags
+                // when a parent's inheritable ACEs diverge. Preserve the actual
+                // stored descriptor, without accepting any kernel-byte change.
+                assert_eq!(kernel_after.bytes, kernel_before.bytes);
+                assert_eq!(kernel_descriptor(&file).bytes, file_before.bytes);
             }
+            let parent = open(root.as_os_str(), true, READ_CONTROL).unwrap();
+            let parent_before = kernel_descriptor(&parent);
+            let parent_plan = parent_before.plan().unwrap();
             let result = verified(prepare_target(root.as_os_str(), true).unwrap());
             assert_eq!(result.additions, 2);
             assert_eq!(result.after.plan().unwrap().additions, 0);
-            assert_eq!(read(&child).unwrap().bytes, child_before.bytes);
-            assert_eq!(read(&file).unwrap().bytes, file_before.bytes);
+            let parent_after = kernel_descriptor(&parent);
+            parent_before.verify(&parent_plan, &parent_after).unwrap();
+            assert_eq!(parent_after.control, parent_before.control);
+            assert_eq!(kernel_descriptor(&child).bytes, kernel_before.bytes);
+            assert_eq!(kernel_descriptor(&file).bytes, file_before.bytes);
             let repeated = verified(prepare_target(root.as_os_str(), true).unwrap());
             assert_eq!(repeated.additions, 0);
             assert_eq!(repeated.write_micros, 0);
             assert_eq!(repeated.before.bytes, repeated.after.bytes);
+            assert_eq!(kernel_descriptor(&parent).bytes, parent_after.bytes);
+            assert_eq!(kernel_descriptor(&child).bytes, kernel_before.bytes);
+            assert_eq!(kernel_descriptor(&file).bytes, file_before.bytes);
         }
     }
     #[test]
