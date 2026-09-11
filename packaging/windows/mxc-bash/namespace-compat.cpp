@@ -23,6 +23,7 @@ using NativeFileOpen = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTE
 NativePipeCreate realNativePipeCreate = nullptr;
 NativeFileOpen realNativeFileOpen = nullptr;
 LONG nativePipeRecords = 0;
+LONG ordinaryAclRecords = 0;
 decltype(&CreateNamedPipeA) realCreateSignalServer = CreateNamedPipeA;
 decltype(&CreateFileA) realOpenSignalWriter = CreateFileA;
 LONG pipeRecords = 0;
@@ -511,6 +512,74 @@ NTSTATUS NTAPI observe_native_open(PHANDLE output, ACCESS_MASK access, POBJECT_A
     return status;
 }
 
+// Diagnose the first exact new ordinary server's actual security, without
+// modifying it or replacing NULL-SD creation with an unproven template.
+void observe_ordinary_default_acl(HANDLE server, HANDLE root) {
+    if (!server || server == INVALID_HANDLE_VALUE || InterlockedIncrement(&ordinaryAclRecords) > 2) return;
+    const DWORD saved = GetLastError();
+    DWORD identityError = 0;
+    const char* identityReason = "none";
+    const bool currentIdentity = not_impersonating(identityReason, identityError);
+    alignas(void*) BYTE tokenBytes[1024] = {};
+    alignas(void*) BYTE effectiveBytes[1024] = {};
+    DWORD tokenRequired = 0, effectiveRequired = 0;
+    DWORD tokenError = 0, effectiveError = 0;
+    bool tokenQueried = false, tokenNullDacl = false, tokenBounded = false, effectiveQueried = false;
+    DWORD tokenAclSize = 0, effectiveCaptured = 0;
+    PACL tokenAcl = nullptr;
+    HANDLE token = nullptr;
+    if (currentIdentity) {
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) tokenError = GetLastError();
+        else {
+            tokenQueried = GetTokenInformation(token, TokenDefaultDacl, tokenBytes, sizeof(tokenBytes), &tokenRequired) != FALSE;
+            if (!tokenQueried) tokenError = GetLastError();
+            if (tokenQueried && tokenRequired >= sizeof(TOKEN_DEFAULT_DACL) && tokenRequired <= sizeof(tokenBytes)) {
+                tokenAcl = reinterpret_cast<TOKEN_DEFAULT_DACL*>(tokenBytes)->DefaultDacl;
+                tokenNullDacl = tokenAcl == nullptr;
+                if (tokenAcl) {
+                    const uintptr_t begin = reinterpret_cast<uintptr_t>(tokenBytes);
+                    const uintptr_t address = reinterpret_cast<uintptr_t>(tokenAcl);
+                    if (address >= begin + sizeof(TOKEN_DEFAULT_DACL) && address <= begin + tokenRequired - sizeof(ACL)) {
+                        tokenAclSize = tokenAcl->AclSize;
+                        tokenBounded = tokenAclSize >= sizeof(ACL) && tokenAclSize <= 512 &&
+                            tokenAclSize <= begin + tokenRequired - address;
+                    }
+                }
+            }
+            CloseHandle(token);
+        }
+        effectiveQueried = GetKernelObjectSecurity(server,
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            effectiveBytes, sizeof(effectiveBytes), &effectiveRequired) != FALSE;
+        if (!effectiveQueried) effectiveError = GetLastError();
+        if (effectiveQueried && effectiveRequired >= sizeof(SECURITY_DESCRIPTOR_RELATIVE) &&
+            effectiveRequired <= sizeof(effectiveBytes)) effectiveCaptured = effectiveRequired;
+    }
+    char tokenHex[1025] = {}, effectiveHex[2049] = {};
+    constexpr char hex[] = "0123456789abcdef";
+    if (tokenBounded) {
+        const BYTE* bytes = reinterpret_cast<const BYTE*>(tokenAcl);
+        for (DWORD n = 0; n < tokenAclSize; ++n) {
+            tokenHex[n * 2] = hex[bytes[n] >> 4]; tokenHex[n * 2 + 1] = hex[bytes[n] & 15];
+        }
+    }
+    for (DWORD n = 0; n < effectiveCaptured; ++n) {
+        effectiveHex[n * 2] = hex[effectiveBytes[n] >> 4]; effectiveHex[n * 2 + 1] = hex[effectiveBytes[n] & 15];
+    }
+    char line[4096];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_ORDINARY_ACL={\"schemaVersion\":1,\"pid\":%lu,\"serverHandle\":\"0x%llx\",\"rootHandle\":\"0x%llx\",\"currentProcessIdentity\":%s,\"identityReason\":\"%s\",\"identityError\":%lu,\"tokenQuerySucceeded\":%s,\"tokenError\":%lu,\"tokenRequired\":%lu,\"tokenNullDacl\":%s,\"tokenAclBounded\":%s,\"tokenAclBytes\":%lu,\"tokenAclHex\":\"%s\",\"effectiveQuerySucceeded\":%s,\"effectiveError\":%lu,\"effectiveRequired\":%lu,\"effectiveCaptured\":%lu,\"effectiveSecurityInformation\":7,\"effectiveSdHex\":\"%s\"}\n",
+        GetCurrentProcessId(), reinterpret_cast<unsigned long long>(server), reinterpret_cast<unsigned long long>(root),
+        currentIdentity ? "true" : "false", identityReason, identityError, tokenQueried ? "true" : "false", tokenError,
+        tokenRequired, tokenNullDacl ? "true" : "false", tokenBounded ? "true" : "false", tokenAclSize, tokenHex,
+        effectiveQueried ? "true" : "false", effectiveError, effectiveRequired, effectiveCaptured, effectiveHex);
+    DWORD written = 0;
+    writingPipeDiagnostic = true;
+    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    writingPipeDiagnostic = false;
+    SetLastError(saved);
+}
+
 NTSTATUS NTAPI observe_native_create(PHANDLE output, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
     PIO_STATUS_BLOCK io, ULONG share, ULONG disposition, ULONG options, ULONG pipeType, ULONG readMode,
     ULONG completionMode, ULONG instances, ULONG inbound, ULONG outbound, PLARGE_INTEGER timeout) {
@@ -529,9 +598,15 @@ NTSTATUS NTAPI observe_native_create(PHANDLE output, ACCESS_MASK access, POBJECT
     const NTSTATUS status = realNativePipeCreate(output, access, attributes, io, share, disposition,
         options, pipeType, readMode, completionMode, instances, inbound, outbound, timeout);
     const DWORD after = GetLastError();
+    const unsigned long long createdHandle = matched ? observed_native_handle(output, status) : 0;
     if (matched) log_native_pipe(observed, "ordinary-server-create", access, share, disposition, options,
         pipeType, readMode, completionMode, instances, inbound, outbound, timeoutReadable, timeoutValue,
-        status, observed_native_handle(output, status), after);
+        status, createdHandle, after);
+    if (matched && status == 0 && !observed.security.descriptorPresent &&
+        access == 0x80100100 && share == 3 && disposition == 2 && options == 0x20 &&
+        pipeType == 0 && readMode == 0 && completionMode == 0 && instances == 1 &&
+        inbound == 65536 && outbound == 65536 && timeoutReadable && timeoutValue == -500000)
+        observe_ordinary_default_acl(reinterpret_cast<HANDLE>(createdHandle), observed.root);
     SetLastError(after);
     return status;
 }
