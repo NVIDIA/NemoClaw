@@ -59,11 +59,11 @@ export const policyChannelDependencies = {
     const cleanup = require("../../sandbox/privileged-exec") as PrivilegedExecModule;
     return cleanup.clearStoppedSandboxStateRoots(sandboxName, paths);
   },
-  revalidateChannelProviderPolicy(sandboxName: string, gatewayName: string): void {
+  async revalidateChannelProviderPolicy(sandboxName: string, gatewayName: string): Promise<void> {
     const policy = require("../../policy") as PolicyModule;
     const operation = `change messaging providers for sandbox '${sandboxName}'`;
-    const context = policy.inspectPolicyMutationContext(sandboxName, operation, gatewayName);
-    policy.recheckPolicyMutationContext(sandboxName, operation, context);
+    const context = await policy.inspectPolicyMutationContext(sandboxName, operation, gatewayName);
+    await policy.recheckPolicyMutationContext(sandboxName, operation, context);
   },
   inspectMessagingProviderAttachmentTarget(sandboxName: string, gatewayName: string): string {
     return inspectOpenShellSandboxIdentityFingerprint({

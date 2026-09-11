@@ -35,6 +35,7 @@ it("applies a missing live Hermes Slack preset despite legacy applied state (#10
     policies: ["slack"],
   };
   const script = String.raw`
+(async () => {
 const fs = require("node:fs");
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
@@ -51,15 +52,17 @@ registry.registerSandbox({
     }),
   },
 });
-const appliedBefore = policies.getAppliedPresets("hermes-sandbox");
-syncPresetSelection("hermes-sandbox", appliedBefore, ["slack"]);
-const appliedAfter = policies.getAppliedPresets("hermes-sandbox");
+const appliedBefore = await policies.getAppliedPresets("hermes-sandbox");
+await syncPresetSelection("hermes-sandbox", appliedBefore, ["slack"]);
+const appliedAfter = await policies.getAppliedPresets("hermes-sandbox");
 process.stdout.write("\n__RESULT__" + JSON.stringify({
   appliedBefore,
   appliedAfter,
   policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
   registry: registry.getSandbox("hermes-sandbox"),
 }));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
 `;
   fs.writeFileSync(
     fakeOpenshell,

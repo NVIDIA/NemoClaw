@@ -304,13 +304,14 @@ function validateSpecialistArtifacts(root: string, interest: string): void {
   const directory = path.join(root, "artifacts", "pr-review-specialist-" + interest);
   const expected = [
     `pr-review-${interest}-e2e.json`,
+    `pr-review-${interest}-findings.json`,
     `pr-review-${interest}-session.jsonl`,
     `pr-review-${interest}-summary.md`,
     "review-queue-context.json",
   ];
   if (JSON.stringify(fs.readdirSync(directory).sort()) !== JSON.stringify(expected))
     throw new Error(
-      "Specialist artifacts do not match the context, E2E, Markdown, and JSONL contract",
+      "Specialist artifacts do not match the context, E2E, findings, Markdown, and JSONL contract",
     );
   if (
     expected.some((name) => {
