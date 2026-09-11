@@ -371,7 +371,9 @@ RUN chown root:sandbox /sandbox \
     && mkdir -p /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
     && chown sandbox:sandbox /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
     && printf '%s' '{}' > /sandbox/.nemoclaw/config.json \
-    && chown sandbox:sandbox /sandbox/.nemoclaw/config.json
+    && chown sandbox:sandbox /sandbox/.nemoclaw/config.json \
+    && install -d -o sandbox -g sandbox -m 0700 /sandbox/.deepagents/conversation_history \
+    && test "$(stat -c '%U:%G:%a' /sandbox/.deepagents/conversation_history)" = 'sandbox:sandbox:700'
 
 RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod -R a+rwX /sandbox/.deepagents; \

@@ -1512,6 +1512,7 @@ const sandboxCreateOrchestrationRuntime = {
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
+  ownsForwardServicePort: (name: string, port: number) => ownsForwardServicePort(name, port),
   readDcodeSelectionDrift: createDcodeSelectionDriftReader(sandboxExec, () => GATEWAY_NAME),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
@@ -1595,7 +1596,6 @@ const createSandboxWithBaseImageResolution =
   sandboxCreateOrchestration.createSandboxWithBaseImageResolution(
     sandboxCreateOrchestrationRuntime,
   );
-
 const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
   agentOnboard.createHermesApiPortScopedSandboxEntryPoints({
     createBaseImageResolutionContext: () =>
@@ -1610,7 +1610,6 @@ const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
     },
     resolveComputePlan: dockerDriverPlatform.resolveCurrentOpenShellComputePlan,
   });
-
 // ── Step 3: Inference selection ──────────────────────────────────
 
 type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
@@ -2515,6 +2514,7 @@ const {
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
+  ownsForwardServicePort,
   printDashboard,
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({

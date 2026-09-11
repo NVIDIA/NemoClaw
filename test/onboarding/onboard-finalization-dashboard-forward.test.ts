@@ -55,6 +55,28 @@ function harness(options: {
 }
 
 describe("finalization dashboard ForwardTcp launch", () => {
+  it("proves exact ForwardTcp ownership for pre-delete port reservation", () => {
+    const { helpers, owns } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18790, hermesApiPort: 8643 }],
+      }),
+      ownsForward: (target) => target.localPort === 8643,
+    });
+
+    expect(helpers.ownsForwardServicePort("reonboard-test", 8643)).toBe(true);
+    expect(helpers.ownsForwardServicePort("reonboard-test", 8644)).toBe(false);
+    expect(owns).toHaveBeenNthCalledWith(1, {
+      executable: "/usr/local/bin/openshell",
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      sandboxName: "reonboard-test",
+      localHost: "127.0.0.1",
+      localPort: 8643,
+      targetHost: "127.0.0.1",
+      targetPort: 8643,
+    });
+  });
+
   it("launches the persisted dashboard port and publishes its URL", () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     const { helpers, launch } = harness({

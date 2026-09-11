@@ -171,6 +171,7 @@ export interface OnboardDashboardHelpers {
     chatUiUrl?: string,
     options?: Parameters<typeof dashboardAccess.getDashboardForwardTarget>[1],
   ): string;
+  ownsForwardServicePort(sandboxName: string, port: number): boolean;
   printDashboard(
     sandboxName: string,
     model: string,
@@ -286,6 +287,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         forwardTarget(sandboxName, gatewayName, port, getDashboardForwardTarget(chatUiUrl)),
       ) === true
     );
+  }
+
+  function ownsForwardServicePort(sandboxName: string, port: number): boolean {
+    const gatewayName = resolveForwardServiceGateway(sandboxName);
+    if (gatewayName === null) return false;
+    return ownsDashboardForward(sandboxName, gatewayName, port, `http://127.0.0.1:${String(port)}`);
   }
 
   function getDashboardForwardPort(
@@ -845,6 +852,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     fetchAgentWebAuthTokenFromSandbox,
     getDashboardForwardPort,
     getDashboardForwardTarget,
+    ownsForwardServicePort,
     printDashboard,
     stopAllDashboardForwards,
   };
