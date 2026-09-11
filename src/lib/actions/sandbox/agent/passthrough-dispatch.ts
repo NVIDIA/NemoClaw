@@ -89,10 +89,6 @@ import type {
 
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import { wrapOpenClawAgentCommandWithRuntimeEnv } from "../runtime-env";
-import {
-  agentDispatchDeadlineSeconds,
-  canCloseAgentStdin,
-} from "../../../domain/sandbox/openclaw-agent-args";
 
 /**
  * Exit code for a dispatch that reported success without delivering a turn.
@@ -196,4 +192,147 @@ const OPENCLAW_AGENT_TIMEOUT_PATTERN =
  */
 export function isTimedOutAgentDispatch(stdout: string, stderr: string): boolean {
   return OPENCLAW_AGENT_TIMEOUT_PATTERN.test(stdout) || OPENCLAW_AGENT_TIMEOUT_PATTERN.test(stderr);
+}
+
+// OpenClaw owns argv validation. Inspect its supported options only to choose
+// stdin, output, and deadline behavior; never rewrite or read message payloads.
+// Unknown options stop inspection because their argument arity is unknown.
+const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
+  "--agent",
+  "--message",
+  "--message-file",
+  "--model",
+  "--provider",
+  "--channel",
+  "--reply-to",
+  "--reply-channel",
+  "--reply-account",
+  "--session-id",
+  "--session-key",
+  "--thinking",
+  "--timeout",
+  "--to",
+  "--verbose",
+  "--profile",
+  "--log-level",
+  "--container",
+]);
+const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set([
+  "--deliver",
+  "--local",
+  "--json",
+  "--help",
+  "--dev",
+  "--no-color",
+  "--version",
+]);
+// Retain NemoClaw's existing -a/--provider recognition alongside OpenClaw 2026.7.1.
+const SHORT_FLAGS: Readonly<Record<string, string>> = {
+  "-a": "--agent",
+  "-m": "--message",
+  "-t": "--to",
+  "-h": "--help",
+  "-V": "--version",
+  "-v": "--version",
+};
+
+type AgentOption = {
+  value: string | undefined;
+  argumentIndex: number;
+  inline: boolean;
+};
+
+function agentOptions(command: readonly string[]) {
+  const options = new Map<string, AgentOption>();
+  if (command[0] !== "openclaw" || command[1] !== "agent") return { options, complete: false };
+  for (let index = 2; index < command.length; index += 1) {
+    const arg = command[index] as string;
+    if (arg === "--") return { options, complete: true };
+    const argumentIndex = index;
+    const shortFlag = SHORT_FLAGS[arg.slice(0, 2)];
+    const equals = arg.startsWith("--") ? arg.indexOf("=") : -1;
+    const flag = shortFlag ?? (equals < 0 ? arg : arg.slice(0, equals));
+    const takesValue = OPENCLAW_AGENT_VALUE_FLAGS.has(flag);
+    const inline = shortFlag ? arg.length > 2 : equals >= 0;
+    if (!takesValue && (!OPENCLAW_AGENT_BOOLEAN_FLAGS.has(flag) || (inline && flag !== "--json")))
+      return { options, complete: false };
+    const value = inline
+      ? arg.slice(shortFlag ? 2 : equals + 1)
+      : takesValue
+        ? command[++index]
+        : undefined;
+    options.set(flag, { value, argumentIndex, inline });
+  }
+  return { options, complete: true };
+}
+
+export function canCloseAgentStdin(command: readonly string[]): boolean {
+  const { options } = agentOptions(command);
+  // Only an inline message proves that valid input needs no stdin. Any sandbox
+  // file can resolve to fd 0 through symlinks, regardless of its pathname.
+  if (options.has("--message")) return true;
+  // A missing/empty file argument fails upstream before any file is read.
+  const file = options.get("--message-file");
+  return file !== undefined && !file.value?.trim();
+}
+
+export function requestsOpenClawJsonOutput(command: readonly string[]): boolean {
+  const option = agentOptions(command).options.get("--json");
+  return (
+    option !== undefined &&
+    !["0", "false", "no", "off"].includes((option.value ?? "").toLowerCase())
+  );
+}
+
+export function hasOpenClawAgentSelector(command: readonly string[]): boolean | undefined {
+  const parsed = agentOptions(command);
+  if (["--agent", "--session-id", "--session-key", "--to"].some((flag) => parsed.options.has(flag)))
+    return true;
+  // Unknown options belong to OpenClaw. Do not invent a missing-selector error
+  // when their arity prevents the host from interpreting later arguments.
+  return parsed.complete ? false : undefined;
+}
+
+export function requestsOpenClawLocalMode(command: readonly string[]): boolean {
+  return agentOptions(command).options.has("--local");
+}
+
+// #8723 observed timeout reports arriving up to 20.8 seconds after the requested
+// deadline. Keep 30 seconds for the remote turn to report its own failure.
+// This is an execution deadline, not a bound on host readiness or lock acquisition.
+export const AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS = 30;
+
+function findRequestedAgentTimeout(
+  command: readonly string[],
+): (AgentOption & { seconds: number }) | null {
+  const option = agentOptions(command).options.get("--timeout");
+  if (option?.value === undefined || !/^\d+$/.test(option.value)) return null;
+  const seconds = Number(option.value);
+  return Number.isSafeInteger(seconds) && seconds > 0 ? { ...option, seconds } : null;
+}
+
+/** Zero, malformed, absent, or ambiguous timeouts keep the existing unbounded behavior. */
+export function requestedAgentTimeoutSeconds(command: readonly string[]): number | null {
+  return findRequestedAgentTimeout(command)?.seconds ?? null;
+}
+
+export function replaceRequestedAgentTimeoutSeconds(
+  argv: readonly string[],
+  timeoutSeconds: number,
+): readonly string[] {
+  const requested = findRequestedAgentTimeout(argv);
+  if (!requested) return argv;
+  const value = String(Math.max(1, Math.floor(timeoutSeconds)));
+  const command = [...argv];
+  command[requested.argumentIndex + (requested.inline ? 0 : 1)] = requested.inline
+    ? `--timeout=${value}`
+    : value;
+  return command;
+}
+
+export function agentDispatchDeadlineSeconds(command: readonly string[]): number | undefined {
+  const requested = requestedAgentTimeoutSeconds(command);
+  if (requested === null) return undefined;
+  const deadline = requested + AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS;
+  return Number.isSafeInteger(deadline) ? deadline : undefined;
 }

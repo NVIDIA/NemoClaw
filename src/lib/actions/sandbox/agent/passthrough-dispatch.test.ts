@@ -8,13 +8,6 @@ import type { ProcessSessionSignals } from "../../../core/process-session";
 import { createCliOpenShellSandboxSessionExecutor } from "../../../adapters/openshell/sandbox-command-cli";
 import {
   runAgentDispatch,
-  runOpenClawAgentDispatch,
-  isSilentAgentDispatch,
-  isTimedOutAgentDispatch,
-  SILENT_AGENT_DISPATCH_EXIT_CODE,
-  TIMED_OUT_AGENT_TURN_EXIT_CODE,
-} from "./passthrough-dispatch";
-import {
   canCloseAgentStdin,
   hasOpenClawAgentSelector,
   requestsOpenClawJsonOutput,
@@ -22,7 +15,13 @@ import {
   agentDispatchDeadlineSeconds,
   replaceRequestedAgentTimeoutSeconds,
   requestedAgentTimeoutSeconds,
-} from "../../../domain/sandbox/openclaw-agent-args";
+  runOpenClawAgentDispatch,
+  isSilentAgentDispatch,
+  isTimedOutAgentDispatch,
+  SILENT_AGENT_DISPATCH_EXIT_CODE,
+  TIMED_OUT_AGENT_TURN_EXIT_CODE,
+} from "./passthrough-dispatch";
+
 describe("isSilentAgentDispatch", () => {
   it("classifies a zero-exit dispatch with no bytes on either stream as silent", () => {
     expect(isSilentAgentDispatch({ outcome: { kind: "exited", exitCode: 0 } }, "", "")).toBe(true);

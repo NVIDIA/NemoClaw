@@ -116,6 +116,11 @@ import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import {
   type OpenClawAgentDispatchDeps,
+  hasOpenClawAgentSelector,
+  requestsOpenClawJsonOutput,
+  requestsOpenClawLocalMode,
+  replaceRequestedAgentTimeoutSeconds,
+  requestedAgentTimeoutSeconds,
   runOpenClawAgentDispatch,
   isSilentAgentDispatch,
   isTimedOutAgentDispatch,
@@ -129,13 +134,7 @@ import {
   writeTimedOutAgentTurnFailure,
 } from "./passthrough-help";
 import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
-import {
-  hasOpenClawAgentSelector,
-  requestsOpenClawJsonOutput,
-  requestsOpenClawLocalMode,
-  replaceRequestedAgentTimeoutSeconds,
-  requestedAgentTimeoutSeconds,
-} from "../../../domain/sandbox/openclaw-agent-args";
+
 import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
 
 export { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";

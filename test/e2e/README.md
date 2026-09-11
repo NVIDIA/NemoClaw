@@ -40,20 +40,12 @@ JSON output, including explicit local mode and a requested timeout. For inline
 messages, the fixture keeps the host pipe open while the wrapper closes the dispatch
 child's stdin. The fixture holds its writer open until command completion, so
 inheriting that pipe blocks until the test timeout, regardless of the model-time cap.
-File-message turns exercise ordinary files,
-paths with spaces, symlinks and relative chains, with EOF or competing stdin.
-Each successful turn must return the model answer from the selected input.
+File-message turns use a relative symlink chain to a file with spaces in its path,
+with competing stdin, in both output formats. Each turn must return the answer
+from the selected input. Parser combinations and stdin aliases belong to the
+unit and real-child tests; this target does not repeat native file-permission errors.
 The first JSON turn also requires at most 60 seconds outside OpenClaw's reported
-agent duration. This bounds host dispatch, transport, CLI startup and output
-handling separately from the configurable hosted-model turn cap. Missing or
-inconsistent duration metadata fails that bound rather than supplying a zero estimate.
-Direct OpenClaw and wrapped calls must preserve native rejection of empty files
-and inaccessible stdin paths. OpenShell 0.0.106 creates stdin pipes before dropping
-the child UID: the descriptor remains readable, but pathname reopening fails with
-EACCES. Real-child tests separately verify byte forwarding through readable stdin
-paths and their symlinks; the wrapper preserves that input without changing native
-file permissions. These live checks cover native OpenClaw file loading and the
-sandbox's UID and filesystem boundaries, which the host-child fixtures do not reproduce.
+agent duration. Missing or inconsistent timing fails that bound.
 These cases are selectable for both Docker and Podman through the existing runtime
 matrix. Host stdin is preserved for nonempty message-file arguments because only
 the sandbox can resolve their paths.

@@ -380,73 +380,66 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     expect(cleanups[2]).toHaveBeenCalledOnce();
   });
 
-  it.each(["SIGTERM", "SIGINT"] as const)(
-    "forwards %s to an active recovery child and releases its Docker environment",
-    async (signal) => {
-      vi.spyOn(tty, "isatty").mockReturnValue(false);
-      const childEvents = new EventEmitter();
-      const signalEvents = new EventEmitter();
-      const stderr = new EventEmitter();
-      const stdout = new EventEmitter();
-      const cleanup = vi.fn(() => ({ ok: true as const }));
-      const child: CapturedProcessChild = {
-        exitCode: null,
-        signalCode: null,
-        kill: vi.fn((signal) => {
-          child.signalCode = signal;
-          queueMicrotask(() => childEvents.emit("close", null, signal));
-          return true;
+  it.each(["SIGTERM", "SIGINT"] as const)("cleans recovery after %s", async (signal) => {
+    vi.spyOn(tty, "isatty").mockReturnValue(false);
+    const childEvents = new EventEmitter();
+    const signalEvents = new EventEmitter();
+    const stderr = new EventEmitter();
+    const stdout = new EventEmitter();
+    const cleanup = vi.fn(() => ({ ok: true as const }));
+    const child: CapturedProcessChild = {
+      exitCode: null,
+      signalCode: null,
+      kill: vi.fn((signal) => {
+        child.signalCode = signal;
+        queueMicrotask(() => childEvents.emit("close", null, signal));
+        return true;
+      }),
+      once: ((event: string, listener: (...args: unknown[]) => void) =>
+        childEvents.once(event, listener)) as CapturedProcessChild["once"],
+      stderr,
+      stdout,
+    };
+    const signalSource: ProcessSessionSignals = {
+      add: (signal, listener) => signalEvents.on(signal, listener),
+      remove: (signal, listener) => signalEvents.off(signal, listener),
+    };
+    const spawnRecoveryChild = vi.fn(
+      (_binary: string, _args: readonly string[], _stdio: StdioOptions, _env: NodeJS.ProcessEnv) =>
+        child,
+    );
+
+    const pending = runOllamaRecoveryCapture(
+      ["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE, "true"],
+      {
+        host: "127.0.0.1",
+        timeoutMilliseconds: 300_000,
+        prepareDockerEnvironment: () => ({
+          env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+          isolatedCredentialConfig: true,
+          cleanup,
         }),
-        once: ((event: string, listener: (...args: unknown[]) => void) =>
-          childEvents.once(event, listener)) as CapturedProcessChild["once"],
-        stderr,
-        stdout,
-      };
-      const signalSource: ProcessSessionSignals = {
-        add: (signal, listener) => signalEvents.on(signal, listener),
-        remove: (signal, listener) => signalEvents.off(signal, listener),
-      };
-      const spawnRecoveryChild = vi.fn(
-        (
-          _binary: string,
-          _args: readonly string[],
-          _stdio: StdioOptions,
-          _env: NodeJS.ProcessEnv,
-        ) => child,
-      );
+        signalSource,
+        spawnRecoveryChild,
+      },
+    );
+    signalEvents.emit(signal);
 
-      const pending = runOllamaRecoveryCapture(
-        ["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE, "true"],
-        {
-          host: "127.0.0.1",
-          timeoutMilliseconds: 300_000,
-          prepareDockerEnvironment: () => ({
-            env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
-            isolatedCredentialConfig: true,
-            cleanup,
-          }),
-          signalSource,
-          spawnRecoveryChild,
-        },
-      );
-      signalEvents.emit(signal);
-
-      await expect(pending).resolves.toMatchObject({
-        exitCode: null,
-        signal,
-        timedOut: false,
-      });
-      expect(child.kill).toHaveBeenCalledOnce();
-      expect(child.kill).toHaveBeenCalledWith(signal);
-      expect(spawnRecoveryChild.mock.calls[0]?.[0]).toBe("docker");
-      expect(spawnRecoveryChild.mock.calls[0]?.[3]?.DOCKER_CONFIG).toBe(
-        "/tmp/credential-free-docker",
-      );
-      expect(cleanup).toHaveBeenCalledOnce();
-      expect(signalEvents.listenerCount("SIGTERM")).toBe(0);
-      expect(signalEvents.listenerCount("SIGINT")).toBe(0);
-    },
-  );
+    await expect(pending).resolves.toMatchObject({
+      exitCode: null,
+      signal,
+      timedOut: false,
+    });
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(child.kill).toHaveBeenCalledWith(signal);
+    expect(spawnRecoveryChild.mock.calls[0]?.[0]).toBe("docker");
+    expect(spawnRecoveryChild.mock.calls[0]?.[3]?.DOCKER_CONFIG).toBe(
+      "/tmp/credential-free-docker",
+    );
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(signalEvents.listenerCount("SIGTERM")).toBe(0);
+    expect(signalEvents.listenerCount("SIGINT")).toBe(0);
+  });
 
   it("forces a timed-out recovery child to close and releases its Docker environment", async () => {
     vi.useFakeTimers();
