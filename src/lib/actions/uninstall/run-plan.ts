@@ -14,7 +14,10 @@ import { isErrnoException } from "../../core/errno";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
 import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
-import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import {
+  getSandboxDeleteOutcome,
+  resolveSandboxContainerOwner,
+} from "../../domain/sandbox/destroy";
 import {
   gatewayDestroySkipMessage,
   OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
@@ -52,6 +55,7 @@ import {
   assertManagedGatewayStateDirectoryParentTrusted,
   isManagedGatewayStateRootReservation,
   managedGatewayStateRootOwnershipFailure,
+  resolveGatewayCompatContainerName,
   resolveGatewayName,
   resolveGatewayPortFromName,
   UnsafeGatewayStateDirectoryError,
@@ -2352,47 +2356,48 @@ function stopBedrockRuntimeAdapterForUninstall(
   throw new IncompleteBedrockRuntimeAdapterCleanupError();
 }
 
-function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string): void {
+function removeDockerContainers(
+  runtime: UninstallRuntime,
+  gatewayName: string,
+  sandboxNames: readonly string[],
+): boolean {
   const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
     env: runtime.env,
   });
-  const ids = splitNonEmptyLines(result.stdout)
-    .filter((line) => {
-      const fields = dockerInventoryFields(line, 3);
-      const image = fields[1] ?? "";
+  if (result.status !== 0) {
+    const detail =
+      result.stderr.trim() || result.stdout.trim() || "Docker returned no error detail";
+    runtime.error(
+      `Could not inventory Docker containers: ${detail}. Remaining uninstall state was preserved for retry.`,
+    );
+    return false;
+  }
+
+  const rows = splitNonEmptyLines(result.stdout).map((line) => dockerInventoryFields(line, 3));
+  const containerNames = rows.map((fields) => fields[2] ?? "").join("\n");
+  const ownedSandboxContainers = new Set(
+    sandboxNames
+      .map((sandboxName) => resolveSandboxContainerOwner(containerNames, sandboxName, sandboxNames))
+      .filter((name): name is string => name !== null),
+  );
+  const ids = rows
+    .filter((fields) => {
       const name = fields[2] ?? "";
-      if (!gatewayName) {
-        if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) {
-          return false;
-        }
-        // `openclaw` is deliberately absent: NemoClaw's containers are
-        // `openshell-*` (cluster and sandbox) and `nemoclaw-*` (gateway compat
-        // and managed inference), so that term only ever selected the separate
-        // OpenClaw project's containers for `docker rm -f` (#8496).
-        // Probe containers that run with `--rm` and no `--name`, such as
-        // `hermesBaseImageSupportsMcp`, take a random Docker name. Their
-        // NemoClaw image reference is the only way to reclaim one that an
-        // interrupted run orphaned.
-        return isOwnedDockerContainerName(name) || isOwnedDockerImageRepository(image);
-      }
-      return (
-        name === `openshell-cluster-${gatewayName}` ||
-        name ===
-          (GATEWAY_PORT === DEFAULT_GATEWAY_PORT
-            ? "nemoclaw-openshell-gateway"
-            : `nemoclaw-openshell-gateway-${String(GATEWAY_PORT)}`)
-      );
+      if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) return false;
+      return isOwnedDockerContainerName(name, gatewayName, ownedSandboxContainers);
     })
-    .map((line) => line.split(/\s+/)[0]);
+    .map((fields) => fields[0] ?? "")
+    .filter(Boolean);
   if (ids.length === 0) {
     runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker containers found`);
-    return;
+    return true;
   }
   for (const id of [...new Set(ids)]) {
     if (runtime.runDocker(["rm", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0)
       runtime.log(`Removed Docker container ${id}`);
     else runtime.warn(`Failed to remove Docker container ${id}`);
   }
+  return true;
 }
 
 function removeDockerImages(runtime: UninstallRuntime): void {
@@ -2429,8 +2434,16 @@ function dockerImageRepository(imageRef: string): string {
   return tagSeparator > slashSeparator ? withoutDigest.slice(0, tagSeparator) : withoutDigest;
 }
 
-function isOwnedDockerContainerName(name: string): boolean {
-  return /^openshell-(?:cluster-)?/iu.test(name) || /^nemoclaw-/iu.test(name);
+function isOwnedDockerContainerName(
+  name: string,
+  gatewayName: string,
+  ownedSandboxContainers: ReadonlySet<string>,
+): boolean {
+  return (
+    name === `openshell-cluster-${gatewayName}` ||
+    name === resolveGatewayCompatContainerName(GATEWAY_PORT) ||
+    ownedSandboxContainers.has(name)
+  );
 }
 
 function isOwnedDockerImageRepository(imageRef: string): boolean {
@@ -2958,7 +2971,15 @@ function executeOpenShellResourceCleanup(
     dockerIsAvailable(runtime)
   ) {
     // An unreachable gateway can leave a stopped sandbox container attached to the state volume.
-    removeDockerContainers(runtime);
+    if (
+      !removeDockerContainers(
+        runtime,
+        options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+        sandboxNames,
+      )
+    ) {
+      return false;
+    }
   }
   if (
     !portableRuntimeCleanup &&
@@ -3375,12 +3396,15 @@ function executePreparedPlan(
           "Kept Docker containers, images, and volumes used by the externally supervised gateway.",
         );
       } else if (dockerIsAvailable(runtime)) {
-        removeDockerContainers(
-          runtime,
-          scopedToSelectedGateway
-            ? options.gatewayName || resolveGatewayName(GATEWAY_PORT)
-            : undefined,
-        );
+        if (
+          !removeDockerContainers(
+            runtime,
+            options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+            sandboxNames,
+          )
+        ) {
+          return { ok: false };
+        }
         if (scopedToSelectedGateway) {
           runtime.log("Sibling gateways remain; kept shared Docker images.");
         } else {
