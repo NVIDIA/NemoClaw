@@ -34,7 +34,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
     gatewayServer = net.createServer();
     await new Promise<void>((resolve, reject) => {
       gatewayServer.once("error", reject);
-    gatewayServer.listen(8990, "127.0.0.1", resolve);
+      gatewayServer.listen(8990, "127.0.0.1", resolve);
     });
     gatewayPort = (gatewayServer.address() as AddressInfo).port;
 
@@ -131,9 +131,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
       );
       expect(combined).not.toMatch(/occupied by unknown/);
       expect(combined).toMatch(/\(PID \d+\)/);
-      expect(combined).toContain(
-        `sudo lsof -i :${String(gatewayPort)} -sTCP:LISTEN -P -n`,
-      );
+      expect(combined).toContain(`sudo lsof -i :${String(gatewayPort)} -sTCP:LISTEN -P -n`);
       expect(combined).toContain("signal only the matching PID from that fresh result");
       expect(combined).not.toMatch(/sudo kill \d+/);
       expect(fs.readFileSync(marker, "utf8")).toBe("8990\n");

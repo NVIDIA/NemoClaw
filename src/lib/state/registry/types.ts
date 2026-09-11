@@ -22,6 +22,12 @@ export interface PendingSandboxCreateIdentity {
   readonly sandboxIdentityFingerprint: string;
   readonly createAttemptNonce?: string;
   readonly route: "none" | "native" | "compatibility";
+  /** The exact final handoff crossed its durable commit fence. */
+  readonly exactFinalHandoffCommitStarted?: true;
+  /** Exact Docker replacement ID authorized before compatibility handoff commit. */
+  readonly exactFinalHandoffRuntimeId?: string;
+  /** OpenShell acknowledged the exact replacement handoff for this identity. */
+  readonly exactFinalHandoffAcknowledged?: true;
 }
 
 // Outcome of the last live sandbox GPU proof run during onboarding/recovery.
@@ -155,6 +161,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
+  /** Whether the sandbox was intentionally stopped via the stop command (#11025). */
+  stopped?: boolean;
 }
 
 export type SandboxWorkloadReceipt =

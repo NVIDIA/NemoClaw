@@ -113,7 +113,7 @@ def _require_source(path: Path, label: str, expected_sha256: str) -> None:
     compile(source, str(path), "exec")
 
 
-def _managed_profile_overlay() -> Any:
+def _managed_profile_overlay(*, repair_names: bool) -> Any:
     """Build the NemoClaw-only middleware layered onto managed Ultra aliases."""
     from deepagents.profiles.harness._nvidia_nemotron_3_ultra import (  # noqa: PLC0415
         NemotronPolicyNudgeMiddleware,
@@ -228,7 +228,7 @@ def _managed_profile_overlay() -> Any:
 
     return HarnessProfile(
         extra_middleware=[
-            policy_nudge,
+            *([policy_nudge] if repair_names else []),
             NemoClawExecutePlaceholderGuardMiddleware(),
         ]
     )
@@ -238,6 +238,7 @@ def _register_aliases(
     registry: MutableMapping[str, Any],
     register_profile: Callable[[str, Any], None],
     overlay: Any,
+    openai_overlay: Any,
 ) -> None:
     native_profile = registry.get(CANONICAL_PROFILE_KEY)
     if native_profile is None:
@@ -245,40 +246,31 @@ def _register_aliases(
 
     existing = tuple(key in registry for key in MANAGED_PROFILE_KEYS)
     if all(existing):
-        managed_profile = registry[NATIVE_MANAGED_PROFILE_KEY]
         native_middleware = tuple(getattr(native_profile, "extra_middleware", ()))
-        managed_middleware = tuple(getattr(managed_profile, "extra_middleware", ()))
-        compatibility = [
-            item
-            for item in managed_middleware
-            if type(item).__name__ == "NemotronPolicyNudgeMiddleware"
-            and getattr(item, "_nemoclaw_internal_name_compatibility", False)
-        ]
-        preserves_native_middleware = (
-            len(managed_middleware) == len(native_middleware) + 1
-            and len(compatibility) == 1
-            and all(
-                managed_item is native_item
-                or (
-                    type(managed_item) is type(native_item)
-                    and managed_item is compatibility[0]
+        for key in MANAGED_PROFILE_KEYS:
+            managed_profile = registry[key]
+            middleware = tuple(getattr(managed_profile, "extra_middleware", ()))
+            repair_names = key.startswith("openai:")
+            preserves_native = len(middleware) == len(native_middleware) + 1 and all(
+                (
+                    type(managed) is type(native)
+                    and getattr(managed, "_nemoclaw_internal_name_compatibility", False)
                 )
-                for managed_item, native_item in zip(
-                    managed_middleware, native_middleware, strict=False
-                )
+                if repair_names and type(native).__name__ == "NemotronPolicyNudgeMiddleware"
+                else managed is native
+                for managed, native in zip(middleware, native_middleware, strict=False)
             )
-        )
-        guard = managed_middleware[-1] if preserves_native_middleware else None
-        if (
-            managed_profile is not native_profile
-            and all(registry[key] is managed_profile for key in MANAGED_PROFILE_KEYS)
-            and guard is not None
-            and type(guard).__name__
-            == "NemoClawExecutePlaceholderGuardMiddleware"
-            and type(guard).__module__ == __name__
-        ):
-            return
-        raise _fail("managed aliases conflict with the reviewed managed profile")
+            guard = middleware[-1] if preserves_native else None
+            peer = MANAGED_ALIAS_KEYS[0] if repair_names else NATIVE_MANAGED_PROFILE_KEY
+            if not (
+                managed_profile is not native_profile
+                and managed_profile is registry[peer]
+                and guard is not None
+                and type(guard).__name__ == "NemoClawExecutePlaceholderGuardMiddleware"
+                and type(guard).__module__ == __name__
+            ):
+                raise _fail("managed aliases conflict with the reviewed managed profile")
+        return
     expected_native_state = (True, *(False for _key in MANAGED_ALIAS_KEYS))
     if existing != expected_native_state:
         raise _fail("managed aliases are in a partial registration state")
@@ -286,19 +278,27 @@ def _register_aliases(
         raise _fail("built-in OpenRouter profile does not match the canonical profile")
 
     try:
-        # Deep Agents already registers the native Ultra profile for its exact
-        # OpenRouter model spec. Layer the NemoClaw guard onto that built-in key,
-        # then reuse the merged profile for the remaining managed aliases.
+        # Keep the native OpenRouter nudge; only OpenAI aliases need name repair.
         register_profile(NATIVE_MANAGED_PROFILE_KEY, overlay)
         managed_profile = registry.get(NATIVE_MANAGED_PROFILE_KEY)
         if managed_profile is None or managed_profile is native_profile:
             raise _fail("managed profile overlay was not applied")
-        for alias_key in MANAGED_ALIAS_KEYS:
-            register_profile(alias_key, managed_profile)
+        first_openai = MANAGED_ALIAS_KEYS[0]
+        register_profile(first_openai, native_profile)
+        register_profile(first_openai, openai_overlay)
+        openai_profile = registry[first_openai]
+        for alias_key in MANAGED_ALIAS_KEYS[1:]:
+            register_profile(
+                alias_key,
+                openai_profile if alias_key.startswith("openai:") else managed_profile,
+            )
         if registry.get(CANONICAL_PROFILE_KEY) is not native_profile:
             raise _fail("canonical profile changed during managed registration")
         if not all(
-            registry.get(key) is managed_profile for key in MANAGED_PROFILE_KEYS
+            registry.get(key) is (
+                openai_profile if key.startswith("openai:") else managed_profile
+            )
+            for key in MANAGED_PROFILE_KEYS
         ):
             raise _fail("managed alias registration did not preserve managed identity")
     except Exception:
@@ -336,7 +336,8 @@ def register() -> None:
         _register_aliases(
             _HARNESS_PROFILES,
             register_harness_profile,
-            _managed_profile_overlay(),
+            _managed_profile_overlay(repair_names=False),
+            _managed_profile_overlay(repair_names=True),
         )
 
 

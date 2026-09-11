@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxGpuProofResult } from "../../state/registry";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import type {
   ManagedStartupStateRoot,
@@ -25,6 +26,7 @@ export interface ManagedBootstrapRuntimeCommandResult {
 }
 
 export interface ManagedBootstrapRuntimeDependencies {
+  readonly commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   readonly runCaptureOpenshell?: (args: string[], options?: Record<string, unknown>) => string;
   readonly runOpenshell?: (
     args: string[],
@@ -74,7 +76,11 @@ export interface ManagedBootstrapRuntimePatch {
     | Promise<void | ManagedBootstrapNativeGpuFallbackRollbackOutcome>;
   ensureApplied(): void | Promise<void>;
   waitForSupervisorReconnectIfNeeded(): void | Promise<void>;
-  commitAfterReady(): void | Promise<void>;
+  commitAfterReady(options?: {
+    readonly beforeFinalHandoff?: (replacementRuntimeId: string | null) => void;
+  }): void | Promise<void>;
+  /** True only after an exact replacement completed its owner-scoped final handoff. */
+  allowsNotReadyLifecycleRevalidation?(): boolean;
   selectedMode(): {
     readonly kind: string;
     readonly label: string;

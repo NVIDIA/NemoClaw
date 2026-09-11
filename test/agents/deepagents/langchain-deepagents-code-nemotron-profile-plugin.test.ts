@@ -96,12 +96,16 @@ type PluginFixture = {
 
 type ProbeResult = {
   aliases: boolean[];
-  aliasesShareManagedProfile: boolean;
+  aliasesShareProviderProfile: boolean;
   aliasMiddleware: string[];
   canonicalHasCompatibility: boolean;
   canonicalHasGuard: boolean;
   canonicalPresent: boolean;
   compatibilityProbe: {
+    syncStatePreserved: boolean;
+    asyncStatePreserved: boolean;
+    openrouterName: string;
+    asyncOpenrouterName: string;
     asyncInternalName: string | null;
     appendedInternalName: string | null;
     originalInternalName: string;
@@ -537,7 +541,7 @@ except Exception as exc:
 compatibility_probe = None
 guard_probe = None
 aliases_registered = [key in _HARNESS_PROFILES for key in aliases]
-managed_profile = _HARNESS_PROFILES.get(aliases[0]) if all(aliases_registered) else None
+managed_profile = _HARNESS_PROFILES.get(aliases[1]) if all(aliases_registered) else None
 alias_middleware = [
     type(item).__name__
     for item in getattr(managed_profile, "extra_middleware", ())
@@ -616,9 +620,12 @@ if error is None and ${options.probeGuard ? "True" : "False"}:
     class ModelRequest:
         def __init__(self, messages):
             self.messages = messages
+            self.state = {"messages": messages, "checkpoint": "preserved-checkpoint"}
 
         def override(self, *, messages):
-            return ModelRequest(messages)
+            result = ModelRequest(messages)
+            result.state = self.state
+            return result
 
     internal = HumanMessage(
         "managed nudge",
@@ -638,7 +645,14 @@ if error is None and ${options.probeGuard ? "True" : "False"}:
     async_compatibility = asyncio.run(
         compatibility.awrap_model_call(model_request, async_model_handler)
     )
+    openrouter_nudge = _HARNESS_PROFILES[aliases[0]].extra_middleware[0]
+    openrouter_result = openrouter_nudge.wrap_model_call(model_request, lambda value: value)
+    async_openrouter_result = asyncio.run(openrouter_nudge.awrap_model_call(model_request, async_model_handler))
     compatibility_probe = {
+        "syncStatePreserved": sync_compatibility.state is model_request.state,
+        "asyncStatePreserved": async_compatibility.state is model_request.state,
+        "openrouterName": openrouter_result.messages[-1].name,
+        "asyncOpenrouterName": async_openrouter_result.messages[-1].name,
         "appendedInternalName": sync_compatibility.messages[-1].name,
         "asyncInternalName": async_compatibility.messages[0].name,
         "originalInternalName": internal.name,
@@ -687,10 +701,10 @@ if error is None and ${options.probeGuard ? "True" : "False"}:
 
 print(json.dumps({
     "aliases": aliases_registered,
-    "aliasesShareManagedProfile": (
+    "aliasesShareProviderProfile": (
         all(aliases_registered)
         and all(
-            _HARNESS_PROFILES[key] is _HARNESS_PROFILES[aliases[0]]
+            _HARNESS_PROFILES[key] is _HARNESS_PROFILES[aliases[1] if key.startswith("openai:") else aliases[0]]
             for key in aliases[1:]
         )
     ),
@@ -865,7 +879,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expect(result.probe.error).toBeNull();
     expect(result.status, result.stderr).toBe(0);
     expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => true));
-    expect(result.probe.aliasesShareManagedProfile).toBe(true);
+    expect(result.probe.aliasesShareProviderProfile).toBe(true);
     expect(result.probe.aliasMiddleware).toEqual([
       "NemotronPolicyNudgeMiddleware",
       "NemoClawExecutePlaceholderGuardMiddleware",
@@ -885,7 +899,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => true));
-    expect(result.probe.aliasesShareManagedProfile).toBe(true);
+    expect(result.probe.aliasesShareProviderProfile).toBe(true);
     expect(result.probe.aliasMiddleware).toEqual([
       "NemotronPolicyNudgeMiddleware",
       "NemoClawExecutePlaceholderGuardMiddleware",
@@ -905,6 +919,10 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.probe.compatibilityProbe).toEqual({
+      syncStatePreserved: true,
+      asyncStatePreserved: true,
+      openrouterName: "nemotron_domain_tool_preference",
+      asyncOpenrouterName: "nemotron_domain_tool_preference",
       appendedInternalName: null,
       asyncInternalName: null,
       originalInternalName: "nemotron_domain_tool_preference",

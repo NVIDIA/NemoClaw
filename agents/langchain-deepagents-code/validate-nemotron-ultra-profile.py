@@ -48,7 +48,7 @@ EXPECTED_PROFILE_ENTRY_POINT = (
 )
 EXPECTED_PLUGIN_LICENSE_EXPRESSION = "Apache-2.0"
 EXPECTED_PLUGIN_SOURCE_SHA256 = (
-    "cee7f9677a7b01572097774a44c08c460ef96e6e4eb999ebf48ccd3cb58a1bf1"
+    "97eaed5781f9c7df4478c96263b0742fb545b322846fe0c73c39a3bfba4553a9"
 )
 EXPECTED_NATIVE_PROFILE_SHA256 = (
     "3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a"
@@ -392,11 +392,13 @@ class ModelRequest:
 
     def __init__(self, messages: list[HumanMessage]) -> None:
         self.messages = messages
-        self.state = {"messages": messages}
+        self.state = {"messages": messages, "checkpoint": "preserved-checkpoint"}
         self.tools = [{"name": "read_file"}, {"name": "get_goal"}]
 
     def override(self, *, messages: list[HumanMessage]) -> "ModelRequest":
-        return ModelRequest(messages)
+        result = ModelRequest(messages)
+        result.state = self.state
+        return result
 
 
 def validate_internal_message_compatibility() -> None:
@@ -423,6 +425,7 @@ def validate_internal_message_compatibility() -> None:
     request = ModelRequest([internal, named_user, plain_user])
 
     sync_result = compatibility.wrap_model_call(request, lambda value: value)
+    require(sync_result.state is request.state, "sync compatibility lost graph state")
     require(sync_result is not request, "sync compatibility did not copy the request")
     require(
         sync_result.messages[0].content == "managed nudge"
@@ -450,7 +453,8 @@ def validate_internal_message_compatibility() -> None:
         compatibility.awrap_model_call(request, async_handler)
     )
     require(
-        async_result.messages[0].name is None
+        async_result.state is request.state
+        and async_result.messages[0].name is None
         and async_result.messages[-1].name is None,
         "async compatibility retained a control name",
     )

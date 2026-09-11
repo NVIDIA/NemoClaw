@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createHermesAuthHelpers,
+  getRequestedHermesAuthMethod,
   HERMES_AUTH_METHOD_API_KEY,
   HERMES_AUTH_METHOD_OAUTH,
   HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
@@ -90,7 +91,60 @@ describe("Hermes authentication exit boundaries", () => {
   });
 });
 
+describe("Hermes provider store availability", () => {
+  it("lists providers through the selected gateway", async () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: "hermes-provider\n",
+      stderr: "",
+    }));
+    const helpers = createHermesAuthHelpers(createDeps({ runOpenshell }));
+
+    await expect(helpers.checkHermesProviderStoreReachable()).resolves.toEqual({ ok: true });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "list", "--names"],
+      expect.objectContaining({ timeout: 10_000 }),
+    );
+  });
+
+  it("reports malformed provider inventory as unavailable", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "bad/name\n", stderr: "" }));
+    const helpers = createHermesAuthHelpers(createDeps({ runOpenshell }));
+
+    await expect(helpers.checkHermesProviderStoreReachable()).resolves.toEqual({
+      ok: false,
+      message: "OpenShell returned an invalid provider inventory.",
+    });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "list", "--names"],
+      expect.objectContaining({ timeout: 10_000 }),
+    );
+  });
+});
+
 describe("Hermes authentication selection", () => {
+  it.each([
+    ["NEMOCLAW_HERMES_AUTH_METHOD", "api-key"],
+    ["NEMOCLAW_HERMES_AUTH", "api-key"],
+    ["NEMOCLAW_NOUS_AUTH_METHOD", "nous-api-key"],
+  ])("maps %s to retained API-key authentication (#11432)", (name, value) => {
+    clearHermesAuthEnvironment();
+    vi.stubEnv(name, value);
+    const deps = createDeps();
+
+    expect(getRequestedHermesAuthMethod(deps)).toBe(HERMES_AUTH_METHOD_API_KEY);
+  });
+
+  it("preserves Hermes auth selector precedence (#11432)", () => {
+    clearHermesAuthEnvironment();
+    vi.stubEnv("NEMOCLAW_HERMES_AUTH_METHOD", "api-key");
+    vi.stubEnv("NEMOCLAW_HERMES_AUTH", "oauth");
+    vi.stubEnv("NEMOCLAW_NOUS_AUTH_METHOD", "oauth");
+    const deps = createDeps();
+
+    expect(getRequestedHermesAuthMethod(deps)).toBe(HERMES_AUTH_METHOD_API_KEY);
+  });
+
   it("selects API key authentication non-interactively when a key already exists", async () => {
     clearHermesAuthEnvironment();
     vi.stubEnv(HERMES_NOUS_API_KEY_CREDENTIAL_ENV, "nous-key");

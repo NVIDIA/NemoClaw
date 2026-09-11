@@ -1965,6 +1965,7 @@ def main() -> None:
                     f"Managed package {boundary} patch is partial in {paths['agent']}"
                 )
         for name, patch in (
+            ("config", CONFIG_PATCH),
             ("entrypoint", ENTRYPOINT_PATCH),
             ("main", MAIN_PATCH),
             ("tools", TOOLS_PATCH),

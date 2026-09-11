@@ -139,7 +139,7 @@ NemoClaw no longer vendors or overlays that source.
 - Native profile SHA-256: `3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a`
 - Unmodified built-in bootstrap SHA-256: `005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf`
 - First-party adapter: `nemoclaw-deepagents-profile==0.1.0`
-- Adapter module SHA-256: `cee7f9677a7b01572097774a44c08c460ef96e6e4eb999ebf48ccd3cb58a1bf1`
+- Adapter module SHA-256: `97eaed5781f9c7df4478c96263b0742fb545b322846fe0c73c39a3bfba4553a9`
 - Adapter project metadata SHA-256: `7be3f7972d7cd78d3ddaf66e2ff8b07a5e6af3611034b956cf0475ba78f5a576`
 - Adapter wheel license expression: `Apache-2.0`
 - Adapter dependency audit result: `No known vulnerabilities found`. Its only
@@ -193,10 +193,10 @@ keys used by NemoClaw's managed OpenAI-compatible `ChatOpenAI` route. It adds on
 first-party middleware that rejects only a case-insensitive `[content]` value,
 with optional whitespace around the token and brackets, passed as the complete
 `execute` command. It also replaces the native policy-nudge instance at the
-same middleware position with an adapted instance that removes `nemotron_`
-control names only from copied provider requests. The canonical NVIDIA profile
-and unrelated models remain unchanged. The
-released SDK has no public profile getter or alias API. The adapter does not add
+same middleware position on the OpenAI aliases. The adapted instance removes
+`nemotron_` control names only from copied provider requests. OpenRouter retains
+the native nudge and the managed execute guard. The canonical NVIDIA profile
+and unrelated models remain unchanged. The released SDK has no public profile getter or alias API. The adapter does not add
 a provider-wide OpenAI profile.
 
 ### Managed Ultra compatibility workarounds
@@ -257,7 +257,7 @@ assistant text when those names reach its chat template. Deep Agents then wraps
 the event in `RemoteException`, so managed `dcode -n` exits 1 with no response
 (#10549). Deep Agents merges middleware overrides by exact type, so the adapter
 wraps a new native policy-nudge instance and replaces the original at the same
-position. The wrapper repairs the request after the native nudge runs. It clears
+position for OpenAI aliases. OpenRouter aliases retain the native policy nudge. The wrapper repairs the request after the native nudge runs. It clears
 only copied `nemotron_` names and preserves content, graph-state metadata,
 user-supplied names, plain messages, the canonical profile, and unrelated
 models. Focused fixture tests and the isolated image validator cover sync and

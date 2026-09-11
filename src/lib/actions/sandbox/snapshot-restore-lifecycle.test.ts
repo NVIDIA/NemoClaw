@@ -188,7 +188,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
         },
       },
     });
-    f.restoreDeepAgentsManagedMcpProjectionMock.mockImplementation(() => {
+    f.restoreDeepAgentsManagedMcpProjectionMock.mockImplementation(async () => {
       f.lifecycleMock.events.push("restore-mcp-projection");
     });
     f.restoreSandboxStateMock.mockImplementation(() => {
@@ -249,7 +249,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       },
     });
     f.restoreDeepAgentsManagedMcpProjectionMock
-      .mockImplementationOnce(() => {
+      .mockImplementationOnce(async () => {
         throw new Error("managed MCP projection path is a directory");
       })
       .mockImplementationOnce(() => {});

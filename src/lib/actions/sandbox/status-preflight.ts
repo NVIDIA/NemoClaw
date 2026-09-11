@@ -49,6 +49,8 @@ export interface SandboxStatusPreflightFailure {
 export interface SandboxStatusPreflightResult {
   failure: SandboxStatusPreflightFailure | null;
   failureLayer: SandboxStatusFailureLayer | null;
+  /** True only when persisted stop intent agrees with the provider-owned live observation. */
+  intentionalStopConfirmed?: boolean;
   suppressInferenceProbe: boolean;
   exitCode: 0 | 1;
 }
@@ -184,12 +186,25 @@ export async function getSandboxStatusPreflight(
   deps: ClassifySandboxStatusPreflightFailureDeps = {},
 ): Promise<SandboxStatusPreflightResult> {
   const failure = await classifySandboxStatusPreflightFailure(sb, deps);
+  const intentionalStopConfirmed = Boolean(
+    sb?.stopped === true && failure?.layer === "sandbox_container_stopped",
+  );
+  const effectiveFailure = intentionalStopConfirmed ? null : failure;
   return {
-    failure,
-    failureLayer: failure ? failure.layer : null,
+    failure: effectiveFailure,
+    failureLayer: effectiveFailure ? effectiveFailure.layer : null,
+    intentionalStopConfirmed,
     suppressInferenceProbe: failure !== null,
-    exitCode: failure ? 1 : 0,
+    exitCode: effectiveFailure ? 1 : 0,
   };
+}
+
+/** Project a provider-confirmed intentional stop onto the OpenShell phase. */
+export function resolveSandboxStatusPhase(
+  observedPhase: string | null,
+  preflight: SandboxStatusPreflightResult,
+): string | null {
+  return preflight.intentionalStopConfirmed ? "Stopped" : observedPhase;
 }
 
 /**
@@ -209,6 +224,7 @@ export function withoutTerminalPhasePreflight(
   return {
     failure: null,
     failureLayer: null,
+    intentionalStopConfirmed: preflight.intentionalStopConfirmed,
     suppressInferenceProbe: preflight.suppressInferenceProbe,
     exitCode: 0,
   };

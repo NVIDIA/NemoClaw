@@ -232,30 +232,29 @@ describe("recoverDockerDriverSandbox — stopped original (start)", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "dead",
-    "exited",
-    "removing",
-  ])("does not report recovery when the restarted container reaches terminal state %s", (runtimeState) => {
-    const sleep = vi.fn();
-    const result = recoverDockerDriverSandbox("e2e-x", {
-      dockerCapture: fakeCapture("openshell-e2e-x\tExited (137) 30 seconds ago\n", [
-        `${runtimeState}\tnone`,
-      ]),
-      dockerStart: fakeStart(0),
-      sleep,
-    });
+  it.each(["dead", "exited", "removing"])(
+    "does not report recovery when the restarted container reaches terminal state %s",
+    (runtimeState) => {
+      const sleep = vi.fn();
+      const result = recoverDockerDriverSandbox("e2e-x", {
+        dockerCapture: fakeCapture("openshell-e2e-x\tExited (137) 30 seconds ago\n", [
+          `${runtimeState}\tnone`,
+        ]),
+        dockerStart: fakeStart(0),
+        sleep,
+      });
 
-    expect(result).toEqual({
-      recovered: false,
-      via: null,
-      containerName: "openshell-e2e-x",
-      detail:
-        "docker container openshell-e2e-x did not become ready after recovery " +
-        `(runtime=${runtimeState}, health=none)`,
-    });
-    expect(sleep).not.toHaveBeenCalled();
-  });
+      expect(result).toEqual({
+        recovered: false,
+        via: null,
+        containerName: "openshell-e2e-x",
+        detail:
+          "docker container openshell-e2e-x did not become ready after recovery " +
+          `(runtime=${runtimeState}, health=none)`,
+      });
+      expect(sleep).not.toHaveBeenCalled();
+    },
+  );
 
   it("enforces the readiness deadline with an advancing clock", () => {
     let currentMs = 0;

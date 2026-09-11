@@ -42,10 +42,7 @@ import {
   getSandboxAgent,
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
-import {
-  discoverMcpTools,
-  mcpToolDiscoveryPreconditionFailure,
-} from "./mcp-bridge-tool-discovery";
+import { discoverMcpTools, mcpToolDiscoveryPreconditionFailure } from "./mcp-bridge-tool-discovery";
 import {
   inspectMcpRecordedTargetPins,
   type McpBridgeRecordedPinStatus,
@@ -94,7 +91,7 @@ function storedCredentialWarning(entry: McpBridgeEntry): string | undefined {
   }
 }
 
-function getAdapterRegistration(
+async function getAdapterRegistration(
   sandboxName: string,
   adapter: AgentMcpAdapter | undefined,
   entry: McpBridgeEntry | undefined,
@@ -102,7 +99,7 @@ function getAdapterRegistration(
   hermesReconciliation?: HermesMcpReconciliationResult,
   credentialRevision?: McpAttachedCredentialRevision,
   credentialObservationDetail?: string,
-): McpBridgeStatus["adapter"] {
+): Promise<McpBridgeStatus["adapter"]> {
   if (!entry) return { registered: null };
   if (!adapter) return { registered: null, detail: "MCP adapter is not declared" };
   const credentialInspectionFailure = credentialObservationDetail
@@ -129,7 +126,7 @@ function getAdapterRegistration(
       : adapter === "hermes-config"
         ? buildHermesMcpStatusCommand(entry, credentialRevision)
         : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
-  const result = executeSandboxCommand(sandboxName, command, { runtimeSelection });
+  const result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
   if (!result)
     return credentialInspectionFailure ?? { registered: null, detail: "sandbox unreachable" };
   const unsafeProjection =
@@ -268,7 +265,7 @@ export async function statusMcpBridge(
     try {
       credentialObservations.set(
         name,
-        observeMcpCredentialRevision(sandboxName, entry, providerRuntimeSelection),
+        await observeMcpCredentialRevision(sandboxName, entry, providerRuntimeSelection),
       );
     } catch {
       credentialObservations.set(name, null);
@@ -408,7 +405,7 @@ export async function statusMcpBridge(
         providerAttached: attached,
         providerCredentialReady,
       };
-      const adapterRegistration = getAdapterRegistration(
+      const adapterRegistration = await getAdapterRegistration(
         sandboxName,
         support.adapter,
         entry,
@@ -433,7 +430,7 @@ export async function statusMcpBridge(
                     detail:
                       "probe skipped: the managed agent adapter does not match the current credential revision",
                   }
-                : probeCredentialResolution(
+                : await probeCredentialResolution(
                     sandboxName,
                     entry,
                     support.adapter,
@@ -452,7 +449,7 @@ export async function statusMcpBridge(
             ? mcpToolDiscoveryPreconditionFailure(
                 `tool discovery skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
               )
-            : discoverMcpTools(
+            : await discoverMcpTools(
                 sandboxName,
                 entry,
                 support.adapter,

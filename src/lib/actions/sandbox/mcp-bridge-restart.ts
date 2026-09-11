@@ -200,14 +200,14 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   for (const entry of missingProviderEntries) {
     await detachMissingProviderReference(sandboxName, entry, providerRuntimeSelection);
   }
-  assertMcpAdapterMutationRuntimeCapabilities(
+  await assertMcpAdapterMutationRuntimeCapabilities(
     sandboxName,
     sandbox,
     targetEntries,
     providerRuntimeSelection,
   );
   for (const entry of missingProviderEntries) {
-    waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+    await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
   }
   // Inspect registered providers once before the first mutation. Per-entry
   // checks below inspect only attached providers at each mutation edge.
@@ -241,9 +241,9 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       allowExisting: true,
       expectedProviderId: entry.providerId,
       runtimeSelection: providerRuntimeSelection,
-      prepareMutation: (action) => {
+      prepareMutation: async (action) => {
         if (action === "update") {
-          previousCredentialRevision = observeMcpCredentialRevision(
+          previousCredentialRevision = await observeMcpCredentialRevision(
             sandboxName,
             entry,
             providerRuntimeSelection,
@@ -291,7 +291,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
           : {}),
       },
     );
-    registerAgentAdapterAtCurrentCredentialRevision(
+    await registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       entryAdapter,
       entry,
@@ -339,14 +339,14 @@ export async function restoreExistingMcpBridgeRuntime(
     // Deep Agents entry on the same old image it just scrubbed. New/rebuilt
     // images use the default path and must prove the current marker before any
     // policy, provider, attachment, or adapter mutation.
-    assertMcpAdapterTeardownRuntimeCapabilities(
+    await assertMcpAdapterTeardownRuntimeCapabilities(
       sandboxName,
       sandbox,
       entries,
       providerRuntimeSelection,
     );
   } else {
-    assertMcpAdapterMutationRuntimeCapabilities(
+    await assertMcpAdapterMutationRuntimeCapabilities(
       sandboxName,
       sandbox,
       entries,
@@ -394,7 +394,7 @@ export async function restoreExistingMcpBridgeRuntime(
       entry,
       providerRuntimeSelection,
     );
-    registerAgentAdapterAtCurrentCredentialRevision(
+    await registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       adapter,
       entry,

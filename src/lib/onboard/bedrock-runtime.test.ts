@@ -62,7 +62,7 @@ function createBedrockSetupHarness(
     credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
     isNonInteractive: () => false,
     runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
-    upsertProvider: vi.fn(() => ({ ok: true })),
+    upsertProvider: vi.fn(async () => ({ ok: true })),
     verifyInferenceRoute: vi.fn(),
     verifyOnboardInferenceSmoke,
     ensureAdapter: vi.fn(async () => ({

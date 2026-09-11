@@ -16,6 +16,15 @@ _cleanup_files=()
 # exact value can be removed from the Hermes onboarding child.
 unset _PORTABLE_INSTALLER_DOCKER_HOST
 _PORTABLE_INSTALLER_DOCKER_HOST=""
+if [[ "${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" != "1" ]]; then
+  unset _PORTABLE_CALLER_DOCKER_CONTEXT
+  unset _PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED
+  unset _PORTABLE_CALLER_DOCKER_CONTEXT_SET
+fi
+_PORTABLE_CALLER_DOCKER_CONTEXT="${_PORTABLE_CALLER_DOCKER_CONTEXT-}"
+_PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED="${_PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED-}"
+_PORTABLE_CALLER_DOCKER_CONTEXT_SET="${_PORTABLE_CALLER_DOCKER_CONTEXT_SET-}"
+_INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED=""
 # #4414: When re-launched as a staged copy via `curl | bash`, queue the
 # staged tmpfile for removal on EXIT. NEMOCLAW_INSTALLER_STAGED carries
 # the staged path forward so both the loop guard and cleanup use one var.
@@ -145,8 +154,12 @@ canonical_agent_name() {
 }
 
 # Resolve which Git ref to install from.
-# Priority: NEMOCLAW_INSTALL_TAG env var > lkg tag.
+# Priority: bootstrap fetch pin > NEMOCLAW_INSTALL_REF > NEMOCLAW_INSTALL_TAG > lkg tag.
 resolve_release_tag() {
+  if [[ -n "${NEMOCLAW_BOOTSTRAP_FETCH_REF:-}" ]]; then
+    printf "%s" "${NEMOCLAW_BOOTSTRAP_FETCH_REF}"
+    return
+  fi
   if [[ -n "${NEMOCLAW_INSTALL_REF:-}" ]]; then
     printf "%s" "${NEMOCLAW_INSTALL_REF}"
     return
@@ -918,6 +931,8 @@ warn_default_agent_fallback() {
     "$C_GREEN" "$C_RESET"
 }
 
+# A successful recovery command does not prove that every recorded sandbox recovered.
+# Keep incomplete observation and orphaned state distinct from confirmed completion.
 print_done() {
   local elapsed=$((SECONDS - _INSTALL_START))
   local _needs_cli_refresh=false
@@ -929,9 +944,9 @@ print_done() {
   # #6520: same when recovery exited 0 but recorded sandboxes were not found
   # on their own recorded gateway — they were not recovered, so the install is
   # not clean either.
-  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
-    warn "=== Installation completed with warnings ==="
-  elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ||
+    "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ||
+    "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
     warn "=== Installation completed with warnings ==="
   else
     info "=== Installation complete ==="
@@ -940,25 +955,28 @@ print_done() {
   printf "  ${C_GREEN}${C_BOLD}%s${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$_CLI_DISPLAY" "$elapsed"
   printf "\n"
   if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
-    if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
-      # #6520: recovery exited 0 but recorded sandboxes were not found on
-      # their own recorded gateway; do not report them as recovered, and give
-      # a concrete remediation path instead.
-      printf "  ${C_YELLOW}Some recorded sandboxes were not found on their recorded gateway and were not recovered.${C_RESET}\n"
-      printf "  ${C_YELLOW}Their gateway registration or Docker image may have been removed (see the recovery notes above).${C_RESET}\n"
-      printf "  ${C_DIM}Clear a stranded sandbox with '%s <name> destroy', then rebuild it with '%s onboard'.${C_RESET}\n" "$_CLI_BIN" "$_CLI_BIN"
-    else
-      printf "  ${C_GREEN}Existing sandboxes were recovered and upgraded.${C_RESET}\n"
-    fi
     if [[ "$_needs_cli_refresh" == true ]]; then
       printf "  ${C_YELLOW}%s installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
       printf "\n"
       printf "  ${C_GREEN}For this terminal:${C_RESET}\n"
       print_cli_path_refresh_actions
     fi
-    if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+    if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
+      printf "  ${C_YELLOW}The recovery command succeeded, but NemoClaw could not inspect its output.${C_RESET}\n"
+      printf "  ${C_DIM}Run '%s upgrade-sandboxes --check' to inspect the registered sandbox upgrade state.${C_RESET}\n" "$_CLI_BIN"
+      printf "  ${C_DIM}Generic onboarding was skipped because recovery verification is incomplete.${C_RESET}\n"
+    elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+      # #6520: recovery exited 0 but recorded sandboxes were not found on
+      # their own recorded gateway; do not report them as recovered, and give
+      # a concrete remediation path instead.
+      printf "  ${C_YELLOW}Some recorded sandboxes were not found on their recorded gateway and were not recovered.${C_RESET}\n"
+      printf "  ${C_YELLOW}Their gateway registration or Docker image may have been removed (see the recovery notes above).${C_RESET}\n"
+      printf "  ${C_DIM}Check the recorded gateway with '%s <name> status', then retry '%s <name> destroy'.${C_RESET}\n" "$_CLI_BIN" "$_CLI_BIN"
+      printf "  ${C_DIM}If the gateway is unavailable, '%s <name> destroy --force' removes only the local record.${C_RESET}\n" "$_CLI_BIN"
+      printf "  ${C_DIM}Before running '%s onboard', verify or remove any remaining OpenShell sandbox if the gateway returns.${C_RESET}\n" "$_CLI_BIN"
       printf "  ${C_DIM}Generic onboarding was skipped because recorded sandboxes exist.${C_RESET}\n"
     else
+      printf "  ${C_GREEN}Existing sandboxes were recovered and upgraded.${C_RESET}\n"
       printf "  ${C_DIM}No new sandbox onboarding was needed.${C_RESET}\n"
     fi
   elif [[ "$ONBOARD_RAN" == true ]]; then
@@ -1039,7 +1057,7 @@ usage() {
   printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
-  printf "    --force-station-install Bypass only the DGX release-metadata allowlist for Station GB300 express install\n"
+  printf "    --force-station-install Validate an unrecognized Station GB300 release profile without onboarding\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
@@ -1336,6 +1354,51 @@ spin() {
 
 command_exists() { command -v "$1" &>/dev/null; }
 
+# Apply the gateway's Unix-socket constraints before Node or CLI modules are available.
+installer_docker_host_has_supported_shape() {
+  local raw="${DOCKER_HOST-}" candidate socket_path
+  [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
+  candidate="${raw#"${raw%%[![:space:]]*}"}"
+  candidate="${candidate%"${candidate##*[![:space:]]}"}"
+  [[ -n "$candidate" ]] || return 0
+  [[ "$candidate" == unix://* ]] || return 1
+  socket_path="${candidate#unix://}"
+  [[ "$socket_path" == /* && "$socket_path" != *"'"* ]]
+}
+
+# Admit a usable socket and the default context before Docker or recovery effects.
+# Persisted JSON inspection can wait only for its missing Node.js prerequisite.
+validate_installer_docker_target_before_host_changes() {
+  local raw="${DOCKER_HOST-}" candidate active_context=""
+  installer_docker_host_has_supported_shape \
+    || error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer."
+  candidate="${raw#"${raw%%[![:space:]]*}"}"
+  candidate="${candidate%"${candidate##*[![:space:]]}"}"
+  if [[ -n "$candidate" ]]; then
+    export DOCKER_HOST="$candidate"
+    active_context="${DOCKER_CONTEXT:-default}"
+  else
+    unset DOCKER_HOST
+    if docker_context_needs_node; then
+      _INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED=1
+      export DOCKER_CONTEXT=default
+      return 0
+    fi
+    active_context="$(docker_active_context)"
+  fi
+  [[ "$active_context" == default ]] \
+    || error "The Docker context does not select the local default target. Unset DOCKER_CONTEXT or set it to default, and run 'docker context use default' if a non-default context is persisted. Then rerun the installer."
+}
+
+# Re-read persisted context after Node installation instead of trusting the temporary default.
+complete_deferred_installer_docker_context_validation() {
+  [[ "${_INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED:-}" == "1" ]] || return 0
+  _INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED=""
+  unset DOCKER_CONTEXT
+  validate_installer_docker_target_before_host_changes
+  export DOCKER_CONTEXT=default
+}
+
 MIN_NODE_VERSION="22.19.0"
 MIN_NPM_MAJOR=10
 
@@ -1379,9 +1442,11 @@ ONBOARD_RAN=false
 _CLI_PATH=""
 _NEMOCLAW_CLI_INSTALL_PREPARED=false
 _NEMOCLAW_CLI_INSTALL_MODE=""
+_INSTALLER_NODE_RUNTIME_PREPARED=false
 _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
 _PREEXISTING_SANDBOX_COUNT=0
 _PREEXISTING_SANDBOX_RECOVERY_RAN=false
+_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=false
 # #6520: set when the automatic recovery pass exited 0 but skipped recorded
 # sandboxes it could not observe on the selected gateway (e.g. their gateway
 # and Docker image were removed by a prior uninstall while sandboxes.json was
@@ -2272,7 +2337,7 @@ EOF
 ensure_nemoclaw_shim() {
   local cli_bin status=0
   ensure_cli_shim "$_CLI_BIN" || status=$?
-  for cli_bin in nemoclaw nemohermes nemo-deepagents; do
+  for cli_bin in nemoclaw nemoclaw-acp nemohermes nemo-deepagents; do
     [[ "$cli_bin" == "$_CLI_BIN" ]] && continue
     ensure_cli_shim "$cli_bin" || true
   done
@@ -4161,6 +4226,8 @@ run_installer_host_preflight() {
   [[ "$status" -eq 0 ]]
 }
 
+# Preserve recorded recovery intent independently of admission for a new sandbox.
+# A failed output inspection must remain unconfirmed rather than imply recovery.
 recover_preexisting_sandboxes_before_onboard() {
   local cli_runner="$1"
   if [ "${_PREEXISTING_SANDBOX_COUNT:-0}" -le 0 ] 2>/dev/null; then
@@ -4184,9 +4251,12 @@ recover_preexisting_sandboxes_before_onboard() {
   # src/lib/actions/upgrade-sandboxes.ts.
   local recovery_log=""
   recovery_log="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-recovery-XXXXXX" 2>/dev/null)" || recovery_log=""
-  local recovery_status=0 recovery_pass=1
+  local recovery_status=0 recovery_pass=1 orphan_marker_status=0
+  local -a recovery_pipeline_status=()
   if [ -n "$recovery_log" ]; then
     _cleanup_files+=("$recovery_log")
+  else
+    _PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=true
   fi
   while [ "$recovery_pass" -le 2 ]; do
     recovery_status=0
@@ -4198,7 +4268,11 @@ recover_preexisting_sandboxes_before_onboard() {
         # pipefail: take the CLI's own status, not tee's — a log-write failure
         # (e.g. ENOSPC on TMPDIR) must not convert a successful recovery into
         # the #5735 failure path.
-        recovery_status=${PIPESTATUS[0]}
+        recovery_pipeline_status=("${PIPESTATUS[@]}")
+        recovery_status="${recovery_pipeline_status[0]:-1}"
+        if [ "${recovery_pipeline_status[1]:-1}" -ne 0 ]; then
+          _PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=true
+        fi
       fi
     else
       NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES="${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-[]}" \
@@ -4217,9 +4291,16 @@ recover_preexisting_sandboxes_before_onboard() {
   done
   if [ "$recovery_status" -eq 0 ]; then
     _PREEXISTING_SANDBOX_RECOVERY_RAN=true
-    if [ -n "$recovery_log" ] \
-      && grep -Fq "recorded sandbox(es) were not found on their recorded gateway" "$recovery_log"; then
-      _PREEXISTING_SANDBOX_ORPHANED=true
+    if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" != true ]] \
+      && [ -n "$recovery_log" ]; then
+      orphan_marker_status=0
+      grep -Fq "recorded sandbox(es) were not found on their recorded gateway" "$recovery_log" \
+        || orphan_marker_status=$?
+      case "$orphan_marker_status" in
+        0) _PREEXISTING_SANDBOX_ORPHANED=true ;;
+        1) ;;
+        *) _PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=true ;;
+      esac
     fi
     rm -f "$recovery_log" 2>/dev/null || true
     return 0
@@ -4270,6 +4351,8 @@ should_defer_hermes_onboarding() {
   esac
 }
 
+# Preserve caller selectors for strict Hermes admission.
+# Omit only the installer's temporary DOCKER_HOST override.
 run_onboard() {
   show_usage_notice
   info "Running ${_CLI_BIN} onboard…"
@@ -4454,7 +4537,13 @@ run_onboard() {
     -n "$_PORTABLE_INSTALLER_DOCKER_HOST" &&
     "${DOCKER_HOST:-}" == "$_PORTABLE_INSTALLER_DOCKER_HOST" ]]; then
     invoke_bin="/usr/bin/env"
-    invoke_args=(-u DOCKER_HOST "$cli_invoke" "${onboard_cmd[@]}")
+    invoke_args=(-u DOCKER_HOST)
+    if [[ "${_PORTABLE_CALLER_DOCKER_CONTEXT_SET:-}" == x ]]; then
+      invoke_args+=("DOCKER_CONTEXT=$_PORTABLE_CALLER_DOCKER_CONTEXT")
+    else
+      invoke_args+=(-u DOCKER_CONTEXT)
+    fi
+    invoke_args+=("$cli_invoke" "${onboard_cmd[@]}")
   fi
 
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
@@ -4664,6 +4753,18 @@ ensure_docker() {
   fi
 }
 
+# Keep the original context across the group child so Hermes can reject caller overrides.
+# The temporary runtime selection must not become the recorded caller context.
+capture_portable_caller_docker_context() {
+  [[ "${_PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED:-}" == "1" ]] && return 0
+  _PORTABLE_CALLER_DOCKER_CONTEXT_SET="${DOCKER_CONTEXT+x}"
+  _PORTABLE_CALLER_DOCKER_CONTEXT="${DOCKER_CONTEXT-}"
+  _PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED=1
+  export _PORTABLE_CALLER_DOCKER_CONTEXT
+  export _PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED
+  export _PORTABLE_CALLER_DOCKER_CONTEXT_SET
+}
+
 # Select the rootless Podman API socket reported for the current user. This
 # must run before ensure_docker and the installer host preflight: both use
 # the Docker CLI, with DOCKER_HOST overriding its daemon to Podman's user
@@ -4671,6 +4772,7 @@ ensure_docker() {
 # local-registry configuration required by the OpenShell Podman driver.
 prepare_portable_experimental_runtime_override() {
   [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]] || return 0
+  capture_portable_caller_docker_context
   [[ "$(uname -s)" == "Linux" ]] \
     || error "The portable experimental profile requires Linux."
   command_exists podman \
@@ -4691,6 +4793,7 @@ prepare_portable_experimental_runtime_override() {
     /*) export DOCKER_HOST="unix://${podman_socket}" ;;
     *) error "Podman reported an invalid rootless API socket path: ${podman_socket:-empty}" ;;
   esac
+  unset DOCKER_CONTEXT
   _PORTABLE_INSTALLER_DOCKER_HOST="$DOCKER_HOST"
 
   info "Portable profile selected rootless Podman through DOCKER_HOST=${DOCKER_HOST}."
@@ -4724,16 +4827,16 @@ is_wsl_host() {
 # N1x from its protected FastOS and PCI identity, and Windows WSL from the host
 # environment. Used to gate the express install prompt; only platforms with an
 # accepted default are offered.
-is_station_gb300_product() {
-  local product=${1:-}
-  [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
-    "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
-}
-
 classify_dgx_station_release() {
   local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
   [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
   bash "$helper" --classify-dgx-release
+}
+
+classify_dgx_station_hardware() {
+  local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
+  [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
+  bash "$helper" --classify-station-hardware
 }
 
 N1X_FASTOS_RELEASE_MAX_BYTES=4096
@@ -4876,20 +4979,44 @@ is_n1x_host() {
 }
 
 detect_express_platform() {
-  local model="" release_state=""
+  local firmware_state="" release_state=""
   if is_wsl_host; then
     printf "Windows WSL"
     return
   fi
-  if [ -r /sys/class/dmi/id/product_name ]; then
-    model="$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)"
-  fi
-  if [ -z "$model" ] && [ -r /sys/firmware/devicetree/base/model ]; then
-    model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null || true)"
-  fi
-  case "$model" in
-    *DGX*Spark*)
+  firmware_state="$(classify_dgx_station_hardware)" || return "$?"
+  case "$firmware_state" in
+    conflicting)
+      printf "Conflicting NVIDIA firmware identity"
+      return
+      ;;
+    spark)
       printf "DGX Spark"
+      return
+      ;;
+    station-other)
+      printf "Unsupported DGX Station generation"
+      return
+      ;;
+    station-gb300-pci-missing)
+      printf "Unverified DGX Station hardware"
+      return
+      ;;
+    jetson) return ;;
+    station-gb300)
+      release_state="$(classify_dgx_station_release)" || return "$?"
+      case "$release_state" in
+        generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
+          printf "DGX Station"
+          ;;
+        *)
+          if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+            printf "DGX Station"
+          else
+            printf "Unsupported DGX Station OS"
+          fi
+          ;;
+      esac
       return
       ;;
   esac
@@ -4897,41 +5024,27 @@ detect_express_platform() {
     printf "DGX Spark"
     return
   fi
-  if is_station_gb300_product "$model"; then
-    release_state="$(classify_dgx_station_release)"
-    case "$release_state" in
-      generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
-        printf "DGX Station"
-        ;;
-      *)
-        if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
-          printf "DGX Station"
-        else
-          printf "Unsupported DGX Station OS"
-        fi
-        ;;
-    esac
-    return
-  fi
   if is_n1x_host; then
     printf "N1x"
     return
   fi
-  case "$model" in
-    *DGX*Station*) printf "Unsupported DGX Station generation" ;;
-    *) ;;
-  esac
 }
 
 validate_express_platform_boundary() {
   case "${1:-}" in
     "Unsupported DGX Station OS")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
-      error "This DGX Station OS image is outside the recognized Station Express release-metadata boundary. Station Express accepts generic Ubuntu 24.04 ARM64, OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0, an explicitly qualified Station factory image, or the no-OTA DGX OS 7.6.x profile with DGX_PRETTY_NAME=\"NVIDIA DGX GB300WS\" or DGX_PRETTY_NAME=\"NVIDIA DGX Server\"."
+      error "This DGX Station OS image is outside the recognized Station Express release-metadata boundary. Station Express accepts generic Ubuntu 24.04 ARM64, OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0, the no-OTA DGX OS 7.6.x profile, or an explicitly qualified Station factory image. DGX_PRETTY_NAME is diagnostic and does not determine qualification."
       ;;
     "Unsupported DGX Station generation")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
       error "This DGX Station generation is outside the validated Station GB300 express boundary."
+      ;;
+    "Conflicting NVIDIA firmware identity")
+      error "NVIDIA platform identity conflicts across firmware fields. Resolve the firmware identity before installation."
+      ;;
+    "Unverified DGX Station hardware")
+      error "DGX Station GB300 firmware was found without an exact NVIDIA GB300 PCI device. Resolve the hardware identity before installation."
       ;;
   esac
 }
@@ -4943,7 +5056,7 @@ STATION_ULTRA_LEGACY_VLLM_IMAGE="vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899
 STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
 _SELECTED_EXPRESS_PLATFORM=""
-_EXPRESS_WSL_PROVIDER_PENDING=""
+_PREFLIGHT_EXPRESS_PLATFORM=""
 _STATION_EXPRESS_RESUME_REVISION=""
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
 _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=0
@@ -4983,6 +5096,9 @@ validate_force_station_install_override() {
   local platform="$1" release_state
   if [ "${FORCE_STATION_INSTALL:-}" != "1" ]; then
     return 0
+  fi
+  if [ "${STATION_DEEPSEEK:-}" = "1" ] || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ]; then
+    error "--force-station-install is validation-only and cannot be combined with --station-deepseek, NEMOCLAW_VLLM_MODEL, or NEMOCLAW_MODEL. Remove the model-selection override."
   fi
   if [ "$platform" != "DGX Station" ]; then
     error "--force-station-install requires DGX Station GB300 hardware (detected: ${platform:-unsupported platform})."
@@ -5060,12 +5176,13 @@ validate_station_deepseek_override() {
   fi
 }
 
+# Retain platform identity for the later Station-owned Docker target decision.
 preflight_explicit_express_flags() {
-  local platform
-  platform="$(detect_express_platform)"
-  validate_express_platform_boundary "$platform"
-  validate_force_station_install_override "$platform"
-  validate_station_deepseek_override "$platform"
+  _PREFLIGHT_EXPRESS_PLATFORM="$(detect_express_platform)" \
+    || error "Cannot classify NVIDIA platform identity. Refusing to continue installation."
+  validate_express_platform_boundary "$_PREFLIGHT_EXPRESS_PLATFORM"
+  validate_force_station_install_override "$_PREFLIGHT_EXPRESS_PLATFORM"
+  validate_station_deepseek_override "$_PREFLIGHT_EXPRESS_PLATFORM"
 }
 
 configure_station_express_model() {
@@ -5541,21 +5658,12 @@ clear_station_express_resume() {
   done
 }
 
-# Report the container runtime's operating-system string (e.g. "Docker Desktop"
-# or "Ubuntu 24.04.4 LTS"). Bounded with a hard timeout so a wedged,
-# misconfigured, or dead-DOCKER_HOST daemon cannot hang the interactive express
-# prompt: this runs from describe_express_install before ensure_docker, and WSL
-# skips ensure_docker entirely. Empty on timeout or error.
-express_wsl_docker_operating_system() {
-  timeout 10 docker info --format '{{.OperatingSystem}}' 2>/dev/null
-}
-
 # Resolve Docker's effective context name: the DOCKER_CONTEXT override if set,
 # otherwise the persisted currentContext from Docker's config (what
 # `docker context use` writes). A missing config or a config with no
 # currentContext uses Docker's "default"; an unreadable or unparseable config
 # fails closed as non-local.
-express_wsl_docker_active_context() {
+docker_active_context() {
   if [ -n "${DOCKER_CONTEXT:-}" ]; then
     printf '%s' "${DOCKER_CONTEXT}"
     return 0
@@ -5601,95 +5709,14 @@ NODE
   printf '%s' "__unknown__"
 }
 
-# True only when the Docker CLI targets the LOCAL default daemon: the active
-# context is "default" and no DOCKER_HOST override is set. A DOCKER_HOST, a
-# DOCKER_CONTEXT override, or a persisted currentContext other than "default"
-# (a context name like desktop-linux is not proof of a local endpoint — it can be
-# pointed at a remote daemon) can reach a remote Docker Desktop that is not the
-# qualified local N1x runtime (PRA-1). Fails closed (non-local) on any
-# non-default, unreadable, or unparseable context.
-express_wsl_docker_target_is_local() {
-  [ -z "${DOCKER_HOST:-}" ] || return 1
-  [ "$(express_wsl_docker_active_context)" = "default" ]
-}
-
-# The managed N1x WSL llama.cpp route requires LOCAL Docker Desktop WSL
-# integration. Keep this topology check narrow: Windows-host Ollama is no
-# longer an Express default because making raw port 11434 container-reachable
-# previously required a wildcard, unauthenticated listener.
-express_wsl_uses_local_docker_desktop() {
-  express_wsl_docker_target_is_local || return 1
-  express_wsl_docker_operating_system | grep -qi 'docker desktop'
-}
-
-# Select the accepted N1x WSL llama.cpp candidate only when Windows product
-# identity, WSL architecture, Docker Desktop locality, and the 48 GB GPU class
-# all match. Later readiness still requires container GPU proof before launch.
-express_wsl_can_use_n1x_managed_llama_cpp() {
-  express_wsl_uses_local_docker_desktop || return 1
-  [ "$(uname -m 2>/dev/null | tr -d '[:space:]')" = "aarch64" ] || return 1
-  command_exists timeout || return 1
-  command_exists powershell.exe || return 1
-  command_exists nvidia-smi || return 1
-
-  local product_name=""
-  local memory_mb=""
-  product_name="$(timeout 10s powershell.exe -NoProfile -NonInteractive -Command '(Get-CimInstance Win32_ComputerSystem).Model' 2>/dev/null | tr -d '\r' | head -n 1)"
-  case "$product_name" in
-    *"RTX Spark N1X"*) ;;
-    *) return 1 ;;
-  esac
-
-  memory_mb="$(timeout 10s nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '[:space:]')"
-  case "$memory_mb" in
-    '' | *[!0-9]*) return 1 ;;
-  esac
-  [ "$memory_mb" -ge 48000 ]
-}
-
-# True when a readable Docker configuration decides the context but no Node.js can
-# parse it yet. The express prompt runs before install_nodejs; selection waits
-# for the runtime so a qualifying N1x host can still choose managed llama.cpp.
-express_wsl_docker_context_needs_node() {
+# Persisted Docker configuration needs a JSON parser that may not yet be installed.
+# Complete admission before Docker setup or sandbox recovery.
+docker_context_needs_node() {
   [ -z "${DOCKER_HOST:-}" ] || return 1
   [ -z "${DOCKER_CONTEXT:-}" ] || return 1
   local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
   [ -e "$cfg" ] && [ -r "$cfg" ] || return 1
   ! command_exists node
-}
-
-# Choose managed llama.cpp on qualified N1x WSL; otherwise use WSL-local
-# Ollama. Defer when a missing Node.js runtime is the only thing preventing the
-# N1x Docker topology check.
-select_express_wsl_provider() {
-  _EXPRESS_WSL_PROVIDER_PENDING=""
-  unset NEMOCLAW_LLAMACPP_RECIPE
-  if express_wsl_can_use_n1x_managed_llama_cpp; then
-    export NEMOCLAW_PROVIDER=install-llama-cpp
-    export NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1
-    return 0
-  fi
-  if express_wsl_docker_context_needs_node; then
-    _EXPRESS_WSL_PROVIDER_PENDING=1
-    return 0
-  fi
-  export NEMOCLAW_PROVIDER=install-ollama
-}
-
-# Finish a deferred Windows WSL selection once install_nodejs has provided the
-# runtime that reads the Docker configuration.
-resolve_pending_express_wsl_provider() {
-  [ "${_EXPRESS_WSL_PROVIDER_PENDING:-}" = "1" ] || return 0
-  _EXPRESS_WSL_PROVIDER_PENDING=""
-  select_express_wsl_provider
-  case "${NEMOCLAW_PROVIDER:-}" in
-    install-llama-cpp)
-      info "Express install will configure managed Qwen 3.6 35B with llama.cpp on N1x WSL."
-      ;;
-    *)
-      info "Express install will configure WSL-local Ollama."
-      ;;
-  esac
 }
 
 select_spark_express_inference() {
@@ -5775,7 +5802,7 @@ activate_express_install() {
       configure_station_express_model
       ;;
     "Windows WSL")
-      select_express_wsl_provider
+      unset NEMOCLAW_PROVIDER NEMOCLAW_LLAMACPP_RECIPE
       ;;
   esac
 }
@@ -5926,6 +5953,13 @@ ensure_station_express_host() {
   run_station_host_preparation || status=$?
   case "$status" in
     0)
+      if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        clear_station_express_resume
+        ok "DGX Station factory-runtime validation completed"
+        warn "Station Express remains blocked because this release profile is not qualified."
+        info "Install a supported DGX Station software profile, then rerun the installer without --force-station-install."
+        exit 0
+      fi
       ok "DGX Station host prerequisites are ready"
       ;;
     10)
@@ -6056,7 +6090,7 @@ ensure_station_express_pair() {
   revision="$(station_installer_revision)"
 
   local -a pair_command=(
-    node --no-warnings --experimental-strip-types "$coordinator"
+    node --no-warnings "$coordinator"
     --helper "$helper"
     --state "$state_file"
     --revision "$revision"
@@ -6157,10 +6191,11 @@ clear_station_dual_pair_resume() {
   assert_nemoclaw_state_path_safe "$state_file"
   [[ -e "$state_file" || -L "$state_file" || -e "${state_file}.ssh-binding" || -L "${state_file}.ssh-binding" ]] || return 0
   [[ -f "$coordinator" ]] || error "Dual DGX Station preparation coordinator is missing: ${coordinator}"
-  node --no-warnings --experimental-strip-types "$coordinator" --state "$state_file" --clear-state >/dev/null \
+  node --no-warnings "$coordinator" --state "$state_file" --clear-state >/dev/null \
     || error "Could not safely clear completed dual DGX Station resume state: ${state_file}"
 }
 
+# Station and portable preparation own their target; ordinary installs use early admission.
 prepare_installer_host() {
   maybe_offer_express_install
   # Reject conflicting explicit Station selections and pending-pair bypasses
@@ -6172,6 +6207,10 @@ prepare_installer_host() {
     # ambient remote context can neither satisfy nor be changed by this path.
     unset DOCKER_HOST
     export DOCKER_CONTEXT=default
+  fi
+  if [[ "${_PREFLIGHT_EXPRESS_PLATFORM:-}" == "DGX Station" ]] \
+    || [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]]; then
+    validate_installer_docker_target_before_host_changes
   fi
   # Intentional ordering: Station preparation owns the reboot boundary before
   # generic Docker bootstrap; ensure_station_express_host is a no-op elsewhere.
@@ -6259,15 +6298,8 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
-      if express_wsl_can_use_n1x_managed_llama_cpp; then
-        show_hf_authentication="1"
-        inference_summary="managed Qwen 3.6 35B with llama.cpp on N1x WSL"
-        inference_disclosure="Managed llama.cpp downloads a pinned 20.4 GB GGUF file before it starts the loopback-only authenticated server."
-      elif express_wsl_docker_context_needs_node; then
-        inference_summary="local inference, selected once the installed Node.js runtime reads the Docker configuration"
-      else
-        inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"
-      fi
+      inference_summary="automatic local inference for the detected WSL hardware"
+      inference_disclosure="Onboarding selects managed Qwen 3.6 35B with llama.cpp on a qualified N1x GPU. Other WSL hosts use WSL-local Ollama."
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     *)
@@ -6275,6 +6307,12 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
   esac
+
+  if [ "$platform" = "DGX Station" ] && [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+    printf "  This validation-only run checks the existing factory GPU and container runtime without authorizing onboarding.\n"
+    printf "  A passing result stops before onboarding. Install a supported DGX Station software profile, then rerun without --force-station-install.\n"
+    return 0
+  fi
 
   case "$tier" in
     balanced)
@@ -6332,7 +6370,8 @@ describe_hf_download_authentication() {
 
 maybe_offer_express_install() {
   local platform resume_file
-  platform="$(detect_express_platform)"
+  platform="$(detect_express_platform)" \
+    || error "Cannot classify NVIDIA platform identity. Refusing to continue installation."
   validate_express_platform_boundary "$platform"
   validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
@@ -6419,6 +6458,8 @@ maybe_offer_express_install() {
     describe_express_install "$platform"
     if [ "$platform" = "N1x" ]; then
       printf "  Run the Deferred N1x preview with these settings? [Y/n]: "
+    elif [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+      printf "  Run validation-only Station checks with these settings? [Y/n]: "
     else
       printf "  Run express install with these settings? [Y/n]: "
     fi
@@ -6441,6 +6482,8 @@ maybe_offer_express_install() {
     describe_express_install "$platform"
     if [ "$platform" = "N1x" ]; then
       printf "  Run the Deferred N1x preview with these settings? [Y/n]: "
+    elif [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+      printf "  Run validation-only Station checks with these settings? [Y/n]: "
     else
       printf "  Run express install with these settings? [Y/n]: "
     fi
@@ -6464,6 +6507,8 @@ maybe_offer_express_install() {
     "" | y | yes)
       if [ "$platform" = "N1x" ]; then
         info "Using the Deferred N1x preview."
+      elif [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        info "Using validation-only Station checks."
       else
         info "Using express install for ${platform}."
       fi
@@ -6478,16 +6523,24 @@ maybe_offer_express_install() {
   esac
 }
 
+# Prepare Node once, including when Docker-context parsing needs it before host setup.
+# Do not admit Docker work until the deferred target check succeeds.
+prepare_installer_node_runtime() {
+  [[ "${_INSTALLER_NODE_RUNTIME_PREPARED:-false}" == true ]] && return 0
+  step 1 "Node.js"
+  install_nodejs
+  ensure_supported_runtime
+  complete_deferred_installer_docker_context_validation
+  _INSTALLER_NODE_RUNTIME_PREPARED=true
+}
+
 # The qualification runner calls these phases without starting onboarding.
 # ---------------------------------------------------------------------------
 install_nemoclaw_before_onboarding() {
   _INSTALL_START=$SECONDS
   bash "${SCRIPT_DIR}/setup-jetson.sh"
 
-  step 1 "Node.js"
-  install_nodejs
-  ensure_supported_runtime
-  resolve_pending_express_wsl_provider
+  prepare_installer_node_runtime
   ensure_station_express_pair
 
   step 2 "${_CLI_DISPLAY} CLI"
@@ -6503,6 +6556,7 @@ install_nemoclaw_before_onboarding() {
 
 # Main
 # ---------------------------------------------------------------------------
+# Recovery retains recorded GPU intent; only remaining onboarding needs generic admission.
 main() {
   # Capture the original argv so ensure_docker can forward it across a
   # self re-exec under sg(1) when the docker group needs activating in a
@@ -6636,6 +6690,13 @@ main() {
   # repeats the same authoritative validation at the prompt boundary because
   # it is also exercised directly by sourced-installer callers and tests.
   preflight_explicit_express_flags
+  if [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]]; then
+    capture_portable_caller_docker_context
+    unset DOCKER_HOST
+    export DOCKER_CONTEXT=default
+  elif [[ "${_PREFLIGHT_EXPRESS_PLATFORM:-}" != "DGX Station" ]]; then
+    validate_installer_docker_target_before_host_changes
+  fi
 
   print_banner
 
@@ -6644,6 +6705,10 @@ main() {
   # a real terminal are different: stdin is the script pipe, but /dev/tty can
   # still collect acceptance before Node.js or the CLI are installed.
   preflight_usage_notice_prompt
+
+  if [[ "${_INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED:-}" == "1" ]]; then
+    prepare_installer_node_runtime
+  fi
 
   # Offer express install on accepted platforms (DGX Spark / Station / N1x / WSL).
   # Runs AFTER the third-party notice so the user has explicitly accepted the
@@ -6685,33 +6750,48 @@ main() {
     fi
     if should_defer_hermes_onboarding "$_registered_sandbox_count"; then
       info "NVIDIA inference credentials are absent. Hermes onboarding did not run."
-    elif run_installer_host_preflight; then
+    else
       if ! recover_preexisting_sandboxes_before_onboard "$_cli_runner"; then
         finalize_install
         return 1
       fi
+
+      local _run_onboard_after_recovery=false
       if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
-        if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+        if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
+          warn "Recovery output could not be inspected; skipping generic onboarding."
+        elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
           # #6520: do not claim recovery when recorded sandboxes are stranded.
           warn "Some recorded sandboxes could not be recovered; skipping generic onboarding."
         elif [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] \
           || [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
           || station_express_receipt_retirement_pending; then
-          info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
-          run_onboard || fail_onboarding "$?"
-          ONBOARD_RAN=true
+          _run_onboard_after_recovery=true
         else
           info "Existing sandboxes recovered; skipping generic onboarding."
         fi
       else
-        run_onboard || fail_onboarding "$?"
-        ONBOARD_RAN=true
-        restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
+        _run_onboard_after_recovery=true
       fi
-    elif [ "${NON_INTERACTIVE:-}" = "1" ]; then
-      error "Skipping onboarding until the host prerequisites above are fixed."
-    else
-      warn "Skipping onboarding until the host prerequisites above are fixed."
+
+      if [[ "$_run_onboard_after_recovery" == true ]]; then
+        if run_installer_host_preflight; then
+          if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
+            info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
+          fi
+          run_onboard || fail_onboarding "$?"
+          ONBOARD_RAN=true
+          if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" != true ]]; then
+            restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
+          fi
+        elif [ "${NON_INTERACTIVE:-}" = "1" ]; then
+          error "Skipping onboarding until the host prerequisites above are fixed."
+        elif [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
+          error "DGX Station reconciliation did not run. Fix the host prerequisites above, then rerun the installer."
+        else
+          warn "Skipping onboarding until the host prerequisites above are fixed."
+        fi
+      fi
     fi
   else
     warn "Skipping onboarding — could not locate the ${_CLI_BIN} executable on disk."

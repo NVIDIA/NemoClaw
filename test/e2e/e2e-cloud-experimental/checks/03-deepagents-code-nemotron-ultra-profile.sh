@@ -318,11 +318,13 @@ assert compatibility._nemoclaw_internal_name_compatibility is True
 class ModelRequest:
     def __init__(self, messages):
         self.messages = messages
-        self.state = {"messages": messages}
+        self.state = {"messages": messages, "checkpoint": "preserved-checkpoint"}
         self.tools = [{"name": "read_file"}, {"name": "get_goal"}]
 
     def override(self, *, messages):
-        return ModelRequest(messages)
+        result = ModelRequest(messages)
+        result.state = self.state
+        return result
 
 
 internal = HumanMessage(
@@ -336,6 +338,7 @@ sync_model_result = compatibility.wrap_model_call(
     model_request,
     lambda value: value,
 )
+assert sync_model_result.state is model_request.state
 assert sync_model_result is not model_request
 assert sync_model_result.messages[0].content == "managed nudge"
 assert sync_model_result.messages[0].name is None
@@ -352,6 +355,7 @@ async def async_model_handler(value):
 async_model_result = asyncio.run(
     compatibility.awrap_model_call(model_request, async_model_handler)
 )
+assert async_model_result.state is model_request.state
 assert async_model_result.messages[0].name is None
 assert async_model_result.messages[-1].name is None
 

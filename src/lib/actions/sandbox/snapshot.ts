@@ -57,7 +57,10 @@ import { streamSandboxCreate } from "../../sandbox/create-stream";
 import { repairMutableConfigPerms } from "../../sandbox/mutable-config-perms";
 import { isSandboxReady } from "../../state/gateway";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
-import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
+import {
+  withMcpLifecycleLock,
+  withMcpLifecycleLockSync,
+} from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
@@ -1483,7 +1486,7 @@ async function runSnapshotRestoreUnlocked(
       }
     }
   }
-  withMcpLifecycleLockSync(targetSandbox, () => {
+  await withMcpLifecycleLock(targetSandbox, async () => {
     const snapshotTarget = registry.getSandbox(targetSandbox);
     const repairsManagedDeepAgentsProjection =
       snapshotTarget?.agent === "langchain-deepagents-code" && !snapshotTarget.fromDockerfile;
@@ -1562,7 +1565,7 @@ async function runSnapshotRestoreUnlocked(
           throw new Error(`target '${targetSandbox}' is no longer registered`);
         }
         const runtimeSelection = getMcpProviderInspectionRuntimeSelection(currentTarget);
-        restoreDeepAgentsManagedMcpProjection(
+        await restoreDeepAgentsManagedMcpProjection(
           targetSandbox,
           managedDeepAgentsEntries,
           runtimeSelection,

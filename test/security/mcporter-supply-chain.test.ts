@@ -51,8 +51,7 @@ const reviewedAuditDriver = fs.readFileSync(
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
   const start = contents.indexOf(startMarker);
-  const helperMarker =
-    "node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only";
+  const helperMarker = "node /scripts/lib/reviewed-npm-archive.mts --verify-only";
   const helperStart = contents.indexOf(helperMarker, start);
   const helperEndMarker = '--label "mcporter ${MCPORTER_VERSION}"';
   const helperEnd = contents.indexOf(helperEndMarker, helperStart) + helperEndMarker.length;
@@ -69,8 +68,8 @@ function extractIntegrityGate(contents: string): string {
 }
 
 function extractAuditReceiptInvocation(contents: string): string {
-  const startMarker = "node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts";
-  const endMarker = "--legacy-npmjs true";
+  const startMarker = "node /scripts/lib/npm-audit-receipt.mts";
+  const endMarker = "--legacy-audit true";
   const start = contents.indexOf(startMarker);
   const end = contents.indexOf(endMarker, start);
   expect(start).toBeGreaterThanOrEqual(0);
@@ -89,14 +88,14 @@ function runIntegrityGate(contents: string, version: string) {
     `MCPORTER_0_7_3_TARBALL=${JSON.stringify(expectedTarball)}`,
     `npm() { printf '%s\\n' ${JSON.stringify(expectedIntegrity)}; }`,
     "node() {",
-    '  [ "$#" -eq 11 ] && [ "${1:-}" = "--experimental-strip-types" ] || return 81',
-    '  [ "${2:-}" = "/scripts/lib/reviewed-npm-archive.mts" ] && [ "${3:-}" = "--verify-only" ] || return 82',
-    '  [ "${4:-}" = "--package-spec" ] && [ "${5:-}" = "mcporter@${MCPORTER_VERSION}" ] || return 83',
-    '  [ "${6:-}" = "--integrity" ] && [ "${7:-}" = ' +
+    '  [ "$#" -eq 10 ] || return 81',
+    '  [ "${1:-}" = "/scripts/lib/reviewed-npm-archive.mts" ] && [ "${2:-}" = "--verify-only" ] || return 82',
+    '  [ "${3:-}" = "--package-spec" ] && [ "${4:-}" = "mcporter@${MCPORTER_VERSION}" ] || return 83',
+    '  [ "${5:-}" = "--integrity" ] && [ "${6:-}" = ' +
       `${JSON.stringify(expectedIntegrity)} ] || return 84`,
-    '  [ "${8:-}" = "--tarball-url" ] && [ "${9:-}" = ' +
+    '  [ "${7:-}" = "--tarball-url" ] && [ "${8:-}" = ' +
       `${JSON.stringify(expectedTarball)} ] || return 85`,
-    '  [ "${10:-}" = "--label" ] && [ "${11:-}" = "mcporter ${MCPORTER_VERSION}" ] || return 86',
+    '  [ "${9:-}" = "--label" ] && [ "${10:-}" = "mcporter ${MCPORTER_VERSION}" ] || return 86',
     "}",
     extractIntegrityGate(contents),
     "printf 'gate-passed\\n'",
@@ -204,7 +203,7 @@ describe("mcporter image supply-chain controls", () => {
         ),
     ).toBe(true);
     expect(flattenedContents).toContain(
-      "node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
+      "node /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
     );
     expect(contents).toContain("ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=");
     expect(contents).toContain(
@@ -213,14 +212,12 @@ describe("mcporter image supply-chain controls", () => {
     expect(contents).toContain(
       "--mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false",
     );
-    expect(flattenedContents).toContain(
-      "node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts --receipt",
-    );
+    expect(flattenedContents).toContain("node /scripts/lib/npm-audit-receipt.mts --receipt");
     expect(flattenedContents).toContain(
       "--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json --raw-report",
     );
     expect(auditReceiptInvocation).toContain(
-      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json --registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true",
+      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json --registry https://registry.yarnpkg.com --threshold high --legacy-audit true",
     );
     expect(expectedReviewedNpmVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
     expect(auditReceiptInvocation).not.toContain("--npm-version");
