@@ -45,7 +45,7 @@ vi.setConfig({ maxConcurrency: 4 });
 function execFileResult(file, args, options) {
   return new Promise((resolve) =>
     execFile(file, args, options, (error, stdout, stderr) =>
-      resolve({ status: Number(error?.code ?? (error ? -1 : 0)), stdout, stderr }),
+      resolve({ status: Number(error?.code) || (error ? -1 : 0), stdout, stderr }),
     ),
   );
 }
