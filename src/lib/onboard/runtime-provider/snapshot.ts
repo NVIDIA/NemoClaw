@@ -242,7 +242,7 @@ function dockerNvidiaGpuRequestSelectors(
   if (driver !== "nvidia" && !hasNvidiaCdiSelector && !hasGpuCapability) return null;
 
   if (deviceIds.length > 0) {
-    if (driver === "nvidia") return deviceIds;
+    if (driver === "nvidia" || (driver === "" && hasGpuCapability)) return deviceIds;
     if (
       ["", "cdi"].includes(driver) &&
       deviceIds.every((device) => /^nvidia[.]com\/gpu=/iu.test(device.trim()))
