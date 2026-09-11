@@ -3119,9 +3119,14 @@ install_nemoclaw() {
     if is_reusable_managed_nemoclaw_install "$nemoclaw_src"; then
       info "Reusing the installed ${_CLI_DISPLAY} CLI at the selected revision."
     else
-      rm -rf "$nemoclaw_src"
+      # Clone beside the installed source and swap only after the fetch
+      # succeeds, so a failed fetch leaves the installed CLI in place.
+      local nemoclaw_staging="${nemoclaw_src}.staging"
+      rm -rf "$nemoclaw_staging"
       mkdir -p "$(dirname "$nemoclaw_src")"
-      spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"
+      spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_staging"
+      rm -rf "$nemoclaw_src"
+      mv "$nemoclaw_staging" "$nemoclaw_src"
       # Fetch version tags into the shallow clone so `git describe --tags
       # --match "v*"` works at runtime (the shallow clone only has the
       # single ref we asked for).

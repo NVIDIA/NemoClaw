@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -340,4 +341,92 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
       );
     },
   );
+
+  const sha256 = (file: string) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+
+  const installedCliFixture = (root: string) => {
+    const bin = path.join(root, "bin");
+    fs.mkdirSync(bin);
+    const cli = path.join(bin, "nemoclaw");
+    fs.writeFileSync(cli, "#!/usr/bin/env bash\nprintf 'nemoclaw v0.0.118\\n'\n", { mode: 0o755 });
+    return { bin, cli, digest: sha256(cli) };
+  };
+
+  const unreachableGitHubEnv = (closedPort: number) => ({
+    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_KEY_0: `url.http://127.0.0.1:${closedPort}/NemoClaw.git.insteadOf`,
+    GIT_CONFIG_VALUE_0: REPO_URL,
+    GIT_CONFIG_KEY_1: "http.proxy",
+    GIT_CONFIG_VALUE_1: "",
+  });
+
+  it("leaves the installed CLI untouched when the curl|bash bootstrap cannot reach GitHub (#11515)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bootstrap-unreachable-"));
+    const closedPort = await closedLoopbackPort();
+
+    try {
+      const installed = installedCliFixture(root);
+      const result = spawnSync("bash", [], {
+        cwd: root,
+        input: fs.readFileSync(CURL_PIPE_INSTALLER, "utf8"),
+        encoding: "utf8",
+        env: {
+          HOME: root,
+          PATH: `${installed.bin}:/usr/bin:/bin`,
+          TMPDIR: root,
+          ...unreachableGitHubEnv(closedPort),
+        },
+      });
+      expect(result.status, result.stderr).toBe(1);
+      expect(result.stderr).toContain(
+        `[ERROR] Could not connect to ${REPO_URL} to look up install ref 'lkg'.`,
+      );
+      expect(result.stderr).toContain("The installed CLI was not changed.");
+      expect(sha256(installed.cli)).toBe(installed.digest);
+      expect(fs.readdirSync(root)).toEqual(["bin"]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves the installed CLI and managed source untouched when the payload cannot reach GitHub (#11515)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-payload-unreachable-"));
+    const closedPort = await closedLoopbackPort();
+
+    try {
+      const installed = installedCliFixture(root);
+      const managedSource = path.join(root, ".nemoclaw", "source");
+      fs.mkdirSync(managedSource, { recursive: true });
+      const managedMarker = path.join(managedSource, "installed-marker.txt");
+      fs.writeFileSync(managedMarker, "previous managed install\n");
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          'source "$INSTALLER_PAYLOAD" >/dev/null\nresolve_repo_root() { printf "%s" "$NON_SOURCE_ROOT"; }\ninstall_nemoclaw',
+        ],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: {
+            HOME: root,
+            PATH: `${installed.bin}:/usr/bin:/bin`,
+            TMPDIR: root,
+            INSTALLER_PAYLOAD,
+            NON_SOURCE_ROOT: path.join(root, "not-a-checkout"),
+            ...unreachableGitHubEnv(closedPort),
+          },
+        },
+      );
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(result.stderr).toContain(
+        `Could not connect to ${REPO_URL} to look up install ref 'lkg'.`,
+      );
+      expect(result.stderr).toContain("The installed CLI was not changed.");
+      expect(sha256(installed.cli)).toBe(installed.digest);
+      expect(fs.readFileSync(managedMarker, "utf8")).toBe("previous managed install\n");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
