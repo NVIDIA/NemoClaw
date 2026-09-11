@@ -11,7 +11,7 @@ import { PEM, LEAF_PEM, PRIVATE_KEY } from "../__test-helpers__/corporate-ca-fix
 import { baseGatewayEnv } from "../../../../test/support/openshell-gateway-config-helpers";
 import { resolveRegisteredRuntimeProvider } from "../runtime-provider/selection";
 import * as runtimeSelection from "../runtime-provider/selection";
-import * as openShellClient from "../../adapters/openshell/client";
+import * as openShellClient from "../../adapters/openshell/async-capture";
 import { flowDeps } from "./onboarding";
 import { configureDockerDriverGatewayExternalComponent } from "../docker-driver-gateway-env";
 import {

@@ -75,3 +75,7 @@ adapters until the remaining #9806 migration slices land. This does not claim SD
 those operations.
 
 Policy export rejects SDK messages and serialized YAML above 1 MiB. It checks cancellation before conversion and after SDK loading. OpenShell SDK 0.0.106 does not expose a transport receive-size option.
+
+## Bounded command capture
+
+`async-capture.ts` owns the shared asynchronous OpenShell process lifecycle. It retains output limits, process-group termination, cancellation, and timeout results. `client.ts` keeps its existing exports for current callers. External-component network preparation imports the focused capture module directly and supplies its selected gateway executable, sanitized environment, and operation limits. This keeps the existing client dependency budget unchanged.

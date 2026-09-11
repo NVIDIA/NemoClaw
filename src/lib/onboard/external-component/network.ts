@@ -4,7 +4,7 @@
 import { isIPv4, isIPv6 } from "node:net";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { captureOpenshellCommandAsyncResult } from "../../adapters/openshell/client";
+import { captureOpenshellCommandAsyncResult } from "../../adapters/openshell/async-capture";
 import { buildOpenShellSubprocessEnv } from "../../adapters/openshell/resolve-shared";
 import type { RuntimeProviderGatewayHostRuntime } from "../runtime-provider/contract";
 import { ExternalComponentContractError, parseStrictExternalComponentJson } from "./index";
