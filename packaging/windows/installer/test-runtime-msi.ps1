@@ -367,6 +367,30 @@ try {
     }
     if ($remaining.Count -ne 0) { throw 'Direct uninstall left installed fixture files.' }
     $receipt.emptyInstallationDirectoryRemains = Test-Path -LiteralPath $installation
+    if ($receipt.emptyInstallationDirectoryRemains) { throw 'Successful removal commit retained the empty installation root.' }
+    $reinstalled = Invoke-FixtureMsi '/i' $first.msi 'foreign-file-install'; $results.Add($reinstalled)
+    if ($reinstalled.exitCode -ne 0) { throw 'The foreign-file preservation fixture did not install.' }
+    Assert-FixtureCurrent $first
+    $foreignPath = Join-Path $installation 'foreign-user-file.txt'
+    $foreignBytes = [Text.UTF8Encoding]::new($false).GetBytes('foreign-' + [Guid]::NewGuid().ToString('N'))
+    $foreignStream = [IO.File]::Open($foreignPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+    try { $foreignStream.Write($foreignBytes, 0, $foreignBytes.Length) } finally { $foreignStream.Dispose() }
+    $foreignHash = (Get-FileHash -LiteralPath $foreignPath -Algorithm SHA256).Hash
+    $foreignRemoved = Invoke-FixtureMsi '/x' $first.msi 'foreign-file-uninstall'; $results.Add($foreignRemoved)
+    if ($foreignRemoved.exitCode -ne 0 -or -not (Test-Path -LiteralPath $foreignPath) -or
+        (Get-FileHash -LiteralPath $foreignPath -Algorithm SHA256).Hash -cne $foreignHash) {
+        throw 'Successful removal did not preserve the foreign file and its nonempty root.'
+    }
+    $foreignRemaining = @(Get-ChildItem -LiteralPath $installation -Force)
+    if ($foreignRemaining.Count -ne 1 -or $foreignRemaining[0].FullName -cne $foreignPath) {
+        throw 'Foreign-file removal retained something other than the exact control file.'
+    }
+    $receipt.foreignFilePreserved = $true
+    # Remove only our exact canary and then its empty fixture directory.
+    Remove-Item -LiteralPath $foreignPath
+    Remove-Item -LiteralPath $installation
+    $receipt.foreignFixtureCleaned = -not (Test-Path -LiteralPath $installation)
+    if (-not $receipt.foreignFixtureCleaned) { throw 'The owned foreign-file fixture did not clean up.' }
     $receipt.status = 'pass'
 } catch { $primary = $_; $receipt.error = $_.Exception.Message }
 finally {

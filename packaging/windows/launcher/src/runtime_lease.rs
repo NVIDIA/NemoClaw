@@ -982,17 +982,19 @@ pub(crate) mod native {
             Ok((Self { handles }, created))
         }
         pub(crate) fn cleanup_created(created: CreatedDirectories) -> Result<(), &'static str> {
+            Self::cleanup_empty_directories(created.application, created.vendor)
+        }
+        pub(crate) fn cleanup_removed_installation() -> Result<(), &'static str> {
+            Self::cleanup_empty_directories(true, false)
+        }
+        fn cleanup_empty_directories(application: bool, vendor: bool) -> Result<(), &'static str> {
             let installation = installed_path()?;
             let program_files = installation
                 .strip_suffix("\\NVIDIA\\NemoClaw")
                 .ok_or("runtime-installation")?;
             for (selected, name, parent) in [
-                (
-                    created.application,
-                    "NemoClaw",
-                    format!("{program_files}\\NVIDIA"),
-                ),
-                (created.vendor, "NVIDIA", program_files.to_owned()),
+                (application, "NemoClaw", format!("{program_files}\\NVIDIA")),
+                (vendor, "NVIDIA", program_files.to_owned()),
             ] {
                 if !selected {
                     continue;

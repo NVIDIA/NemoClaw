@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::runtime_lease::{
-    Descriptor,
     native::{self, ContentFile, ControlDirectory, ControlFile, CreatedDirectories},
+    Descriptor,
 };
 use super::runtime_manifest::{self, Entry};
 use super::runtime_transaction::{
@@ -299,9 +299,12 @@ impl NativeStore for WindowsStore {
             .remove(ControlFile::Maintenance)
             .map_err(native_error)?;
         self.journal = None;
-        // Successful commit opens admission as its final operation. Cleanup of
-        // newly created empty ancestors belongs only to the rollback path.
-        if expected.stage != Stage::Selected && expected.previous.is_none() {
+        // MSI cannot remove the root while these transaction markers exist.
+        // Close our directory lease before empty-only successful-remove cleanup.
+        if expected.stage == Stage::Selected && expected.operation == Operation::Remove {
+            self.directory = None;
+            ControlDirectory::cleanup_removed_installation().map_err(native_error)?;
+        } else if expected.stage != Stage::Selected && expected.previous.is_none() {
             self.directory = None;
             ControlDirectory::cleanup_created(self.created).map_err(native_error)?;
         }
