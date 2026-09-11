@@ -1,14 +1,40 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-function runRemoveIdentityRace(swapAt: "detach" | "delete") {
+// Each case loads CLI source in a separate process; keep overlap bounded.
+vi.setConfig({ maxConcurrency: 3 });
+
+interface ScriptResult {
+  status: number;
+  stderr: string;
+  stdout: string;
+}
+
+function runScript(script: string, env: NodeJS.ProcessEnv): Promise<ScriptResult> {
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      ["-e", script],
+      { cwd: process.cwd(), encoding: "utf8", env },
+      (error, stdout, stderr) => {
+        resolve({
+          status: typeof error?.code === "number" ? error.code : error ? 1 : 0,
+          stderr,
+          stdout,
+        });
+      },
+    );
+  });
+}
+
+async function runRemoveIdentityRace(swapAt: "detach" | "delete") {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-race-"));
   const script = `
 process.env.HOME = ${JSON.stringify(home)};
@@ -103,16 +129,12 @@ bridge.removeMcpBridge("alpha", "fake").then(
   })),
 );
 `;
-  const result = spawnSync(process.execPath, ["-e", script], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    env: { ...process.env, HOME: home },
-  });
+  const result = await runScript(script, { ...process.env, HOME: home });
   fs.rmSync(home, { recursive: true, force: true });
   return result;
 }
 
-function runLegacyReservedCredentialCleanup() {
+async function runLegacyReservedCredentialCleanup() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-legacy-cleanup-"));
   const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
@@ -206,20 +228,16 @@ bridge.removeMcpBridge("alpha", "fake").then(
   (error) => { console.error(error); process.exit(1); },
 );
 `;
-  const result = spawnSync(process.execPath, ["-e", script], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    env: { ...process.env, HOME: home },
-  });
+  const result = await runScript(script, { ...process.env, HOME: home });
   fs.rmSync(home, { recursive: true, force: true });
   return result;
 }
 
-describe("MCP provider ownership", () => {
+describe.concurrent("MCP provider ownership", () => {
   it.each(["detach", "delete"] as const)(
     "rechecks stable identity immediately before provider %s",
-    (boundary) => {
-      const result = runRemoveIdentityRace(boundary);
+    async (boundary) => {
+      const result = await runRemoveIdentityRace(boundary);
 
       expect(result.status, `${result.stdout}\\n${result.stderr}`).toBe(0);
       const payload = JSON.parse(result.stdout) as {
@@ -240,8 +258,8 @@ describe("MCP provider ownership", () => {
     },
   );
 
-  it("removes an exact legacy provider whose credential name is now reserved", () => {
-    const result = runLegacyReservedCredentialCleanup();
+  it("removes an exact legacy provider whose credential name is now reserved", async () => {
+    const result = await runLegacyReservedCredentialCleanup();
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as {
@@ -262,7 +280,7 @@ describe("MCP provider ownership", () => {
     );
   });
 
-  it("reports a same-shape provider with a different stable ID as drift", () => {
+  it("reports a same-shape provider with a different stable ID as drift", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-status-owner-"));
     const openshellLog = path.join(home, "openshell.log");
     const openshellStub = path.join(home, "openshell");
@@ -346,10 +364,10 @@ bridge.statusMcpBridge("alpha", "fake").then(
   (error) => { console.error(error); process.exit(1); },
 );
 `;
-    const result = spawnSync(process.execPath, ["-e", script], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: openshellStub },
+    const result = await runScript(script, {
+      ...process.env,
+      HOME: home,
+      NEMOCLAW_OPENSHELL_BIN: openshellStub,
     });
     const openshellCalls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
     fs.rmSync(home, { recursive: true, force: true });
@@ -367,7 +385,7 @@ bridge.statusMcpBridge("alpha", "fake").then(
     expect(status.provider.detail).toContain("Expected stable provider ID");
   });
 
-  it("clears multiple dangling stock OpenShell provider references without listing between them", () => {
+  it("clears multiple dangling stock OpenShell provider references without listing between them", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-dangling-"));
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
@@ -425,11 +443,7 @@ const entry = {
   process.exit(1);
 });
 `;
-    const result = spawnSync(process.execPath, ["-e", script], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: { ...process.env, HOME: home },
-    });
+    const result = await runScript(script, { ...process.env, HOME: home });
     fs.rmSync(home, { recursive: true, force: true });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -461,7 +475,7 @@ const entry = {
     ]);
   });
 
-  it("does not treat a concurrent writer's resource-version advance as our update", () => {
+  it("does not treat a concurrent writer's resource-version advance as our update", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-update-race-"));
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
@@ -511,11 +525,7 @@ let message = "";
   process.exit(1);
 });
 `;
-    const result = spawnSync(process.execPath, ["-e", script], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: { ...process.env, HOME: home },
-    });
+    const result = await runScript(script, { ...process.env, HOME: home });
     fs.rmSync(home, { recursive: true, force: true });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -534,7 +544,7 @@ let message = "";
     expect(JSON.stringify(payload.calls)).not.toContain("host-only-secret");
   });
 
-  it("does not recreate a missing provider during credential republish", () => {
+  it("does not recreate a missing provider during credential republish", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-republish-missing-"));
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
@@ -572,11 +582,7 @@ let message = "";
   process.exit(1);
 });
 `;
-    const result = spawnSync(process.execPath, ["-e", script], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: { ...process.env, HOME: home },
-    });
+    const result = await runScript(script, { ...process.env, HOME: home });
     fs.rmSync(home, { recursive: true, force: true });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -587,7 +593,7 @@ let message = "";
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("host-only-secret");
   });
 
-  it("never detaches or deletes a non-matching provider in force mode", () => {
+  it("never detaches or deletes a non-matching provider in force mode", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-owner-"));
     const script = `
 process.env.HOME = ${JSON.stringify(home)};
@@ -653,11 +659,7 @@ bridge.removeMcpBridge("alpha", "fake", { force: true }).then(
   })),
 );
 `;
-    const result = spawnSync(process.execPath, ["-e", script], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: { ...process.env, HOME: home },
-    });
+    const result = await runScript(script, { ...process.env, HOME: home });
     fs.rmSync(home, { recursive: true, force: true });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
