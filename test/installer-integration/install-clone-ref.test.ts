@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -196,6 +197,147 @@ describe("installer version stamping", testTimeoutOptions(15_000), () => {
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
+    },
+  );
+});
+
+describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
+  const REPO_URL = "https://github.com/NVIDIA/NemoClaw.git";
+
+  const cloneWithGitConfig = (
+    installer: string,
+    ref: string,
+    destination: string,
+    gitConfig: Record<string, string>,
+  ) => {
+    const entries = Object.entries(gitConfig);
+    return spawnSync(
+      "bash",
+      ["-c", 'source "$INSTALLER_UNDER_TEST"\nclone_nemoclaw_ref "$REF" "$DESTINATION"'],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DESTINATION: destination,
+          GIT_CONFIG_COUNT: String(entries.length),
+          ...Object.fromEntries(
+            entries.flatMap(([key, value], index) => [
+              [`GIT_CONFIG_KEY_${index}`, key],
+              [`GIT_CONFIG_VALUE_${index}`, value],
+            ]),
+          ),
+          INSTALLER_UNDER_TEST: installer,
+          REF: ref,
+        },
+      },
+    );
+  };
+
+  const closedLoopbackPort = () =>
+    new Promise<number>((resolve, reject) => {
+      const server = net.createServer();
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        const { port } = server.address() as net.AddressInfo;
+        server.close(() => resolve(port));
+      });
+    });
+
+  it.each([INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER])(
+    "reports a missing ref and states that the installed CLI was not changed [case %#] (#11515)",
+    (installer) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-clone-missing-ref-"));
+      const origin = path.join(tmp, "origin");
+      fs.mkdirSync(origin);
+      const git = (args: string[]) => spawnSync("git", args, { cwd: origin, encoding: "utf8" });
+
+      try {
+        expect(git(["init", "--initial-branch=main"]).status).toBe(0);
+        expect(git(["config", "user.name", "NemoClaw Test"]).status).toBe(0);
+        expect(git(["config", "user.email", "nemoclaw-test@example.invalid"]).status).toBe(0);
+        fs.writeFileSync(path.join(origin, "README.md"), "fixture\n");
+        expect(git(["add", "README.md"]).status).toBe(0);
+        expect(git(["-c", "commit.gpgsign=false", "commit", "-m", "fixture"]).status).toBe(0);
+
+        const result = cloneWithGitConfig(
+          installer,
+          "refs/heads/does-not-exist",
+          path.join(tmp, "checkout"),
+          { [`url.file://${origin}.insteadOf`]: REPO_URL },
+        );
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain(
+          `Requested install ref 'refs/heads/does-not-exist' is not available from ${REPO_URL}.`,
+        );
+        expect(result.stderr).toContain("The installed CLI was not changed.");
+        expect(result.stderr).not.toContain("Could not connect");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER])(
+    "reports a refused connection as unreachable instead of a missing ref [case %#] (#11515)",
+    async (installer) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-clone-refused-"));
+      const closedPort = await closedLoopbackPort();
+
+      try {
+        const result = cloneWithGitConfig(installer, "lkg", path.join(tmp, "checkout"), {
+          [`url.http://127.0.0.1:${closedPort}/NemoClaw.git.insteadOf`]: REPO_URL,
+          "http.proxy": "",
+        });
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain(
+          `Could not connect to ${REPO_URL} to look up install ref 'lkg'.`,
+        );
+        expect(result.stderr).toContain("The installed CLI was not changed.");
+        expect(result.stderr).not.toContain("is not available");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER])(
+    "separates a timed-out connect from a refused one by the reported connect duration [case %#] (#11515)",
+    (installer) => {
+      const classify = (gitError: string) => {
+        const result = spawnSync(
+          "bash",
+          ["-c", 'source "$INSTALLER_UNDER_TEST"\nclassify_install_ref_fetch_failure "$GIT_ERROR"'],
+          {
+            encoding: "utf8",
+            env: { ...process.env, GIT_ERROR: gitError, INSTALLER_UNDER_TEST: installer },
+          },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        return result.stdout;
+      };
+      const unableToAccess = `fatal: unable to access '${REPO_URL}/': `;
+
+      expect(
+        classify(
+          `${unableToAccess}Failed to connect to github.com port 443 after 3 ms: Couldn't connect to server`,
+        ),
+      ).toBe("connect-failed");
+      expect(
+        classify(
+          `${unableToAccess}Failed to connect to github.com port 443 after 131512 ms: Couldn't connect to server`,
+        ),
+      ).toBe("connect-timeout");
+      expect(
+        classify(
+          `${unableToAccess}Failed to connect to github.com port 443 after 129003 ms: Connection timed out`,
+        ),
+      ).toBe("connect-timeout");
+      expect(classify(`${unableToAccess}Could not resolve host: github.com`)).toBe(
+        "connect-failed",
+      );
+      expect(classify("fatal: couldn't find remote ref refs/heads/does-not-exist")).toBe(
+        "missing-ref",
+      );
     },
   );
 });
