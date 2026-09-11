@@ -372,8 +372,7 @@ RUN chown root:sandbox /sandbox \
     && chown sandbox:sandbox /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
     && printf '%s' '{}' > /sandbox/.nemoclaw/config.json \
     && chown sandbox:sandbox /sandbox/.nemoclaw/config.json \
-    && install -d -o sandbox -g sandbox -m 0700 /sandbox/.deepagents/conversation_history \
-    && test "$(stat -c '%U:%G:%a' /sandbox/.deepagents/conversation_history)" = 'sandbox:sandbox:700'
+    && install -d -o sandbox -g sandbox -m 0700 /sandbox/.deepagents/conversation_history
 
 RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod -R a+rwX /sandbox/.deepagents; \
@@ -384,7 +383,10 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         done; \
         chmod a+rw /sandbox/.nemoclaw/config.json; \
         chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
-    fi
+    fi \
+    && chown sandbox:sandbox /sandbox/.deepagents/conversation_history \
+    && chmod 0700 /sandbox/.deepagents/conversation_history \
+    && test "$(stat -c '%U:%G:%a' /sandbox/.deepagents/conversation_history)" = 'sandbox:sandbox:700'
 
 # Verify the managed bootstrap files in dynamically built images.
 RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \

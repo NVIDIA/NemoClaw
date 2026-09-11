@@ -1512,7 +1512,7 @@ const sandboxCreateOrchestrationRuntime = {
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
-  ownsForwardServicePort: (name: string, port: number) => ownsForwardServicePort(name, port),
+  ownsForwardServicePort: (n: string, p: number, k?: "dashboard" | "loopback") => ownsFwd(n, p, k),
   readDcodeSelectionDrift: createDcodeSelectionDriftReader(sandboxExec, () => GATEWAY_NAME),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
@@ -2514,7 +2514,7 @@ const {
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
-  ownsForwardServicePort,
+  ownsForwardServicePort: ownsFwd,
   printDashboard,
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({

@@ -1680,7 +1680,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         env: process.env,
         getSandbox: registry.getSandbox,
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
-        ownsExistingForward: (port: number) => ownsForwardServicePort(sandboxName, port),
+        ownsExistingForward: (port: number) =>
+          ownsForwardServicePort(sandboxName, port, "loopback"),
         warn: (message: string) => console.warn(message),
       };
     if (manageDashboard) {

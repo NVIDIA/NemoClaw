@@ -171,7 +171,11 @@ export interface OnboardDashboardHelpers {
     chatUiUrl?: string,
     options?: Parameters<typeof dashboardAccess.getDashboardForwardTarget>[1],
   ): string;
-  ownsForwardServicePort(sandboxName: string, port: number): boolean;
+  ownsForwardServicePort(
+    sandboxName: string,
+    port: number,
+    targetKind?: "dashboard" | "loopback",
+  ): boolean;
   printDashboard(
     sandboxName: string,
     model: string,
@@ -289,10 +293,25 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     );
   }
 
-  function ownsForwardServicePort(sandboxName: string, port: number): boolean {
+  function ownsForwardServicePort(
+    sandboxName: string,
+    port: number,
+    targetKind: "dashboard" | "loopback" = "dashboard",
+  ): boolean {
     const gatewayName = resolveForwardServiceGateway(sandboxName);
     if (gatewayName === null) return false;
-    return ownsDashboardForward(sandboxName, gatewayName, port, `http://127.0.0.1:${String(port)}`);
+    const target =
+      targetKind === "loopback"
+        ? `127.0.0.1:${String(port)}`
+        : buildChain({
+            chatUiUrl: `http://127.0.0.1:${String(port)}`,
+            port,
+            ...dashboardAccess.resolveDashboardPlatformHints({
+              isWsl: deps.isWsl(),
+              runCapture: deps.runCapture,
+            }),
+          }).forwardTarget;
+    return forwardService?.owns?.(forwardTarget(sandboxName, gatewayName, port, target)) === true;
   }
 
   function getDashboardForwardPort(

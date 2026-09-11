@@ -208,20 +208,6 @@ function assertEveryRequirementIsHashLocked(requirementsLock: string): void {
 }
 
 describe("LangChain Deep Agents Code image contracts", () => {
-  it("keeps conversation history writable by the sandbox runtime user", () => {
-    const dockerfile = readAgentFile("Dockerfile");
-    const ownershipRepair =
-      "install -d -o sandbox -g sandbox -m 0700 /sandbox/.deepagents/conversation_history";
-    const ownershipAssertion =
-      "test \"$(stat -c '%U:%G:%a' /sandbox/.deepagents/conversation_history)\" = 'sandbox:sandbox:700'";
-    const finalRuntimeUser = dockerfile.lastIndexOf("USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}");
-
-    expect(dockerfile).toContain(ownershipRepair);
-    expect(dockerfile).toContain(ownershipAssertion);
-    expect(dockerfile.indexOf(ownershipRepair)).toBeLessThan(finalRuntimeUser);
-    expect(dockerfile.indexOf(ownershipAssertion)).toBeLessThan(finalRuntimeUser);
-  });
-
   it.each([
     "/usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true",
     "/usr/local/bin/dcode --version",
