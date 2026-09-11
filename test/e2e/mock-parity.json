@@ -299,7 +299,10 @@
     },
     {
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
-      "liveSources": ["test/e2e/live/dashboard-connect-handoff.ts", "test/e2e/live/json-envelope.ts"],
+      "liveSources": [
+        "test/e2e/live/dashboard-connect-handoff.ts",
+        "test/e2e/live/json-envelope.ts"
+      ],
       "fast": [
         "test/e2e/support/json-envelope.test.ts",
         "test/e2e/support/dashboard-connect-handoff.test.ts",
@@ -821,6 +824,7 @@
       "live": "test/e2e/live/rebuild-hermes.test.ts",
       "liveSources": [
         "test/e2e/live/rebuild-hermes-base-identity.ts",
+        "test/e2e/live/rebuild-hermes-cron-restore.ts",
         "test/e2e/live/rebuild-hermes-env.ts",
         "test/e2e/live/rebuild-hermes-host-policy.ts"
       ],
