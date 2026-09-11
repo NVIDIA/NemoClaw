@@ -64,6 +64,8 @@ call GitHub. A separate secret-free job reconstructs and validates the patch. Wh
 explicitly requested, the protected deterministic publisher rechecks the live state and may make
 one verified, non-force, compare-and-swap branch update. A trusted-main reporter then runs and
 records the approved exact-generated-SHA checks without starting another repair attempt.
+The publisher seals the generated-head request before branch mutation, but the reporter receives
+it only from the completed, successful parent run after publication and its dependent audit finish.
 Only blocking `P0` and `P1` machine-ledger findings are eligible for this repair path; every other
 severity fails closed at the trusted selection boundary.
 

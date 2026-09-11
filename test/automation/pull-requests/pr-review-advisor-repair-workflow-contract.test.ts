@@ -17,6 +17,10 @@ describe("PR Review Advisor repair workflow contracts", () => {
   const generatedHeadWorkflow = readYaml<AdvisorWorkflow>(
     ".github/workflows/pr-review-advisor-generated-head.yaml",
   );
+  const generatedHeadWorkflowText = readFileSync(
+    ".github/workflows/pr-review-advisor-generated-head.yaml",
+    "utf8",
+  );
 
   // source-shape-contract: security -- Job permissions and artifact routing are the executable privilege boundary for Advisor repair.
   it("keeps Phase 0 Advisor repair manual, credential-separated, and non-publishing (#10791)", () => {
@@ -105,6 +109,9 @@ describe("PR Review Advisor repair workflow contracts", () => {
     expect(upload).toBeLessThan(
       repairPublishText.indexOf("Compare-and-swap the prepared repair commit"),
     );
+    expect(generatedHeadWorkflowText).toContain("types: [completed]");
+    expect(repairRequest.if).toContain("github.event.workflow_run.conclusion == 'success'");
+    expect(audit.needs).toContain("repair-publish");
     const auditSteps = advisorWorkflow.jobs["repair-audit"]?.steps ?? [];
     const writeAuditStep = auditSteps.find(
       (candidate) => candidate.name === "Write bounded redacted receipt",
