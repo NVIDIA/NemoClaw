@@ -11,6 +11,7 @@ const SCRIPT = path.join(REPO_ROOT, "tools", "e2e", "brev-launchable-e2e.sh");
 const REAL_CUT = spawnSync("which", ["cut"], { encoding: "utf8" }).stdout.trim();
 const REAL_PYTHON3 = spawnSync("which", ["python3"], { encoding: "utf8" }).stdout.trim();
 const REAL_STAT = spawnSync("which", ["stat"], { encoding: "utf8" }).stdout.trim();
+const REAL_TEE = spawnSync("which", ["tee"], { encoding: "utf8" }).stdout.trim();
 export const candidateSha = "a".repeat(40);
 const roots: string[] = [];
 
@@ -45,6 +46,7 @@ export function fixture(
     createAppearsAfterRefresh?: number;
     createStatus?: number;
     deleteFails?: boolean;
+    delayWorkspaceSshLog?: boolean;
     e2eDiagnosticTimesOut?: boolean;
     e2eFails?: boolean;
     gatewayChildJournal?: string;
@@ -131,6 +133,19 @@ exec "$@"
     path.join(bin, "sleep"),
     '#!/usr/bin/env bash\nprintf "sleep %s\\n" "$*" >> "$FAKE_CALLS"\n',
   );
+  if (options.delayWorkspaceSshLog) {
+    executable(
+      path.join(bin, "tee"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+IFS= read -r line || true
+if [[ "$line" == "Waiting up to "*" seconds for workspace SSH access" ]]; then
+  /bin/sleep 1
+fi
+printf '%s\n' "$line" | ${JSON.stringify(REAL_TEE)} "$@"
+`,
+    );
+  }
   executable(
     path.join(bin, "sudo"),
     `#!/usr/bin/env bash

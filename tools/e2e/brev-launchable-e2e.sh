@@ -393,12 +393,13 @@ wait_for_workspace_ssh() {
   log "Waiting up to $timeout_seconds seconds for workspace SSH access"
 
   remaining=$((deadline - SECONDS))
-  [ "$remaining" -gt 0 ] || die "workspace SSH readiness timed out"
-  refresh_timeout=$((remaining < 60 ? remaining : 60))
-  run_bounded_probe "$refresh_timeout" refresh_error refresh_status brev refresh
-  if [ "$refresh_status" -ne 0 ]; then
-    last_refresh_error="$refresh_error"
-    last_refresh_failure_status="$refresh_status"
+  if [ "$remaining" -gt 0 ]; then
+    refresh_timeout=$((remaining < 60 ? remaining : 60))
+    run_bounded_probe "$refresh_timeout" refresh_error refresh_status brev refresh
+    if [ "$refresh_status" -ne 0 ]; then
+      last_refresh_error="$refresh_error"
+      last_refresh_failure_status="$refresh_status"
+    fi
   fi
 
   while [ "$SECONDS" -lt "$deadline" ]; do

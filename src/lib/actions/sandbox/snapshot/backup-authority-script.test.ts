@@ -19,6 +19,7 @@ const MAX_CONFIG_BYTES = 16 * 1024 * 1024;
 const HERMES_DIRECTORY_MAX_BYTES = 256 * 1024 * 1024;
 const PROTOCOL_PREFIX = "nemoclaw-openclaw-config-capture:";
 const fixtureRoots: string[] = [];
+const linuxIt = process.platform === "linux" ? it : it.skip;
 
 interface CaptureResult {
   readonly status: number | null;
@@ -164,7 +165,8 @@ describe("Hermes privileged state capture scripts", () => {
     expect(unsafe.stdout).toEqual(Buffer.alloc(0));
   });
 
-  it("uses SQLite backup with a valid database", () => {
+  // The shipped sandbox probe opens SQLite through Linux /proc/self/fd.
+  linuxIt("uses SQLite backup with a valid database", () => {
     const directory = fixtureDirectory();
     const database = path.join(directory, "state.db");
     expect(
@@ -227,7 +229,8 @@ describe("Hermes privileged state capture scripts", () => {
     expect(captured.stdout).toEqual(Buffer.alloc(0));
   });
 
-  it("rejects a SQLite file replaced during capture without returning bytes", () => {
+  // The shipped sandbox probe opens SQLite through Linux /proc/self/fd.
+  linuxIt("rejects a SQLite file replaced during capture without returning bytes", () => {
     const directory = fixtureDirectory();
     const database = path.join(directory, "state.db");
     const outside = path.join(path.dirname(directory), "outside.db");

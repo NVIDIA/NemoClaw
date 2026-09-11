@@ -291,7 +291,7 @@ describe("handleGatewayState", () => {
   });
 
   it("starts the gateway after component preparation succeeds (#11507)", async () => {
-    const directory = fs.mkdtempSync(path.join(path.dirname(process.cwd()), "nc-prepare-"));
+    const directory = fs.mkdtempSync(path.join(fs.realpathSync(os.homedir()), "nc-prepare-"));
     const socketPath = path.join(directory, "activate.sock");
     const component = preparedConnectionComponent(socketPath);
     const preparation: componentActivation.ExternalComponentGatewayPreparation = {

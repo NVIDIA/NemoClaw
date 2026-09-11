@@ -290,6 +290,21 @@
       "file": "test/runtime/policy/repro-5978-policy-denial-hint.test.ts",
       "test": "prints only once when the file is sourced twice in one login shell",
       "category": "compatibility"
+    },
+    {
+      "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test": "preserves distinct main-commit evidence in a serialized queue",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test": "grants only the read access needed to install reviewed dependencies",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test": "installs container clients before Vitest but starts Docker only afterward",
+      "category": "compatibility"
     }
   ]
 }

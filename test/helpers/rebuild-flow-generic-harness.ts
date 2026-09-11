@@ -38,6 +38,7 @@ import {
   policies,
   policyGet,
   policyState,
+  portableRetirementAuthority,
   processRecovery,
   purgeRebuildModule,
   type RebuildFlowHarness,
@@ -226,6 +227,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockReturnValue(
       overrides.baseImagePreflight ?? { ok: true, imageRef: null, overrideEnvVar: null },
     );
+  vi.spyOn(rebuildFlowHelpers, "removeStaleRebuildDockerOrphan").mockReturnValue(undefined);
+  vi.spyOn(onboardSession, "listRetainedSandboxRecoveryRecords").mockReturnValue([]);
+  if (!overrides.useRealPortableRetirementBoundary) {
+    vi.spyOn(
+      portableRetirementAuthority,
+      "withPortableOnboardRetirementBoundary",
+    ).mockImplementation(((_boundary: unknown, operation: () => unknown) => operation()) as never);
+  }
   const imageIdsByRef = new Map([
     [agentBaseImageRef, agentBaseImageId],
     [agentBaseImageId, agentBaseImageId],

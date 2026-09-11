@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import { execTimeout } from "../../../../test/helpers/timeouts";
 import { hermesPortableContainerInternals } from "./hermes-portable-container";
 import { hermesPortableLifecycleInternals } from "./hermes-portable-lifecycle";
 
@@ -24,7 +25,9 @@ class Health(http.server.BaseHTTPRequestHandler):
         self.end_headers()
     def log_message(self, *args):
         pass
-server = http.server.HTTPServer(("127.0.0.1", 0), Health)
+# The loopback fixture's server name must not depend on host DNS.
+with patch("socket.getfqdn", return_value="localhost"):
+    server = http.server.HTTPServer(("127.0.0.1", 0), Health)
 thread = threading.Thread(target=server.serve_forever, daemon=True)
 thread.start()
 stdout, stderr = io.StringIO(), io.StringIO()
@@ -70,9 +73,9 @@ function runProbe(
   const result = spawnSync("python3", ["-I", "-c", HARNESS], {
     input: JSON.stringify({ program, env, status, redirect, successStatus }),
     encoding: "utf8",
-    timeout: 5_000,
+    timeout: execTimeout(5_000),
   });
-  expect(result.error).toBeUndefined();
+  expect(result.error, result.stderr).toBeUndefined();
   expect(result.status, result.stderr).toBe(0);
   const output = JSON.parse(result.stdout) as {
     code: number;

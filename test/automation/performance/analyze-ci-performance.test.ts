@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -30,6 +31,12 @@ async function fixtureDirectory(): Promise<string> {
 async function installMockGh(directory: string, source: string): Promise<string> {
   const bin = path.join(directory, "bin");
   await execFileAsync("mkdir", ["-p", bin]);
+  const gnuTools = ["dd", "stat", "base64", "wc"]
+    .map((name) => ({ name, executable: `/usr/bin/gnu${name}` }))
+    .filter(({ executable }) => existsSync(executable));
+  for (const { name, executable } of gnuTools) {
+    await symlink(executable, path.join(bin, name));
+  }
   const gh = path.join(bin, "gh");
   await writeFile(gh, "#!/usr/bin/env node\n" + source);
   await chmod(gh, 0o700);
@@ -97,7 +104,7 @@ describe("CI performance analysis", () => {
     await writeFile(trustedListing, JSON.stringify(trustedRuns));
     const bin = await installMockGh(
       directory,
-      `const fs=require("node:fs"); const args=process.argv.slice(2); if(args[0]==="run"){process.stdout.write(fs.readFileSync(process.env.TRUSTED));}else if(args.includes("--jq")){process.stdout.write(fs.readFileSync(process.env.LISTING));}else{const endpoint=args.join(" "); const id=endpoint.split("/artifacts/")[1].split("/zip")[0];process.stdout.write(fs.readFileSync(process.env.ARCHIVES+"/"+id+".zip"));}`,
+      `const fs=require("node:fs"); const args=process.argv.slice(2); if(args[0]==="run"){process.stdout.write(fs.readFileSync(process.env.TRUSTED));}else if(args.includes("--jq")){process.stdout.write(fs.readFileSync(process.env.LISTING));}else{const endpoint=args.join(" "); const id=endpoint.split("/artifacts/")[1].split("/zip")[0];fs.writeSync(1,fs.readFileSync(process.env.ARCHIVES+"/"+id+".zip"));}`,
     );
     const result = await runAnalyzer(
       `${skillRoot}/scripts/analyze-recent-cli-timings.mts`,
