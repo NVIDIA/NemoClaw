@@ -51,12 +51,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
     const forceRemove = vi.fn(() => ({ status: 0 }));
 
     expect(() =>
-      removeExactOpenShellDockerSandboxContainers(
-        "alpha",
-        [expectedContainerId],
-        vi.fn(),
-        { inspectContainers, forceRemove },
-      ),
+      removeExactOpenShellDockerSandboxContainers("alpha", [expectedContainerId], vi.fn(), {
+        inspectContainers,
+        forceRemove,
+      }),
     ).toThrow("could not confirm exact Docker container removal");
 
     expect(forceRemove).toHaveBeenCalledWith(expectedContainerId);
@@ -71,12 +69,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
       return { status: 0 };
     });
 
-    removeExactOpenShellDockerSandboxContainers(
-      "alpha",
-      expectedContainerIds,
-      vi.fn(),
-      { inspectContainers, forceRemove },
-    );
+    removeExactOpenShellDockerSandboxContainers("alpha", expectedContainerIds, vi.fn(), {
+      inspectContainers,
+      forceRemove,
+    });
 
     expect(forceRemove.mock.calls.map(([containerId]) => containerId)).toEqual(
       expectedContainerIds,
@@ -94,12 +90,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
       return { status: 0 };
     });
 
-    removeExactOpenShellDockerSandboxContainers(
-      "alpha",
-      [alreadyRemovedId, remainingId],
-      vi.fn(),
-      { inspectContainers, forceRemove },
-    );
+    removeExactOpenShellDockerSandboxContainers("alpha", [alreadyRemovedId, remainingId], vi.fn(), {
+      inspectContainers,
+      forceRemove,
+    });
 
     expect(forceRemove).toHaveBeenCalledExactlyOnceWith(remainingId);
     expect(currentContainerIds).toEqual([]);
@@ -111,15 +105,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
     const forceRemove = vi.fn(() => ({ status: 0 }));
 
     expect(() =>
-      removeExactOpenShellDockerSandboxContainers(
-        "alpha",
-        [expectedContainerId],
-        vi.fn(),
-        {
-          inspectContainers: vi.fn(() => observeContainerIds([replacementContainerId])),
-          forceRemove,
-        },
-      ),
+      removeExactOpenShellDockerSandboxContainers("alpha", [expectedContainerId], vi.fn(), {
+        inspectContainers: vi.fn(() => observeContainerIds([replacementContainerId])),
+        forceRemove,
+      }),
     ).toThrow("refusing replacement cleanup");
 
     expect(forceRemove).not.toHaveBeenCalled();
@@ -130,15 +119,10 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
     const forceRemove = vi.fn(() => ({ status: 0 }));
 
     expect(() =>
-      removeExactOpenShellDockerSandboxContainers(
-        "alpha",
-        [expectedContainerId],
-        vi.fn(),
-        {
-          inspectContainers: vi.fn(() => observeContainerIds([], 1)),
-          forceRemove,
-        },
-      ),
+      removeExactOpenShellDockerSandboxContainers("alpha", [expectedContainerId], vi.fn(), {
+        inspectContainers: vi.fn(() => observeContainerIds([], 1)),
+        forceRemove,
+      }),
     ).toThrow("malformed container identity row");
 
     expect(forceRemove).not.toHaveBeenCalled();

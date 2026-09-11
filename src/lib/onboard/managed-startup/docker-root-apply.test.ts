@@ -54,58 +54,32 @@ function successfulSpawnResult() {
 }
 
 describe("Docker managed-startup root applicator", () => {
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("pins exact container/image identity and uses fixed root stdin for %s", (agent) => {
-    const request = requestFor(agent);
-    const dockerCapture = vi.fn(() => stableInspect());
-    const dockerSpawnSync = vi.fn(() => successfulSpawnResult());
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "pins exact container/image identity and uses fixed root stdin for %s",
+    (agent) => {
+      const request = requestFor(agent);
+      const dockerCapture = vi.fn(() => stableInspect());
+      const dockerSpawnSync = vi.fn(() => successfulSpawnResult());
 
-    expect(
-      applyDockerManagedStartupRootRequest(
-        { containerId: CONTAINER_ID, request },
-        { dockerCapture, dockerSpawnSync, environment: {} },
-      ),
-    ).toEqual({ agent, containerId: CONTAINER_ID, image: IMAGE_ID });
+      expect(
+        applyDockerManagedStartupRootRequest(
+          { containerId: CONTAINER_ID, request },
+          { dockerCapture, dockerSpawnSync, environment: {} },
+        ),
+      ).toEqual({ agent, containerId: CONTAINER_ID, image: IMAGE_ID });
 
-    expect(dockerCapture).toHaveBeenCalledWith(["inspect", "--type", "container", CONTAINER_ID], {
-      ignoreError: false,
-      timeout: 30_000,
-    });
-    expect(dockerSpawnSync).toHaveBeenCalledTimes(2);
-    const [argv, options] = dockerSpawnSync.mock.calls[0] as unknown as [
-      string[],
-      { input: string; timeout: number; encoding: string },
-    ];
-    expect(argv).toEqual([
-      "exec",
-      "--interactive",
-      "--user",
-      "0:0",
-      "--workdir",
-      "/",
-      CONTAINER_ID,
-      "/usr/bin/env",
-      "-i",
-      "HOME=/root",
-      "LANG=C.UTF-8",
-      "LC_ALL=C.UTF-8",
-      "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "/usr/local/bin/node",
-      "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
-      "--apply-root-stdin",
-      "--agent",
-      agent,
-    ]);
-    expect(argv.join(" ")).not.toContain(request.encodedProfile);
-    expect(parseManagedStartupRootApplyRequest(options.input)).toEqual(request);
-    expect(options).toMatchObject({ encoding: "utf8", timeout: 300_000 });
-    expect(dockerSpawnSync.mock.calls[1]).toEqual([
-      [
+      expect(dockerCapture).toHaveBeenCalledWith(["inspect", "--type", "container", CONTAINER_ID], {
+        ignoreError: false,
+        timeout: 30_000,
+      });
+      expect(dockerSpawnSync).toHaveBeenCalledTimes(2);
+      const [argv, options] = dockerSpawnSync.mock.calls[0] as unknown as [
+        string[],
+        { input: string; timeout: number; encoding: string },
+      ];
+      expect(argv).toEqual([
         "exec",
+        "--interactive",
         "--user",
         "0:0",
         "--workdir",
@@ -113,16 +87,41 @@ describe("Docker managed-startup root applicator", () => {
         CONTAINER_ID,
         "/usr/bin/env",
         "-i",
+        "HOME=/root",
+        "LANG=C.UTF-8",
+        "LC_ALL=C.UTF-8",
+        "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "/bin/sh",
-        "-c",
-        'if [ -d "$1" ] && [ ! -L "$1" ]; then exit 0; fi; if [ ! -e "$1" ] && [ ! -L "$1" ]; then exit 1; fi; exit 2',
-        "nemoclaw-transaction-probe",
-        MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
-      ],
-      { encoding: "utf8", timeout: 30_000 },
-    ]);
-  });
+        "/usr/local/bin/node",
+        "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
+        "--apply-root-stdin",
+        "--agent",
+        agent,
+      ]);
+      expect(argv.join(" ")).not.toContain(request.encodedProfile);
+      expect(parseManagedStartupRootApplyRequest(options.input)).toEqual(request);
+      expect(options).toMatchObject({ encoding: "utf8", timeout: 300_000 });
+      expect(dockerSpawnSync.mock.calls[1]).toEqual([
+        [
+          "exec",
+          "--user",
+          "0:0",
+          "--workdir",
+          "/",
+          CONTAINER_ID,
+          "/usr/bin/env",
+          "-i",
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "/bin/sh",
+          "-c",
+          'if [ -d "$1" ] && [ ! -L "$1" ]; then exit 0; fi; if [ ! -e "$1" ] && [ ! -L "$1" ]; then exit 1; fi; exit 2',
+          "nemoclaw-transaction-probe",
+          MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+        ],
+        { encoding: "utf8", timeout: 30_000 },
+      ]);
+    },
+  );
 
   it("forwards only allowlisted application-runtime controls through the clean root exec", () => {
     const dockerSpawnSync = vi.fn(() => successfulSpawnResult());

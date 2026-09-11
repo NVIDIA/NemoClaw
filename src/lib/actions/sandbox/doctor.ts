@@ -420,9 +420,9 @@ function resolveInferenceRoute(
   };
 }
 
-function agentVersionDoctorCheck(sandboxName: string): DoctorCheck {
+async function agentVersionDoctorCheck(sandboxName: string): Promise<DoctorCheck> {
   try {
-    const version = sandboxVersion.checkAgentVersion(sandboxName);
+    const version = await sandboxVersion.checkAgentVersion(sandboxName);
     const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
     if (version.isStale) {
       return {
@@ -464,7 +464,7 @@ async function collectRegisteredSandboxChecks(
   sandboxReachable: boolean,
 ): Promise<DoctorCheck[]> {
   if (!sb) return [];
-  const checks = [agentVersionDoctorCheck(sandboxName)];
+  const checks = [await agentVersionDoctorCheck(sandboxName)];
   let dashboardPortRequired = true;
   try {
     dashboardPortRequired = shouldManageDashboardForAgent(loadAgent(sb.agent || "openclaw"));
@@ -605,8 +605,7 @@ function globalGatewayGuidance(gatewayName: string): {
   try {
     return { checks: [], unavailableHint: gatewayDoctorStartHint(gatewayName) };
   } catch {
-    const hint =
-      "check the gateway-management declaration file permissions and JSON, then retry";
+    const hint = "check the gateway-management declaration file permissions and JSON, then retry";
     return {
       checks: [
         {

@@ -3,7 +3,7 @@
 
 import * as agentRuntime from "../../../agent/runtime";
 import { inspectPortableAgentReceiptDisposition } from "../../../onboard/experimental/portable-agent-lifecycle";
-import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock";
+import { withSandboxLifecycleLock } from "../lifecycle/lock";
 import { connectSandbox } from "../connect";
 import {
   prepareHermesCronRestoreRecovery,
@@ -14,7 +14,7 @@ const RECOVERY_LOCK_TIMEOUT_MS = 30_000;
 
 /** Re-establish a Hermes gate before gateway repair, then validate and release it. */
 export async function recoverSandboxWithHermesCronRestore(sandboxName: string): Promise<void> {
-  await withMcpLifecycleLock(
+  await withSandboxLifecycleLock(
     sandboxName,
     async () => {
       const portable = inspectPortableAgentReceiptDisposition(sandboxName);

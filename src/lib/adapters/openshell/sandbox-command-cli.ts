@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { spawn, spawnSync, type SpawnSyncReturns, type StdioOptions } from "node:child_process";
 
+import {
+  superviseProcessSession,
+  type ProcessSessionChild,
+  type ProcessSessionResult,
+} from "../../core/process-session";
 import { spawnExitCode } from "../../core/process-exit";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isValidName } from "../../sandbox-name-contract";
@@ -17,6 +22,7 @@ import {
   type OpenShellSandboxBufferedCommandRequest,
   type OpenShellSandboxBufferedCommandExecutor,
   type OpenShellSandboxCommandCompletion,
+  type OpenShellSandboxCommandError,
   type OpenShellSandboxCommandExecutor,
   type OpenShellSandboxCommandRequest,
   type OpenShellSandboxCommandOutcome,
@@ -24,18 +30,14 @@ import {
 import { buildSandboxCommandStdio } from "./sandbox-command-stdio";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
 
-export type OpenShellCommandChild = {
-  exitCode: number | null;
-  signalCode: NodeJS.Signals | null;
-  kill: (signal: NodeJS.Signals) => boolean;
-  once: {
-    (event: "error", listener: (error: Error) => void): unknown;
-    (
-      event: "close",
-      listener: (code: number | null, signal: NodeJS.Signals | null) => void,
-    ): unknown;
-  };
-};
+import { runCapturedProcess, type CapturedProcessChild } from "../../core/process-capture";
+import type {
+  OpenShellSandboxSessionExecutor,
+  OpenShellSandboxSessionOutcome,
+  OpenShellSandboxSessionRequest,
+} from "./sandbox-session";
+
+export type OpenShellCommandChild = ProcessSessionChild;
 
 export type OpenShellCommandSpawner = (
   binary: string,
@@ -51,12 +53,7 @@ export type OpenShellCommandChildOptions = Readonly<{
   hostEnv?: NodeJS.ProcessEnv;
 }>;
 
-export type OpenShellCommandSpawnResult = Readonly<{
-  status: number | null;
-  signal?: NodeJS.Signals | null;
-  error?: Error;
-  releaseSignals?: () => void;
-}>;
+export type OpenShellCommandSpawnResult = Readonly<ProcessSessionResult>;
 
 export type OpenShellBufferedCommandRunResult = Readonly<{
   status: number | null;
@@ -172,7 +169,7 @@ export const runCliOpenShellBufferedCommand: OpenShellBufferedCommandRunner = as
   try {
     const result = await captureOpenshellCommandAsyncResult(binary, args, {
       cwd: options.hostCwd,
-      environment: options.environment,
+      environment: options.environment ?? buildSubprocessEnv(),
       // Ignored stdin supplies immediate EOF without opening a writable pipe
       // that can race a short-lived child with EPIPE.
       input: options.input,
@@ -186,11 +183,8 @@ export const runCliOpenShellBufferedCommand: OpenShellBufferedCommandRunner = as
       signal: result.signal ?? result.timeoutSignal ?? null,
       stdout: result.stdout,
       stderr: result.stderr,
-      ...(result.timedOut
-        ? { timedOut: true }
-        : result.error
-          ? { error: result.error, timedOut: false }
-          : {}),
+      ...(result.timedOut ? { timedOut: true } : {}),
+      ...(!result.timedOut && result.error ? { error: result.error, timedOut: false } : {}),
     };
   } catch (error) {
     return {
@@ -209,55 +203,18 @@ export async function runCliOpenShellStreamingCommand(
   spawnChild: OpenShellCommandSpawner = defaultSpawner,
   signalSource: OpenShellCommandSignalSource = defaultSignalSource,
 ): Promise<OpenShellCommandSpawnResult> {
-  let child: OpenShellCommandChild;
-  try {
-    child = spawnChild(binary, args, options);
-  } catch (error) {
-    return { status: null, error: error instanceof Error ? error : new Error(String(error)) };
-  }
-
-  return new Promise((resolve) => {
-    let spawnError: Error | undefined;
-    const forwardTerm = () => {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
-    };
-    // A terminal Ctrl+C already reaches every member of the foreground process
-    // group. Hold it in the parent without delivering it to the child twice.
-    const holdInt = () => {};
-    signalSource.add("SIGTERM", forwardTerm);
-    signalSource.add("SIGINT", holdInt);
-    child.once("error", (error) => {
-      spawnError = error;
-    });
-    child.once("close", (status, signal) => {
-      resolve({
-        status,
-        signal,
-        ...(spawnError ? { error: spawnError } : {}),
-        releaseSignals: () => {
-          signalSource.remove("SIGTERM", forwardTerm);
-          signalSource.remove("SIGINT", holdInt);
-        },
-      });
-    });
-  });
+  return superviseProcessSession(() => spawnChild(binary, args, options), signalSource);
 }
 
-function commandError(error: Error) {
+function commandError(error: Error): OpenShellSandboxCommandError {
   const code = (error as NodeJS.ErrnoException).code;
-  return {
-    kind:
-      code === "ENOENT"
-        ? "unavailable"
-        : code === "ECANCELED"
-          ? "cancelled"
-          : code === "ETIMEDOUT"
-            ? "timeout"
-            : code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
-              ? "capture"
-              : "invocation",
-    message: error.message,
-  } as const;
+  if (code === "ENOENT") return { kind: "unavailable", message: error.message };
+  if (code === "ECANCELED") return { kind: "cancelled", message: error.message };
+  if (code === "ETIMEDOUT") return { kind: "timeout", message: error.message };
+  if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+    return { kind: "capture", message: error.message };
+  }
+  return { kind: "invocation", message: error.message };
 }
 
 function commandFailure(error: Error): OpenShellSandboxCommandOutcome {
@@ -267,18 +224,21 @@ function commandFailure(error: Error): OpenShellSandboxCommandOutcome {
 function bufferedCommandCompletion(
   result: OpenShellBufferedCommandRunResult,
 ): OpenShellSandboxBufferedCommandCompletion {
-  const outcome = result.timedOut
-    ? {
-        kind: "failed" as const,
-        error: { kind: "timeout" as const, message: "OpenShell command timed out" },
-      }
-    : result.error
-      ? commandFailure(result.error)
-      : {
-          kind: "completed" as const,
-          exitCode: spawnExitCode(result),
-          ...(result.signal ? { signal: result.signal } : {}),
-        };
+  let outcome: OpenShellSandboxCommandOutcome;
+  if (result.timedOut) {
+    outcome = {
+      kind: "failed",
+      error: { kind: "timeout", message: "OpenShell command timed out" },
+    };
+  } else if (result.error) {
+    outcome = commandFailure(result.error);
+  } else {
+    outcome = {
+      kind: "completed",
+      exitCode: spawnExitCode(result),
+      ...(result.signal ? { signal: result.signal } : {}),
+    };
+  }
   return { outcome, stdout: result.stdout, stderr: result.stderr };
 }
 
@@ -403,6 +363,184 @@ export function createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor
       } finally {
         assertCurrent();
       }
+    },
+  };
+}
+
+export type CliOpenShellSessionChild = CapturedProcessChild;
+export type CliOpenShellSessionSpawner = (
+  binary: string,
+  args: readonly string[],
+  options: { cwd?: string; env: NodeJS.ProcessEnv; stdio: StdioOptions },
+) => CliOpenShellSessionChild;
+
+function restoreTerminal(cwd?: string): void {
+  if (!process.stdin.isTTY) return;
+  try {
+    process.stdin.setRawMode?.(false);
+  } catch {
+    /* Best effort. */
+  }
+  try {
+    spawnSync("stty", ["sane"], {
+      cwd,
+      env: buildSubprocessEnv(),
+      stdio: ["inherit", "ignore", "ignore"],
+    });
+  } catch {
+    /* Preserve the session outcome. */
+  }
+}
+
+function failed(
+  reason: "configuration" | "unavailable" | "invocation" | "transport" | "capture",
+  message: string,
+  exitCode = 1,
+): OpenShellSandboxSessionOutcome {
+  return { kind: "failed", reason, message, exitCode };
+}
+
+function sessionOutcome(
+  result: OpenShellCommandSpawnResult,
+  cancelled: boolean,
+): OpenShellSandboxSessionOutcome {
+  if (result.error) {
+    const code = (result.error as NodeJS.ErrnoException).code;
+    if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+      return failed("capture", result.error.message);
+    if (code === "ECANCELED") return { kind: "cancelled", exitCode: 143 };
+    return failed(code === "ENOENT" ? "unavailable" : "invocation", result.error.message);
+  }
+  if (cancelled) return { kind: "cancelled", exitCode: 143 };
+  const exitCode = spawnExitCode(result);
+  if (result.status === 255 || result.signal === "SIGHUP" || result.signal === "SIGPIPE") {
+    return failed("transport", "Gateway connection lost", exitCode);
+  }
+  if (result.signal) return { kind: "signalled", signal: result.signal, exitCode };
+  if (result.status === null)
+    return failed("transport", "OpenShell session ended without an exit status");
+  return { kind: "exited", exitCode };
+}
+
+function sessionArgs(request: OpenShellSandboxSessionRequest): string[] {
+  if (
+    !isValidName(request.sandboxName) ||
+    (request.target.kind === "named" && !isValidName(request.target.gatewayName))
+  ) {
+    throw new Error("Invalid OpenShell session target");
+  }
+  if (request.kind === "connect") {
+    const gateway = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+    return ["sandbox", "connect", ...gateway, request.sandboxName];
+  }
+  if (request.command.some((arg) => arg.includes("\0")) || /[\0\r\n]/.test(request.workdir ?? "")) {
+    throw new Error("Invalid OpenShell session command or working directory");
+  }
+  return buildCliOpenShellSandboxExecArgs(request);
+}
+
+/** Own interactive process wiring and cleanup while exposing only session outcomes. */
+export function createCliOpenShellSandboxSessionExecutor(
+  deps: {
+    resolveBinary?: () => string | null;
+    environment?: NodeJS.ProcessEnv;
+    hostCwd?: string;
+    stdinIsTty?: () => boolean;
+    spawnChild?: CliOpenShellSessionSpawner;
+    signalSource?: OpenShellCommandSignalSource;
+    restoreTerminal?: () => void;
+  } = {},
+): OpenShellSandboxSessionExecutor {
+  return {
+    start(request) {
+      const environment = deps.environment ?? buildSubprocessEnv();
+      let binary: string | null;
+      let args: string[];
+      try {
+        assertNoOpenShellGatewayEndpointOverride(environment);
+        args = sessionArgs(request);
+        binary = (deps.resolveBinary ?? resolveOpenshellBinaryOrNull)();
+      } catch (error) {
+        return {
+          cancel() {},
+          completion: Promise.resolve({
+            outcome: failed(
+              "configuration",
+              error instanceof Error ? error.message : String(error),
+            ),
+            stdout: "",
+            stderr: "",
+            release() {},
+          }),
+        };
+      }
+      if (!binary)
+        return {
+          cancel() {},
+          completion: Promise.resolve({
+            outcome: failed("unavailable", "OpenShell executable is unavailable"),
+            stdout: "",
+            stderr: "",
+            release() {},
+          }),
+        };
+      const capture = request.kind === "command" && request.output === "capture";
+      const stdinIsTty = (deps.stdinIsTty ?? (() => Boolean(process.stdin.isTTY)))();
+      let cancelled = false;
+      let finished = false;
+      let child: CliOpenShellSessionChild | undefined;
+      const spawnSession = (executable: string, argv: readonly string[], stdio: StdioOptions) => {
+        const spawnChild: CliOpenShellSessionSpawner =
+          deps.spawnChild ?? ((file, command, options) => spawn(file, [...command], options));
+        child = spawnChild(executable, argv, { cwd: deps.hostCwd, env: environment, stdio });
+        return child;
+      };
+      const execution: Promise<ProcessSessionResult & { stdout?: string; stderr?: string }> =
+        capture
+          ? runCapturedProcess(
+              binary,
+              args,
+              {
+                maxBufferBytes: request.kind === "command" ? request.outputLimitBytes : undefined,
+                stdinIsTty,
+              },
+              { spawnChild: spawnSession, signalSource: deps.signalSource },
+            )
+          : superviseProcessSession(
+              () => spawnSession(binary, args, ["inherit", "inherit", "inherit"]),
+              deps.signalSource,
+            );
+      const completion = execution.then((result) => {
+        finished = true;
+        if (!capture) {
+          try {
+            (deps.restoreTerminal ?? (() => restoreTerminal(deps.hostCwd)))();
+          } catch {
+            /* Best effort. */
+          }
+        }
+        return {
+          outcome: sessionOutcome(result, cancelled),
+          stdout: result.stdout ?? "",
+          stderr: result.stderr ?? "",
+          release: result.releaseSignals ?? (() => {}),
+        };
+      });
+      return {
+        completion,
+        cancel() {
+          if (
+            cancelled ||
+            finished ||
+            !child ||
+            child.exitCode !== null ||
+            child.signalCode !== null
+          )
+            return;
+          cancelled = true;
+          child.kill("SIGTERM");
+        },
+      };
     },
   };
 }

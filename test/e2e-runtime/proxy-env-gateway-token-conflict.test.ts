@@ -71,7 +71,6 @@ function runReconcile(scenario: Scenario): {
       '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
       '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
-      '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
       "_TOOL_REDIRECTS=()",
       `OPENCLAW_GATEWAY_TOKEN=${shellQuote(scenario.intended)}`,
       "write_runtime_shell_env",
@@ -191,20 +190,21 @@ describe("proxy-env OPENCLAW_GATEWAY_TOKEN trust-anchor reconcile (#8428)", () =
     expect(stderr).toBe("");
   });
 
-  it.each(
-    SHELLS.flatMap((shell) => EMPTY_TOKEN_URLS.map((sourceUrl) => ({ shell, sourceUrl }))),
-  )("rejects a readonly nonempty token for $sourceUrl under $shell", ({ shell, sourceUrl }) => {
-    const { status, stdout, stderr } = runReconcile({
-      intended: REAL_TOKEN,
-      shell,
-      preset: { value: "SENTINEL_CONFLICT", readonly: true },
-      sourceUrl,
-    });
-    expect(status).toBe(1);
-    expect(stderr).toContain("Error: conflicting trust anchor");
-    expect(stderr).not.toContain("read only");
-    expect(`${stdout}\n${stderr}`).not.toContain("SENTINEL_CONFLICT");
-    expect(`${stdout}\n${stderr}`).not.toContain(REAL_TOKEN);
-    expect(stdout).not.toContain("TOKEN=");
-  });
+  it.each(SHELLS.flatMap((shell) => EMPTY_TOKEN_URLS.map((sourceUrl) => ({ shell, sourceUrl }))))(
+    "rejects a readonly nonempty token for $sourceUrl under $shell",
+    ({ shell, sourceUrl }) => {
+      const { status, stdout, stderr } = runReconcile({
+        intended: REAL_TOKEN,
+        shell,
+        preset: { value: "SENTINEL_CONFLICT", readonly: true },
+        sourceUrl,
+      });
+      expect(status).toBe(1);
+      expect(stderr).toContain("Error: conflicting trust anchor");
+      expect(stderr).not.toContain("read only");
+      expect(`${stdout}\n${stderr}`).not.toContain("SENTINEL_CONFLICT");
+      expect(`${stdout}\n${stderr}`).not.toContain(REAL_TOKEN);
+      expect(stdout).not.toContain("TOKEN=");
+    },
+  );
 });

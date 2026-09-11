@@ -102,10 +102,15 @@ The report rejects an unsupported explicit `DOCKER_HOST` before it uses Docker d
 TCP, SSH, relative Unix socket, and unsafe path values do not fall back to the default Docker socket.
 When `DOCKER_HOST` is unset, NemoClaw first probes the Docker CLI's selected authority, including `DOCKER_CONTEXT` and its `DOCKER_CONFIG` directory when set, without a host override.
 If that authority completes with an unreachable result, NemoClaw probes a bounded set of local Unix sockets and accepts only an endpoint with valid server-version evidence.
+On Linux, the set includes the rootless Docker socket at `/run/user/<UID>/docker.sock`.
 If the probe times out or cannot start, NemoClaw keeps the selected authority. `host probe` reports `host.docker.probe_inconclusive`; onboarding reports the `docker_probe_inconclusive` advisory with a command to verify that authority.
 When it selects a fallback socket, NemoClaw clears the unreachable `DOCKER_CONTEXT` so later Docker commands use the selected `DOCKER_HOST`.
 A mixed set of reachable Docker and Podman fallbacks, or a fallback with an unknown server identity, produces no automatic `DOCKER_HOST` override.
+When two reachable fallbacks identify as different engines, onboarding reports the blocking `docker_authority_conflict` advisory.
+The advisory names both sockets and their engines and provides a `DOCKER_HOST` command for the Docker socket.
 A reachable Podman endpoint remains classified as Podman and does not satisfy the standard Docker runtime requirement.
+For native rootless Podman on a qualified Linux host, set `NEMOCLAW_GATEWAY_RUNTIME=podman` before onboarding.
+Review the [native Podman requirements](./platform-support#deployment-paths) before selecting that path.
 
 The Docker storage capabilities separate the current host configuration from NemoClaw's supported remediation path.
 
@@ -142,7 +147,7 @@ Each capability uses `present`, `absent`, or `unknown`.
 | `host.platform.wsl_native_docker` | Native Docker Engine inside WSL. |
 | `host.platform.wsl_gpu_passthrough` | A bounded CUDA proof from the selected Docker or provider-owned runtime. |
 | `host.platform.n1x_wsl` | A proof-backed accepted N1x WSL GPU identity qualified through WSL on Linux ARM64 with an available NVIDIA GPU and a matching selected-provider CUDA proof. The accepted identities are listed below. |
-| `host.platform.dgx_spark` | DGX Spark identity on ARM64 with an available NVIDIA GPU. |
+| `host.platform.dgx_spark` | DGX Spark identity from firmware or a trusted FastOS marker on ARM64 with an available NVIDIA GPU. |
 | `host.platform.n1x` | N1x identity from the trusted FastOS marker and NVIDIA display PCI device on Linux ARM64 with an available NVIDIA GPU. This capability does not promote the Deferred platform status. |
 | `host.platform.dgx_station_hardware` | Station GB300 firmware identity and an exact NVIDIA GB300 display-class PCI device. |
 | `host.platform.dgx_station_software` | A qualified Station software profile. |
@@ -150,6 +155,13 @@ Each capability uses `present`, `absent`, or `unknown`.
 | `host.platform.dgx_station` | The combined Station GB300 hardware, software-handling, and runtime result. |
 
 If the combined platform capability is absent and no more specific platform qualification finding applies, the blocking `host.platform.unsupported` finding identifies an unsupported host and runtime combination.
+
+When firmware does not identify DGX Spark, NemoClaw can use a trusted `/etc/fastos-release` marker.
+The marker must be a regular file of 1 through 4,096 bytes, owned by UID and GID 0, and not a symbolic link.
+It must grant no group or world write access and contain no NUL or carriage-return byte.
+Its only `NAME=` line must be `NAME="DGX SPARK FASTOS"`.
+A matching marker identifies DGX Spark; the ARM64 and available NVIDIA GPU requirements still apply.
+This identity check does not establish hardware qualification for an OEM system.
 
 The report adds `host.platform.wsl`, `host.platform.n1x_wsl`, `host.platform.dgx_spark`, or `host.platform.n1x` qualifications when those platforms apply.
 For Station, it adds separate hardware, software, runtime, and combined qualifications.

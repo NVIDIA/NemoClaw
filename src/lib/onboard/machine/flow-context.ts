@@ -5,6 +5,7 @@ import type { InferenceEndpointSource } from "../../inference/selection";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { Session } from "../../state/onboard-session";
 import type { HostLocalInferenceSandboxProofAuthority } from "../runtime-provider/host-local-inference-routing";
+import type { PreparedExternalComponent } from "../external-component";
 import type { OnboardStateHandlerResult } from "./runner";
 
 export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuConfig = unknown> {
@@ -44,6 +45,8 @@ export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuCo
   gpu: Gpu | null;
   sandboxGpuConfig: SandboxGpuConfig | null;
   gpuPassthrough: boolean;
+  /** Validated process-local component authority for this fresh onboarding run. */
+  externalComponent?: PreparedExternalComponent | null;
 }
 
 export type ProviderModelSelectedOnboardFlowContext<Context extends OnboardFlowContext> =
@@ -121,11 +124,20 @@ export function assertProviderSelectedContext<Context extends OnboardFlowContext
   }
 }
 
+export function isProviderlessComponentOnboarding(
+  context: Pick<OnboardFlowContext, "providerlessApf" | "externalComponent">,
+): boolean {
+  return context.providerlessApf === true && Boolean(context.externalComponent);
+}
+
 export function assertSandboxCreatedContext<Context extends OnboardFlowContext>(
   context: Context,
   stepName: string,
 ): asserts context is SandboxCreatedOnboardFlowContext<Context> {
-  if (!context.sandboxName || !context.model || !context.provider) {
+  const inferenceReady = isProviderlessComponentOnboarding(context)
+    ? context.model === "" && context.provider === ""
+    : Boolean(context.model && context.provider);
+  if (!context.sandboxName || !inferenceReady) {
     throw new Error(`Onboarding state is incomplete before ${stepName}.`);
   }
 }

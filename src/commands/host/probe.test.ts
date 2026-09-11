@@ -3,9 +3,7 @@
 
 import Ajv2020, { type AnySchema } from "ajv/dist/2020.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with {
-  type: "json",
-};
+import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with { type: "json" };
 import type { SystemReadinessReport } from "../../lib/readiness/types";
 
 const mocks = vi.hoisted(() => ({

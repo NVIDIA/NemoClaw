@@ -193,17 +193,17 @@ describe("reversible registry removal", () => {
     });
   });
 
-  it.each([
-    null,
-    "missing",
-  ])("makes the restored row default when the prior pointer is %s", (defaultSandbox) => {
-    const result = restoreSandboxIfMissingInRegistry(
-      registry([entry("beta")], defaultSandbox),
-      receipt(entry("alpha")),
-    );
+  it.each([null, "missing"])(
+    "makes the restored row default when the prior pointer is %s",
+    (defaultSandbox) => {
+      const result = restoreSandboxIfMissingInRegistry(
+        registry([entry("beta")], defaultSandbox),
+        receipt(entry("alpha")),
+      );
 
-    expect(result.registry.defaultSandbox).toBe("alpha");
-  });
+      expect(result.registry.defaultSandbox).toBe("alpha");
+    },
+  );
 
   it("refuses a spoofed same-name recreation and keeps its replacement row", () => {
     const replacement = entry("alpha", "replacement-model");

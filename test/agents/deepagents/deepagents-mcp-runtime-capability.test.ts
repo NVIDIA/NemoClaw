@@ -31,8 +31,8 @@ beforeEach(() => {
 
 type ProbeResult = { status: number; stdout: string; stderr: string } | null;
 
-function runDeepAgentsProbe(result: ProbeResult) {
-  mocks.executeSandboxCommand.mockReset().mockReturnValue(result);
+async function runDeepAgentsProbe(result: ProbeResult) {
+  mocks.executeSandboxCommand.mockReset().mockResolvedValue(result);
   const runtimeSelection = {
     gatewayName: "nemoclaw-8091",
     workspace: "default",
@@ -40,7 +40,7 @@ function runDeepAgentsProbe(result: ProbeResult) {
 
   let message = "";
   try {
-    assertAgentMcpMutationRuntimeCapability(
+    await assertAgentMcpMutationRuntimeCapability(
       "deepagents-box",
       "deepagents-config",
       runtimeSelection,
@@ -60,9 +60,9 @@ function runDeepAgentsProbe(result: ProbeResult) {
 }
 
 describe("Deep Agents managed MCP runtime capability", () => {
-  it("accepts only the exact managed launcher capability marker", () => {
+  it("accepts only the exact managed launcher capability marker", async () => {
     expect(
-      runDeepAgentsProbe({
+      await runDeepAgentsProbe({
         status: 0,
         stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n",
         stderr: "",
@@ -89,8 +89,8 @@ describe("Deep Agents managed MCP runtime capability", () => {
     { status: 0, stdout: "deepagents-code 0.1.12\n", stderr: "" },
   ])(
     "requires a rebuild before MCP side effects on stale or unreachable images [case %#]",
-    (result) => {
-      const probe = runDeepAgentsProbe(result);
+    async (result) => {
+      const probe = await runDeepAgentsProbe(result);
       expect(probe.calls).toHaveLength(1);
       expect(probe.message).toMatch(/does not contain managed MCP capability v2/i);
       expect(probe.message).toMatch(/rebuild the sandbox before changing authenticated MCP state/i);

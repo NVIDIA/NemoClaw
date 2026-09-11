@@ -237,7 +237,9 @@ function normalizedNetworkSettings(
   runtimeId: string | undefined,
 ): DockerContainerInspect["NetworkSettings"] {
   const networks = value?.Networks ?? {};
-  const normalizedRuntimeId = String(runtimeId ?? "").trim().toLowerCase();
+  const normalizedRuntimeId = String(runtimeId ?? "")
+    .trim()
+    .toLowerCase();
   return {
     Networks: Object.fromEntries(
       Object.entries(networks)
@@ -418,10 +420,7 @@ function normalizedHostConfig(
   // request of zero while stopped, then rewrites it to the current user's
   // effective floor (500) on start. Both values describe that same enforced
   // runtime setting; use the stable effective value in the launch contract.
-  if (
-    annotations?.["io.container.manager"] === "libpod" &&
-    normalized.OomScoreAdj === 0
-  ) {
+  if (annotations?.["io.container.manager"] === "libpod" && normalized.OomScoreAdj === 0) {
     normalized.OomScoreAdj = 500;
   }
   const tmpfs =
@@ -474,9 +473,7 @@ function normalizedHostConfig(
   if (imageMounts.length > 0) {
     const imageTargets = new Set(imageMounts.map((mount) => mount.Target));
     const binds = Array.isArray(normalized.Binds) ? (normalized.Binds as string[]) : [];
-    normalized.Binds = binds.filter(
-      (bind) => !imageTargets.has(dockerBindTarget(bind)),
-    );
+    normalized.Binds = binds.filter((bind) => !imageTargets.has(dockerBindTarget(bind)));
     const existingMounts = normalizedStructuredMounts(normalized.Mounts ?? []);
     if (!Array.isArray(existingMounts)) {
       throw new Error("Managed bootstrap Docker HostConfig.Mounts must be an array.");
