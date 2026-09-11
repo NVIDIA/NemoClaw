@@ -848,8 +848,11 @@ test(
           "--provider",
           `${SANDBOX_NAME}-discord-bridge`,
           "--no-tty",
+          // OpenShell 0.0.116 treats this argv as the canonical main process,
+          // so the historical fixture must stay alive until NemoClaw rebuilds it.
           "--",
-          "true",
+          "sleep",
+          "infinity",
         ],
         {
           artifactName: "phase-3-create-old-hermes-sandbox",

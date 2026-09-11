@@ -542,8 +542,11 @@ test(
           "--policy",
           path.join(REPO_ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
           "--no-tty",
+          // OpenShell 0.0.116 treats this argv as the canonical main process,
+          // so the historical fixture must stay alive until NemoClaw rebuilds it.
           "--",
-          "true",
+          "sleep",
+          "infinity",
         ],
         {
           artifactName: "phase-3-create-old-openclaw-sandbox",
