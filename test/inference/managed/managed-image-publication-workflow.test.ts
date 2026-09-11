@@ -34,6 +34,7 @@ import type {
 } from "../../helpers/managed-image-publication-workflow-types";
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
+const reviewedAuditSha = "98669f24d35f18e49b6b2769cd68709509ea24f2";
 
 function needsOutput(job: string, output: string): string {
   return `\${{ needs.${job}.outputs.${output} }}`;
@@ -458,7 +459,7 @@ describe("complete managed-image publication workflow", () => {
     });
     const trustedCheckout = step(reviewedAudit, "Checkout npm audit code from the base commit");
     expect(trustedCheckout.with).toMatchObject({
-      ref: "98669f24d35f18e49b6b2769cd68709509ea24f2",
+      ref: reviewedAuditSha,
       path: ".trusted-reviewed-npm-audit",
       "persist-credentials": false,
       "sparse-checkout-cone-mode": false,
@@ -470,7 +471,7 @@ describe("complete managed-image publication workflow", () => {
     const verifyAuditIdentities = step(reviewedAudit, "Verify exact audit source and target");
     expect(verifyAuditIdentities.env).toEqual({
       CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
-      REVIEWED_AUDIT_SHA: "98669f24d35f18e49b6b2769cd68709509ea24f2",
+      REVIEWED_AUDIT_SHA: reviewedAuditSha,
     });
     expect(verifyAuditIdentities.run).toContain(
       "git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD",
@@ -505,6 +506,15 @@ describe("complete managed-image publication workflow", () => {
     expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$CANDIDATE_SHA\"");
     expect(releaseIdentity.run).toContain("value=%s");
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
+    const auditVerifierCheckout = step(prBuilder, "Checkout trusted mcporter audit verifier");
+    expect(auditVerifierCheckout.with?.ref).toBe(reviewedAuditSha);
+    expect(step(prBuilder, "Install reviewed npm").uses).toBe(
+      `NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@${reviewedAuditSha}`,
+    );
+    const prepareAuditEvidence = step(prBuilder, "Prepare same-run mcporter audit evidence");
+    expect(prepareAuditEvidence.run).toContain(`rev-parse --verify HEAD)" = '${reviewedAuditSha}'`);
+    expect(prepareAuditEvidence.run).not.toContain("--legacy-audit");
+    expect(prepareAuditEvidence.run).not.toContain("--legacy-npmjs");
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
       "hermes",
@@ -1151,6 +1161,7 @@ fi
       publisher = managedPublisher(workflow),
       action = readAction("publish-managed-image-digest"),
       source = JSON.stringify(workflow);
+    const auditEvidence = step(publisher, "Prepare same-run mcporter audit evidence");
     expect(workflow.jobs?.["reviewed-npm-audit"]?.if).toBe("github.event_name != 'pull_request'");
     expect(publisher.needs).toEqual(["publication-identity", "reviewed-npm-audit"]);
     expect(
@@ -1159,12 +1170,17 @@ fi
         "Prepare same-run mcporter audit evidence",
         "mcporter-runtime.receipt.json",
         "mcporter-runtime.raw.json",
+        "mcporter-runtime.policy.json",
         "nemoclaw-mcporter-audit-receipt",
         "nemoclaw-mcporter-audit-raw-report",
+        "nemoclaw-mcporter-audit-policy-result",
         "NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256",
+        "NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256",
       ].filter((marker) => !source.includes(marker)),
     ).toEqual([]);
     expect(source).not.toContain("NEMOCLAW_MCPORTER_AUDIT_RAW_REPORT_SHA256");
+    expect(auditEvidence.run).toContain('test -s "$policy"');
+    expect(auditEvidence.run).toContain('test ! -L "$policy"');
     const actionSource = JSON.stringify(action);
     expect([
       actionSource.includes('"secret-files":{"description"'),

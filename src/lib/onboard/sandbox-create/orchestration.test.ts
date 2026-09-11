@@ -440,7 +440,7 @@ describe("APF create policy selection", () => {
 });
 
 describe("deferred provider effect authority", () => {
-  it("carries identity authority through every provider cleanup effect (#9833)", () => {
+  it("carries identity authority through every provider cleanup effect (#9833)", async () => {
     let liveIdentity = "identity-a";
     const operations: string[] = [];
     const revalidateSandboxIdentity = vi.fn((operation: string) => {
@@ -450,7 +450,7 @@ describe("deferred provider effect authority", () => {
           throw new Error("sandbox identity changed");
         })();
     });
-    const runProviderPreDeleteCleanup = vi.fn((_sandboxName, deps) => {
+    const runProviderPreDeleteCleanup = vi.fn(async (_sandboxName, deps) => {
       expect(deps.revalidateSandboxIdentity).toBe(revalidateSandboxIdentity);
       deps.revalidateSandboxIdentity?.("detaching provider");
       liveIdentity = "identity-b";
@@ -458,7 +458,7 @@ describe("deferred provider effect authority", () => {
       return { detached: [], failures: [] };
     });
 
-    expect(() =>
+    await expect(
       runAuthorityBoundProviderCleanup({
         sandboxName: "alpha",
         revalidateSandboxIdentity,
@@ -466,7 +466,7 @@ describe("deferred provider effect authority", () => {
         runOpenshell: vi.fn(),
         redact: (value) => value,
       }),
-    ).toThrow(/sandbox identity changed/u);
+    ).rejects.toThrow(/sandbox identity changed/u);
     expect(runProviderPreDeleteCleanup).toHaveBeenCalledOnce();
     expect(operations).toEqual([
       "cleaning up providers for sandbox 'alpha'",
@@ -475,7 +475,7 @@ describe("deferred provider effect authority", () => {
     ]);
   });
 
-  it("refuses provider cleanup when a sandbox appears after verified absence (#9833)", () => {
+  it("refuses provider cleanup when a sandbox appears after verified absence (#9833)", async () => {
     let observationCount = 0;
     const revalidateSandboxIdentity = vi.fn();
     const runOpenshell = vi.fn(() => ({
@@ -487,7 +487,7 @@ describe("deferred provider effect authority", () => {
       signal: null,
     }));
 
-    expect(() =>
+    await expect(
       runAuthorityBoundProviderCleanup({
         sandboxName: "alpha",
         observeSandbox: () =>
@@ -500,7 +500,7 @@ describe("deferred provider effect authority", () => {
         redact: (value) => value,
         tolerateMissingSandbox: true,
       }),
-    ).toThrow(/appeared after absence was verified/u);
+    ).rejects.toThrow(/appeared after absence was verified/u);
     expect(revalidateSandboxIdentity).toHaveBeenCalledOnce();
     expect(runOpenshell).not.toHaveBeenCalled();
   });

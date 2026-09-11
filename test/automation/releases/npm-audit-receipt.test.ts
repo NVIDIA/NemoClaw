@@ -156,6 +156,12 @@ describe("npm audit receipt", () => {
         packageLock: "changed",
       }),
     ).toThrow(/packageLockSha256/);
+    expect(() =>
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt()), {
+        ...inputs,
+        rawResponse: `${inputs.rawResponse}\n`,
+      }),
+    ).toThrow(/rawResponseSha256/);
   });
 
   it("provides a local CLI verifier for a BuildKit secret mount", () => {

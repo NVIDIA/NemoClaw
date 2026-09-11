@@ -27,7 +27,11 @@ import {
   type OpenShellProviderResult,
   type UpdateOpenShellProviderRequest,
 } from "./provider-adapter";
-import { reportsExactProviderNotFound } from "./provider-diagnostic-cli";
+import {
+  reportsExactProviderNotFound,
+  reportsExactSandboxNotFound,
+  reportsProviderNotAttached,
+} from "./provider-diagnostic-cli";
 import {
   isValidCliOpenShellProviderIdentifier,
   parseCliOpenShellProviderMetadata,
@@ -97,7 +101,6 @@ const TERMINAL_CSI_RE = /(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~]/gu;
 const TERMINAL_CONTROL_RE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/gu;
 const ATTACHED_TO_SANDBOX_RE =
   /attached(?:\s|│)+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+?)(?=\.\s+[a-z]|["\n]|$)/iu;
-const TOLERATED_DETACH_OUTPUT_RE = /\bNotAttached\b|\bnot\s+attached\b/iu;
 const PROVIDER_GET_DIAGNOSTIC_LIMIT = 64 * 1024;
 const REFRESH_STATUS_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u;
 const NO_PROVIDER_ATTACHMENTS_RE = /^No providers attached to sandbox\b/mu;
@@ -644,7 +647,13 @@ export function createCliOpenShellProviderAdapter(
   ) => {
     const targetError = namedGatewayEndpointOverrideError(request.target, environment);
     if (targetError) return failure(targetError);
-    const result = invoke(["provider", "delete", request.providerName], request);
+    const result = invoke(
+      ["provider", "delete", request.providerName],
+      request,
+      undefined,
+      2,
+      true,
+    );
     const output = commandOutput(result);
     if (
       !result.error &&
@@ -678,6 +687,7 @@ export function createCliOpenShellProviderAdapter(
       request,
       undefined,
       3,
+      true,
     );
     const output = commandOutput(result);
     const error = commandError(result);
@@ -685,9 +695,29 @@ export function createCliOpenShellProviderAdapter(
       !result.error &&
       !result.signal &&
       result.status !== null &&
-      TOLERATED_DETACH_OUTPUT_RE.test(output);
+      reportsProviderNotAttached(output, request.providerName, request.sandboxName);
     if (confirmedIdempotentDetach) {
       return success({ changed: false });
+    }
+    if (
+      !result.error &&
+      !result.signal &&
+      result.status !== null &&
+      error?.kind === "command" &&
+      reportsExactSandboxNotFound(output, request.sandboxName, PROVIDER_GET_DIAGNOSTIC_LIMIT)
+    ) {
+      return failure({
+        kind: "command",
+        reason: "sandbox_not_found",
+        message: `OpenShell sandbox not found: '${request.sandboxName}'.`,
+      });
+    }
+    if (
+      error?.kind === "command" &&
+      error.reason === "not_found" &&
+      !reportsExactProviderNotFound(output, request.providerName, PROVIDER_GET_DIAGNOSTIC_LIMIT)
+    ) {
+      return failure({ ...error, reason: "failed" });
     }
     return error ? failure(error) : success({ changed: true });
   };

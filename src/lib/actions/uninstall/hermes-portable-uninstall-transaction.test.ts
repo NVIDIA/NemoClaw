@@ -217,7 +217,37 @@ afterEach(() => {
 });
 
 describe("Hermes Portable uninstall transaction", () => {
-  it("coordinates phases through the injected journal state store (#9608)", () => {
+  it("keeps the journal at sandbox retirement until provider cleanup completes", async () => {
+    const state = stateDir();
+    const fixture = transactionDeps(state);
+    let releaseProvider!: () => void;
+    let providerStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      providerStarted = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const transaction = runHermesPortableUninstallTransaction(state, {
+      ...fixture.deps,
+      reconcileProviders: async (authority) => {
+        providerStarted();
+        await pending;
+        await fixture.deps.reconcileProviders(authority);
+      },
+    });
+    await started;
+    try {
+      expect(inspectHermesPortableUninstallJournal(state)?.phase).toBe("sandboxes-retired");
+      expect(fixture.mutations).toEqual(["sandbox"]);
+    } finally {
+      releaseProvider();
+      await transaction;
+    }
+    expect(inspectHermesPortableUninstallJournal(state)?.phase).toBe("completed");
+  });
+
+  it("coordinates phases through the injected journal state store (#9608)", async () => {
     const state = stateDir();
     const fixture = transactionDeps(state);
     const persisted = createHermesPortableUninstallJournalStore(state);
@@ -230,7 +260,7 @@ describe("Hermes Portable uninstall transaction", () => {
     };
 
     expect(
-      runHermesPortableUninstallTransaction(state, { ...fixture.deps, journalStore }),
+      await runHermesPortableUninstallTransaction(state, { ...fixture.deps, journalStore }),
     ).toMatchObject({ phase: "completed", targetCount: 1 });
     expect(journalStore.read).toHaveBeenCalledOnce();
     expect(journalStore.publishPrepared).toHaveBeenCalledOnce();
@@ -246,16 +276,16 @@ describe("Hermes Portable uninstall transaction", () => {
     "resources-absent",
     "registry-retired",
     "receipts-retired",
-  ] as const)("reconciles an interruption after the %s action (#9608)", (phase) => {
+  ] as const)("reconciles an interruption after the %s action (#9608)", async (phase) => {
     const state = stateDir();
     const fixture = transactionDeps(state, phase);
 
-    expect(() => runHermesPortableUninstallTransaction(state, fixture.deps)).toThrow(
-      `interrupted after ${phase}`,
-    );
+    await expect(
+      async () => await runHermesPortableUninstallTransaction(state, fixture.deps),
+    ).rejects.toThrow(`interrupted after ${phase}`);
     expect(inspectHermesPortableUninstallJournal(state)?.phase).toBe(phase);
 
-    const resumed = runHermesPortableUninstallTransaction(state, fixture.deps);
+    const resumed = await runHermesPortableUninstallTransaction(state, fixture.deps);
     expect(resumed.phase).toBe("completed");
     expect(inspectHermesPortableUninstallJournal(state)?.phase).toBe("completed");
     expect(fs.statSync(hermesPortableUninstallJournalPath(state)).mode & 0o777).toBe(0o600);
@@ -266,7 +296,7 @@ describe("Hermes Portable uninstall transaction", () => {
     );
 
     const mutations = [...fixture.mutations];
-    expect(runHermesPortableUninstallTransaction(state, fixture.deps)).toEqual({
+    expect(await runHermesPortableUninstallTransaction(state, fixture.deps)).toEqual({
       phase: "completed",
       sandboxContainersRemoved: 0,
       targetCount: 1,
@@ -274,32 +304,34 @@ describe("Hermes Portable uninstall transaction", () => {
     expect(fixture.mutations).toEqual(mutations);
   });
 
-  it("cleans the phase temporary file when journal replacement fails (#9608)", () => {
+  it("cleans the phase temporary file when journal replacement fails (#9608)", async () => {
     const state = stateDir();
     const fixture = transactionDeps(state, "prepared");
-    expect(() => runHermesPortableUninstallTransaction(state, fixture.deps)).toThrow(
-      "interrupted after prepared",
-    );
+    await expect(
+      async () => await runHermesPortableUninstallTransaction(state, fixture.deps),
+    ).rejects.toThrow("interrupted after prepared");
     const rename = vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
       throw new Error("rename failed");
     });
     try {
-      expect(() => runHermesPortableUninstallTransaction(state, fixture.deps)).toThrow(
-        "rename failed",
-      );
+      await expect(
+        async () => await runHermesPortableUninstallTransaction(state, fixture.deps),
+      ).rejects.toThrow("rename failed");
       expect(fs.readdirSync(state).filter((entry) => entry.endsWith(".next"))).toEqual([]);
     } finally {
       rename.mockRestore();
     }
   });
 
-  it("replaces a completed journal when a later install publishes new authority (#9608)", () => {
+  it("replaces a completed journal when a later install publishes new authority (#9608)", async () => {
     const state = stateDir();
     const fixture = transactionDeps(state);
 
-    expect(runHermesPortableUninstallTransaction(state, fixture.deps).phase).toBe("completed");
+    expect((await runHermesPortableUninstallTransaction(state, fixture.deps)).phase).toBe(
+      "completed",
+    );
     fixture.replaceInstallation();
-    expect(runHermesPortableUninstallTransaction(state, fixture.deps)).toEqual({
+    expect(await runHermesPortableUninstallTransaction(state, fixture.deps)).toEqual({
       phase: "completed",
       sandboxContainersRemoved: 1,
       targetCount: 1,
@@ -310,17 +342,17 @@ describe("Hermes Portable uninstall transaction", () => {
     expect(fixture.mutations.filter((mutation) => mutation === "sandbox")).toHaveLength(2);
   });
 
-  it("fails closed on a same-name replacement after sandbox deletion (#9608)", () => {
+  it("fails closed on a same-name replacement after sandbox deletion (#9608)", async () => {
     const state = stateDir();
     const fixture = transactionDeps(state, "prepared");
 
-    expect(() => runHermesPortableUninstallTransaction(state, fixture.deps)).toThrow(
-      "interrupted after prepared",
-    );
+    await expect(
+      async () => await runHermesPortableUninstallTransaction(state, fixture.deps),
+    ).rejects.toThrow("interrupted after prepared");
     fixture.setReplacement(true);
-    expect(() => runHermesPortableUninstallTransaction(state, fixture.deps)).toThrow(
-      "same-name replacement",
-    );
+    await expect(
+      async () => await runHermesPortableUninstallTransaction(state, fixture.deps),
+    ).rejects.toThrow("same-name replacement");
     expect(fixture.mutations).toEqual(["sandbox"]);
     expect(inspectHermesPortableUninstallJournal(state)?.phase).toBe("prepared");
   });
