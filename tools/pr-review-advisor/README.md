@@ -56,9 +56,10 @@ GitHub API. Manual dispatch does not require CI-run evidence.
 ### Manual repair pilot
 
 Accepted issue #10791 adds a separate, default-disabled repair path to the trusted manual dispatch.
-For an opted-in, same-repository, non-draft PR whose exact head still permits maintainer changes, a
-maintainer may select eligible finding IDs and request one two-turn repair attempt. Pi can edit only
-a disposable checkout in a credential-free OpenShell sandbox; it cannot run tests, commit, push, or
+For an open, same-repository, non-draft PR whose exact head and base match the selection, a
+maintainer may select eligible finding IDs and request one two-turn repair attempt when both the
+workflow actor and triggering actor have `maintain` or `admin` permission. Pi can edit only a
+disposable checkout in a credential-free OpenShell sandbox; it cannot run tests, commit, push, or
 call GitHub. A separate secret-free job reconstructs and validates the patch. When publication is
 explicitly requested, the protected deterministic publisher rechecks the live state and may make
 one verified, non-force, compare-and-swap branch update. A trusted-main reporter then runs and
