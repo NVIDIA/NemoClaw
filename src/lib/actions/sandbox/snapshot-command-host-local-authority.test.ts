@@ -174,13 +174,13 @@ function sandbox(receipt: string): SandboxEntry {
   };
 }
 
-function successfulRestore(
+async function successfulRestore(
   _name: string,
   _path: string,
   options: SnapshotRestoreOptions = {},
-): RestoreResult {
+): Promise<RestoreResult> {
   harness.events.push("restore-start");
-  options.validateBeforeMutation?.();
+  await options.validateBeforeMutation?.();
   harness.events.push("restore-complete");
   return {
     success: true,

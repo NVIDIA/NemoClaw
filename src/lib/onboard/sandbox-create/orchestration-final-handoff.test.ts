@@ -281,8 +281,8 @@ describe("durable final-handoff publication", () => {
               resolveLifecycleRegistrationFields,
               createdLifecycle,
             ) => {
-              createdLifecycle.revalidate(
-                createdLifecycle.capture(resolveLifecycleRegistrationFields()),
+              await createdLifecycle.revalidate(
+                await createdLifecycle.capture(resolveLifecycleRegistrationFields()),
               );
               const verifiedCheckpoint = registry.getSandbox(
                 authority.sandboxName,

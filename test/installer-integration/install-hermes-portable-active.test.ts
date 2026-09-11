@@ -305,7 +305,7 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
           revalidate,
           reservation,
         ) => {
-          expect(revalidate()).toBe(liveIdentityFingerprint);
+          expect(await revalidate()).toBe(liveIdentityFingerprint);
           expect(reservation.authority).toEqual(createReservation.authority);
           registry.requireCurrentPendingSandboxCreateIdentity(createReservation, checkpoint);
           return completeHermesPortableSandboxRegistration({

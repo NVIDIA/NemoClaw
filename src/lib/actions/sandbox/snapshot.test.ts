@@ -638,8 +638,8 @@ describe("runSandboxSnapshot", () => {
       hostLocalInferenceReceipt,
       hostLocalInferenceProvenance,
     });
-    f.restoreSandboxStateMock.mockImplementation((_name, _path, options) => {
-      options?.validateBeforeMutation?.();
+    f.restoreSandboxStateMock.mockImplementation(async (_name, _path, options) => {
+      await options?.validateBeforeMutation?.();
       return {
         success: true,
         restoredDirs: [],

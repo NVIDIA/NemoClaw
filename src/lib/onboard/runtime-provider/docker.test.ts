@@ -221,10 +221,46 @@ describe("Docker runtime provider NVIDIA container capture", () => {
 });
 
 describe("Docker provider portable lifecycle dispatch", () => {
-  it("routes active Hermes start before every Docker dependency (#9203)", () => {
-    const requalifyPortableSandbox = vi.fn(() => ({ kind: "not-hermes" as const }));
-    const recoverPortableSandbox = vi.fn(() => ({ kind: "already-running" as const }));
-    const withLifecycleLockSync: DockerRuntimeProviderDependencies["withLifecycleLockSync"] = vi.fn(
+  it("rereads registry authority after deferred requalification before recovery (#11479)", async () => {
+    const input = lifecycleInput();
+    let row = input.sandbox;
+    let resolvePolicy!: () => void;
+    let notifyEntered!: () => void;
+    const policy = new Promise<void>((resolve) => {
+      resolvePolicy = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      notifyEntered = resolve;
+    });
+    const recoverPortableSandbox = vi.fn(poison);
+    const provider = createDockerRuntimeProviderBundle({
+      hasPortableLifecycleReceipt: () => false,
+      requalifyPortableSandbox: async (name, deps) => {
+        expect(deps.readRegistry?.(name)).toBe(input.sandbox);
+        notifyEntered();
+        await policy;
+        expect(deps.readRegistry?.(name)).toBe(row);
+        throw new Error("registry authority disagrees with the active receipt");
+      },
+      recoverPortableSandbox,
+      withLifecycleLock: async (_name, operation) => operation(),
+    });
+    const started = supportedLifecycle(provider).start({ ...input, readRegistry: () => row });
+    await entered;
+    row = { ...row, lifecycleGeneration: "generation-2" };
+    resolvePolicy();
+
+    expect(await started).toEqual({
+      exitCode: 1,
+      message: "registry authority disagrees with the active receipt",
+    });
+    expect(recoverPortableSandbox).not.toHaveBeenCalled();
+  });
+
+  it("routes active Hermes start before every Docker dependency (#9203)", async () => {
+    const requalifyPortableSandbox = vi.fn(async () => ({ kind: "not-hermes" as const }));
+    const recoverPortableSandbox = vi.fn(async () => ({ kind: "already-running" as const }));
+    const withLifecycleLock: DockerRuntimeProviderDependencies["withLifecycleLock"] = vi.fn(
       (_sandboxName, operation) => operation(),
     );
     const provider = createDockerRuntimeProviderBundle({
@@ -234,17 +270,19 @@ describe("Docker provider portable lifecycle dispatch", () => {
       findLabeledSandboxContainers: poison,
       recoverSandbox: poison,
       unpauseContainer: poison,
-      withLifecycleLockSync,
+      withLifecycleLock,
     });
     const lifecycle = supportedLifecycle(provider);
 
     expect(
-      lifecycle.start(lifecycleInput({ HOME: "/portable-home", NEMOCLAW_GATEWAY_PORT: "18080" })),
+      await lifecycle.start(
+        lifecycleInput({ HOME: "/portable-home", NEMOCLAW_GATEWAY_PORT: "18080" }),
+      ),
     ).toEqual({
       exitCode: 0,
       hermesPortableVerified: true,
     });
-    expect(withLifecycleLockSync).toHaveBeenCalledWith("alpha", expect.any(Function), {
+    expect(withLifecycleLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
       stateDir: "/portable-home/.nemoclaw/state",
     });
     expect(requalifyPortableSandbox).toHaveBeenCalledOnce();
@@ -254,7 +292,7 @@ describe("Docker provider portable lifecycle dispatch", () => {
     );
   });
 
-  it("fails closed before recovery when Hermes requalification fails (#11248)", () => {
+  it("fails closed before recovery when Hermes requalification fails (#11248)", async () => {
     const recoverPortableSandbox = vi.fn(poison);
     const provider = createDockerRuntimeProviderBundle({
       hasPortableLifecycleReceipt: () => false,
@@ -262,22 +300,22 @@ describe("Docker provider portable lifecycle dispatch", () => {
         throw new Error("startup authority changed");
       },
       recoverPortableSandbox,
-      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+      withLifecycleLock: async (_sandboxName, operation) => operation(),
     });
 
-    expect(supportedLifecycle(provider).start(lifecycleInput())).toEqual({
+    expect(await supportedLifecycle(provider).start(lifecycleInput())).toEqual({
       exitCode: 1,
       message: "startup authority changed",
     });
     expect(recoverPortableSandbox).not.toHaveBeenCalled();
   });
 
-  it("routes active Hermes stop before Docker capture or mutation (#9203)", () => {
-    const stopPortableSandbox = vi.fn(() => ({
+  it("routes active Hermes stop before Docker capture or mutation (#9203)", async () => {
+    const stopPortableSandbox = vi.fn(async () => ({
       kind: "stopped" as const,
       portableAgent: "hermes" as const,
     }));
-    const withLifecycleLockSync: DockerRuntimeProviderDependencies["withLifecycleLockSync"] = vi.fn(
+    const withLifecycleLock: DockerRuntimeProviderDependencies["withLifecycleLock"] = vi.fn(
       (_sandboxName, operation) => operation(),
     );
     const provider = createDockerRuntimeProviderBundle({
@@ -285,20 +323,23 @@ describe("Docker provider portable lifecycle dispatch", () => {
       stopPortableSandbox,
       findLabeledSandboxContainers: poison,
       stopContainer: poison,
-      withLifecycleLockSync,
+      withLifecycleLock,
     });
     const lifecycle = supportedLifecycle(provider);
 
     expect(
-      lifecycle.stop(lifecycleInput({ HOME: "/portable-home", NEMOCLAW_GATEWAY_PORT: "18080" }), {
-        beforeStop: poison,
-      }),
+      await lifecycle.stop(
+        lifecycleInput({ HOME: "/portable-home", NEMOCLAW_GATEWAY_PORT: "18080" }),
+        {
+          beforeStop: poison,
+        },
+      ),
     ).toEqual({
       exitCode: 0,
       state: "stopped",
       hermesPortableVerified: true,
     });
-    expect(withLifecycleLockSync).toHaveBeenCalledWith("alpha", expect.any(Function), {
+    expect(withLifecycleLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
       stateDir: "/portable-home/.nemoclaw/state",
     });
     expect(stopPortableSandbox).toHaveBeenCalledOnce();
@@ -306,27 +347,27 @@ describe("Docker provider portable lifecycle dispatch", () => {
 });
 
 describe("Docker provider OpenShell lifecycle dispatch", () => {
-  it("starts a stopped OpenShell sandbox through the gateway instead of Docker (#11251)", () => {
+  it("starts a stopped OpenShell sandbox through the gateway instead of Docker (#11251)", async () => {
     const captureSandboxLifecycle = vi.fn(() => ({ status: 0, output: "started" }));
     const provider = createDockerRuntimeProviderBundle({
       captureSandboxLifecycle,
       findLabeledSandboxContainers: () => [
         { name: "openshell-default--alpha-id", running: false, status: "Exited (0) 1 second ago" },
       ],
-      recoverPortableSandbox: () => ({ kind: "not-installed" }),
+      recoverPortableSandbox: async () => ({ kind: "not-installed" }),
       recoverSandbox: poison,
-      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+      withLifecycleLock: async (_sandboxName, operation) => operation(),
     });
 
     expect(
-      supportedLifecycle(provider).start(openClawLifecycleInput({ HOME: "/test-home" })),
+      await supportedLifecycle(provider).start(openClawLifecycleInput({ HOME: "/test-home" })),
     ).toEqual({ exitCode: 0 });
     expect(captureSandboxLifecycle).toHaveBeenCalledWith("start", "alpha", "nemoclaw", {
       HOME: "/test-home",
     });
   });
 
-  it("stops a running OpenShell sandbox through the gateway instead of Docker (#11251)", () => {
+  it("stops a running OpenShell sandbox through the gateway instead of Docker (#11251)", async () => {
     const beforeStop = vi.fn();
     const captureSandboxLifecycle = vi.fn(() => ({ status: 0, output: "stopped" }));
     const provider = createDockerRuntimeProviderBundle({
@@ -335,12 +376,12 @@ describe("Docker provider OpenShell lifecycle dispatch", () => {
         { name: "openshell-default--alpha-id", running: true, status: "Up 1 minute" },
       ],
       stopContainer: poison,
-      stopPortableSandbox: () => ({ kind: "not-installed" }),
-      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+      stopPortableSandbox: async () => ({ kind: "not-installed" }),
+      withLifecycleLock: async (_sandboxName, operation) => operation(),
     });
 
     expect(
-      supportedLifecycle(provider).stop(openClawLifecycleInput({ HOME: "/test-home" }), {
+      await supportedLifecycle(provider).stop(openClawLifecycleInput({ HOME: "/test-home" }), {
         beforeStop,
       }),
     ).toEqual({ exitCode: 0, state: "stopped" });
@@ -350,24 +391,24 @@ describe("Docker provider OpenShell lifecycle dispatch", () => {
     });
   });
 
-  it("fails closed when OpenShell cannot start the stopped sandbox (#11251)", () => {
+  it("fails closed when OpenShell cannot start the stopped sandbox (#11251)", async () => {
     const provider = createDockerRuntimeProviderBundle({
       captureSandboxLifecycle: () => ({ status: 1, output: "sandbox phase is Error" }),
       findLabeledSandboxContainers: () => [
         { name: "openshell-default--alpha-id", running: false, status: "Exited (0) 1 second ago" },
       ],
-      recoverPortableSandbox: () => ({ kind: "not-installed" }),
+      recoverPortableSandbox: async () => ({ kind: "not-installed" }),
       recoverSandbox: poison,
-      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+      withLifecycleLock: async (_sandboxName, operation) => operation(),
     });
 
-    expect(supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
+    expect(await supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
       exitCode: 1,
       message: "  OpenShell could not start sandbox 'alpha' (exit 1): sandbox phase is Error.",
     });
   });
 
-  it("fails closed when OpenShell cannot stop the running sandbox (#11251)", () => {
+  it("fails closed when OpenShell cannot stop the running sandbox (#11251)", async () => {
     const beforeStop = vi.fn();
     const provider = createDockerRuntimeProviderBundle({
       captureSandboxLifecycle: () => ({ status: 1, output: "gateway unavailable" }),
@@ -375,18 +416,20 @@ describe("Docker provider OpenShell lifecycle dispatch", () => {
         { name: "openshell-default--alpha-id", running: true, status: "Up 1 minute" },
       ],
       stopContainer: poison,
-      stopPortableSandbox: () => ({ kind: "not-installed" }),
-      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+      stopPortableSandbox: async () => ({ kind: "not-installed" }),
+      withLifecycleLock: async (_sandboxName, operation) => operation(),
     });
 
-    expect(supportedLifecycle(provider).stop(openClawLifecycleInput(), { beforeStop })).toEqual({
+    expect(
+      await supportedLifecycle(provider).stop(openClawLifecycleInput(), { beforeStop }),
+    ).toEqual({
       exitCode: 1,
       message: "  OpenShell could not stop sandbox 'alpha' (exit 1): gateway unavailable.",
     });
     expect(beforeStop).toHaveBeenCalledOnce();
   });
 
-  it("keeps an already-stopped sandbox idempotent without calling OpenShell (#11251)", () => {
+  it("keeps an already-stopped sandbox idempotent without calling OpenShell (#11251)", async () => {
     const captureSandboxLifecycle = vi.fn(poison);
     const beforeStop = vi.fn(poison);
     const provider = createDockerRuntimeProviderBundle({
@@ -394,11 +437,13 @@ describe("Docker provider OpenShell lifecycle dispatch", () => {
       findLabeledSandboxContainers: () => [
         { name: "openshell-default--alpha-id", running: false, status: "Exited (0) 1 second ago" },
       ],
-      stopPortableSandbox: () => ({ kind: "not-installed" }),
-      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+      stopPortableSandbox: async () => ({ kind: "not-installed" }),
+      withLifecycleLock: async (_sandboxName, operation) => operation(),
     });
 
-    expect(supportedLifecycle(provider).stop(openClawLifecycleInput(), { beforeStop })).toEqual({
+    expect(
+      await supportedLifecycle(provider).stop(openClawLifecycleInput(), { beforeStop }),
+    ).toEqual({
       exitCode: 0,
       state: "already-stopped",
     });

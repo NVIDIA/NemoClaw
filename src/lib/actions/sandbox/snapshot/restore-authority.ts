@@ -23,7 +23,7 @@ import {
 } from "./provider-lifecycle";
 
 interface ProviderRestoreAuthorityDependencies {
-  readonly getSandbox: (sandboxName: string) => SandboxEntry | null;
+  readonly getSandbox: (sandboxName: string) => SandboxEntry | null | Promise<SandboxEntry | null>;
   readonly requireProvider: (sandbox: SandboxEntry) => RuntimeProviderBundle;
   readonly captureContentAuthority: typeof sandboxState.captureSnapshotRestoreAuthority;
   readonly prepareHostLocalInference: typeof prepareHostLocalInferenceAuthority;
@@ -57,13 +57,13 @@ function failure(error: unknown): sandboxState.RestoreResult {
  * Legacy/custom-image manifests without provider-backed state retain the
  * existing state-only path.
  */
-export function restoreRecreatedSandboxStateWithManagedAuthority(
+export async function restoreRecreatedSandboxStateWithManagedAuthority(
   sandboxName: string,
   manifest: sandboxState.RebuildManifest,
   options: sandboxState.RecreatedSandboxRestoreOptions,
   overrides: Pick<ProviderRestoreAuthorityDependencies, "getSandbox"> &
     Partial<Omit<ProviderRestoreAuthorityDependencies, "getSandbox">>,
-): sandboxState.RestoreResult {
+): Promise<sandboxState.RestoreResult> {
   const dependencies = { ...defaultDependencies, ...overrides };
   let snapshotProfile;
   try {
@@ -88,7 +88,7 @@ export function restoreRecreatedSandboxStateWithManagedAuthority(
   let providerId: string;
   let contentAuthority: sandboxState.SnapshotRestoreAuthority;
   try {
-    const target = dependencies.getSandbox(sandboxName);
+    const target = await dependencies.getSandbox(sandboxName);
     if (!target) throw new Error(`target '${sandboxName}' is not registered`);
     const provider = dependencies.requireProvider(target);
     providerId = provider.identity.id;
@@ -135,11 +135,11 @@ export function restoreRecreatedSandboxStateWithManagedAuthority(
     return failure(error);
   }
 
-  const restore = dependencies.restore(sandboxName, manifest.backupPath, {
+  const restore = await dependencies.restore(sandboxName, manifest.backupPath, {
     ...options,
     authority: contentAuthority,
-    validateBeforeMutation: () => {
-      const current = dependencies.getSandbox(sandboxName);
+    validateBeforeMutation: async () => {
+      const current = await dependencies.getSandbox(sandboxName);
       if (!current) throw new Error(`target '${sandboxName}' is no longer registered`);
       const provider = dependencies.requireProvider(current);
       if (provider.identity.id !== providerId) {
@@ -183,7 +183,7 @@ export function restoreRecreatedSandboxStateWithManagedAuthority(
   if (!restore.success) return restore;
 
   try {
-    const current = dependencies.getSandbox(sandboxName);
+    const current = await dependencies.getSandbox(sandboxName);
     if (!current) throw new Error(`target '${sandboxName}' is no longer registered`);
     const provider = dependencies.requireProvider(current);
     if (provider.identity.id !== providerId) {

@@ -27,7 +27,7 @@ function extensionDir(install: OpenClawImagePluginInstall): string | null {
   return install.installPath.startsWith(prefix) ? install.installPath.slice(prefix.length) : null;
 }
 
-function runRestoreScenario(options: {
+async function runRestoreScenario(options: {
   backupConfig: Record<string, unknown>;
   backupExtensionDirs: string[];
   discoverFreshPluginInstalls?: boolean;
@@ -39,16 +39,16 @@ function runRestoreScenario(options: {
     localTlsDir?: string;
     workspace: string;
   };
-}): {
+}): Promise<{
   cleanupCommand: string | undefined;
   freshMarkers: Record<string, string>;
   openshellInvocations: Array<{ args: string[]; env: Record<string, string> }>;
-  restore: ReturnType<typeof restoreRecreatedSandboxState>;
+  restore: Awaited<ReturnType<typeof restoreRecreatedSandboxState>>;
   restoredConfig: Record<string, any>;
   sshInvocations: Array<{ cmd: string; env: Record<string, string> }>;
   staleUserExtensionExists: boolean;
   userExtensionMarker: string;
-} {
+}> {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recreated-restore-"));
   const previousOpenshellBin = process.env.NEMOCLAW_OPENSHELL_BIN;
   const previousPath = process.env.PATH;
@@ -174,7 +174,7 @@ process.exit(1);
 
     process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
     process.env.PATH = `${binDir}:${previousPath ?? ""}`;
-    const restore = restoreRecreatedSandboxState("alpha", backupPath, {
+    const restore = await restoreRecreatedSandboxState("alpha", backupPath, {
       targetAgentType: "openclaw",
       ...(options.discoverFreshPluginInstalls
         ? {}
@@ -217,7 +217,7 @@ process.exit(1);
   }
 }
 
-function expectSuccessfulRestore(result: ReturnType<typeof runRestoreScenario>): void {
+function expectSuccessfulRestore(result: Awaited<ReturnType<typeof runRestoreScenario>>): void {
   expect(result.restore).toEqual({
     success: true,
     restoredDirs: ["extensions"],
@@ -230,7 +230,7 @@ function expectSuccessfulRestore(result: ReturnType<typeof runRestoreScenario>):
 }
 
 describe("recreated OpenClaw state restore", { timeout: 30_000 }, () => {
-  it("pins plugin discovery and restore SSH to the frozen OpenShell target (#10514)", () => {
+  it("pins plugin discovery and restore SSH to the frozen OpenShell target (#10514)", async () => {
     const previousEnv = {
       OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY,
       OPENSHELL_GATEWAY_ENDPOINT: process.env.OPENSHELL_GATEWAY_ENDPOINT,
@@ -246,7 +246,7 @@ describe("recreated OpenClaw state restore", { timeout: 30_000 }, () => {
     process.env.OPENSHELL_TOKEN = "hostile-token";
     process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
     try {
-      const result = runRestoreScenario({
+      const result = await runRestoreScenario({
         backupConfig: { plugins: { entries: {} } },
         backupExtensionDirs: [],
         discoverFreshPluginInstalls: true,
@@ -283,9 +283,9 @@ describe("recreated OpenClaw state restore", { timeout: 30_000 }, () => {
     { provenance: "known-empty", previousPluginInstalls: [] },
   ])(
     "restores config and extensions with $provenance previous provenance",
-    ({ previousPluginInstalls }) => {
+    async ({ previousPluginInstalls }) => {
       const weather = imageInstall("weather", "weather");
-      const result = runRestoreScenario({
+      const result = await runRestoreScenario({
         previousPluginInstalls,
         freshPluginInstalls: [weather],
         backupExtensionDirs: ["weather"],
@@ -319,8 +319,8 @@ describe("recreated OpenClaw state restore", { timeout: 30_000 }, () => {
     },
   );
 
-  it("uses fresh primary-model routing during an ordinary sandbox re-create (#7011)", () => {
-    const result = runRestoreScenario({
+  it("uses fresh primary-model routing during an ordinary sandbox re-create (#7011)", async () => {
+    const result = await runRestoreScenario({
       previousPluginInstalls: [],
       freshPluginInstalls: [],
       backupExtensionDirs: [],
@@ -348,11 +348,11 @@ describe("recreated OpenClaw state restore", { timeout: 30_000 }, () => {
     });
   });
 
-  it("reconciles populated previous and fresh image-plugin provenance during config restore", () => {
+  it("reconciles populated previous and fresh image-plugin provenance during config restore", async () => {
     const previousWeather = imageInstall("weather", "weather-v1");
     const freshWeather = imageInstall("weather", "weather-v2");
     const userPluginPath = `${OPENCLAW_DIR}/extensions/user-plugin`;
-    const result = runRestoreScenario({
+    const result = await runRestoreScenario({
       previousPluginInstalls: [previousWeather],
       freshPluginInstalls: [freshWeather],
       backupExtensionDirs: ["weather-v1"],

@@ -17,8 +17,12 @@ type SanitizedCaptureOptions = Readonly<{
   replaceEnv?: true;
 }>;
 
-type SanitizedAsyncCaptureOptions = Omit<SanitizedCaptureOptions, "maxBuffer"> &
-  Readonly<{ outputLimitBytes: number }>;
+type SanitizedAsyncCaptureOptions = Omit<SanitizedCaptureOptions, "maxBuffer" | "env"> &
+  Readonly<{ outputLimitBytes: number }> &
+  (
+    | Readonly<{ openshellBinary?: never; env?: Record<string, string> }>
+    | Readonly<{ openshellBinary: string; env: NodeJS.ProcessEnv }>
+  );
 
 /** Capture a bounded OpenShell read with a credential-minimizing environment. */
 function resolveCapture(args: string[]) {
@@ -64,7 +68,10 @@ export async function captureSanitizedResolvedOpenshellAsync(
   args: string[],
   opts: SanitizedAsyncCaptureOptions,
 ): Promise<CapturedOpenShellCommandResult> {
-  const resolved = resolveCapture(args);
+  const resolved =
+    opts.openshellBinary !== undefined
+      ? { openshell: opts.openshellBinary, env: opts.env }
+      : resolveCapture(args);
   if (!resolved) return missingBinary();
   return openshellRuntime.captureResolvedOpenshellAsync(args, {
     ...opts,

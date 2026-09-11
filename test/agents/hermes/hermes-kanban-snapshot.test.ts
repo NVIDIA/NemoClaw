@@ -381,7 +381,7 @@ it.skipIf(typeof process.getuid === "function" && process.getuid() === 0)(
   },
 );
 
-it("preserves only the Hermes default-board database across rebuilds (#7095)", () => {
+it("preserves only the Hermes default-board database across rebuilds (#7095)", async () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-kanban-state-"));
   const oldPath = process.env.PATH;
   const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -487,7 +487,7 @@ process.exit(0);
     fs.writeFileSync(externalDirFile, "fresh external dir workspace\n");
     fs.writeFileSync(externalWorktreeFile, "fresh external worktree\n");
 
-    const restore = sandboxState.restoreSandboxState("hermes", backup.manifest!.backupPath);
+    const restore = await sandboxState.restoreSandboxState("hermes", backup.manifest!.backupPath);
     expect(restore.success).toBe(true);
     expect(restore.restoredFiles).toEqual(["kanban.db"]);
     expect(restore.restoredDirs).toEqual([]);

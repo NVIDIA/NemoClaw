@@ -347,6 +347,8 @@ export type RuntimeProviderCommandCapture = {
 };
 
 export interface RuntimeProviderLifecycleInput {
+  /** Required by portable lifecycle operations to recheck authority after awaiting observations. */
+  readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
   readonly environment: NodeJS.ProcessEnv;
   readonly log: (message: string) => void;
   readonly sandbox: SandboxEntry;
@@ -625,7 +627,9 @@ export type RuntimeProviderLifecycleSurface =
       /** Provider-owned timeout for direct container lifecycle mutations. */
       readonly containerMutationTimeoutMs?: number;
       readonly privilegedSandboxControl: RuntimeProviderPrivilegedSandboxControl;
-      start(input: RuntimeProviderLifecycleInput): RuntimeProviderLifecycleResult;
+      start(
+        input: RuntimeProviderLifecycleInput,
+      ): RuntimeProviderLifecycleResult | Promise<RuntimeProviderLifecycleResult>;
       verifyStarted(
         input: RuntimeProviderLifecycleInput,
         verifyGateway: (sandboxName: string) => Promise<void>,
@@ -633,7 +637,7 @@ export type RuntimeProviderLifecycleSurface =
       stop(
         input: RuntimeProviderLifecycleInput,
         hooks: RuntimeProviderLifecycleStopHooks,
-      ): RuntimeProviderLifecycleStopOutcome;
+      ): RuntimeProviderLifecycleStopOutcome | Promise<RuntimeProviderLifecycleStopOutcome>;
     }>
   | RuntimeProviderUnsupportedSurface;
 

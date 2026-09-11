@@ -52,7 +52,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     DockerRuntimeProviderDependencies["hasPortableLifecycleReceipt"]
   >(() => false);
   const recoverPortableSandbox = vi.fn<DockerRuntimeProviderDependencies["recoverPortableSandbox"]>(
-    () => ({ kind: "not-installed" }),
+    async () => ({ kind: "not-installed" }),
   );
   const recoverDockerDriverSandbox = vi.fn<DockerRuntimeProviderDependencies["recoverSandbox"]>(
     () => ({
@@ -518,7 +518,7 @@ describe("startSandbox", () => {
       }),
     );
     h.hasPortableLifecycleReceipt.mockReturnValue(true);
-    h.recoverPortableSandbox.mockReturnValue({ kind: "recovered" });
+    h.recoverPortableSandbox.mockResolvedValue({ kind: "recovered" });
 
     await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
 
@@ -546,7 +546,7 @@ describe("startSandbox", () => {
       }),
     );
     h.hasPortableLifecycleReceipt.mockReturnValue(true);
-    h.recoverPortableSandbox.mockReturnValue({ kind: "recovered" });
+    h.recoverPortableSandbox.mockResolvedValue({ kind: "recovered" });
 
     await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
 

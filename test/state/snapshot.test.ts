@@ -389,15 +389,16 @@ describe("listBackups computes virtual versions", () => {
     });
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
   });
-  it("does not restore backed-up directory entries that are plain files", () => {
+  it("does not restore backed-up directory entries that are plain files", async () => {
     const manifest = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
       stateDirs: ["workspace"],
       backedUpDirs: ["workspace"],
     });
     writeAgentRegistry("test-sandbox", "openclaw");
-    fs.writeFileSync(path.join(String(manifest.backupPath), "workspace"), "not a directory");
+    const backupPath = String(manifest.backupPath);
+    fs.writeFileSync(path.join(backupPath, "workspace"), "not a directory");
 
-    const restore = sandboxState.restoreSandboxState("test-sandbox", String(manifest.backupPath));
+    const restore = await sandboxState.restoreSandboxState("test-sandbox", backupPath);
 
     expect(restore).toEqual({
       success: true,
@@ -749,7 +750,7 @@ process.exit(0);
     }
   });
 
-  it("classifies tar-failed directories and excludes them from the restorable manifest", () => {
+  it("classifies tar-failed directories and excludes them from the restorable manifest", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-partial-tar-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -827,7 +828,7 @@ process.exit(0);
       expect(backup.manifest?.backedUpDirs).toEqual(["extensions"]);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "agents"))).toBe(true);
 
-      const restore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+      const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(["extensions"]);
 
@@ -1349,7 +1350,7 @@ process.exit(0);
 });
 
 describe("Deep Agents Code durable state files", () => {
-  it("backs up manifest-declared state while excluding credential-bearing files", () => {
+  it("backs up manifest-declared state while excluding credential-bearing files", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-snapshot-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -1481,7 +1482,10 @@ process.exit(0);
       expect(loggedCommands).not.toContain(".mcp.json");
       expect(loggedCommands).not.toContain(".nemoclaw-mcp.json");
       // #5753: restore must include agent/skills after backup and recreation.
-      const restore = sandboxState.restoreSandboxState("deepagents", backup.manifest!.backupPath);
+      const restore = await sandboxState.restoreSandboxState(
+        "deepagents",
+        backup.manifest!.backupPath,
+      );
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(expect.arrayContaining([".state", "agent/skills"]));
     } finally {

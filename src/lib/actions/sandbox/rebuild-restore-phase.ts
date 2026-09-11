@@ -95,7 +95,9 @@ function restoreHermesOperatorConfig(
 }
 
 /** Restore sandbox files. The replacement already received the captured live OpenShell policy. */
-export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): RebuildRestorePhaseResult {
+export async function runRebuildRestorePhase(
+  input: RebuildRestorePhaseInput,
+): Promise<RebuildRestorePhaseResult> {
   const {
     sandboxName,
     targetAgentType,
@@ -112,7 +114,7 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
   if (backupManifest) {
     console.log("");
     console.log("  Restoring workspace state...");
-    const restore = snapshotRestore.restoreRecreatedSandboxStateWithManagedAuthority(
+    const restore = await snapshotRestore.restoreRecreatedSandboxStateWithManagedAuthority(
       sandboxName,
       backupManifest,
       {

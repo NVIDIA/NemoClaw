@@ -13,6 +13,7 @@
     {
       "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "fast": [
+        "src/lib/onboard/experimental/hermes-portable-lifecycle.test.ts",
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/docker-driver-gateway-env.test.ts",
         "src/lib/onboard/experimental/portable-host-preparation.test.ts",
@@ -95,6 +96,7 @@
       "live": "test/e2e/live/native-runtime-qualification-case.test.ts",
       "liveSources": ["test/e2e/live/native-runtime-qualification-case-executor.ts"],
       "fast": [
+        "src/lib/onboard/runtime-provider/docker.test.ts",
         "test/e2e/support/native-runtime-qualification-case-helpers.test.ts",
         "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
         "test/e2e/support/native-runtime-qualification.test.ts",

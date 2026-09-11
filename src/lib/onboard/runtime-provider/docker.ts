@@ -33,7 +33,7 @@ import {
   requalifyPortableAgentSandboxAuthority,
   stopPortableAgentSandboxLifecycle,
 } from "../experimental/portable-agent-lifecycle";
-import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import { resolveHermesPortableLifecycleLockOptions } from "../experimental/portable-lifecycle-lock";
 import { queryOpenShellDockerSandboxRuntimeSnapshot } from "../openshell-docker-sandbox-containers";
 import { validateSandboxGpuPreflight } from "../sandbox-gpu-preflight";
@@ -95,7 +95,7 @@ export interface DockerRuntimeProviderDependencies {
   readonly stopContainer: DockerStop;
   readonly stopPortableSandbox: typeof stopPortableAgentSandboxLifecycle;
   readonly unpauseContainer: DockerUnpause;
-  readonly withLifecycleLockSync: typeof withMcpLifecycleLockSync;
+  readonly withLifecycleLock: typeof withMcpLifecycleLock;
 }
 
 const DOCKER_OPERATION_TIMEOUT_MS = 30_000;
@@ -260,7 +260,7 @@ function resolveDependencies(
     stopPortableSandbox: overrides.stopPortableSandbox ?? stopPortableAgentSandboxLifecycle,
     unpauseContainer:
       overrides.unpauseContainer ?? ((name, options) => loadDockerUnpause()(name, options)),
-    withLifecycleLockSync: overrides.withLifecycleLockSync ?? withMcpLifecycleLockSync,
+    withLifecycleLock: overrides.withLifecycleLock ?? withMcpLifecycleLock,
   };
 }
 
@@ -313,11 +313,11 @@ function isGpuBackupSibling(name: string): boolean {
   return /-nemoclaw-gpu-backup-\d+$/u.test(name);
 }
 
-function startDockerSandbox(
+async function startDockerSandbox(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
-): RuntimeProviderLifecycleResult {
-  return deps.withLifecycleLockSync(
+): Promise<RuntimeProviderLifecycleResult> {
+  return deps.withLifecycleLock(
     input.sandboxName,
     () => startDockerSandboxUnlocked(input, deps),
     dockerLifecycleLockOptions(input, deps),
@@ -336,18 +336,18 @@ function dockerLifecycleLockOptions(
   );
 }
 
-function startDockerSandboxUnlocked(
+async function startDockerSandboxUnlocked(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
-): RuntimeProviderLifecycleResult {
+): Promise<RuntimeProviderLifecycleResult> {
   try {
     if (input.sandbox.agent === "hermes") {
-      deps.requalifyPortableSandbox(input.sandboxName, {
+      await deps.requalifyPortableSandbox(input.sandboxName, {
         env: input.environment,
-        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
       });
     }
-    const portable = deps.recoverPortableSandbox(
+    const portable = await deps.recoverPortableSandbox(
       input.sandboxName,
       {
         agent: input.sandbox.agent,
@@ -359,7 +359,7 @@ function startDockerSandboxUnlocked(
       {
         env: input.environment,
         log: input.log,
-        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
       },
     );
     if (portable.kind !== "not-installed") {
@@ -435,25 +435,25 @@ function startDockerSandboxUnlocked(
   return { exitCode: 0 };
 }
 
-function stopDockerSandbox(
+async function stopDockerSandbox(
   input: RuntimeProviderLifecycleInput,
   hooks: RuntimeProviderLifecycleStopHooks,
   deps: DockerRuntimeProviderDependencies,
-): RuntimeProviderLifecycleStopOutcome {
-  return deps.withLifecycleLockSync(
+): Promise<RuntimeProviderLifecycleStopOutcome> {
+  return deps.withLifecycleLock(
     input.sandboxName,
     () => stopDockerSandboxUnlocked(input, hooks, deps),
     dockerLifecycleLockOptions(input, deps),
   );
 }
 
-function stopDockerSandboxUnlocked(
+async function stopDockerSandboxUnlocked(
   input: RuntimeProviderLifecycleInput,
   hooks: RuntimeProviderLifecycleStopHooks,
   deps: DockerRuntimeProviderDependencies,
-): RuntimeProviderLifecycleStopOutcome {
+): Promise<RuntimeProviderLifecycleStopOutcome> {
   try {
-    const portable = deps.stopPortableSandbox(
+    const portable = await deps.stopPortableSandbox(
       input.sandboxName,
       {
         agent: input.sandbox.agent,
@@ -466,7 +466,7 @@ function stopDockerSandboxUnlocked(
       {
         env: input.environment,
         log: input.log,
-        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
       },
     );
     if (portable.kind === "already-stopped") {

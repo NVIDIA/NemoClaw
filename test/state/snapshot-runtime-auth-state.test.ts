@@ -237,7 +237,7 @@ describe("runtime auth state across snapshot backup/restore (#6852)", () => {
       fs.writeFileSync(path.join(openclawDir, "agents", "main", "state.txt"), "new-agent-state");
 
       // ── Restore: durable dirs restored, runtime auth dirs untouched ─
-      const restore = sandboxState.restoreSandboxState("alpha", backupPath);
+      const restore = await sandboxState.restoreSandboxState("alpha", backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toContain("agents");
       expect(restore.restoredDirs).not.toContain("identity");

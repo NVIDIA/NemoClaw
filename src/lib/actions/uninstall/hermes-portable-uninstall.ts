@@ -324,12 +324,12 @@ function targetAuthority(input: {
   });
 }
 
-function loadAuthority(
+async function loadAuthority(
   input: HermesPortableUninstallInput,
   deps: HermesPortableUninstallDeps,
   expected: HermesPortableUninstallAuthority | null,
   admittedAbsence: AdmittedResourceAbsence,
-): LoadedAuthority {
+): Promise<LoadedAuthority> {
   if (
     expected &&
     (expected.registryPathSha256 !== pathDigest(input.registryFile) ||
@@ -343,7 +343,8 @@ function loadAuthority(
   if (names.length === 0) throw new Error("Hermes Portable uninstall has no schema-5 targets");
   const registry = exactRegistry(input);
   const targetNames = new Set(names);
-  const loaded = names.map((sandboxName): LoadedTarget => {
+  const loaded: LoadedTarget[] = [];
+  for (const sandboxName of names) {
     const snapshot = readHermesPortableLifecycleReceipt(sandboxName, input.stateDir);
     if (!snapshot || snapshot.receipt.phase !== "active") {
       throw new Error(
@@ -363,7 +364,7 @@ function loadAuthority(
         name === sandboxName ? (exactRegistry(input).sandboxes[name] as SandboxEntry) : null,
       ...(deps.podmanAuthorityDeps ? { podmanAuthorityDeps: deps.podmanAuthorityDeps } : {}),
     };
-    const sandbox = prepareHermesPortableSandboxRemoval(
+    const sandbox = await prepareHermesPortableSandboxRemoval(
       sandboxName,
       {
         agent: "hermes",
@@ -446,18 +447,20 @@ function loadAuthority(
     if (expectedTarget && !isDeepStrictEqual(authority, expectedTarget)) {
       throw new Error(`Hermes Portable uninstall authority drifted for '${sandboxName}'`);
     }
-    return Object.freeze({
-      row,
-      inferenceRow,
-      receipt,
-      sandbox,
-      provider,
-      runtime,
-      inference,
-      inferencePeers,
-      authority,
-    });
-  });
+    loaded.push(
+      Object.freeze({
+        row,
+        inferenceRow,
+        receipt,
+        sandbox,
+        provider,
+        runtime,
+        inference,
+        inferencePeers,
+        authority,
+      }),
+    );
+  }
   const authority = Object.freeze({
     registryPathSha256: pathDigest(input.registryFile),
     statePathSha256: pathDigest(input.stateDir),
@@ -465,6 +468,9 @@ function loadAuthority(
   });
   if (expected && !isDeepStrictEqual(authority, expected)) {
     throw new Error("Hermes Portable uninstall transaction authority drifted");
+  }
+  if (!isDeepStrictEqual(exactRegistry(input), registry)) {
+    throw new Error("Hermes Portable uninstall registry authority changed during observation");
   }
   return Object.freeze({ authority, registry, targets: Object.freeze(loaded) });
 }
@@ -481,22 +487,22 @@ export async function runHermesPortableUninstall(
 ): Promise<HermesPortableUninstallTransactionResult> {
   let cache: LoadedAuthority | null = null;
   return runHermesPortableUninstallTransaction(input.stateDir, {
-    prepare: () => {
-      cache = loadAuthority(input, deps, null, NO_RESOURCE_ABSENCE);
+    prepare: async () => {
+      cache = await loadAuthority(input, deps, null, NO_RESOURCE_ABSENCE);
       return cache.authority;
     },
-    prepareReplacement: () => {
+    prepareReplacement: async () => {
       if (schema5SandboxNames(input).length === 0) return null;
-      cache = loadAuthority(input, deps, null, NO_RESOURCE_ABSENCE);
+      cache = await loadAuthority(input, deps, null, NO_RESOURCE_ABSENCE);
       return cache.authority;
     },
-    revalidateResources: (authority, phase) => {
-      cache = loadAuthority(input, deps, authority, admittedResourceAbsence(phase));
+    revalidateResources: async (authority, phase) => {
+      cache = await loadAuthority(input, deps, authority, admittedResourceAbsence(phase));
     },
-    reconcileSandboxes: () => {
+    reconcileSandboxes: async () => {
       let removed = 0;
       for (const target of requireCache(cache).targets) {
-        target.sandbox.removeAndVerify();
+        await target.sandbox.removeAndVerify();
         if (target.sandbox.present) removed += 1;
       }
       return removed;
@@ -529,9 +535,9 @@ export async function runHermesPortableUninstall(
         }
       }
     },
-    verifyResourcesAbsent: () => {
+    verifyResourcesAbsent: async () => {
       for (const target of requireCache(cache).targets) {
-        target.sandbox.verifyAbsent();
+        await target.sandbox.verifyAbsent();
         if (target.authority.provider.disposition === "remove") target.provider.verifyAbsent();
         else if (!target.provider.present) {
           throw new Error("Hermes Portable shared provider disappeared during uninstall");
