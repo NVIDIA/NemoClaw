@@ -20,6 +20,6 @@ export default class SandboxPolicyListCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args } = await this.parse(SandboxPolicyListCommand);
-    listSandboxPolicies(args.sandboxName);
+    await listSandboxPolicies(args.sandboxName);
   }
 }

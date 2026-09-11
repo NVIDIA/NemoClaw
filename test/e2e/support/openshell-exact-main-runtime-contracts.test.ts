@@ -89,7 +89,7 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
     const policyMutations: Array<{ document: string; operation: string | undefined }> = [];
     const setPolicy = vi
       .spyOn(policy, "setPolicyDocument")
-      .mockImplementation((_sandboxName, document, options) => {
+      .mockImplementation(async (_sandboxName, document, options) => {
         policyMutations.push({ document, operation: options?.operation });
         return true;
       });

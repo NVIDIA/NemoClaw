@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  buildEnableSandboxAuditLogsArgs,
   buildSandboxLogsArgs,
   buildSandboxOpenclawGatewayLogsArgs,
   describeLogProbeResult,
@@ -58,15 +57,6 @@ describe("sandbox logs helpers", () => {
         since: "5m",
       }),
     ).toEqual(["logs", "alpha", "-n", "25", "--source", "all", "--since", "5m", "--tail"]);
-    expect(buildEnableSandboxAuditLogsArgs("alpha")).toEqual([
-      "settings",
-      "set",
-      "alpha",
-      "--key",
-      "ocsf_json_enabled",
-      "--value",
-      "true",
-    ]);
   });
 
   it("describes log probe results and bounds probe timeout env input", () => {

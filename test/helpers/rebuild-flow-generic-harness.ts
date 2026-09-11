@@ -841,11 +841,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   let policyRemovalObserved = false;
   const applyPresetSpy = vi
     .spyOn(policies, "applyPreset")
-    .mockImplementation((_sandboxName: unknown, presetName: unknown) => {
+    .mockImplementation(async (_sandboxName: unknown, presetName: unknown) => {
       const normalizedPresetName = String(presetName);
       let applied: boolean;
       if (overrides.applyPreset) {
-        applied = overrides.applyPreset(normalizedPresetName);
+        applied = await overrides.applyPreset(normalizedPresetName);
       } else if (normalizedPresetName === "throw") {
         throw new Error("preset boom");
       } else {
