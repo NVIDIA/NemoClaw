@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Low-level OpenShell CLI/runtime primitives shared by the runtime facade and
- * typed CLI adapters. Keep higher-level adapter behavior out of this module.
+ * Low-level OpenShell primitives shared by the runtime facade and typed CLI
+ * adapters. This internal fan-in seam is not a consumer-facing adapter.
  */
 export {
   captureOpenshellCommand,

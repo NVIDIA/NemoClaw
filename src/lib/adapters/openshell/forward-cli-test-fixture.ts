@@ -9,8 +9,10 @@ import { vi } from "vitest";
 
 import type { OpenShellForwardIdentity } from "./forward";
 import { createCliOpenShellForwardAdapter } from "./forward-cli";
+import type { OpenShellRuntimeSelection } from "./runtime-selection";
 
 export const forward: OpenShellForwardIdentity = {
+  gatewayEndpoint: "https://127.0.0.1:8080",
   gatewayName: "nemoclaw",
   workspace: "default",
   sandboxName: "demo",
@@ -25,6 +27,10 @@ export const otherForward: OpenShellForwardIdentity = {
 };
 
 export const executable = "/usr/local/bin/openshell";
+export const runtimeSelection: OpenShellRuntimeSelection = {
+  gatewayName: forward.gatewayName,
+  workspace: forward.workspace,
+};
 export const listHeader = "SANDBOX BIND PORT PID STATUS";
 export const noActiveForwards = "No active forwards.";
 export const legacyForwardList = [listHeader, "demo     127.0.0.1  18789  4312  running"].join(
@@ -93,6 +99,7 @@ export type TerminateForward = NonNullable<AdapterDeps["terminate"]>;
 type HarnessOverrides = Readonly<{
   environment?: NodeJS.ProcessEnv;
   executable?: string;
+  gatewayEndpoint?: string;
   hostProbe?: HostProbe;
   inspect?: InspectListener;
   inspectLegacy?: InspectLegacyListener;
@@ -102,6 +109,7 @@ type HarnessOverrides = Readonly<{
   procWorkLimit?: number;
   probePort?: ProbePort;
   run?: RunCommand;
+  runtimeSelection?: OpenShellRuntimeSelection;
   sleep?: (milliseconds: number) => Promise<void>;
   spawn?: SpawnForward;
   terminate?: TerminateForward;
@@ -239,15 +247,17 @@ export function createHarness(overrides: HarnessOverrides = {}) {
   const adapter = createCliOpenShellForwardAdapter({
     environment: overrides.environment ?? {},
     executable: overrides.executable ?? executable,
+    gatewayEndpoint: overrides.gatewayEndpoint ?? forward.gatewayEndpoint,
     ...(overrides.hostProbe ? { hostProbe: overrides.hostProbe } : {}),
     inspect,
     inspectLegacy,
     now: overrides.now ?? (() => time),
     platform: overrides.platform ?? "linux",
     ...(overrides.procRoot ? { procRoot: overrides.procRoot } : {}),
-    ...(overrides.procWorkLimit ? { procWorkLimit: overrides.procWorkLimit } : {}),
+    ...(overrides.procWorkLimit !== undefined ? { procWorkLimit: overrides.procWorkLimit } : {}),
     probePort,
     run,
+    runtimeSelection: overrides.runtimeSelection ?? runtimeSelection,
     sleep,
     spawn,
     terminate,

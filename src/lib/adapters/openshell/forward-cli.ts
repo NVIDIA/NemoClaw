@@ -28,6 +28,10 @@ import {
   type VerifyOpenShellForwardReleaseRequest,
 } from "./forward";
 import { buildOpenShellSubprocessEnv } from "./resolve-shared";
+import {
+  replaceOpenShellRuntimeSelectionEnv,
+  type OpenShellRuntimeSelection,
+} from "./runtime-selection";
 
 const DEFAULT_CLEANUP_TIMEOUT_MS = 5_000;
 const DEFAULT_RELEASE_TIMEOUT_MS = 5_000;
@@ -128,6 +132,8 @@ export type CliOpenShellForwardPortProbe = (
 export type CliOpenShellForwardAdapterDeps = Readonly<{
   executable: string;
   environment?: NodeJS.ProcessEnv;
+  gatewayEndpoint: string;
+  runtimeSelection: OpenShellRuntimeSelection;
   inspect?: (
     forward: OpenShellForwardIdentity,
     expectedPid: number | undefined,
@@ -230,7 +236,16 @@ export function parseCliOpenShellForwardList(
 
 /** Build the gateway-scoped legacy forward-list command. */
 export function buildCliOpenShellForwardListArgs(forward: OpenShellForwardIdentity): string[] {
-  return ["forward", "list", "--gateway", forward.gatewayName, "--workspace", forward.workspace];
+  return [
+    "forward",
+    "list",
+    "--gateway",
+    forward.gatewayName,
+    "--gateway-endpoint",
+    forward.gatewayEndpoint,
+    "--workspace",
+    forward.workspace,
+  ];
 }
 
 /** Build the direct ForwardTcp command without a shell. */
@@ -238,6 +253,8 @@ export function buildCliOpenShellForwardServiceArgs(forward: OpenShellForwardIde
   return [
     "--gateway",
     forward.gatewayName,
+    "--gateway-endpoint",
+    forward.gatewayEndpoint,
     "--workspace",
     forward.workspace,
     "forward",
@@ -263,6 +280,8 @@ export function buildCliOpenShellLegacyForwardStopArgs(
     forward.sandboxName,
     "--gateway",
     forward.gatewayName,
+    "--gateway-endpoint",
+    forward.gatewayEndpoint,
     "--workspace",
     forward.workspace,
   ];
@@ -272,21 +291,73 @@ function isPort(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= 65_535;
 }
 
-function isCanonicalNemoClawGatewayName(value: string): boolean {
-  if (value === "nemoclaw") return true;
+function canonicalNemoClawGatewayPort(value: string): number | null {
+  if (value === "nemoclaw") return 8_080;
   const match = /^nemoclaw-([1-9]\d{0,4})$/u.exec(value);
-  if (!match) return false;
+  if (!match) return null;
   const port = Number(match[1]);
-  return port >= 1 && port <= 65_535 && port !== 8_080;
+  return port >= 1 && port <= 65_535 && port !== 8_080 ? port : null;
+}
+
+function isAuthorityBoundGatewayEndpoint(endpoint: string, gatewayName: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    return false;
+  }
+  const gatewayPort = canonicalNemoClawGatewayPort(gatewayName);
+  let endpointPort: number;
+  if (parsed.port) endpointPort = Number(parsed.port);
+  else endpointPort = parsed.protocol === "https:" ? 443 : 80;
+  return (
+    gatewayPort !== null &&
+    endpoint === parsed.origin &&
+    (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+    (parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]" || parsed.hostname === "::1") &&
+    !parsed.username &&
+    !parsed.password &&
+    endpointPort === gatewayPort
+  );
 }
 
 function validForward(forward: OpenShellForwardIdentity): boolean {
   return (
-    isCanonicalNemoClawGatewayName(forward.gatewayName) &&
+    canonicalNemoClawGatewayPort(forward.gatewayName) !== null &&
+    isAuthorityBoundGatewayEndpoint(forward.gatewayEndpoint, forward.gatewayName) &&
     isValidName(forward.workspace) &&
     isValidName(forward.sandboxName) &&
     (forward.localHost === "127.0.0.1" || forward.localHost === "0.0.0.0") &&
     isPort(forward.port)
+  );
+}
+
+function snapshotRuntimeSelection(
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+): OpenShellRuntimeSelection | null {
+  if (
+    typeof runtimeSelection?.gatewayName !== "string" ||
+    typeof runtimeSelection.workspace !== "string" ||
+    (runtimeSelection.localTlsDir !== undefined && typeof runtimeSelection.localTlsDir !== "string")
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    gatewayName: runtimeSelection.gatewayName,
+    ...(runtimeSelection.localTlsDir === undefined
+      ? {}
+      : { localTlsDir: runtimeSelection.localTlsDir }),
+    workspace: runtimeSelection.workspace,
+  });
+}
+
+function validRuntimeSelection(runtimeSelection: OpenShellRuntimeSelection): boolean {
+  const { localTlsDir } = runtimeSelection;
+  return (
+    canonicalNemoClawGatewayPort(runtimeSelection.gatewayName) !== null &&
+    isValidName(runtimeSelection.workspace) &&
+    (localTlsDir === undefined ||
+      (localTlsDir.length > 0 && path.isAbsolute(localTlsDir) && !localTlsDir.includes("\0")))
   );
 }
 
@@ -303,7 +374,9 @@ function sameScope(forwards: readonly OpenShellForwardIdentity[]): boolean {
     first === undefined ||
     forwards.every(
       (forward) =>
-        forward.gatewayName === first.gatewayName && forward.workspace === first.workspace,
+        forward.gatewayEndpoint === first.gatewayEndpoint &&
+        forward.gatewayName === first.gatewayName &&
+        forward.workspace === first.workspace,
     )
   );
 }
@@ -311,17 +384,28 @@ function sameScope(forwards: readonly OpenShellForwardIdentity[]): boolean {
 function validBatch(
   forwards: readonly OpenShellForwardIdentity[],
   timeoutMs: number | undefined,
+  gatewayEndpoint: string,
+  runtimeSelection: OpenShellRuntimeSelection,
 ): boolean {
   return (
     validTimeout(timeoutMs) &&
+    isAuthorityBoundGatewayEndpoint(gatewayEndpoint, runtimeSelection.gatewayName) &&
+    validRuntimeSelection(runtimeSelection) &&
     sameScope(forwards) &&
     forwards.every(validForward) &&
+    forwards.every(
+      (forward) =>
+        forward.gatewayEndpoint === gatewayEndpoint &&
+        forward.gatewayName === runtimeSelection.gatewayName &&
+        forward.workspace === runtimeSelection.workspace,
+    ) &&
     new Set(forwards.map((forward) => forward.port)).size === forwards.length
   );
 }
 
 function snapshotForward(forward: OpenShellForwardIdentity): OpenShellForwardIdentity {
   return Object.freeze({
+    gatewayEndpoint: forward.gatewayEndpoint,
     gatewayName: forward.gatewayName,
     workspace: forward.workspace,
     sandboxName: forward.sandboxName,
@@ -390,7 +474,10 @@ function commandError(
   return COMMAND_ERROR;
 }
 
-function commandEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv | null {
+function commandEnvironment(
+  source: NodeJS.ProcessEnv,
+  runtimeSelection: OpenShellRuntimeSelection,
+): NodeJS.ProcessEnv | null {
   const sourceConfigHome = source.XDG_CONFIG_HOME;
   const configHome = sourceConfigHome?.trim();
   if (
@@ -402,6 +489,7 @@ function commandEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv | null
   }
   const environment = buildOpenShellSubprocessEnv(source);
   if (environment.XDG_CONFIG_HOME === "") delete environment.XDG_CONFIG_HOME;
+  replaceOpenShellRuntimeSelectionEnv(environment, runtimeSelection);
   return environment;
 }
 
@@ -456,23 +544,17 @@ function parseListenerPids(output: string): number[] | null {
   return pids.every((pid) => Number.isSafeInteger(pid)) ? pids : null;
 }
 
-function parseDarwinProcessImage(output: string, expectedPid: number): string | null {
+function parseDarwinHostingExecutable(output: string): string | null {
   if (Buffer.byteLength(output) > DEFAULT_OUTPUT_LIMIT_BYTES) return null;
-  const lines = output.split(/\r?\n/u);
-  if (lines.at(-1) === "") lines.pop();
-  if (lines[0] !== `p${String(expectedPid)}` || lines.length < 3 || lines.length % 2 !== 1) {
-    return null;
-  }
-  const imagePaths: string[] = [];
-  for (let index = 1; index < lines.length; index += 2) {
-    const descriptor = lines[index];
-    const name = lines[index + 1];
-    if (descriptor !== "ftxt" || !name?.startsWith("n/")) return null;
-    const imagePath = name.slice(1);
-    if (!path.isAbsolute(imagePath) || imagePath.includes("\0")) return null;
-    imagePaths.push(imagePath);
-  }
-  return new Set(imagePaths).size === imagePaths.length ? (imagePaths[0] ?? null) : null;
+  const [hostingExecutable] = output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return hostingExecutable &&
+    path.isAbsolute(hostingExecutable) &&
+    !hostingExecutable.includes("\0")
+    ? hostingExecutable
+    : null;
 }
 
 async function lsofListenerPids(
@@ -676,8 +758,8 @@ async function processExecutableMatch(
   }
   if (options.platform !== "darwin") return "indeterminate";
   const image = await runPidProbe(
-    "/usr/sbin/lsof",
-    ["-a", "-p", String(pid), "-d", "txt", "-Fn"],
+    "/usr/bin/codesign",
+    ["-h", String(pid)],
     options.environment,
     timeoutMs,
     options.run,
@@ -685,7 +767,7 @@ async function processExecutableMatch(
   if (image.status !== 0 || image.timedOut || image.error || image.signal || image.stderr.trim()) {
     return "indeterminate";
   }
-  const imagePath = parseDarwinProcessImage(image.stdout, pid);
+  const imagePath = parseDarwinHostingExecutable(image.stdout);
   return imagePath === null ? "indeterminate" : executableMatch(imagePath, expectedExecutable);
 }
 
@@ -980,9 +1062,16 @@ export function createCliOpenShellForwardAdapter(
   deps: CliOpenShellForwardAdapterDeps,
 ): OpenShellForwardAdapter {
   const executable = deps.executable;
+  const gatewayEndpoint = deps.gatewayEndpoint;
   const platform = deps.platform ?? process.platform;
   const sourceEnvironment = deps.environment ?? process.env;
-  const environment = commandEnvironment(sourceEnvironment);
+  const runtimeSelection = snapshotRuntimeSelection(deps.runtimeSelection);
+  const runtimeSelectionValid =
+    runtimeSelection !== null && validRuntimeSelection(runtimeSelection);
+  const environment =
+    runtimeSelectionValid && runtimeSelection
+      ? commandEnvironment(sourceEnvironment, runtimeSelection)
+      : null;
   const hostEnvironment: NodeJS.ProcessEnv = { LANG: "C", LC_ALL: "C" };
   const now = deps.now ?? (() => performance.now());
   const sleep =
@@ -1040,7 +1129,10 @@ export function createCliOpenShellForwardAdapter(
       }));
 
   const runtimeValid =
-    path.isAbsolute(executable) && !executable.includes("\0") && environment !== null;
+    path.isAbsolute(executable) &&
+    !executable.includes("\0") &&
+    runtimeSelectionValid &&
+    environment !== null;
 
   type TimedSettlement<T> =
     | Readonly<{ state: "value"; value: T }>
@@ -1164,7 +1256,11 @@ export function createCliOpenShellForwardAdapter(
       ownedPids: new Map<number, number>(),
     });
     if (forwards.length === 0) return emptyEvidence([]);
-    if (!runtimeValid || !validBatch(forwards, requestedTimeoutMs)) {
+    if (
+      !runtimeValid ||
+      !runtimeSelection ||
+      !validBatch(forwards, requestedTimeoutMs, gatewayEndpoint, runtimeSelection)
+    ) {
       return emptyEvidence(invalidObservations(forwards.length));
     }
     if (platform === "win32") {
@@ -1370,7 +1466,11 @@ export function createCliOpenShellForwardAdapter(
     const requestedTimeoutMs = request.timeoutMs;
     const assertCurrent = request.assertCurrent;
     const timeoutMs = requestedTimeoutMs ?? OPENSHELL_OPERATION_TIMEOUT_MS;
-    if (!runtimeValid || !validBatch([forward], requestedTimeoutMs)) {
+    if (
+      !runtimeValid ||
+      !runtimeSelection ||
+      !validBatch([forward], requestedTimeoutMs, gatewayEndpoint, runtimeSelection)
+    ) {
       return { state: "failed", effect: "none", error: VALIDATION_ERROR };
     }
     if (platform === "win32") {
@@ -1535,7 +1635,11 @@ export function createCliOpenShellForwardAdapter(
     const requestedTimeoutMs = request.timeoutMs;
     const assertCurrent = request.assertCurrent;
     if (forwards.length === 0) return { state: "released" };
-    if (!validBatch(forwards, requestedTimeoutMs)) {
+    if (
+      !runtimeValid ||
+      !runtimeSelection ||
+      !validBatch(forwards, requestedTimeoutMs, gatewayEndpoint, runtimeSelection)
+    ) {
       return { state: "indeterminate", error: VALIDATION_ERROR };
     }
     const timeoutMs = requestedTimeoutMs ?? DEFAULT_RELEASE_TIMEOUT_MS;
@@ -1579,7 +1683,11 @@ export function createCliOpenShellForwardAdapter(
     const authorize = request.authorize;
     const assertCurrent = request.assertCurrent;
     const timeoutMs = requestedTimeoutMs ?? OPENSHELL_OPERATION_TIMEOUT_MS;
-    if (!runtimeValid || !validBatch([forward], requestedTimeoutMs)) {
+    if (
+      !runtimeValid ||
+      !runtimeSelection ||
+      !validBatch([forward], requestedTimeoutMs, gatewayEndpoint, runtimeSelection)
+    ) {
       return { state: "failed", effect: "none", error: VALIDATION_ERROR };
     }
     const deadline = now() + timeoutMs;

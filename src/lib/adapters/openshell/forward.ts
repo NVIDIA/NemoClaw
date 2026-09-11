@@ -5,6 +5,7 @@ export type OpenShellForwardLocalHost = "127.0.0.1" | "0.0.0.0";
 
 /** The sandbox target is always 127.0.0.1 on the same port. */
 export type OpenShellForwardIdentity = Readonly<{
+  gatewayEndpoint: string;
   gatewayName: string;
   workspace: string;
   sandboxName: string;
