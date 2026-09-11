@@ -5,7 +5,23 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import type { OpenShellGatewayObservation } from "../../adapters/openshell/gateway-observer";
+
 type GatewayStateModule = typeof import("./gateway-state");
+
+function gatewayObservation(
+  state: OpenShellGatewayObservation["state"],
+  diagnostic = "Gateway is not connected.",
+  activeGateway = "nemoclaw",
+): OpenShellGatewayObservation {
+  return {
+    state,
+    diagnostic,
+    activeGateway,
+    recoveryBlocked: false,
+    unavailable: state === "named_unhealthy" || state === "named_unreachable",
+  };
+}
 
 const requireDist = createRequire(import.meta.url);
 
@@ -43,7 +59,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     mockSandboxPhase("Ready");
     getNamedGatewayLifecycleStateSpy = vi
       .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
-      .mockResolvedValue({ state: "healthy_named", status: "Gateway: nemoclaw" });
+      .mockResolvedValue(gatewayObservation("healthy_named", "Connected to gateway nemoclaw."));
     recoverNamedGatewayRuntimeSpy = vi
       .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
       .mockResolvedValue({ recovered: false });
@@ -338,29 +354,26 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
 
   it.each([
     {
-      lifecycle: {
-        state: "named_unreachable",
-        status: "Gateway: nemoclaw\nConnection refused",
-      },
+      lifecycle: gatewayObservation("named_unreachable", "Gateway is unreachable."),
       expectedState: "gateway_unreachable_after_restart",
       expectedGatewayRecoveryFailed: undefined,
     },
     {
-      lifecycle: { state: "named_unhealthy", diagnostic: "Gateway is not connected." },
+      lifecycle: gatewayObservation("named_unhealthy"),
       expectedState: "gateway_unreachable_after_restart",
       expectedGatewayRecoveryFailed: undefined,
     },
     {
-      lifecycle: { state: "missing_named", status: "No gateway configured" },
+      lifecycle: gatewayObservation("missing_named", "No gateway configured"),
       expectedState: "gateway_missing_after_restart",
       expectedGatewayRecoveryFailed: undefined,
     },
     {
-      lifecycle: {
-        state: "connected_other",
-        activeGateway: "openshell",
-        status: "Gateway: openshell\nStatus: Connected",
-      },
+      lifecycle: gatewayObservation(
+        "connected_other",
+        "Connected to another gateway.",
+        "openshell",
+      ),
       expectedState: "gateway_error",
       expectedGatewayRecoveryFailed: true,
     },
@@ -381,7 +394,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   it("preserves restart guidance from an unhealthy recovery observation", async () => {
     recoverNamedGatewayRuntimeSpy.mockResolvedValue({
       recovered: false,
-      after: { state: "named_unhealthy", diagnostic: "Gateway is not connected." },
+      after: gatewayObservation("named_unhealthy"),
     });
     const lookup = await gatewayState.getReconciledSandboxGatewayState("instance-a", {
       getState: async () => ({ state: "gateway_error", output: "transport error" }),
@@ -421,17 +434,11 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   it.each([
     {
       state: "named_unreachable" as const,
-      observation: {
-        state: "named_unreachable" as const,
-        status: "Gateway: nemoclaw\nConnection refused",
-      },
+      observation: gatewayObservation("named_unreachable", "Gateway is unreachable."),
     },
     {
       state: "named_unhealthy" as const,
-      observation: {
-        state: "named_unhealthy" as const,
-        diagnostic: "Gateway is not connected.",
-      },
+      observation: gatewayObservation("named_unhealthy"),
     },
   ])("prints restart guidance when the named gateway remains $state", async ({ observation }) => {
     captureOpenshellSpy.mockReturnValue({

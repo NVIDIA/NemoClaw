@@ -1127,14 +1127,18 @@ function isBlockingGatewayLifecycle(
   return lifecycle.unavailable;
 }
 
-function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutput = ""): never {
+function failConnectReadinessGatewayUnavailable(
+  sandboxName: string,
+  detailOutput = "",
+  lifecycle?: Awaited<ReturnType<typeof getNamedGatewayLifecycleState>>,
+): never {
   console.error("");
   console.error(
     `  OpenShell gateway is not running or unreachable; cannot verify sandbox '${sandboxName}' readiness.`,
   );
   if (detailOutput.trim()) {
     console.error(detailOutput.trimEnd());
-    printGatewayLifecycleHint(detailOutput, sandboxName, console.error);
+    printGatewayLifecycleHint(lifecycle ?? detailOutput, sandboxName, console.error);
   }
   console.error("  Recovery:");
   console.error(`    1. ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))}`);
@@ -1190,7 +1194,7 @@ async function failIfGatewayBlocksConnectReadiness(sandboxName: string): Promise
   const lifecycle = await getNamedGatewayLifecycleState(resolveSandboxGatewayName(sb));
   if (lifecycle.error) failConnectReadinessObservation(sandboxName, lifecycle.error);
   if (isBlockingGatewayLifecycle(lifecycle)) {
-    failConnectReadinessGatewayUnavailable(sandboxName, lifecycle.diagnostic);
+    failConnectReadinessGatewayUnavailable(sandboxName, lifecycle.diagnostic, lifecycle);
   }
 }
 
