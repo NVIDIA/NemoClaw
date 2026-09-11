@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
+import { EXPORTED_OLLAMA_MODEL } from "../../config/model";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
+import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
+import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry } from "../../state/registry/types";
@@ -125,4 +131,119 @@ export function configuration(revision = 3) {
     policySource: 1,
     globalPolicyVersion: 0,
   };
+}
+
+export function ollamaSource(model = EXPORTED_OLLAMA_MODEL) {
+  const route = resolveManagedStartupInferenceRoute(
+    "openclaw",
+    "ollama-local",
+    model,
+    "openai-completions",
+  );
+  const built = buildManagedStartupProfile({
+    ...startupInput,
+    inference: {
+      routeProvider: route.providerKey,
+      upstreamProvider: "ollama-local",
+      model,
+      routedBaseUrl: route.inferenceBaseUrl,
+      upstreamEndpointUrl: null,
+      api: "openai-completions",
+      primaryModelRef: route.primaryModelRef,
+      compatibility: route.inferenceCompat ?? {},
+    },
+  });
+  const source: SandboxEntry = {
+    ...entry,
+    provider: "ollama-local",
+    model,
+    endpointUrl: "http://host.openshell.internal:11440/v1",
+    credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+    workload: {
+      ...entry.workload,
+      encodedProfile: built.encodedProfile,
+      startupProfileSha256: built.startupProfileSha256,
+    },
+  };
+  const observed: ObservedOllamaProxy = {
+    pid: 1234,
+    listenerAddress: "0.0.0.0",
+    serving: {
+      backend: "ollama",
+      daemon: { management: "external", hostPort: 11439 },
+      proxy: { management: "nemoclaw", hostPort: 11440 },
+      model: { servedName: model, digest: `sha256:${"a".repeat(64)}` },
+    },
+  };
+  return { source, observed };
+}
+
+export function telemetryEntry(
+  telemetry: Readonly<Record<string, unknown>> = {},
+  agentSettings: Readonly<Record<string, unknown>> = {},
+) {
+  const profile = JSON.parse(Buffer.from(startup.encodedProfile, "base64url").toString("utf8")) as {
+    agentConfig: { otel: Record<string, unknown> };
+  };
+  Object.assign(profile.agentConfig.otel, {
+    enabled: true,
+    serviceName: "research-assistant",
+    sampleRate: 0.5,
+    ...telemetry,
+  });
+  Object.assign(profile.agentConfig, agentSettings);
+  const encodedProfile = Buffer.from(JSON.stringify(profile)).toString("base64url");
+  return {
+    ...entry,
+    workload: {
+      ...entry.workload,
+      encodedProfile,
+      startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+    },
+  };
+}
+
+export function dashboardSource() {
+  const built = buildManagedStartupProfile({
+    ...startupInput,
+    toolDisclosure: "direct",
+    dashboard: {
+      agent: "openclaw" as const,
+      mode: "remote" as const,
+      url: "http://127.0.0.1:19000",
+      port: 19000,
+      bindAddress: "0.0.0.0" as const,
+      wslExposure: false,
+    },
+  });
+  return {
+    ...entry,
+    toolDisclosure: "direct" as const,
+    dashboardPort: 19000,
+    dashboardRemoteBindPrepared: true,
+    workload: {
+      ...entry.workload,
+      encodedProfile: built.encodedProfile,
+      startupProfileSha256: built.startupProfileSha256,
+    },
+  };
+}
+
+export function openAiProviderProfile() {
+  return {
+    profile: {
+      id: "openai",
+      source: "user",
+      scope: "workspace",
+      resourceVersion: 4n,
+      credentials: [],
+      endpoints: [],
+      binaries: [],
+      inferenceCapable: true,
+    },
+  };
+}
+
+export function nativeNvidiaProvider() {
+  return { ...provider().provider, type: "nvidia", profileWorkspace: "", config: {} };
 }

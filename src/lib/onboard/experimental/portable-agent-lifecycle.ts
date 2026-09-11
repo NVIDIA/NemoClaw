@@ -35,6 +35,7 @@ import {
   type PortableDemoLifecycleRecoveryResult,
   type PortableDemoLifecycleStopResult,
 } from "./portable-demo-lifecycle";
+import { resolveHermesPortableLifecycleLockOptions } from "./portable-lifecycle-lock";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 
 export { defaultPortableDemoStateDir };
@@ -45,10 +46,9 @@ export function hermesPortableLifecycleLockOptions(
   env: NodeJS.ProcessEnv = process.env,
   hasReceiptCandidate: typeof hasHermesPortableReceiptCandidate = hasHermesPortableReceiptCandidate,
 ): { readonly stateDir: string } | undefined {
-  if (!hasReceiptCandidate(sandboxName, defaultPortableDemoStateDir(env))) {
-    return undefined;
-  }
-  return { stateDir: path.join(defaultPortableDemoStateDir(env), "state") };
+  return resolveHermesPortableLifecycleLockOptions(sandboxName, env, (name, environment) =>
+    hasReceiptCandidate(name, defaultPortableDemoStateDir(environment)),
+  );
 }
 
 export type PortableAgentLifecycleDeps = PortableDemoLifecycleDeps & HermesPortableLifecycleDeps;
