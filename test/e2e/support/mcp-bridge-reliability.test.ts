@@ -28,8 +28,6 @@ import {
 } from "../live/mcp-bridge-reliability.ts";
 
 const HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
-const HOST_FENCE_CONTENTION =
-  "Error: Failed to acquire lock on /home/runner/.nemoclaw-portable-host.lock after 120 retries\n";
 
 function gatewayResult(status: number, code: string) {
   return {
@@ -637,24 +635,21 @@ describe("MCP bridge transient classification", () => {
     ).toBe(false);
   });
 
-  it.each([{ adapter: "hermes-config", kind: "duplicate", diagnostic: "server already exists" }])(
-    "keeps a verified $adapter $kind rejection without retrying",
-    async ({ adapter, diagnostic }) => {
-      const originalResult = { exitCode: 1 };
-      const retry = vi.fn(async () => ({ exitCode: 2 }));
+  it("keeps the original duplicate rejection without retrying", async () => {
+    const originalResult = { exitCode: 1 };
+    const retry = vi.fn(async () => ({ exitCode: 2 }));
 
-      await expect(
-        retryAfterConcurrentAddTransientFailure({
-          adapter,
-          committedBridgeVerified: true,
-          diagnostic,
-          originalResult,
-          retry,
-        }),
-      ).resolves.toBe(originalResult);
-      expect(retry).not.toHaveBeenCalled();
-    },
-  );
+    await expect(
+      retryAfterConcurrentAddTransientFailure({
+        adapter: "hermes-config",
+        committedBridgeVerified: true,
+        diagnostic: "server already exists",
+        originalResult,
+        retry,
+      }),
+    ).resolves.toBe(originalResult);
+    expect(retry).not.toHaveBeenCalled();
+  });
 
   it("retries the exact Hermes restart transport failure once", async () => {
     const retryResult = { exitCode: 1 };
@@ -689,19 +684,14 @@ describe("MCP bridge transient classification", () => {
     expect(retry).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    "unexpected transport error",
-    HOST_FENCE_CONTENTION.replace(".nemoclaw-portable-host.lock", "another.lock"),
-    HOST_FENCE_CONTENTION.replace("120 retries", "1 retries"),
-    `Applied preset\n${HOST_FENCE_CONTENTION}`,
-  ])("fails closed for an unknown rejection: %s", async (diagnostic) => {
+  it("fails closed for an unknown rejection", async () => {
     const retry = vi.fn(async () => ({ exitCode: 1 }));
 
     await expect(
       retryAfterConcurrentAddTransientFailure({
         adapter: "hermes-config",
         committedBridgeVerified: true,
-        diagnostic,
+        diagnostic: "unexpected transport error",
         originalResult: { exitCode: 1 },
         retry,
       }),
@@ -718,23 +708,20 @@ describe("MCP bridge transient classification", () => {
     expect(retry).not.toHaveBeenCalled();
   });
 
-  it.each([HERMES_BROKEN_PIPE, HOST_FENCE_CONTENTION])(
-    "requires committed bridge verification before accepting a rejection [case %#]",
-    async (diagnostic) => {
-      const retry = vi.fn(async () => ({ exitCode: 1 }));
+  it("refuses retry before the committed bridge is verified", async () => {
+    const retry = vi.fn(async () => ({ exitCode: 1 }));
 
-      await expect(
-        retryAfterConcurrentAddTransientFailure({
-          adapter: "hermes-config",
-          committedBridgeVerified: false,
-          diagnostic,
-          originalResult: { exitCode: 1 },
-          retry,
-        }),
-      ).rejects.toThrow("requires a verified committed bridge");
-      expect(retry).not.toHaveBeenCalled();
-    },
-  );
+    await expect(
+      retryAfterConcurrentAddTransientFailure({
+        adapter: "hermes-config",
+        committedBridgeVerified: false,
+        diagnostic: HERMES_BROKEN_PIPE,
+        originalResult: { exitCode: 1 },
+        retry,
+      }),
+    ).rejects.toThrow("requires a verified committed bridge");
+    expect(retry).not.toHaveBeenCalled();
+  });
 
   it("retries the exact gateway draining response with a bounded delay", async () => {
     const passing = gatewayResult(200, "none");

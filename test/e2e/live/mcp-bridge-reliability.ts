@@ -667,9 +667,6 @@ export function isHermesRestartTransportFailure(adapter: string, diagnostic: str
   return HERMES_RESTART_SUCCESS_PREFIX.test(normalized.slice(0, -suffix.length));
 }
 
-export const MCP_CONCURRENT_ADD_REJECTION =
-  /already exists|^[\t \r\n]*Error: Failed to acquire lock on [^\r\n]+\/\.nemoclaw-portable-host\.lock after 120 retries[\t \r\n]*$/iu;
-
 export async function retryAfterConcurrentAddTransientFailure<T>(options: {
   adapter: string;
   committedBridgeVerified: boolean;
