@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as gatewayDrift from "../../adapters/openshell/gateway-drift";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as gatewayRuntime from "../../gateway-runtime-action";
-import * as registry from "../../state/registry";
+import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as gatewaySelect from "./gateway-select";
 import {
   getReconciledSandboxGatewayState,
@@ -16,6 +16,11 @@ import {
 
 describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   beforeEach(() => {
+    vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockReturnValue({
+      entry: { name: "beta", gatewayPort: 8091 } as never,
+      gatewayPort: 8091,
+      registryFile: "/test/sandboxes.json",
+    });
     vi.spyOn(gatewaySelect, "selectSandboxOwningGateway").mockReturnValue({
       outcome: "selected",
       gatewayName: "nemoclaw-8091",
@@ -114,7 +119,6 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("targets the registered owner on the first lookup instead of accepting ambient sibling state", async () => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8091 } as never);
     const getState = vi.fn((_name: string, gatewayName?: string) =>
       gatewayName === "nemoclaw-8091"
         ? { state: "present", output: "Phase: Ready" }
@@ -133,7 +137,6 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("queries the gateway returned by selection when registry ownership changes between snapshots", async () => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8091 } as never);
     vi.mocked(gatewaySelect.selectSandboxOwningGateway).mockReturnValue({
       outcome: "selected",
       gatewayName: "nemoclaw-8092",
@@ -148,7 +151,6 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("keeps recovery pinned to the gateway returned by selection after ownership changes", async () => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8091 } as never);
     vi.mocked(gatewaySelect.selectSandboxOwningGateway).mockReturnValue({
       outcome: "selected",
       gatewayName: "nemoclaw-8092",
@@ -178,7 +180,6 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("does not return an ambient sibling timeout without first querying the healthy owner", async () => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8091 } as never);
     const getState = vi.fn((_name: string, gatewayName?: string) =>
       gatewayName === "nemoclaw-8091"
         ? { state: "present", output: "Phase: Ready" }
@@ -193,7 +194,6 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("does not return an ambient sibling unknown error without first querying the healthy owner", async () => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8091 } as never);
     const getState = vi.fn((_name: string, gatewayName?: string) =>
       gatewayName === "nemoclaw-8091"
         ? { state: "present", output: "Phase: Ready" }
@@ -208,7 +208,6 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("fails closed before lookup when the owning gateway cannot be selected", async () => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8091 } as never);
     vi.mocked(gatewaySelect.selectSandboxOwningGateway).mockReturnValue({
       outcome: "failed",
       gatewayName: "nemoclaw-8091",
@@ -223,7 +222,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
   });
 
   it("leaves an unregistered sandbox on the existing default lookup path", async () => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+    vi.mocked(crossPortRegistry.findSandboxAcrossGatewayRoots).mockReturnValue(null);
     const getState = vi.fn().mockResolvedValue({ state: "present", output: "Phase: Ready" });
 
     const result = await getReconciledSandboxGatewayState("ghost", { getState });
