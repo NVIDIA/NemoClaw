@@ -2362,9 +2362,9 @@ cli_shim_entry_identity() {
     printf 'absent'
     return 0
   fi
-  if identity="$(stat -c '%F:%d:%i' -- "$shim_path" 2>/dev/null)"; then
+  if identity="$(stat -c '%d:%i' -- "$shim_path" 2>/dev/null)"; then
     :
-  elif identity="$(stat -f '%HT:%d:%i' "$shim_path" 2>/dev/null)"; then
+  elif identity="$(stat -f '%d:%i' "$shim_path" 2>/dev/null)"; then
     :
   else
     return 1
@@ -2413,6 +2413,73 @@ try {
   process.exitCode = 1;
 }
 ' "$source_path" "$destination_path"
+}
+
+refresh_managed_nemoclaw_acp_shim() {
+  local source_path="${1:-}" destination_path="${2:-}" node_path="${3:-}"
+  local expected_identity="${4:-}"
+  [[ -n "$source_path" && -n "$destination_path" && -x "$node_path" &&
+    -n "$expected_identity" && "$expected_identity" != "absent" ]] || return 1
+  # shellcheck disable=SC2016 # JavaScript template literals are evaluated by Node.js.
+  "$node_path" -e '
+const fs = require("node:fs");
+const { O_NOFOLLOW, O_RDONLY, O_RDWR } = fs.constants;
+let destination;
+let original;
+let originalMode;
+let source;
+let wroteDestination = false;
+
+function identity(stat) {
+  return `${stat.dev}:${stat.ino}`;
+}
+
+function writeAll(fd, contents) {
+  let offset = 0;
+  while (offset < contents.length) {
+    offset += fs.writeSync(fd, contents, offset, contents.length - offset, offset);
+  }
+}
+
+try {
+  source = fs.openSync(process.argv[1], O_RDONLY | O_NOFOLLOW);
+  const sourceStat = fs.fstatSync(source, { bigint: true });
+  if (!sourceStat.isFile()) throw new Error("invalid source");
+  const contents = fs.readFileSync(source);
+
+  destination = fs.openSync(process.argv[2], O_RDWR | O_NOFOLLOW);
+  const before = fs.fstatSync(destination, { bigint: true });
+  if (!before.isFile() || before.nlink !== 1n || identity(before) !== process.argv[3]) {
+    throw new Error("destination changed");
+  }
+  original = fs.readFileSync(destination);
+  originalMode = Number(before.mode & 0o777n);
+
+  fs.ftruncateSync(destination, 0);
+  wroteDestination = true;
+  writeAll(destination, contents);
+  fs.fchmodSync(destination, 0o755);
+  fs.fsyncSync(destination);
+
+  const current = fs.lstatSync(process.argv[2], { bigint: true });
+  if (!current.isFile() || identity(current) !== process.argv[3]) {
+    throw new Error("destination changed");
+  }
+} catch {
+  if (destination !== undefined && wroteDestination && original !== undefined) {
+    try {
+      fs.ftruncateSync(destination, 0);
+      writeAll(destination, original);
+      fs.fchmodSync(destination, originalMode);
+      fs.fsyncSync(destination);
+    } catch {}
+  }
+  process.exitCode = 1;
+} finally {
+  if (destination !== undefined) fs.closeSync(destination);
+  if (source !== undefined) fs.closeSync(source);
+}
+' "$source_path" "$destination_path" "$expected_identity"
 }
 
 ensure_cli_shim() {
@@ -2465,11 +2532,11 @@ EOF
 
   if [[ "$cli_bin" == "nemoclaw-acp" && "$replace_identity" != "absent" ]]; then
     assert_nemoclaw_acp_shim_unchanged "$cli_bin" "$cli_path" "$replace_identity"
-    cmp -s "$shim_path" <(printf '%s\n' "$expected_shim") \
-      || error "Installation stopped because $shim_path is a NemoClaw-managed shim that must be refreshed for the selected Node.js runtime. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
-    refresh_path
-    ensure_local_bin_in_profile
-    return 0
+    if cmp -s "$shim_path" <(printf '%s\n' "$expected_shim"); then
+      refresh_path
+      ensure_local_bin_in_profile
+      return 0
+    fi
   fi
 
   if [[ "$cli_bin" != "nemoclaw-acp" && -x "$shim_path" ]] \
@@ -2489,12 +2556,18 @@ EOF
   fi
   assert_nemoclaw_acp_shim_unchanged "$cli_bin" "$cli_path" "$replace_identity"
   if [[ "$cli_bin" == "nemoclaw-acp" ]]; then
-    if ! publish_cli_shim_no_clobber "$temp_shim" "$shim_path" "$node_path"; then
-      rm -f "$temp_shim"
-      if [[ -e "$shim_path" || -L "$shim_path" ]]; then
-        error "Installation stopped because $shim_path changed while NemoClaw published its shim. NemoClaw left the current path unchanged. Rerun the installer."
+    if [[ "$replace_identity" == "absent" ]]; then
+      if ! publish_cli_shim_no_clobber "$temp_shim" "$shim_path" "$node_path"; then
+        rm -f "$temp_shim"
+        if [[ -e "$shim_path" || -L "$shim_path" ]]; then
+          error "Installation stopped because $shim_path changed while NemoClaw published its shim. NemoClaw left the current path unchanged. Rerun the installer."
+        fi
+        error "Could not publish the user-local shim at $shim_path."
       fi
-      error "Could not publish the user-local shim at $shim_path."
+    elif ! refresh_managed_nemoclaw_acp_shim \
+      "$temp_shim" "$shim_path" "$node_path" "$replace_identity"; then
+      rm -f "$temp_shim"
+      error "Installation stopped because NemoClaw could not safely refresh $shim_path. NemoClaw did not replace the current path. Rerun the installer."
     fi
     rm -f "$temp_shim" \
       || error "NemoClaw published $shim_path but could not remove its temporary shim."
