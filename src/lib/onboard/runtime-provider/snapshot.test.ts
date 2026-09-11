@@ -603,6 +603,33 @@ function dockerRestoreCapture(
   );
 }
 
+function dockerGpuSnapshot(deviceIds: readonly string[] | null, driver = "") {
+  return dockerSnapshot({
+    deviceRequests: [
+      {
+        Driver: driver,
+        Count: deviceIds === null ? -1 : 0,
+        DeviceIDs: deviceIds && [...deviceIds],
+        Capabilities: driver === "cdi" ? null : [["gpu"]],
+        Options: null,
+      },
+    ],
+    nativeGpuAttachmentState: "present",
+  });
+}
+
+function dockerSnapshotSurface(
+  snapshot: ReturnType<typeof dockerSnapshot>,
+  captureHostCommand = dockerRestoreCapture(),
+) {
+  return requireSupportedSurface(
+    createDockerRuntimeProviderSnapshotSurface("docker", {
+      captureHostCommand,
+      queryRuntimeSnapshot: () => snapshot,
+    }),
+  );
+}
+
 describe("Docker provider snapshot evidence", () => {
   it("normalizes Docker's explicit paused status", () => {
     const observed = observeDockerRuntimeSnapshot(
@@ -661,66 +688,40 @@ describe("Docker provider snapshot evidence", () => {
   });
 
   it.each([
-    ["all", -1, null],
-    ["0", 0, ["0"]],
-    ["GPU-0", 0, ["GPU-0"]],
+    ["all", null],
+    ["0", ["0"]],
+    ["GPU-0", ["GPU-0"]],
   ] as const)(
     "restores GPU selection %s across CDI and Docker capability forms (#10758)",
-    (device, count, deviceIds) => {
+    (device, deviceIds) => {
       const target = sandbox({ openshellDriver: "docker" });
-      const sourceSurface = requireSupportedSurface(
-        createDockerRuntimeProviderSnapshotSurface("docker", {
-          captureHostCommand: dockerRestoreCapture(),
-          queryRuntimeSnapshot: () =>
-            dockerSnapshot({
-              deviceRequests: [
-                {
-                  Driver: "cdi",
-                  Count: 0,
-                  DeviceIDs: [`nvidia.com/gpu=${device}`],
-                  Capabilities: null,
-                  Options: null,
-                },
-              ],
-              nativeGpuAttachmentState: "present",
-            }),
-        }),
+      const sourceSurface = dockerSnapshotSurface(
+        dockerGpuSnapshot([`nvidia.com/gpu=${device}`], "cdi"),
       );
       const sourcePreflight = sourceSurface.preflight("backup", target);
       const source = snapshotSource(
         sourcePreflight,
         sourceSurface.capture(target, sourcePreflight),
       );
-      const restoreManagedProfile = dockerRestoreCapture();
-      const targetSurface = requireSupportedSurface(
-        createDockerRuntimeProviderSnapshotSurface("docker", {
-          captureHostCommand: restoreManagedProfile,
-          queryRuntimeSnapshot: () =>
-            dockerSnapshot({
-              deviceRequests: [
-                {
-                  Driver: "",
-                  Count: count,
-                  DeviceIDs: deviceIds && [...deviceIds],
-                  Capabilities: [["gpu"]],
-                  Options: null,
-                },
-              ],
-              nativeGpuAttachmentState: "present",
-            }),
-        }),
-      );
-      const targetPreflight = targetSurface.preflight("restore", target);
+      const verifyProfile = dockerRestoreCapture();
+      const targetSurface = dockerSnapshotSurface(dockerGpuSnapshot(deviceIds), verifyProfile);
 
       expect(source.runtime.acceleration).toEqual({
         kind: "gpu",
         vendor: "nvidia",
         devices: [`nvidia.com/gpu=${device}`],
       });
-      expect(targetSurface.restore(target, targetPreflight, source, managedProfile)).toMatchObject({
+      expect(
+        targetSurface.restore(
+          target,
+          targetSurface.preflight("restore", target),
+          source,
+          managedProfile,
+        ),
+      ).toMatchObject({
         runtime: { acceleration: source.runtime.acceleration },
       });
-      expect(restoreManagedProfile).toHaveBeenCalledWith(
+      expect(verifyProfile).toHaveBeenCalledWith(
         "docker",
         expect.arrayContaining(["exec", "--user", "root"]),
         15_000,
@@ -728,187 +729,62 @@ describe("Docker provider snapshot evidence", () => {
     },
   );
 
-  it("restores a retained legacy all-GPU snapshot through canonical target authority (#10758)", () => {
-    const target = sandbox({ openshellDriver: "docker" });
-    const legacyObservation = observation("docker", {
-      runtime: {
-        schemaVersion: 1,
-        providerId: "docker",
-        runtime: { kind: "docker-container", handle: "c".repeat(64) },
-        acceleration: {
-          kind: "gpu",
-          vendor: "nvidia",
-          devices: ["docker-device-id:nvidia.com/gpu=all"],
-        },
-      },
-    });
-    const legacySurface = requireSupportedSurface(
-      createRuntimeProviderSnapshotSurface(
+  it.each([
+    {
+      label: "all-GPU",
+      snapshot: dockerGpuSnapshot(null),
+      error: /cannot represent the snapshot acceleration state/u,
+    },
+    {
+      label: "non-NVIDIA",
+      snapshot: dockerGpuSnapshot(["GPU-0"], "amd"),
+      error: /does not prove NVIDIA acceleration authority/u,
+    },
+  ])(
+    "rejects an incompatible $label target before profile restoration (#10758)",
+    ({ snapshot, error }) => {
+      const target = sandbox({ openshellDriver: "docker" });
+      const sourceSurface = dockerSnapshotSurface(
+        dockerGpuSnapshot(["nvidia.com/gpu=GPU-0"], "cdi"),
+      );
+      const sourcePreflight = sourceSurface.preflight("backup", target);
+      const source = snapshotSource(
+        sourcePreflight,
+        sourceSurface.capture(target, sourcePreflight),
+      );
+      const verifyProfile = dockerRestoreCapture();
+      const targetSurface = dockerSnapshotSurface(snapshot, verifyProfile);
+
+      expect(() =>
+        targetSurface.restore(
+          target,
+          targetSurface.preflight("restore", target),
+          source,
+          managedProfile,
+        ),
+      ).toThrow(error);
+      expect(verifyProfile).not.toHaveBeenCalledWith(
         "docker",
-        surfaceDriver(() => legacyObservation),
-      ),
-    );
-    const sourcePreflight = legacySurface.preflight("backup", target);
-    const source = snapshotSource(sourcePreflight, legacySurface.capture(target, sourcePreflight));
-    const targetSurface = requireSupportedSurface(
-      createDockerRuntimeProviderSnapshotSurface("docker", {
-        captureHostCommand: dockerRestoreCapture(),
-        queryRuntimeSnapshot: () =>
-          dockerSnapshot({
-            deviceRequests: [
-              {
-                Driver: "",
-                Count: -1,
-                DeviceIDs: null,
-                Capabilities: [["gpu"]],
-                Options: null,
-              },
-            ],
-            nativeGpuAttachmentState: "present",
-          }),
-      }),
-    );
-    const targetPreflight = targetSurface.preflight("restore", target);
-
-    expect(source.runtime.acceleration).toMatchObject({
-      devices: ["docker-device-id:nvidia.com/gpu=all"],
-    });
-    expect(targetSurface.restore(target, targetPreflight, source, managedProfile)).toMatchObject({
-      runtime: {
-        acceleration: {
-          kind: "gpu",
-          vendor: "nvidia",
-          devices: ["nvidia.com/gpu=all"],
-        },
-      },
-    });
-  });
-
-  it("rejects an all-GPU target for an exact-device snapshot before restore (#10758)", () => {
-    const target = sandbox({ openshellDriver: "docker" });
-    const sourceSurface = requireSupportedSurface(
-      createDockerRuntimeProviderSnapshotSurface("docker", {
-        captureHostCommand: dockerRestoreCapture(),
-        queryRuntimeSnapshot: () =>
-          dockerSnapshot({
-            deviceRequests: [
-              {
-                Driver: "cdi",
-                Count: 0,
-                DeviceIDs: ["nvidia.com/gpu=0"],
-                Capabilities: null,
-                Options: null,
-              },
-            ],
-            nativeGpuAttachmentState: "present",
-          }),
-      }),
-    );
-    const sourcePreflight = sourceSurface.preflight("backup", target);
-    const source = snapshotSource(sourcePreflight, sourceSurface.capture(target, sourcePreflight));
-    const restoreManagedProfile = dockerRestoreCapture();
-    const targetSurface = requireSupportedSurface(
-      createDockerRuntimeProviderSnapshotSurface("docker", {
-        captureHostCommand: restoreManagedProfile,
-        queryRuntimeSnapshot: () =>
-          dockerSnapshot({
-            deviceRequests: [
-              {
-                Driver: "",
-                Count: -1,
-                DeviceIDs: null,
-                Capabilities: [["gpu"]],
-                Options: null,
-              },
-            ],
-            nativeGpuAttachmentState: "present",
-          }),
-      }),
-    );
-    const targetPreflight = targetSurface.preflight("restore", target);
-
-    expect(() => targetSurface.restore(target, targetPreflight, source, managedProfile)).toThrow(
-      /cannot represent the snapshot acceleration state/u,
-    );
-    expect(restoreManagedProfile).not.toHaveBeenCalledWith(
-      "docker",
-      expect.arrayContaining(["exec"]),
-      expect.any(Number),
-    );
-  });
-
-  it("rejects a non-NVIDIA driver before restoring matching device authority (#10758)", () => {
-    const target = sandbox({ openshellDriver: "docker" });
-    const sourceSurface = requireSupportedSurface(
-      createDockerRuntimeProviderSnapshotSurface("docker", {
-        captureHostCommand: dockerRestoreCapture(),
-        queryRuntimeSnapshot: () =>
-          dockerSnapshot({
-            deviceRequests: [
-              {
-                Driver: "cdi",
-                Count: 0,
-                DeviceIDs: ["nvidia.com/gpu=GPU-0"],
-                Capabilities: null,
-                Options: null,
-              },
-            ],
-            nativeGpuAttachmentState: "present",
-          }),
-      }),
-    );
-    const sourcePreflight = sourceSurface.preflight("backup", target);
-    const source = snapshotSource(sourcePreflight, sourceSurface.capture(target, sourcePreflight));
-    const restoreManagedProfile = dockerRestoreCapture();
-    const targetSurface = requireSupportedSurface(
-      createDockerRuntimeProviderSnapshotSurface("docker", {
-        captureHostCommand: restoreManagedProfile,
-        queryRuntimeSnapshot: () =>
-          dockerSnapshot({
-            deviceRequests: [
-              {
-                Driver: "amd",
-                Count: 0,
-                DeviceIDs: ["GPU-0"],
-                Capabilities: [["gpu"]],
-                Options: null,
-              },
-            ],
-            nativeGpuAttachmentState: "present",
-          }),
-      }),
-    );
-
-    expect(() => {
-      const targetPreflight = targetSurface.preflight("restore", target);
-      targetSurface.restore(target, targetPreflight, source, managedProfile);
-    }).toThrow(/does not prove NVIDIA acceleration authority/u);
-    expect(restoreManagedProfile).not.toHaveBeenCalledWith(
-      "docker",
-      expect.arrayContaining(["exec"]),
-      expect.any(Number),
-    );
-  });
+        expect.arrayContaining(["exec"]),
+        expect.any(Number),
+      );
+    },
+  );
 
   it("rejects mapping-only GPU evidence without NVIDIA selectors (#10758)", () => {
-    const target = sandbox({ openshellDriver: "docker" });
-    const captureHostCommand = dockerRestoreCapture();
-    const surface = requireSupportedSurface(
-      createDockerRuntimeProviderSnapshotSurface("docker", {
-        captureHostCommand,
-        queryRuntimeSnapshot: () =>
-          dockerSnapshot({
-            deviceRequests: null,
-            devices: [
-              {
-                PathOnHost: "/dev/dri/renderD128",
-                PathInContainer: "/dev/dri/renderD128",
-                CgroupPermissions: "rwm",
-              },
-            ],
-            nativeGpuAttachmentState: "present",
-          }),
+    const capture = dockerRestoreCapture();
+    const surface = dockerSnapshotSurface(
+      dockerSnapshot({
+        devices: [
+          {
+            PathOnHost: "/dev/dri/renderD128",
+            PathInContainer: "/dev/dri/renderD128",
+            CgroupPermissions: "rwm",
+          },
+        ],
+        nativeGpuAttachmentState: "present",
       }),
+      capture,
     );
     const acceleration = {
       kind: "gpu" as const,
@@ -916,9 +792,11 @@ describe("Docker provider snapshot evidence", () => {
       devices: ["docker-device-path:/dev/dri/renderD128=>/dev/dri/renderD128:rwm"],
     };
 
-    expect(() => surface.preflight("restore", target)).toThrow(/exact live device selectors/u);
+    expect(() => surface.preflight("restore", sandbox({ openshellDriver: "docker" }))).toThrow(
+      /exact live device selectors/u,
+    );
     expect(surface.canRepresentAcceleration?.(acceleration, acceleration)).toBe(false);
-    expect(captureHostCommand.mock.calls.some(([, args]) => args[0] === "exec")).toBe(false);
+    expect(capture.mock.calls.some(([, args]) => args[0] === "exec")).toBe(false);
   });
 
   it.each(

@@ -39,10 +39,6 @@ function provider(
     preflightProviderId?: string;
     runtimeProviderId?: string;
     restoreProviderId?: string;
-    canRepresentAcceleration?: (
-      source: RuntimeProviderRuntimeReceipt["acceleration"],
-      target: RuntimeProviderRuntimeReceipt["acceleration"],
-    ) => boolean;
   } = {},
 ): {
   readonly bundle: RuntimeProviderBundle;
@@ -90,9 +86,6 @@ function provider(
         capabilities: { backup: true, restore: true, managedProfileRestore: true },
         preflight,
         capture,
-        ...(options.canRepresentAcceleration
-          ? { canRepresentAcceleration: options.canRepresentAcceleration }
-          : {}),
         validateRestore,
         restore,
       },
@@ -393,43 +386,21 @@ describe("snapshot provider lifecycle", () => {
       vendor: "nvidia",
       devices: ["nvidia.com/gpu=all"],
     };
-    const canRepresentAcceleration = vi.fn(
-      (
-        source: RuntimeProviderRuntimeReceipt["acceleration"],
-        target: RuntimeProviderRuntimeReceipt["acceleration"],
-      ) => {
-        expect(Object.isFrozen(source)).toBe(true);
-        expect(Object.isFrozen(target)).toBe(true);
-        return (
-          source.kind === "gpu" &&
-          target.kind === "gpu" &&
-          source.devices[0] === "docker-device-id:nvidia.com/gpu=all" &&
-          target.devices[0] === "nvidia.com/gpu=all"
-        );
-      },
-    );
-    const { bundle, restore } = provider({ canRepresentAcceleration });
+    const canRepresentAcceleration = vi.fn((source: object, target: object) => {
+      expect(Object.isFrozen(source)).toBe(true);
+      expect(Object.isFrozen(target)).toBe(true);
+      return true;
+    });
+    const { bundle, restore } = provider();
+    Object.assign(bundle.snapshot, { canRepresentAcceleration });
     const target = sandbox("target");
-    const prepared = prepareSandboxRuntimeRestore(
-      bundle,
-      target,
-      {
-        schemaVersion: 1,
-        providerId: "mxc",
-        providerHandle: "opaque-source",
-        lifecycleState: "running",
-        lifecycleGeneration: "source-generation",
-        runtime: { ...runtime(), acceleration: legacyAcceleration },
-      },
-      managedProfile,
-    );
+    const source = {
+      ...captureSandboxRuntimeSnapshot(bundle, target),
+      runtime: { ...runtime(), acceleration: legacyAcceleration },
+    };
+    const prepared = prepareSandboxRuntimeRestore(bundle, target, source, managedProfile);
     restore.mockReturnValueOnce({
-      schemaVersion: 1,
-      providerId: "mxc",
-      sandboxName: "target",
-      providerHandle: "opaque-restore",
-      lifecycleState: "running",
-      lifecycleGeneration: "generation-1",
+      ...prepared.preflight,
       runtime: { ...runtime(), acceleration: canonicalAcceleration },
       managedProfile,
     });

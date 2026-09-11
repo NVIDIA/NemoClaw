@@ -107,15 +107,8 @@ function requireRestoreReceipt(
     receipt.managedProfile.agent !== authority.agent ||
     receipt.managedProfile.profileFingerprint !== authority.profileFingerprint ||
     receipt.lifecycleState !== preflight.lifecycleState ||
-    receipt.lifecycleGeneration !== preflight.lifecycleGeneration
-  ) {
-    throw new SandboxSnapshotProviderError(
-      `runtime provider '${bundle.identity.id}' returned invalid managed restore proof`,
-    );
-  }
-  const canRepresentAcceleration = surface.canRepresentAcceleration ?? isDeepStrictEqual;
-  if (
-    !canRepresentAcceleration(
+    receipt.lifecycleGeneration !== preflight.lifecycleGeneration ||
+    !(surface.canRepresentAcceleration ?? isDeepStrictEqual)(
       cloneAndDeepFreeze(source.runtime.acceleration),
       cloneAndDeepFreeze(receipt.runtime.acceleration),
     )

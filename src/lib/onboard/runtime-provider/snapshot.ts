@@ -262,9 +262,7 @@ function dockerNvidiaGpuRequestSelectors(
 }
 
 function canonicalNvidiaGpuSelector(device: string): string {
-  const value = device.trim();
-  const cdiPrefix = /^nvidia[.]com\/gpu=/iu;
-  const identifier = cdiPrefix.test(value) ? value.replace(cdiPrefix, "") : value;
+  const identifier = device.trim().replace(/^nvidia[.]com\/gpu=/iu, "");
   if (!identifier || CONTROL_CHARACTERS.test(identifier)) {
     throw new RuntimeProviderSnapshotError(
       "Docker GPU attachment does not expose exact live device selectors",
@@ -295,11 +293,10 @@ function canonicalDockerAcceleration(
       pathSelectors.push(selector);
       continue;
     }
-    if (selector === "docker-nvidia-visible-devices:all") {
-      gpuSelectors.push("all");
-      continue;
-    }
-    if (selector === "docker-device-request:nvidia:count=-1") {
+    if (
+      selector === "docker-nvidia-visible-devices:all" ||
+      selector === "docker-device-request:nvidia:count=-1"
+    ) {
       gpuSelectors.push("all");
       continue;
     }
@@ -748,9 +745,7 @@ export function createRuntimeProviderSnapshotSurface(
       assertUnchanged(providerId, expected, observed);
       return observed.runtime;
     },
-    canRepresentAcceleration(source, target) {
-      return (driver.canRepresentAcceleration ?? isDeepStrictEqual)(source, target);
-    },
+    canRepresentAcceleration: driver.canRepresentAcceleration,
     validateRestore(sandbox, preflight, source, managedProfile) {
       validateRestoreRequest(providerId, driver, sandbox, preflight, source, managedProfile);
     },
