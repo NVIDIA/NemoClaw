@@ -24,9 +24,3 @@ export function hasControlCharacters(value: string, allowedCodes: readonly numbe
     return (code <= 31 || code === 127) && !allowedCodes.includes(code);
   });
 }
-
-export function replaceControlCharacters(value: string): string {
-  return [...value]
-    .map((character) => (hasControlCharacters(character) ? " " : character))
-    .join("");
-}

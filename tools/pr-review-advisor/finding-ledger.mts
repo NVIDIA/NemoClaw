@@ -197,7 +197,7 @@ export function buildAdvisorFindingLedger(input: {
       impact: boundedText(candidate.impact, "impact", 1000),
       smallestSafeFix: boundedText(candidate.smallestSafeFix, "smallestSafeFix", 1000),
       regressionTest: boundedText(candidate.regressionTest, "regressionTest", 1000),
-      exclusions: [...exclusions].sort(),
+      exclusions: Object.freeze(exclusions.sort()),
     } as const;
     const id = `F-${input.interest}-${sha256(canonicalJson(normalized)).slice(0, 20)}`;
     return Object.freeze({ id, ...normalized });

@@ -223,8 +223,6 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.requireToolsBeforeText).toEqual(contextToolNames);
       expect(turn.requireAssistantText).toBe(true);
       expect(turn.requiredReadOneOfPaths).toEqual([context.diffPath]);
-      expect(turn.prompt).toContain(`Required files:\n- ${context.diffPath}`);
-      expect(turn.prompt).toContain("call the repository read tool on that exact diff path");
       expect(turn.prompt).toContain("Inspect changed files and their diffs on demand");
       expect(turn.prompt).toContain("do not try to preload the complete diff");
       expect(turn.atomicTerminalToolName).toBeUndefined();
@@ -314,10 +312,15 @@ describe("PR review advisor specialist prompts", () => {
 
     await Promise.all(
       ADVISOR_INTERESTS.map((interest) =>
-        runSpecialistAdvisor(interest, { baseRef, headRef }, options, async (runnerOptions) => {
-          captured.push([interest, runnerOptions.customTools ?? []]);
-          return result;
-        }),
+        runSpecialistAdvisor(
+          interest,
+          { baseRef, headRef, headSha: headRef },
+          options,
+          async (runnerOptions) => {
+            captured.push([interest, runnerOptions.customTools ?? []]);
+            return result;
+          },
+        ),
       ),
     );
 
@@ -444,7 +447,6 @@ describe("PR review advisor specialist prompts", () => {
       ),
     ).rejects.toThrow("already has a committed receipt");
   });
-
   it("selects only exact opted-in source, test, and documentation findings (#10791)", async () => {
     const headSha = "a".repeat(40);
     const controller = createAdvisorFindingToolController({

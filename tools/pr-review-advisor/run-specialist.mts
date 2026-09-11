@@ -67,11 +67,11 @@ export function writeSpecialistSummary(
 
 export function runSpecialistAdvisor(
   interest: AdvisorInterest,
-  refs: { baseRef: string; headRef: string; headSha?: string },
+  refs: { baseRef: string; headRef: string; headSha: string },
   options: RunReadOnlyAdvisorOptions,
   run: (options: RunReadOnlyAdvisorOptions) => Promise<RunAdvisorResult> = runReadOnlyAdvisor,
   findingController: AdvisorFindingToolController = createAdvisorFindingToolController({
-    headSha: refs.headSha || getHeadSha(refs.headRef, options.cwd),
+    headSha: refs.headSha,
     interest,
   }),
 ): Promise<RunAdvisorResult> {
