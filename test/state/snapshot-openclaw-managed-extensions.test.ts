@@ -119,7 +119,7 @@ describe("OpenClaw managed extension snapshot restore", () => {
 
   it.each(installIndexCases)(
     "preserves fresh extensions and handles image-plugin $name from the $installIndexSource install index",
-    ({ installIndexSource, previousPlugin, freshPlugin }) => {
+    async ({ installIndexSource, previousPlugin, freshPlugin }) => {
       const fixture = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-openclaw-extension-restore-"),
       );
@@ -240,9 +240,13 @@ process.exit(0);
         process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
         process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-        const restore = sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
-          targetAgentType: "openclaw",
-        });
+        const restore = await sandboxState.restoreRecreatedSandboxState(
+          "alpha",
+          manifest.backupPath,
+          {
+            targetAgentType: "openclaw",
+          },
+        );
         expect(restore.success).toBe(true);
         expect(restore.restoredDirs).toEqual(["extensions"]);
         for (const extensionName of managedExtensions) {
@@ -291,9 +295,13 @@ process.exit(0);
             },
           }),
         );
-        const rejected = sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
-          targetAgentType: "openclaw",
-        });
+        const rejected = await sandboxState.restoreRecreatedSandboxState(
+          "alpha",
+          manifest.backupPath,
+          {
+            targetAgentType: "openclaw",
+          },
+        );
         expect(rejected.success).toBe(false);
         expect(rejected.error).toBe("fresh OpenClaw plugin install registry failed validation");
         expect(fs.existsSync(path.join(extensionsDir, previousPlugin))).toBe(

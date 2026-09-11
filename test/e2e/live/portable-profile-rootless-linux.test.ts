@@ -56,7 +56,7 @@ import {
   PORTABLE_HOST_GATEWAY_IP,
   PORTABLE_REGISTRY_IP,
 } from "../../../src/lib/onboard/docker-driver-platform.ts";
-import { withMcpLifecycleLockSync } from "../../../src/lib/state/mcp-lifecycle-lock-acquisition.ts";
+import { withMcpLifecycleLock } from "../../../src/lib/state/mcp-lifecycle-lock-acquisition.ts";
 import { withPortableHostFence } from "../../../src/lib/state/portable-uninstall-retirement.ts";
 import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { retryUntil } from "../../../src/lib/core/retry.ts";
@@ -700,7 +700,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       ...currentStartup,
       manifestSha256: HERMES_PORTABLE_E2E_HISTORICAL_MANIFEST_SHA256,
     };
-    const active = withMcpLifecycleLockSync(
+    const active = await withMcpLifecycleLock(
       sandboxName,
       () => {
         const policy = publishHermesPortableDurablePolicySource({
@@ -797,7 +797,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
         },
       } satisfies Parameters<typeof startSandbox>[1];
       const upgradeResult = await startSandbox(sandboxName, publicStartDeps);
-      const firstStop = withMcpLifecycleLockSync(
+      const firstStop = await withMcpLifecycleLock(
         sandboxName,
         () =>
           stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, lifecycleDeps),
@@ -820,7 +820,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       requireCompatibleStartupAuthority();
 
       input.progress.phase("prove post-recovery stop settlement");
-      const postRecoveryStop = withMcpLifecycleLockSync(
+      const postRecoveryStop = await withMcpLifecycleLock(
         sandboxName,
         () =>
           stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, lifecycleDeps),

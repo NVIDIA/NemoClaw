@@ -149,7 +149,7 @@ describe("Hermes Portable lifecycle recovery command authority", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses transaction currentness for intermediate captures and full currentness at recovery boundaries", () => {
+  it("uses transaction currentness for intermediate captures and full currentness at recovery boundaries", async () => {
     const assertCurrent = vi.fn();
     const assertTransactionCurrent = vi.fn();
     const capture = vi.spyOn(openshellRuntime, "captureResolvedOpenshell").mockReturnValue({
@@ -160,7 +160,7 @@ describe("Hermes Portable lifecycle recovery command authority", () => {
     } as never);
     const recover = vi
       .spyOn(portableAgentLifecycle, "recoverPortableAgentSandboxLifecycle")
-      .mockImplementation((_sandboxName, _context, deps) => {
+      .mockImplementation(async (_sandboxName, _context, deps) => {
         const recoveryDeps = deps!;
         recoveryDeps.assertOpenShellExecutableAuthority?.({} as never, {}, {});
         recoveryDeps.captureOpenshell?.(["sandbox", "exec", "--", "true"], 1_000);
@@ -170,7 +170,7 @@ describe("Hermes Portable lifecycle recovery command authority", () => {
       });
 
     expect(
-      recoverPortableDemoSandboxLifecycleForConnect(
+      await recoverPortableDemoSandboxLifecycleForConnect(
         "alpha",
         {
           name: "alpha",
@@ -195,7 +195,7 @@ describe("Hermes Portable lifecycle recovery command authority", () => {
     expect(assertTransactionCurrent).toHaveBeenCalledTimes(4);
   });
 
-  it("rejects transaction drift around an intermediate capture", () => {
+  it("rejects transaction drift around an intermediate capture", async () => {
     const assertCurrent = vi.fn();
     const assertTransactionCurrent = vi
       .fn()
@@ -210,13 +210,13 @@ describe("Hermes Portable lifecycle recovery command authority", () => {
       stderr: "",
     } as never);
     vi.spyOn(portableAgentLifecycle, "recoverPortableAgentSandboxLifecycle").mockImplementation(
-      (_sandboxName, _context, deps) => {
+      async (_sandboxName, _context, deps) => {
         deps!.captureOpenshell?.(["sandbox", "exec", "--", "true"], 1_000);
         return { kind: "recovered" };
       },
     );
 
-    expect(() =>
+    await expect(() =>
       recoverPortableDemoSandboxLifecycleForConnect(
         "alpha",
         {
@@ -234,7 +234,7 @@ describe("Hermes Portable lifecycle recovery command authority", () => {
           executablePath: "/usr/bin/openshell",
         },
       ),
-    ).toThrow("transaction authority changed");
+    ).rejects.toThrow("transaction authority changed");
     expect(assertCurrent).toHaveBeenCalledTimes(2);
   });
 });

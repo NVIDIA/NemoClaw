@@ -625,7 +625,9 @@ export type RuntimeProviderLifecycleSurface =
       /** Provider-owned timeout for direct container lifecycle mutations. */
       readonly containerMutationTimeoutMs?: number;
       readonly privilegedSandboxControl: RuntimeProviderPrivilegedSandboxControl;
-      start(input: RuntimeProviderLifecycleInput): RuntimeProviderLifecycleResult;
+      start(
+        input: RuntimeProviderLifecycleInput,
+      ): RuntimeProviderLifecycleResult | Promise<RuntimeProviderLifecycleResult>;
       verifyStarted(
         input: RuntimeProviderLifecycleInput,
         verifyGateway: (sandboxName: string) => Promise<void>,
@@ -633,7 +635,7 @@ export type RuntimeProviderLifecycleSurface =
       stop(
         input: RuntimeProviderLifecycleInput,
         hooks: RuntimeProviderLifecycleStopHooks,
-      ): RuntimeProviderLifecycleStopOutcome;
+      ): RuntimeProviderLifecycleStopOutcome | Promise<RuntimeProviderLifecycleStopOutcome>;
     }>
   | RuntimeProviderUnsupportedSurface;
 

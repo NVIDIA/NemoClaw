@@ -439,7 +439,7 @@ describe("NemoClawCommand", () => {
     vi.spyOn(receiptAuthority, "hasHermesPortableReceiptCandidate").mockReturnValue(true);
     const requalify = vi
       .spyOn(portableAgentLifecycle, "requalifyPortableAgentSandboxAuthority")
-      .mockImplementation((sandboxName) => {
+      .mockImplementation(async (sandboxName) => {
         expect(
           fs.existsSync(
             portableHostAuthority.portableHostFencePath(process.env.HOME || os.homedir()),

@@ -336,7 +336,7 @@ export function relaunchManagedSupervisorSession(
       }
       let stateRestored = false;
       try {
-        stateRestored = restoreState(sandboxName, backupManifest.backupPath).success;
+        stateRestored = (await restoreState(sandboxName, backupManifest.backupPath)).success;
       } catch {
         stateRestored = false;
       }

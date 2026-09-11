@@ -199,9 +199,9 @@ function provider() {
   return { bundle, preserveForRebuild };
 }
 
-function successfulRestore(options: RecreatedSandboxRestoreOptions): RestoreResult {
+async function successfulRestore(options: RecreatedSandboxRestoreOptions): Promise<RestoreResult> {
   try {
-    options.validateBeforeMutation?.();
+    await options.validateBeforeMutation?.();
     return {
       success: true,
       restoredDirs: ["workspace"],
@@ -232,45 +232,48 @@ describe("host-local inference snapshot restore authority", () => {
     ["langchain-deepagents-code", "ollama"],
     ["langchain-deepagents-code", "nim"],
     ["langchain-deepagents-code", "vllm"],
-  ] as const)("re-proves exact %s %s authority before, at, and after restore", (agent, service) => {
-    const target = sandbox(agent, service);
-    const runtimeProvider = provider();
-    const restore = vi.fn((_name, _path, options: RecreatedSandboxRestoreOptions) =>
-      successfulRestore(options),
-    );
+  ] as const)(
+    "re-proves exact %s %s authority before, at, and after restore",
+    async (agent, service) => {
+      const target = sandbox(agent, service);
+      const runtimeProvider = provider();
+      const restore = vi.fn((_name, _path, options: RecreatedSandboxRestoreOptions) =>
+        successfulRestore(options),
+      );
 
-    const result = restoreRecreatedSandboxStateWithManagedAuthority(
-      "alpha",
-      manifest(agent, service),
-      { targetAgentType: agent },
-      {
-        getSandbox: () => target,
-        requireProvider: () => runtimeProvider.bundle,
-        captureContentAuthority: () => ({
-          schemaVersion: 1,
-          backupPath: "/tmp/alpha",
-          contentSha256: "e".repeat(64),
+      const result = await restoreRecreatedSandboxStateWithManagedAuthority(
+        "alpha",
+        manifest(agent, service),
+        { targetAgentType: agent },
+        {
+          getSandbox: () => target,
+          requireProvider: () => runtimeProvider.bundle,
+          captureContentAuthority: () => ({
+            schemaVersion: 1,
+            backupPath: "/tmp/alpha",
+            contentSha256: "e".repeat(64),
+          }),
+          restore,
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(runtimeProvider.preserveForRebuild).toHaveBeenCalledTimes(3);
+      expect(restore).toHaveBeenCalledWith(
+        "alpha",
+        "/tmp/alpha",
+        expect.objectContaining({
+          authority: expect.objectContaining({ contentSha256: "e".repeat(64) }),
+          validateBeforeMutation: expect.any(Function),
         }),
-        restore,
-      },
-    );
+      );
+    },
+  );
 
-    expect(result.success).toBe(true);
-    expect(runtimeProvider.preserveForRebuild).toHaveBeenCalledTimes(3);
-    expect(restore).toHaveBeenCalledWith(
-      "alpha",
-      "/tmp/alpha",
-      expect.objectContaining({
-        authority: expect.objectContaining({ contentSha256: "e".repeat(64) }),
-        validateBeforeMutation: expect.any(Function),
-      }),
-    );
-  });
-
-  it("fails before mutation when the target route differs from the manifest", () => {
+  it("fails before mutation when the target route differs from the manifest", async () => {
     const runtimeProvider = provider();
     const restore = vi.fn();
-    const result = restoreRecreatedSandboxStateWithManagedAuthority(
+    const result = await restoreRecreatedSandboxStateWithManagedAuthority(
       "alpha",
       manifest("hermes", "vllm"),
       { targetAgentType: "hermes" },
@@ -289,7 +292,7 @@ describe("host-local inference snapshot restore authority", () => {
     expect(restore).not.toHaveBeenCalled();
   });
 
-  it("rejects a dedicated llama.cpp receipt instead of skipping provider confirmation", () => {
+  it("rejects a dedicated llama.cpp receipt instead of skipping provider confirmation", async () => {
     const runtimeProvider = provider();
     const serialized = llamaCppReceipt();
     const target = {
@@ -300,7 +303,7 @@ describe("host-local inference snapshot restore authority", () => {
     const restore = vi.fn();
     const captureContentAuthority = vi.fn();
 
-    const result = restoreRecreatedSandboxStateWithManagedAuthority(
+    const result = await restoreRecreatedSandboxStateWithManagedAuthority(
       "alpha",
       { ...manifest("openclaw", "vllm"), hostLocalInferenceReceipt: serialized },
       { targetAgentType: "openclaw" },
@@ -322,7 +325,7 @@ describe("host-local inference snapshot restore authority", () => {
 
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "re-proves explicit llama.cpp authority throughout %s restore",
-    (agent) => {
+    async (agent) => {
       const serialized = llamaCppReceipt();
       const provenance = createSandboxHostLocalInferenceProvenance("alpha", serialized);
       const target: SandboxEntry = {
@@ -344,7 +347,7 @@ describe("host-local inference snapshot restore authority", () => {
         successfulRestore(options),
       );
 
-      const result = restoreRecreatedSandboxStateWithManagedAuthority(
+      const result = await restoreRecreatedSandboxStateWithManagedAuthority(
         "alpha",
         {
           ...manifest(agent, "vllm"),
@@ -372,7 +375,7 @@ describe("host-local inference snapshot restore authority", () => {
     },
   );
 
-  it("rejects a manifest that omits explicit llama.cpp provenance", () => {
+  it("rejects a manifest that omits explicit llama.cpp provenance", async () => {
     const serialized = llamaCppReceipt();
     const target: SandboxEntry = {
       ...sandbox("openclaw", "vllm"),
@@ -385,7 +388,7 @@ describe("host-local inference snapshot restore authority", () => {
     const prepareHostLocalInference = vi.fn();
     const restore = vi.fn();
 
-    const result = restoreRecreatedSandboxStateWithManagedAuthority(
+    const result = await restoreRecreatedSandboxStateWithManagedAuthority(
       "alpha",
       { ...manifest("openclaw", "vllm"), hostLocalInferenceReceipt: serialized },
       { targetAgentType: "openclaw" },
@@ -406,7 +409,7 @@ describe("host-local inference snapshot restore authority", () => {
     expect(restore).not.toHaveBeenCalled();
   });
 
-  it("fails closed when sandbox authority changes at the filesystem mutation fence", () => {
+  it("fails closed when sandbox authority changes at the filesystem mutation fence", async () => {
     const runtimeProvider = provider();
     const initial = sandbox("openclaw", "ollama");
     const changed = sandbox("openclaw", "ollama", 8000, {
@@ -417,7 +420,7 @@ describe("host-local inference snapshot restore authority", () => {
       .mockReturnValueOnce(initial)
       .mockReturnValueOnce(changed);
 
-    const result = restoreRecreatedSandboxStateWithManagedAuthority(
+    const result = await restoreRecreatedSandboxStateWithManagedAuthority(
       "alpha",
       manifest("openclaw", "ollama"),
       { targetAgentType: "openclaw" },

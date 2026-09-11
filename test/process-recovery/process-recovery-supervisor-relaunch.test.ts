@@ -125,7 +125,7 @@ function composedRelaunchTransaction(
                 failedFiles: [],
               }) as never,
           ),
-          restoreState: vi.fn(() => {
+          restoreState: vi.fn(async () => {
             order.push("restore-state");
             return {
               success: true,

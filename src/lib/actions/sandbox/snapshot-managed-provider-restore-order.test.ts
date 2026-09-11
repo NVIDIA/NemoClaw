@@ -133,9 +133,9 @@ beforeEach(() => {
     agent: "openclaw",
     openshellDriver: "docker",
   });
-  fixture.restoreSandboxStateMock.mockImplementation((_name, _path, options) => {
+  fixture.restoreSandboxStateMock.mockImplementation(async (_name, _path, options) => {
     try {
-      options?.validateBeforeMutation?.();
+      await options?.validateBeforeMutation?.();
     } catch (error) {
       return {
         success: false,

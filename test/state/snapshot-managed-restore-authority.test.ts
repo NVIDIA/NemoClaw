@@ -125,7 +125,7 @@ describe("managed snapshot restore authority", () => {
     { scenario: "missing authority" },
   ])(
     "requires both content and runtime fences at each raw state entry point [$scenario]",
-    ({ scenario }) => {
+    async ({ scenario }) => {
       const manifest = writeBackup(managedAuthority());
       const contentAuthority = sandboxState.captureSnapshotRestoreAuthority(manifest.backupPath);
       expect(contentAuthority).not.toBeNull();
@@ -138,7 +138,7 @@ describe("managed snapshot restore authority", () => {
         } as const
       )[scenario]!;
       expect(
-        sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
+        await sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
           targetAgentType: "openclaw",
           ...partialAuthority,
         }),
@@ -148,14 +148,14 @@ describe("managed snapshot restore authority", () => {
       });
 
       writeOpenClawRegistry();
-      expect(sandboxState.restoreSandboxState("alpha", manifest.backupPath)).toMatchObject({
+      expect(await sandboxState.restoreSandboxState("alpha", manifest.backupPath)).toMatchObject({
         success: false,
         error: sandboxState.MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
       });
 
       const validateBeforeMutation = vi.fn();
       expect(
-        sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
+        await sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
           targetAgentType: "openclaw",
           freshOpenClawImagePluginInstalls: [],
           authority: contentAuthority!,
@@ -166,3 +166,69 @@ describe("managed snapshot restore authority", () => {
     },
   );
 });
+
+it.each([
+  {
+    outcome: "allow",
+    validate: () => undefined,
+    mutate: (_manifest: ReturnType<typeof writeBackup>) => undefined,
+    expected: { success: true },
+  },
+  {
+    outcome: "reject",
+    validate: () => {
+      throw new Error("policy observation rejected");
+    },
+    mutate: (_manifest: ReturnType<typeof writeBackup>) => undefined,
+    expected: { success: false, error: expect.stringContaining("policy observation rejected") },
+  },
+  {
+    outcome: "content-drift",
+    validate: () => undefined,
+    mutate: (manifest: ReturnType<typeof writeBackup>) =>
+      fs.writeFileSync(
+        path.join(manifest.backupPath, "rebuild-manifest.json"),
+        JSON.stringify({ ...manifest, stateDirs: ["workspace"] }),
+      ),
+    expected: {
+      success: false,
+      error: expect.stringContaining("Selected snapshot content changed"),
+    },
+  },
+])(
+  "awaits $outcome authority before completing an empty restore",
+  async ({ validate, mutate, expected }) => {
+    const manifest = writeBackup(managedAuthority());
+    const contentAuthority = sandboxState.captureSnapshotRestoreAuthority(manifest.backupPath)!;
+    let release!: () => void;
+    let entered!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const observing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let completed = false;
+    const restoring = sandboxState
+      .restoreRecreatedSandboxState("alpha", manifest.backupPath, {
+        targetAgentType: "openclaw",
+        freshOpenClawImagePluginInstalls: [],
+        authority: contentAuthority,
+        validateBeforeMutation: async () => {
+          entered();
+          await pending;
+          validate();
+        },
+      })
+      .then((result) => {
+        completed = true;
+        return result;
+      });
+    await observing;
+    expect(completed).toBe(false);
+    mutate(manifest);
+    release();
+    const result = await restoring;
+    expect(result).toMatchObject(expected);
+  },
+);

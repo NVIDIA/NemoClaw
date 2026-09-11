@@ -148,12 +148,16 @@ function provider(agent: ShippedManagedImageAgent) {
 describe("managed rebuild restore authority", () => {
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "revalidates %s content and provider authority at the mutation edge",
-    (agent) => {
+    async (agent) => {
       const target = sandbox(agent);
       const runtimeProvider = provider(agent);
       const restore = vi.fn(
-        (_name: string, _path: string, options: RecreatedSandboxRestoreOptions): RestoreResult => {
-          options.validateBeforeMutation?.();
+        async (
+          _name: string,
+          _path: string,
+          options: RecreatedSandboxRestoreOptions,
+        ): Promise<RestoreResult> => {
+          await options.validateBeforeMutation?.();
           return {
             success: true,
             restoredDirs: ["workspace"],
@@ -164,7 +168,7 @@ describe("managed rebuild restore authority", () => {
         },
       );
 
-      const result = restoreRecreatedSandboxStateWithManagedAuthority(
+      const result = await restoreRecreatedSandboxStateWithManagedAuthority(
         "alpha",
         manifest(agent),
         { targetAgentType: agent },
@@ -195,9 +199,9 @@ describe("managed rebuild restore authority", () => {
     },
   );
 
-  it("keeps legacy rebuild manifests on the state-only restore path", () => {
+  it("keeps legacy rebuild manifests on the state-only restore path", async () => {
     const legacy = { ...manifest("openclaw"), workload: undefined, runtimeSnapshot: undefined };
-    const restore = vi.fn(() => ({
+    const restore = vi.fn(async () => ({
       success: true,
       restoredDirs: [],
       failedDirs: [],
@@ -206,16 +210,18 @@ describe("managed rebuild restore authority", () => {
     }));
 
     expect(
-      restoreRecreatedSandboxStateWithManagedAuthority(
-        "alpha",
-        legacy,
-        { targetAgentType: "openclaw" },
-        {
-          getSandbox: vi.fn(),
-          requireProvider: vi.fn() as never,
-          captureContentAuthority: vi.fn(),
-          restore,
-        },
+      (
+        await restoreRecreatedSandboxStateWithManagedAuthority(
+          "alpha",
+          legacy,
+          { targetAgentType: "openclaw" },
+          {
+            getSandbox: vi.fn(),
+            requireProvider: vi.fn() as never,
+            captureContentAuthority: vi.fn(),
+            restore,
+          },
+        )
       ).success,
     ).toBe(true);
     expect(restore).toHaveBeenCalledWith("alpha", "/tmp/alpha", {
@@ -223,9 +229,9 @@ describe("managed rebuild restore authority", () => {
     });
   });
 
-  it("rejects a managed manifest without provider runtime authority", () => {
+  it("rejects a managed manifest without provider runtime authority", async () => {
     const restore = vi.fn();
-    const result = restoreRecreatedSandboxStateWithManagedAuthority(
+    const result = await restoreRecreatedSandboxStateWithManagedAuthority(
       "alpha",
       { ...manifest("hermes"), runtimeSnapshot: undefined },
       { targetAgentType: "hermes" },
