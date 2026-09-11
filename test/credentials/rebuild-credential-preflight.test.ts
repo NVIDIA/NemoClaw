@@ -219,6 +219,10 @@ if (a[0] === "provider" && a[1] === "get") {
   process.stdout.write("Name: ${provider}\\nType: openai\\nCredential keys: ${credentialEnv}\\nConfig keys: OPENAI_BASE_URL\\n");
   process.exit(0);
 }
+if (a[0] === "provider" && a[1] === "list") {
+  process.stdout.write(${JSON.stringify(JSON.stringify(providerRegistered ? [{ name: provider }] : []) + "\n")});
+  process.exit(0);
+}
 if (a[0] === "provider") process.exit(0);
 if (a[0] === "forward" && a[1] === "list") { process.stdout.write("SANDBOX BIND PORT PID STATUS\\n${sandboxName} 127.0.0.1 18789 4242 running\\n"); process.exit(0); }
 if (a[0] === "forward") process.exit(0);

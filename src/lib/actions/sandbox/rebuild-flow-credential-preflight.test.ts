@@ -171,28 +171,35 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
   });
 
-  it("continues when the selected provider credential has not expired (#10394)", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        provider: "nvidia-prod",
-        model: MODEL,
-        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      },
-      hydrateCredentialEnv: () => "saved-provider-key",
-      runOpenshell: providerRuntime(
-        ["nvidia-prod"],
-        {},
-        { "nvidia-prod": { NVIDIA_INFERENCE_API_KEY: Number.MAX_SAFE_INTEGER } },
-      ),
-    });
-    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+  it.each([
+    ["has no expiration map", undefined],
+    ["is absent from another credential's expiration map", { OTHER_API_KEY: 1_000 }],
+    ["has a future expiration", { NVIDIA_INFERENCE_API_KEY: Number.MAX_SAFE_INTEGER }],
+  ])(
+    "continues when the selected provider credential %s (#10394)",
+    async (_case, expirationMap) => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          provider: "nvidia-prod",
+          model: MODEL,
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        },
+        hydrateCredentialEnv: () => "saved-provider-key",
+        runOpenshell: providerRuntime(
+          ["nvidia-prod"],
+          {},
+          expirationMap ? { "nvidia-prod": expirationMap } : {},
+        ),
+      });
+      configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
 
-    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
-  });
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    },
+  );
 
   it("aborts before backup when provider expiry metadata cannot be verified (#10394)", async () => {
     const registeredProvider = providerRuntime(["nvidia-prod"]);
