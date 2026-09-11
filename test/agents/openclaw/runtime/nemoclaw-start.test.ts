@@ -43,10 +43,7 @@ const JSON5_MODULE = path.join(
   "json5",
 );
 const execFileAsync = promisify(execFile);
-
-// Concurrent process fixtures are independent, but keep their host load bounded.
 vi.setConfig({ maxConcurrency: 4 });
-
 function commandPath(name: string): string {
   const result = spawnSync("/bin/sh", ["-c", `command -v ${name}`], { encoding: "utf-8" });
   if (result.status !== 0 || !result.stdout.trim()) throw new Error(`${name} is required`);
