@@ -2538,7 +2538,7 @@ class SandboxStateFlow<
       webSearchSupported: state.webSearchSupported,
       session: state.session,
       stateResult:
-        this.options.apfInterceptorRequested === true
+        this.options.apfInterceptorRequested === true && !this.options.externalComponentRegistered
           ? completeOnboardMachine({}, metadata)
           : branchTo(this.options.agent ? "agent_setup" : "openclaw", { metadata }),
     };

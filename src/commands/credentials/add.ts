@@ -13,10 +13,11 @@ export default class CredentialsAddCommand extends NemoClawCommand {
   static description =
     "Register a provider credential with the OpenShell gateway so workloads in NemoClaw sandboxes can authenticate to the corresponding endpoint without holding the raw secret. Pass the env variable name; the value is read from the host environment and never enters argv.";
   static usage = [
-    "credentials add <PROVIDER> --type <TYPE> [--credential ENV_NAME] [--config K=V] [--from-existing]",
+    "credentials add <PROVIDER> --type <TYPE> [--agent AGENT] [--credential ENV_NAME] [--config K=V] [--from-existing]",
   ];
   static examples = [
-    "<%= config.bin %> credentials add tavily-search --type tavily --credential TAVILY_API_KEY",
+    "<%= config.bin %> credentials add hermes-search --type tavily --agent hermes --credential TAVILY_API_KEY",
+    "<%= config.bin %> credentials add dcode-search --type tavily --agent dcode --credential TAVILY_API_KEY",
     "<%= config.bin %> credentials add nvidia-prod --type nvidia --credential NVIDIA_INFERENCE_API_KEY",
     "<%= config.bin %> credentials add claude --type claude-code --from-existing",
   ];
@@ -30,8 +31,13 @@ export default class CredentialsAddCommand extends NemoClawCommand {
   };
   static flags = {
     type: Flags.string({
-      description: "Provider type (e.g. tavily, nvidia, openai, anthropic, generic)",
+      description:
+        "Provider profile (e.g. tavily, tavily-hermes-v1, nvidia, openai, anthropic, generic)",
       required: true,
+    }),
+    agent: Flags.string({
+      description:
+        "Agent name or alias for Tavily profile selection (e.g. hermes or dcode). Does not select or rebuild a sandbox.",
     }),
     credential: Flags.string({
       description:
@@ -53,6 +59,7 @@ export default class CredentialsAddCommand extends NemoClawCommand {
     const result = await runCredentialsAddAction({
       provider: args.provider,
       type: flags.type,
+      ...(flags.agent !== undefined ? { agent: flags.agent } : {}),
       credentials: flags.credential ?? [],
       configPairs: flags.config ?? [],
       fromExisting: flags["from-existing"] === true,
