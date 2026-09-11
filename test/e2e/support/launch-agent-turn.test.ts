@@ -531,7 +531,7 @@ exec "$@"
           ? "10"
           : mode === "pty-socket-timeout"
             ? "5"
-            : mode.endsWith("-timeout")
+            : mode.endsWith("-timeout") && mode !== "supervisor-timeout"
               ? "2"
               : (invocationEnv.NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS ?? "230"),
       NEMOCLAW_LAUNCH_SECOND_INPUT: invocationEnv.NEMOCLAW_LAUNCH_SECOND_INPUT ?? "second input",
