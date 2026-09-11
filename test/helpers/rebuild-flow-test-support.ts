@@ -12,7 +12,7 @@ import type {
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import type { VersionCheckResult } from "../../src/lib/sandbox/version";
 import type { PreservedEnvFile } from "../../src/lib/state/preserved-env";
-import type { SandboxRemovalReceipt } from "../../src/lib/state/registry";
+import type { SandboxEntry, SandboxRemovalReceipt } from "../../src/lib/state/registry";
 
 export type RebuildSandbox =
   (typeof import("../../src/lib/actions/sandbox/rebuild"))["rebuildSandbox"];
@@ -188,6 +188,7 @@ export type RebuildFlowHarness = {
   prepareManagedDcodeRebuildImageSpy: MockInstance;
   preparedDcodeBuildContext: Record<string, unknown> & { cleanupBuildCtx: MockInstance };
   registryUpdateSpy: MockInstance;
+  getSandboxEntry: () => SandboxEntry;
   setDefaultSpy: MockInstance;
   setDefault: (name: string) => boolean;
   registerSandboxEntry: (name: string) => void;

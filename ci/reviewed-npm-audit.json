@@ -3,6 +3,7 @@
   "nodeVersion": "22.23.2",
   "npmVersion": "10.9.4",
   "npmIntegrity": "sha512-OnUG836FwboQIbqtefDNlyR0gTHzIfwRfE3DuiNewBvnMnWEpB0VEXwBlFVgqpNzIgYo/MHh3d2Hel/pszapAA==",
+  "npmArchiveSha256": "4bfba8a0c823024d1926ec9d97a37a00eb60fd2adf44b3d34a686fc32e8f51e4",
   "registryOrigin": "https://registry.npmjs.org/",
   "sourceRegistryPackage": {
     "artifactName": "nvidia-openshell-sdk-0.0.116.tgz",
@@ -11,7 +12,9 @@
     "integrity": "sha512-MFnyX2vs47f/yVJRUXKmA7C6wZDH03ZGFFg+R5gZME+yMQDg9WF6G4Kdz/APM7nCUpaoGk2bwNEdUUmR60J54A==",
     "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.116/3380652847354127ed1bb8010490f8815040ada3"
   },
-  "sourceNestedShrinkwrapPackages": ["@earendil-works/pi-coding-agent@0.80.6"],
+  "sourceNestedShrinkwrapPackages": [
+    "@earendil-works/pi-coding-agent@0.80.6"
+  ],
   "sourceRegistryPackagesWithoutIntegrity": [
     {
       "label": "Pi agent core 0.80.6 nested shrinkwrap entry",

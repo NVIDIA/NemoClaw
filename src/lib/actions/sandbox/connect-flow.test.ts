@@ -124,15 +124,12 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha");
     expect(harness.ensureOllamaAuthProxySpy).toHaveBeenCalledTimes(1);
     expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", "nemoclaw");
-    expect(harness.runSandboxExecChildSpy).toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "connect", "alpha"],
-      expect.objectContaining({
-        hostCwd: expect.any(String),
-        stdin: true,
-      }),
-    );
-    expect(harness.runSandboxExecChildSpy.mock.invocationCallOrder[0]!).toBeLessThan(
+    expect(harness.startSandboxSessionSpy).toHaveBeenCalledWith({
+      kind: "connect",
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+    });
+    expect(harness.startSandboxSessionSpy.mock.invocationCallOrder[0]!).toBeLessThan(
       exitSpy.mock.invocationCallOrder[0]!,
     );
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
@@ -178,166 +175,32 @@ describe("connectSandbox flow", () => {
     expect(output).toContain("Portable onboarding for 'alpha' is incomplete");
     expect(output).toContain("Resume or rerun onboarding");
     expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
-    expect(
-      harness.spawnSyncSpy.mock.calls.some(
-        ([, args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "connect",
-      ),
-    ).toBe(false);
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });
 
-  it("restores the terminal and prints reconnect guidance when SSH disconnects", async () => {
-    const setRawModeSpy = vi.fn();
-    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
-    Object.defineProperty(process.stdin, "setRawMode", {
-      configurable: true,
-      value: setRawModeSpy,
-    });
-    const harness = createConnectHarness({
-      agentName: "langchain-deepagents-code",
-      sessionAgent: {
-        name: "langchain-deepagents-code",
-        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
-      },
-      spawnStatus: 255,
-    });
-
-    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(255)");
-
-    expect(setRawModeSpy).toHaveBeenCalledWith(false);
-    expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
-      "stty",
-      ["sane"],
-      expect.objectContaining({ stdio: ["inherit", "ignore", "ignore"] }),
-    );
-    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain(
-      "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
-    );
-    expect(exitSpy).toHaveBeenCalledWith(255);
-  });
-
-  it.each([
-    ["SIGHUP", 129],
-    ["SIGPIPE", 141],
-  ] as const)(
-    "restores the terminal and preserves the exit code when SSH ends with %s",
-    async (signal, exitCode) => {
-      const setRawModeSpy = vi.fn();
-      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
-      Object.defineProperty(process.stdin, "setRawMode", {
-        configurable: true,
-        value: setRawModeSpy,
-      });
+  it.each([255, 129, 141])(
+    "prints reconnect guidance and preserves transport exit %s",
+    async (exitCode) => {
       const harness = createConnectHarness({
         agentName: "langchain-deepagents-code",
         sessionAgent: {
           name: "langchain-deepagents-code",
           runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
         },
-        spawnSignal: signal,
-        spawnStatus: null,
+        sessionOutcome: {
+          kind: "failed",
+          reason: "transport",
+          message: "Gateway connection lost",
+          exitCode,
+        },
       });
-
       await expect(harness.connectSandbox("alpha")).rejects.toThrow(`process.exit(${exitCode})`);
-
-      expect(setRawModeSpy).toHaveBeenCalledWith(false);
-      expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
-        "stty",
-        ["sane"],
-        expect.objectContaining({ stdio: ["inherit", "ignore", "ignore"] }),
-      );
-      const errorOutput = harness.errorSpy.mock.calls
-        .map((call) => String(call[0] ?? ""))
-        .join("\n");
-      expect(errorOutput).toContain(
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
         "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
       );
       expect(exitSpy).toHaveBeenCalledWith(exitCode);
     },
   );
-
-  it("prints reconnect guidance without terminal cleanup when stdin is not a TTY", async () => {
-    const setRawModeSpy = vi.fn();
-    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: false });
-    Object.defineProperty(process.stdin, "setRawMode", {
-      configurable: true,
-      value: setRawModeSpy,
-    });
-    const harness = createConnectHarness({
-      agentName: "langchain-deepagents-code",
-      sessionAgent: {
-        name: "langchain-deepagents-code",
-        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
-      },
-      spawnStatus: 255,
-    });
-
-    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(255)");
-
-    expect(setRawModeSpy).not.toHaveBeenCalled();
-    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith("stty", ["sane"], expect.any(Object));
-    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain(
-      "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
-    );
-    expect(exitSpy).toHaveBeenCalledWith(255);
-  });
-
-  it("still runs stty cleanup when disabling raw mode throws", async () => {
-    const setRawModeSpy = vi.fn(() => {
-      throw new Error("raw mode failed");
-    });
-    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
-    Object.defineProperty(process.stdin, "setRawMode", {
-      configurable: true,
-      value: setRawModeSpy,
-    });
-    const harness = createConnectHarness({
-      agentName: "langchain-deepagents-code",
-      sessionAgent: {
-        name: "langchain-deepagents-code",
-        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
-      },
-      spawnStatus: 255,
-    });
-
-    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(255)");
-
-    expect(setRawModeSpy).toHaveBeenCalledWith(false);
-    expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
-      "stty",
-      ["sane"],
-      expect.objectContaining({ stdio: ["inherit", "ignore", "ignore"] }),
-    );
-    expect(exitSpy).toHaveBeenCalledWith(255);
-  });
-
-  it("preserves the disconnect exit code when stty cleanup throws", async () => {
-    const setRawModeSpy = vi.fn();
-    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
-    Object.defineProperty(process.stdin, "setRawMode", {
-      configurable: true,
-      value: setRawModeSpy,
-    });
-    const harness = createConnectHarness({
-      agentName: "langchain-deepagents-code",
-      sessionAgent: {
-        name: "langchain-deepagents-code",
-        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
-      },
-      spawnStatus: 255,
-      sttyThrows: true,
-    });
-
-    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(255)");
-
-    expect(setRawModeSpy).toHaveBeenCalledWith(false);
-    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain(
-      "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
-    );
-    expect(exitSpy).toHaveBeenCalledWith(255);
-  });
 
   it("prints a credential-safe connect hint for terminal agents", async () => {
     const harness = createConnectHarness({
@@ -1246,14 +1109,13 @@ describe("connectSandbox flow", () => {
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
     expect(sandboxVersion.checkAgentVersion).not.toHaveBeenCalled();
     expect(brokerSpy).not.toHaveBeenCalled();
-    const connectCall = harness.runSandboxExecChildSpy.mock.calls.find(
-      ([command, args]) =>
-        command === "/usr/bin/openshell" &&
-        Array.isArray(args) &&
-        args.join("\0") === ["sandbox", "connect", "-g", "nemoclaw", "alpha"].join("\0"),
-    );
-    expect(connectCall?.[2]).toMatchObject({
-      hostEnv: expect.not.objectContaining({
+    expect(harness.startSandboxSessionSpy).toHaveBeenCalledWith({
+      kind: "connect",
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+    });
+    expect(harness.createSessionExecutorSpy.mock.calls[0]?.[0]).toMatchObject({
+      environment: expect.not.objectContaining({
         NVIDIA_INFERENCE_API_KEY: expect.anything(),
         GITHUB_TOKEN: expect.anything(),
         AWS_SECRET_ACCESS_KEY: expect.anything(),
@@ -1289,9 +1151,7 @@ describe("connectSandbox flow", () => {
       "lifecycle authority disappeared before interactive connect",
     );
     expect(
-      harness.runSandboxExecChildSpy.mock.calls.some(
-        ([, args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "connect",
-      ),
+      harness.startSandboxSessionSpy.mock.calls.some(([request]) => request.kind === "connect"),
     ).toBe(false);
   });
 

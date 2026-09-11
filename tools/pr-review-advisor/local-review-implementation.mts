@@ -71,6 +71,13 @@ function combineFailures(first: unknown, next: unknown): unknown {
   });
 }
 
+function makeOwnedTemporaryDirectoriesWritable(root: string): void {
+  for (const entry of fs.readdirSync(root, { recursive: true, withFileTypes: true })) {
+    if (entry.isDirectory()) fs.chmodSync(path.join(entry.parentPath, entry.name), 0o700);
+  }
+  fs.chmodSync(root, 0o700);
+}
+
 export const defaultLocalReviewLifecycle: LocalReviewLifecycle = {
   ...defaultAdvisorSpecialistLifecycle,
   prepare: (env) => prepareAdvisorSandboxInputs(env, { collectContext: async () => null }),
@@ -430,7 +437,10 @@ export async function runLocalReview(input: {
   try {
     await activeCleanup?.();
     activeCleanup = undefined;
-    if (ownsRoot) (input.removeTemporaryRoot ?? fs.rmSync)(root, { recursive: true, force: true });
+    if (ownsRoot) {
+      makeOwnedTemporaryDirectoriesWritable(root);
+      (input.removeTemporaryRoot ?? fs.rmSync)(root, { recursive: true, force: true });
+    }
   } catch (error) {
     cleanup = contextualError(
       `Local review failed during cleanup for temporary root ${root}`,

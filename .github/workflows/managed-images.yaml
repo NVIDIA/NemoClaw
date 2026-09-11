@@ -75,7 +75,7 @@ env:
 
 jobs:
   pr-reviewed-npm-audit:
-    name: PR reviewed npm audit
+    name: PR npm audit
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -89,7 +89,7 @@ jobs:
           path: candidate
           persist-credentials: false
 
-      - name: Checkout trusted reviewed npm audit
+      - name: Checkout npm audit code from the base commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
@@ -475,7 +475,7 @@ jobs:
             chmod 0664 "$artifact_path"
           done
 
-      - name: Download same-run reviewed npm audit evidence
+      - name: Download same-run npm audit evidence
         if: matrix.agent == 'openclaw'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1604,7 +1604,7 @@ jobs:
           printf 'cohort=ghrun-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
   reviewed-npm-audit:
-    name: Reviewed npm audit for managed image publication
+    name: npm audit for managed image publication
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1721,7 +1721,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - name: Download same-run reviewed npm audit evidence
+      - name: Download same-run npm audit evidence
         if: matrix.agent == 'openclaw'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
