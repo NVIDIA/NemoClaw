@@ -103,10 +103,17 @@ function runsSanitizedReviewedNpmBootstrap(step: Step): boolean {
 }
 
 function runsNpm(step: Step): boolean {
-  return /(?:^|[\n;&|({])\s*(?:npm|npx)(?:\s|$)/mu.test(step.run ?? "");
+  return /(?:^|[\n;&|({])\s*(?:(?:sudo|env|[A-Za-z_][A-Za-z0-9_]*=\S*)\s+)*(?:npm|npx)(?:\s|$)/mu.test(
+    step.run ?? "",
+  );
 }
 
 describe("controlled setup-node environments", () => {
+  it.each(["CI=true npx vitest", "sudo npm ci", "env NODE_ENV=test npm ci"])(
+    "detects prefixed npm execution: %s",
+    (run) => expect(runsNpm({ run })).toBe(true),
+  );
+
   // source-shape-contract: security -- Changes to the reviewed npm bootstrap must select both PR image validation and the post-merge base-image publication path.
   it("selects image validation when the reviewed npm bootstrap changes", () => {
     const reviewedNpmBootstrap = ".github/actions/setup-reviewed-npm/**";
@@ -215,7 +222,8 @@ describe("controlled setup-node environments", () => {
         const completeSparseCheckout =
           sparseCheckout === undefined ||
           (sparsePaths.includes(".github/actions/setup-reviewed-npm") &&
-            sparsePaths.includes("ci/reviewed-npm-audit.json"));
+            sparsePaths.includes("ci/reviewed-npm-audit.json") &&
+            sparsePaths.includes("scripts/lib/reviewed-npm-audit.mts"));
         return {
           label: `${path.relative(REPO_ROOT, file)}:${label}:${step.uses}`,
           valid: match !== null && matchingCheckout !== undefined && completeSparseCheckout,

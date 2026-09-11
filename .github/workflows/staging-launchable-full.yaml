@@ -29,6 +29,7 @@ jobs:
           sparse-checkout: |
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
+            scripts/lib/reviewed-npm-audit.mts
             ci/cli-test-timing-hints.json
             nemoclaw/vitest.project.ts
             src/

@@ -64,6 +64,7 @@ jobs:
           sparse-checkout: |
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
+            scripts/lib/reviewed-npm-audit.mts
             scripts/lib/read-artifact-zip.mts
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             test/e2e/registry/native-runtime-qualification.ts

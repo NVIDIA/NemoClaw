@@ -64,17 +64,7 @@ describe("npm audit receipt", () => {
   });
 
   it("rejects a receipt that omits the reviewed npm archive identity", () => {
-    const {
-      npmArchiveSha256: _npmArchiveSha256,
-      npmIntegrity: _npmIntegrity,
-      ...versionOnly
-    } = receipt();
-    const incomplete = {
-      ...versionOnly,
-      argv: ["audit", "--omit=dev", "--json"],
-      registryOrigin: "https://registry.npmjs.org/",
-      schemaVersion: 1,
-    } as const;
+    const { npmArchiveSha256: _npmArchiveSha256, ...incomplete } = receipt();
     expect(() => parseAndVerifyAuditReceipt(JSON.stringify(incomplete), inputs)).toThrow(
       /unexpected or missing keys/,
     );

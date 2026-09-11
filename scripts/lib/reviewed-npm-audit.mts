@@ -904,7 +904,6 @@ export function runReviewedNpmAudit(
     directory: string;
     exceptionFile: string;
     graph: string;
-    npmIntegrity?: string;
     provenance?: AuditProvenanceContext;
     reviewedNpmIdentity?: ReviewedNpmIdentity;
     reportFile?: string;
@@ -1031,7 +1030,6 @@ export function parseReviewedNpmAuditCliArgs(
     "--directory",
     "--exceptions",
     "--graph",
-    "--npm-integrity",
     "--report",
     "--result",
     "--threshold",

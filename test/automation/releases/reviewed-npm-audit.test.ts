@@ -565,6 +565,12 @@ describe("npm audit raw cache", () => {
     );
   });
 
+  it("rejects a standalone npm integrity argument", () => {
+    expect(() =>
+      parseReviewedNpmAuditCliArgs(cliArgs(".", "--npm-integrity", npmIdentity.npmIntegrity), {}),
+    ).toThrow("unknown npm audit arguments: --npm-integrity");
+  });
+
   it("rejects a truncated reviewed npm SHA-512 integrity", () => {
     expect(() => parseReviewedNpmIdentity({ ...npmIdentity, npmIntegrity: "sha512-A" })).toThrow(
       "npm audit configuration has an invalid npmIntegrity",
