@@ -73,6 +73,7 @@ jobs:
     timeout-minutes: 120
     outputs:
       preview_id: ${{ steps.preview.outputs.artifact-id }}
+      migration_inputs_id: ${{ steps.migration_inputs.outputs.artifact-id }}
     steps:
       - name: Check out the finished Windows application source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -212,6 +213,24 @@ jobs:
             ${{ runner.temp }}/finished-windows/package/*.json
             ${{ runner.temp }}/finished-windows/assembled/runtime-identity.json
           if-no-files-found: error
+      - name: Record exact native UI inputs for independent setup regression
+        shell: pwsh
+        run: |
+          $package = "$env:RUNNER_TEMP\finished-windows\package"
+          $paths = @('build/BootstrapperPayloads.wxs','build/payload/mxc/wxc-host-prep.exe') + @(Get-ChildItem -LiteralPath "$package\build\bootstrapper" -File | ForEach-Object { 'build/bootstrapper/' + $_.Name })
+          $files = @($paths | ForEach-Object { $file = Join-Path $package $_; @{file=$_;bytes=(Get-Item -LiteralPath $file).Length;sha256=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()} })
+          [IO.File]::WriteAllText("$package\migration-inputs.json", (@{schemaVersion=1;sourceRevision=$env:GITHUB_SHA;files=$files}|ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+      - name: Preserve same-build UI bytes for separate setup regression
+        id: migration_inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-setup-migration-inputs-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/finished-windows/package/migration-inputs.json
+            ${{ runner.temp }}/finished-windows/package/build/BootstrapperPayloads.wxs
+            ${{ runner.temp }}/finished-windows/package/build/bootstrapper/*
+            ${{ runner.temp }}/finished-windows/package/build/payload/mxc/wxc-host-prep.exe
+          if-no-files-found: error
       - name: Preserve finished build and helper proof evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -231,6 +250,68 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+
+  windows-finished-setup-migration:
+    name: Native setup failure and published-preview migration (ARM64)
+    needs: windows-finished-installer
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 35
+    steps:
+      - name: Check out the Windows-owned setup qualification
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: candidate
+          persist-credentials: false
+      - name: Download the exact same-run product artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.windows-finished-installer.outputs.preview_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/finished-windows
+      - name: Download its exact native bootstrapper inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.windows-finished-installer.outputs.migration_inputs_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/finished-windows/package
+      - name: Prepare pinned native fixture compiler
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.95.0
+          target: aarch64-pc-windows-msvc
+          cache: false
+      - name: Build actual Burn failure fixture from the same native UI
+        shell: pwsh
+        env:
+          PRODUCT_VERSION: ${{ inputs.finished_windows_product_version }}
+        run: |
+          $tools = "$env:RUNNER_TEMP\setup-regression-tools"
+          dotnet tool install --tool-path $tools wix --version 5.0.2
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned WiX installation failed.' }
+          & "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\build-burn-diagnostics-fixture.ps1" -SourceRoot "$env:GITHUB_WORKSPACE\candidate" -PackageDirectory "$env:RUNNER_TEMP\finished-windows\package" -OutputDirectory "$env:RUNNER_TEMP\finished-windows\diagnostics-fixture" -ProductVersion $env:PRODUCT_VERSION -WixPath "$tools\wix.exe"
+      - name: Require native failed-stage reporting before any MSI
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\test-burn-diagnostics.ps1" -FixtureDirectory "$env:RUNNER_TEMP\finished-windows\diagnostics-fixture" -OutputDirectory "$env:RUNNER_TEMP\finished-windows\burn-diagnostics"
+      - name: Exercise previous EXE migration and native selective reset
+        shell: pwsh
+        env:
+          PRODUCT_VERSION: ${{ inputs.finished_windows_product_version }}
+        run: |
+          & "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\run-preview-migration.ps1" -WorkDirectory "$env:RUNNER_TEMP\finished-windows" -ProductVersion $env:PRODUCT_VERSION
+      - name: Preserve setup and migration evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-setup-migration-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/finished-windows/burn-diagnostics/
+            ${{ runner.temp }}/finished-windows/migration/
+            !${{ runner.temp }}/finished-windows/migration/**/*.exe
+            ${{ runner.temp }}/finished-windows/diagnostics-fixture/fixture.json
+          if-no-files-found: warn
+          retention-days: 14
 
   windows-finished-installed-acceptance:
     name: Fresh-runner finished Windows preview acceptance (ARM64)
