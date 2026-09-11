@@ -168,7 +168,7 @@ describe("CLI OpenShell sandbox policy reader", () => {
     ).resolves.toMatchObject({ ok: false, error: { kind: "command" } });
     expect(capture).toHaveBeenCalledWith(
       ["policy", "get", "-g", "nemoclaw", "--base", "alpha"],
-      expect.objectContaining({ maxBuffer: 1024 * 1024, timeout: 15_000 }),
+      expect.objectContaining({ outputLimitBytes: 1024 * 1024, timeout: 15_000 }),
     );
   });
 });

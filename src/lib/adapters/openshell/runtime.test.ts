@@ -117,7 +117,7 @@ describe("captureResolvedOpenshellAsync", () => {
     const result = await captureResolvedOpenshellAsync([], {
       openshellBinary: largeOutputExecutable("openshell"),
       ignoreError: true,
-      maxBuffer: 64,
+      outputLimitBytes: 64,
       includeStreams: true,
     });
 

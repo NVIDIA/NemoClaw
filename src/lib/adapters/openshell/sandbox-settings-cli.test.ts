@@ -26,7 +26,7 @@ describe("sandbox audit settings", () => {
         "--value",
         "true",
       ],
-      expect.objectContaining({ timeout: 500, maxBuffer: 1024 * 1024 }),
+      expect.objectContaining({ timeout: 500, outputLimitBytes: 1024 * 1024 }),
     );
   });
 

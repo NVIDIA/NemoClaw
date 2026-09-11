@@ -17,6 +17,9 @@ type SanitizedCaptureOptions = Readonly<{
   replaceEnv?: true;
 }>;
 
+type SanitizedAsyncCaptureOptions = Omit<SanitizedCaptureOptions, "maxBuffer"> &
+  Readonly<{ outputLimitBytes: number }>;
+
 /** Capture a bounded OpenShell read with a credential-minimizing environment. */
 function resolveCapture(args: string[]) {
   const env = buildOpenShellSubprocessEnv();
@@ -59,7 +62,7 @@ export function captureSanitizedResolvedOpenshell(
 
 export async function captureSanitizedResolvedOpenshellAsync(
   args: string[],
-  opts: SanitizedCaptureOptions,
+  opts: SanitizedAsyncCaptureOptions,
 ): Promise<CapturedOpenShellCommandResult> {
   const resolved = resolveCapture(args);
   if (!resolved) return missingBinary();

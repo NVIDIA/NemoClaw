@@ -344,17 +344,18 @@ export async function getSandboxInventory(
       : null;
   const incompleteOnboarding = projectIncompleteOnboarding(recovery.sandboxes, lastSession);
 
-  const rows = [];
-  for (const sandbox of recovery.sandboxes.filter(isPublishedSandboxRegistration)) {
-    rows.push(
-      await buildSandboxInventoryRow(
-        sandbox,
-        resolvedDefault,
-        deps.getActiveSessionCount,
-        deps.getPolicyPresets,
+  const rows = await Promise.all(
+    recovery.sandboxes
+      .filter(isPublishedSandboxRegistration)
+      .map((sandbox) =>
+        buildSandboxInventoryRow(
+          sandbox,
+          resolvedDefault,
+          deps.getActiveSessionCount,
+          deps.getPolicyPresets,
+        ),
       ),
-    );
-  }
+  );
   return {
     schemaVersion: 1,
     defaultSandbox: resolvedDefault,
@@ -597,18 +598,17 @@ export async function getStatusReport(deps: ShowStatusCommandDeps): Promise<Stat
         .map(normalizeServiceStatus) ?? [])
     : [];
 
-  const rows = [];
-  for (const sandbox of sandboxes) {
-    rows.push(
-      await buildStatusSandboxRow(
+  const rows = await Promise.all(
+    sandboxes.map((sandbox) =>
+      buildStatusSandboxRow(
         sandbox,
         resolvedDefault,
         liveInference,
         portablePhases.get(sandbox.name) ?? null,
         deps.getPolicyPresets,
       ),
-    );
-  }
+    ),
+  );
   return {
     schemaVersion: 1,
     defaultSandbox: safeStatusString(resolvedDefault),

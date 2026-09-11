@@ -34,7 +34,7 @@ export function createCliOpenShellSandboxSettings(
         includeStreams: true,
         includeStderr: true,
         timeout: timeoutMs,
-        maxBuffer: 1024 * 1024,
+        outputLimitBytes: 1024 * 1024,
       });
       const error = classifyCliOpenShellCommandError(result, {
         authentication: "OpenShell could not authenticate the sandbox audit setting update.",

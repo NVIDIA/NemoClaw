@@ -95,7 +95,7 @@ export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
   maxBuffer?: number;
 }
 
-export interface CaptureOpenshellAsyncOptions extends CaptureOpenshellOptions {
+export interface CaptureOpenshellAsyncOptions extends Omit<CaptureOpenshellOptions, "maxBuffer"> {
   signalSource?: OpenshellAsyncCaptureSignalSource;
   outputLimitBytes?: number;
   killGraceMs?: number;

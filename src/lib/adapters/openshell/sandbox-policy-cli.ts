@@ -57,13 +57,16 @@ export type {
 
 export { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary };
 
+type CapturePolicyOptions = Omit<Parameters<CaptureOpenShellCommand>[1], "maxBuffer"> & {
+  readonly outputLimitBytes: number;
+};
 type SyncCapturePolicyCommand = (
   args: string[],
   options: Parameters<CaptureOpenShellCommand>[1] & { readonly maxBuffer: number },
 ) => CapturedOpenShellCommandResult;
 type CapturePolicyCommand = (
   args: string[],
-  options: Parameters<SyncCapturePolicyCommand>[1],
+  options: CapturePolicyOptions,
 ) => CapturedOpenShellCommandResult | Promise<CapturedOpenShellCommandResult>;
 type PolicyReaderDeps<Capture> = Readonly<{ capture: Capture; defaultTimeoutMs?: number }>;
 type PolicyWriterDeps<Capture> = Readonly<{ capture: Capture; defaultTimeoutMs?: number }>;
@@ -173,7 +176,7 @@ function captureOptions(
       ignoreError: true,
       includeStderr: true,
       includeStreams: true,
-      maxBuffer: POLICY_READ_MAX_BYTES,
+      outputLimitBytes: POLICY_READ_MAX_BYTES,
       timeout: request.timeoutMs ?? defaultTimeoutMs ?? DEFAULT_POLICY_READ_TIMEOUT_MS,
     } as const,
     request.runtimeSelection,
@@ -347,9 +350,11 @@ export function createSyncCliOpenShellSandboxPolicyReader(
   deps: PolicyReaderDeps<SyncCapturePolicyCommand>,
 ): SyncOpenShellSandboxPolicyReader {
   return {
-    readSandboxPolicy: (request) =>
-      parsePolicyRead(
-        deps.capture(policyReadArgs(request), captureOptions(request, deps.defaultTimeoutMs)),
-      ),
+    readSandboxPolicy: (request) => {
+      const { outputLimitBytes, ...options } = captureOptions(request, deps.defaultTimeoutMs);
+      return parsePolicyRead(
+        deps.capture(policyReadArgs(request), { ...options, maxBuffer: outputLimitBytes }),
+      );
+    },
   };
 }
