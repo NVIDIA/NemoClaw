@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -44,12 +45,13 @@ type Receipt struct {
 }
 
 type Client struct {
-	BaseURL string
-	HTTP    *http.Client
+	BaseURL        string
+	HTTP           *http.Client
+	ResumeAttempts int
 }
 
 func NewClient() Client {
-	return Client{BaseURL: "https://huggingface.co", HTTP: &http.Client{
+	return Client{BaseURL: "https://huggingface.co", ResumeAttempts: 4, HTTP: &http.Client{
 		Transport: &http.Transport{Proxy: nil, ResponseHeaderTimeout: time.Minute, IdleConnTimeout: 30 * time.Second},
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			if len(via) >= 10 || r.URL.Scheme != "https" {
@@ -133,23 +135,74 @@ func (c Client) Ensure(ctx context.Context, dir string, m Manifest, progress fun
 		return result, err
 	}
 	result.Manifest = m.Key()
-	for _, f := range m.Files {
-		if err := ctx.Err(); err != nil {
-			return result, err
+	result.Files = make([]VerifiedFile, len(m.Files))
+	work, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	// Four bounded streams avoid a single long-lived CDN connection limiting
+	// the 100 GiB snapshot. Each file still has exactly one writer and receipt.
+	for range min(4, len(m.Files)) {
+		workers.Go(func() {
+			for i := range jobs {
+				f := m.Files[i]
+				if progress != nil {
+					progress(f.Name)
+				}
+				v, err := c.resumeFile(work, dir, m, f, progress)
+				if err != nil {
+					cancel(fmt.Errorf("snapshot %s: %w", f.Name, err))
+					return
+				}
+				result.Files[i] = v
+			}
+		})
+	}
+send:
+	for i := range m.Files {
+		select {
+		case jobs <- i:
+		case <-work.Done():
+			break send
 		}
-		if progress != nil {
-			progress(f.Name)
-		}
-		v, err := c.ensureFile(ctx, dir, m, f)
-		if err != nil {
-			return result, fmt.Errorf("snapshot %s: %w", f.Name, err)
-		}
-		result.Files = append(result.Files, v)
+	}
+	close(jobs)
+	workers.Wait()
+	if err := context.Cause(work); err != nil {
+		return result, err
 	}
 	if err := WriteJSON(filepath.Join(dir, ".nemoclaw-complete.json"), result); err != nil {
 		return result, err
 	}
 	return result, nil
+}
+
+var errInterruptedStream = errors.New("model stream incomplete; partial download retained")
+
+// The Spark backend owns this four-attempt policy. Only an interrupted body
+// stream is retried. Exact-revision GET + confirmed Range + final SHA-256 makes
+// resumption idempotent. Authentication, range, checksum, disk, and cancellation
+// failures do not retry. Each resumed attempt is exposed in runtime progress.
+func (c Client) resumeFile(ctx context.Context, dir string, m Manifest, f File, progress func(string)) (VerifiedFile, error) {
+	var v VerifiedFile
+	var err error
+	for attempt := range max(1, min(c.ResumeAttempts, 4)) {
+		if attempt > 0 {
+			if progress != nil {
+				progress(fmt.Sprintf("resuming %s (attempt %d of %d)", f.Name, attempt+1, c.ResumeAttempts))
+			}
+			select {
+			case <-ctx.Done():
+				return v, ctx.Err()
+			case <-time.After(time.Duration(1<<(attempt-1)) * time.Second):
+			}
+		}
+		v, err = c.ensureFile(ctx, dir, m, f)
+		if !errors.Is(err, errInterruptedStream) || ctx.Err() != nil {
+			return v, err
+		}
+	}
+	return v, err
 }
 
 func (c Client) ensureFile(ctx context.Context, dir string, m Manifest, want File) (VerifiedFile, error) {
@@ -217,7 +270,13 @@ func (c Client) ensureFile(ctx context.Context, dir string, m Manifest, want Fil
 		}
 		n, err := io.Copy(f, io.LimitReader(r.Body, want.Size-offset+1))
 		if err != nil || n != want.Size-offset {
-			return v, errors.New("model stream incomplete; partial download retained")
+			if _, diskError := errors.AsType[*os.PathError](err); diskError {
+				return v, errors.New("model storage write failed; partial download retained")
+			}
+			if n > want.Size-offset {
+				return v, errors.New("model stream exceeded pinned size; data retained")
+			}
+			return v, errInterruptedStream
 		}
 		if err = f.Sync(); err != nil {
 			return v, err

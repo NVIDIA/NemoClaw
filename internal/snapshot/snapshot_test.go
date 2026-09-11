@@ -137,6 +137,9 @@ func TestIncompleteManifestNeverPublishesCompletion(t *testing.T) {
 	}))
 	defer s.Close()
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "weights.bin"), []byte("right"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	c := Client{BaseURL: s.URL, HTTP: s.Client()}
 	if _, err := c.Ensure(t.Context(), dir, m, nil); err == nil {
 		t.Fatal("accepted partial result")
@@ -146,5 +149,47 @@ func TestIncompleteManifestNeverPublishesCompletion(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "weights.bin")); err != nil {
 		t.Fatal("lost completed file")
+	}
+}
+
+func TestSnapshotUsesBoundedParallelStreamsAndOrderedReceipts(t *testing.T) {
+	m := manifest("right")
+	for i := 1; i < 8; i++ {
+		f := m.Files[0]
+		f.Name = fmt.Sprintf("part-%d", i)
+		m.Files = append(m.Files, f)
+	}
+	arrived := make(chan struct{}, 8)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		arrived <- struct{}{}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		fmt.Fprint(w, "right")
+	}))
+	defer s.Close()
+	dir := t.TempDir()
+	done := make(chan error, 1)
+	go func() {
+		_, err := (Client{BaseURL: s.URL, HTTP: s.Client()}).Ensure(t.Context(), dir, m, nil)
+		done <- err
+	}()
+	for range 4 {
+		<-arrived
+	}
+	if calls.Load() != 4 {
+		t.Error("download exceeded four active streams")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Observe(dir, m); err != nil {
+		t.Fatal("parallel completion changed manifest ordering", err)
 	}
 }
