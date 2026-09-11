@@ -12,6 +12,7 @@ import { type SandboxClient, validateSandboxName } from "../fixtures/clients/san
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
+import { pollUntil } from "../fixtures/polling.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
@@ -26,6 +27,26 @@ export function startAttachedOllama(progress: TestProgress, environment: NodeJS.
     spawn: { cwd: REPO_ROOT, env: environment, stdio: "ignore" },
   });
   return ownChildProcess(child);
+}
+
+export function waitForAttachedOllama(host: HostCliClient, environment: NodeJS.ProcessEnv) {
+  // Connection refusal and curl timeouts are transient while this fixture's child starts.
+  return pollUntil({
+    artifactPrefix: "export-daemon-ready",
+    attempts: 20,
+    delayMs: 500,
+    probe: (_attempt, artifactName) =>
+      host.command(
+        "curl",
+        ["-q", "--noproxy", "*", "-fsS", "--max-time", "2", "http://127.0.0.1:11439/api/tags"],
+        { artifactName, env: environment, timeoutMs: 5000 },
+      ),
+    accept: (result) => result.exitCode === 0,
+    terminal: (result) =>
+      result.exitCode !== 0 && result.exitCode !== 7 && result.exitCode !== 28
+        ? "The attached daemon readiness read failed."
+        : undefined,
+  });
 }
 
 export const CLI = CLI_ENTRYPOINT;

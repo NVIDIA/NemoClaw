@@ -12,7 +12,6 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { pollUntil } from "../fixtures/polling.ts";
 import {
   assertAgentExecutionSucceeded,
   assertGpuInstallProofs,
@@ -33,6 +32,7 @@ import {
   restartProxy,
   SANDBOX_NAME,
   startAttachedOllama,
+  waitForAttachedOllama,
 } from "./gpu-e2e-helpers.ts";
 import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
 
@@ -473,23 +473,7 @@ test(
       env: exportEnv,
       timeoutMs: 120000,
     });
-    // Only connection refusal is transient while this fixture's child starts. Every read is recorded.
-    await pollUntil({
-      artifactPrefix: "export-daemon-ready",
-      attempts: 20,
-      delayMs: 500,
-      probe: (_attempt, artifactName) =>
-        host.command(
-          "curl",
-          ["-q", "--noproxy", "*", "-fsS", "--max-time", "2", "http://127.0.0.1:11439/api/tags"],
-          { artifactName, env: exportEnv, timeoutMs: 5000 },
-        ),
-      accept: (result) => result.exitCode === 0,
-      terminal: (result) =>
-        result.exitCode !== 0 && result.exitCode !== 7
-          ? "The attached daemon readiness read failed."
-          : undefined,
-    });
+    await waitForAttachedOllama(host, exportEnv);
 
     progress.phase("onboard OpenClaw without sandbox GPU");
     const onboard = await host.command(
