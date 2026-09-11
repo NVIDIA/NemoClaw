@@ -18,8 +18,8 @@ import (
 )
 
 type Manifest struct {
-	Version, Go, OpenTofu, Osquery string
-	Files                          map[string]string
+	Version, Go, OpenTofu string
+	Files                 map[string]string
 }
 
 func VerifyBundle(dir string) error {
@@ -28,14 +28,14 @@ func VerifyBundle(dir string) error {
 		return errors.New("bundle manifest missing; run go run ./tools/bundle")
 	}
 	var m Manifest
-	if json.Unmarshal(b, &m) != nil || m.OpenTofu != "1.12.6" || m.Osquery != "5.23.1" {
+	if json.Unmarshal(b, &m) != nil || m.OpenTofu != "1.12.6" {
 		return errors.New("incompatible bundle manifest")
 	}
 	ext := ""
 	if runtime.GOOS == "windows" {
 		ext = ".exe"
 	}
-	for _, p := range []string{"bin/nemoclaw" + ext, "libexec/tofu" + ext, "libexec/osqueryi" + ext, "libexec/nemoclaw-osquery.ext" + ext, "providers/registry.opentofu.org/nvidia/nemoclaw/" + m.Version + "/" + runtime.GOOS + "_" + runtime.GOARCH + "/terraform-provider-nemoclaw_v" + m.Version + ext} {
+	for _, p := range []string{"bin/nemoclaw" + ext, "libexec/tofu" + ext, "providers/registry.opentofu.org/nvidia/nemoclaw/" + m.Version + "/" + runtime.GOOS + "_" + runtime.GOARCH + "/terraform-provider-nemoclaw_v" + m.Version + ext} {
 		if m.Files[p] == "" {
 			return errors.New("bundle is incomplete")
 		}
@@ -58,6 +58,6 @@ func VerifyBundle(dir string) error {
 	return nil
 }
 func (e *Engine) tofu(ctx context.Context, args ...string) ([]byte, error) {
-	env := append(subprocess.CleanEnv(), "NEMOCLAW_INTERNAL_BUNDLE="+e.BundleDir, "TF_IN_AUTOMATION=1", "TF_INPUT=0", "TF_CLI_CONFIG_FILE="+filepath.Join(e.StateDir, "providers.tfrc"), "CHECKPOINT_DISABLE=1")
+	env := append(subprocess.CleanEnv(), "TF_IN_AUTOMATION=1", "TF_INPUT=0", "TF_CLI_CONFIG_FILE="+filepath.Join(e.StateDir, "providers.tfrc"), "CHECKPOINT_DISABLE=1")
 	return subprocess.Run(ctx, e.StateDir, subprocess.Executable(e.BundleDir, "tofu"), env, args...)
 }

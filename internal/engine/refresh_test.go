@@ -18,36 +18,22 @@ import (
 	"time"
 
 	oshell "github.com/NVIDIA/NemoClaw/internal/openshell"
-	"github.com/NVIDIA/NemoClaw/internal/subprocess"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
 )
 
-// The test executable can stand in for a broken osquery process. The actual
-// OpenTofu/provider processes still perform Read, with no SDK fallback possible.
-func TestMain(m *testing.M) {
-	if output, ok := os.LookupEnv("NEMOCLAW_TEST_QUERY_RESULT"); ok {
-		os.Stdout.WriteString(output)
-		os.Exit(0)
-	}
-	os.Exit(m.Run())
-}
-
 // Exercise Resource.Read directly through OpenTofu, bypassing the CLI's separate
 // ownership preflight. A preflight failure must not mask a broken refresh.
-func refreshTofu(t *testing.T, e *Engine, bundle string, args ...string) ([]byte, error) {
+func refreshTofu(t *testing.T, e *Engine, args ...string) ([]byte, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
-	env := append(subprocess.CleanEnv(), "NEMOCLAW_INTERNAL_BUNDLE="+bundle,
-		"TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1",
-		"TF_CLI_CONFIG_FILE="+filepath.Join(e.StateDir, "providers.tfrc"))
-	return subprocess.Run(ctx, e.StateDir, subprocess.Executable(e.BundleDir, "tofu"), env, args...)
+	return e.tofu(ctx, args...)
 }
 
-func planRefresh(t *testing.T, e *Engine, bundle string) (Plan, error) {
+func planRefresh(t *testing.T, e *Engine) (Plan, error) {
 	t.Helper()
-	_, err := refreshTofu(t, e, bundle, "plan", "-input=false", "-no-color", "-parallelism=1", "-out=refresh.plan")
+	_, err := refreshTofu(t, e, "plan", "-input=false", "-no-color", "-parallelism=1", "-out=refresh.plan")
 	if err != nil {
 		return Plan{}, err
 	}
@@ -77,7 +63,7 @@ func TestProviderRefreshObservesLiveValuesAndPlansDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := stateBytes(t, e)
-	p, err := planRefresh(t, e, e.BundleDir)
+	p, err := planRefresh(t, e)
 	if err != nil || len(p.ResourceChanges) != 4 {
 		t.Fatalf("successful refresh: %+v, %v", p, err)
 	}
@@ -90,7 +76,7 @@ func TestProviderRefreshObservesLiveValuesAndPlansDrift(t *testing.T) {
 	f.providers[d.Workspace()+"/local"].Config["OPENAI_BASE_URL"] = "http://127.0.0.1:11435/v1"
 	f.routes[d.Workspace()].ModelId = "external-model"
 	f.mu.Unlock()
-	p, err = planRefresh(t, e, e.BundleDir)
+	p, err = planRefresh(t, e)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +131,7 @@ func TestProviderRefreshOnlyConfirmedAbsenceRemovesState(t *testing.T) {
 				t.Fatal("CLI recreated a missing managed resource")
 			}
 			// Refresh-only apply persists Read's state decision without creating.
-			if _, err = refreshTofu(t, e, e.BundleDir, "apply", "-refresh-only", "-auto-approve", "-input=false", "-no-color", "-parallelism=1"); err != nil {
+			if _, err = refreshTofu(t, e, "apply", "-refresh-only", "-auto-approve", "-input=false", "-no-color", "-parallelism=1"); err != nil {
 				t.Fatal(err)
 			}
 			after, err := e.stateIDs()
@@ -202,14 +188,14 @@ func TestProviderRefreshFailuresStopPlanningAndRetainState(t *testing.T) {
 				clear(f.partialRead)
 				f.mu.Unlock()
 			}()
-			_, err := planRefresh(t, e, e.BundleDir)
+			_, err := planRefresh(t, e)
 			if err == nil || !strings.Contains(err.Error(), "Resource observation") || !strings.Contains(err.Error(), tt.diagnostic) {
 				t.Fatalf("missing refresh diagnostic: %v", err)
 			}
 			if strings.Contains(err.Error(), "sensitive-sentinel-42") {
 				t.Fatal("remote diagnostic leaked credentials")
 			}
-			if _, err = refreshTofu(t, e, e.BundleDir, "apply", "-refresh-only", "-auto-approve", "-input=false", "-no-color", "-parallelism=1"); err == nil {
+			if _, err = refreshTofu(t, e, "apply", "-refresh-only", "-auto-approve", "-input=false", "-no-color", "-parallelism=1"); err == nil {
 				t.Fatal("failed observation allowed state persistence")
 			}
 			out.Reset()
@@ -251,7 +237,7 @@ func TestProviderRefreshRetainsOwnershipIdentityAndPolicyGuards(t *testing.T) {
 					meta.Labels["nemoclaw.nvidia.com/"+map[string]string{"owner": "uid", "generation": "generation"}[field]] = "foreign"
 				}
 				f.mu.Unlock()
-				_, err := planRefresh(t, e, e.BundleDir)
+				_, err := planRefresh(t, e)
 				f.mu.Lock()
 				proto.Reset(meta)
 				proto.Merge(meta, old)
@@ -281,7 +267,7 @@ func TestProviderRefreshRetainsOwnershipIdentityAndPolicyGuards(t *testing.T) {
 				s.Spec.Template.Image = "example.test/other@sha256:" + strings.Repeat("a", 64)
 			}
 			f.mu.Unlock()
-			_, err := planRefresh(t, e, e.BundleDir)
+			_, err := planRefresh(t, e)
 			f.mu.Lock()
 			proto.Reset(s.Spec)
 			proto.Merge(s.Spec, old)
@@ -293,53 +279,5 @@ func TestProviderRefreshRetainsOwnershipIdentityAndPolicyGuards(t *testing.T) {
 				t.Fatal("configuration failure changed state")
 			}
 		})
-	}
-}
-
-func TestProviderRefreshDoesNotFallbackWhenOsqueryFails(t *testing.T) {
-	e, f, d, _ := setup(t)
-	if err := invoke(t, e, "apply", d); err != nil {
-		t.Fatal(err)
-	}
-	before := stateBytes(t, e)
-	for _, mode := range []string{"missing query", "missing extension", "empty result", "partial result"} {
-		t.Run(mode, func(t *testing.T) {
-			bundle := t.TempDir()
-			if err := os.MkdirAll(filepath.Join(bundle, "libexec"), 0700); err != nil {
-				t.Fatal(err)
-			}
-			if mode != "missing query" {
-				source := subprocess.Executable(e.BundleDir, "osqueryi")
-				if mode != "missing extension" {
-					var err error
-					source, err = os.Executable()
-					if err != nil {
-						t.Fatal(err)
-					}
-					result := `[]`
-					if mode == "partial result" {
-						result = `[{"observation_status":"absent"}]`
-					}
-					t.Setenv("NEMOCLAW_TEST_QUERY_RESULT", result)
-				}
-				// A hard link avoids copying the large upstream osquery executable.
-				if err := os.Link(source, subprocess.Executable(bundle, "osqueryi")); err != nil {
-					t.Fatal(err)
-				}
-			}
-			_, err := planRefresh(t, e, bundle)
-			if err == nil || !strings.Contains(err.Error(), "Resource observation") {
-				t.Fatalf("missing query failure: %v", err)
-			}
-			if _, err = refreshTofu(t, e, bundle, "apply", "-refresh-only", "-auto-approve", "-input=false", "-no-color", "-parallelism=1"); err == nil {
-				t.Fatal("query failure allowed state persistence")
-			}
-			if f.count() != 4 || !bytes.Equal(before, stateBytes(t, e)) {
-				t.Fatal("query failure lost state or recreated resources")
-			}
-		})
-	}
-	if err := invoke(t, e, "apply", d); err != nil || f.count() != 4 {
-		t.Fatalf("query recovery recreated resources: %v", err)
 	}
 }

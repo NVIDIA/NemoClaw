@@ -1,7 +1,7 @@
 # NemoClaw desired-state prototype
 
 This local experiment creates an OpenClaw agent from YAML using Go, OpenTofu,
-OpenShell, and osquery. It has an independent Git root and contains no source
+and OpenShell. It has an independent Git root and contains no source
 from the previous NemoClaw implementation. See [DESIGN.md](DESIGN.md) for scope.
 
 The supported prototype commands are:
@@ -25,15 +25,13 @@ Install Go 1.27.1, then run:
 go run ./tools/bundle
 ```
 
-The builder downloads checksum-pinned OpenTofu and osquery artifacts and builds
-three Go executables. It does not install global tools or contact a provider
+The builder downloads a checksum-pinned OpenTofu artifact and builds
+two Go executables. It does not install global tools or contact a provider
 registry during deployment. Runtime artifacts are under `dist/OS_ARCH`:
 
 ```text
 bin/nemoclaw
 libexec/tofu
-libexec/osqueryi
-libexec/nemoclaw-osquery.ext
 providers/registry.opentofu.org/nvidia/nemoclaw/VERSION/OS_ARCH/
   terraform-provider-nemoclaw_vVERSION
 manifest.json
@@ -121,67 +119,36 @@ loopback addresses. Plaintext gateways must use literal loopback addresses.
 | Go CLI | Strict YAML, compilation, deployment lock, ownership, unfinished intent |
 | OpenTofu | Dependency graph, refresh, diff, saved plan, resource state |
 | Go provider | OpenShell resources and optional Ollama service/model resources |
-| OpenShell SDK | Table data source, mutation reconciliation, conditional writes, sandbox execution |
-| osquery extension | Explicit resource tables with observation status and policy checks |
-| Typed query adapter | Complete observations shared by provider refresh and export |
-| osqueryi | SQL execution for refresh and export |
-| Shared Docker/Ollama readers | Managed container, volume binding, and complete model inventory |
+| OpenShell SDK and shared resource reader | Configuration observations, mutation reconciliation, conditional writes, sandbox execution |
+| Shared Docker/model API readers | Managed runtime configuration, storage identity, and complete model inventory |
 
-Provider refresh and export query `openshell_workspaces`, `openshell_providers`,
-`openshell_inference_routes`, and `openshell_sandboxes`. For example:
+Provider refresh and export call the same OpenShell resource reader directly for
+workspaces, inference providers, routes, and sandboxes. The provider reuses its
+gateway client for observations and mutations; export opens one gateway client
+for its configuration reads and agent checks. Reads have bounded deadlines and
+contain only non-secret resource attributes.
 
-```sql
-SELECT name, observation_status, observation_error, provider_name, model
-FROM openshell_inference_routes
-WHERE workspace = 'nc-8bb56695710753e3' AND name = 'primary';
-```
+A complete successful read returns the resource's observed configuration. Only
+an explicit OpenShell NotFound for the object, or its parent workspace for a
+route, establishes absence. A policy-status NotFound is an observation failure,
+not evidence that the sandbox disappeared. Incomplete responses, missing required
+attributes, mismatched names, authentication, permission, and transport failures
+stop planning with a diagnostic and preserve the last known state. Only confirmed
+absence permits the provider's `Resource.Read` to remove an object from OpenTofu
+state.
 
-Every table requires an equality constraint on `name`; nested tables also
-require `workspace`. There is no document table. Export uses observed resource
-values, verifies durable identities and the active policy, and checks the agent's
-configuration. Export does not require a healthy inference result. Missing
-configuration observations produce an error and no YAML.
+Export uses observed values, verifies ownership, generation, durable identities,
+launch configuration, and the active policy, and checks the agent's configuration.
+It writes YAML only after all required observations and checks succeed. Export
+rejects absence as well as failure; it does not require a healthy inference result.
 
-Each constrained lookup returns one row with `observation_status` set to
-`present`, `absent`, or `failed`. An absent row contains the requested key and
-empty resource attributes. It requires an explicit OpenShell NotFound response
-for that object, or its parent workspace for a route. A policy-status NotFound
-is an observation failure, not evidence that the sandbox disappeared.
-Use `observation_status = 'present'` when querying only existing resource values.
-The shared adapter deliberately does not filter status: it requires exactly one
-complete row for each key, checks columns and identities, and rejects empty,
-partial, duplicate, malformed, or failed results. Only explicit absence permits
-the provider's `Resource.Read` to remove an object from OpenTofu state. Query,
-extension, authentication, permission, and transport failures stop planning with
-a diagnostic and preserve the last known state. Export rejects absence as well.
-
-The CLI supplies its verified absolute bundle directory to the private provider
-through `NEMOCLAW_INTERNAL_BUNDLE`. The adapter invokes that bundle's osquery and
-extension executables and supplies gateway configuration with secret references.
-Refresh starts one osquery process per resource; export batches its four tables
-in one process. OpenShell refresh and export have no fallback to direct SDK reads.
-Host CPU and process inventory remain available in osquery's built-in tables;
-they are not needed for the current resource contract. Managed Ollama uses shared
-direct readers: Docker's API for identity/configuration and Ollama's `/api/tags`
-for model inventory. osquery's built-in Docker table returned empty successful
-output for an unavailable socket, so it cannot establish absence by itself.
-
-These reads still bypass osquery in this slice:
-
-- Managed Ollama service/model refresh and export, engine identity and volume
-  ownership checks, image inventory, and bounded model-inventory activation waits.
-- CLI gateway version/compute-driver discovery and ownership preflight. The
-  preflight retains the existing rule against replacing missing managed objects.
-- Mutation reconciliation before and after writes, parent ownership checks,
-  immediate provider resource-version reads for conditional updates, and the
-  sandbox readiness wait.
-- Active agent configuration/health and inference probes through OpenShell exec.
-- Local intent, OpenTofu state, bundle manifests, environment credential values,
-  and TLS credential files.
-
-The extension itself uses the OpenShell SDK to populate its tables, including
-the sandbox's active policy and launch specification. Those SDK calls are the
-source of osquery observations, not a second refresh path.
+Managed Ollama uses Docker's API for identity/configuration and Ollama's `/api/tags`
+for complete model inventory. Refresh and export share those readers too. The same
+owning APIs support gateway capability discovery, ownership preflight, mutation
+reconciliation, readiness waits, and active agent/inference probes. Local intent,
+OpenTofu state, bundle manifests, and credential references use local sources.
+Host observations describe that host; guest and remote resources are read through
+the owning API or inside the environment being observed.
 
 ## Recovery and limits
 
@@ -221,7 +188,7 @@ go run ./tools/bundle
 go test -tags=integration ./internal/engine -count=1
 ```
 
-Integration tests execute the real OpenTofu, provider, and osquery binaries
+Integration tests execute the real OpenTofu and provider binaries
 against a gRPC fixture. They cover no-op apply, model changes, export/recreate,
 lost responses, cancellation, ownership, policy/configuration drift, and secrets.
 Refresh tests invoke OpenTofu directly to verify state removal on confirmed
@@ -240,7 +207,7 @@ the external-endpoint variant requires both models already available.
 Test credentials and model costs are
 those of the explicitly selected gateway and inference endpoint.
 
-Versions were checked on 2026-09-11: Go 1.27.1, OpenTofu 1.12.6, osquery 5.23.1,
+Versions were checked on 2026-09-11: Go 1.27.1, OpenTofu 1.12.6,
 OpenShell 0.0.116, OpenClaw 2026.9.4, and Ollama 0.34.0. Binary hashes and URLs
 are in [versions.json](versions.json); Go dependencies are pinned in `go.mod`
 and `go.sum`. The OpenShell SDK is pinned to the stable gateway's release commit:

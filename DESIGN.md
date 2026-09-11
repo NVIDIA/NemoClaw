@@ -4,7 +4,7 @@ Decision: Accept for a local experiment, authorized by cv in this task on 2026-0
 Placement: the independent root of `codex/desired-state-prototype`.
 Accountable maintainer: cv. No publication or existing-deployment migration is authorized.
 
-The experiment tests whether Go, OpenTofu, OpenShell, and osquery can implement
+The experiment tests whether Go, OpenTofu, and OpenShell can implement
 NemoClaw's desired-state workflow with a small amount of new code.
 No existing NemoClaw source or documentation is copied into this branch.
 
@@ -30,20 +30,20 @@ only the separately declared inference service.
 OpenTofu owns dependencies, refresh, diffs, saved plans, and resource state.
 NemoClaw owns YAML validation, compilation, ownership enforcement, and recovery
 of operations that may have completed before their response was recorded.
-Provider refresh and export share a typed osquery adapter over the four resource
-tables. The extension uses the OpenShell SDK and emits explicit present, absent,
-or failed observations. Empty or partial SQL output cannot remove resource state.
-Ownership, generation, durable identity, launch specification, and active policy
-checks remain enforced. Mutations and their reconciliation, CLI preflight, active
-probes, and local state/credential access remain direct in this slice.
-Host queries run on the machine being observed; they do not pretend to inspect
+Provider refresh and export share direct resource readers over the OpenShell SDK
+and Docker/model APIs. A successful complete read supplies configuration; only an
+explicit owning-API NotFound establishes absence. Failed or incomplete reads stop
+planning and export without discarding resource bindings. Ownership, generation,
+durable identity, launch specification, and active policy checks remain enforced.
+Mutations and their reconciliation, CLI preflight, active probes, and local
+state/credential access use the same owning APIs and local sources.
+Host reads run on the machine being observed; they do not pretend to inspect
 a container guest.
 
-Ollama refresh and export share direct typed readers. osquery's built-in Docker
-inventory returned empty successful output for an unavailable socket, so it does
-not meet the absence contract. A custom table is deferred until its benefit is
-established. The separate service/model resources are also provisional: a stopped
-service makes model refresh fail and prevents OpenTofu from planning its restart.
+Ollama refresh and export share direct typed readers for container configuration,
+volume identity, and complete model inventory. The separate service/model resources
+are also provisional: a stopped service makes model refresh fail and prevents
+OpenTofu from planning its restart.
 The live harness exposes this limitation and explicitly restarts the runtime to
 continue; ordinary apply has no implicit repair outside the plan.
 
@@ -71,7 +71,7 @@ evidence shows that a boundary prevents the parent runtime from being repaired.
 7. Build native binaries for Linux, macOS, and Windows. Record native execution
    separately; cross-compilation is not platform qualification.
 
-Tests will exercise real OpenTofu/provider/osquery process boundaries and a
+Tests will exercise real OpenTofu/provider process boundaries and a
 protocol fixture for deterministic failure cases. Linux runtime evidence uses
 only resources created for this prototype. Interrupted model streams and initial
 volume allocation use deterministic API fixtures. Windows/macOS/Podman runtime

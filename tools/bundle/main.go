@@ -4,9 +4,7 @@
 package main
 
 import (
-	"archive/tar"
 	"archive/zip"
-	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -29,12 +27,12 @@ type Artifact struct {
 	SHA256 string `json:"sha256"`
 }
 type Pins struct {
-	Go, OpenTofu, Osquery string
-	Platforms             map[string]map[string]Artifact
+	Go, OpenTofu string
+	Platforms    map[string]map[string]Artifact
 }
 type Manifest struct {
-	Version, Go, OpenTofu, Osquery string
-	Files                          map[string]string
+	Version, Go, OpenTofu string
+	Files                 map[string]string
 }
 
 func main() {
@@ -63,6 +61,10 @@ func build() error {
 	}
 	goos, goarch, _ := strings.Cut(*platform, "_")
 	root := filepath.Join("dist", *platform)
+	// libexec is generated output. Drop retired helpers before recording the bundle.
+	if err = os.RemoveAll(filepath.Join(root, "libexec")); err != nil {
+		return err
+	}
 	if err = os.MkdirAll(filepath.Join(root, "libexec"), 0755); err != nil {
 		return err
 	}
@@ -77,20 +79,13 @@ func build() error {
 	if err != nil {
 		return err
 	}
-	manifest := Manifest{Version: version, Go: pins.Go, OpenTofu: pins.OpenTofu, Osquery: pins.Osquery, Files: map[string]string{}}
-	for _, tool := range []string{"tofu", "osquery"} {
-		archive, err := download(artifacts[tool])
-		if err != nil {
-			return err
-		}
-		name := tool
-		if tool == "osquery" {
-			name = "osqueryi"
-		}
-		dest := filepath.Join(root, "libexec", name+ext)
-		if err = extractBinary(archive, dest, tool, strings.HasSuffix(artifacts[tool].URL, ".zip")); err != nil {
-			return err
-		}
+	manifest := Manifest{Version: version, Go: pins.Go, OpenTofu: pins.OpenTofu, Files: map[string]string{}}
+	archive, err := download(artifacts["tofu"])
+	if err != nil {
+		return err
+	}
+	if err = extractBinary(archive, filepath.Join(root, "libexec", "tofu"+ext)); err != nil {
+		return err
 	}
 	providerDir := filepath.Join(root, "providers", "registry.opentofu.org", "nvidia", "nemoclaw", version, *platform)
 	// dist is generated output. Keep one provider version in each bundle.
@@ -103,7 +98,6 @@ func build() error {
 	for _, target := range []struct{ Package, Output string }{
 		{"./cmd/nemoclaw", filepath.Join(root, "bin", "nemoclaw"+ext)},
 		{"./cmd/terraform-provider-nemoclaw", filepath.Join(providerDir, "terraform-provider-nemoclaw_v"+version+ext)},
-		{"./cmd/nemoclaw-osquery", filepath.Join(root, "libexec", "nemoclaw-osquery.ext"+ext)},
 	} {
 		goBinary := filepath.Join(runtime.GOROOT(), "bin", "go")
 		if runtime.GOOS == "windows" {
@@ -192,11 +186,8 @@ func download(a Artifact) (string, error) {
 		return dest, nil
 	}
 	// Reuse verified bootstrap downloads when present.
-	for _, dir := range []string{"tofu", "osquery"} {
-		p := filepath.Join(".tools", "downloads", dir, path.Base(a.URL))
-		if validDigest(p, a.SHA256) {
-			return p, nil
-		}
+	if p := filepath.Join(".tools", "downloads", "tofu", path.Base(a.URL)); validDigest(p, a.SHA256) {
+		return p, nil
 	}
 	client := http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Get(a.URL)
@@ -240,65 +231,25 @@ func validDigest(p, digest string) bool {
 	}
 	return hex.EncodeToString(h.Sum(nil)) == digest
 }
-func extractBinary(archive, dest, tool string, isZip bool) error {
-	match := func(name string) bool {
-		base := path.Base(name)
-		if tool == "tofu" {
-			return base == "tofu" || base == "tofu.exe"
-		}
-		return base == "osqueryd" || base == "osqueryd.exe"
+func extractBinary(archive, dest string) error {
+	z, err := zip.OpenReader(archive)
+	if err != nil {
+		return err
 	}
-	write := func(r io.Reader) error {
-		f, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
-		if err != nil {
-			return err
-		}
-		_, err = io.Copy(f, r)
-		closeErr := f.Close()
-		if err != nil {
-			return err
-		}
-		return closeErr
-	}
-	if isZip {
-		z, err := zip.OpenReader(archive)
-		if err != nil {
-			return err
-		}
-		defer z.Close()
-		for _, f := range z.File {
-			if match(f.Name) && f.Mode().IsRegular() {
-				r, err := f.Open()
-				if err != nil {
-					return err
-				}
-				defer r.Close()
-				return write(r)
-			}
-		}
-	} else {
-		f, err := os.Open(archive)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		g, err := gzip.NewReader(f)
-		if err != nil {
-			return err
-		}
-		defer g.Close()
-		t := tar.NewReader(g)
-		for {
-			h, err := t.Next()
-			if errors.Is(err, io.EOF) {
-				break
-			}
+	defer z.Close()
+	for _, f := range z.File {
+		if base := path.Base(f.Name); (base == "tofu" || base == "tofu.exe") && f.Mode().IsRegular() {
+			r, err := f.Open()
 			if err != nil {
 				return err
 			}
-			if h.Typeflag == tar.TypeReg && match(h.Name) {
-				return write(t)
+			defer r.Close()
+			out, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
+			if err != nil {
+				return err
 			}
+			_, err = io.Copy(out, r)
+			return errors.Join(err, out.Close())
 		}
 	}
 	return errors.New("archive contains no expected executable")

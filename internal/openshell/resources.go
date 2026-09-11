@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
+	"time"
 
 	v1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
 )
@@ -18,19 +20,19 @@ const GenerationLabel = "nemoclaw.nvidia.com/generation"
 const CredentialLabel = "nemoclaw.nvidia.com/credential-env"
 const AgentLabel = "nemoclaw.nvidia.com/agent"
 
-// Each resource has its own public attributes and osquery table. The shared row
-// transport contains only declared, non-secret columns.
+// Row contains the non-secret attributes shared by resource readers, provider
+// state, mutation reconciliation, and export.
 type Row map[string]string
 type Definition struct {
-	Kind, Table     string
+	Kind            string
 	Fields, Mutable []string
 }
 
 var Definitions = []Definition{
-	{"workspace", "openshell_workspaces", []string{"name", "owner", "generation"}, nil},
-	{"provider", "openshell_providers", []string{"workspace", "name", "owner", "generation", "endpoint", "credential_env"}, []string{"endpoint", "credential_env"}},
-	{"route", "openshell_inference_routes", []string{"workspace", "name", "owner", "generation", "provider_name", "model"}, []string{"provider_name", "model"}},
-	{"sandbox", "openshell_sandboxes", []string{"workspace", "name", "owner", "generation", "image", "agent_name"}, nil},
+	{"workspace", []string{"name", "owner", "generation"}, nil},
+	{"provider", []string{"workspace", "name", "owner", "generation", "endpoint", "credential_env"}, []string{"endpoint", "credential_env"}},
+	{"route", []string{"workspace", "name", "owner", "generation", "provider_name", "model"}, []string{"provider_name", "model"}},
+	{"sandbox", []string{"workspace", "name", "owner", "generation", "image", "agent_name"}, nil},
 }
 
 type Client interface {
@@ -57,7 +59,15 @@ func labels(r Row) map[string]string {
 	return map[string]string{OwnerLabel: r["owner"], GenerationLabel: r["generation"]}
 }
 
+// Observe reads configuration through the owning API. Only an explicit NotFound
+// for the resource (or a route's workspace) returns nil, nil. Failed or incomplete
+// reads return an error and must never authorize state removal or export.
 func Observe(ctx context.Context, c Client, kind, workspace, name string) (Row, error) {
+	if name == "" || (kind == "workspace") != (workspace == "") || strings.ContainsAny(name+workspace, "\x00") {
+		return nil, errors.New("invalid resource observation key")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	var row Row
 	switch kind {
 	case "workspace":
@@ -126,6 +136,9 @@ func Observe(ctx context.Context, c Client, kind, workspace, name string) (Row, 
 		row["image"] = s.Spec.Template.Image
 		row["agent_name"] = s.Labels[AgentLabel]
 		row["phase"] = string(s.Status.Phase)
+		if row["phase"] == "" {
+			return nil, errors.New("incomplete sandbox phase")
+		}
 		if !slices.Equal(s.Spec.Command, Command()) || !maps.Equal(s.Spec.Environment, Environment(row["agent_name"])) {
 			return nil, errors.New("sandbox launch specification drifted")
 		}

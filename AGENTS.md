@@ -27,6 +27,6 @@ revision and license information are recorded in the skill's `UPSTREAM.md`.
 ## Validation
 
 Run `gofmt`, focused tests, and `go vet` for changes. Rebuild the native bundle
-before integration tests that execute its provider or osquery extension.
+before integration tests that execute its provider.
 Keep native runtime evidence distinct from cross-compilation. Live tests create
 real resources and require the explicit environment settings in `LOCAL_TEST.md`.

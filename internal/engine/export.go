@@ -8,12 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/NVIDIA/NemoClaw/internal/config"
 	"github.com/NVIDIA/NemoClaw/internal/managed"
 	"github.com/NVIDIA/NemoClaw/internal/ollama"
 	oshell "github.com/NVIDIA/NemoClaw/internal/openshell"
-	"github.com/NVIDIA/NemoClaw/internal/query"
 )
 
 func (e *Engine) export(ctx context.Context, r Record) error {
@@ -61,21 +61,21 @@ func (e *Engine) export(ctx context.Context, r Record) error {
 		}
 	}
 	targets := Targets(d, r.Generations)
-	keys := make([]query.Key, 0, len(targets))
-	for _, t := range targets {
-		keys = append(keys, query.Key{Kind: t.Kind, Workspace: t.Values["workspace"], Name: t.Values["name"]})
-	}
-	observer := query.Client{BundleDir: e.BundleDir, Gateway: d.Spec.Gateway}
-	observations, err := observer.Read(ctx, keys...)
+	c, err := oshell.Connect(d.Spec.Gateway)
 	if err != nil {
-		return fmt.Errorf("export: %w; no YAML exported", err)
+		return err
 	}
-	for i, t := range targets {
-		observation := observations[keys[i]]
-		if observation.Status == query.Absent {
+	defer c.Close()
+	observationCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for _, t := range targets {
+		got, err := oshell.Observe(observationCtx, c, t.Kind, t.Values["workspace"], t.Values["name"])
+		if err != nil {
+			return fmt.Errorf("export %s: %w; no YAML exported", t.Kind, err)
+		}
+		if got == nil {
 			return fmt.Errorf("export %s: resource is confirmed absent; no YAML exported", t.Kind)
 		}
-		got := observation.Row()
 		t.Values["id"] = ids[t.Address]
 		if t.Values["id"] == "" {
 			return errors.New("resource has no durable state identity")
@@ -122,11 +122,6 @@ func (e *Engine) export(ctx context.Context, r Record) error {
 	if err = d.Validate(); err != nil {
 		return err
 	}
-	c, err := oshell.Connect(d.Spec.Gateway)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
 	if err = oshell.Configuration(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name, d.Spec.Sandboxes[0].Agents[0].Name); err != nil {
 		return err
 	}

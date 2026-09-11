@@ -20,8 +20,8 @@
 NemoClaw should become a declarative deployment system with one YAML contract and
 one plan/apply engine. A Go frontend would translate configuration into OpenTofu
 resources. A Go provider would manage those resources through OpenShell and
-backend APIs. Shared resource readers would supply observations, with osquery
-included where its queries reduce maintained code.
+backend APIs. Provider refresh and export would call shared resource readers
+directly through the owning APIs.
 
 The proposed result is one workflow for creation, configuration changes, drift
 repair, and recovery. Export captures the current configuration of managed
@@ -54,7 +54,7 @@ Three arguments support this recommendation:
    runtime APIs report observations, and state binds logical resources to objects.
 
 The design succeeds only if these boundaries reduce total maintenance. Provider
-code, SQL, packaging, recovery, tests, and compatibility work count toward the
+code, readers, packaging, recovery, tests, and compatibility work count toward the
 result. A smaller command surface alone is insufficient.
 
 ### 1.1. Problem
@@ -382,7 +382,6 @@ OpenTofu: refresh, plan, apply, resource state
 Go provider: resource operations and typed readers
     +-- OpenShell API for OpenShell-owned resources
     +-- backend APIs for other managed resources
-    +-- osquery where collection or queries reduce owned code
 ```
 
 The frontend generates OpenTofu JSON configuration [TOFU-JSON]. Each independently
@@ -460,8 +459,7 @@ backend-specific checks in Section 5; a saved plan does not freeze runtime objec
 ### 4.3. Distribution
 
 The proposed bundle contains the Go CLI, OpenTofu, and one provider package for the
-required resource types. When selected, osquery and its Go extension are private
-helpers. Only the CLI needs a public PATH entry.
+required resource types. Only the CLI needs a public PATH entry.
 
 A private filesystem mirror, explicit CLI configuration, pinned selections, and
 package checksums control provider installation [TOFU-INSTALL]. Helpers run by
@@ -502,43 +500,36 @@ An observed conflict stops apply; this RFC makes no stronger concurrency guarant
 If exclusive management is unacceptable for a resource, conditional-write support
 becomes a prerequisite for including it.
 
-### 5.2. Observation and the osquery Decision
+### 5.2. Shared Direct Observation
 
-Readers return typed configuration facts with target identity and bounded calls.
-Unknown observations MUST remain distinct from confirmed absence. Failed access,
-timeouts, parse errors, or unavailable tables cannot authorize mutation.
-Activation checks establish that the intended process loaded the requested configuration.
+Provider refresh and export call the same resource readers directly. Readers use
+OpenShell's SDK for OpenShell-owned resources and the Docker/model APIs for
+separately managed inference resources. Readers return configuration facts with
+target identity and bounded calls. Unknown observations MUST remain distinct from
+confirmed absence. Failed access, timeouts, parse errors, and incomplete responses
+cannot authorize mutation or state removal. Activation checks establish that the
+intended process loaded the requested configuration.
 
-The proposed osquery extension exposes resource concepts, such as sandboxes,
-policies, and routes. Resource readers parse configuration files directly where needed.
-The extension mechanism supports additional tables [OSQUERY-EXT].
+For OpenShell resources, the shared reader returns resource attributes on success,
+confirmed absence only for an explicit owning-API NotFound, and an error for failed
+or incomplete observations. A route's missing workspace confirms route absence;
+a sandbox's missing policy status does not confirm sandbox absence. Readers check
+required attributes, response identity, launch specification, and active policy.
+Consumers verify deployment ownership, generation, and durable bindings before
+using observed configuration. Export emits no YAML if any required read or check
+fails. Multiple live reads do not constitute an atomic snapshot.
 
-An isolated osquery 5.23.1 test distinguished a table error from confirmed absence
-(Appendix B). Consumers discard output on a failed invocation; valid JSON alone
-does not prove observation success. Joins across live tables are not atomic snapshots.
-
-Built-in tables need their own failure qualification. With osquery 5.23.1,
-`docker_containers` returned an empty array and exit code 0 for an unavailable
-Docker socket, just as it did for a successful query matching no containers.
-It therefore cannot supply confirmed absence for reconciliation by itself.
-The Ollama experiment shares direct typed Docker and model-API readers between
-refresh and export. Existing OpenShell observations retain their custom tables
-with explicit `present`, `absent`, and `failed` results. A future Docker table
-would need to preserve the direct reader's failure and identity semantics.
-
-The Spark resources reuse this direct Docker boundary for container, bridge,
+The Spark resources use the direct Docker boundary for container, bridge,
 volume, and offline artifact inspection. Capacity checks use local filesystem
 capacity, `/proc/meminfo`, and bounded NVIDIA GPU inventory calls. The resident
-watchdog reads host memory every second; starting an osquery process for each
-sample would add latency and another failure boundary without removing a collector.
-An added table remains an option for independent inventory consumers, rather
-than a prerequisite for these safety checks. Mutations and active probes stay direct.
+watchdog reads host memory every second. Mutations and active probes use their
+owning APIs directly.
 
-Before bundling osquery, compare the same readers consumed directly and through
-custom tables. Measure collection code removed, useful joins, startup latency,
-memory, binary size, tests, and release maintenance. Retain osquery where that
-comparison shows a benefit. Provider operations and osquery tables share each
-resource's collector.
+No SQL engine, extension protocol, or separate observation executable is part of
+the architecture. New resources extend the shared readers and their failure tests.
+The earlier collector experiments in Appendix B are historical evidence, not a
+requirement to maintain or reintroduce an alternative observation path.
+
 
 ### 5.3. Creation, Configuration, and Readiness
 
@@ -639,7 +630,7 @@ both lost responses and provider errors; neither is established by the other.
 ## 6. Credentials and Security Considerations
 
 Credentials remain references in YAML. Values MUST NOT appear in generated resource
-configuration, SQL results, plans, state, operation records, arguments, logs, or
+configuration, observations, plans, state, operation records, arguments, logs, or
 export.
 
 ### 6.1. Proposed Credential Transport
@@ -649,8 +640,8 @@ Pass only reference names and non-secret installation versions as resource field
 
 The caller, CLI, OpenTofu child, and provider form the trusted process path through
 which allowlisted credential variables can pass. Child environments include only
-required values and execution settings. Observation helpers receive only the
-authentication needed for their target, never unrelated inference credentials.
+required values and execution settings. Each API client receives only the
+authentication needed for its target.
 The original environment remains owned by the caller; child copies last for the
 operation. No credential file is generated by this resolver.
 
@@ -689,9 +680,9 @@ preserves URL and SSRF controls, image identity, network policy, and filesystem
 restrictions. YAML values are escaped when compiled into OpenTofu expressions;
 the schema cannot introduce provisioners or executable modules.
 
-State directories and extension sockets or named pipes restrict access to the
-operating user. Container-socket access is privileged and belongs in the qualified
-trust boundary. Redacted diagnostics preserve useful failure classification without
+State directories restrict access to the operating user. Container-socket access
+is privileged and belongs in the qualified trust boundary. Redacted diagnostics
+preserve useful failure classification without
 credential contents. Appendix A includes credential and artifact checks.
 
 ## 7. Platform Targets
@@ -722,7 +713,7 @@ Windows with a sandbox in WSL2, adds a separate reachability and authentication
 dimension. It is later qualification work. Windows arm64 and Intel macOS also
 need explicit helper-artifact and runtime decisions before inclusion.
 
-A host osquery process observes that host, not automatically its Linux guest.
+A host reader observes that host, not automatically its Linux guest.
 Cross-boundary collection uses the owning API or a collector in the relevant
 environment. Qualification MUST execute the complete workflow in every claimed
 arrangement; cross-compilation alone is insufficient. If a required platform
@@ -754,10 +745,10 @@ The decision has three gates:
 3. **Maintenance:** An equivalent-capability comparison shows fewer independently
    maintained workflows and a net reduction in owned production logic.
 
-The comparison includes YAML resolution, provider code, SQL, recovery, packaging,
-and tests. Dependency code is excluded from owned-code counts, but dependency
-release and security maintenance costs are reported. The osquery comparison is
-part of this assessment, not an assumed benefit.
+The comparison includes YAML resolution, provider code, resource readers, recovery,
+packaging, and tests. Dependency code is excluded from owned-code counts, but dependency
+release and security maintenance costs are reported. Shared readers count toward
+this assessment along with their tests and backend-specific failure handling.
 
 Appendix B records the engine and collector behavior tested so far.
 The deployment, platform, and maintenance gates remain open until their evidence
@@ -770,7 +761,7 @@ is complete. If a gate fails, revise or decline the proposal before expanding it
 | Add YAML input to the existing onboarding and lifecycle commands | Incremental delivery and established compatibility | Separate command workflows still need maintenance unless their execution paths are consolidated |
 | Build a Go planner | Full control over semantics | NemoClaw owns graph execution and state mechanics |
 | Represent a deployment as one OpenTofu resource | Small initial provider schema | The provider must order and recover its internal operations because OpenTofu sees only the deployment as a whole |
-| Use direct readers throughout | Fewer bundled helpers | Preferred wherever osquery adds no measured collection or query benefit |
+| Add a separate SQL observation layer | SQL access to resource facts | Rejected for this architecture: adds packaging and transport around readers already maintained in Go |
 
 ## 11. Open Project Decisions
 
@@ -804,7 +795,6 @@ This proposal requests no IANA allocations or registry changes.
 - **TOFU-LOCK:** [OpenTofu State Locking](https://opentofu.org/docs/language/state/locking/).
 - **TOFU-INSTALL:** [OpenTofu CLI Configuration File](https://opentofu.org/docs/cli/config/config-file/).
 - **PROVIDER-CREATE:** [Provider Framework: Create Resources](https://developer.hashicorp.com/terraform/plugin/framework/resources/create).
-- **OSQUERY-EXT:** [Using osquery Extensions](https://osquery.readthedocs.io/en/stable/deployment/extensions/).
 - **OPENSHELL-PLATFORMS:** [OpenShell Support Matrix](https://docs.nvidia.com/openshell/latest/reference/support-matrix).
 - **OPENSHELL-DRIVERS:** [OpenShell Sandbox Compute Drivers](https://docs.nvidia.com/openshell/latest/reference/sandbox-compute-drivers).
 
@@ -839,11 +829,11 @@ process contracts and real runtimes for isolation, activation, and inference.
 | Modify through an API without conditional writes | Read/write race limits recorded; no atomicity claim |
 | Change ownership or physical identity | Mutation denied with a bounded diagnostic |
 | Inspect arguments, output, state, plans, and recovery artifacts | Credential values absent |
-| Compare direct readers and osquery | Equivalent facts/errors with measured code, latency, memory, and packaging costs |
+| Shared readers for refresh and export | Equivalent configuration facts, confirmed absence, and failure semantics through the owning APIs |
 | Execute every claimed platform row | Complete workflow tested in the stated client/gateway/runtime arrangement |
 
 Before product adoption, record the before/after inventory of public inputs,
-execution paths, configuration representations, production logic, SQL, packaging,
+execution paths, configuration representations, production logic, readers, packaging,
 and tests. Name remaining resource-capability gaps rather than inferring them
 from a passing test on another resource or platform.
 
@@ -855,12 +845,12 @@ identified separately. Full deployment and platform qualification remain pending
 | Experiment | Setup | Observed result | Limit |
 |---|---|---|---|
 | Creation error and taint | OpenTofu 1.12.6; Provider Framework 1.19.0; Linux arm64; fixture returns a known ID and error | Apply exited 1; subsequent plan requested `delete, create` with `replace_because_tainted`; adding `prevent_destroy` blocked planning | Establishes engine behavior, not a production recovery implementation |
-| Failed and absent observations | osquery 5.23.1; osquery-go revision `eb39ad3443df`; Linux arm64; custom table fixtures | Table error exited 1 with diagnostic; absence exited 0 and `count(*)` returned 0 | Establishes these query paths, not all extensions, joins, or operating systems |
-| Built-in Docker observation failure | osquery 5.23.1; Linux arm64; live Docker socket versus nonexistent socket | Valid socket returned a running container; nonexistent socket returned `[]` with exit 0 | Built-in empty output cannot prove absence; full collector cost comparison remains open |
+| Historical SQL collector: failed and absent observations | osquery 5.23.1; osquery-go revision `eb39ad3443df`; Linux arm64; custom table fixtures | Table error exited 1 with diagnostic; absence exited 0 and `count(*)` returned 0 | Establishes these query paths, not all extensions, joins, or operating systems |
+| Historical SQL collector: Docker observation failure | osquery 5.23.1; Linux arm64; live Docker socket versus nonexistent socket | Valid socket returned a running container; nonexistent socket returned `[]` with exit 0 | Built-in empty output cannot prove absence; current architecture uses direct readers |
 | Managed inference lifecycle | Linux arm64; Docker 29.2.1; OpenShell 0.0.116; pinned Ollama 0.34.0 and OpenClaw 2026.9.4 images | Six resources created; repeat apply had no changes; model switch retained the sandbox and previous model; export recreated a second deployment with working inference | One native Docker topology, CPU models, and fresh volumes; no Podman/macOS/Windows runtime qualification |
 | Stopped inference parent | Same live deployment; stop the owned Ollama container before planning | Model inventory failed, blocking the restart plan; state stayed unchanged; explicit runtime start restored a no-op apply | Current service/model split fails automatic repair; no product restart workaround added |
 | Interrupted model installation | HTTP fixture; partial pull stream and cancellation during streaming | Failed operation did not report a model or retry the mutation; explicit reapply resumed and subsequent ensure had no effects | Reader boundary only; engine-level interruption during a real download still needs qualification |
-| Export after failed inference | Real OpenTofu/provider/osquery processes; OpenShell gRPC fixture | Failed probe retained four configured bindings; export succeeded; reapply created no duplicate resources | Existing sandbox Create still performs readiness checks; provider-error taint recovery remains open |
+| Historical export after failed inference | Real OpenTofu/provider/osquery processes; OpenShell gRPC fixture | Failed probe retained four configured bindings; export succeeded; reapply created no duplicate resources | Existing sandbox Create still performs readiness checks; provider-error taint recovery remains open |
 
 Reproduce the first experiment with a provider whose `Create` records a local
 fixture object, returns its known identity in state, and adds an error diagnostic.
@@ -899,6 +889,5 @@ as checked on the stated date.
 [TOFU-LOCK]: https://opentofu.org/docs/language/state/locking/
 [TOFU-INSTALL]: https://opentofu.org/docs/cli/config/config-file/
 [PROVIDER-CREATE]: https://developer.hashicorp.com/terraform/plugin/framework/resources/create
-[OSQUERY-EXT]: https://osquery.readthedocs.io/en/stable/deployment/extensions/
 [OPENSHELL-PLATFORMS]: https://docs.nvidia.com/openshell/latest/reference/support-matrix
 [OPENSHELL-DRIVERS]: https://docs.nvidia.com/openshell/latest/reference/sandbox-compute-drivers

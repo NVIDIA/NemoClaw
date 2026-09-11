@@ -6,8 +6,6 @@ package provider
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"time"
 
@@ -15,7 +13,6 @@ import (
 	"github.com/NVIDIA/NemoClaw/internal/managed"
 	"github.com/NVIDIA/NemoClaw/internal/ollama"
 	oshell "github.com/NVIDIA/NemoClaw/internal/openshell"
-	"github.com/NVIDIA/NemoClaw/internal/query"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -68,13 +65,7 @@ func (*Provider) Configure(ctx context.Context, q framework.ConfigureRequest, r 
 		r.Diagnostics.AddError("Gateway connection", err.Error())
 		return
 	}
-	bundle := os.Getenv("NEMOCLAW_INTERNAL_BUNDLE")
-	if !filepath.IsAbs(bundle) {
-		c.Close()
-		r.Diagnostics.AddError("Provider configuration", "missing absolute osquery bundle directory")
-		return
-	}
-	clients := resourceClients{mutation: c, observation: query.Client{BundleDir: bundle, Gateway: g}}
+	clients := resourceClients{gateway: c}
 	if endpoint := get("ollama_engine"); endpoint != "" {
 		clients.docker, err = ollama.NewDocker(endpoint)
 		if err != nil {
@@ -102,15 +93,13 @@ func (*Provider) DataSources(context.Context) []func() datasource.DataSource { r
 type Resource struct {
 	definition     oshell.Definition
 	client         oshell.Client
-	observer       query.Client
 	docker         *ollama.Docker
 	runtimeFactory func(string) (*managed.Docker, error)
 }
 
 type resourceClients struct {
-	mutation    oshell.Client
-	observation query.Client
-	docker      *ollama.Docker
+	gateway oshell.Client
+	docker  *ollama.Docker
 }
 
 func (r *Resource) Metadata(_ context.Context, _ resource.MetadataRequest, out *resource.MetadataResponse) {
@@ -143,8 +132,7 @@ func (r *Resource) Configure(_ context.Context, q resource.ConfigureRequest, out
 		out.Diagnostics.AddError("Provider configuration", "invalid gateway client")
 		return
 	}
-	r.client = c.mutation
-	r.observer = c.observation
+	r.client = c.gateway
 	r.docker = c.docker
 }
 
@@ -204,18 +192,15 @@ func (r *Resource) Read(ctx context.Context, q resource.ReadRequest, out *resour
 		r.put(ctx, &out.State, got, &out.Diagnostics)
 		return
 	}
-	key := query.Key{Kind: r.definition.Kind, Workspace: want["workspace"], Name: want["name"]}
-	observations, err := r.observer.Read(ctx, key)
+	got, err := oshell.Observe(ctx, r.client, r.definition.Kind, want["workspace"], want["name"])
 	if err != nil {
 		out.Diagnostics.AddError("Resource observation", err.Error())
 		return
 	}
-	observation := observations[key]
-	if observation.Status == query.Absent {
+	if got == nil {
 		out.State.RemoveResource(ctx)
 		return
 	}
-	got := observation.Row()
 	if err = oshell.VerifyIdentity(want, got); err != nil {
 		out.Diagnostics.AddError("Resource observation", err.Error())
 		return
