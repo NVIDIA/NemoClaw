@@ -242,7 +242,7 @@ validate_audit_evidence() {
     --audit-config "$trusted_audit_config" \
     --registry https://registry.yarnpkg.com \
     --threshold high \
-    --legacy-npmjs true \
+    --legacy-audit true \
     --result "$audit_policy_result"
   [[ -f "$audit_policy_result" && -s "$audit_policy_result" && ! -L "$audit_policy_result" ]] || {
     echo "ERROR: protected managed-image reviewed audit policy result is missing or unsafe" >&2

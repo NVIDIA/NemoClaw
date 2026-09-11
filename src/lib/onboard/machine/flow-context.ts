@@ -124,11 +124,20 @@ export function assertProviderSelectedContext<Context extends OnboardFlowContext
   }
 }
 
+export function isProviderlessComponentOnboarding(
+  context: Pick<OnboardFlowContext, "providerlessApf" | "externalComponent">,
+): boolean {
+  return context.providerlessApf === true && Boolean(context.externalComponent);
+}
+
 export function assertSandboxCreatedContext<Context extends OnboardFlowContext>(
   context: Context,
   stepName: string,
 ): asserts context is SandboxCreatedOnboardFlowContext<Context> {
-  if (!context.sandboxName || !context.model || !context.provider) {
+  const inferenceReady = isProviderlessComponentOnboarding(context)
+    ? context.model === "" && context.provider === ""
+    : Boolean(context.model && context.provider);
+  if (!context.sandboxName || !inferenceReady) {
     throw new Error(`Onboarding state is incomplete before ${stepName}.`);
   }
 }
