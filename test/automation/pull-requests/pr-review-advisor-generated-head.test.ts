@@ -311,9 +311,9 @@ describe("PR Review Advisor generated-head evidence", () => {
             return pull;
           case method === "GET" && workflowRunsMatch !== null: {
             const workflowName = workflowRunsMatch[1] as string;
-            const prerequisite = ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS.some(
-              (candidate) => candidate === workflowName,
-            );
+            const prerequisite = (
+              ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS as readonly string[]
+            ).includes(workflowName);
             const runId = prerequisite
               ? ADVISOR_REPAIR_HEAD_WORKFLOWS.length + 1
               : ADVISOR_REPAIR_HEAD_WORKFLOWS.findIndex((item) => item.workflow === workflowName) +
@@ -435,7 +435,9 @@ describe("PR Review Advisor generated-head evidence", () => {
             const specification = ADVISOR_REPAIR_HEAD_WORKFLOWS[runId - 1];
             const workflowName =
               specification?.workflow ?? ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS[0];
-            const prerequisite = ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS.includes(workflowName);
+            const prerequisite = (
+              ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS as readonly string[]
+            ).includes(workflowName);
             return {
               id: runId,
               event: "workflow_dispatch",
