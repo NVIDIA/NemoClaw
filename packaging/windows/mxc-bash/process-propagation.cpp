@@ -99,8 +99,13 @@ MsysMappedLayout mappedImageLayout(HMODULE module, bool msys) {
         value.preferred = pe->OptionalHeader.ImageBase;
         value.size = pe->OptionalHeader.SizeOfImage;
         value.characteristics = pe->OptionalHeader.DllCharacteristics;
+        // Normal ASLR updates the mapped optional-header ImageBase. Accept
+        // that form only for the already-selected derived metadata variant.
+        const bool expectedBase = value.preferred == 0x210040000ULL ||
+            (observeDerivedMsysLayout() && value.characteristics == IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE &&
+             value.preferred == value.base);
         value.exactShape = msys && pe->FileHeader.Machine == IMAGE_FILE_MACHINE_AMD64 &&
-            value.preferred == 0x210040000ULL && value.size == 0x360000 &&
+            expectedBase && value.size == 0x360000 &&
             pe->FileHeader.TimeDateStamp == 0x69c910a9;
         if (value.exactShape) value.caps = *reinterpret_cast<const DWORD64*>(base + 0x34d198);
     } __except (EXCEPTION_EXECUTE_HANDLER) {}

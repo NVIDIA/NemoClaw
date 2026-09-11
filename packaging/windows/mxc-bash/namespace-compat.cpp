@@ -17,6 +17,17 @@ using namespace nemoclaw_msys;
 using DirectoryCall = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES);
 DirectoryCall realCreate = nullptr;
 DirectoryCall realOpen = nullptr;
+using SectionCreate = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PLARGE_INTEGER, ULONG, ULONG, HANDLE);
+using SectionOpen = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES);
+using SectionQuery = NTSTATUS (NTAPI*)(HANDLE, ULONG, PVOID, SIZE_T, PSIZE_T);
+SectionCreate realCreateSharedSection = nullptr;
+SectionOpen realOpenSharedSection = nullptr;
+SectionQuery realQuerySharedSection = nullptr;
+HANDLE heldSharedDirectory = nullptr;
+LONG sharedDirectoryState = 0;
+LONG sharedSectionRecords = 0;
+void bind_shared_directory(PHANDLE output);
+
 using NativePipeCreate = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK,
     ULONG, ULONG, ULONG, ULONG, ULONG, ULONG, ULONG, ULONG, ULONG, PLARGE_INTEGER);
 using NativeFileOpen = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, ULONG, ULONG);
@@ -169,6 +180,11 @@ bool initialize_namespace() {
     if (!realCreate) return context_result("ntdll-create-export", "win32", GetLastError());
     realOpen = reinterpret_cast<DirectoryCall>(GetProcAddress(ntdll, "NtOpenDirectoryObject"));
     if (!realOpen) return context_result("ntdll-open-export", "win32", GetLastError());
+    realCreateSharedSection = reinterpret_cast<SectionCreate>(GetProcAddress(ntdll, "NtCreateSection"));
+    realOpenSharedSection = reinterpret_cast<SectionOpen>(GetProcAddress(ntdll, "NtOpenSection"));
+    realQuerySharedSection = reinterpret_cast<SectionQuery>(GetProcAddress(ntdll, "NtQuerySection"));
+    if (!realCreateSharedSection || !realOpenSharedSection || !realQuerySharedSection)
+        return context_result("ntdll-section-exports", "win32", GetLastError());
     realNativePipeCreate = reinterpret_cast<NativePipeCreate>(GetProcAddress(ntdll, "NtCreateNamedPipeFile"));
     if (!realNativePipeCreate) return context_result("ntdll-pipe-create-export", "win32", GetLastError());
     realNativeFileOpen = reinterpret_cast<NativeFileOpen>(GetProcAddress(ntdll, "NtOpenFile"));
@@ -311,6 +327,7 @@ NTSTATUS call(DirectoryCall original, PHANDLE output, ACCESS_MASK access,
                 InterlockedCompareExchange(&installationKeyState, 1, 0) == 0) {
                 for (size_t n = 0; n < 16; ++n) installationKey[n] = static_cast<char>(match.key[n]);
                 InterlockedExchange(&installationKeyState, 2);
+                bind_shared_directory(output);
             }
             log_result(match, create, status);
         } else log_rejected(match, create, access, attributes.Attributes, rejected, rejectionError, status);
@@ -829,6 +846,155 @@ BOOL WINAPI create_tracker_pipe(PHANDLE read, PHANDLE write, LPSECURITY_ATTRIBUT
     return result;
 }
 
+// Canonical shared.5 is a noninheritable, pagefile-backed read/write section.
+// Its wrapper requests standard ownership rights even when reopening it. Keep
+// that original attempt; only a denied existing-object open may use map rights.
+struct SharedSectionRequest {
+    bool bound = false;
+    bool exact = false;
+    ULONG attributes = 0;
+    LONGLONG size = 0;
+    PipeSecurityObservation security = {};
+};
+
+void bind_shared_directory(PHANDLE output) {
+    if (InterlockedCompareExchange(&sharedDirectoryState, 1, 0) != 0) return;
+    const DWORD before = GetLastError();
+    HANDLE copy = nullptr;
+    DWORD error = 0;
+    const char* kind = "invalid-output";
+    __try {
+        if (output && *output) {
+            const BOOL duplicated = DuplicateHandle(GetCurrentProcess(), *output, GetCurrentProcess(), &copy, 0, FALSE, DUPLICATE_SAME_ACCESS);
+            if (duplicated) kind = "success";
+            else { error = GetLastError(); kind = "win32"; copy = nullptr; }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { kind = "seh"; error = GetExceptionCode(); copy = nullptr; }
+    heldSharedDirectory = copy;
+    InterlockedExchange(&sharedDirectoryState, copy ? 2 : 3);
+    char line[320];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_SHARED_BIND={\"schemaVersion\":1,\"pid\":%lu,\"bound\":%s,\"kind\":\"%s\",\"error\":%lu}\n",
+        GetCurrentProcessId(), copy ? "true" : "false", kind, error);
+    DWORD written = 0;
+    writingPipeDiagnostic = true;
+    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    writingPipeDiagnostic = false;
+    SetLastError(before);
+}
+
+SharedSectionRequest inspect_shared_section(ACCESS_MASK access, POBJECT_ATTRIBUTES input,
+                                            PLARGE_INTEGER size, ULONG protection, ULONG allocation, HANDLE file) {
+    SharedSectionRequest result = {};
+    __try {
+        if (InterlockedCompareExchange(&sharedDirectoryState, 2, 2) != 2 || !sameKernelObject ||
+            !input || input->Length != sizeof(OBJECT_ATTRIBUTES) || !input->RootDirectory ||
+            !input->ObjectName || input->ObjectName->Length != 16 ||
+            input->ObjectName->MaximumLength < 16 || !input->ObjectName->Buffer ||
+            memcmp(input->ObjectName->Buffer, L"shared.5", 16) != 0 ||
+            !sameKernelObject(input->RootDirectory, heldSharedDirectory)) return result;
+        result.bound = true;
+        result.attributes = input->Attributes;
+        if (size) result.size = size->QuadPart;
+        SECURITY_ATTRIBUTES attributes = {sizeof(SECURITY_ATTRIBUTES), input->SecurityDescriptor,
+                                           (input->Attributes & OBJ_INHERIT) != 0};
+        observe_pipe_security(&attributes, result.security);
+        const auto& sd = result.security;
+        const char* rejected = nullptr;
+        DWORD identityError = 0;
+        result.exact = access == 0x000f0007 && input->Attributes == (OBJ_OPENIF | OBJ_CASE_INSENSITIVE) &&
+            !input->SecurityQualityOfService && size && result.size > 0 && result.size <= MAXDWORD &&
+            protection == PAGE_READWRITE && allocation == SEC_COMMIT && !file &&
+            sd.complete && sd.descriptorPresent && sd.control == SE_DACL_PRESENT &&
+            sd.revision == SECURITY_DESCRIPTOR_REVISION && !sd.ownerPresent && !sd.groupPresent &&
+            !sd.ownerDefaulted && !sd.groupDefaulted && sd.nullDacl &&
+            not_impersonating(rejected, identityError);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { result.exact = false; }
+    return result;
+}
+
+void log_shared_section(const SharedSectionRequest& request, ACCESS_MASK access, ULONG protection,
+                        ULONG allocation, NTSTATUS originalStatus, NTSTATUS finalStatus,
+                        bool attempted, NTSTATUS openStatus, NTSTATUS queryStatus,
+                        LONGLONG actualSize, ULONG actualAllocation, HANDLE originalHandle, bool reused) {
+    if (InterlockedIncrement(&sharedSectionRecords) > 8) return;
+    alignas(void*) BYTE descriptor[2048] = {};
+    DWORD required = 0, descriptorError = 0;
+    const bool descriptorRead = originalHandle && GetKernelObjectSecurity(originalHandle,
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        descriptor, sizeof(descriptor), &required);
+    if (originalHandle && !descriptorRead) descriptorError = GetLastError();
+    char descriptorHex[sizeof(descriptor) * 2 + 1] = {};
+    constexpr char hex[] = "0123456789abcdef";
+    if (descriptorRead && required <= sizeof(descriptor))
+        for (DWORD n = 0; n < required; ++n) {
+            descriptorHex[n * 2] = hex[descriptor[n] >> 4];
+            descriptorHex[n * 2 + 1] = hex[descriptor[n] & 15];
+        }
+    char line[6144];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_SHARED_SECTION={\"schemaVersion\":1,\"pid\":%lu,\"name\":\"shared.5\",\"parentHandleBound\":true,\"exactContract\":%s,\"access\":\"0x%08lx\",\"objectAttributes\":\"0x%08lx\",\"requestedSize\":%lld,\"protection\":%lu,\"allocation\":%lu,\"inputSecurityComplete\":%s,\"inputDescriptorPresent\":%s,\"inputControl\":%u,\"inputRevision\":%lu,\"inputOwnerPresent\":%s,\"inputGroupPresent\":%s,\"inputNullDacl\":%s,\"inputAceCount\":%lu,\"originalStatus\":\"0x%08lx\",\"finalStatus\":\"0x%08lx\",\"existingOnlyOpenAttempted\":%s,\"openAccess\":7,\"openStatus\":\"0x%08lx\",\"queryStatus\":\"0x%08lx\",\"actualSectionSize\":%lld,\"actualAllocation\":%lu,\"existingSectionReused\":%s,\"originalResultDescriptorAttempted\":%s,\"originalResultDescriptorRead\":%s,\"descriptorError\":%lu,\"descriptorRequiredBytes\":%lu,\"descriptorHex\":\"%s\"}\n",
+        GetCurrentProcessId(), request.exact ? "true" : "false", access, request.attributes,
+        request.size, protection, allocation, request.security.complete ? "true" : "false",
+        request.security.descriptorPresent ? "true" : "false", static_cast<unsigned>(request.security.control),
+        request.security.revision, request.security.ownerPresent ? "true" : "false",
+        request.security.groupPresent ? "true" : "false", request.security.nullDacl ? "true" : "false",
+        request.security.aceCount, static_cast<ULONG>(originalStatus), static_cast<ULONG>(finalStatus),
+        attempted ? "true" : "false", static_cast<ULONG>(openStatus), static_cast<ULONG>(queryStatus),
+        actualSize, actualAllocation, reused ? "true" : "false", originalHandle ? "true" : "false",
+        descriptorRead ? "true" : "false", descriptorError, required, descriptorHex);
+    DWORD written = 0;
+    writingPipeDiagnostic = true;
+    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    writingPipeDiagnostic = false;
+}
+
+NTSTATUS NTAPI create_shared_section(PHANDLE output, ACCESS_MASK access, POBJECT_ATTRIBUTES input,
+                                     PLARGE_INTEGER size, ULONG protection, ULONG allocation, HANDLE file) {
+    if (writingPipeDiagnostic) return realCreateSharedSection(output, access, input, size, protection, allocation, file);
+    const DWORD before = GetLastError();
+    const SharedSectionRequest request = inspect_shared_section(access, input, size, protection, allocation, file);
+    SetLastError(before);
+    const NTSTATUS originalStatus = realCreateSharedSection(output, access, input, size, protection, allocation, file);
+    const DWORD after = GetLastError();
+    NTSTATUS finalStatus = originalStatus, openStatus = 0, queryStatus = 0;
+    bool attempted = false, reused = false;
+    LONGLONG actualSize = 0;
+    ULONG actualAllocation = 0;
+    HANDLE originalHandle = nullptr;
+    // NtCreateSection does not promise a meaningful output on failure.
+    if (originalStatus >= 0) {
+        __try { if (output) originalHandle = *output; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { originalHandle = nullptr; }
+    }
+    if (request.exact && output && originalStatus == static_cast<NTSTATUS>(0xc0000022)) {
+        UNICODE_STRING name = {16, 18, const_cast<PWSTR>(L"shared.5")};
+        OBJECT_ATTRIBUTES attributes = {};
+        attributes.Length = sizeof(attributes);
+        attributes.RootDirectory = heldSharedDirectory;
+        attributes.ObjectName = &name;
+        attributes.Attributes = OBJ_CASE_INSENSITIVE;
+        HANDLE existing = nullptr;
+        attempted = true;
+        openStatus = realOpenSharedSection(&existing, 0x7, &attributes);
+        if (openStatus >= 0) {
+            struct SectionBasic { PVOID base; ULONG attributes; LARGE_INTEGER size; } basic = {};
+            queryStatus = realQuerySharedSection(existing, 0, &basic, sizeof(basic), nullptr);
+            if (queryStatus >= 0) { actualSize = basic.size.QuadPart; actualAllocation = basic.attributes; }
+            if (queryStatus >= 0 && actualSize >= request.size && actualAllocation == SEC_COMMIT) {
+                __try { *output = existing; reused = true; }
+                __except (EXCEPTION_EXECUTE_HANDLER) { reused = false; }
+            }
+            if (reused) finalStatus = static_cast<NTSTATUS>(0x40000000); // Existing object; wrapper emits ERROR_ALREADY_EXISTS.
+            else CloseHandle(existing);
+        }
+    }
+    if (request.bound) log_shared_section(request, access, protection, allocation, originalStatus, finalStatus,
+        attempted, openStatus, queryStatus, actualSize, actualAllocation, originalHandle, reused);
+    SetLastError(after);
+    return finalStatus;
+}
+
 #if defined(_M_X64)
 LONG observedAccessViolations = 0;
 PVOID faultObserver = nullptr;
@@ -941,7 +1107,7 @@ void removeFaultObserver() {}
 
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     (void)reserved;
-    if (reason == DLL_PROCESS_DETACH) { removeFaultObserver(); return TRUE; }
+    if (reason == DLL_PROCESS_DETACH) { removeFaultObserver(); if (heldSharedDirectory) CloseHandle(heldSharedDirectory); return TRUE; }
     if (DetourIsHelperProcess()) return TRUE;
     if (reason != DLL_PROCESS_ATTACH) return TRUE;
     DetourRestoreAfterWith();
@@ -954,6 +1120,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     if (!error) error = NemoClawStageProcessPropagation();
     if (!error) error = DetourAttach(&realCreate, create_directory);
     if (!error) error = DetourAttach(&realOpen, open_directory);
+    if (!error) error = DetourAttach(&realCreateSharedSection, create_shared_section);
     if (!error) error = DetourAttach(&realCreateSignalServer, observe_signal_server);
     if (!error) error = DetourAttach(&realOpenSignalWriter, observe_signal_writer);
     if (!error) error = DetourAttach(&realCreateTrackerPipe, create_tracker_pipe);
