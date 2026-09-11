@@ -1,4 +1,5 @@
 .tools/
+.build/
 dist/
 .local/
 .nemoclaw/

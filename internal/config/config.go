@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/NVIDIA/NemoClaw/internal/spark"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -46,17 +47,21 @@ type TLS struct {
 	Key         Credential `yaml:"key" json:"key"`
 }
 type Gateway struct {
-	Management string      `yaml:"management" json:"management"`
-	Endpoint   string      `yaml:"endpoint" json:"endpoint"`
-	Credential *Credential `yaml:"credential,omitempty" json:"credential,omitempty"`
-	TLS        *TLS        `yaml:"tls,omitempty" json:"tls,omitempty"`
+	Management  string      `yaml:"management" json:"management"`
+	Endpoint    string      `yaml:"endpoint" json:"endpoint"`
+	Credential  *Credential `yaml:"credential,omitempty" json:"credential,omitempty"`
+	TLS         *TLS        `yaml:"tls,omitempty" json:"tls,omitempty"`
+	Engine      string      `yaml:"engine,omitempty" json:"engine,omitempty"`
+	Image       string      `yaml:"image,omitempty" json:"image,omitempty"`
+	NetworkCIDR string      `yaml:"networkCIDR,omitempty" json:"networkCIDR,omitempty"`
 }
 type InferenceProvider struct {
 	Name       string         `yaml:"name" json:"name"`
 	Provider   string         `yaml:"provider" json:"provider"`
-	Endpoint   string         `yaml:"endpoint" json:"endpoint"`
+	Endpoint   string         `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
 	Credential *Credential    `yaml:"credential,omitempty" json:"credential,omitempty"`
 	Ollama     *ManagedOllama `yaml:"ollama,omitempty" json:"ollama,omitempty"`
+	Service    *spark.Service `yaml:"service,omitempty" json:"service,omitempty"`
 }
 type ManagedOllama struct {
 	Engine  string `yaml:"engine" json:"engine"`
@@ -128,6 +133,7 @@ func Parse(r io.Reader) (Document, error) {
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return d, errors.New("expected exactly one YAML document")
 	}
+	d.Defaults()
 	return d, d.Validate()
 }
 
@@ -154,8 +160,15 @@ func (d Document) Validate() error {
 		return errors.New("metadata requires a lowercase name and immutable UUID")
 	}
 	g := d.Spec.Gateway
-	if g.Management != "external" {
-		return errors.New("this slice attaches to an external gateway")
+	if g.Management != "external" && g.Management != "managed" {
+		return errors.New("gateway management must be external or managed")
+	}
+	if g.Management == "managed" {
+		if err := g.ValidateManaged(); err != nil {
+			return err
+		}
+	} else if g.Engine != "" || g.Image != "" || g.NetworkCIDR != "" {
+		return errors.New("external gateway cannot declare managed runtime settings")
 	}
 	if err := ValidateEndpoint(g.Endpoint, true); err != nil {
 		return fmt.Errorf("gateway endpoint: %w", err)
@@ -180,7 +193,17 @@ func (d Document) Validate() error {
 	if !slug.MatchString(p.Name) || p.Provider != "openai" {
 		return errors.New("provider requires a lowercase name and openai implementation")
 	}
-	if err := ValidateEndpoint(p.Endpoint, false); err != nil {
+	if p.Service != nil {
+		if p.Endpoint != "" || p.Ollama != nil || p.Credential != nil {
+			return errors.New("managed service is mutually exclusive with endpoint, Ollama, and external credentials")
+		}
+		if g.Management != "managed" {
+			return errors.New("this Spark slice requires its managed Docker gateway")
+		}
+		if err := p.Service.Validate(); err != nil {
+			return err
+		}
+	} else if err := ValidateEndpoint(p.Endpoint, false); err != nil {
 		return fmt.Errorf("inference endpoint: %w", err)
 	}
 	if err := validateCredential(p.Credential); err != nil {
@@ -212,6 +235,9 @@ func (d Document) Validate() error {
 	r := a.Inference.Routes[0]
 	if r.Name != "primary" || r.ProviderRef != p.Name || !modelName.MatchString(r.Overrides.Model) {
 		return errors.New("primary route must reference the declared provider and a valid model")
+	}
+	if p.Service != nil && (r.Overrides.Model != spark.ModelName || s.Runtime.Provider != "docker") {
+		return errors.New("Spark service requires its pinned served model and Docker sandbox")
 	}
 	if p.Ollama != nil {
 		o := p.Ollama
