@@ -311,7 +311,7 @@ describe("Docker provider OpenShell lifecycle dispatch", () => {
     const provider = createDockerRuntimeProviderBundle({
       captureSandboxLifecycle,
       findLabeledSandboxContainers: () => [
-        { name: "openshell-default--alpha-id", status: "Exited (0) 1 second ago" },
+        { name: "openshell-default--alpha-id", running: false, status: "Exited (0) 1 second ago" },
       ],
       recoverPortableSandbox: () => ({ kind: "not-installed" }),
       recoverSandbox: poison,
@@ -332,7 +332,7 @@ describe("Docker provider OpenShell lifecycle dispatch", () => {
     const provider = createDockerRuntimeProviderBundle({
       captureSandboxLifecycle,
       findLabeledSandboxContainers: () => [
-        { name: "openshell-default--alpha-id", status: "Up 1 minute" },
+        { name: "openshell-default--alpha-id", running: true, status: "Up 1 minute" },
       ],
       stopContainer: poison,
       stopPortableSandbox: () => ({ kind: "not-installed" }),
@@ -354,7 +354,7 @@ describe("Docker provider OpenShell lifecycle dispatch", () => {
     const provider = createDockerRuntimeProviderBundle({
       captureSandboxLifecycle: () => ({ status: 1, output: "sandbox phase is Error" }),
       findLabeledSandboxContainers: () => [
-        { name: "openshell-default--alpha-id", status: "Exited (0) 1 second ago" },
+        { name: "openshell-default--alpha-id", running: false, status: "Exited (0) 1 second ago" },
       ],
       recoverPortableSandbox: () => ({ kind: "not-installed" }),
       recoverSandbox: poison,
@@ -372,7 +372,7 @@ describe("Docker provider OpenShell lifecycle dispatch", () => {
     const provider = createDockerRuntimeProviderBundle({
       captureSandboxLifecycle: () => ({ status: 1, output: "gateway unavailable" }),
       findLabeledSandboxContainers: () => [
-        { name: "openshell-default--alpha-id", status: "Up 1 minute" },
+        { name: "openshell-default--alpha-id", running: true, status: "Up 1 minute" },
       ],
       stopContainer: poison,
       stopPortableSandbox: () => ({ kind: "not-installed" }),
@@ -392,7 +392,7 @@ describe("Docker provider OpenShell lifecycle dispatch", () => {
     const provider = createDockerRuntimeProviderBundle({
       captureSandboxLifecycle,
       findLabeledSandboxContainers: () => [
-        { name: "openshell-default--alpha-id", status: "Exited (0) 1 second ago" },
+        { name: "openshell-default--alpha-id", running: false, status: "Exited (0) 1 second ago" },
       ],
       stopPortableSandbox: () => ({ kind: "not-installed" }),
       withLifecycleLockSync: (_sandboxName, operation) => operation(),
