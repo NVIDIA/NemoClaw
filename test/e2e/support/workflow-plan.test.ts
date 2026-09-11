@@ -89,7 +89,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(86);
+    expect(plan.coverageMatrix).toHaveLength(88);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -665,6 +665,28 @@ describe("E2E workflow plan", () => {
     expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["snapshot-commands"]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
+
+  it.each(["src/lib/onboard/dashboard-forward-control.ts", "src/lib/onboard/dashboard-runtime.ts"])(
+    "selects both Hermes onboarding scenarios when %s changes",
+    (changedFile) => {
+      const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+      expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(
+        expect.arrayContaining(["double-onboard-hermes", "onboard-resume-hermes"]),
+      );
+    },
+  );
+
+  it.each(["double-onboard-hermes", "onboard-resume-hermes"])(
+    "prepares Hermes swap for the %s execution",
+    (target) => {
+      const plan = buildE2eWorkflowPlan({ targets: target });
+
+      expect(plan.catalogueMatrices.standard).toEqual([
+        expect.objectContaining({ id: target, host_preparation: "hermes-swap" }),
+      ]);
+    },
+  );
 
   it("selects only full E2E consumers when the timeout contract changes", () => {
     const changedFile = "tools/e2e/full-e2e-timeout-contract.mts";
