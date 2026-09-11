@@ -823,7 +823,7 @@ core cross-device install took about seven seconds.
 The #11547 reduction keeps all seven phases while lowering the target to 8
 direct `expect` calls and 16 direct assertion points. Its two companions bring
 the transitive totals to 8 `expect` calls, 25 assertion points, and no generated
-probe blocks across 1,090 lines. The live target itself fell from 654 to 580
+probe blocks across 1,094 lines. The live target itself fell from 654 to 580
 lines. Push-run timing for this revision is recorded by the focused PR E2E run.
 
 ## OpenShell development artifact retention
