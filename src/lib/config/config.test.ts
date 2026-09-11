@@ -6,6 +6,7 @@ import Ajv from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { renderCanonicalNemoClawConfig, validateNemoClawConfig } from "./index";
 import {
+  EXPORTED_OLLAMA_MODEL,
   EXPORTED_VLLM_PROFILE_ID,
   EXPORTED_VLLM_RECIPE_ID,
   isCredentialEnvironmentReferenceName,
@@ -86,6 +87,12 @@ function renderInput(value: unknown) {
 }
 
 describe("NemoClawConfig v1", () => {
+  it("preserves an earlier valid hosted document using the ollama-local label (#11435)", () => {
+    const value = config();
+    value.spec.inferenceProviders[0]!.provider = "ollama-local";
+    expect(validateNemoClawConfig(value)).toEqual(value);
+  });
+
   it.each(["progressive", "direct"])("validates tool disclosure %s", (disclosure) => {
     const value = config();
     Object.assign(value.spec.sandboxes[0]!.agents[0]!, { tools: { disclosure } });
@@ -855,6 +862,77 @@ describe("fixed managed serving public contract", () => {
     const f = managedServingConfig();
     change(f);
     expect(() => validateNemoClawConfig(f.value)).toThrow();
+  });
+});
+
+function ollamaConfig() {
+  const value = config();
+  value.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides.model = EXPORTED_OLLAMA_MODEL;
+  return {
+    ...value,
+    spec: {
+      ...value.spec,
+      inferenceProviders: [
+        {
+          name: "hosted-openai",
+          provider: "ollama-local",
+          api: "openai-completions",
+          serving: {
+            backend: "ollama",
+            daemon: { management: "external", hostPort: 11439 },
+            proxy: { management: "nemoclaw", hostPort: 11440 },
+            model: { servedName: EXPORTED_OLLAMA_MODEL, digest: `sha256:${"a".repeat(64)}` },
+          },
+        },
+      ],
+    },
+  };
+}
+
+describe("attached Ollama serving public contract", () => {
+  it("round trips the external daemon separately from its managed proxy (#11435)", () => {
+    const value = ollamaConfig();
+    const rendered = renderCanonicalNemoClawConfig(validateNemoClawConfig(value));
+    expect(validateNemoClawConfig(YAML.parse(rendered.yaml))).toEqual(value);
+  });
+
+  it.each([
+    { daemon: { management: "nemoclaw", hostPort: 11439 } },
+    { daemon: { management: "external", hostPort: 11440 } },
+    { proxy: { management: "external", hostPort: 11440 } },
+    { proxy: { management: "nemoclaw", hostPort: 65536 } },
+    { model: { servedName: "other:tag", digest: `sha256:${"a".repeat(64)}` } },
+    { model: { servedName: EXPORTED_OLLAMA_MODEL, digest: "not-a-digest" } },
+    { runtime: { image: { ref: "ollama:latest" } } },
+  ])("rejects unsupported lifecycle or model declarations %# (#11435)", (change) => {
+    const value = ollamaConfig();
+    Object.assign(value.spec.inferenceProviders[0]!.serving, change);
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
+  it.each([
+    { endpoint: "http://127.0.0.1:11439/v1" },
+    { credential: { env: "NEMOCLAW_OLLAMA_PROXY_TOKEN" } },
+  ])(
+    "rejects internal transport or credential fields on the local branch %# (#11435)",
+    (change) => {
+      const value = ollamaConfig();
+      Object.assign(value.spec.inferenceProviders[0]!, change);
+      expect(() => validateNemoClawConfig(value)).toThrow();
+    },
+  );
+
+  it.each([
+    { agent: "hermes", runtime: "docker", model: EXPORTED_OLLAMA_MODEL },
+    { agent: "openclaw", runtime: "remote", model: EXPORTED_OLLAMA_MODEL },
+    { agent: "openclaw", runtime: "docker", model: "different-model" },
+  ])("rejects an unsupported local consumer %s (#11435)", (change) => {
+    const value = ollamaConfig();
+    const sandbox = value.spec.sandboxes[0]!;
+    sandbox.agents[0]!.type = change.agent;
+    sandbox.runtime.provider = change.runtime;
+    sandbox.agents[0]!.inference.routes[0]!.overrides.model = change.model;
+    expect(() => validateNemoClawConfig(value)).toThrow();
   });
 });
 
