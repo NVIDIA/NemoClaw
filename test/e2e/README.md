@@ -814,16 +814,20 @@ base-image resolution after the workflow removes Docker Hub credentials.
 The release-baseline lane is retired. Historical package versions are not part
 of this current runtime contract.
 
-Before #11547, the live target had 9 direct `expect` calls and 17 direct
-assertion points. Its three companions raised the transitive totals to 9
-`expect` calls, 32 assertion points, and three generated probe blocks across
-1,178 lines. A passing seven-phase run took about 20 minutes even though the
-core cross-device install took about seven seconds.
+At issue creation, the live target had 9 direct `expect` calls and 17 direct
+assertion points across 654 lines. Its three companions raised the transitive
+totals to 9 `expect` calls, 32 assertion points, and three generated probe
+blocks across 1,178 lines. A passing seven-phase run took about 20 minutes even
+though the core cross-device install took about seven seconds. After #11552
+fixed canonical forward ownership, the current base kept those assertion totals
+while growing to 658 target lines and 1,202 transitive live lines. Its first
+automatic main run completed the live step in 7 minutes 26 seconds.
 
 The #11547 reduction keeps all seven phases while lowering the target to 8
 direct `expect` calls and 16 direct assertion points. Its two companions bring
 the transitive totals to 8 `expect` calls, 25 assertion points, and no generated
-probe blocks across 1,094 lines. The live target itself fell from 654 to 580
+probe blocks across 1,094 lines. Against the current base, the live target falls
+from 658 to 580 lines and the transitive live surface falls from 1,202 to 1,094
 lines. Push-run timing for this revision is recorded by the focused PR E2E run.
 
 ## OpenShell development artifact retention

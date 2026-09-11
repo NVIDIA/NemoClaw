@@ -253,7 +253,7 @@ describe("E2E fixture clients", () => {
     },
   );
 
-  it("rejects a wrapper as the owner of a canonical OpenShell listener (#11547)", async () => {
+  it("rejects a wrapper as the owner of a canonical OpenShell listener", async () => {
     const runner = new FakeRunner();
     runner.enqueue({ stdout: "4321\n" });
     runner.enqueue({ stdout: "/tmp/openshell-wrapper\n" });
