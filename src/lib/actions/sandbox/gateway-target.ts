@@ -12,9 +12,7 @@ import * as registry from "../../state/registry";
 import { findSandboxAcrossGatewayRoots } from "../../state/registry/cross-port";
 
 export function getKnownSandboxTarget(sandboxName: string): registry.SandboxEntry | null {
-  return (
-    findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? registry.getSandbox(sandboxName) ?? null
-  );
+  return findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
 }
 
 export function listPersistedSandboxTargets(): registry.SandboxEntry[] {

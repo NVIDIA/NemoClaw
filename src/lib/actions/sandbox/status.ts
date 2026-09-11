@@ -69,8 +69,7 @@ function inspectHermesPortableStatus(
 }
 
 function getPublishedSandbox(sandboxName: string): registry.SandboxEntry | null {
-  const entry =
-    findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? registry.getSandbox(sandboxName) ?? null;
+  const entry = findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
   return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
 }
 

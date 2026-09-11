@@ -72,6 +72,7 @@ export async function withDirectPublicDispatch(
   const oclifRunnerPath = require.resolve("../../src/lib/cli/oclif-runner.js");
   const sandboxConnectPath = require.resolve("../../src/lib/actions/sandbox/connect.js");
   const registryPath = require.resolve("../../src/lib/state/registry.js");
+  const crossPortRegistryPath = require.resolve("../../src/lib/state/registry/cross-port.js");
   const legacyPortMigrationPath = require.resolve("../../src/lib/state/legacy-port-migration.js");
   const registryRecoveryPath = require.resolve("../../src/lib/registry-recovery-action.js");
   const runnerPath = require.resolve("../../src/lib/runner.js");
@@ -79,6 +80,7 @@ export async function withDirectPublicDispatch(
   const priorOclifRunner = requireCache[oclifRunnerPath];
   const priorSandboxConnect = requireCache[sandboxConnectPath];
   const priorRegistry = requireCache[registryPath];
+  const priorCrossPortRegistry = requireCache[crossPortRegistryPath];
   const priorLegacyPortMigration = requireCache[legacyPortMigrationPath];
   const priorRegistryRecovery = requireCache[registryRecoveryPath];
   const priorRunner = requireCache[runnerPath];
@@ -158,6 +160,23 @@ export async function withDirectPublicDispatch(
     isPublishedSandboxRegistration,
     listSandboxes,
   });
+  if (!options.preserveHome) {
+    cacheModule(crossPortRegistryPath, {
+      findSandboxAcrossGatewayRoots: (name: string) => {
+        if (options.registryReadError) throw options.registryReadError;
+        const entry = sandboxes.get(name);
+        return entry ? { entry, gatewayPort: null, registryFile: "/test/sandboxes.json" } : null;
+      },
+      listPublishedSandboxNamesAcrossGatewayRoots: () =>
+        [...sandboxes.values()]
+          .filter(({ pendingRouteReservation }) => pendingRouteReservation !== true)
+          .map(({ name }) => name),
+      listPendingSandboxNamesAcrossGatewayRoots: () =>
+        [...sandboxes.values()]
+          .filter(({ pendingRouteReservation }) => pendingRouteReservation === true)
+          .map(({ name }) => name),
+    });
+  }
   cacheModule(legacyPortMigrationPath, { hasMigratableLegacySandbox, migrateLegacyPortState });
   cacheModule(registryRecoveryPath, { recoverRegistryEntries });
   cacheModule(oclifRunnerPath, { runOclifArgv, runOclifCommandById });
@@ -198,6 +217,7 @@ export async function withDirectPublicDispatch(
     restoreCache(oclifRunnerPath, priorOclifRunner);
     restoreCache(sandboxConnectPath, priorSandboxConnect);
     restoreCache(registryPath, priorRegistry);
+    restoreCache(crossPortRegistryPath, priorCrossPortRegistry);
     restoreCache(legacyPortMigrationPath, priorLegacyPortMigration);
     restoreCache(registryRecoveryPath, priorRegistryRecovery);
     restoreCache(runnerPath, priorRunner);
