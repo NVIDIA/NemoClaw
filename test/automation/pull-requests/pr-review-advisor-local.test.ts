@@ -113,6 +113,7 @@ function artifactLifecycle(stop = async (): Promise<void> => undefined): LocalRe
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-summary.md"), "review\n");
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-session.jsonl"), "{}\n");
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-e2e.json"), "{}\n");
+      fs.writeFileSync(path.join(output, "review-queue-context.json"), "{}\n");
     },
     remove: () => undefined,
   };
@@ -504,6 +505,7 @@ describe("local PR review advisor", () => {
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-summary.md"), "review\n");
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-session.jsonl"), "{}\n");
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-e2e.json"), "{}\n");
+        fs.writeFileSync(path.join(out, "review-queue-context.json"), "{}\n");
       },
       remove: (env) => {
         calls.push("remove:" + env.PR_REVIEW_ADVISOR_INTEREST);

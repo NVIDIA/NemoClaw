@@ -319,6 +319,10 @@ function passthroughEnvironment(env: NodeJS.ProcessEnv): Record<string, string> 
   for (const name of [
     "BASE_REF",
     "GITHUB_REPOSITORY",
+    "GITHUB_RUN_ID",
+    "GITHUB_RUN_ATTEMPT",
+    "GITHUB_WORKFLOW_SHA",
+    "GITHUB_EVENT_NAME",
     "HEAD_REF",
     "PR_NUMBER",
     "PR_REVIEW_ADVISOR_ARTIFACT_DIR",
