@@ -19,7 +19,7 @@ const REVIEWED_NODE_VERSION = REVIEWED_RUNTIME.nodeVersion;
 const REVIEWED_NPM_VERSION = REVIEWED_RUNTIME.npmVersion;
 const BREV_LIFECYCLE_SCRIPT_MAX_BYTES = 16 * 1024;
 const ASSET = "openshell-x86_64-unknown-linux-musl.tar.gz";
-const PINNED_ASSET_SHA256 = "d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0";
+const PINNED_ASSET_SHA256 = "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e";
 
 type FakeSystemOptions = {
   archiveShape?:
@@ -220,7 +220,7 @@ done
 case "$(basename "$out")" in
   ${ASSET})
     tmp="$(mktemp -d)"
-    printf '#!/usr/bin/env bash\\nprintf "openshell 0.0.106\\\\n"\\n' > "$tmp/openshell"
+    printf '#!/usr/bin/env bash\\nprintf "openshell 0.0.116\\\\n"\\n' > "$tmp/openshell"
     chmod +x "$tmp/openshell"
     /usr/bin/tar -czf "$out" -C "$tmp" openshell
     rm -rf "$tmp"
@@ -280,7 +280,7 @@ function runLaunchable(options: FakeSystemOptions) {
       ...process.env,
       LAUNCH_LOG: fake.launchLog,
       NEMOCLAW_CLONE_DIR: fake.cloneDir,
-      OPENSHELL_VERSION: options.openshellVersion ?? "v0.0.106",
+      OPENSHELL_VERSION: options.openshellVersion ?? "v0.0.116",
       PATH:
         options.nodeSourceChecksumTool === false ? fake.fakeBin : `${fake.fakeBin}:/usr/bin:/bin`,
       SUDO_USER: "tester",
@@ -371,7 +371,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
       const out = combinedLaunchableOutput(result, fake.launchLog);
       expect(result.status, out).toBe(1);
       expect(out).toContain(
-        `OpenShell release checksum for ${ASSET} does not match NemoClaw-pinned v0.0.106 digest`,
+        `OpenShell release checksum for ${ASSET} does not match NemoClaw-pinned v0.0.116 digest`,
       );
       expect(fs.existsSync(fake.tarLog) ? fs.readFileSync(fake.tarLog, "utf-8") : "").toBe("");
       expect(fs.existsSync(fake.sudoLog) ? fs.readFileSync(fake.sudoLog, "utf-8") : "").not.toMatch(
@@ -407,7 +407,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     try {
       const out = combinedLaunchableOutput(result, fake.launchLog);
       expect(result.status, out).toBe(0);
-      expect(out).toContain("OpenShell CLI installed: openshell 0.0.106");
+      expect(out).toContain("OpenShell CLI installed: openshell 0.0.116");
       expect(fs.readFileSync(fake.tarLog, "utf-8")).toContain(`xzf`);
       const sudoLog = fs.readFileSync(fake.sudoLog, "utf-8");
       expect(sudoLog).toMatch(/^install -m 755 .*openshell/m);

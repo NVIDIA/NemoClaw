@@ -71,15 +71,15 @@ describe("OpenShell migration executable contracts", () => {
           "lib",
           "actions",
           "sandbox",
-          "openshell-child-visible-credentials.v0.0.106.json",
+          "openshell-child-visible-credentials.v0.0.116.json",
         ),
         "utf8",
       ),
     ) as { openshellVersion: string };
 
-    expect(blueprint).toContain('min_openshell_version: "0.0.106"');
-    expect(blueprint).toContain('max_openshell_version: "0.0.106"');
-    expect(manifest.openshellVersion).toBe("0.0.106");
+    expect(blueprint).toContain('min_openshell_version: "0.0.116"');
+    expect(blueprint).toContain('max_openshell_version: "0.0.116"');
+    expect(manifest.openshellVersion).toBe("0.0.116");
   });
   it("does not reintroduce newline-only code transports at migrated consumers", () => {
     const migratedConsumers = [

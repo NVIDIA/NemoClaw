@@ -178,12 +178,12 @@ function writeExternalBlueprint(
     path.join(blueprintRoot, "blueprint.yaml"),
     YAML.stringify({
       version: "1.0.0",
-      min_openshell_version: "0.0.106",
-      max_openshell_version: "0.0.106",
+      min_openshell_version: "0.0.116",
+      max_openshell_version: "0.0.116",
       openshell_target: {
         endpoint: `https://${address}:${String(port)}`,
         workspace: "default",
-        expected_release: "0.0.106",
+        expected_release: "0.0.116",
         lifecycle: "external",
         trust: { ca_file: caPath },
         authentication: { credential_file: authenticationPath },

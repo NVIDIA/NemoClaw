@@ -239,8 +239,18 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       // non-zero for it, per the hook above).
       const approvalExec = findApprovalExec(state);
       expect(approvalExec).toBeDefined();
-      // Despite the approval-pass failure, SSH handoff still happens.
-      expect(state.sandboxConnectCalls).toContainEqual(["sandbox", "connect", sandboxName]);
+      // Despite the approval-pass failure, the interactive exec handoff still happens.
+      expect(state.sandboxConnectCalls).toEqual([]);
+      expect(state.sandboxExecCalls).toContainEqual([
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        "--tty",
+        "--",
+        "/bin/bash",
+        "-i",
+      ]);
     },
   );
 });

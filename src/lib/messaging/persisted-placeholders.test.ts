@@ -11,6 +11,7 @@ const CANONICAL_DISCORD_PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN";
 const VERSIONED_DISCORD_PLACEHOLDER =
   "openshell:resolve:env:v1442987827285932589_DISCORD_BOT_TOKEN";
 const VERSIONED_SLACK_PLACEHOLDER = "openshell:resolve:env:v1442987827285932589_SLACK_BOT_TOKEN";
+const STABLE_DISCORD_PLACEHOLDER = `openshell:resolve:env:s${"a".repeat(64)}_DISCORD_BOT_TOKEN`;
 
 function makeHermesDiscordPlan(
   placeholder: string = VERSIONED_DISCORD_PLACEHOLDER,
@@ -78,12 +79,16 @@ function makeHermesDiscordPlan(
 describe("persisted messaging placeholders", () => {
   it("normalizes versioned Hermes credential placeholders from full persisted plans", () => {
     const parsed = parseSandboxMessagingPlan(makeHermesDiscordPlan());
+    const stableParsed = parseSandboxMessagingPlan(
+      makeHermesDiscordPlan(STABLE_DISCORD_PLACEHOLDER),
+    );
 
     expect(parsed?.credentialBindings[0]?.placeholder).toBe(CANONICAL_DISCORD_PLACEHOLDER);
     expect(parsed?.agentRender[0]).toMatchObject({
       kind: "env-lines",
       lines: ["API_SERVER_PORT=18642", `DISCORD_BOT_TOKEN=${CANONICAL_DISCORD_PLACEHOLDER}`],
     });
+    expect(stableParsed?.credentialBindings[0]?.placeholder).toBe(CANONICAL_DISCORD_PLACEHOLDER);
   });
 
   it("regenerates canonical placeholders from compact persisted Hermes plans", () => {

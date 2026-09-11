@@ -189,6 +189,8 @@ const BLUEPRINT_KEYS = new Set([
 ]);
 const MISSING_PROVIDER_INSPECTION_PATTERN =
   /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
+const MISSING_SANDBOX_INSPECTION_PATTERN =
+  /(?:\bsandbox\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bsandbox\b|\bunknown sandbox\b)/i;
 const POLICY_INSPECTION_MAX_BYTES = 1024 * 1024;
 const POLICY_INSPECTION_TIMEOUT_MS = 30_000;
 const POLICY_INSPECTION_DETAIL_MAX_CHARS = 240;
@@ -1799,6 +1801,7 @@ export async function actionApply(
   try {
     let reuseExistingInferenceProvider = false;
     let reuseExistingInferenceRoute = false;
+    let reuseExistingSandbox = false;
     progress(20, "Creating OpenClaw sandbox");
     const createArgs = [
       "openshell",
@@ -1819,20 +1822,37 @@ export async function actionApply(
     }
 
     await requireCreatePolicyBoundary();
-    const createResult = await runCmd(createArgs, {
-      gateway: policyGateway.name,
-      omitSandboxPolicy: true,
-      reject: false,
-    });
-    if (createResult.exitCode !== 0) {
-      if (createResult.stderr.includes("already exists")) {
+    if (runtimeIdentityConfig) {
+      const sandboxResult = await runCmd(["openshell", "sandbox", "get", sandboxName], {
+        gateway: policyGateway.name,
+        reject: false,
+      });
+      const sandboxOutput = `${sandboxResult.stderr}\n${sandboxResult.stdout}`;
+      if (sandboxResult.exitCode === 0) {
+        reuseExistingSandbox = true;
         log(`Sandbox '${sandboxName}' already exists; using its current OpenShell policy.`);
-      } else {
-        throw new Error(`Failed to create sandbox: ${boundedCommandError(createResult.stderr)}`);
+      } else if (!MISSING_SANDBOX_INSPECTION_PATTERN.test(sandboxOutput)) {
+        throw new Error(
+          `Failed to inspect sandbox '${sandboxName}' before runtime identity apply: ${boundedCommandError(sandboxOutput)}`,
+        );
       }
-    } else {
-      sandboxCreatedByApply = true;
-      persistRunPlan();
+    }
+    if (!reuseExistingSandbox) {
+      const createResult = await runCmd(createArgs, {
+        gateway: policyGateway.name,
+        omitSandboxPolicy: true,
+        reject: false,
+      });
+      if (createResult.exitCode !== 0) {
+        if (createResult.stderr.includes("already exists")) {
+          log(`Sandbox '${sandboxName}' already exists; using its current OpenShell policy.`);
+        } else {
+          throw new Error(`Failed to create sandbox: ${boundedCommandError(createResult.stderr)}`);
+        }
+      } else {
+        sandboxCreatedByApply = true;
+        persistRunPlan();
+      }
     }
 
     persistRunPlan();

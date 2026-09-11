@@ -234,11 +234,11 @@ def _is_openshell_placeholder_for_name(name: str, value: str) -> bool:
     if name == "OPENSHELL_TLS_KEY" or not _MCP_ENV_NAME.fullmatch(name):
         return False
     canonical = f"{_OPENSHELL_ENV_PLACEHOLDER_PREFIX}{name}"
-    versioned = re.fullmatch(
-        rf"{re.escape(_OPENSHELL_ENV_PLACEHOLDER_PREFIX)}v[0-9]{{1,20}}_{re.escape(name)}",
+    generation_scoped = re.fullmatch(
+        rf"{re.escape(_OPENSHELL_ENV_PLACEHOLDER_PREFIX)}(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(name)}",
         value,
     )
-    return value == canonical or versioned is not None
+    return value == canonical or generation_scoped is not None
 
 
 def _is_managed_value(name: str, value: str) -> bool:
@@ -460,7 +460,10 @@ def _validate_managed_mcp_entry(
     if not placeholder.startswith(_OPENSHELL_ENV_PLACEHOLDER_PREFIX):
         raise RuntimeError(f"managed MCP server {server} must use an OpenShell placeholder")
     suffix = placeholder.removeprefix(_OPENSHELL_ENV_PLACEHOLDER_PREFIX)
-    match = re.fullmatch(r"(?:v[0-9]{1,20}_)?([A-Za-z_][A-Za-z0-9_]{0,127})", suffix)
+    match = re.fullmatch(
+        r"(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?([A-Za-z_][A-Za-z0-9_]{0,127})",
+        suffix,
+    )
     if match is None or not _is_openshell_placeholder_for_name(match.group(1), placeholder):
         raise RuntimeError(f"managed MCP server {server} has an invalid OpenShell placeholder")
     return {
