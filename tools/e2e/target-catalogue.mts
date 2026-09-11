@@ -483,6 +483,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: ["test/e2e/live/brave-search-helpers.ts"],
     environment: {
       ...hostedInference,
       ...nonInteractive,
@@ -751,7 +752,17 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/live/hermes-cli-adapter-live.ts"],
+    owningPaths: [
+      "test/e2e/live/gpu-e2e-helpers.ts",
+      "test/e2e/live/hermes-cli-adapter-live.ts",
+      "src/lib/inference/ollama/proxy.ts",
+      "src/lib/inference/ollama/proxy-observation.ts",
+      "scripts/ollama-auth-proxy.mts",
+      "src/lib/adapters/config/live-export-source.ts",
+      "src/lib/domain/config/verify-ollama-serving.ts",
+      "src/lib/config/model.ts",
+      "src/lib/config/schema.ts",
+    ],
     environment: {
       ...nonInteractive,
       NEMOCLAW_MODEL: "qwen3.5:9b",
@@ -1396,6 +1407,14 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: [
       ...SKILL_LIFECYCLE_OWNING_PATHS,
       "agents/hermes/manifest.yaml",
+      "schemas/nemoclaw-config-v1.schema.json",
+      "src/commands/config/export.ts",
+      "src/lib/actions/config/",
+      "src/lib/adapters/config/",
+      "src/lib/adapters/fs/config-export-file.ts",
+      "src/lib/config/",
+      "src/lib/domain/config/",
+      "test/e2e/fixtures/hermes-config-export-live.ts",
       "test/e2e/live/hermes-skill-lifecycle.ts",
     ],
     environment: {

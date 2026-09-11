@@ -1222,7 +1222,15 @@ export function shouldSmokeOpenAiLikeOnboardRoute(
     return false;
   }
   const { REMOTE_PROVIDER_CONFIG } = require("../onboard/providers");
-  if (provider === "nvidia-nim" || provider === "nvidia-router") return true;
+  // NVIDIA Endpoints registers as OpenShell provider type "nvidia", which the
+  // providerType test below does not match, so nvidia-prod was the only
+  // OpenAI-completions remote provider whose onboarding never sent a Chat
+  // Completions request. A model that is in the NVIDIA Build catalog but not
+  // deployed for the account then onboarded clean and first failed at
+  // `status` with a bare HTTP 404 (#10879). Smoke it like its siblings.
+  if (provider === "nvidia-prod" || provider === "nvidia-nim" || provider === "nvidia-router") {
+    return true;
+  }
   return Object.values(REMOTE_PROVIDER_CONFIG).some(
     (entry) =>
       entry.providerName === provider &&

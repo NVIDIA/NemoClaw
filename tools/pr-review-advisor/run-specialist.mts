@@ -17,6 +17,8 @@ import {
   type RunReadOnlyAdvisorOptions,
 } from "../advisors/session.mts";
 import { collectDeterministicContext } from "./deterministic-context.mts";
+import { trustedE2eRecommendationInventory } from "../advisors/e2e-recommendations.mts";
+import { buildSpecialistE2eReceipt, createE2eRecommendationRecorder } from "./e2e-receipt.mts";
 import { collectGitHubReviewContext } from "./github-context.mts";
 import {
   ADVISOR_SPECIALISTS,
@@ -57,12 +59,15 @@ export function writeSpecialistSummary(
 export function runSpecialistAdvisor(
   interest: AdvisorInterest,
   refs: { baseRef: string; headRef: string },
-  options: Omit<RunReadOnlyAdvisorOptions, "customTools">,
+  options: RunReadOnlyAdvisorOptions,
   run: (options: RunReadOnlyAdvisorOptions) => Promise<RunAdvisorResult> = runReadOnlyAdvisor,
 ): Promise<RunAdvisorResult> {
   return run({
     ...options,
-    customTools: specialistCustomTools(interest, { ...refs, cwd: options.cwd }),
+    customTools: [
+      ...specialistCustomTools(interest, { ...refs, cwd: options.cwd }),
+      ...(options.customTools ?? []),
+    ],
   });
 }
 
@@ -117,6 +122,8 @@ async function main(): Promise<void> {
     operations: buildOperationsTurnContext(deterministic),
     reconciliation: buildReconciliationTurnContext(deterministic),
   });
+  const inventory = trustedE2eRecommendationInventory();
+  const recommendations = createE2eRecommendationRecorder(inventory);
   const run = await runSpecialistAdvisor(
     interest,
     { baseRef, headRef },
@@ -124,6 +131,7 @@ async function main(): Promise<void> {
       cwd: process.cwd(),
       additionalReadRoots: [path.dirname(diffPath)],
       promptTurns: [turn],
+      customTools: [recommendations.tool],
       systemPrompt: buildSystemPrompt(),
       configDir,
       timeoutMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_TIMEOUT_MS, 900000),
@@ -141,6 +149,19 @@ async function main(): Promise<void> {
   );
   const errors = advisorRunErrors(run);
   if (errors.length > 0) throw new Error(errors.join("; "));
+  const receipt = buildSpecialistE2eReceipt({
+    baseSha: getHeadSha(baseRef),
+    interest,
+    expectedSpecialists: ADVISOR_SPECIALISTS.map((specialist) => specialist.interest),
+    riskPlan: deterministic.riskPlan,
+    advisor: recommendations.snapshot(),
+    inventory,
+  });
+  fs.writeFileSync(
+    path.join(outDir, `pr-review-${interest}-e2e.json`),
+    `${JSON.stringify(receipt, null, 2)}\n`,
+    { flag: "wx", mode: 0o600 },
+  );
   writeSpecialistSummary(outDir, interest, run.text);
   if (!run.sessionFile) throw new Error("Pi did not persist a specialist JSONL session");
   const sessionStat = fs.lstatSync(run.sessionFile);
