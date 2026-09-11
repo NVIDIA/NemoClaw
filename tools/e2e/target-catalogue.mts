@@ -704,6 +704,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       agentRuntime: "hermes",
       environmentOrInferenceEndpoint: "Ubuntu Docker host; local onboarding fixtures",
       profile: "standard",
+      hostPreparation: "hermes-swap",
       testFile: `test/e2e/live/${scenario}.test.ts`,
       timeoutMinutes: scenario === "double-onboard" ? 90 : ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
       installMode: "credential-free",

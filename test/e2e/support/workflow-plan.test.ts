@@ -677,6 +677,17 @@ describe("E2E workflow plan", () => {
     },
   );
 
+  it.each(["double-onboard-hermes", "onboard-resume-hermes"])(
+    "prepares Hermes swap for the %s execution",
+    (target) => {
+      const plan = buildE2eWorkflowPlan({ targets: target });
+
+      expect(plan.catalogueMatrices.standard).toEqual([
+        expect.objectContaining({ id: target, host_preparation: "hermes-swap" }),
+      ]);
+    },
+  );
+
   it("selects only full E2E consumers when the timeout contract changes", () => {
     const changedFile = "tools/e2e/full-e2e-timeout-contract.mts";
 
