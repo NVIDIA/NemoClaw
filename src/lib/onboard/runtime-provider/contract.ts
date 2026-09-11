@@ -347,6 +347,8 @@ export type RuntimeProviderCommandCapture = {
 };
 
 export interface RuntimeProviderLifecycleInput {
+  /** Required by portable lifecycle operations to recheck authority after awaiting observations. */
+  readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
   readonly environment: NodeJS.ProcessEnv;
   readonly log: (message: string) => void;
   readonly sandbox: SandboxEntry;
@@ -696,6 +698,11 @@ export type RuntimeProviderSnapshotSurface =
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
       ): RuntimeProviderRuntimeReceipt;
+      /** Compare provider-owned acceleration encodings without widening central authority. */
+      canRepresentAcceleration?(
+        source: RuntimeProviderRuntimeReceipt["acceleration"],
+        target: RuntimeProviderRuntimeReceipt["acceleration"],
+      ): boolean;
       validateRestore(
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,

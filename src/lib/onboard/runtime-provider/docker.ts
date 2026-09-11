@@ -344,7 +344,7 @@ async function startDockerSandboxUnlocked(
     if (input.sandbox.agent === "hermes") {
       await deps.requalifyPortableSandbox(input.sandboxName, {
         env: input.environment,
-        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
       });
     }
     const portable = await deps.recoverPortableSandbox(
@@ -359,7 +359,7 @@ async function startDockerSandboxUnlocked(
       {
         env: input.environment,
         log: input.log,
-        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
       },
     );
     if (portable.kind !== "not-installed") {
@@ -466,7 +466,7 @@ async function stopDockerSandboxUnlocked(
       {
         env: input.environment,
         log: input.log,
-        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+        readRegistry: (name) => input.readRegistry?.(name) ?? null,
       },
     );
     if (portable.kind === "already-stopped") {

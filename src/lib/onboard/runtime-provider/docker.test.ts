@@ -221,6 +221,42 @@ describe("Docker runtime provider NVIDIA container capture", () => {
 });
 
 describe("Docker provider portable lifecycle dispatch", () => {
+  it("rereads registry authority after deferred requalification before recovery (#11479)", async () => {
+    const input = lifecycleInput();
+    let row = input.sandbox;
+    let resolvePolicy!: () => void;
+    let notifyEntered!: () => void;
+    const policy = new Promise<void>((resolve) => {
+      resolvePolicy = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      notifyEntered = resolve;
+    });
+    const recoverPortableSandbox = vi.fn(poison);
+    const provider = createDockerRuntimeProviderBundle({
+      hasPortableLifecycleReceipt: () => false,
+      requalifyPortableSandbox: async (name, deps) => {
+        expect(deps.readRegistry?.(name)).toBe(input.sandbox);
+        notifyEntered();
+        await policy;
+        expect(deps.readRegistry?.(name)).toBe(row);
+        throw new Error("registry authority disagrees with the active receipt");
+      },
+      recoverPortableSandbox,
+      withLifecycleLock: async (_name, operation) => operation(),
+    });
+    const started = supportedLifecycle(provider).start({ ...input, readRegistry: () => row });
+    await entered;
+    row = { ...row, lifecycleGeneration: "generation-2" };
+    resolvePolicy();
+
+    expect(await started).toEqual({
+      exitCode: 1,
+      message: "registry authority disagrees with the active receipt",
+    });
+    expect(recoverPortableSandbox).not.toHaveBeenCalled();
+  });
+
   it("routes active Hermes start before every Docker dependency (#9203)", async () => {
     const requalifyPortableSandbox = vi.fn(async () => ({ kind: "not-hermes" as const }));
     const recoverPortableSandbox = vi.fn(async () => ({ kind: "already-running" as const }));

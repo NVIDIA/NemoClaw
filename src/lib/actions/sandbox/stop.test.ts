@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as agentRuntime from "../../agent/runtime";
 import {
@@ -12,6 +12,7 @@ import {
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
 import { decideOllamaModelOwnership } from "../../inference/ollama/model-ownership";
 import type { OllamaUnloadResult } from "../../inference/ollama/proxy";
+import * as ollamaProxy from "../../inference/ollama/proxy";
 import type { SandboxEntry } from "../../state/registry";
 import { teardownSandboxDashboardForward } from "./forward-recovery";
 import { discoverActiveOllamaSandboxNames, type SandboxStopDeps, stopSandbox } from "./stop";
@@ -292,6 +293,14 @@ describe("discoverActiveOllamaSandboxNames", () => {
 });
 
 describe("stopSandbox", () => {
+  beforeEach(() => {
+    vi.spyOn(ollamaProxy, "loadPersistedOllamaHost").mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("gracefully stops in-sandbox channels before stopping through OpenShell (#6026)", async () => {
     const h = harness();
 

@@ -21,6 +21,7 @@ export { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES };
 import { selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
+  getKnownSandboxTarget,
   getKnownSandboxTargetGatewayName,
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
@@ -283,7 +284,7 @@ export async function recoverPortableDemoSandboxLifecycleForConnect(
             }
           : {}),
         captureOpenshell: capture,
-        readRegistry: (name) => (sandbox?.name === name ? sandbox : null),
+        readRegistry: getKnownSandboxTarget,
         ...(lifecycleTiming ? { recoveryTiming: lifecycleTiming } : {}),
         ...(currentnessTiming ? { currentnessTiming } : {}),
         ...(inspectionTiming ? { inspectionTiming } : {}),
@@ -309,7 +310,7 @@ export async function assertHermesPortableLifecycleForConnect(
       openshellDriver: sandbox.openshellDriver,
       provider: sandbox.provider,
     },
-    { readRegistry: (name: string) => (name === sandboxName ? sandbox : null) },
+    { readRegistry: getKnownSandboxTarget },
   );
 }
 

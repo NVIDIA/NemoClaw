@@ -28,6 +28,7 @@ import {
 } from "../inference/llama-cpp/managed-selection";
 import { getOllamaContextWindowFloorForAgent } from "../inference/ollama-runtime-context";
 import {
+  NEMOCLAW_SERVING_PRESET_ENV,
   type RequestedServingProfileModel,
   resolveRequestedServingProfileModel,
 } from "../inference/serving/requested-profile-model";
@@ -524,7 +525,7 @@ function prepareManagedLlamaCppMenu(input: {
     ? discoverManagedLlamaCppSafely(
         deps,
         !deps.isNonInteractive() && !requestedProvider
-          ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "" }
+          ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "", [NEMOCLAW_SERVING_PRESET_ENV]: "" }
           : undefined,
         gpu,
         runtimeProviderId,
@@ -573,7 +574,11 @@ function resolveSelectedManagedLlamaCpp(input: {
   const { deps, gpu, recoveredFromSandbox, selectedFromInteractiveMenu, selectedRecipeId } = input;
   const env =
     selectedRecipeId && (recoveredFromSandbox || selectedFromInteractiveMenu)
-      ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
+      ? {
+          ...process.env,
+          [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId,
+          [NEMOCLAW_SERVING_PRESET_ENV]: "",
+        }
       : undefined;
   const runtimeProvider = deps.getRuntimeProvider();
   return {

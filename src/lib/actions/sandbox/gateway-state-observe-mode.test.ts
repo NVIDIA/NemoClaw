@@ -10,6 +10,7 @@ import * as portableAgentLifecycle from "../../onboard/experimental/portable-age
 import * as registry from "../../state/registry";
 import * as gatewaySelect from "./gateway-select";
 import {
+  assertHermesPortableLifecycleForConnect,
   captureHermesPortableInferenceRecoveryGateway,
   getReconciledSandboxGatewayState,
   recoverPortableDemoSandboxLifecycleForConnect,
@@ -145,6 +146,44 @@ describe("Hermes Portable inference recovery gateway", () => {
 });
 
 describe("Hermes Portable lifecycle recovery command authority", () => {
+  it("keeps connect authority registry reads live across deferred policy proof (#11479)", async () => {
+    const input = {
+      name: "alpha",
+      agent: "hermes",
+      gatewayName: "nemoclaw",
+      openshellDriver: "docker",
+      lifecycleGeneration: "generation-1",
+    } as registry.SandboxEntry;
+    let row = input;
+    vi.spyOn(registry, "getSandbox").mockImplementation(() => row);
+    let resolvePolicy!: () => void;
+    let notifyEntered!: () => void;
+    const policy = new Promise<void>((resolve) => {
+      resolvePolicy = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      notifyEntered = resolve;
+    });
+    vi.spyOn(
+      portableAgentLifecycle,
+      "assertHermesPortableAgentLifecycleAuthority",
+    ).mockImplementation(async (name, _context, deps) => {
+      expect(deps?.readRegistry?.(name)).toBe(input);
+      notifyEntered();
+      await policy;
+      expect(deps?.readRegistry?.(name)).toBe(row);
+      throw new Error("registry authority disagrees with the active receipt");
+    });
+    const proof = assertHermesPortableLifecycleForConnect("alpha", input, "nemoclaw");
+    const rejected = expect(proof).rejects.toThrow(
+      "registry authority disagrees with the active receipt",
+    );
+    await entered;
+    row = { ...row, lifecycleGeneration: "generation-2" };
+    resolvePolicy();
+    await rejected;
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
