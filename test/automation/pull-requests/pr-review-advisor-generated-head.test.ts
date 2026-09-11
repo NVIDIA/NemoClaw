@@ -288,10 +288,10 @@ describe("PR Review Advisor generated-head evidence", () => {
     const e2eCorrelationId = "01234567-89ab-4cde-8fab-0123456789ab";
     const e2eUrl = `https://github.com/${selection.repository}/actions/runs/${e2eRunId}`;
     const e2eArtifactId = 990;
-    const expectedE2eJobNames = [
-      "Onboarding: repairs a missing sandbox and rejects conflicting resume input (docker)",
-      "Onboarding: resumes interrupted setup from recorded progress (docker)",
-    ];
+    const expectedE2eJobNames = e2eEvidenceJobNamesForSelectors([
+      "onboard-repair",
+      "onboard-resume",
+    ]);
     const dispatchedWorkflows = new Set<string>();
     const dispatchE2e = vi.fn(async () => ({
       runId: e2eRunId,
@@ -720,7 +720,7 @@ describe("PR Review Advisor generated-head evidence", () => {
       advisorRepairCorrelationId(attemptKey, head),
     );
     expect(e2eControllerDeadlineMinutesForSelectors(["cloud-onboard"])).toBe(150);
-    expect(e2eControllerDeadlineMinutesForSelectors(["managed-image-protected-runtime"])).toBe(590);
+    expect(e2eControllerDeadlineMinutesForSelectors(["managed-image-protected-runtime"])).toBe(365);
   });
 
   it("routes every repair workflow through one executable trusted target gate (#10791)", () => {
@@ -835,6 +835,7 @@ describe("PR Review Advisor generated-head evidence", () => {
 
   it("binds representative E2E selectors to fixed workflow evidence names (#10791)", () => {
     expect(e2eEvidenceJobNamesForSelectors(["onboard-repair", "onboard-resume"])).toEqual([
+      "Onboarding: Hermes resumes its sandbox and forwards (docker)",
       "Onboarding: repairs a missing sandbox and rejects conflicting resume input (docker)",
       "Onboarding: resumes interrupted setup from recorded progress (docker)",
     ]);
