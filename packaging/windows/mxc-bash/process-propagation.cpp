@@ -160,6 +160,81 @@ void logPropagation(DWORD pid, USHORT machine, BOOL sameSid, BOOL inJob, BOOL in
     if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
 }
 
+// Failure-only readback of the existing process handle and current caller.
+// A process descriptor is not the primary token's descriptor. No handle is
+// reopened, no rights/context are changed, and none of this can admit a child.
+void logTokenOpenDenial(HANDLE child) {
+    static LONG records = 0;
+    const DWORD saved = GetLastError();
+    if (InterlockedIncrement(&records) > 4) { SetLastError(saved); return; }
+    struct BasicInformation {
+        ULONG attributes; ACCESS_MASK grantedAccess; ULONG handleCount; ULONG pointerCount; ULONG reserved[10];
+    } basic = {};
+    static_assert(sizeof(BasicInformation) == 56);
+    using QueryObject = LONG (NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    const auto query = reinterpret_cast<QueryObject>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryObject"));
+    const DWORD resolveError = query ? 0 : GetLastError();
+    ULONG basicNeeded = 0;
+    const LONG basicStatus = query ? query(child, 0, &basic, sizeof(basic), &basicNeeded) : 0;
+    const BOOL basicKnown = query && basicStatus == 0;
+    alignas(void*) BYTE descriptor[1024] = {};
+    DWORD descriptorNeeded = 0, descriptorError = 0, descriptorLength = 0, validationError = 0;
+    BOOL descriptorAttempted = basicKnown && (basic.grantedAccess & READ_CONTROL);
+    BOOL descriptorRead = FALSE, descriptorValid = FALSE;
+    if (descriptorAttempted) {
+        descriptorRead = GetKernelObjectSecurity(child,
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            descriptor, sizeof(descriptor), &descriptorNeeded);
+        descriptorError = descriptorRead ? 0 : GetLastError();
+        if (descriptorRead) {
+            __try {
+                SECURITY_DESCRIPTOR_CONTROL control = 0; DWORD revision = 0;
+                if (!GetSecurityDescriptorControl(descriptor, &control, &revision)) validationError = GetLastError();
+                else if ((control & SE_SELF_RELATIVE) && IsValidSecurityDescriptor(descriptor)) {
+                    descriptorLength = GetSecurityDescriptorLength(descriptor);
+                    descriptorValid = descriptorLength >= 20 && descriptorLength <= sizeof(descriptor);
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) { validationError = GetExceptionCode(); }
+        }
+    }
+    char descriptorHex[sizeof(descriptor) * 2 + 1] = {};
+    if (descriptorValid) for (DWORD index = 0; index < descriptorLength; ++index) {
+        descriptorHex[index * 2] = "0123456789abcdef"[descriptor[index] >> 4];
+        descriptorHex[index * 2 + 1] = "0123456789abcdef"[descriptor[index] & 15];
+    }
+    HANDLE threadToken = nullptr;
+    const BOOL threadOpened = OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &threadToken);
+    const DWORD threadError = threadOpened ? 0 : GetLastError();
+    DWORD threadType = 0, threadLevel = 0, threadAppContainer = 0, needed = 0;
+    BOOL typeKnown = FALSE, levelKnown = FALSE, appKnown = FALSE;
+    DWORD typeError = 0, levelError = 0, appError = 0, closeError = 0;
+    if (threadOpened) {
+        typeKnown = GetTokenInformation(threadToken, TokenType, &threadType, sizeof(threadType), &needed);
+        typeError = typeKnown ? 0 : GetLastError();
+        if (typeKnown && threadType == TokenImpersonation) {
+            levelKnown = GetTokenInformation(threadToken, TokenImpersonationLevel, &threadLevel, sizeof(threadLevel), &needed);
+            levelError = levelKnown ? 0 : GetLastError();
+        }
+        appKnown = GetTokenInformation(threadToken, TokenIsAppContainer, &threadAppContainer, sizeof(threadAppContainer), &needed);
+        appError = appKnown ? 0 : GetLastError();
+        if (!CloseHandle(threadToken)) closeError = GetLastError();
+    }
+    char line[4096];
+    const int length = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_TOKEN_OPEN_DENIAL={\"schemaVersion\":1,\"parentPid\":%lu,\"childPid\":%lu,\"objectQueryAvailable\":%s,\"objectQueryResolveError\":%lu,\"objectBasicStatus\":\"0x%08lx\",\"objectBasicKnown\":%s,\"objectBasicNeeded\":%lu,\"grantedAccess\":\"0x%08lx\",\"processQueryLimitedGranted\":%s,\"processReadControlGranted\":%s,\"processSdAttempted\":%s,\"processSdRead\":%s,\"processSdError\":%lu,\"processSdNeeded\":%lu,\"processSdValid\":%s,\"processSdLength\":%lu,\"processSdValidationError\":%lu,\"processSdHex\":\"%s\",\"threadTokenOpened\":%s,\"threadTokenOpenError\":%lu,\"threadHasNoToken\":%s,\"threadTypeKnown\":%s,\"threadType\":%lu,\"threadTypeError\":%lu,\"threadLevelKnown\":%s,\"threadLevel\":%lu,\"threadLevelError\":%lu,\"threadAppContainerKnown\":%s,\"threadAppContainer\":%lu,\"threadAppContainerError\":%lu,\"threadTokenCloseError\":%lu}\n",
+        GetCurrentProcessId(), GetProcessId(child), query ? "true" : "false", resolveError,
+        static_cast<ULONG>(basicStatus), basicKnown ? "true" : "false", basicNeeded, basicKnown ? basic.grantedAccess : 0UL,
+        basicKnown && (basic.grantedAccess & PROCESS_QUERY_LIMITED_INFORMATION) ? "true" : "false",
+        descriptorAttempted ? "true" : "false", descriptorAttempted ? "true" : "false", descriptorRead ? "true" : "false",
+        descriptorError, descriptorNeeded, descriptorValid ? "true" : "false", descriptorLength, validationError, descriptorHex,
+        threadOpened ? "true" : "false", threadError, !threadOpened && threadError == ERROR_NO_TOKEN ? "true" : "false",
+        typeKnown ? "true" : "false", threadType, typeError, levelKnown ? "true" : "false", threadLevel, levelError,
+        appKnown ? "true" : "false", threadAppContainer, appError, closeError);
+    DWORD written = 0;
+    if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    SetLastError(saved);
+}
+
 BOOL inject(HANDLE child) {
     alignas(SID) BYTE actualSid[SECURITY_MAX_SID_SIZE] = {};
     USHORT processMachine = 0, nativeMachine = 0;
@@ -172,6 +247,8 @@ BOOL inject(HANDLE child) {
     logTokenProof(child, proof, sidQueried, sameSid, jobKnown, inJob, jobError);
     DWORD error = ERROR_ACCESS_DENIED;
     if (!sameSid || !jobKnown || !inJob) {
+        if (!sidQueried && !strcmp(proof.operation, "OpenProcessToken") && proof.apiError == ERROR_ACCESS_DENIED)
+            logTokenOpenDenial(child);
         logPropagation(GetProcessId(child), 0, sameSid, inJob, FALSE, error);
         SetLastError(error);
         return FALSE;
